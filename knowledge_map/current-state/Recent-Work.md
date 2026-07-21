@@ -1308,6 +1308,21 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
   an always-on live acquisition→pulse latency gauge, status-bar surfacing,
   [[../diagnostics/CrashStateMirror]] loss fields, and a funnel/loss section in
   `analyze_pipeline_timing.py`. Test: `processing.identification_metrics`.
+- **Auto-fit processing ROI from background** (2026-07-21, issue #295) —
+  new pure detector `detectChannelRoi` (`ChannelRoiDetect.{h,cpp}`, OpenCV-only,
+  in the Qt-free `mib_processing` core) locates the microfluidic channel walls
+  from a captured background's vertical-gradient row profile and returns a
+  full-width ROI with the wall rows excluded, failing safe to the full frame on
+  empty/flat/ambiguous input. `ProcessingConfig::auto_roi_from_background`
+  (default off, + `auto_roi_wall_gradient_ratio`, `auto_roi_wall_margin`) gates
+  it; `setRealtimeBackgroundGray` — the single background-capture chokepoint —
+  applies the derived ROI via `setRealtimeRoi` and fires a new
+  `SuggestedRoiCallback`. Keeps full-frame capture in realtime while excluding
+  the wall noise that both pollutes detections and defeats the empty-frame fast
+  path. Guard: `processing.channel_roi_detect`. Config threaded through
+  `AppConfigWatcher` (`image_processing`). Task:
+  [[../task/2026-07-21-auto-roi-warmup]].
+
 - **Trigger-path hardening** (2026-07-18, issue #227) — the
   [[../services/TriggerService]] thread elevates itself to
   `THREAD_PRIORITY_TIME_CRITICAL` on Windows (best-effort `SCHED_FIFO`

@@ -34,6 +34,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp

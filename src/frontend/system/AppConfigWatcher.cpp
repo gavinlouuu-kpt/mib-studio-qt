@@ -336,6 +336,12 @@ namespace frontend
 					pcfg.auto_background_empty_frames = ip.value("auto_background_empty_frames").toInt(pcfg.auto_background_empty_frames);
 				if (ip.contains("auto_background_cooldown_frames"))
 					pcfg.auto_background_cooldown_frames = ip.value("auto_background_cooldown_frames").toInt(pcfg.auto_background_cooldown_frames);
+				if (ip.contains("auto_roi_from_background"))
+					pcfg.auto_roi_from_background = ip.value("auto_roi_from_background").toBool(pcfg.auto_roi_from_background);
+				if (ip.contains("auto_roi_wall_gradient_ratio"))
+					pcfg.auto_roi_wall_gradient_ratio = ip.value("auto_roi_wall_gradient_ratio").toDouble(pcfg.auto_roi_wall_gradient_ratio);
+				if (ip.contains("auto_roi_wall_margin"))
+					pcfg.auto_roi_wall_margin = ip.value("auto_roi_wall_margin").toInt(pcfg.auto_roi_wall_margin);
 				if (ip.contains("filters") && ip.value("filters").isObject())
 				{
 					const QJsonObject fl = ip.value("filters").toObject();

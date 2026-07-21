@@ -482,6 +482,18 @@ public:
     using BackgroundCaptureCallback = std::function<void(const cv::Mat& background, uint64_t frameIndex)>;
     void setBackgroundCaptureCallback(BackgroundCaptureCallback callback);
 
+    // Suggested-ROI callback: fired when auto_roi_from_background derives a
+    // wall-avoiding ROI from a captured background (after it is applied via
+    // setRealtimeRoi). Lets the UI reflect the automatically chosen ROI.
+    using SuggestedRoiCallback = std::function<void(const Roi& roi, uint64_t frameIndex)>;
+    void setSuggestedRoiCallback(SuggestedRoiCallback callback);
+
+    // Derive a wall-avoiding ROI from a background image using the current
+    // ProcessingConfig auto-ROI settings. Returns an empty/full-frame ROI when
+    // detection is disabled or the background is unusable. Pure w.r.t. service
+    // state (does not apply the result); exposed for reuse and testing.
+    Roi computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const;
+
 private:
     struct DroppedFrameCounts {
         size_t valid{0};
@@ -754,6 +766,10 @@ private:
     // Background capture callback for auto-capture
     mutable std::mutex backgroundCaptureCallbackMutex_;
     BackgroundCaptureCallback backgroundCaptureCallback_;
+
+    // Suggested-ROI callback (fired when auto_roi_from_background applies a ROI)
+    mutable std::mutex suggestedRoiCallbackMutex_;
+    SuggestedRoiCallback suggestedRoiCallback_;
     
     // Auto-capture state tracking
     std::atomic<uint64_t> consecutiveEmptyFrames_{0};
