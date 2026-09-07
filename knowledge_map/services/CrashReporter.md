@@ -256,6 +256,21 @@ sentry-cli releases finalize "mib_studio_qt@$version"
   escapes a worker thread entry point reaches the terminate handler,
   which leaves a `.dmp` + `.json` + `.txt` and gets the event to Sentry
   on the next launch.
+- **`sehHandler` must translate the MSVC C++-exception SEH code
+  (`0xE06D7363`) into an explicit `std::terminate()` call.** Installing
+  `SetUnhandledExceptionFilter(sehHandler)` replaces the CRT's own
+  top-level filter — the one that normally recognizes this code and
+  calls `std::terminate()` on our behalf. Without redoing that
+  translation, a C++ exception that escapes every frame (e.g. off a
+  worker thread) is intercepted by `sehHandler` first: it wrote generic
+  `-seh.dmp`/`.json` files and returned `EXCEPTION_CONTINUE_SEARCH`,
+  after which Windows tore the process down directly — `std::terminate`
+  (and therefore `terminateHandler`'s `-terminate.json/.txt/.dmp` +
+  exception message) was never reached. This was caught by
+  `backend.crash_reporter_terminate` failing only in the Windows CI lane
+  (`build-windows.yml`'s CTest step), never in Linux `backend-ci.yml`,
+  since glibc's unwind calls `std::terminate` directly with no SEH
+  translation step to clobber.
 - Building with `MIB_USE_SENTRY=OFF` (or with no DSN) keeps the local
   minidump path active — useful for offline / air-gapped deployments.
 - **`sentry_capture_minidump` vs `sentry_capture_event`:** The upload

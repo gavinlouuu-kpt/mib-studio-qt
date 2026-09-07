@@ -212,7 +212,23 @@ LONG writeMinidumpInternal(EXCEPTION_POINTERS* eptr,
     return ok ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH;
 }
 
+// SEH exception code MSVC raises for an uncaught C++ exception (ehdata.h's
+// EH_EXCEPTION_NUMBER; not pulled from that internal header since its layout
+// is undocumented across toolset versions — only the stable numeric code is
+// needed here). Installing our own SetUnhandledExceptionFilter replaces the
+// CRT's own top-level filter, which is what normally recognizes this code
+// and calls std::terminate() on our behalf; without redoing that translation
+// here, an exception escaping every C++ frame (e.g. off a worker thread) hits
+// this filter instead of std::terminate, so terminateHandler's dedicated
+// "-terminate" artifacts + exception message are never produced.
+constexpr DWORD kCxxExceptionCode = 0xE06D7363;
+
 LONG WINAPI sehHandler(EXCEPTION_POINTERS* eptr) {
+    if (eptr && eptr->ExceptionRecord &&
+        eptr->ExceptionRecord->ExceptionCode == kCxxExceptionCode) {
+        std::terminate();
+    }
+
     auto& g = globals();
     bool expected = false;
     if (!g.handlingCrash.compare_exchange_strong(expected, true)) {
