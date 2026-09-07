@@ -25,7 +25,7 @@ verification. No hardware validation is asserted by this inventory.
 | Finalization | migration #274 / reliability #369 | A | Migration experiment commands | Reliability caller owns finalization | Migration status/start/stop | Historical e2e.experiment_coordinator and cargo lifecycle test | One converged coordinator; Qt-free finalization |
 | Config application | migration #273 / reliability work | A | JSON merge/config_version; no checked persistent transaction | Existing config UI | Editor | Historical processing_config_roundtrip_and_core_status | Baseline revision, conflict/save/apply/verification outcomes |
 | Monitoring/accounting | migration #275 / reliability #367 | A | Bounded metrics snapshots; UI activation switch | Existing monitoring | Visibility-gated collection | Historical monitoring_and_trigger_contract | Backend-owned run collection and authoritative accounting |
-| Review/export | migration #276 / develop #344 plan | A service / B adapter | Paged review, read-only CSV worker | Existing exporter/review | Review table/image/export | Historical review_metadata_pages_images_and_export_job | Reuse accepted HdfExportService; provenance/accounting exposure |
+| Review/export | migration #276 / reliability #344 implementation | A service / B adapter | Migration paged review/CSV worker; reliability HdfExportService not yet integrated | Reliability Qt adapter exists | Review table/image/export | Existing recording.hdf_export_service / recording.hdf_export_soak (50 rounds), not executed here | Bind accepted existing HdfExportService; provenance/accounting exposure |
 | Integrated workspace | PR #321 | B | Uses migration snapshots | Reference only | Metrics/alerts slice exists elsewhere | PR reports 8 tests; not native E2E proof | Persistent header/alerts, truthful freshness, layout/drafts |
 | Pump/autofocus/commissioning | migration ABI 10/11, PR #320 | Existing services A / B adapter | Existing bindings | Existing controls | Commissioning guards | Existing test files | Preserve; no milestone expansion |
 | Native cross-shell experiment | #372 M4 | A contracts / B integration | No accepted revision | Required comparison | Not validated | No execution evidence | Native Linux/Windows setup and handoff |
@@ -114,3 +114,17 @@ TypeScript shared golden fixture, then extend the existing event adapter with
 lossless non-frame identities and payload fixtures. Integrate authoritative
 identity/snapshot/recovery contracts only after the committed Agent A handoff.
 Dependency requests recorded on issue #372, comment 5565220578.
+
+### Export inventory refinement
+
+At reliability candidate `921f48d`, `include/backend/recording/HdfExportService.h`
+and its implementation already exist. Reuse `HdfExportRequest`,
+`HdfExportCancelToken`, `HdfExportProgress` and `HdfExportResult`; `run()` is
+synchronous on an owned caller worker, has its own read-only reader, and reports
+Completed/Cancelled/Failed plus retainedPartialPath. The missing integration is
+the reviewed facade operation/worker binding and accepted test evidence, not
+creation of an export engine. Its existing tests include
+`recording.hdf_export_service` and a 50-round `recording.hdf_export_soak`.
+
+Code commit for this session: `c7a9a6b`. The candidate manifest records fixture,
+lockfile and implementation hashes without a self-referential commit hash.
