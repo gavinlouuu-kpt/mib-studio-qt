@@ -13,19 +13,13 @@ use serde::Serialize;
 use tauri::ipc::Response;
 use tauri::{Manager, State};
 
+mod frame_packet;
 mod platform;
 pub mod updater;
 
 struct AppState {
     bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
-    /// Pixel bytes of the last `fetch_frame` pull, so `frame_bytes` returns the
-    /// exact frame `fetch_frame` described.
-    last_frame: Mutex<Vec<u8>>,
-    /// Pixel bytes of the last `fetch_background` pull (separate cache so
-    /// background pulls never clobber the live-frame channel).
-    last_background: Mutex<Vec<u8>>,
-    /// Pixel bytes of the last `fetch_review_image` pull.
-    last_review_image: Mutex<Vec<u8>>,
+
 }
 
 /// Flattened command result handed to JS.
@@ -48,19 +42,6 @@ impl From<ffi::BridgeCommandResult> for CmdResult {
             operation_id: r.operation_id,
         }
     }
-}
-
-/// Frame metadata (pixel bytes are pulled separately via `frame_bytes`).
-#[derive(Serialize, Clone, Default)]
-struct FrameMeta {
-    valid: bool,
-    frame_index: u64,
-    timestamp_ns: u64,
-    width: u64,
-    height: u64,
-    pixel_format: u64,
-    stride_bytes: u64,
-    byte_len: u64,
 }
 
 /// Realtime processing stats snapshot for the webview.
@@ -222,48 +203,38 @@ fn seek_index(state: State<AppState>, frame_index: u64) -> Result<CmdResult, Str
     Ok(guard.pin_mut().playback_seek_index(frame_index).into())
 }
 
-fn frame_to_meta(frame: &ffi::BridgeFrame) -> FrameMeta {
-    FrameMeta {
-        valid: frame.valid,
-        frame_index: frame.frame_index,
-        timestamp_ns: frame.timestamp_ns,
-        width: frame.width,
-        height: frame.height,
-        pixel_format: frame.pixel_format,
-        stride_bytes: frame.stride_bytes,
-        byte_len: frame.data.len() as u64,
-    }
+// Legacy split-cache commands fail explicitly: an old webview must reload,
+// never receive a substitute frame from another request.
+#[tauri::command]
+fn fetch_frame() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
+#[tauri::command]
+fn fetch_frame_by_index() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
+#[tauri::command]
+fn frame_bytes() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
+
+fn parse_frame_index(value: &str) -> Result<u64, String> {
+    let n = value.parse::<u64>().map_err(|_| "INVALID_U64".to_string())?;
+    if n.to_string() != value { return Err("INVALID_U64".into()); }
+    Ok(n)
 }
 
-/// Pull the latest frame, cache it, and return its metadata. Call `frame_bytes`
-/// next to get the pixel bytes of this same frame.
 #[tauri::command]
-fn fetch_frame(state: State<AppState>) -> Result<FrameMeta, String> {
-    let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-    let frame = bridge.pin_mut().fetch_latest_frame();
-    let meta = frame_to_meta(&frame);
-    let mut last = state.last_frame.lock().map_err(|e| e.to_string())?;
-    *last = frame.data;
-    Ok(meta)
+fn fetch_frame_packet(state: State<AppState>) -> Result<Response, String> {
+    let frame = {
+        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
+        bridge.pin_mut().fetch_latest_frame()
+    };
+    frame_packet::encode(frame, 1).map(Response::new)
 }
 
-/// Pull a specific frame by index (review scrubbing), cache it, return metadata.
 #[tauri::command]
-fn fetch_frame_by_index(state: State<AppState>, frame_index: u64) -> Result<FrameMeta, String> {
-    let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-    let frame = bridge.pin_mut().fetch_frame_by_index(frame_index);
-    let meta = frame_to_meta(&frame);
-    let mut last = state.last_frame.lock().map_err(|e| e.to_string())?;
-    *last = frame.data;
-    Ok(meta)
-}
-
-/// Return the raw pixel bytes of the last `fetch_frame` result as a binary IPC
-/// response — never base64-encoded (ADR 0003 hot-path rule).
-#[tauri::command]
-fn frame_bytes(state: State<AppState>) -> Result<Response, String> {
-    let last = state.last_frame.lock().map_err(|e| e.to_string())?;
-    Ok(Response::new(last.clone()))
+fn fetch_indexed_frame_packet(state: State<AppState>, frame_index: String) -> Result<Response, String> {
+    let index = parse_frame_index(&frame_index)?;
+    let frame = {
+        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
+        bridge.pin_mut().fetch_frame_by_index(index)
+    };
+    frame_packet::encode(frame, 2).map(Response::new)
 }
 
 #[tauri::command]
@@ -723,27 +694,18 @@ fn fetch_review_metrics_page(
     })
 }
 
-/// Pull one review image/mask by dataset id + index (bytes via
-/// `review_image_bytes`).
 #[tauri::command]
-fn fetch_review_image(
-    state: State<AppState>,
-    dataset: u32,
-    index: u64,
-) -> Result<FrameMeta, String> {
-    let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-    let frame = bridge.pin_mut().fetch_review_image(dataset, index);
-    let meta = frame_to_meta(&frame);
-    let mut last = state.last_review_image.lock().map_err(|e| e.to_string())?;
-    *last = frame.data;
-    Ok(meta)
-}
-
-/// Raw Mono8 bytes of the last `fetch_review_image` pull.
+fn fetch_review_image() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
 #[tauri::command]
-fn review_image_bytes(state: State<AppState>) -> Result<Response, String> {
-    let last = state.last_review_image.lock().map_err(|e| e.to_string())?;
-    Ok(Response::new(last.clone()))
+fn review_image_bytes() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
+#[tauri::command]
+fn fetch_review_frame_packet(state: State<AppState>, dataset: u32, index: String) -> Result<Response, String> {
+    let index = parse_frame_index(&index)?;
+    let frame = {
+        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
+        bridge.pin_mut().fetch_review_image(dataset, index)
+    };
+    frame_packet::encode(frame, 3).map(Response::new)
 }
 
 /// Start a cancellable metrics CSV export job for the loaded file.
@@ -803,22 +765,17 @@ fn set_processing_roi(
     Ok(guard.pin_mut().set_processing_roi(x, y, w, h).into())
 }
 
-/// Pull the background image metadata (bytes via `background_bytes`).
 #[tauri::command]
-fn fetch_background(state: State<AppState>) -> Result<FrameMeta, String> {
-    let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-    let frame = bridge.pin_mut().fetch_background_image();
-    let meta = frame_to_meta(&frame);
-    let mut last = state.last_background.lock().map_err(|e| e.to_string())?;
-    *last = frame.data;
-    Ok(meta)
-}
-
-/// Raw Mono8 bytes of the last `fetch_background` pull (binary IPC response).
+fn fetch_background() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
 #[tauri::command]
-fn background_bytes(state: State<AppState>) -> Result<Response, String> {
-    let last = state.last_background.lock().map_err(|e| e.to_string())?;
-    Ok(Response::new(last.clone()))
+fn background_bytes() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
+#[tauri::command]
+fn fetch_background_packet(state: State<AppState>) -> Result<Response, String> {
+    let frame = {
+        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
+        bridge.pin_mut().fetch_background_image()
+    };
+    frame_packet::encode(frame, 4).map(Response::new)
 }
 
 /// Set the processing background from the latest live frame — the operator's
@@ -1356,9 +1313,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             bridge: Mutex::new(ffi::new_backend_bridge()),
-            last_frame: Mutex::new(Vec::new()),
-            last_background: Mutex::new(Vec::new()),
-            last_review_image: Mutex::new(Vec::new()),
         })
         .invoke_handler(tauri::generate_handler![
             abi_version,
@@ -1369,6 +1323,10 @@ pub fn run() {
             stop_capture,
             seek_latest,
             poll_events,
+            fetch_frame_packet,
+            fetch_indexed_frame_packet,
+            fetch_review_frame_packet,
+            fetch_background_packet,
             fetch_frame,
             frame_bytes,
             start_recording,

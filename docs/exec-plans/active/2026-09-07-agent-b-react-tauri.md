@@ -74,7 +74,7 @@ operation/cancellation rules, and known gaps. No shared backend files are edited
 - [x] Refresh branch refs; read #372 and inspect PR #321/current frame path.
 - [x] Inventory coordinator/facade differences and ownership dependencies.
 - [x] Execute first deterministic regression against pre-fix client.
-- [ ] Atomic packet implementation and bounded malformed/interleaving tests.
+- [x] Atomic packet adapter and frontend malformed/interleaving tests (native Rust execution pending).
 - [ ] M2 operation recovery and bounded ownership.
 - [ ] M3 integrated workflow/layout and drafts.
 - [ ] M4 accepted-backend native experiment and Qt comparison.
@@ -85,3 +85,32 @@ Node/npm and frontend dependencies are available. Rust/Cargo, CMake, pkg-config,
 and the GTK/WebKit native development stack are absent at inventory time.
 System package setup failed on restricted UID/group operations. No native,
 CTest, sanitizer, or Qt-free build result is claimed from frontend tests.
+
+## Session handoff — implemented transport slice
+
+Inventory/regression commit: `82114ee`. The following code commit implements
+one binary frame response for latest/indexed/review/background; explicit legacy
+protocol errors; generated Rust/TypeScript packet limits; exact decimal frame
+indices/timestamps; bounded view scheduling and stale-reply retirement.
+No shared backend or Qt files were modified. All lifecycle/config/readiness/
+export authority remains with Agent A. PR #321 code has not been imported.
+
+Executed locally: 99 frontend tests (8 files), `npm run build`, generated
+contract check, docs check, screenshot manifest check, and `git diff --check`.
+The baseline regression was executed and failed before the fix. Rust encoder
+unit tests exist but were not run. See adjacent candidate JSON for hashes and
+explicit unexecuted gates. Runtime logs remain in `data/agent-b-evidence/`.
+
+Remaining M1: accepted snapshot identities/time and pre-marshaling allocation
+bounds; lossless non-frame DTOs; typed events/validity; cross-language native
+roundtrip execution. M2 operation truth/recovery is not implemented by the
+presentation scheduler. M3 workflow/layout/drafts and M4 native experiment/
+Qt comparison remain open. Source/config local generations do not replace
+backend session generations. No native FPS, latency, RSS or hardware claim.
+
+Next implementation step: run the Rust packet tests and production command
+integration on the supported Linux desktop CI toolchain; add a C++→Rust→binary→
+TypeScript shared golden fixture, then extend the existing event adapter with
+lossless non-frame identities and payload fixtures. Integrate authoritative
+identity/snapshot/recovery contracts only after the committed Agent A handoff.
+Dependency requests recorded on issue #372, comment 5565220578.
