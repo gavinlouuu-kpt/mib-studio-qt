@@ -189,3 +189,15 @@ session state, requested vs confirmed delivery mode, transport counters
 publish latency, the timestamp source, the active processing core and its
 artifact hash, and process memory. It refreshes on every statistics tick
 while open.
+
+Below those values the dialog lists the **memory owners**: the camera SDK
+buffers (estimated from the buffer count, or *unknown* when the camera
+backend cannot report them — never shown as zero), the frame ring, the
+experiment buffer, the Monitoring rings, the processing queues and the
+presentation snapshot, each with current / peak / budget MB and how many
+items the bound evicted. An owner marked **OVER** has exceeded its declared
+budget. The last line separates **display** counters (frames the preview
+rendered or skipped because it draws at a capped rate) from real losses:
+skipping a frame on screen never affects what was processed or recorded.
+The experiment buffer's byte budget can be set per profile with the
+`experiment_buffer_max_mb` key (default 512 MB).

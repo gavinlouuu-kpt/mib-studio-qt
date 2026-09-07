@@ -17,17 +17,57 @@ namespace backend::playback {
 
 FrameStore::FrameStore(size_t capacity)
     : capacity_(capacity), slotMutexes_(capacity), ring_(capacity),
-      slotWriteIndices_(capacity, kSlotEmpty) {
+      slotWriteIndices_(capacity, kSlotEmpty), slotBytes_(capacity, 0) {
     backend::diagnostics::CrashStateMirror::instance().frameStore.capacity.store(capacity_.load());
+}
+
+void FrameStore::noteSlotBytes(size_t idx, size_t bytes) {
+    // Caller holds the slot lock (pushFrame) or the exclusive structural lock.
+    const size_t prev = slotBytes_[idx];
+    if (prev == bytes) return;
+    slotBytes_[idx] = bytes;
+    uint64_t total;
+    if (bytes > prev) {
+        total = retainedBytes_.fetch_add(bytes - prev, std::memory_order_relaxed) + (bytes - prev);
+    } else {
+        total = retainedBytes_.fetch_sub(prev - bytes, std::memory_order_relaxed) - (prev - bytes);
+    }
+    uint64_t peak = peakRetainedBytes_.load(std::memory_order_relaxed);
+    while (total > peak && !peakRetainedBytes_.compare_exchange_weak(peak, total, std::memory_order_relaxed)) {
+    }
+}
+
+backend::diagnostics::MemoryOwnerStats FrameStore::memoryStats() const {
+    backend::diagnostics::MemoryOwnerStats o;
+    o.name = "playback.frameStore";
+    o.knowledge = backend::diagnostics::MemoryKnowledge::Measured;
+    o.currentBytes = retainedBytes_.load(std::memory_order_relaxed);
+    o.peakBytes = peakRetainedBytes_.load(std::memory_order_relaxed);
+    const size_t cap = capacity_.load(std::memory_order_acquire);
+    const uint64_t w = totalWritten_.load(std::memory_order_relaxed);
+    o.currentCount = availableCount();
+    o.peakCount = std::min<uint64_t>(w, cap);
+    o.capacityCount = cap;
+    const size_t reserved = reservedFrameBytes_.load(std::memory_order_relaxed);
+    o.capacityBytes = reserved > 0 ? static_cast<uint64_t>(cap) * reserved : 0;
+    o.evictedByBudget = w > cap ? w - cap : 0; // ring overwrites (declared: fixed capacity)
+    o.note = "ring slot allocations (resident even when a slot is stale); overwrites are the ring's declared policy";
+    return o;
 }
 
 void FrameStore::reserveFrameBytes(size_t frameBytes) {
     if (frameBytes == 0) return;
     std::unique_lock structLk(structureMutex_);
-    for (auto& f : ring_) {
+    for (size_t i = 0; i < ring_.size(); ++i) {
+        auto& f = ring_[i];
         if (f.data.capacity() < frameBytes) f.data.reserve(frameBytes);
+        noteSlotBytes(i, f.data.capacity());
     }
-    SPDLOG_INFO("FrameStore: reserved {} bytes per slot across {} slots", frameBytes, ring_.size());
+    size_t prev = reservedFrameBytes_.load(std::memory_order_relaxed);
+    while (frameBytes > prev && !reservedFrameBytes_.compare_exchange_weak(prev, frameBytes, std::memory_order_relaxed)) {
+    }
+    SPDLOG_INFO("FrameStore: reserved {} bytes per slot across {} slots ({:.1f} MB retained)", frameBytes,
+                ring_.size(), retainedBytes_.load(std::memory_order_relaxed) / (1024.0 * 1024.0));
 }
 
 void FrameStore::pushFrame(const uint8_t* src, size_t size, uint64_t width, uint64_t height,
@@ -62,6 +102,7 @@ void FrameStore::pushFrame(const uint8_t* src, size_t size, uint64_t width, uint
         f.hostTimestampUs = hostTimestampUs;
         f.data.resize(size);
         std::copy_n(src, size, f.data.begin());
+        noteSlotBytes(idx, f.data.capacity());
         slotWriteIndices_[idx] = w - 1;
         if (commitHookForTests_) commitHookForTests_(w - 1);
     }
@@ -662,6 +703,10 @@ bool FrameStore::resize(size_t newCapacity) {
 
     ring_ = std::move(newRing);
     slotWriteIndices_ = std::move(newSlotIndices);
+    // Re-account the retained allocations for the new ring (issue #370).
+    slotBytes_.assign(newCapacity, 0);
+    retainedBytes_.store(0, std::memory_order_relaxed);
+    for (size_t i = 0; i < ring_.size(); ++i) noteSlotBytes(i, ring_[i].data.capacity());
     capacity_.store(newCapacity, std::memory_order_release);
     backend::diagnostics::CrashStateMirror::instance().frameStore.capacity.store(capacity_.load());
 

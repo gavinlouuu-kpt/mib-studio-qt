@@ -40,6 +40,12 @@ public:
     // Metrics
     double getDisplayFps() const { return lastDisplayFps_; }
 		void setDisplayFps(int fps);
+    // Issue #370: presentation counters, distinct from acquisition /
+    // processing / persistence loss. The preview pulls the latest frame at a
+    // capped rate; frames it never showed are "skipped by display" — they
+    // were still acquired, processed and (if applicable) recorded.
+    uint64_t displayFramesPresented() const { return framesPresented_; }
+    uint64_t displayFramesSkipped() const { return totalDrops_; }
 
     // Background image access
     QImage getBackgroundImage() const;
@@ -131,7 +137,8 @@ private:
     uint64_t lastDisplayedIndex_ = 0;          // Last displayed frame index for drop detection
     uint64_t lastDisplayTimeUs_ = 0;           // Last display time for window pruning
     bool metricsInitialized_ = false;           // Track if we've seen first frame
-    uint64_t totalDrops_ = 0;                   // Total frame drops detected
+    uint64_t totalDrops_ = 0;                   // Frames the display skipped (presentation only)
+    uint64_t framesPresented_ = 0;              // Frames actually rendered (issue #370)
     double lastDisplayFps_ = 0.0;               // Last computed display FPS (1s window)
 };
 

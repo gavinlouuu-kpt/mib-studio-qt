@@ -468,11 +468,12 @@ void ProcessingService::startExperiment() {
         std::scoped_lock qlk(flushQueueMutex_);
         flushQueue_.reset();
     }
-    std::scoped_lock lk(framesMutex_);
-    validFrames_.clear();
-    invalidFrames_.clear();
     const size_t flushInterval = flushInterval_.load(std::memory_order_relaxed);
     const size_t maxBuffered = maxBufferedFrames_.load(std::memory_order_relaxed);
+    experimentBuffer_.setPolicy({maxBuffered, maxBufferedBytes_.load(std::memory_order_relaxed)});
+    experimentBuffer_.clear();
+    experimentBuffer_.resetTotals();
+    flushQueueBytes_.reset();
     framesSinceLastFlush_.store(0);
     invalidFrameCounter_.store(0);
     totalValidFlushed_.store(0, std::memory_order_relaxed);
@@ -493,43 +494,104 @@ void ProcessingService::startExperiment() {
         m.unservedTargetGroupObjects.store(0, std::memory_order_relaxed);
     }
     SPDLOG_INFO("ProcessingService: experiment started, frame buffers cleared (flush interval: {} "
-                "frames, max buffered: {}, invalid sampling: every {}th)",
-                flushInterval, maxBuffered, invalidFrameSamplingRate_.load());
+                "frames, max buffered: {} frames / {} MB, invalid sampling: every {}th)",
+                flushInterval, maxBuffered,
+                maxBufferedBytes_.load(std::memory_order_relaxed) / (1024.0 * 1024.0),
+                invalidFrameSamplingRate_.load());
 }
 
 void ProcessingService::endExperiment() {
     experimentActive_.store(false);
     backend::diagnostics::CrashStateMirror::instance().processing.experimentActive.store(false);
-    BufferedFrameCounts counts{};
-    {
-        std::scoped_lock lk(framesMutex_);
-        counts.valid = validFrames_.size();
-        counts.invalid = invalidFrames_.size();
-    }
+    const BufferedFrameCounts counts = experimentBuffer_.counts();
     SPDLOG_INFO("ProcessingService: experiment ended, valid frames: {}, invalid frames: {}",
                 counts.valid, counts.invalid);
 }
 
 std::vector<ProcessedFrame> ProcessingService::getValidFrames() const {
-    std::scoped_lock lk(framesMutex_);
-    return {validFrames_.begin(), validFrames_.end()};
+    return experimentBuffer_.copyValid();
 }
 
 std::vector<ProcessedFrame> ProcessingService::getInvalidFrames() const {
-    std::scoped_lock lk(framesMutex_);
-    return {invalidFrames_.begin(), invalidFrames_.end()};
+    return experimentBuffer_.copyInvalid();
 }
 
 BufferedFrameCounts ProcessingService::getBufferedFrameCounts() const {
-    std::scoped_lock lk(framesMutex_);
-    return BufferedFrameCounts{validFrames_.size(), invalidFrames_.size()};
+    return experimentBuffer_.counts();
 }
 
 void ProcessingService::clearAccumulatedFrames() {
-    std::scoped_lock lk(framesMutex_);
-    validFrames_.clear();
-    invalidFrames_.clear();
+    experimentBuffer_.clear();
     framesSinceLastFlush_.store(0, std::memory_order_relaxed);
+}
+
+void ProcessingService::setMaxBufferedBytes(uint64_t bytes) {
+    maxBufferedBytes_.store(bytes, std::memory_order_relaxed);
+    experimentBuffer_.setPolicy({std::max<size_t>(1, maxBufferedFrames_.load(std::memory_order_relaxed)), bytes});
+    SPDLOG_INFO("Experiment buffer byte budget set to {} MB{}", bytes / (1024.0 * 1024.0),
+                bytes == 0 ? " (count-only)" : "");
+}
+
+uint64_t ProcessingService::getMaxBufferedBytes() const {
+    return maxBufferedBytes_.load(std::memory_order_relaxed);
+}
+
+ProcessingService::MemoryStats ProcessingService::memoryStats() const {
+    MemoryStats m;
+    m.experimentBuffer = experimentBuffer_.memoryStats();
+    {
+        std::scoped_lock lk(monitoringFramesMutex_);
+        backend::diagnostics::MemoryOwnerStats o;
+        o.name = "processing.monitoringRings";
+        o.knowledge = backend::diagnostics::MemoryKnowledge::Measured;
+        o.currentBytes = monitoringValidFrames_.bytes() + monitoringInvalidFrames_.bytes();
+        o.peakBytes = monitoringValidFrames_.peakBytes() + monitoringInvalidFrames_.peakBytes();
+        o.currentCount = monitoringValidFrames_.size() + monitoringInvalidFrames_.size();
+        o.peakCount = o.currentCount; // rings only grow to capacity
+        o.capacityCount = monitoringValidFrames_.capacity() + monitoringInvalidFrames_.capacity();
+        o.capacityBytes = 0; // bounded by count; bytes follow the frame geometry
+        o.evictedByBudget = monitoringValidFrames_.replaced() + monitoringInvalidFrames_.replaced();
+        o.note = monitoringActive_.load(std::memory_order_relaxed)
+                     ? "presentation rings (valid+invalid) for the Monitoring tab; oldest entries replaced"
+                     : "presentation rings inactive (no consumer): nothing retained";
+        m.monitoringRings = o;
+    }
+    {
+        uint64_t capBytes = 0;
+        size_t capCount = 0;
+        {
+            std::scoped_lock lk(batchMutex_);
+            capBytes = batchConfig_.maxQueuedBytes;
+            capCount = batchConfig_.maxQueuedFrames;
+        }
+        m.batchQueue = batchQueueBytes_.snapshot("processing.batchQueue",
+                                                 backend::diagnostics::MemoryKnowledge::Measured, capBytes,
+                                                 capCount, "async batch input frames awaiting a worker");
+        m.batchQueue.evictedByBudget = batchFramesDropped_.load(std::memory_order_relaxed);
+    }
+    m.flushQueue = flushQueueBytes_.snapshot("processing.flushQueue",
+                                             backend::diagnostics::MemoryKnowledge::Measured, 0, 3,
+                                             "experiment batches submitted to the HDF5 writer, not yet written");
+    {
+        backend::diagnostics::MemoryOwnerStats o;
+        o.name = "processing.snapshot";
+        o.knowledge = backend::diagnostics::MemoryKnowledge::Measured;
+        std::shared_ptr<const RealtimeSnapshot> snap;
+        {
+            std::scoped_lock lk(snapshotMutex_);
+            snap = latestSnapshot_;
+        }
+        if (snap && !snap->mask.empty()) {
+            o.currentBytes = static_cast<uint64_t>(snap->mask.total()) * snap->mask.elemSize();
+            o.currentCount = 1;
+        }
+        o.peakBytes = o.currentBytes;
+        o.peakCount = o.currentCount;
+        o.capacityCount = 1;
+        o.note = "latest realtime snapshot mask (pointer-swapped; older snapshots die with their last reader)";
+        m.snapshot = o;
+    }
+    return m;
 }
 
 std::vector<ProcessedFrame> ProcessingService::getMonitoringValidFrames() const {
@@ -786,11 +848,7 @@ backend::recording::RecordingAccountingSnapshot ProcessingService::experimentAcc
     // frames still buffered (never handed to the writer) and frames queued
     // but not confirmed written. A latched writer error turns the latter into
     // persistence failures instead of "pending".
-    size_t buffered = 0;
-    {
-        std::scoped_lock lk(framesMutex_);
-        buffered = validFrames_.size() + invalidFrames_.size();
-    }
+    const size_t buffered = experimentBuffer_.counts().total();
     bool queueErrored = false;
     {
         std::scoped_lock qlk(flushQueueMutex_);
@@ -1165,8 +1223,11 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
                 ProcessedFrame objectFrame;
                 objectFrame.index = base.index;
                 objectFrame.timestampNs = base.timestampNs;
-                objectFrame.originalImage = base.originalImage.clone();
-                objectFrame.processedImage = base.processedImage.clone();
+                // Issue #370: objects of one frame share the immutable source
+                // + mask by refcount (frozen-Mats invariant); nothing clones
+                // merely for lifetime.
+                objectFrame.originalImage = base.originalImage;
+                objectFrame.processedImage = base.processedImage;
                 objectFrame.validation = std::move(validation);
                 if (!objectFrame.validation.isValid) {
                     results.emplace_back(std::move(objectFrame));
@@ -1251,6 +1312,8 @@ bool ProcessingService::startBatchPipeline(BatchPipelineConfig config,
         batchBatchesProcessed_.store(0, std::memory_order_relaxed);
         batchAlgoMicrosTotal_.store(0, std::memory_order_relaxed);
         batchMaxQueueDepth_.store(0, std::memory_order_relaxed);
+        batchQueueBytes_.reset();
+        batchFramesDroppedByBytes_.store(0, std::memory_order_relaxed);
         batchWorkerCount_.store(batchConfig_.workerCount, std::memory_order_relaxed);
     }
 
@@ -1283,6 +1346,7 @@ void ProcessingService::stopBatchPipeline() {
         std::scoped_lock lk(batchMutex_);
         std::queue<QueuedBatchFrame> empty;
         batchQueue_.swap(empty);
+        batchQueueBytes_.set(0, 0);
         batchResultCallback_ = {};
         batchWorkerCount_.store(0, std::memory_order_relaxed);
     }
@@ -1319,8 +1383,18 @@ bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t ind
             batchFramesDropped_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
+        const uint64_t frameBytes = static_cast<uint64_t>(gray.total()) * gray.elemSize();
+        if (batchConfig_.maxQueuedBytes > 0 &&
+            batchQueueBytes_.bytes() + frameBytes > batchConfig_.maxQueuedBytes) {
+            // Issue #370: the byte budget is a declared drop policy like the
+            // frame cap; the caller sees the same accepted/dropped outcome.
+            batchFramesDropped_.fetch_add(1, std::memory_order_relaxed);
+            batchFramesDroppedByBytes_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
 
         batchQueue_.push(QueuedBatchFrame{std::move(gray), index, timestampNs, hostTimestampUs});
+        batchQueueBytes_.add(frameBytes, 1);
         batchFramesAccepted_.fetch_add(1, std::memory_order_relaxed);
 
         const size_t depth = batchQueue_.size();
@@ -1354,6 +1428,9 @@ ProcessingService::BatchPipelineStats ProcessingService::getBatchPipelineStats()
     BatchPipelineStats stats;
     stats.framesAccepted = batchFramesAccepted_.load(std::memory_order_relaxed);
     stats.framesDropped = batchFramesDropped_.load(std::memory_order_relaxed);
+    stats.framesDroppedByByteBudget = batchFramesDroppedByBytes_.load(std::memory_order_relaxed);
+    stats.currentQueueBytes = batchQueueBytes_.bytes();
+    stats.maxQueueBytes = batchQueueBytes_.peakBytes();
     stats.framesProcessed = batchFramesProcessed_.load(std::memory_order_relaxed);
     stats.batchesProcessed = batchBatchesProcessed_.load(std::memory_order_relaxed);
     stats.maxQueueDepth = batchMaxQueueDepth_.load(std::memory_order_relaxed);
@@ -1399,6 +1476,8 @@ void ProcessingService::batchWorkerLoop() {
             for (size_t i = 0; i < desired && !batchQueue_.empty(); ++i) {
                 inputs.emplace_back(std::move(batchQueue_.front()));
                 batchQueue_.pop();
+                const auto& g = inputs.back().gray;
+                batchQueueBytes_.remove(static_cast<uint64_t>(g.total()) * g.elemSize(), 1);
             }
             config = batchConfig_;
             callback = batchResultCallback_;
@@ -1448,8 +1527,8 @@ void ProcessingService::batchWorkerLoop() {
                     objectFrame.index = base.index;
                     objectFrame.timestampNs = base.timestampNs;
                     objectFrame.hostTimestampUs = base.hostTimestampUs;
-                    objectFrame.originalImage = base.originalImage.clone();
-                    objectFrame.processedImage = base.processedImage.clone();
+                    objectFrame.originalImage = base.originalImage;   // shared, read-only (issue #370)
+                    objectFrame.processedImage = base.processedImage; // shared, read-only
                     objectFrame.validation = std::move(validation);
                     results.emplace_back(std::move(objectFrame));
                 }
@@ -1497,39 +1576,6 @@ void ProcessingService::setBackgroundCaptureCallback(BackgroundCaptureCallback c
     backgroundCaptureCallback_ = std::move(callback);
 }
 
-ProcessingService::DroppedFrameCounts
-ProcessingService::trimExperimentBuffersLocked(size_t maxBufferedFrames) {
-    DroppedFrameCounts dropped{};
-    if (maxBufferedFrames == 0) {
-        maxBufferedFrames = 1;
-    }
-
-    while (validFrames_.size() + invalidFrames_.size() > maxBufferedFrames &&
-           !invalidFrames_.empty()) {
-        invalidFrames_.pop_front();
-        ++dropped.invalid;
-    }
-
-    while (validFrames_.size() + invalidFrames_.size() > maxBufferedFrames &&
-           !validFrames_.empty()) {
-        validFrames_.pop_front();
-        ++dropped.valid;
-    }
-
-    if (dropped.valid > 0) {
-        droppedValidFrames_.fetch_add(static_cast<uint64_t>(dropped.valid),
-                                      std::memory_order_relaxed);
-    }
-    if (dropped.invalid > 0) {
-        droppedInvalidFrames_.fetch_add(static_cast<uint64_t>(dropped.invalid),
-                                        std::memory_order_relaxed);
-    }
-
-    framesSinceLastFlush_.store(validFrames_.size() + invalidFrames_.size(),
-                                std::memory_order_relaxed);
-    return dropped;
-}
-
 void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dropped,
                                                    size_t bufferedTotal, size_t maxBufferedFrames) {
     if (dropped.valid == 0 && dropped.invalid == 0) {
@@ -1551,63 +1597,31 @@ void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dro
 }
 
 bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isValid) {
-    DroppedFrameCounts dropped{};
-    size_t bufferedTotal = 0;
-    bool stored = false;
+    // Issue #370: the bounded buffer owns the retention policy (frame cap AND
+    // byte budget; sampled invalid evicted first, a valid frame is refused
+    // only when the backlog is entirely valid and still over the bound).
     const size_t maxBufferedFrames =
         std::max<size_t>(1, maxBufferedFrames_.load(std::memory_order_relaxed));
-
-    {
-        std::scoped_lock framesLk(framesMutex_);
-        const size_t currentTotal = validFrames_.size() + invalidFrames_.size();
-
-        if (currentTotal >= maxBufferedFrames) {
-            if (isValid && !invalidFrames_.empty()) {
-                invalidFrames_.pop_front();
-                ++dropped.invalid;
-            } else {
-                if (isValid) {
-                    ++dropped.valid;
-                    droppedValidFrames_.fetch_add(1, std::memory_order_relaxed);
-                } else {
-                    ++dropped.invalid;
-                    droppedInvalidFrames_.fetch_add(1, std::memory_order_relaxed);
-                }
-                bufferedTotal = currentTotal;
-                framesSinceLastFlush_.store(bufferedTotal, std::memory_order_relaxed);
-            }
-        }
-
-        if (bufferedTotal == 0) {
-            if (isValid) {
-                validFrames_.emplace_back(std::move(frame));
-            } else {
-                invalidFrames_.emplace_back(std::move(frame));
-            }
-            if (dropped.invalid > 0) {
-                droppedInvalidFrames_.fetch_add(static_cast<uint64_t>(dropped.invalid),
-                                                std::memory_order_relaxed);
-            }
-
-            DroppedFrameCounts extraDropped = trimExperimentBuffersLocked(maxBufferedFrames);
-            dropped.valid += extraDropped.valid;
-            dropped.invalid += extraDropped.invalid;
-            bufferedTotal = validFrames_.size() + invalidFrames_.size();
-            framesSinceLastFlush_.store(bufferedTotal, std::memory_order_relaxed);
-            stored = true;
-        }
+    const auto r = experimentBuffer_.append(std::move(frame), isValid);
+    framesSinceLastFlush_.store(r.bufferedAfter, std::memory_order_relaxed);
+    if (r.droppedValid > 0) {
+        droppedValidFrames_.fetch_add(static_cast<uint64_t>(r.droppedValid), std::memory_order_relaxed);
+    }
+    if (r.droppedInvalid > 0) {
+        droppedInvalidFrames_.fetch_add(static_cast<uint64_t>(r.droppedInvalid), std::memory_order_relaxed);
     }
 
     // Issue #367: every call is a persistence admission; frames evicted by
     // the bounded-buffer policy (including this one when not stored) are
     // CancelledByPolicy on the persistence side — never silent.
     experimentAccounting_.persistenceAdmitted.fetch_add(1, std::memory_order_relaxed);
-    const uint64_t evicted = static_cast<uint64_t>(dropped.valid + dropped.invalid);
+    const uint64_t evicted = static_cast<uint64_t>(r.dropped());
     if (evicted > 0) {
         experimentAccounting_.persistenceCancelledByPolicy.fetch_add(evicted, std::memory_order_relaxed);
     }
-    logDroppedExperimentFrames(dropped, bufferedTotal, maxBufferedFrames);
-    return stored;
+    logDroppedExperimentFrames(DroppedFrameCounts{r.droppedValid, r.droppedInvalid}, r.bufferedAfter,
+                               maxBufferedFrames);
+    return r.stored;
 }
 
 size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
@@ -1617,25 +1631,26 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
     // fresh buffer. Overflow or a write failure is fatal (stop + surface) rather
     // than a silent trim-and-drop.
     ExperimentBatch batch;
-    {
-        std::scoped_lock lk(framesMutex_);
-        if (validFrames_.empty() && invalidFrames_.empty()) return 0;
-        // Move-construct vectors from deques — cv::Mat moves are O(1) refcount transfers
-        batch.valid.assign(std::make_move_iterator(validFrames_.begin()),
-                           std::make_move_iterator(validFrames_.end()));
-        batch.invalid.assign(std::make_move_iterator(invalidFrames_.begin()),
-                             std::make_move_iterator(invalidFrames_.end()));
-        validFrames_.clear();
-        invalidFrames_.clear();
-        framesSinceLastFlush_.store(0, std::memory_order_relaxed);
-    }
+    if (experimentBuffer_.empty()) return 0;
+    // Move out — cv::Mat moves are O(1) refcount transfers.
+    experimentBuffer_.takeAll(batch.valid, batch.invalid);
+    framesSinceLastFlush_.store(0, std::memory_order_relaxed);
     const size_t n = batch.valid.size() + batch.invalid.size();
+    if (n == 0) return 0;
+    uint64_t batchBytes = 0;
+    for (const auto& f : batch.valid) batchBytes += processedFrameBytes(f);
+    for (const auto& f : batch.invalid) batchBytes += processedFrameBytes(f);
 
     std::scoped_lock qlk(flushQueueMutex_);
     if (!flushQueue_) {
         Hdf5Service* h = &hdf5;
         auto writeFn = [this, h](const ExperimentBatch& b) -> bool {
-            if (!h->appendFrames(b.valid, b.invalid)) return false;
+            const bool ok = h->appendFrames(b.valid, b.invalid);
+            uint64_t bytes = 0;
+            for (const auto& f : b.valid) bytes += processedFrameBytes(f);
+            for (const auto& f : b.invalid) bytes += processedFrameBytes(f);
+            flushQueueBytes_.remove(bytes, 1);
+            if (!ok) return false;
             experimentAccounting_.persistenceCommitted.fetch_add(
                 static_cast<uint64_t>(b.valid.size() + b.invalid.size()), std::memory_order_relaxed);
             if (!b.valid.empty()) {
@@ -1650,7 +1665,9 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
         flushQueue_ = std::make_unique<backend::recording::HdfWriteQueue<ExperimentBatch>>(
             3, writeFn, onError);
     }
+    flushQueueBytes_.add(batchBytes, 1);
     if (!flushQueue_->submit(std::move(batch))) {
+        flushQueueBytes_.remove(batchBytes, 1);
         return 0; // fatal error already surfaced via onError
     }
     return n;
@@ -1675,6 +1692,7 @@ void ProcessingService::setFlushInterval(size_t frames) {
     flushInterval_.store(frames);
     const size_t maxBuffered = defaultMaxBufferedFrames(frames);
     maxBufferedFrames_.store(maxBuffered, std::memory_order_relaxed);
+    experimentBuffer_.setPolicy({maxBuffered, maxBufferedBytes_.load(std::memory_order_relaxed)});
     SPDLOG_INFO("Flush interval set to: {} frames (max buffered backlog: {})", frames, maxBuffered);
 }
 
@@ -1758,6 +1776,7 @@ ProcessingService::BatchPipelineConfig ProcessingService::makeRealtimeBatchPipel
         config.maxQueuedFrames = std::max(config.batchSize, rtBatchSettings_.maxQueuedFrames);
         config.workerCount = std::max<size_t>(1, rtBatchSettings_.workerCount);
         config.maxBatchDelayMs = std::max(1, rtBatchSettings_.maxBatchDelayMs);
+        config.maxQueuedBytes = rtBatchSettings_.maxQueuedBytes;
     }
     {
         std::scoped_lock cfgLk(configMutex_);
@@ -1785,6 +1804,7 @@ void ProcessingService::refreshRealtimeBatchPipelineConfig() {
     }
     batchConfig_.batchSize = fresh.batchSize;
     batchConfig_.maxQueuedFrames = fresh.maxQueuedFrames;
+    batchConfig_.maxQueuedBytes = fresh.maxQueuedBytes;
     batchConfig_.maxBatchDelayMs = fresh.maxBatchDelayMs;
     batchConfig_.processing = fresh.processing;
     batchConfig_.background = std::move(fresh.background);
@@ -2685,9 +2705,9 @@ void ProcessingService::realtimeInlineLoop() {
                     size_t vSz = 0;
                     size_t iSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     SPDLOG_TRACE("Accumulated frames (idx={}): valid={}, invalid={}, "
                                  "flush_interval={}, since_last_flush={}, mem_mb={:.1f}",
@@ -3126,9 +3146,9 @@ void ProcessingService::realtimeInlineLoop() {
                     size_t vSz = 0;
                     size_t iSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     SPDLOG_DEBUG("Accumulated frames (idx={}): valid={}, invalid={}, "
                                  "flush_interval={}, since_last_flush={}, mem_mb={:.1f}",
@@ -3238,9 +3258,9 @@ void ProcessingService::realtimeInlineLoop() {
                 // Extended summary: buffers, ROI, background, and process memory
                 size_t vSz = 0, iSz = 0, monValidSz = 0, monInvalidSz = 0;
                 {
-                    std::scoped_lock fLk(framesMutex_);
-                    vSz = validFrames_.size();
-                    iSz = invalidFrames_.size();
+                    const auto bufferedCounts = experimentBuffer_.counts();
+                    vSz = bufferedCounts.valid;
+                    iSz = bufferedCounts.invalid;
                 }
                 {
                     std::scoped_lock mLk(monitoringFramesMutex_);
@@ -3568,9 +3588,9 @@ void ProcessingService::realtimeInlineLoop() {
                     size_t vSz = 0;
                     size_t iSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     SPDLOG_TRACE("Accumulated frames (idx={}): valid={}, invalid={}, "
                                  "flush_interval={}, since_last_flush={}, mem_mb={:.1f}",
@@ -3769,9 +3789,9 @@ void ProcessingService::realtimeInlineLoop() {
                     // Extended summary: buffers, ROI, background, and process memory
                     size_t vSz = 0, iSz = 0, monValidSz = 0, monInvalidSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     {
                         std::scoped_lock mLk(monitoringFramesMutex_);

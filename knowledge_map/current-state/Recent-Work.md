@@ -5,6 +5,25 @@
 
 ## Features shipped
 
+- **Byte-budgeted ownership + bounded presentation** (2026-09-07, issue
+  #370 — reliability release #371 phase 7). New header-only
+  [[../diagnostics/MemoryBudget]] (`MemoryOwnerStats` with Measured /
+  Estimated / Unknown knowledge, `ByteAccountant`,
+  `HostMemoryBudgetSnapshot`) and the extracted `ExperimentFrameBuffer`
+  (frame cap **and** byte budget, invalid-first eviction, every drop
+  reported). [[../services/ProcessingService]] reports experiment buffer /
+  monitoring rings / batch queue / flush queue / snapshot bytes, gains
+  `setMaxBufferedBytes` (`experiment_buffer_max_mb`, default 512 MiB) and a
+  batch-queue byte budget, and no longer clones the source + mask per
+  object in `processBatch` / the async workers. [[../data-model/FrameStore]]
+  measures retained slot bytes lock-free; [[../architecture/AppBackend]]
+  `memoryBudgetSnapshot()` adds SDK buffers (estimated or explicitly
+  unknown) and the streaming exporter; the [[../frontend/MainWindow]]
+  Diagnostics dialog lists every owner plus the preview's presentation
+  counters. Tests: `processing.memory_budget` (+TSan),
+  `performance.memory_budget`; evidence in
+  `docs/evidence/2026-09-07-memory-budget/`.
+
 - **Monitoring tune panel: criteria with units, dirty/conflict state,
   fixed Apply/Revert, acknowledged apply path** (2026-09-07, issue #364 —
   reliability release #371 phase 6d). New pure `ProcessingConfigDraft`

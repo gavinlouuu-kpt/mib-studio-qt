@@ -1,5 +1,7 @@
 #pragma once
 
+#include "backend/diagnostics/MemoryBudget.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -187,7 +189,20 @@ public:
     // default
     size_t estimateMemoryBytesForCapacity(size_t capacity) const;
 
+    // Measured retained memory (issue #370): bytes allocated by the ring
+    // slots (capacity, not just size — that is what stays resident), the
+    // peak, frames retained, and the declared bound (capacity × reserved
+    // frame bytes when reserveFrameBytes was called). Lock-free.
+    backend::diagnostics::MemoryOwnerStats memoryStats() const;
+
 private:
+    // Per-slot allocation size (parallel to ring_; written under the slot
+    // lock or the exclusive structural lock) and its running sum.
+    std::vector<size_t> slotBytes_;
+    std::atomic<uint64_t> retainedBytes_{0};
+    std::atomic<uint64_t> peakRetainedBytes_{0};
+    std::atomic<size_t> reservedFrameBytes_{0};
+    void noteSlotBytes(size_t idx, size_t bytes);
     // Atomic so the lock-free guard reads (earliest/latest/availableCount and
     // the top-of-function `capacity_ == 0` checks) cannot data-race with
     // resize()'s write. resize() holds structureMutex_ exclusively and also

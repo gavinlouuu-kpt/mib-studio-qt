@@ -2,6 +2,7 @@
 
 #include "backend/recording/RecordingAccounting.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -16,7 +17,9 @@
 #include <opencv2/core.hpp>
 #include <deque>
 #include <cmath>
+#include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/EModulusLut.h"
+#include "backend/processing/ExperimentFrameBuffer.h"
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/HdfWriteQueue.h"
@@ -41,26 +44,8 @@ struct TargetGroupEvent {
     uint64_t hostTimestampUs{0};
 };
 
-struct ProcessedFrame {
-    uint64_t index{0};
-    uint64_t timestampNs{0};
-    // Host monotonic acquisition stamp carried from playback::Frame (0 if unknown).
-    uint64_t hostTimestampUs{0};
-    cv::Mat originalImage;
-    cv::Mat processedImage; // mask
-    FilterResult validation;
-    // Multi-image series: additional images captured after the trigger frame.
-    // seriesImages[0] is the trigger image (same as originalImage), followed by subsequent frames.
-    // Empty when multi-image mode is disabled.
-    std::vector<cv::Mat> seriesImages;
-};
-
-struct BufferedFrameCounts {
-    size_t valid{0};
-    size_t invalid{0};
-
-    size_t total() const { return valid + invalid; }
-};
+// ProcessedFrame / BufferedFrameCounts live in ProcessingTypes.h (shared with
+// ExperimentFrameBuffer, issue #370).
 
 // One unit of work handed to the experiment flush write queue.
 struct ExperimentBatch {
@@ -93,7 +78,11 @@ public:
         size_t maxQueuedFrames{4096};
         size_t workerCount{1};
         int maxBatchDelayMs{10};
+        // Byte budget for queued input frames (issue #370); 0 = count-only.
+        uint64_t maxQueuedBytes{kDefaultBatchQueueMaxBytes};
     };
+    static constexpr uint64_t kDefaultBatchQueueMaxBytes = 256ULL * 1024 * 1024;
+    static constexpr uint64_t kDefaultExperimentBufferMaxBytes = 512ULL * 1024 * 1024;
 
     ProcessingService();
     ~ProcessingService();
@@ -210,6 +199,27 @@ public:
     void setFlushInterval(size_t frames); // Flush every N frames (default: 1000)
     size_t getFlushInterval() const;
     size_t getMaxBufferedFrames() const;
+    // Byte budget for the experiment buffer (issue #370): frames beyond it
+    // are evicted under the same declared policy as the frame cap (sampled
+    // invalid first) and accounted as persistenceCancelledByPolicy. 0 = none.
+    void setMaxBufferedBytes(uint64_t bytes);
+    uint64_t getMaxBufferedBytes() const;
+
+    // ---- Memory ownership report (issue #370) -------------------------------
+    // Current/peak bytes + counts per owner inside this service. Shared
+    // (refcounted) images retained by two owners are counted in both — each
+    // number is what that owner alone keeps alive (an upper bound).
+    struct MemoryStats {
+        backend::diagnostics::MemoryOwnerStats experimentBuffer; // frames awaiting flush
+        backend::diagnostics::MemoryOwnerStats monitoringRings;  // presentation rings (valid+invalid)
+        backend::diagnostics::MemoryOwnerStats batchQueue;       // async batch input queue
+        backend::diagnostics::MemoryOwnerStats flushQueue;       // batches handed to the HDF5 writer
+        backend::diagnostics::MemoryOwnerStats snapshot;         // latest realtime snapshot (mask)
+        std::vector<backend::diagnostics::MemoryOwnerStats> all() const {
+            return {experimentBuffer, monitoringRings, batchQueue, flushQueue, snapshot};
+        }
+    };
+    MemoryStats memoryStats() const;
     
     // Invalid frame sampling (save every Nth invalid frame to reduce file size)
     void setInvalidFrameSamplingRate(size_t rate); // Save every Nth invalid frame (default: 100, 1 = save all)
@@ -408,6 +418,7 @@ public:
         size_t maxQueuedFrames{4096};
         size_t workerCount{1};
         int maxBatchDelayMs{10};
+        uint64_t maxQueuedBytes{kDefaultBatchQueueMaxBytes}; // 0 = count-only (issue #370)
         ProcessingConfig processing;
         cv::Mat background;
         Roi roi{0, 0, 0, 0};
@@ -416,10 +427,13 @@ public:
     struct BatchPipelineStats {
         uint64_t framesAccepted{0};
         uint64_t framesDropped{0};
+        uint64_t framesDroppedByByteBudget{0}; // subset of framesDropped (issue #370)
         uint64_t framesProcessed{0};
         uint64_t batchesProcessed{0};
         size_t currentQueueDepth{0};
         size_t maxQueueDepth{0};
+        uint64_t currentQueueBytes{0};
+        uint64_t maxQueueBytes{0};
         size_t batchSize{0};
         size_t workerCount{0};
         bool running{false};
@@ -503,7 +517,6 @@ private:
                                        const cv::Mat& originalImage,
                                        const cv::Mat& processedImage);
     bool appendExperimentFrame(ProcessedFrame&& frame, bool isValid);
-    DroppedFrameCounts trimExperimentBuffersLocked(size_t maxBufferedFrames);
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
     FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi, 
                                       const ProcessingConfig& config, const cv::Mat& originalImage);
@@ -562,6 +575,9 @@ private:
     std::atomic<uint64_t> batchAlgoMicrosTotal_{0};
     std::atomic<size_t> batchMaxQueueDepth_{0};
     std::atomic<size_t> batchWorkerCount_{0};
+    // Queued input bytes (issue #370): add on enqueue, subtract on dequeue.
+    backend::diagnostics::ByteAccountant batchQueueBytes_;
+    std::atomic<uint64_t> batchFramesDroppedByBytes_{0};
 
     // Realtime processing state
     std::thread realtimeThread_;
@@ -585,18 +601,20 @@ private:
     std::shared_ptr<cv::Mat> rtBgGray_; // shared_ptr to avoid cloning on access
     std::atomic<uint64_t> rtLastProcessed_{0};
 
-    std::mutex snapshotMutex_;
+    mutable std::mutex snapshotMutex_;
     std::shared_ptr<const RealtimeSnapshot> latestSnapshot_; // pointer-swap on publish (no mutex-held copy)
 
-    // Frame accumulation for experiment — deque for O(1) pop_front under backpressure
-    mutable std::mutex framesMutex_;
-    std::deque<ProcessedFrame> validFrames_;
-    std::deque<ProcessedFrame> invalidFrames_;
+    // Frame accumulation for experiment (issue #370: extracted, bounded by
+    // frames AND bytes, every eviction reported).
+    ExperimentFrameBuffer experimentBuffer_;
+    std::atomic<uint64_t> maxBufferedBytes_{kDefaultExperimentBufferMaxBytes};
 
     // Experiment flush write queue (decouples HDF5 writes from frame
     // accumulation). Created lazily on the first flush, drained by finishFlush.
     mutable std::mutex flushQueueMutex_;
     std::unique_ptr<backend::recording::HdfWriteQueue<ExperimentBatch>> flushQueue_;
+    // Bytes of batches submitted to the writer and not yet written (issue #370).
+    backend::diagnostics::ByteAccountant flushQueueBytes_;
     std::function<void(const std::string&)> flushErrorCb_;
     std::atomic<bool> experimentActive_{false};
     // Issue #367: per-experiment frame accounting + lifetime processing
@@ -634,15 +652,28 @@ private:
             : capacity_(capacity), data_(capacity) {}
 
         void clear() {
+            for (auto& f : data_) f = ProcessedFrame{}; // release retained images
             size_ = 0;
             head_ = 0;
+            bytes_ = 0;
         }
 
         size_t size() const { return size_; }
         size_t capacity() const { return capacity_; }
+        // Image bytes the ring keeps alive (issue #370); bounded by capacity.
+        uint64_t bytes() const { return bytes_; }
+        uint64_t peakBytes() const { return peakBytes_; }
+        uint64_t replaced() const { return replaced_; }
 
         void push_back(ProcessedFrame&& frame) {
+            const uint64_t incoming = processedFrameBytes(frame);
+            if (size_ == capacity_) {
+                bytes_ -= std::min(bytes_, processedFrameBytes(data_[head_]));
+                ++replaced_;
+            }
             data_[head_] = std::move(frame);
+            bytes_ += incoming;
+            if (bytes_ > peakBytes_) peakBytes_ = bytes_;
             head_ = (head_ + 1) % capacity_;
             if (size_ < capacity_) {
                 ++size_;
@@ -665,6 +696,9 @@ private:
         std::vector<ProcessedFrame> data_;
         size_t size_{0};
         size_t head_{0}; // next write position
+        uint64_t bytes_{0};
+        uint64_t peakBytes_{0};
+        uint64_t replaced_{0}; // entries overwritten by the bounded ring
     };
 
     FrameRingBuffer monitoringValidFrames_{1000};

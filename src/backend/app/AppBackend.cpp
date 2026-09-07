@@ -1,5 +1,6 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/Tools.h"
 
 #include "backend/services/Logger.h"
 #include "backend/services/CrashReporter.h"
@@ -1352,6 +1353,58 @@ namespace backend
     std::string AppBackend::getLastConfigJson() const {
         std::lock_guard<std::mutex> lk(configJsonMutex_);
         return lastConfigJson_;
+    }
+
+    diagnostics::HostMemoryBudgetSnapshot AppBackend::memoryBudgetSnapshot() const {
+        using diagnostics::MemoryKnowledge;
+        diagnostics::HostMemoryBudgetSnapshot s;
+        s.sampledAtUs = Tools::getTimestamp();
+        s.processRssMB = Tools::getProcessMemoryMB();
+        s.processPeakRssMB = Tools::getPeakProcessMemoryMB();
+
+        // 1) Camera / SDK buffers: only the buffer *count* is observable, and
+        //    only for backends that report it; the vendor's memory is not.
+        {
+            diagnostics::MemoryOwnerStats o;
+            o.name = "capture.sdkBuffers";
+            size_t frameBytes = 0;
+            if (frameStore_ && captureService_ && captureService_->isRunning()) {
+                playback::Frame f;
+                if (frameStore_->getLatest(f)) frameBytes = f.data.size();
+            }
+            const auto t = captureService_ ? captureService_->telemetrySnapshot()
+                                           : services::AcquisitionTelemetrySnapshot{};
+            if (t.sdkInputBufferCount.hasValue() && frameBytes > 0) {
+                o.knowledge = MemoryKnowledge::Estimated;
+                o.currentCount = t.sdkInputBufferCount.value;
+                o.peakCount = o.currentCount;
+                o.currentBytes = o.currentCount * static_cast<uint64_t>(frameBytes);
+                o.peakBytes = o.currentBytes;
+                o.capacityCount = o.currentCount;
+                o.note = "SDK input buffers x last frame payload; vendor allocations are not directly observable";
+            } else {
+                o.knowledge = MemoryKnowledge::Unknown;
+                o.note = t.sessionActive ? "this camera backend does not report its buffer count"
+                                         : "no capture session";
+            }
+            s.owners.push_back(std::move(o));
+        }
+        // 2) FrameStore ring.
+        if (frameStore_) s.owners.push_back(frameStore_->memoryStats());
+        // 3) Processing: experiment buffer, monitoring rings, batch queue,
+        //    persistence queue, presentation snapshot.
+        if (processingService_) {
+            for (auto& o : processingService_->memoryStats().all()) s.owners.push_back(std::move(o));
+        }
+        // 4) Exporter jobs: streaming by design (issue #344), no retained pool.
+        {
+            diagnostics::MemoryOwnerStats o;
+            o.name = "export.jobs";
+            o.knowledge = MemoryKnowledge::Estimated;
+            o.note = "HdfExportService / Python exporter stream one frame at a time; working set is one frame plus one encode buffer per job";
+            s.owners.push_back(std::move(o));
+        }
+        return s;
     }
 
 } // namespace backend

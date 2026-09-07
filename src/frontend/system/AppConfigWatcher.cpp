@@ -383,6 +383,12 @@ namespace frontend
 			const int flushEvery = std::max(1, root.value("buffer_threshold").toInt(1000));
 			backend_.processing().setFlushInterval(static_cast<size_t>(flushEvery));
 		}
+		// Issue #370: byte budget for the experiment buffer (MB; 0 = count-only).
+		if (root.contains("experiment_buffer_max_mb"))
+		{
+			const double mb = std::max(0.0, root.value("experiment_buffer_max_mb").toDouble(0.0));
+			backend_.processing().setMaxBufferedBytes(static_cast<uint64_t>(mb * 1024.0 * 1024.0));
+		}
 
 		// 2.25) Realtime processing mode
 		if (root.contains("realtime_processing") && root.value("realtime_processing").isObject())

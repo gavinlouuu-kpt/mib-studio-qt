@@ -1221,6 +1221,39 @@ void MainWindow::refreshDiagnostics(const frontend::StatisticsData& data)
     lines << tr("Processing core: %1 (contract %2, source %3)").arg(QString::fromStdString(core.version)).arg(core.contractVersion).arg(QString::fromStdString(core.source));
     lines << tr("Core artifact sha256: %1").arg(QString::fromStdString(core.artifactSha256));
     lines << tr("Process memory: %1 MB").arg(QString::number(backend::Tools::getProcessMemoryMB(), 'f', 1));
+
+    // Issue #370: byte-budgeted owners + presentation counters (distinct from loss).
+    lines << QString();
+    lines << tr("Memory owners (current / peak / budget; unknown vendor memory is reported as unknown):");
+    const auto budget = backend_.memoryBudgetSnapshot();
+    auto mb = [](uint64_t bytes) { return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1); };
+    for (const auto& o : budget.owners) {
+        QString line = QStringLiteral("  %1: ").arg(QString::fromStdString(o.name));
+        if (o.knowledge == backend::diagnostics::MemoryKnowledge::Unknown) {
+            line += tr("unknown");
+        } else {
+            line += tr("%1 / %2 MB").arg(mb(o.currentBytes), mb(o.peakBytes));
+            if (o.capacityBytes > 0) line += tr(" / budget %1 MB%2").arg(mb(o.capacityBytes), o.overBudget() ? tr(" OVER") : QString());
+            line += tr(", %1 / %2 items").arg(static_cast<qulonglong>(o.currentCount)).arg(static_cast<qulonglong>(o.peakCount));
+            if (o.capacityCount > 0) line += tr(" / cap %1").arg(static_cast<qulonglong>(o.capacityCount));
+            if (o.evictedByBudget > 0) line += tr(", evicted/replaced %1").arg(static_cast<qulonglong>(o.evictedByBudget));
+            if (o.knowledge == backend::diagnostics::MemoryKnowledge::Estimated) line += tr(" (estimated)");
+        }
+        lines << line;
+    }
+    lines << tr("Accounted host memory: %1 MB across %2 owners%3")
+                 .arg(mb(budget.accountedBytes()))
+                 .arg(budget.owners.size())
+                 .arg(budget.hasUnknownOwner() ? tr(" (plus unknown vendor buffers)") : QString());
+    if (experimentTabs_ && experimentTabs_->count() > 0) {
+        if (auto* previewPage = qobject_cast<frontend::PreviewPage*>(experimentTabs_->widget(0))) {
+            if (auto* panel = previewPage->getPlaybackPanel()) {
+                lines << tr("Display: presented %1 frames, skipped by display %2 (presentation only; not acquisition, processing or persistence loss)")
+                             .arg(static_cast<qulonglong>(panel->displayFramesPresented()))
+                             .arg(static_cast<qulonglong>(panel->displayFramesSkipped()));
+            }
+        }
+    }
     diagnosticsText_->setPlainText(lines.join(QLatin1Char('\n')));
 }
 

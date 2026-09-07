@@ -146,7 +146,12 @@ created in `setupStatusSurfaces()`:
   live in the non-modal **Diagnostics…** dialog (status-bar `diagnosticsBtn`,
   Help ▸ Diagnostics…, `showDiagnostics()` slot, dialog objectName
   `diagnosticsDialog`, text `diagnosticsText`). Long values never change the
-  window's required width.
+  window's required width. Since issue #370 the dialog also lists every
+  memory owner from `AppBackend::memoryBudgetSnapshot()` (current / peak /
+  budget MB, items, evictions, "unknown" for vendor memory, "OVER" when a
+  declared budget is exceeded) and the preview's presentation counters
+  (`PlaybackPanel::displayFramesPresented/Skipped`, labelled as
+  presentation-only, never acquisition/processing/persistence loss).
 - **Two-phase stop.** `onStopExperiment` sets `Stopping`, waits for an
   in-flight round-robin flush, then `Saving` and runs the drain
   (`finishFlush`) on `QtConcurrent` via `finalizeWatcher_`;

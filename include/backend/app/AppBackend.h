@@ -9,6 +9,7 @@
 
 #include "backend/app/BackgroundFrame.h"
 #include "backend/app/ExperimentReadiness.h"
+#include "backend/diagnostics/MemoryBudget.h"
 #include "backend/recording/RecordingAccounting.h"
 
 namespace backend::services
@@ -125,6 +126,12 @@ namespace backend
         // demand) while recording, otherwise the final snapshot of the last
         // run including its Complete/Partial/Loss/Failed completion state.
         backend::recording::RecordingAccountingSnapshot recordingAccounting() const;
+
+        // Issue #370: byte-budget view of every host-path memory owner
+        // (camera/SDK buffers, FrameStore, processing queues/retention,
+        // persistence queue, presentation snapshot, exporter) plus process
+        // RSS. Unknown vendor memory is reported as Unknown, never as 0.
+        backend::diagnostics::HostMemoryBudgetSnapshot memoryBudgetSnapshot() const;
 
         // Raw config JSON storage (set by config watcher, read at experiment save)
         void setLastConfigJson(const std::string& json);

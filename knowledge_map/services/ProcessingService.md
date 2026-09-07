@@ -159,11 +159,16 @@ All gates in one struct. Notable fields:
   the rings only fill while that tab is visible. Stored frames share cv::Mat
   refcounts with the processing loop (no per-frame clone); consumers are
   read-only.
-- **Experiment accumulation** — bounded `std::deque<ProcessedFrame>` populated
-  while `experimentActive_` is true. Deque gives O(1) `pop_front()` when the
-  bounded backlog is full under high frame rates. `flushBufferedFrames(Hdf5Service&)`
-  moves frames into an `ExperimentBatch` via `std::make_move_iterator` (O(1)
-  per Mat, refcount transfer), submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
+- **Experiment accumulation** — the extracted, bounded
+  `ExperimentFrameBuffer` (`experimentBuffer_`, issue #370 —
+  [[../diagnostics/MemoryBudget]]) populated while `experimentActive_` is
+  true, bounded by **frames** (`maxBufferedFrames_`, derived from the flush
+  interval) **and bytes** (`setMaxBufferedBytes`, default 512 MiB, config
+  key `experiment_buffer_max_mb`; 0 = count-only). Every eviction is returned
+  to `appendExperimentFrame` and accounted as `persistenceCancelledByPolicy`.
+  `flushBufferedFrames(Hdf5Service&)`
+  moves frames out with `takeAll()` (O(1) per Mat, refcount transfer),
+  tracks the bytes in flight (`flushQueueBytes_`) and submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
   whose writer thread does the slow append, so capture/processing never blocks
   on disk. The write queue is created lazily on first flush and torn down by
   `finishFlush()` at experiment stop (drains + joins before any direct HDF5
@@ -175,8 +180,21 @@ All gates in one struct. Notable fields:
   (`gray`, `mask`, `grayROI`, `grayFull`, `fullMask`) is freshly allocated per
   iteration and never written after publication. Experiment frames and monitoring
   ring entries share refcounts instead of cloning (PR3 clone elimination).
+  Since issue #370 the per-object records of `processBatch` and the async
+  batch workers share the frame's source + mask the same way (no clone per
+  object; `processing.memory_budget` asserts one source and one mask
+  allocation per frame and identical science).
   Consumers (`Hdf5Service::appendFrames`, monitoring/HDF readers, overlay) are
   all read-only. Enforced by comment at the top of `realtimeInlineLoop`.
+- **Memory ownership report (issue #370)** — `memoryStats()` returns
+  `MemoryStats{experimentBuffer, monitoringRings, batchQueue, flushQueue,
+  snapshot}` as [[../diagnostics/MemoryBudget]] `MemoryOwnerStats`
+  (current/peak bytes + counts, declared bounds, evictions/replacements).
+  `FrameRingBuffer` tracks its bytes and replacements; the async batch queue
+  has a byte budget (`RealtimeBatchSettings::maxQueuedBytes` /
+  `BatchPipelineConfig::maxQueuedBytes`, default 256 MiB) whose drops are
+  counted in `BatchPipelineStats::framesDroppedByByteBudget` (a subset of
+  `framesDropped`) next to `currentQueueBytes` / `maxQueueBytes`.
 - Invalid frame sampling rate defaults to 1-in-100 to bound HDF5 size.
 
 ## Snapshot model (PR4)
@@ -386,10 +404,12 @@ current/max queue depth, batch size, worker count, and running state. See
   (`integration.e2e_live_view_latency`): under sustained overload the default
   stays a few hundred frames behind, vs. tens of thousands with drop-frames
   forced off (~30x).
-- When the experiment backlog reaches `maxBufferedFrames_`, sampled invalid
-  frames are dropped first. Valid frames can evict old invalid frames; valid
-  drops only happen if the backlog is entirely valid and still over cap. This
-  is a last-resort RAM safety valve for long runs where HDF5 is slow or failing.
+- When the experiment backlog reaches `maxBufferedFrames_` **or the byte
+  budget**, sampled invalid frames are dropped first. Valid frames can evict
+  old invalid frames; valid drops only happen if the backlog is entirely
+  valid and still over the bound. This is a last-resort RAM safety valve for
+  long runs where HDF5 is slow or failing; the policy lives in
+  `ExperimentFrameBuffer` and every drop is reported (never silent).
 - `pixelToMicronFactor_` default is `0.4886` — UI lets users change this.
 - YOLO is a separate service ([[YoloService]]); this pipeline does not use it.
 - **Callback ordering invariant**: `TargetGroupCallback` and

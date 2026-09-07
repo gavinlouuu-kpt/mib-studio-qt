@@ -1289,6 +1289,7 @@ void PlaybackPanel::resetMetrics()
     lastDisplayTimeUs_ = 0;
     metricsInitialized_ = false;
     totalDrops_ = 0;
+    framesPresented_ = 0;
     lastDisplayFps_ = 0.0;
 }
 
@@ -1323,6 +1324,7 @@ void PlaybackPanel::trackFrameDisplay(uint64_t frameIndex, uint64_t frameTimesta
     sample.frameTimestamp = frameTimestamp;
     sample.frameIndex = frameIndex;
     metricsWindow_.push_back(sample);
+    ++framesPresented_;
 
     lastDisplayedIndex_ = frameIndex;
     lastDisplayTimeUs_ = displayTime;

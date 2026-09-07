@@ -234,6 +234,17 @@ failures to one callback. `MainWindow` marshals it to the UI thread, stops the
 active operation, and shows a modal Save Error dialog — failed saves are never
 silent.
 
+## Memory budget snapshot (issue #370)
+
+`memoryBudgetSnapshot()` assembles the [[../diagnostics/MemoryBudget]]
+`HostMemoryBudgetSnapshot`: process RSS / peak (0 where `Tools` has no
+platform helper), `capture.sdkBuffers` (Estimated from the telemetry
+input-buffer count × the latest frame payload while capture runs, otherwise
+Unknown — never a measured zero), `FrameStore::memoryStats()`, every
+`ProcessingService::memoryStats()` owner, and the streaming exporter entry.
+Consumed by the [[../frontend/MainWindow]] Diagnostics dialog and the
+memory benchmark evidence.
+
 ## Config JSON storage
 
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the

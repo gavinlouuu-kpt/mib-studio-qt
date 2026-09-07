@@ -79,6 +79,10 @@ bool saveFramesToAvi(path, startTs, endTs, /*useTs=*/true, fps, filterFn);
 
 bool resize(size_t newCapacity);
 size_t estimateMemoryBytesForCapacity(size_t capacity) const;
+// Issue #370: measured retained bytes (slot allocations, resident even
+// when stale), peak, retained frame count, capacity x reserved frame
+// bytes as the declared bound, overwrites as evictedByBudget. Lock-free.
+backend::diagnostics::MemoryOwnerStats memoryStats() const;
 ```
 
 ### AVI codec choice
@@ -183,6 +187,12 @@ this is safe because every hot-path op acquires the shared structural lock
   the ring does not allocate — without it the first `capacity` pushes each
   allocate a slot buffer mid-stream. The empty-frame filter path reuses a
   `thread_local` scratch `Frame` rather than allocating a temp per frame.
+- Retained-byte accounting (issue #370, [[../diagnostics/MemoryBudget]]):
+  `slotBytes_` mirrors each slot's `data.capacity()` (updated under the slot
+  lock in `pushFrame`, under the exclusive lock in `reserveFrameBytes` /
+  `resize`) and `retainedBytes_` / `peakRetainedBytes_` are relaxed atomics,
+  so `memoryStats()` never takes a lock. Guard: `processing.memory_budget`
+  (reserve → plateau across overwrites → resize re-account).
 - `saveFramesToAvi` serialises frames while holding the mutex only long
   enough to snapshot the range; the VideoWriter loop runs outside the
   lock. Same pattern as `saveFramesToDisk`.

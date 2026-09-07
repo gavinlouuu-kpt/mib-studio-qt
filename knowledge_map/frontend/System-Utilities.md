@@ -30,6 +30,9 @@
   `writeBackCameraConfig` uses the same checked store. The old
   `writeBackProcessingConfig` (rewrite the whole section from runtime) is
   gone. Guard: `frontend.config_apply`.
+  Config loads also read the optional top-level `experiment_buffer_max_mb`
+  (issue #370) into `ProcessingService::setMaxBufferedBytes` (0 = count-only
+  backlog bound; default 512 MiB when the key is absent).
   On startup, when the app-managed `config.json` already exists,
   `mergeNewDefaultsIntoConfig` deep-merges any keys added to the bundled
   `:/defaults/config.json` by a newer build into the existing file
@@ -89,6 +92,12 @@
     itself: `onToggleCapture()` emits `captureToggleRequested()`, which
     [[MainWindow]] routes through its `CameraController` so the experiment
     guard and duplicate-command protection apply to every route (issue #360).
+  - Presentation is a bounded pull: `onTick` reads the latest frame /
+    snapshot at the configured `display_fps`, so no UI queue can grow behind
+    a slow display. `displayFramesPresented()` / `displayFramesSkipped()`
+    (issue #370) count rendered frames and frames the display skipped —
+    presentation counters only, shown in the Diagnostics dialog and never
+    mixed with acquisition, processing or persistence loss.
   - Overlay cell color (blue=target / green=valid / red=invalid) only uses
     the live [[../services/ProcessingService]] `getLatestSnapshot()` while
     *following live*. When stopped/scrubbing/replaying buffered frames the

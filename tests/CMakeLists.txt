@@ -126,6 +126,17 @@ target_link_libraries(pipeline_timing_benchmark PRIVATE Threads::Threads)
 add_test(NAME performance.pipeline_timing COMMAND $<TARGET_FILE:pipeline_timing_benchmark>)
 set_tests_properties(performance.pipeline_timing PROPERTIES LABELS "performance" TIMEOUT 180)
 
+# Issue #370: byte-budgeted ownership — deterministic policy test + benchmark.
+mib_add_backend_test_executable(memory_budget_test processing/memory_budget_test.cpp)
+target_link_libraries(memory_budget_test PRIVATE Threads::Threads)
+add_test(NAME processing.memory_budget COMMAND $<TARGET_FILE:memory_budget_test>)
+set_tests_properties(processing.memory_budget PROPERTIES LABELS "processing;backend;safety;memory" TIMEOUT 180)
+
+mib_add_backend_test_executable(memory_budget_bench performance/memory_budget_bench.cpp)
+target_link_libraries(memory_budget_bench PRIVATE Threads::Threads)
+add_test(NAME performance.memory_budget COMMAND $<TARGET_FILE:memory_budget_bench>)
+set_tests_properties(performance.memory_budget PROPERTIES LABELS "performance;memory" TIMEOUT 600)
+
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:backend_facade_boundary_test>)
 set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")
