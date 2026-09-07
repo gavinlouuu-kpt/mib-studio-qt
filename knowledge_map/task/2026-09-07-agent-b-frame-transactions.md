@@ -17,3 +17,13 @@ no Rust image cache, stale reply guards and bounded live/Review ownership.
 are unexecuted. The 10,000-pull and 100-view-cycle tests exercise transport
 ownership, not hardware throughput. Complete contract and resource limitations:
 `docs/architecture/frame-packet-v1.md`.
+
+Desktop CI includes staged `agent-b/**` PRs and the eventual develop target;
+generator-only edits also trigger the drift gate. Native CI results remain
+pending until the runner completes; a shell launch is not native E2E proof.
+
+Publishing used GitHub's connected API because local HTTPS push had no
+credentials. Trees were checked identical to the local commits. Remote mapping:
+`82114ee` → `f436f7f8f4c38699c6c83db68755617940a7a806`,
+`c7a9a6b` → `632bb8d8e2389e90d7c999ad70338569678ce549`,
+`edd1292` → `758023ff3ab06f160c0120c144f634f8994502de`.
