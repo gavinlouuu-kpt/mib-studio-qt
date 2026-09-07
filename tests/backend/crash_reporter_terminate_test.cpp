@@ -119,6 +119,16 @@ int main(int argc, char* argv[]) {
     CHECK(findArtifact(dir, "-terminate.dmp"));
 #endif
 
+    if (g_failures != 0) {
+        // Show what the child actually left behind so a platform-specific
+        // handler mismatch (e.g. "-sigabrt" instead of "-terminate") is
+        // visible straight from the CI log.
+        std::cerr << "child exit code: " << rc << "\ncrash dir contents:\n";
+        for (auto& entry : fs::directory_iterator(dir, ec)) {
+            std::cerr << "  " << entry.path().filename().string() << "\n";
+        }
+    }
+
     fs::remove_all(dir, ec);
 
     if (g_failures != 0) {

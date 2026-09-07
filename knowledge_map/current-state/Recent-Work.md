@@ -16,18 +16,23 @@
   calls `std::terminate()`. Without that translation, an exception
   escaping every C++ frame never reached `terminateHandler` —
   `sehHandler` intercepted it first, wrote generic `-seh.*` files, and
-  let Windows tear the process down directly. First fix attempt
-  (redirecting to an explicit `std::terminate()` call from inside
-  `sehHandler`) did not work — CI still showed zero `-terminate`
-  artifacts, so `terminateHandler` isn't reliably reachable from that
-  callback context. Working fix: `sehHandler` now replicates
-  `terminateHandler`'s file-writing inline (same `-terminate.json/.txt/.dmp`
-  naming and `current_exception()`-based message capture) when it detects
-  that SEH code, using the real `EXCEPTION_POINTERS` for a proper
-  minidump. Verified locally (Linux, where the bug never reproduced):
-  full `linux-backend-only` CTest suite green. Windows-only code path;
-  only verifiable end-to-end via the `build-windows.yml` CI lane. File:
-  `CrashReporter.cpp`.
+  let Windows tear the process down directly. Two `sehHandler`-based
+  attempts changed nothing, which showed the real mechanism: MSVC's
+  `std::thread` shim is `noexcept` (terminate is called in the search
+  phase, the top-level filter never runs), MSVC's `set_terminate` is
+  **per-thread** so the worker thread only ever had the CRT default
+  `abort()` (→ `-sigabrt.*` via the SIGABRT fallback), and MSVC's
+  `current_exception()` is null for uncaught exceptions. Fix: a
+  first-chance vectored exception handler that, on every C++ throw on any
+  thread, lazily installs `terminateHandler` for that thread and captures
+  `what()` from the exception record's ThrowInfo into a `thread_local`
+  record that `terminateHandler` writes into `-terminate.txt`;
+  `sehHandler` forwards a C++ exception that does reach the top-level
+  filter to `std::terminate()`. The test now lists the crash dir on
+  failure. Verified locally (Linux): full `linux-backend-only` CTest
+  suite green. Windows-only code path; only verifiable end-to-end via the
+  `build-windows.yml` CI lane. Files: `CrashReporter.cpp`,
+  `crash_reporter_terminate_test.cpp`.
 
 - **Shared RS485 bus + Linux serial discovery for the pulse generator**
   (2026-08-31, issue #323 follow-up) — the pulse-generator stack is now
