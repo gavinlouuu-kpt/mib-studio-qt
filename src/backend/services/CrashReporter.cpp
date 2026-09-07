@@ -217,18 +217,17 @@ LONG writeMinidumpInternal(EXCEPTION_POINTERS* eptr,
 // is undocumented across toolset versions — only the stable numeric code is
 // needed here). Installing our own SetUnhandledExceptionFilter replaces the
 // CRT's own top-level filter, which is what normally recognizes this code
-// and calls std::terminate() on our behalf; without redoing that translation
-// here, an exception escaping every C++ frame (e.g. off a worker thread) hits
-// this filter instead of std::terminate, so terminateHandler's dedicated
-// "-terminate" artifacts + exception message are never produced.
+// and translates it to a std::terminate() call. Explicitly calling
+// std::terminate() from inside this filter was tried and did not reliably
+// reach terminateHandler (observed in CI: zero "-terminate" artifacts, likely
+// because the runtime is still mid-dispatch of the original SEH exception at
+// this point). So handle the C++-exception case inline here instead, writing
+// the same "-terminate" artifacts terminateHandler would have — with the
+// added benefit of real EXCEPTION_POINTERS for the minidump instead of the
+// null pointer terminateHandler has to pass.
 constexpr DWORD kCxxExceptionCode = 0xE06D7363;
 
 LONG WINAPI sehHandler(EXCEPTION_POINTERS* eptr) {
-    if (eptr && eptr->ExceptionRecord &&
-        eptr->ExceptionRecord->ExceptionCode == kCxxExceptionCode) {
-        std::terminate();
-    }
-
     auto& g = globals();
     bool expected = false;
     if (!g.handlingCrash.compare_exchange_strong(expected, true)) {
@@ -236,14 +235,32 @@ LONG WINAPI sehHandler(EXCEPTION_POINTERS* eptr) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
+    const bool isCxxException = eptr && eptr->ExceptionRecord &&
+        eptr->ExceptionRecord->ExceptionCode == kCxxExceptionCode;
+
     try {
         std::error_code ec;
         std::filesystem::create_directories(g.config.crashDir, ec);
-        const auto base = makeCrashFilenameBase(g.config.crashDir, "seh");
+        const auto base = makeCrashFilenameBase(
+            g.config.crashDir, isCxxException ? "terminate" : "seh");
         const auto dump = std::filesystem::path(base.string() + ".dmp");
         const auto json = std::filesystem::path(base.string() + ".json");
         writeMinidumpInternal(eptr, dump);
         writeStateJsonSidecar(json);
+
+        // Same convention as terminateHandler: record the escaping
+        // exception's what() alongside the snapshot.
+        if (isCxxException && std::current_exception()) {
+            std::string what = "unknown (non-std::exception)";
+            try {
+                std::rethrow_exception(std::current_exception());
+            } catch (const std::exception& e) {
+                what = e.what();
+            } catch (...) {
+            }
+            std::ofstream f(base.string() + ".txt");
+            f << "terminate: " << what << "\n";
+        }
     } catch (...) {
         // Swallow — we are already crashing.
     }

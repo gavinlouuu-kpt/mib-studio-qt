@@ -256,21 +256,30 @@ sentry-cli releases finalize "mib_studio_qt@$version"
   escapes a worker thread entry point reaches the terminate handler,
   which leaves a `.dmp` + `.json` + `.txt` and gets the event to Sentry
   on the next launch.
-- **`sehHandler` must translate the MSVC C++-exception SEH code
-  (`0xE06D7363`) into an explicit `std::terminate()` call.** Installing
+- **`sehHandler` handles the MSVC C++-exception SEH code (`0xE06D7363`)
+  inline rather than delegating to `terminateHandler`.** Installing
   `SetUnhandledExceptionFilter(sehHandler)` replaces the CRT's own
   top-level filter — the one that normally recognizes this code and
-  calls `std::terminate()` on our behalf. Without redoing that
-  translation, a C++ exception that escapes every frame (e.g. off a
-  worker thread) is intercepted by `sehHandler` first: it wrote generic
-  `-seh.dmp`/`.json` files and returned `EXCEPTION_CONTINUE_SEARCH`,
-  after which Windows tore the process down directly — `std::terminate`
-  (and therefore `terminateHandler`'s `-terminate.json/.txt/.dmp` +
-  exception message) was never reached. This was caught by
-  `backend.crash_reporter_terminate` failing only in the Windows CI lane
-  (`build-windows.yml`'s CTest step), never in Linux `backend-ci.yml`,
-  since glibc's unwind calls `std::terminate` directly with no SEH
-  translation step to clobber.
+  calls `std::terminate()` on our behalf — so a C++ exception that
+  escapes every frame (e.g. off a worker thread) reaches `sehHandler`
+  first. It originally wrote generic `-seh.dmp`/`.json` files and
+  returned `EXCEPTION_CONTINUE_SEARCH`, after which Windows tore the
+  process down directly: `terminateHandler`'s `-terminate.json/.txt/.dmp`
+  + exception message were never produced. An explicit `std::terminate()`
+  call from inside `sehHandler` was tried first and did **not** reliably
+  reach `terminateHandler` either (CI still showed zero `-terminate`
+  artifacts) — the runtime is apparently still mid-dispatch of the
+  original SEH exception at that point, so redirecting control flow back
+  into `std::terminate` isn't safe/reliable there. The fix instead
+  replicates `terminateHandler`'s file-writing (same `-terminate.*`
+  naming, same `current_exception()` + rethrow to capture `what()`)
+  directly inside `sehHandler` when it detects this exception code — using
+  the real `EXCEPTION_POINTERS` for the minidump, which is actually a
+  better dump than `terminateHandler`'s `nullptr`-context one. This gap
+  was caught by `backend.crash_reporter_terminate` failing only in the
+  Windows CI lane (`build-windows.yml`'s CTest step), never in Linux
+  `backend-ci.yml`, since glibc's unwind calls `std::terminate` directly
+  with no SEH translation step to clobber.
 - Building with `MIB_USE_SENTRY=OFF` (or with no DSN) keeps the local
   minidump path active — useful for offline / air-gapped deployments.
 - **`sentry_capture_minidump` vs `sentry_capture_event`:** The upload

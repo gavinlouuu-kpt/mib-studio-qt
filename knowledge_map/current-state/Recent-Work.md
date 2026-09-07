@@ -5,23 +5,29 @@
 
 ## Features shipped
 
-- **Fix: `std::terminate` unreachable on Windows for exceptions escaping a
-  worker thread** (2026-09-07) — the beta pipeline's Windows CI (CTest in
-  `build-windows.yml`) was failing `backend.crash_reporter_terminate` on
-  every `develop` push since issue #347's fix (011f565), blocking the
-  auto-beta release. Root cause: [[../services/CrashReporter]]'s
-  `SetUnhandledExceptionFilter(sehHandler)` silently replaces the CRT's
-  own top-level filter, which is what normally recognizes the MSVC C++
-  exception SEH code (`0xE06D7363`) and calls `std::terminate()`. Without
-  that translation, an exception escaping every C++ frame never reached
-  `terminateHandler` — `sehHandler` intercepted it first, wrote generic
-  `-seh.*` files, and let Windows tear the process down directly. Fix:
-  `sehHandler` now recognizes that SEH code and calls `std::terminate()`
-  explicitly before doing any of its own crash-artifact work, restoring
-  the CRT's normal translation. Verified locally (Linux, where the bug
-  never reproduced): full `linux-backend-only` CTest suite green.
-  Windows-only code path; only verifiable end-to-end via the
-  `build-windows.yml` CI lane. File: `CrashReporter.cpp`.
+- **Fix: `-terminate` crash artifacts never produced on Windows for
+  exceptions escaping a worker thread** (2026-09-07) — the beta
+  pipeline's Windows CI (CTest in `build-windows.yml`) was failing
+  `backend.crash_reporter_terminate` on every `develop` push since issue
+  #347's fix (011f565), blocking the auto-beta release. Root cause:
+  [[../services/CrashReporter]]'s `SetUnhandledExceptionFilter(sehHandler)`
+  silently replaces the CRT's own top-level filter, which is what
+  normally recognizes the MSVC C++ exception SEH code (`0xE06D7363`) and
+  calls `std::terminate()`. Without that translation, an exception
+  escaping every C++ frame never reached `terminateHandler` —
+  `sehHandler` intercepted it first, wrote generic `-seh.*` files, and
+  let Windows tear the process down directly. First fix attempt
+  (redirecting to an explicit `std::terminate()` call from inside
+  `sehHandler`) did not work — CI still showed zero `-terminate`
+  artifacts, so `terminateHandler` isn't reliably reachable from that
+  callback context. Working fix: `sehHandler` now replicates
+  `terminateHandler`'s file-writing inline (same `-terminate.json/.txt/.dmp`
+  naming and `current_exception()`-based message capture) when it detects
+  that SEH code, using the real `EXCEPTION_POINTERS` for a proper
+  minidump. Verified locally (Linux, where the bug never reproduced):
+  full `linux-backend-only` CTest suite green. Windows-only code path;
+  only verifiable end-to-end via the `build-windows.yml` CI lane. File:
+  `CrashReporter.cpp`.
 
 - **Shared RS485 bus + Linux serial discovery for the pulse generator**
   (2026-08-31, issue #323 follow-up) — the pulse-generator stack is now
