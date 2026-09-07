@@ -62,7 +62,7 @@ it("out-of-order native responses preserve exact u64 identity, geometry and chec
 it("rejects a response from before a source mutation", async () => {
   let finish!: (b: ArrayBuffer) => void;
   invoke.mockImplementation((command: string) => command === "fetch_frame_packet"
-    ? new Promise<ArrayBuffer>(r => { finish=r; }) : Promise.resolve({ok:true}));
+    ? new Promise<ArrayBuffer>(r => { finish=r; }) : Promise.resolve({transport_version:1,ok:true,command:0,message:"",operation_id:"0"}));
   const a = bridge.fetchFrame();
   const rejected = expect(a).rejects.toThrow("FRAME_REPLY_STALE");
   await bridge.configureMock("explicit-fixture", 1, true);

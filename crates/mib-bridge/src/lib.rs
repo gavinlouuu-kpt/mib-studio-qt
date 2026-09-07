@@ -76,6 +76,12 @@ pub mod ffi {
         pub b1: bool,
         /// Text slot (labels, error/file messages).
         pub text: String,
+        // ABI 12: exact companions for legacy floating integer slots. Legacy
+        // slots keep their original meanings for compatibility.
+        pub experiment_end_time_ns: u64,
+        pub experiment_dropped_valid: u64,
+        pub experiment_dropped_invalid: u64,
+        pub frame_byte_size: u64,
     }
 
     /// Pollable snapshot of the realtime processing pipeline. `valid` is false
@@ -368,6 +374,11 @@ pub mod ffi {
         /// Opaque owner of an `AppBackend` + `BackendFacade`. Dropping it calls
         /// `shutdown()` then destroys the backend.
         type BackendBridge;
+
+        #[cfg(feature = "contract-fixtures")]
+        fn contract_fixture_events() -> Vec<BridgeEvent>;
+        #[cfg(feature = "contract-fixtures")]
+        fn contract_fixture_frame() -> BridgeFrame;
 
         /// Construct a fresh, uninitialized bridge.
         fn new_backend_bridge() -> UniquePtr<BackendBridge>;

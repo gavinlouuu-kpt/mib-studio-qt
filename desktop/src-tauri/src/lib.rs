@@ -13,6 +13,7 @@ use serde::Serialize;
 use tauri::ipc::Response;
 use tauri::{Manager, State};
 
+mod event_transport;
 mod frame_packet;
 mod platform;
 pub mod updater;
@@ -25,17 +26,20 @@ struct AppState {
 /// Flattened command result handed to JS.
 #[derive(Serialize, Clone)]
 struct CmdResult {
+    transport_version: u32,
     ok: bool,
     command: u32,
     message: String,
     /// Non-zero when the command started/targeted a tracked operation
     /// (schema v4) — correlates with OperationStatus events.
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     operation_id: u64,
 }
 
 impl From<ffi::BridgeCommandResult> for CmdResult {
     fn from(r: ffi::BridgeCommandResult) -> Self {
         CmdResult {
+            transport_version: frame_packet::JSON_TRANSPORT_VERSION,
             ok: r.ok,
             command: r.command,
             message: r.message,
@@ -47,30 +51,12 @@ impl From<ffi::BridgeCommandResult> for CmdResult {
 /// Realtime processing stats snapshot for the webview.
 #[derive(Serialize, Clone, Default)]
 struct ProcessingStats {
+    transport_version: u32,
     valid: bool,
-    algo_fps1s: f64,
-    valid_fps1s: f64,
-    invalid_fps1s: f64,
-    pixel_to_micron: f64,
-}
-
-/// Serde mirror of `BridgeEvent` for the webview. `kind` is a stable string;
-/// the typed slots carry the per-kind fields (see the bridge's `shim.cpp`).
-#[derive(Serialize, Clone)]
-struct EventDto {
-    kind: &'static str,
-    u0: u64,
-    u1: u64,
-    u2: u64,
-    u3: u64,
-    u4: u64,
-    u5: u64,
-    f0: f64,
-    f1: f64,
-    f2: f64,
-    b0: bool,
-    b1: bool,
-    text: String,
+    algo_fps1s: Option<f64>,
+    valid_fps1s: Option<f64>,
+    invalid_fps1s: Option<f64>,
+    pixel_to_micron: Option<f64>,
 }
 
 fn kind_name(k: BridgeEventKind) -> &'static str {
@@ -156,27 +142,15 @@ fn seek_latest(state: State<AppState>) -> Result<CmdResult, String> {
 }
 
 #[tauri::command]
-fn poll_events(state: State<AppState>) -> Result<Vec<EventDto>, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let events = guard.pin_mut().poll_events();
-    Ok(events
-        .into_iter()
-        .map(|e| EventDto {
-            kind: kind_name(e.kind),
-            u0: e.u0,
-            u1: e.u1,
-            u2: e.u2,
-            u3: e.u3,
-            u4: e.u4,
-            u5: e.u5,
-            f0: e.f0,
-            f1: e.f1,
-            f2: e.f2,
-            b0: e.b0,
-            b1: e.b1,
-            text: e.text,
-        })
-        .collect())
+fn poll_events() -> Result<(), String> { Err("EVENT_PROTOCOL_UPGRADE_REQUIRED".into()) }
+
+#[tauri::command]
+fn poll_events_exact(state: State<AppState>) -> Result<event_transport::EventEnvelope, String> {
+    let events = {
+        let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+        guard.pin_mut().poll_events()
+    };
+    Ok(event_transport::encode(events))
 }
 
 #[tauri::command]
@@ -198,9 +172,9 @@ fn load_recording(state: State<AppState>, file_path: String) -> Result<CmdResult
 }
 
 #[tauri::command]
-fn seek_index(state: State<AppState>, frame_index: u64) -> Result<CmdResult, String> {
+fn seek_index(state: State<AppState>, frame_index: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().playback_seek_index(frame_index).into())
+    Ok(guard.pin_mut().playback_seek_index(parse_frame_index(&frame_index)?).into())
 }
 
 // Legacy split-cache commands fail explicitly: an old webview must reload,
@@ -253,15 +227,24 @@ fn apply_processing(
 /// Experiment lifecycle snapshot for the webview (schema v5, BE-4).
 #[derive(Serialize, Clone, Default)]
 struct ExperimentStatus {
+    transport_version: u32,
     valid: bool,
     state: u32,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     start_time_ns: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     end_time_ns: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     valid_buffered: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     invalid_buffered: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     valid_saved: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     invalid_saved: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     dropped_valid: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
     dropped_invalid: u64,
     flushing: bool,
     cancelled: bool,
@@ -296,6 +279,7 @@ fn fetch_experiment_status(state: State<AppState>) -> Result<ExperimentStatus, S
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let s = guard.pin_mut().fetch_experiment_status();
     Ok(ExperimentStatus {
+        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
         valid: s.valid,
         state: s.state,
         start_time_ns: s.start_time_ns,
@@ -786,6 +770,7 @@ fn set_background_from_current_frame(state: State<AppState>) -> Result<CmdResult
     let frame = guard.pin_mut().fetch_latest_frame();
     if !frame.valid {
         return Ok(CmdResult {
+            transport_version: frame_packet::JSON_TRANSPORT_VERSION,
             ok: false,
             command: 2, // ProcessingSettings
             message: "No live frame available to capture as background".into(),
@@ -1141,16 +1126,16 @@ fn fetch_trigger_status(state: State<AppState>) -> Result<TriggerStatus, String>
 /// Request cancellation of a tracked operation (schema v4). Fails safely for
 /// unknown/finished IDs.
 #[tauri::command]
-fn cancel_operation(state: State<AppState>, operation_id: u64) -> Result<CmdResult, String> {
+fn cancel_operation(state: State<AppState>, operation_id: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().cancel_operation(operation_id).into())
+    Ok(guard.pin_mut().cancel_operation(parse_frame_index(&operation_id)?).into())
 }
 
 /// Total events dropped by the bounded bridge queue (schema v4 observability).
 #[tauri::command]
-fn queue_overflow_total(state: State<AppState>) -> Result<u64, String> {
+fn queue_overflow_total(state: State<AppState>) -> Result<String, String> {
     let guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.queue_overflow_total())
+    Ok(guard.queue_overflow_total().to_string())
 }
 
 #[tauri::command]
@@ -1158,11 +1143,12 @@ fn fetch_processing_stats(state: State<AppState>) -> Result<ProcessingStats, Str
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let s = guard.pin_mut().fetch_processing_stats();
     Ok(ProcessingStats {
+        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
         valid: s.valid,
-        algo_fps1s: s.algo_fps1s,
-        valid_fps1s: s.valid_fps1s,
-        invalid_fps1s: s.invalid_fps1s,
-        pixel_to_micron: s.pixel_to_micron,
+        algo_fps1s: if s.valid && s.algo_fps1s.is_finite() { Some(s.algo_fps1s) } else { None },
+        valid_fps1s: if s.valid && s.valid_fps1s.is_finite() { Some(s.valid_fps1s) } else { None },
+        invalid_fps1s: if s.valid && s.invalid_fps1s.is_finite() { Some(s.invalid_fps1s) } else { None },
+        pixel_to_micron: if s.valid && s.pixel_to_micron.is_finite() { Some(s.pixel_to_micron) } else { None },
     })
 }
 
@@ -1323,6 +1309,7 @@ pub fn run() {
             stop_capture,
             seek_latest,
             poll_events,
+            poll_events_exact,
             fetch_frame_packet,
             fetch_indexed_frame_packet,
             fetch_review_frame_packet,

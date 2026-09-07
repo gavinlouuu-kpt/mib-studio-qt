@@ -199,3 +199,13 @@ Two gates, both without a real display:
 - An **empty `data_dir`** passed to the `init` command resolves to Tauri's
   `app_data_dir` — `AppBackend::initialize("")` rejects an empty path (found
   by driving the UI under Xvfb: init always failed before this).
+
+## Exact event contract continuation (ABI 12)
+
+The desktop now uses versioned `poll_events_exact` JSON and one named event
+adapter. Commands/experiment snapshots retain u64 identities as decimal strings;
+legacy cxx slots are preserved with exact companion fields where floats previously
+lost precision. Processing metrics preserve unavailable/non-finite values instead
+of zero; unknown clock domains cannot produce elapsed-time claims. See
+`docs/architecture/event-json-v1.md` and
+[[../task/2026-09-07-agent-b-event-contracts]] for executed evidence and gaps.

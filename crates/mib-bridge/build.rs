@@ -76,13 +76,18 @@ fn main() {
     ensure_backend_built(&repo, &build_dir);
 
     // Compile the cxx bridge + shim.
-    cxx_build::bridge("src/lib.rs")
+    let mut bridge_build = cxx_build::bridge("src/lib.rs");
+    if std::env::var_os("CARGO_FEATURE_CONTRACT_FIXTURES").is_some() {
+        bridge_build.define("MIB_BRIDGE_CONTRACT_FIXTURES", None);
+    }
+    bridge_build
         .file("src/shim.cpp")
         .flag_if_supported("-std=c++17")
         .include(&include_dir)
         .include("/usr/include/opencv4")
         .compile("mib_bridge_shim");
 
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CONTRACT_FIXTURES");
     // Rebuild triggers.
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/shim.cpp");

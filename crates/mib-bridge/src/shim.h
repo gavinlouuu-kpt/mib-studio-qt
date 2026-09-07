@@ -31,6 +31,11 @@ struct BridgeMonitoringSnapshot;
 struct BridgeProcessingStats;
 struct BridgeTriggerStatus;
 
+#ifdef MIB_BRIDGE_CONTRACT_FIXTURES
+rust::Vec<BridgeEvent> contract_fixture_events();
+BridgeFrame contract_fixture_frame();
+#endif
+
 class BackendBridge {
 public:
     BackendBridge();

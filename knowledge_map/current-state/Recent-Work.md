@@ -1206,3 +1206,11 @@ Atomic binary packets replace Tauri mutable image caches; strict bounded decode,
 lossless frame identities and owned view scheduling have deterministic tests.
 See [[../task/2026-09-07-agent-b-frame-transactions]]. Native validation and
 accepted Agent A backend integration remain open; this is not a release claim.
+
+## 2026-09-07 — Agent B exact event contract continuation
+
+The atomic-frame PR passed native Desktop CI (Qt-free build, Tauri, 12 Rust
+checks, frontend and Xvfb smoke). The next transport slice adds exact event
+integers, a typed adapter, nullable processing metrics and shared producer/
+consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
+Full native experiment acceptance remains open.

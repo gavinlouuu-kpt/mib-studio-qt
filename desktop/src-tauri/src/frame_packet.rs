@@ -46,6 +46,14 @@ pub fn encode(frame: BridgeFrame, pull_kind: u32) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cpp_rust_binary_matches_shared_golden() {
+        let frame = mib_bridge::ffi::contract_fixture_frame();
+        let packet = encode(frame, 1).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../crates/mib-bridge/contract/fixtures/frame-v1.json")).unwrap();
+        assert_eq!(hex::encode(packet), fixture["hex"].as_str().unwrap());
+    }
     fn frame(index: u64, value: u8) -> BridgeFrame {
         BridgeFrame { valid: true, frame_index: index, timestamp_ns: u64::MAX,
             width: 2, height: 2, pixel_format: 0x01080001, stride_bytes: 2,

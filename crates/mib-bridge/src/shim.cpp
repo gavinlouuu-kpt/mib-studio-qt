@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <deque>
 #include <mutex>
+#include <limits>
 #include <string>
 #include <utility>
 #include <variant>
@@ -29,6 +30,10 @@ namespace {
 // lib.rs and the generated desktop/src/bridgeContract.ts). Renumbering any of
 // them breaks the build here instead of drifting silently.
 namespace bb = backend::bridge;
+
+static_assert(static_cast<int>(bb::FrameReadySource::LiveCapture) == 0);
+static_assert(static_cast<int>(bb::FrameReadySource::Playback) == 1);
+static_assert(static_cast<int>(bb::FrameReadySource::BackgroundCapture) == 2);
 
 static_assert(std::variant_size_v<bb::BackendEvent> == 8,
               "BackendEvent variant changed — update the bridge contract");
@@ -123,7 +128,7 @@ std::size_t queueCapacityFromEnv() {
     if (const char* raw = std::getenv("MIB_BRIDGE_MAX_QUEUE")) {
         const long parsed = std::strtol(raw, nullptr, 10);
         if (parsed > 0) {
-            return std::max<std::size_t>(4, static_cast<std::size_t>(parsed));
+            return std::clamp<std::size_t>(static_cast<std::size_t>(parsed), 4, 4096);
         }
     }
     return 4096;
@@ -166,6 +171,7 @@ BridgeEvent toBridgeEvent(const backend::bridge::BackendEvent& ev) {
                 out.u4 = e.pixelFormat;
                 out.u5 = static_cast<std::uint64_t>(e.strideBytes);
                 out.f0 = static_cast<double>(e.byteSize);
+                out.frame_byte_size = static_cast<std::uint64_t>(e.byteSize);
                 out.f1 = static_cast<double>(static_cast<int>(e.source));
             } else if constexpr (std::is_same_v<T, CameraStatusEvent>) {
                 // u0 state, u1 framesProcessed, u2 frameRate, u3 dataRateMBps;
@@ -241,6 +247,9 @@ BridgeEvent toBridgeEvent(const backend::bridge::BackendEvent& ev) {
                 out.f0 = static_cast<double>(e.endTimeNs);
                 out.f1 = static_cast<double>(e.droppedValid);
                 out.f2 = static_cast<double>(e.droppedInvalid);
+                out.experiment_end_time_ns = e.endTimeNs;
+                out.experiment_dropped_valid = e.droppedValid;
+                out.experiment_dropped_invalid = e.droppedInvalid;
                 out.b0 = e.flushing;
                 out.b1 = e.cancelled;
                 out.text = rust::String(e.message);
@@ -251,6 +260,62 @@ BridgeEvent toBridgeEvent(const backend::bridge::BackendEvent& ev) {
 }
 
 } // namespace
+
+#ifdef MIB_BRIDGE_CONTRACT_FIXTURES
+BridgeFrame contract_fixture_frame() {
+    backend::bridge::BackendFrame frame{};
+    frame.frameIndex = 9007199254740993ULL;
+    frame.timestampNs = std::numeric_limits<std::uint64_t>::max();
+    frame.width = 2; frame.height = 2; frame.strideBytes = 2;
+    frame.pixelFormat = 0x01080001; frame.data = {11, 22, 33, 44};
+    return toBridgeFrame(frame);
+}
+// Feeds the PRODUCTION converter with deterministic domain events. No backend
+// is constructed, no fake source can be selected by a production command.
+rust::Vec<BridgeEvent> contract_fixture_events() {
+    using namespace backend::bridge;
+    constexpr std::uint64_t large = 9007199254740993ULL;
+    constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+    rust::Vec<BridgeEvent> events;
+    OperationStatusEvent operation{};
+    operation.operationId = large;
+    operation.kind = BackendOperationKind::Experiment;
+    operation.state = BackendOperationState::Completed;
+    operation.progress = maximum;
+    operation.total = maximum;
+    operation.message = "complete";
+    events.push_back(toBridgeEvent(operation));
+    ExperimentStatusEvent experiment{};
+    experiment.state = backend::ExperimentCoordinator::State::Active;
+    experiment.validBuffered = large;
+    experiment.invalidBuffered = 5;
+    experiment.validSaved = maximum;
+    experiment.invalidSaved = 7;
+    experiment.startTimeNs = maximum - 1;
+    experiment.endTimeNs = maximum;
+    experiment.droppedValid = large;
+    experiment.droppedInvalid = maximum;
+    experiment.flushing = true;
+    experiment.message = "saving";
+    events.push_back(toBridgeEvent(experiment));
+    ProcessingResultEvent processing{};
+    processing.frameIndex = 17;
+    processing.timestampNs = 18;
+    processing.algoFps1s = std::numeric_limits<double>::quiet_NaN();
+    processing.validFps1s = 0;
+    processing.invalidFps1s = std::numeric_limits<double>::infinity();
+    events.push_back(toBridgeEvent(processing));
+    FrameReadyEvent frame{};
+    frame.source = FrameReadySource::BackgroundCapture;
+    frame.frameIndex = large;
+    frame.byteSize = 4;
+    frame.width = 2;
+    frame.height = 2;
+    frame.strideBytes = 2;
+    events.push_back(toBridgeEvent(frame));
+    return events;
+}
+#endif
 
 struct BackendBridge::Impl {
     backend::AppBackend app;
@@ -1340,6 +1405,6 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // nanopositioner control, config round-trip, and freshness-explicit status
 // (BE-8). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 11; }
+std::uint32_t bridge_abi_version() { return 12; }
 
 } // namespace mib_bridge

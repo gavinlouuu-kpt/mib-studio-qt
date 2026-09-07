@@ -57,7 +57,7 @@ fn abi_version_is_stable() {
     // background, and core status (BE-3); v9 paged HDF5 review + export jobs
     // (BE-6); v10 syringe-pump commands/status (BE-7); v11 autofocus/
     // nanopositioner control (BE-8).
-    assert_eq!(ffi::bridge_abi_version(), 11);
+    assert_eq!(ffi::bridge_abi_version(), 12);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
