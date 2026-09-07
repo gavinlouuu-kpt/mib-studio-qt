@@ -57,4 +57,4 @@ jobs:
           N="${{ github.event.inputs.repeats || '40' }}"
           ctest --test-dir build/linux-backend --output-on-failure --timeout 240 \
             --repeat until-fail:${N} \
-            -R "integration.e2e_pipeline_stress|integration.e2e_trigger_timing|integration.e2e_live_view_latency|integration.e2e_realtime_throughput|integration.e2e_batch_backpressure|backend.frame_store_resize_under_load"
+            -R "integration.e2e_pipeline_stress|integration.e2e_trigger_timing|integration.e2e_live_view_latency|integration.e2e_realtime_throughput|integration.e2e_batch_backpressure|backend.frame_store_resize_under_load|performance.memory_budget"

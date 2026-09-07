@@ -6,6 +6,11 @@
 
 ## By theme
 
+### Reliability release (epic #371)
+- `task/2026-09-07-reliability-release-371.md` — phase order, commits,
+  evidence pointers, open hardware items
+- `task/2026-08-24-exporter-stability.md` — #344 exporter phase
+
 ### Camera lifecycle & hardware SDKs
 - `task/2025-11-14-safe-start-stop-egrabber.md`
 - `task/camera-reset.md`

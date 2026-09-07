@@ -5,6 +5,14 @@
 
 ## Features shipped
 
+- **Reliability release evidence** (2026-09-07, epic #371). The release
+  matrix (criterion → implementation → deterministic guards → evidence),
+  lane results (99 backend/scripts tests, 19 frontend tests, TSan runs,
+  screenshot tour), the required-evidence checklist and the open hardware
+  items live in `docs/evidence/2026-09-07-reliability-release-371/`; the
+  phase/commit map is [[../task/2026-09-07-reliability-release-371]]. The
+  nightly `soak.yml` now also runs `performance.memory_budget`.
+
 - **Byte-budgeted ownership + bounded presentation** (2026-09-07, issue
   #370 — reliability release #371 phase 7). New header-only
   [[../diagnostics/MemoryBudget]] (`MemoryOwnerStats` with Measured /
