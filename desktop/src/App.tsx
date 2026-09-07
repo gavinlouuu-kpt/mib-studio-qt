@@ -1,3 +1,4 @@
+import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -10,6 +11,7 @@ import {
   type CameraSelection,
   type ExperimentStatus,
   type FrameMeta,
+  type FramePacket,
   type MonitoringSnapshot,
   type ProcessingCoreStatus,
   type ProcessingStats,
@@ -78,7 +80,7 @@ interface RatesRef {
   bytes: number;
   displayFps: number;
   dataRateMBs: number;
-  lastFrameIndex: number;
+  lastFrameIndex: string | null;
 }
 
 function SideRow(props: { k: string; v: string; cls?: string }) {
@@ -220,6 +222,10 @@ export default function App() {
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const reviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const loopRef = useRef<number | null>(null);
+  const previewLoopRef = useRef<number | null>(null);
+  const framePulls = useRef(new FramePullScheduler());
+  const tickBusy = useRef(false);
+  const lastMetadataRenderMs = useRef(-Infinity);
   const tabRef = useRef<MainTab>("connect");
   tabRef.current = tab;
 
@@ -231,7 +237,7 @@ export default function App() {
     bytes: 0,
     displayFps: 0,
     dataRateMBs: 0,
-    lastFrameIndex: -1,
+    lastFrameIndex: null,
   });
   const [, setRatesTick] = useState(0);
 
@@ -272,18 +278,21 @@ export default function App() {
     return liveCanvasRef.current;
   }, []);
 
-  // Draw a frame whose metadata is already known by pulling its pixel bytes.
+  // Draw only the pixels owned by this exact immutable pull response.
   const draw = useCallback(
-    async (meta: FrameMeta, canvas: HTMLCanvasElement | null) => {
+    (meta: FramePacket, canvas: HTMLCanvasElement | null) => {
       if (!meta.valid || !canvas) return;
-      if (meta.frame_index === ratesRef.current.lastFrameIndex && canvas !== reviewCanvasRef.current) return;
-      const bytes = await bridge.frameBytes();
+      const bytes = meta.data;
       canvas.width = meta.width;
       canvas.height = meta.height;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
-      setLastMeta(meta);
+      const { data: _pixels, ...metadata } = meta;
+      if (canvas !== reviewCanvasRef.current && performance.now() - lastMetadataRenderMs.current >= 200) {
+        lastMetadataRenderMs.current = performance.now();
+        setLastMeta(metadata);
+      }
       const r = ratesRef.current;
       r.frames += 1;
       r.bytes += meta.byte_len;
@@ -335,20 +344,36 @@ export default function App() {
   const procEnabledRef = useRef(procEnabled);
   procEnabledRef.current = procEnabled;
 
+  useEffect(() => {
+    const scheduler = framePulls.current;
+    const live = scheduler.mount("live", p => draw(p, activeLiveCanvas()), e => append(`frame error: ${e}`));
+    const review = scheduler.mount("review", p => draw(p, reviewCanvasRef.current), e => append(`review frame error: ${e}`));
+    return () => { live(); review(); };
+  }, [draw, activeLiveCanvas, append]);
+
+  // Navigation/config/source changes retire presentation replies only.
+  useEffect(() => { framePulls.current.invalidate(); }, [tab, reviewPath, camStatus]);
+
   const tick = useCallback(async () => {
+    if (tickBusy.current) return;
+    tickBusy.current = true;
     try {
+      // State/fault notifications do not wait behind pixel decode/rendering.
       applyEvents(await bridge.pollEvents());
-      const meta = await bridge.fetchFrame();
-      await draw(meta, activeLiveCanvas());
       if (procEnabledRef.current) setStats(await bridge.fetchProcessingStats());
       setExpStatus(await bridge.fetchExperimentStatus());
       setAfStatus(await bridge.fetchAutofocusStatus());
     } catch (e) {
       append(`tick error: ${e}`);
-    }
-  }, [applyEvents, draw, append, activeLiveCanvas]);
+    } finally { tickBusy.current = false; }
+  }, [applyEvents, append]);
 
   const stopLoop = useCallback(() => {
+    framePulls.current.invalidate("live");
+    if (previewLoopRef.current !== null) {
+      window.clearInterval(previewLoopRef.current);
+      previewLoopRef.current = null;
+    }
     if (loopRef.current !== null) {
       window.clearInterval(loopRef.current);
       loopRef.current = null;
@@ -545,7 +570,10 @@ export default function App() {
       setRunning(true);
       append("capture started");
       stopLoop();
-      loopRef.current = window.setInterval(tick, 100);
+      loopRef.current = window.setInterval(tick, 200);
+      previewLoopRef.current = window.setInterval(() => {
+        framePulls.current.request("live", bridge.fetchFrame, false);
+      }, 1000 / 30);
       // Parity with Qt: a successful start lands the operator on Overview.
       setTab((t) => (t === "connect" ? "overview" : t));
     } catch (e) {
@@ -631,20 +659,14 @@ export default function App() {
 
   // ---- Review ----
 
-  const onScrub = useCallback(
-    async (idx: number) => {
-      setReviewIndex(idx);
-      try {
-        await bridge.seekIndex(idx);
-        const meta = await bridge.fetchFrameByIndex(idx);
-        await draw(meta, reviewCanvasRef.current);
-        applyEvents(await bridge.pollEvents());
-      } catch (e) {
-        append(`seek error: ${e}`);
-      }
-    },
-    [draw, applyEvents, append],
-  );
+  const onScrub = useCallback((idx: number) => {
+    setReviewIndex(idx);
+    framePulls.current.request("review", async () => {
+      const result = await bridge.seekIndex(idx);
+      if (!result.ok) throw new Error(result.message);
+      return bridge.fetchFrameByIndex(idx);
+    });
+  }, []);
 
   const loadMetricsPage = useCallback(
     async (valid: boolean, offset: number) => {
@@ -661,25 +683,9 @@ export default function App() {
     [append],
   );
 
-  const drawReviewImage = useCallback(
-    async (dataset: number, index: number) => {
-      try {
-        const meta = await bridge.fetchReviewImage(dataset, index);
-        if (!meta.valid) return;
-        const canvas = reviewCanvasRef.current;
-        if (!canvas) return;
-        const bytes = await bridge.reviewImageBytes();
-        canvas.width = meta.width;
-        canvas.height = meta.height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
-      } catch (e) {
-        append(`review image error: ${e}`);
-      }
-    },
-    [append],
-  );
+  const drawReviewImage = useCallback((dataset: number, index: number) => {
+    framePulls.current.request("review", () => bridge.fetchReviewImage(dataset, index));
+  }, []);
 
   const onSelectHdf = useCallback(async () => {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });

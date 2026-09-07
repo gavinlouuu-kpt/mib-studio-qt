@@ -187,3 +187,14 @@ CI: `.github/workflows/bridge-ci.yml` builds the archives then runs
   binary + `rlib` (an executable, like this crate's own tests). If a mobile
   target ever needs the `cdylib`, build the backend with
   `CMAKE_POSITION_INDEPENDENT_CODE=ON` instead.
+
+## Agent B frame transaction slice (2026-09-07)
+
+The Tauri adapter now encodes one owned BridgeFrame into one binary response;
+metadata and pixels are never separate mutable-cache pulls. Native calls retain
+the existing bridge mutex serialization. Encoding uses the returned owned value
+after releasing that mutex; no worker or second backend authority was added.
+The frontend scheduler bounds aggregate pending pulls and discards retired view
+responses. Details and limitations: `docs/architecture/frame-packet-v1.md`.
+The accepted readiness/configuration/finalization/recovery handoff is still open
+under #372; this slice does not establish native experiment acceptance.

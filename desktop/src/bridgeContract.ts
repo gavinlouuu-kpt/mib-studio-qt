@@ -130,6 +130,40 @@ export const RECORDING_STATES = {
   Error: 5,
 } as const;
 
+export const FRAME_PACKET = {
+  "version": 1,
+  "header_bytes": 96,
+  "byte_order": "little",
+  "max_payload_bytes": 33554432,
+  "max_pixels": 16777216,
+  "max_dimension": 8192,
+  "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
+  "identity_semantics": "source/session/config unavailable; reserved u64 slots zero",
+  "pull_kinds": {
+    "latest": 1,
+    "indexed": 2,
+    "review": 3,
+    "background": 4
+  },
+  "fields": {
+    "magic": 0,
+    "version": 4,
+    "header_bytes": 6,
+    "flags": 8,
+    "pull_kind": 12,
+    "frame_index": 16,
+    "timestamp_ns": 24,
+    "width": 32,
+    "height": 40,
+    "pixel_format": 48,
+    "stride_bytes": 56,
+    "payload_bytes": 64,
+    "session_id_reserved": 72,
+    "config_revision_reserved": 80,
+    "source_id_reserved": 88
+  }
+} as const;
+
 export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {
   0: "FrameReady",
   1: "CameraStatus",

@@ -1,0 +1,71 @@
+{
+  "status": "partial-staging-not-accepted",
+  "issue": 372,
+  "migration_sha": "5c7918c6410d4594a49f1deaf1e7035a3ba6d307",
+  "develop_sha": "bb82cf19a6e4ae44e766e4d787594ff76344f26c",
+  "agent_a_candidate_sha": "921f48dbc6eb546e241d34b305298954cf542cea",
+  "accepted_backend_sha": null,
+  "inventory_commit": "82114ee",
+  "environment": {
+    "os": "Ubuntu 24.04.3",
+    "architecture": "x86_64",
+    "node": "24.19.0",
+    "npm": "11.9.0",
+    "vitest": "2.1.9",
+    "vite": "5.4.21",
+    "rust": null,
+    "native_webview": null
+  },
+  "passed": [
+    "npm test: 99 tests in 8 files",
+    "npm run build: strict TypeScript and Vite",
+    "python3 scripts/gen_bridge_contract.py --check",
+    "python3 scripts/check_docs.py",
+    "python3 scripts/check_screenshots.py: 8 manifest shots, not new native screenshots",
+    "git diff --check"
+  ],
+  "regression_before": "A metadata plus B pixels; expected [11,11,11,11], received [22,22,22,22]",
+  "deterministic_scenarios": {
+    "client_interleaved_pulls": 10000,
+    "scheduler_pulls": 10000,
+    "view_mount_unmount_cycles": 100,
+    "pending_replacements_test": 50,
+    "panel_toggles_test": 0
+  },
+  "budgets": {
+    "payload_bytes": 33554432,
+    "header_bytes": 96,
+    "max_pixels": 16777216,
+    "max_dimension": 8192,
+    "scheduler_views": 4,
+    "aggregate_in_flight_pulls": 1,
+    "pending_requests_per_view": 1,
+    "pending_pixel_bytes": 0,
+    "retained_rust_image_cache_bytes": 0,
+    "preview_target_hz": 30,
+    "routine_poll_target_hz": 5
+  },
+  "not_executed": [
+    "cargo test",
+    "backend CTest",
+    "Qt-free native build",
+    "native Linux/Windows Tauri E2E",
+    "Qt scientific comparison",
+    "HDF5 mock run and export verification",
+    "ASan/TSan",
+    "layout/DPR/ROI geometry",
+    "native CPU/RSS/resource/latency benchmark"
+  ],
+  "native_performance_thresholds": null,
+  "hashes_sha256": {
+    "crates/mib-bridge/contract/bridge-contract.json": "0872320d09c0c97e7617f4fff1b2eb2454359f0c5bec6aeb80a96f3327f66af7",
+    "desktop/package-lock.json": "27c8375bbe94083efafd951c33fedaf941b5dfdaa1e67348b9849b863fa2d3b0",
+    "desktop/src-tauri/Cargo.lock": "778adf0926a2a3872383ebc122d861538f1a1317c80358d1dc16b4c55c7468c0",
+    "desktop/src/frameTransaction.test.ts": "e19196a4675333de419884dc8cffa4ad7ba7e098479a4ac86664bd662939c3c8",
+    "desktop/src/framePacket.test.ts": "3e59b3dd5c8dbf8a6840974ce3a549cf15ae8bbd49aabf9647af8f14fe939b6d",
+    "desktop/src/framePullScheduler.test.ts": "df888c937466580dd0287cd29d75566508b7b3d3f82f8ce2c4b6d5f7a208f195",
+    "desktop/src-tauri/src/frame_packet.rs": "e7314513d1808a4645e0546fc25e367a9c04dd75bda48ea30ee91143a1d75ab8",
+    "desktop/src/bridge.ts": "2549f421f22654878afa3671e0aff2b39861dc102bd1a42aa51a41cbd8e804fe",
+    "desktop/src/App.tsx": "f62df313c95670b596880857887a70d5adab20a6681d67be7b3f5f914abdf4c4"
+  }
+}

@@ -7,7 +7,7 @@ name: Desktop CI
 
 on:
   push:
-    branches: [dev/react-tauri]
+    branches: [dev/react-tauri, develop, "agent-b/**"]
     paths:
       - "desktop/**"
       - "crates/mib-bridge/**"
@@ -16,9 +16,10 @@ on:
       - "cmake/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
+      - "scripts/gen_bridge_contract.py"
       - ".github/workflows/desktop-ci.yml"
   pull_request:
-    branches: [dev/react-tauri]
+    branches: [dev/react-tauri, develop, "agent-b/**"]
     paths:
       - "desktop/**"
       - "crates/mib-bridge/**"
@@ -27,6 +28,7 @@ on:
       - "cmake/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
+      - "scripts/gen_bridge_contract.py"
       - ".github/workflows/desktop-ci.yml"
 
 permissions:
@@ -97,7 +99,7 @@ jobs:
           npm install
           npm run build
 
-      - name: Unit-test workflow derivation (UX-1)
+      - name: Unit-test workflow and frame transaction contracts
         shell: bash
         working-directory: desktop
         run: |

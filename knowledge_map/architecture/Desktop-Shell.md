@@ -124,21 +124,34 @@ reveal-in-dir actions go through `tauri-plugin-opener`, capability-scoped to
 
 Thin wrappers over the bridge (all take the managed `AppState`):
 
-- **Live capture:** `abi_version`, `is_initialized`, `init(data_dir)`,
-  `configure_mock(dir, interval_ms, loop)`, `start_capture`, `stop_capture`,
-  `seek_latest`, `poll_events` (→ serde `EventDto[]`), `fetch_frame`
-  (→ `FrameMeta`, caches the pixel bytes), `frame_bytes` (→ `tauri::ipc::Response`
-  — **raw Mono8 bytes as a binary IPC response, never base64**, per ADR 0003).
-- **Recording + review (Phase 4 slice 1):** `start_recording(path)`,
-  `stop_recording`, `load_recording(path)`, `seek_index(i)`,
-  `fetch_frame_by_index(i)`.
-- **Processing (Phase 4 slice 2):** `apply_processing(realtime, px→µm)` and
-  `fetch_processing_stats` (fps + scale, polled each tick for a live overlay).
+- **Live capture:** existing lifecycle commands remain serialized through
+  `AppState.bridge`. `fetch_frame_packet` returns one owned binary response.
+- **Recording/review:** `fetch_indexed_frame_packet(frame_index)` and
+  `fetch_review_frame_packet(dataset,index)` accept canonical decimal-string
+  indices. `fetch_background_packet` uses the same codec.
+- **Compatibility:** old split-cache commands return
+  `FRAME_PROTOCOL_UPGRADE_REQUIRED`; they cannot return a substitute image.
+  C++ ABI 11 is unchanged; desktop frame wire protocol v1 is independently
+  versioned in `bridge-contract.json`.
 
-The frontend calls `fetch_frame` (or `fetch_frame_by_index`) then `frame_bytes`
-for the same pull, and expands Mono8→RGBA on a canvas via `mono8ToImageData`
-(honouring row stride). `PlaybackPosition` events (drained from `poll_events`)
-bound the review scrubber.
+`framePacket.ts` validates the complete packet before canvas allocation. Frame
+indices/timestamps are decimal strings. Missing source/session/config identity
+and timestamp clock validity are explicitly unavailable, so identity-matched
+scientific overlays remain blocked pending the accepted backend contract.
+
+`FramePullScheduler` owns at most four views, one aggregate in-flight pull,
+and one replaceable pending request per view (no pending pixel buffers).
+Review intents supersede older replies; live sampling does not starve a slow
+in-flight frame. Unmount/navigation/source changes retire replies without
+stopping a run or claiming native cancellation. No pixels enter React state.
+Live sampling targets 30 Hz; routine polling and metadata state updates are
+capped at 5 Hz. These are scheduling policies, not measured camera throughput.
+State polling no longer awaits the image response, but native lock contention
+and webview stalls still need native measurement.
+
+See `docs/architecture/frame-packet-v1.md` and
+`docs/exec-plans/active/2026-09-07-agent-b-react-tauri.md` for byte budgets,
+explicit backend prerequisites and executed versus pending evidence.
 
 ## Build & run
 
@@ -172,7 +185,7 @@ Two gates, both without a real display:
 - WebKitGTK needs the dmabuf/compositing env workarounds to initialize in a
   container; without them GTK init fails headless. `xvfb-smoke.sh` sets them.
 - `dist/` must exist before `cargo build` — build the frontend first (CI does).
-- Keep frame pixels on the `frame_bytes` binary channel; do not JSON/base64
+- Keep frame pixels in the atomic versioned binary packet; do not JSON/base64
   them through `poll_events` or a command return (ADR 0003 hot-path rule).
 - **Debug binaries load `devUrl`, not `dist/`** — Tauri embeds
   `build.devUrl` in dev profiles, so running `target/debug/mib-studio-desktop`

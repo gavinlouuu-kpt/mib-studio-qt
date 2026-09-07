@@ -1198,3 +1198,11 @@ See [[Task-Log-Index]] for the full list. Highlights:
 Active development branches use the `claude/` prefix (e.g.
 `claude/create-agent-onboarding-docs-J9j66`). Main is the integration
 branch.
+
+## 2026-09-07 — Agent B atomic frame transport (staging)
+
+Reproduced interleaved live/indexed metadata-pixel corruption before fixing it.
+Atomic binary packets replace Tauri mutable image caches; strict bounded decode,
+lossless frame identities and owned view scheduling have deterministic tests.
+See [[../task/2026-09-07-agent-b-frame-transactions]]. Native validation and
+accepted Agent A backend integration remain open; this is not a release claim.
