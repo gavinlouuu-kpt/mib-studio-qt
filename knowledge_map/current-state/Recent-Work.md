@@ -40,6 +40,11 @@
   whether something on the runner had raised the timer resolution). The
   producer is now deadline-based with catch-up bursts (bounded to one
   queue's worth per wake), keeping the nominal rate honest on any timer.
+  That in turn exposed a latent race in `camera.delivery_mode_overload`'s
+  lag metric (producer head read *after* the grab, outside the lock, while
+  underruns consume sequence numbers): the head is now sampled under the
+  grab lock (`newestCompletedSequenceAtLastGrab()`), making "lag at grab" a
+  true logical distance.
   Files: `CrashReporter.cpp`, `crash_reporter_terminate_test.cpp`,
   `tests/support/queue_camera.h`.
 

@@ -61,10 +61,13 @@ OverloadResult runOverload(QueueBackedTestCamera& camera, FrameDeliveryMode mode
         MIB_REQUIRE(camera.grabFrame(frame), "producer outruns consumer; grab must succeed");
         const uint64_t seq = QueueBackedTestCamera::sequenceOf(frame);
         result.sequences.push_back(seq);
-        // Compare with the newest frame that reached the completed-buffer
-        // queue. Sequence numbers rejected by a full queue are underruns, not
-        // frames that LatestFrame could have delivered.
-        result.lagAtGrab.push_back(camera.newestCompletedSequence() - seq);
+        // Compare with the newest frame that had reached the completed-buffer
+        // queue at the moment of the grab (sampled under the grab lock).
+        // Sequence numbers rejected by a full queue are underruns, not frames
+        // that LatestFrame could have delivered -- and because they still
+        // consume sequence numbers, reading the head after the grab would
+        // race with the next push and inflate the lag by every underrun.
+        result.lagAtGrab.push_back(camera.newestCompletedSequenceAtLastGrab() - seq);
         const uint64_t now = backend::Tools::getTimestamp();
         if (now > frame.timestamp) {
             result.maxFrameAgeUs = std::max(result.maxFrameAgeUs, now - frame.timestamp);

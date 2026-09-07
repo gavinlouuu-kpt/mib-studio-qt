@@ -107,6 +107,13 @@ public:
         out = std::move(queue_.front());
         queue_.pop_front();
         delivered_.fetch_add(1, std::memory_order_relaxed);
+        // Sample the producer head under the same lock as the grab so lag
+        // measurements are a logical distance at grab time, not a race with
+        // the next push (underruns consume sequence numbers, so one push
+        // landing between the grab and a later read can inflate the apparent
+        // lag by every frame rejected while the queue was full).
+        headAtLastGrab_.store(newestCompletedSequence_.load(std::memory_order_relaxed),
+                              std::memory_order_relaxed);
         return true;
     }
 
@@ -168,6 +175,11 @@ public:
     uint64_t newestCompletedSequence() const
     {
         return newestCompletedSequence_.load(std::memory_order_relaxed);
+    }
+    // Newest completed sequence as observed atomically with the last grab.
+    uint64_t newestCompletedSequenceAtLastGrab() const
+    {
+        return headAtLastGrab_.load(std::memory_order_relaxed);
     }
 
     static uint64_t sequenceOf(const camera::common::Frame& frame)
@@ -265,6 +277,7 @@ private:
 
     std::atomic<uint64_t> nextSequence_{0};
     std::atomic<uint64_t> newestCompletedSequence_{0};
+    std::atomic<uint64_t> headAtLastGrab_{0};
     std::atomic<uint64_t> produced_{0};
     std::atomic<uint64_t> delivered_{0};
     std::atomic<uint64_t> intentionalDiscards_{0};
