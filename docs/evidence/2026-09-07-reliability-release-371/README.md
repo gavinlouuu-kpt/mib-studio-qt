@@ -11,6 +11,7 @@ the last commit unless stated.
 |---|---|---|
 | Backend + scripts | `ctest --test-dir build/linux-backend -E performance\.` | 99 tests, 0 failed (4 hardware tests skipped — no devices) |
 | Frontend (Qt, offscreen) | `ctest --test-dir build/linux-system -R '^frontend\.'` | 19 tests, 0 failed |
+| Frontend (MindVision hardware host) | `ctest --test-dir build/linux-system -L frontend` | First run 15/19 with four stalls; watchdog output lost to log rotation; no reproduction across 12 targeted reruns; full-lane reruns 19/19 in 38.5 s and 37.55 s. Cause unknown. See [hardware-host evidence](../2026-09-07-mindvision-acceptance/#frontend-lane-on-mindvision-bench). |
 | ThreadSanitizer (`-DMIB_SANITIZER=thread`) | `backend.experiment_readiness`, `recording.hdf_export_service`, `processing.memory_budget`, `processing.experiment_accounting`, `backend.processing_batch_pipeline`, `backend.frame_store_concurrency` | no reports (suppressions: `tests/sanitizer/tsan.supp`) |
 | Screenshot tour | `screenshot_tour --out docs/manual/images` | 9 shots, geometry assertions pass, `check_screenshots` in sync |
 | Vault/docs | `scripts/check_docs.py` | OK |
@@ -48,9 +49,9 @@ the last commit unless stated.
 - [x] repeated camera start/stop/fault/restart/shutdown stress — `backend.capture_lifecycle` (120 cycles), `backend.lifecycle_smoke`
 - [x] bounded memory/queue high-water trends — memory-budget evidence; `.github/workflows/soak.yml` now also runs `performance.memory_budget`
 - [x] reopen Review/export and verify recorded provenance/accounting — `recording.experiment_roundtrip`, `recording.accounting`, `backend.experiment_readiness` (run snapshot round trip)
-- [ ] long host-path acquisition/recording soak with exact final accounting on hardware — not possible in this environment (mock only); the accounting equations are enforced on every mock run
-- [ ] supported MindVision/EGrabber hardware acceptance — requires the Windows hardware bench (`build-windows.yml` + `hardware.*` tests, currently skipped without devices)
-- [ ] bounded thread/file-handle trends on Windows — RSS helper is Windows-first; Linux runs use `/proc/self/status`
+- [ ] long host-path acquisition/recording soak with exact final accounting on hardware — **not run:** the Linux MindVision camera became SDK-access-denied pending a physical reset before the 30-minute and low-memory runs; see [MindVision acceptance evidence](../2026-09-07-mindvision-acceptance/)
+- [ ] supported MindVision/EGrabber hardware acceptance — **partially run:** real MindVision `hardware.camera` passed on rerun and the 50-cycle `CameraController` lifecycle gate passed; real format/geometry fault injection, Diagnostics/provenance, delivery-mode recording, EGrabber, and Windows package gates were **not run** for the reasons recorded in [MindVision acceptance evidence](../2026-09-07-mindvision-acceptance/)
+- [ ] bounded thread/file-handle trends on Windows — **not run:** this acceptance host is Linux; no Windows build or packaged executable was available
 
 ## Open items carried out of the release
 

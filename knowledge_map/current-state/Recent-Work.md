@@ -5,6 +5,19 @@
 
 ## Features shipped
 
+- **MindVision hardware-host acceptance evidence** (2026-09-07, epic #371).
+  The real MV-XG51GM passed `hardware.camera` on an immediate rerun and a
+  temporary `CameraController` harness completed 50 start/stop generations
+  with bounded stops and ordered trigger teardown. Deterministic conversion,
+  readiness, timestamp/telemetry, delivery-mode and memory guards passed.
+  The remaining real-hardware UI, format/geometry fault-injection, recording
+  soak and delivery-mode gates were recorded as not run after the SDK began
+  returning AIA access denied pending a physical reset; Windows-only gates
+  were also recorded as not run. The initial frontend hardware-host stall
+  remained non-reproducible and its cause unknown; synchronous serial-port
+  enumeration during `ConfigTabs` construction is tracked separately as
+  TD-8. Evidence: `docs/evidence/2026-09-07-mindvision-acceptance/`.
+
 - **Reliability release evidence** (2026-09-07, epic #371). The release
   matrix (criterion → implementation → deterministic guards → evidence),
   lane results (99 backend/scripts tests, 19 frontend tests, TSan runs,
