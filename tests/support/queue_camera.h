@@ -21,8 +21,10 @@
 #include "backend/app/Tools.h"
 #include "backend/camera/common/ICamera.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -178,50 +180,77 @@ public:
 private:
     void produceLoop()
     {
+        // Deadline-based pacing with catch-up. A coarse OS timer (Windows'
+        // default ~15.6 ms tick) turns a 500 us sleep into ~15 ms, silently
+        // dropping the nominal rate to ~64 fps -- the same rate a "slow" 5 ms
+        // consumer runs at once it is quantized too -- so overload never
+        // materialises and LatestFrame never discards. Producing every frame
+        // the elapsed time owes (bounded to one queue's worth per wake, like a
+        // DMA engine completing several buffers at once) keeps the nominal
+        // rate honest on any timer resolution.
+        // First frame lands one interval after start (a 60 s interval must not
+        // produce immediately -- the blocked-grab cancel test relies on it).
+        auto nextDue = std::chrono::steady_clock::now() +
+                       std::max(options_.produceInterval, std::chrono::microseconds(1));
         while (running_.load(std::memory_order_acquire)) {
             // Sleep in slices so stop() never waits out a long produce interval.
-            auto remaining = options_.produceInterval;
-            while (remaining > std::chrono::microseconds::zero() &&
-                   running_.load(std::memory_order_acquire)) {
-                const auto step = std::min(remaining, std::chrono::microseconds(1000));
-                std::this_thread::sleep_for(step);
-                remaining -= step;
-            }
-            if (!running_.load(std::memory_order_acquire)) {
-                return;
-            }
-            camera::common::Frame frame;
-            frame.width = options_.width;
-            frame.height = options_.height;
-            frame.linePitch = options_.width;
-            frame.pixelFormat = 0x01080001; // Mono8
-            frame.timestamp = backend::Tools::getTimestamp();
-            frame.data.assign(static_cast<size_t>(options_.width * options_.height), 0);
-            const uint64_t seq = nextSequence_.fetch_add(1, std::memory_order_relaxed) + 1;
-            std::memcpy(frame.data.data(), &seq, sizeof(seq));
-
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
+            for (;;) {
                 if (!running_.load(std::memory_order_acquire)) {
                     return;
                 }
-                if (queue_.size() >= static_cast<size_t>(config_.numBuffers)) {
-                    // No input buffer available: the transport must drop.
-                    underruns_.fetch_add(1, std::memory_order_relaxed);
-                } else {
-                    queue_.push_back(std::move(frame));
-                    newestCompletedSequence_.store(seq, std::memory_order_relaxed);
-                    size_t depth = queue_.size();
-                    size_t peak = peakDepth_.load(std::memory_order_relaxed);
-                    while (depth > peak &&
-                           !peakDepth_.compare_exchange_weak(peak, depth,
-                                                             std::memory_order_relaxed)) {
-                    }
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= nextDue) {
+                    break;
                 }
-                produced_.fetch_add(1, std::memory_order_relaxed);
+                const auto remaining =
+                    std::chrono::duration_cast<std::chrono::microseconds>(nextDue - now);
+                std::this_thread::sleep_for(std::min(remaining, std::chrono::microseconds(1000)));
             }
-            cv_.notify_one();
+            const auto now = std::chrono::steady_clock::now();
+            const auto interval = std::max(options_.produceInterval, std::chrono::microseconds(1));
+            const int64_t owed = 1 + (now - nextDue) / interval;
+            const int64_t cap = std::max<int64_t>(1, config_.numBuffers);
+            const int64_t burst = std::min(owed, cap);
+            nextDue += interval * owed; // lands within one interval of now
+            for (int64_t i = 0; i < burst && running_.load(std::memory_order_acquire); ++i) {
+                produceOne();
+            }
         }
+    }
+
+    void produceOne()
+    {
+        camera::common::Frame frame;
+        frame.width = options_.width;
+        frame.height = options_.height;
+        frame.linePitch = options_.width;
+        frame.pixelFormat = 0x01080001; // Mono8
+        frame.timestamp = backend::Tools::getTimestamp();
+        frame.data.assign(static_cast<size_t>(options_.width * options_.height), 0);
+        const uint64_t seq = nextSequence_.fetch_add(1, std::memory_order_relaxed) + 1;
+        std::memcpy(frame.data.data(), &seq, sizeof(seq));
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!running_.load(std::memory_order_acquire)) {
+                return;
+            }
+            if (queue_.size() >= static_cast<size_t>(config_.numBuffers)) {
+                // No input buffer available: the transport must drop.
+                underruns_.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                queue_.push_back(std::move(frame));
+                newestCompletedSequence_.store(seq, std::memory_order_relaxed);
+                size_t depth = queue_.size();
+                size_t peak = peakDepth_.load(std::memory_order_relaxed);
+                while (depth > peak &&
+                       !peakDepth_.compare_exchange_weak(peak, depth,
+                                                         std::memory_order_relaxed)) {
+                }
+            }
+            produced_.fetch_add(1, std::memory_order_relaxed);
+        }
+        cv_.notify_one();
     }
 
     Options options_;

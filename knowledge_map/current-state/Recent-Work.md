@@ -31,8 +31,17 @@
   filter to `std::terminate()`. The test now lists the crash dir on
   failure. Verified locally (Linux): full `linux-backend-only` CTest
   suite green. Windows-only code path; only verifiable end-to-end via the
-  `build-windows.yml` CI lane. Files: `CrashReporter.cpp`,
-  `crash_reporter_terminate_test.cpp`.
+  `build-windows.yml` CI lane. With that green, the same lane exposed
+  `camera.delivery_mode_contract` as timer-resolution-flaky on Windows:
+  `QueueBackedTestCamera` slept in <=1 ms slices, but a default ~15.6 ms
+  Windows tick made its "2000 fps" producer run at ~64 fps -- the same
+  rate as the quantized "slow" 5 ms consumer -- so the queue never
+  exceeded depth 1 and LatestFrame never discarded (pass/fail depended on
+  whether something on the runner had raised the timer resolution). The
+  producer is now deadline-based with catch-up bursts (bounded to one
+  queue's worth per wake), keeping the nominal rate honest on any timer.
+  Files: `CrashReporter.cpp`, `crash_reporter_terminate_test.cpp`,
+  `tests/support/queue_camera.h`.
 
 - **Shared RS485 bus + Linux serial discovery for the pulse generator**
   (2026-08-31, issue #323 follow-up) — the pulse-generator stack is now
