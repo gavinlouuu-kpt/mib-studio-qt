@@ -26,3 +26,11 @@ M2 operation reconciliation and M3 workflow/layout/drafts remain independent nex
 work. Accepted-backend native M4 experiment and Qt comparison remain blocked.
 
 Related: [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]].
+
+Delivery: draft PR #375, published implementation commit
+`f66a111f1433c52aed6a351000a143eebedb7489` (tree
+`08da89e96bee95ee6a8d8b2eb1ad074a51a2c28a`, identical to local
+`540e18b72cf008a7e0828207c0cd88b8a6802d30`). Desktop CI run
+34086418024 is pending. Bridge CI now also targets staging and develop, so the
+existing full cxx contract suite runs on these branches rather than only the
+Tauri crate tests. No test categories are substituted by this trigger change.
