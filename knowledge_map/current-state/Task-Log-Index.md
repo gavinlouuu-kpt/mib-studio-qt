@@ -7,6 +7,7 @@
 ## By theme
 
 ### Camera lifecycle & hardware SDKs
+- `task/2026-09-07-mindvision-xgc-r5d-strobe-validation.md`
 - `task/2025-11-14-safe-start-stop-egrabber.md`
 - `task/camera-reset.md`
 - `task/fps_mbs_zero.md`
@@ -50,6 +51,7 @@
 - `task/2026-06-02-long-run-frame-growth.md`
 
 ### Trigger / realtime performance
+- `task/2026-09-07-mindvision-xgc-r5d-strobe-validation.md`
 - `task/2026-04-15-trigger-timing-bug.md`
 - `task/2026-04-16-thread-performance-audit.md`
 - `task/2026-07-02-realtime-performance-plan.md`
@@ -88,6 +90,7 @@
 2026-08-07-issue-341-processing-core-wheel-architectures.md
 2026-07-15-ultra96-direct-ddr.md
 2026-08-03-issue-338-mindvision-release-builds.md
+2026-09-07-mindvision-xgc-r5d-strobe-validation.md
 camera-reset.md
 diagnostic-logging.md
 external-config-browse.md

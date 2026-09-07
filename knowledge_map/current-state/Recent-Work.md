@@ -5,6 +5,18 @@
 
 ## Features shipped
 
+- **MindVision XGC + R5D 5 kHz hardware validation** (2026-09-07) — the
+  MV-XG51GM bench requires high-level external signal type 2; edge types 0/1
+  returned no frames. Rigol-gated testing proved 5 kHz camera acquisition and
+  downstream LED current, calibrated R5D pulse duration
+  (`measured ≈ 0.9969 * commanded - 31.75 µs` for commands >=50 µs), and
+  showed the prior 20 µs exposure missed the LED-current window. A 100 µs
+  exposure + 100 µs strobe command gives about 67 µs inferred overlap.
+  Wiring, scope safety, rejected-measurement rules, plots, CSV data, and the
+  R5D purchase reference are in
+  [`docs/howto/mindvision-xgc-r5d-led-strobe.md`](../../docs/howto/mindvision-xgc-r5d-led-strobe.md);
+  task record [[../task/2026-09-07-mindvision-xgc-r5d-strobe-validation]].
+
 - **Shared RS485 bus + Linux serial discovery for the pulse generator**
   (2026-08-31, issue #323 follow-up) — the pulse-generator stack is now
   usable on Linux and correct on multi-drop RS485. New

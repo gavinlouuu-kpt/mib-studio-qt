@@ -153,15 +153,29 @@ contract). `MindVisionApply.cpp` includes the SDK header **without**
 `API_LOAD_MAIN`.
 
 A documented sample config ships at `resources/defaults/mindvisionConfig.json`
-(the GUI seeds a user-writable copy). Its defaults ARE the bench setup for the
-MV-XGC51GM (10GigE, IMX426): **external trigger at 5000 fps** — the Zhongsheng
-pulse generator on TRIG_IN determines the frame rate — with 512×96 ROI (the
-5000 fps figure is only valid at this reduced ROI), `exposure_time_us: 1.0`
-(sensor minimum is 0.8 µs), and strobe in semi-auto/manual mode
-(`strobe_mode: 1`) with `strobe_delay_us: 10`, `strobe_pulse_width_us: 35`
-driving the LED driver from STRB_OUT. Soft-trigger bench variant: change
-`trigger_mode` to 1; free-run: 0 (code defaults for absent keys remain
-free-run/conservative — only the shipped file carries the bench values).
+(the GUI seeds a user-writable copy). It carries the original planned
+MV-XGC51GM (10GigE, IMX426) 5000 fps starting point: external trigger,
+512×96 ROI (5000 fps is only valid at this reduced ROI), 1 µs exposure, and
+manual strobe mode with 10 µs delay / 35 µs width. The 2026-09-07 hardware
+validation below found that this exact trigger type and illumination timing do
+not work on the current R5D bench; apply the runbook overrides before testing.
+Soft-trigger variant: change `trigger_mode` to 1; free-run: 0 (code defaults
+for absent keys remain free-run/conservative).
+
+### MV-XG51GM + R5D bench validation (2026-09-07)
+
+The Linux bench required `trigger_mode: 2` with high-level
+`ext_trig_signal_type: 2`; signal types 0 and 1 returned no frames. Physical
+OUT1 is SDK output index 0 and drives the R5D constant-current LED driver.
+At 5 kHz, a 35 µs strobe command produced no reliable current pulse; commands
+>=50 µs followed `measured ≈ 0.9969 * commanded - 31.75 µs`. An auto-strobe
+exposure sweep inferred exposure start at approximately 47 µs after the
+external trigger. The former 20 µs exposure ended before LED current began;
+100 µs exposure with a 100 µs strobe command provides about 67 µs overlap.
+
+Use the complete wiring, Rigol gating procedure, calibration data, exposure
+overlay, and safety notes in
+[`docs/howto/mindvision-xgc-r5d-led-strobe.md`](../../docs/howto/mindvision-xgc-r5d-led-strobe.md).
 
 ## Gotchas
 

@@ -1,0 +1,7 @@
+exposure_us,current_start_us,current_end_us,current_width_us,inferred_exposure_start_us
+20,,,,
+35,,,,
+50,79.0,98.9,19.8,48.9
+75,79.6,123.2,43.6,48.2
+100,79.2,145.4,66.7,45.4
+125,79.8,170.9,91.1,45.9
