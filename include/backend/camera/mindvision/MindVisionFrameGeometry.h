@@ -78,14 +78,14 @@ inline bool checkedFrameBytes(int width, int height, int bytesPerPixel, std::siz
     const std::uint64_t w = static_cast<std::uint64_t>(width);
     const std::uint64_t h = static_cast<std::uint64_t>(height);
     const std::uint64_t b = static_cast<std::uint64_t>(bytesPerPixel);
-    if (w > std::numeric_limits<std::uint64_t>::max() / h) return false;
+    if (w > (std::numeric_limits<std::uint64_t>::max)() / h) return false;
     const std::uint64_t wh = w * h;
-    if (wh > std::numeric_limits<std::uint64_t>::max() / b) return false;
+    if (wh > (std::numeric_limits<std::uint64_t>::max)() / b) return false;
     const std::uint64_t total = wh * b;
     // Must be representable as size_t and as the SDK's int-sized allocation
     // argument (CameraAlignMalloc takes int).
-    if (total > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return false;
-    if (total > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) return false;
+    if (total > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)())) return false;
+    if (total > static_cast<std::uint64_t>((std::numeric_limits<int>::max)())) return false;
     out = static_cast<std::size_t>(total);
     return true;
 }
