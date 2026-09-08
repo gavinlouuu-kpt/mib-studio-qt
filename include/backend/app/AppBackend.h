@@ -8,6 +8,9 @@
 #include <thread>
 
 #include "backend/app/BackgroundFrame.h"
+#include "backend/app/ExperimentReadiness.h"
+#include "backend/diagnostics/MemoryBudget.h"
+#include "backend/recording/RecordingAccounting.h"
 
 namespace backend::services
 {
@@ -39,6 +42,8 @@ namespace camera::mock
 {
     struct MockCameraOptions;
 }
+
+namespace backend::app { class ExperimentCoordinator; }
 
 namespace backend
 {
@@ -101,6 +106,15 @@ namespace backend
         // Check if a camera is configured (either hardware or mock)
         bool isCameraConfigured() const;
 
+        // Requested vs effective camera source (issue #369). A hardware
+        // selection that could not be honored is reported as a fallback —
+        // readiness refuses to treat it as a successful hardware run, and
+        // it is never silently presented as "mock selected".
+        app::CameraSourceInfo cameraSourceInfo() const;
+
+        // Backend-owned experiment readiness + Start transaction (issue #369).
+        app::ExperimentCoordinator& experiment();
+
         // Frame recording mode: record non-empty frames directly to HDF5 (images + metadata only, no contour processing)
         // Returns false if recording cannot start (e.g., capture not running, file error)
         bool startFrameRecording(const std::string& hdf5FilePath);
@@ -108,6 +122,16 @@ namespace backend
         bool isFrameRecording() const;
         uint64_t frameRecordingCount() const;     // Frames written so far
         uint64_t frameRecordingFiltered() const;   // Empty frames skipped
+        // Explicit per-run frame accounting (issue #367): live (reconciled on
+        // demand) while recording, otherwise the final snapshot of the last
+        // run including its Complete/Partial/Loss/Failed completion state.
+        backend::recording::RecordingAccountingSnapshot recordingAccounting() const;
+
+        // Issue #370: byte-budget view of every host-path memory owner
+        // (camera/SDK buffers, FrameStore, processing queues/retention,
+        // persistence queue, presentation snapshot, exporter) plus process
+        // RSS. Unknown vendor memory is reported as Unknown, never as 0.
+        backend::diagnostics::HostMemoryBudgetSnapshot memoryBudgetSnapshot() const;
 
         // Raw config JSON storage (set by config watcher, read at experiment save)
         void setLastConfigJson(const std::string& json);
@@ -164,6 +188,11 @@ namespace backend
         int selectedMvCameraIndex_{-1};
         std::string lastMindVisionConfigPath_;
         bool mockCameraConfigured_{false};
+        // Issue #369: what was asked for vs what the capture factory builds.
+        std::string requestedCameraSource_{"unknown"};
+        std::string effectiveCameraSource_{"unknown"};
+        std::string cameraFallbackReason_;
+        std::unique_ptr<app::ExperimentCoordinator> experimentCoordinator_;
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;
@@ -174,6 +203,9 @@ namespace backend
         std::atomic<uint64_t> frameRecordingWritten_{0};
         std::atomic<uint64_t> frameRecordingFiltered_{0};
         std::string frameRecordingPath_;
+        mutable std::mutex recordingAccountingMutex_;
+        backend::recording::RecordingAccounting recordingAccounting_;
+        backend::recording::RecordingAccountingSnapshot lastRecordingAccounting_;
 
         mutable std::mutex backgroundCaptureCallbackMutex_;
         BackgroundCaptureCallback backgroundCaptureCallback_;

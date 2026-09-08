@@ -10,9 +10,17 @@
 
 ## Responsibility
 
-- Hold a non-owning `ICamera*` (handed to it by
-  [[CaptureService]]::CameraReadyCallback via
-  [[../architecture/AppBackend]]).
+- Hold a non-owning `ICamera*` **bound to one acquisition session
+  generation** (handed to it by [[CaptureService]]::CameraReadyCallback via
+  [[../architecture/AppBackend]]). `setCamera(camera, generation)` is the
+  session boundary (issue #365): it waits for any in-flight pulse
+  (`pulseMutex_`), clears every pending request (counted in
+  `getDroppedStaleRequestCount()`), then swaps the pointer + generation.
+  After it returns the trigger thread can never touch the previous camera.
+  Requests are stamped with the generation bound at enqueue time and are
+  refused at fire time if a different session is bound, so a request from
+  session N cannot execute against session N+1 after reconnect/restart.
+  Regression guard: `tests/backend/trigger_session_test.cpp`.
 - On `onTargetGroupResult(signal)`, signal the trigger thread to raise the
   configured output line, sleep `pulseDurationUs_`, then lower it.
 - `TargetGroupSignal` carries source identity (`objectId`, `trackId`) plus
@@ -67,8 +75,14 @@ OS scheduling in a 500 fps mock run).
 ## Gotchas
 
 - Camera pointer is non-owning and read via `std::atomic`. If the camera
-  disappears (stop), `setCamera(nullptr)` and `stop()` must be called.
-  `AppBackend` wires this via `CameraReadyCallback`.
+  disappears (stop), `setCamera(nullptr)` and `stop()` must be called
+  **before the camera object is destroyed** — `CaptureService::stop()` and
+  the capture thread's `releaseCamera()` both do this through the ready
+  callback, and `AppBackend::shutdown()` no longer clears that callback
+  before stopping capture. The trigger loop holds `pulseMutex_` for the
+  whole pulse (load pointer → rising edge → busy-wait → falling edge); lock
+  order is `pulseMutex_` before `triggerMutex_` and the loop never holds
+  both.
 - Not all cameras support `setTriggerOutput`. `ICamera::setTriggerOutput`
   returns `false` by default (see [[../camera/ICamera]]).
 - Requires `ProcessingService::enable_target_group` + thresholds to be set.

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <random>
 #include <stdexcept>
 #include <thread>
@@ -96,8 +97,12 @@ int main()
     const int result = [&]() -> int {
         backend::AppBackend backend;
         bridge::BackendFacade facade(backend);
+        // The sink is called from backend threads too (the experiment
+        // coordinator's worker publishes Stopping/terminal), so guard it.
         std::vector<bridge::BackendEvent> events;
-        facade.setEventSink([&events](const bridge::BackendEvent &event) {
+        std::mutex eventsMutex;
+        facade.setEventSink([&events, &eventsMutex](const bridge::BackendEvent &event) {
+            std::lock_guard<std::mutex> lock(eventsMutex);
             events.push_back(event);
         });
 
@@ -187,6 +192,125 @@ int main()
         return 10;
     }
 
+    // Experiment lifecycle through the facade only (shared backend, #372
+    // G2/G3): readiness pull -> Start -> status events -> Stop -> terminal.
+    {
+        bridge::ExperimentCommand evaluate;
+        evaluate.action = bridge::ExperimentCommandAction::EvaluateReadiness;
+        evaluate.outputPath = (dataDir / "facade_run.h5").string();
+        const auto evaluated = facade.dispatch(evaluate);
+        if (!evaluated.ok)
+        {
+            std::cerr << "ExperimentCommand EvaluateReadiness failed: " << evaluated.message << "\n";
+            facade.shutdown();
+            return 20;
+        }
+        backend::app::ExperimentReadinessSnapshot readiness;
+        if (!facade.fetchExperimentReadiness(readiness, evaluate.outputPath) || !readiness.ready)
+        {
+            std::cerr << "fetchExperimentReadiness should be ready with a running mock camera\n";
+            for (const auto &gate : readiness.gates)
+            {
+                std::cerr << "  " << gate.id << " " << backend::app::toString(gate.status) << " " << gate.reason << "\n";
+            }
+            facade.shutdown();
+            return 21;
+        }
+
+        bridge::ExperimentCommand start;
+        start.action = bridge::ExperimentCommandAction::Start;
+        start.outputPath = evaluate.outputPath;
+        start.readinessGeneration = readiness.generation;
+        const auto started = facade.dispatch(start);
+        if (!started.ok || !started.experimentStartOutcome ||
+            *started.experimentStartOutcome != backend::app::ExperimentStartOutcome::Started)
+        {
+            std::cerr << "ExperimentCommand Start failed: " << started.message << "\n";
+            facade.shutdown();
+            return 22;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        backend::app::ExperimentStatus status;
+        if (!facade.fetchExperimentStatus(status) || status.state != backend::app::ExperimentRunState::Active)
+        {
+            std::cerr << "fetchExperimentStatus should report Active\n";
+            facade.shutdown();
+            return 23;
+        }
+        // A second Start while Active is a typed AlreadyActive, never a second run.
+        const auto again = facade.dispatch(start);
+        if (again.ok || !again.experimentStartOutcome ||
+            *again.experimentStartOutcome != backend::app::ExperimentStartOutcome::AlreadyActive)
+        {
+            std::cerr << "second Start should be AlreadyActive\n";
+            facade.shutdown();
+            return 24;
+        }
+
+        bridge::ExperimentCommand stop;
+        stop.action = bridge::ExperimentCommandAction::Stop;
+        const auto stopped = facade.dispatch(stop);
+        if (!stopped.ok || !stopped.experimentStopOutcome ||
+            *stopped.experimentStopOutcome != backend::app::ExperimentStopOutcome::Accepted)
+        {
+            std::cerr << "ExperimentCommand Stop not accepted: " << stopped.message << "\n";
+            facade.shutdown();
+            return 25;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        bool sawTerminal = false;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (facade.fetchExperimentStatus(status) && status.terminal)
+            {
+                sawTerminal = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        if (!sawTerminal || !status.finalizationOk ||
+            status.state != backend::app::ExperimentRunState::Idle ||
+            status.persistenceCommitted != status.persistenceAdmitted)
+        {
+            std::cerr << "ExperimentCommand Stop did not finalize cleanly (terminal=" << sawTerminal
+                      << " ok=" << status.finalizationOk << " state=" << backend::app::toString(status.state)
+                      << " persisted=" << status.persistenceCommitted << "/" << status.persistenceAdmitted << ")\n";
+            facade.shutdown();
+            return 26;
+        }
+        const auto stoppedAgain = facade.dispatch(stop);
+        if (stoppedAgain.ok || !stoppedAgain.experimentStopOutcome ||
+            *stoppedAgain.experimentStopOutcome != backend::app::ExperimentStopOutcome::NotActive)
+        {
+            std::cerr << "Stop after finalization should be NotActive\n";
+            facade.shutdown();
+            return 27;
+        }
+        std::vector<backend::app::ExperimentRunState> seen;
+        {
+            std::lock_guard<std::mutex> lock(eventsMutex);
+            for (const auto &event : events)
+            {
+                if (const auto *e = std::get_if<bridge::ExperimentStatusEvent>(&event))
+                {
+                    seen.push_back(e->status.state);
+                }
+            }
+        }
+        const bool sequenceOk = seen.size() >= 4 &&
+                                seen[0] == backend::app::ExperimentRunState::Starting &&
+                                seen[1] == backend::app::ExperimentRunState::Active &&
+                                seen[2] == backend::app::ExperimentRunState::Stopping &&
+                                seen.back() == backend::app::ExperimentRunState::Idle;
+        if (!sequenceOk)
+        {
+            std::cerr << "expected ExperimentStatusEvent sequence Starting/Active/Stopping/Idle, got " << seen.size()
+                      << " events\n";
+            facade.shutdown();
+            return 28;
+        }
+    }
+
     bridge::RecordingLoadCommand loadRecording;
     loadRecording.filePath = recordingPath.string();
     if (!facade.dispatch(loadRecording).ok)
@@ -240,6 +364,7 @@ int main()
         return 15;
     }
 
+    std::lock_guard<std::mutex> eventsLock(eventsMutex);
     if (!hasEvent<bridge::CameraStatusEvent>(events) ||
         !hasEvent<bridge::PlaybackPositionEvent>(events) ||
         !hasEvent<bridge::FrameReadyEvent>(events) ||

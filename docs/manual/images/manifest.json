@@ -34,6 +34,12 @@
         },
         {
             "captured": true,
+            "file": "sidebar-collapsed.png",
+            "id": "sidebar-collapsed",
+            "title": "Main window with the hardware panel hidden (reopen control in the tab-bar corner)"
+        },
+        {
+            "captured": true,
             "file": "dialog-processing-settings.png",
             "id": "dialog-processing-settings",
             "title": "Settings > Processing Settings dialog"

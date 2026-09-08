@@ -36,6 +36,9 @@ public:
 
     bool grabFrame(Frame& out) override;
     bool pollStats(CameraStats& out) const override;
+    // Frame::timestamp = Coaxlink BUFFER_INFO_TIMESTAMP / per-part custom
+    // timestamps: microseconds since host boot (QPC domain on Windows).
+    TimestampDescriptor timestampDescriptor() const override;
     FrameDeliveryCapabilities deliveryCapabilities() const override;
     FrameDeliveryMode activeDeliveryMode() const override;
     bool pollAcquisitionQueueStats(AcquisitionQueueStats& out) const override;

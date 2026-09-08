@@ -1,5 +1,7 @@
 #include "backend/app/BackendFacade.h"
 
+#include "backend/app/ExperimentCoordinator.h"
+
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackgroundFrame.h"
 #include "backend/camera/mock/MockCamera.h"
@@ -38,6 +40,10 @@ namespace backend::bridge
                 else if constexpr (std::is_same_v<Command, RecordingLoadCommand>)
                 {
                     return BackendCommandType::RecordingLoad;
+                }
+                else if constexpr (std::is_same_v<Command, ExperimentCommand>)
+                {
+                    return BackendCommandType::Experiment;
                 }
                 else
                 {
@@ -126,6 +132,9 @@ namespace backend::bridge
         }
 
         initialized_ = true;
+        backend_.experiment().setStatusCallback([this](const app::ExperimentStatus &status) {
+            emitEvent(ExperimentStatusEvent{status});
+        });
         emitEvent(makeCameraStatus(backend_.isCameraConfigured()
                                        ? CameraState::Configured
                                        : CameraState::Unconfigured));
@@ -139,6 +148,10 @@ namespace backend::bridge
             return;
         }
 
+        // An active experiment is finalized by its owner before the services
+        // it needs are stopped; the last status event is delivered first.
+        backend_.experiment().shutdown();
+        backend_.experiment().setStatusCallback({});
         backend_.stopFrameRecording();
         backend_.capture().stop();
         backend_.processing().stopRealtime();
@@ -225,11 +238,92 @@ namespace backend::bridge
             {
                 return handleRecordingLoadCommand(typedCommand);
             }
+            else if constexpr (std::is_same_v<Command, ExperimentCommand>)
+            {
+                return handleExperimentCommand(typedCommand);
+            }
             else
             {
                 return handlePlaybackSeekCommand(typedCommand);
             }
         }, command);
+    }
+
+    bool BackendFacade::fetchExperimentReadiness(app::ExperimentReadinessSnapshot &out,
+                                                 const std::string &outputPath,
+                                                 const std::string &profileId) const
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = backend_.experiment().evaluateReadiness(outputPath, profileId);
+        return true;
+    }
+
+    bool BackendFacade::fetchExperimentStatus(app::ExperimentStatus &out) const
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = backend_.experiment().status();
+        return true;
+    }
+
+    BackendCommandResult BackendFacade::handleExperimentCommand(const ExperimentCommand &command)
+    {
+        BackendCommandResult result;
+        result.command = BackendCommandType::Experiment;
+        auto &coordinator = backend_.experiment();
+        switch (command.action)
+        {
+        case ExperimentCommandAction::EvaluateReadiness:
+        {
+            const auto readiness = coordinator.evaluateReadiness(command.outputPath, command.profileId);
+            result.ok = true;
+            result.message = readiness.ready ? "ready" : "not ready";
+            if (!readiness.ready)
+            {
+                for (const auto &id : readiness.blockingGateIds())
+                {
+                    result.message += (result.message == "not ready" ? ": " : ", ") + id;
+                }
+            }
+            return result;
+        }
+        case ExperimentCommandAction::Start:
+        {
+            app::ExperimentStartRequest request;
+            request.outputPath = command.outputPath;
+            request.readinessGeneration = command.readinessGeneration;
+            request.profileId = command.profileId;
+            request.acknowledgeLatestFrameDrops = command.acknowledgeLatestFrameDrops;
+            const auto started = coordinator.start(request);
+            result.experimentStartOutcome = started.outcome;
+            result.ok = started.started();
+            result.message = started.message;
+            if (!result.ok)
+            {
+                emitEvent(BackendErrorEvent{BackendErrorSource::Recording, BackendCommandType::Experiment,
+                                            started.message});
+            }
+            return result;
+        }
+        case ExperimentCommandAction::Stop:
+        {
+            const auto outcome = coordinator.requestStop(command.cancelled);
+            result.experimentStopOutcome = outcome;
+            result.ok = outcome == app::ExperimentStopOutcome::Accepted;
+            result.message = app::toString(outcome);
+            return result;
+        }
+        case ExperimentCommandAction::Status:
+            result.ok = true;
+            result.message = app::toString(coordinator.status().state);
+            return result;
+        }
+        return lifecycleError(BackendCommandType::Experiment, "unknown experiment action");
     }
 
     bool BackendFacade::fetchLatestFrame(BackendFrame &out) const
@@ -280,7 +374,7 @@ namespace backend::bridge
         {
         case CameraCommandAction::ConfigureMockCamera:
         {
-            camera::mock::MockCameraOptions options;
+            ::camera::mock::MockCameraOptions options;
             options.folder = std::filesystem::path(command.mockFrameDirectory);
             options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
             options.loopFiles = command.mockLoopFiles;

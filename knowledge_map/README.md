@@ -10,13 +10,14 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[architecture/_MOC|Architecture MOC]]
 - [[architecture/Overview]] — layered design (frontend → backend → services)
 - [[architecture/AppBackend]] — composition root
+- [[architecture/ExperimentCoordinator]] — experiment readiness gates + frozen run snapshot
 - [[architecture/Threading-Model]]
 - [[architecture/Data-Flow]]
 
 ### Services (`src/backend/services/`)
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
-- Persistence: [[services/Hdf5Service]], [[services/SqliteService]]
+- Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
   [[services/TriggerService]], [[services/SerialBus]],

@@ -184,10 +184,15 @@ Run from command line:
    - **Pixel to Micron:** Enter the conversion factor (default: 0.4886)
 
 4. **Export:**
-   - Click the "Export" button
-   - Monitor progress in the status area
-   - The progress bar shows export completion
-   - Click "Cancel" to abort if needed
+   - Click the "Export" button (one export runs at a time; the button stays
+     disabled until the background job has fully finished)
+   - Monitor progress in the status area; the phase label and progress bar
+     advance monotonically through metadata → metrics → valid images →
+     series images → invalid images → publish
+   - Click "Cancel" to abort: the job stops within one frame, the partial
+     output is deleted, and the status shows "Export cancelled"
+   - Closing the window during an export cancels it first and closes only
+     after the worker thread has stopped
 
 5. **Completion:**
    - A message box will appear when export completes
@@ -195,6 +200,26 @@ Run from command line:
      - `<input-basename>_metrics.csv` for CSV-only export
      - `<input-basename>/metrics.csv` for All export
      - `<input-basename>/valid_frame_XXXXXX.tiff` and `<input-basename>/invalid_frame_XXXXXX.tiff` for image exports
+
+### Memory, partial output and repeated exports
+
+- Images are streamed from the HDF5 file one frame at a time, so memory use
+  depends on the frame size, not on the number of frames or the size of the
+  recording. Running many exports in one session keeps a flat memory and
+  timing profile (see `docs/evidence/2026-09-07-exporter-soak/`).
+- Every export is written to a hidden staging name
+  (`.<name>.partial-<job-id>` next to the destination) and renamed to its
+  final name only when it is complete. A cancelled or failed export is
+  removed; if the removal itself fails, the staging folder is kept under its
+  `.partial-` name with an `export-failure.json` manifest. You will never
+  find a normal-looking export folder that is silently incomplete.
+- An image that cannot be written (disk full, permissions) fails the whole
+  export; a frame with an unsupported shape is skipped with a warning.
+- Generated names (`_2`, `_3`, …) are chosen from a single directory listing,
+  so a destination containing hundreds of previous exports costs the same
+  as an empty one.
+- Each job has an id that appears in the status log and in the console log
+  (`export <id>: started / cancelled / failed / completed`).
 
 ## Output Files
 
@@ -320,8 +345,21 @@ The `hdf5_export_app` binary is a standalone Linux executable produced by PyInst
 
 ### Architecture
 
-- `hdf5_export_app.py`: Main GUI application
-- `export_worker.py`: Background worker for non-blocking export operations
-- `export_hdf5.py`: Core export logic (shared with CLI version)
+- `hdf5_export_app.py`: Main GUI application (`ExportWindow`: one
+  `ActiveExport` at a time, deterministic `QThread` teardown, deferred close)
+- `export_worker.py`: `ExportWorker` Qt adapter (immutable job in, progress /
+  result / finished signals out)
+- `hdf_export_engine.py`: Qt-free export engine shared by the GUI and the CLI
+  (`ExportJob` → `run_export_job` → `ExportResult`; streaming, cancellation,
+  transactional output, bounded name lookup)
+- `export_hdf5.py`: CLI adapter and metrics/JSON writers
+- `export_test_fixture.py`, `test_export_hdf5_streaming.py`,
+  `test_hdf5_export_app_lifecycle.py`, `exporter_soak.py`: fixture, tests and
+  the repeated-run soak harness (`python3 scripts/exporter_soak.py --cycles 50`)
 
-The GUI uses Qt signals and slots for communication between the main thread and the worker thread, ensuring the UI remains responsive during export operations.
+The GUI uses Qt signals and slots for communication between the main thread
+and the worker thread; the worker is connected with
+`worker.finished → thread.quit / worker.deleteLater` and
+`thread.finished → thread.deleteLater`, references are released only from the
+thread-finished handler, and `QThread.wait()` / `terminate()` are never used
+on the GUI thread.

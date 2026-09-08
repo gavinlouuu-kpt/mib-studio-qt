@@ -42,6 +42,16 @@ public:
         return config_.deliveryMode;
     }
     bool pollAcquisitionQueueStats(camera::common::AcquisitionQueueStats& out) const override;
+    // Frame::timestamp = steady_clock nanoseconds at delivery (synthetic; a
+    // different unit from Tools::getTimestamp's microseconds).
+    camera::common::TimestampDescriptor timestampDescriptor() const override {
+        camera::common::TimestampDescriptor d;
+        d.domain = camera::common::ClockDomain::HostSteadyNs;
+        d.ticksPerSecond = 1'000'000'000ULL;
+        d.semantic = camera::common::TimestampSemantic::Synthetic;
+        d.validity = camera::common::TimestampValidity::Valid;
+        return d;
+    }
 
     // Simulated digital trigger output so TriggerService works end-to-end in
     // mock mode (headless pipeline dry-runs, latency instrumentation). The

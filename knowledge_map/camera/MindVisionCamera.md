@@ -3,12 +3,20 @@
 > MindVision SDK-backed `ICamera` implementation. Used when the user selects a
 > MindVision device and the build was configured with `MIB_ENABLE_MINDVISION=ON`.
 
-**Source:** `src/backend/camera/mindvision/MindVisionCamera.cpp`,
+**Source:** `src/backend/camera/mindvision/MindVisionCamera.cpp` (SDK-header-free,
+all vendor calls through the seam),
 `include/backend/camera/mindvision/MindVisionCamera.h`,
+`include/backend/camera/mindvision/MindVisionSdk.h` (injectable `SdkOps` seam),
+`src/backend/camera/mindvision/MindVisionSdkReal.cpp` (real MVSDK binding; owns
+`API_LOAD_MAIN` on Windows),
+`include/backend/camera/mindvision/MindVisionFrameGeometry.h` (pure checked
+format/geometry validation),
 `include/backend/camera/mindvision/MindVisionConfig.h` (pure JSON parse + bounds),
 `include/backend/camera/mindvision/MindVisionApply.h` +
 `src/backend/camera/mindvision/MindVisionApply.cpp` (shared SDK apply helper)
-**Tests:** `tests/backend/mindvision_config_test.cpp`
+**Tests:** `tests/backend/mindvision_config_test.cpp`,
+`tests/backend/mindvision_conversion_fault_test.cpp`
+(`backend.mindvision_conversion_fault`, fake SDK — no hardware)
 **Related:** [[ICamera]], [[../services/CameraControlService]],
 [[../services/PulseGeneratorService]], [[../architecture/AppBackend]],
 [[../frontend/ConnectTab]], [[../frontend/ConfigTabs]]
@@ -36,6 +44,62 @@
   output pulse** (TriggerService)
 - `softTrigger()` — **software acquisition trigger** (`CameraSoftTrigger`);
   requires the camera running with `trigger_mode: 1`
+
+## Fail-closed Mono8/geometry contract (issue #366)
+
+`start()` proves the destination buffer is large enough for what the SDK will
+write **before** any conversion can run, and refuses to stream otherwise:
+
+1. `CameraSetIspOutFormat(MONO8)` must succeed — failure is a hard start
+   failure (`mindvision.isp_format_rejected`), never "warn and continue".
+2. `CameraGetIspOutFormat` must succeed and read back Mono8
+   (`mindvision.isp_format_unverified` / `mindvision.geometry.unsupportedFormat`
+   for RGB8/BGR8/Mono16/anything else). Relied-upon SDK guarantee: the
+   readback is the format `CameraImageProcess` writes.
+3. `validateSessionGeometry(width, height, effectiveFormat)`
+   (`MindVisionFrameGeometry.h`) rejects `<= 0` / `> 65535` dimensions and
+   uses checked `width*height*bpp` arithmetic (`checkedFrameBytes`) that also
+   caps at `INT_MAX` for `CameraAlignMalloc`.
+4. The buffer is allocated to exactly the validated `requiredBytes`; the
+   validated `SessionGeometry` is retained (`sessionGeometry()`).
+5. Every incoming frame header is checked with `validateIncomingFrame`
+   against the session allocation **before** `CameraImageProcess`. A
+   mismatch (larger *or* smaller, or a post-process header that disagrees)
+   releases the buffer, counts `geometryRejectedFrames()`, and **faults the
+   stream** (`isRunning()` → false, `lastFailure().code =
+   mindvision.frame.frameGeometryMismatch`). [[../services/CaptureService]]
+   reports it as `StreamEnded` with the message; the buffer is never resized
+   under the SDK. Recovery is a controlled `stop()` → `start()` which
+   re-validates.
+
+Every failure is a structured `CameraFailure{code, message}` via
+`lastFailure()` (codes are listed in `MindVisionCamera.cpp`); there is no
+automatic fallback to a color/unknown output presented as Mono8. Without the
+SDK compiled in, `start()` fails with `mindvision.sdk_unavailable`.
+
+## In-flight SDK operation boundary (issue #365)
+
+`grabFrame` wraps each SDK retrieval in an `InFlightOp` (counter under
+`stateMutex_`, taken only while running). `stop()` clears `running_`, calls
+`CameraStop` (which returns a blocked `CameraGetImageBuffer`), then waits on
+`inFlightCv_` for the count to reach zero — bounded by
+`setInFlightDrainTimeout` (5 s default; the SDK retrieval itself times out at
+100 ms) — before freeing the buffer and `CameraUnInit`. If the drain times
+out (wedged driver) the handle and buffer are **abandoned** (leaked) and
+`mindvision.inflight_drain_timeout` is recorded rather than uninitializing a
+handle under a live call. `setTriggerOutput`/`softTrigger`/stats calls take
+`stateMutex_` and check `running_ && hCamera_ >= 0`, so they cannot reach a
+closed handle either.
+
+## Timestamps (issue #368)
+
+`tSdkFrameHead::uiTimeStamp` is a 32-bit device capture counter in 0.1 ms
+ticks; `grabFrame` stores `Frame::timestamp = ticks × 100000` (ns) and keeps
+the native value in `Frame::rawDeviceTicks`. `timestampDescriptor()` reports
+`deviceTicks @1e9 Hz (native 10000 Hz), deviceCapture, valid, 32-bit`. The
+device clock is not comparable to `Tools::getTimestamp()`
+(`timestampsHostComparable=false`), so frame age is `Unsupported` for this
+backend.
 
 ## Acquisition trigger modes
 
@@ -174,16 +238,21 @@ free-run/conservative — only the shipped file carries the bench values).
 - The implementation accepts namespaced or flat SDK include layouts. Windows
   looks for `MindVision/CameraApiLoad.h` / `CameraApiLoad.h`; Linux/macOS look
   for `MindVision/CameraApi.h` / `CameraApi.h`.
-- On Windows, `MindVisionCamera.cpp` owns the SDK dynamic-loader definitions
+- On Windows, `MindVisionSdkReal.cpp` owns the SDK dynamic-loader definitions
   by defining `API_LOAD_MAIN`; other MindVision users include the loader as
   extern declarations. Unix builds have ordinary linked C functions and do
   not define a loader table.
 - `grabFrame` copies out of `outBuffer_` **while holding `stateMutex_`** —
   `stop()` frees the buffer under the same lock, so the copy must not be moved
   outside the locked region (use-after-free on stop/start churn).
-- `CameraSetIspOutFormat(MONO8)` is applied unconditionally: `outBuffer_` is
-  sized 1 byte/px and the pipeline is mono8-only, so a color sensor left at
-  the ISP's 3-byte default would overrun the buffer.
+- `CameraSetIspOutFormat(MONO8)` + readback is a hard gate (see the
+  fail-closed contract above): `outBuffer_` is sized 1 byte/px and the
+  pipeline is mono8-only, so a color sensor left at the ISP's 3-byte default
+  would overrun the buffer.
+- `MindVisionCamera.cpp` must stay free of vendor headers
+  (`scripts/test_mindvision_release_gate.py` checks the SDK include lives in
+  `MindVisionSdkReal.cpp`); inject a `SdkOps` table through the constructor
+  to test any SDK-facing behavior (`tests/support/fake_mindvision_sdk.h`).
 - Runtime deployment copies the MindVision DLL next to the app when Windows
   packaging is enabled. Linux build RPATH resolves the provisioned `.so`; the
   macOS provisioner converts the dylib install name to `@rpath` and re-signs it.
@@ -192,3 +261,13 @@ free-run/conservative — only the shipped file carries the bench values).
 - Naming: "trigger output" / `TriggerService` vocabulary means the **sort
   pulse** (camera → sorter). The acquisition trigger (pulse generator →
   camera) uses `softTrigger` / `acq_trigger_*` / `ext_trig_*` naming.
+
+## Abandoned handle and its buffer (2026-09-08)
+
+When `stop()` cannot drain an in-flight SDK call within
+`inFlightDrainTimeout_` it abandons the handle (never `CameraUnInit` under a
+live call) and parks the ISP output buffer in `abandonedBuffer_`; the
+destructor frees it once `inFlightOps_` is zero (the wedged call returned),
+otherwise it stays leaked for good. LeakSanitizer flagged the unconditional
+leak in `backend.mindvision_conversion_fault` ("wedged driver").
+

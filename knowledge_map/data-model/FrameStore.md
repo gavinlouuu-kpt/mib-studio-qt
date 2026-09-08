@@ -57,8 +57,12 @@ void pushFrame(src, size, w, h, linePitch, pixelFormat, timestamp,
 // put a uniform 0-2 ms wait in front of every frame.
 uint64_t waitForFrame(uint64_t lastSeenTotal, std::chrono::microseconds timeout);
 
-bool getLatest(Frame& out) const;
-bool getByWriteIndex(uint64_t idx, Frame& out) const;
+bool getLatest(Frame& out) const;                 // latest COMMITTED frame
+bool getByWriteIndex(uint64_t idx, Frame& out) const; // wrapper: Available only
+FrameReadOutcome readByWriteIndex(uint64_t idx, Frame& out) const; // typed (issue #367)
+uint64_t committedCount() const;   // publication count (<= totalWritten())
+uint64_t latestCommittedIndex() const;
+void setCommitHookForTests(std::function<void(uint64_t)>); // barrier between reserve and commit
 bool getByWriteIndexROI(uint64_t idx, int roiX, int roiY, int roiW, int roiH,
                         Frame& out) const;  // avoids full-frame copy
 
@@ -75,6 +79,10 @@ bool saveFramesToAvi(path, startTs, endTs, /*useTs=*/true, fps, filterFn);
 
 bool resize(size_t newCapacity);
 size_t estimateMemoryBytesForCapacity(size_t capacity) const;
+// Issue #370: measured retained bytes (slot allocations, resident even
+// when stale), peak, retained frame count, capacity x reserved frame
+// bytes as the declared bound, overwrites as evictedByBudget. Lock-free.
+backend::diagnostics::MemoryOwnerStats memoryStats() const;
 ```
 
 ### AVI codec choice
@@ -92,6 +100,28 @@ grayscale AVIs and can crash trying. Confirmed to play in **VLC**, and
 it round-trips cleanly through `cv::VideoCapture` and ImageJ, so mask
 regeneration is unaffected. Use VLC (or ImageJ) to preview saved
 buffers visually.
+
+## Publication contract (issue #367)
+
+`pushFrame` **reserves** the next index first (`totalWritten()` advances, the
+`CrashStateMirror` mirrors it) and only after the image + metadata copy under
+the slot lock **commits** it (`committedCount()` advances, release-ordered).
+With the single capture producer, commit order equals reservation order, so
+every index below `committedCount()` is readable unless evicted.
+`readByWriteIndex` returns one of `Available` (slot holds exactly this index,
+usable geometry), `NotYetCommitted` (index reserved or beyond the reservation
+but not published; also the slot still holding the *previous* occupant), 
+`Overwritten` (evicted: a newer frame occupies the slot), `Malformed` (zero
+geometry / pitch < width / payload shorter than `(h-1)*pitch + w`), or
+`OutOfRange` (empty store). `getLatest()` uses `latestCommittedIndex()` and the
+same identity check, so it can never expose a slot whose copy is in progress;
+`getByWriteIndex` is `readByWriteIndex(...) == Available`. Consumers that must
+account for every index (the raw-recording loop, experiment accounting) switch
+on the outcome: `NotYetCommitted` → wait/retry without claiming the index;
+`Overwritten`/`Malformed` → claim and count as store loss. Guarded by
+`tests/backend/frame_store_commit_test.cpp` (`backend.frame_store_commit`),
+which uses `setCommitHookForTests` as a deterministic barrier inside the
+reserve→commit window.
 
 ## Threading
 
@@ -157,6 +187,12 @@ this is safe because every hot-path op acquires the shared structural lock
   the ring does not allocate — without it the first `capacity` pushes each
   allocate a slot buffer mid-stream. The empty-frame filter path reuses a
   `thread_local` scratch `Frame` rather than allocating a temp per frame.
+- Retained-byte accounting (issue #370, [[../diagnostics/MemoryBudget]]):
+  `slotBytes_` mirrors each slot's `data.capacity()` (updated under the slot
+  lock in `pushFrame`, under the exclusive lock in `reserveFrameBytes` /
+  `resize`) and `retainedBytes_` / `peakRetainedBytes_` are relaxed atomics,
+  so `memoryStats()` never takes a lock. Guard: `processing.memory_budget`
+  (reserve → plateau across overwrites → resize re-account).
 - `saveFramesToAvi` serialises frames while holding the mutex only long
   enough to snapshot the range; the VideoWriter loop runs outside the
   lock. Same pattern as `saveFramesToDisk`.

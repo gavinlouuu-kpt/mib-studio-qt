@@ -32,6 +32,13 @@ bool loopFiles{true};
   to hit `frameInterval`. Returns false when `loopFiles == false` and
   the list is exhausted.
 
+## Timestamps (issue #368)
+
+`Frame::timestamp` is `std::chrono::steady_clock` nanoseconds at delivery
+(`timestampDescriptor()`: `hostSteadyNs @1e9 Hz, synthetic`). It is a
+different unit from `Tools::getTimestamp()` microseconds, so the mock does
+not claim `timestampsHostComparable`.
+
 ## Gotchas
 
 - Mock camera **simulates** trigger output: `setTriggerOutput` flips an

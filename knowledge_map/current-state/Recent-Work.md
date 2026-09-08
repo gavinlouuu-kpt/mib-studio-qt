@@ -5,6 +5,320 @@
 
 ## Features shipped
 
+- **Crash dump review + fixes from the code review** (2026-09-08) — 62 crash
+  reports in `%LOCALAPPDATA%\MIB_Studio_Qt\crashes` (never uploaded) and
+  five WER dumps reviewed with WinDbg; findings in
+  `docs/evidence/2026-09-08-crash-dump-review.md`. The one symbolized crash
+  (installed 1.0.7, exit with an HDF5 file open) is mitigated by
+  `H5dont_atexit()` in `Hdf5Service` (guard `recording.hdf5_exit_teardown`).
+  From the review of the shared-backend work: the experiment-buffer append
+  is gated on the admitted index range like the outcome counting, and the
+  async-batch realtime mode now participates in the accounting (admission
+  at enqueue, one outcome per frame in the batch callback, `endExperiment()`
+  drains the batch queue + in-flight batch); experiment 3 of
+  `processing.experiment_accounting` runs in both modes. The OpenCV ROI
+  assertion seen 7× on 1.0.7 was the Monitoring tab cropping accumulated
+  frames with the current, unclamped ROI (fixed via
+  `frontend/tabs/MonitoringRoiCrop.h`, guard `frontend.monitoring_roi_crop`).
+  The intermittent silent exit crash after a run is still open, but the next
+  occurrence will be symbolizable: the SIGSEGV path now writes the dump with
+  the CRT's exception pointers, the sidecar carries a `crash` object and the
+  exe build id, and `init()` keeps the running binary's PDB under
+  `%LOCALAPPDATA%\MIB_Studio_Qt\symbols\<build id>\` (guard
+  `backend.crash_reporter_segv`).
+
+- **Shared backend experiment lifecycle (issue #372 G2/G3)** (2026-09-08) —
+  `ExperimentCoordinator` now owns the run after Start: a worker thread runs
+  the periodic flush and, on `requestStop()`, the whole finalization (drain,
+  stop-time remainder through the flush path, experiment info, accounting,
+  acquisition provenance, config JSON, close) and publishes a terminal
+  `ExperimentStatus` (completion from the reconciled accounting,
+  `finalizationOk`, fault code). `onFatalSaveError()` finalizes as `Failed`
+  with a readable file; `shutdown()` is bounded and idempotent and runs
+  first in `AppBackend::shutdown()`. `ExperimentRunState` carries the bridge
+  contract values (`Idle=0 … Failed=4`; `Running` renamed `Active`).
+  `BackendFacade` exposes it as `ExperimentCommand` (type 6; EvaluateReadiness /
+  Start / Stop / Status), `fetchExperimentReadiness/Status`, typed
+  start/stop outcomes and `ExperimentStatusEvent` (kind 8). `MainWindow` is a
+  client: `requestStop` + `onExperimentStatus`; the flush/finalize
+  `QFutureWatcher`s, every `Hdf5Service` call in the stop path and the
+  realtime-mode restore are gone. Spec:
+  `docs/superpowers/specs/2026-09-08-shared-backend-experiment-lifecycle-design.md`;
+  plan: `docs/superpowers/plans/2026-09-08-shared-backend-experiment-lifecycle.md`.
+  Tests: `backend.experiment_readiness` (finalize Complete with the
+  remainder committed, fatal → Failed + readable file, Busy/NotActive,
+  shutdown while Active), `backend.facade_boundary` (readiness pull → Start →
+  Starting/Active/Stopping/Idle events → Stop → terminal).
+
+- **Fix: clean runs labelled IntentionallyPartial; accounting dialog held the
+  file open** (2026-09-08) — Found by the first recording soak with real
+  detections (mock camera fed with the Hugging Face `gavinlouuu/512x96stream`
+  frames, 5 min at 1000 fps, 36,592 frames persisted): every frame was in
+  the HDF5 (36,075 valid + 517 invalid rows matched the counters) but the 49
+  frames the frontend appended at stop stayed `persistencePendingAtStop`, so
+  `reconcile()` returned IntentionallyPartial. `MainWindow::finishStopExperiment`
+  appended `getValidFrames()` copies directly, bypassing the write queue that
+  credits `persistenceCommitted`, and the copies stayed "buffered". It now
+  routes the remainder through `flushBufferedFrames()` + `finishFlush()`
+  (verified: 284/284 committed, 0 pending). The same run showed the
+  "Experiment Accounting" QMessageBox blocking finalization for 108 s with
+  the HDF5 still open; it is now deferred until after `closeFile()` and
+  `finish()`. Both are the G3 gap of the #372 handoff (finalization owned by
+  the Qt window) and argue for moving finalization into the coordinator. See
+  [[../frontend/MainWindow]].
+
+- **Windows bench acceptance of the reliability release branch** (2026-09-08)
+  — `claude/host-sdk-reliability-qt-ui-g03ubd` did not compile on Windows
+  (MSVC `min`/`max` macros vs `std::numeric_limits<T>::max()` in
+  `MindVisionFrameGeometry.h` and a new `std::max` after `<windows.h>` in
+  `MainWindow.cpp`; Linux CI never sees either) — fixed with the macro-proof
+  `(std::numeric_limits<T>::max)()` spelling and `NOMINMAX`. All seven new
+  Qt-widget tests then fail-fast crashed under CTest on Windows because they
+  force `QT_QPA_PLATFORM=offscreen` and windeployqt ships only
+  `qwindows.dll`; the Windows crash dialog held each dead process until the
+  CTest timeout, which is what the 120-240 s "stalls" were. New
+  `cmake/MIBQtOffscreenTests.cmake` (`mib_apply_qt_offscreen_plugin_path()`,
+  called at the end of both CMakeLists that register `frontend.*` tests)
+  points the tests at the Conan Qt plugin directory per configuration and at
+  the system font directory (the offscreen platform has no font database on
+  Windows, which inflated every text metric and failed the layout-budget
+  assertions in `frontend.ui_layout`, `frontend.config_tabs_state`,
+  `frontend.monitoring_tune`). `backend.capture_lifecycle` failed
+  deterministically on Windows in the "slow stop + concurrent start" case:
+  the rig shares one `Observations` across the cameras its factory creates
+  and never cleared `destroyed`, so a second session legitimately admitted
+  during the 150 ms stop (the 2 ms sleeps are ~15 ms on a coarse-timer
+  host) was misreported as access-after-destroy; the factory now clears the
+  flag. Bench results after the fixes, merged with develop (`b309061a`,
+  which carries the shared GenTL handle and the crash-reporter /
+  delivery-mode test fixes this branch predates): fast lane 93/94 (only
+  `scripts.exporter_soak`, needs PySide6 on the host), integration 10/10,
+  hardware 5/5 (pump skipped), frontend 19/19; app auto-connects to the
+  EoSens/Coaxlink camera, streams 1920x1080 for 3 min with threads 97→91,
+  handles 730→714, working set plateauing at 10.2 GB (the 5000-slot
+  FrameStore), closes cleanly mid-capture, no crash artifacts. See
+  [[../services/CameraControlService]] for the GenTL lockout this branch
+  must pick up from develop.
+
+- **MindVision hardware-host acceptance evidence** (2026-09-07, epic #371).
+  The real MV-XG51GM passed `hardware.camera` on an immediate rerun and a
+  temporary `CameraController` harness completed 50 start/stop generations
+  with bounded stops and ordered trigger teardown. Deterministic conversion,
+  readiness, timestamp/telemetry, delivery-mode and memory guards passed.
+  The remaining real-hardware UI, format/geometry fault-injection, recording
+  soak and delivery-mode gates were recorded as not run after the SDK began
+  returning AIA access denied pending a physical reset; Windows-only gates
+  were also recorded as not run. The initial frontend hardware-host stall
+  remained non-reproducible and its cause unknown; synchronous serial-port
+  enumeration during `ConfigTabs` construction is tracked separately as
+  TD-8. Evidence: `docs/evidence/2026-09-07-mindvision-acceptance/`.
+
+- **Reliability release evidence** (2026-09-07, epic #371). The release
+  matrix (criterion → implementation → deterministic guards → evidence),
+  lane results (99 backend/scripts tests, 19 frontend tests, TSan runs,
+  screenshot tour), the required-evidence checklist and the open hardware
+  items live in `docs/evidence/2026-09-07-reliability-release-371/`; the
+  phase/commit map is [[../task/2026-09-07-reliability-release-371]]. The
+  nightly `soak.yml` now also runs `performance.memory_budget`.
+
+- **Byte-budgeted ownership + bounded presentation** (2026-09-07, issue
+  #370 — reliability release #371 phase 7). New header-only
+  [[../diagnostics/MemoryBudget]] (`MemoryOwnerStats` with Measured /
+  Estimated / Unknown knowledge, `ByteAccountant`,
+  `HostMemoryBudgetSnapshot`) and the extracted `ExperimentFrameBuffer`
+  (frame cap **and** byte budget, invalid-first eviction, every drop
+  reported). [[../services/ProcessingService]] reports experiment buffer /
+  monitoring rings / batch queue / flush queue / snapshot bytes, gains
+  `setMaxBufferedBytes` (`experiment_buffer_max_mb`, default 512 MiB) and a
+  batch-queue byte budget, and no longer clones the source + mask per
+  object in `processBatch` / the async workers. [[../data-model/FrameStore]]
+  measures retained slot bytes lock-free; [[../architecture/AppBackend]]
+  `memoryBudgetSnapshot()` adds SDK buffers (estimated or explicitly
+  unknown) and the streaming exporter; the [[../frontend/MainWindow]]
+  Diagnostics dialog lists every owner plus the preview's presentation
+  counters. Tests: `processing.memory_budget` (+TSan),
+  `performance.memory_budget`; evidence in
+  `docs/evidence/2026-09-07-memory-budget/`.
+
+- **Monitoring tune panel: criteria with units, dirty/conflict state,
+  fixed Apply/Revert, acknowledged apply path** (2026-09-07, issue #364 —
+  reliability release #371 phase 6d). New pure `ProcessingConfigDraft`
+  ([[../frontend/System-Utilities]]): exposed-field mapping (labels, units,
+  JSON paths), changed-field patches that never rewrite untouched
+  high-precision values, Refreshed/Unchanged/Conflict/Deferred external
+  baselines, single-flight apply lifecycle. [[../frontend/ExperimentMonitoringTab]]
+  regroups each criterion with its enable switch (checkable groups, full
+  names, µm²), separates *Cell acceptance filters* from *Target group /
+  sorting gate*, keeps Apply changes / Revert / state text in a footer
+  outside the scroll area, and fits 220–280 px. `AppConfigWatcher` gains
+  `applyProcessingDraft` (validate → fingerprint-checked, patch-only
+  QSaveFile write preserving unknown keys → runtime patch → read-back
+  confirmation; self-write echo recognised by fingerprint) replacing the
+  whole-section `writeBackProcessingConfig`; [[../frontend/MainWindow]] wires
+  request/result and raises `tune.conflict` / `tune.apply` alerts. Tests:
+  `frontend.config_draft`, `frontend.monitoring_tune`, `frontend.config_apply`.
+
+- **Run state, alerts and metrics separated; async experiment
+  finalization** (2026-09-07, issue #363 — reliability release #371 phase
+  6c). New `RunStatusModel`/`UiAlertModel` and `RunStatusWidget`/
+  `AlertBanner` ([[../frontend/System-Utilities]]); [[../frontend/MainWindow]]
+  projects the run lifecycle (operation ids, latched failure survives a
+  later Complete), raises keyed aggregated alerts (`save.fatal`,
+  `save.flush`, `save.metadata`, `run.accounting`, `camera.start`,
+  `processing.core`, `config.conflict`) into a persistent wrapping banner
+  with Acknowledge ≠ resolve, keeps one bounded compact metrics line in the
+  status bar and moves verbose telemetry/identities into a non-modal
+  **Diagnostics…** dialog. `onUpdateStats` is split into sample / render /
+  diagnostics so a stats tick can never erase an error; Stop is two-phase
+  (Stopping → Saving on a worker via `finalizeWatcher_` →
+  `finishStopExperiment`). Tests: `frontend.run_status_model`,
+  `frontend.run_status_ui`.
+
+- **Config inspector: explicit edit state, bounded header, responsive
+  Preview inspector** (2026-09-07, issues #361 and #362 — reliability
+  release #371 phase 6b). [[../frontend/ConfigTabs]]: per-document
+  `ConfigDocumentState` (dirty = content comparison, conflict retained
+  while hidden), checked `ConfigDocumentStore` saves (QSaveFile, stale
+  baseline detected), primary header = Profile · state · Reset · Save ·
+  **More…** menu, elided path row + wrapping notices, passive vs
+  intentional profile refresh, geometry-only 1/2/3-column reflow, JS/MV
+  pages in scroll areas, two-row MindVision form.
+  [[../frontend/PreviewPage]]: `InspectorMode` Expanded/Compact/Hidden with a
+  stable mode bar, image-biased default (no 50/50), versioned
+  `Preview/*` preference clamped to the viewport, deliberate drag clamp,
+  temporary workflow override that never overwrites the preference. Tests:
+  `frontend.config_document_state`, `frontend.config_tabs_state`,
+  `frontend.preview_layout`.
+
+- **Viewport-safe layout + single-owner sidebar** (2026-09-07, issues #358
+  and #359 — reliability release #371 phase 6a). New `ElidingLabel` and pure
+  `WindowGeometryPolicy` ([[../frontend/System-Utilities]]); one
+  window-geometry restore/validate/save path in [[../frontend/MainWindow]]
+  (`Window/*` versioned settings, removed-monitor recovery, coalesced
+  screen-change fit, no unconditional resize in `main.cpp`); the main
+  splitter is the sole owner of the hardware panel width (preference in
+  `Sidebar/*` v1, migrated from the legacy keys; drag→collapse→expand
+  restores the width; narrow windows clamp/compact/hide-for-space without
+  resizing the window; stable `hardwarePanelAct`/`hardwarePanelBtn` reopen
+  control, `Ctrl+Shift+H`); status text elided; Review file row split with a
+  **More…** menu and elided path ([[../frontend/HdfReviewTab]]); screenshot
+  tour asserts actual geometry and adds `sidebar-collapsed`
+  ([[../frontend/Screenshot-Tour]]). Tests: `frontend.window_geometry_policy`,
+  `frontend.ui_layout`.
+
+- **Exporter stability: bounded memory, transactional output,
+  deterministic worker lifecycle, 50-run soak** (2026-09-07, issue #344 —
+  reliability release #371 phase 5). Python: new `scripts/hdf_export_engine.py`
+  (frozen `ExportJob`/`ExportProgress`/`ExportResult`, one-frame-at-a-time
+  streaming, `threading.Event` cancel, `.partial-<job>` staging + rename,
+  single-listing name lookup); `export_hdf5.py` is a CLI adapter;
+  `export_worker.py` / `hdf5_export_app.py` use the
+  `finished→quit/deleteLater` chain, no GUI `wait()`, single-flight, deferred
+  close. Native: new [[../services/HdfExportService]] (Qt-free, own reader,
+  cancellable, transactional) + `Hdf5Service` open-object diagnostics;
+  [[../frontend/HdfReviewTab]] exports run asynchronously with progress /
+  cancel and batch no longer swaps the live reader. Tests:
+  `scripts.export_hdf5_streaming`, `scripts.hdf5_export_app_lifecycle`,
+  `recording.hdf_export_service` (+TSan), soak gates
+  `scripts.exporter_soak` / `recording.hdf_export_soak`; evidence in
+  `docs/evidence/2026-09-07-exporter-soak/`. Notes:
+  [[../task/2026-08-24-exporter-stability]].
+
+- **Backend readiness transaction + immutable run snapshot + bounded
+  background calibration** (2026-09-06, issue #369 + host portion of #274 —
+  reliability release #371 phase 4). New
+  [[../architecture/ExperimentCoordinator]] (`ExperimentReadiness.h`,
+  `ExperimentCoordinator.{h,cpp}`): generation-tagged `evaluateReadiness()`
+  over 16 gates (camera session/source/delivery/geometry, ROI, core pin,
+  config, calibration factor, background, trigger binding, output storage,
+  HDF5/recording/experiment lifecycle, unresolved fault, transport-loss
+  telemetry; unknown is never Pass) and a serialized `start()` that refuses a
+  stale generation, opens HDF5, persists the frozen `RunConfigurationSnapshot`
+  (`/run_provenance` `run_snapshot_json` + `readiness_json`, schema v1) and
+  only then enters Running; `finish()`, `reportUnresolvedFault()`.
+  [[../architecture/AppBackend]] `cameraSourceInfo()` records requested vs
+  effective camera source — every former silent mock fallback now carries a
+  reason and blocks `camera.source`. [[../services/ProcessingService]]
+  `backgroundGeneration()` / `backgroundSha256()` and the finite, cancellable
+  `startBackgroundCalibration()` (`Succeeded / FailedInsufficient /
+  FailedTimeout / FailedProcessing / Cancelled`, previous background
+  preserved on every non-success). [[../frontend/MainWindow]] Start/Stop run
+  through the coordinator (gate dialog with remediation, typed outcomes);
+  Preview canvas menu gained "Calibrate Background (bounded)". Test:
+  `backend.experiment_readiness` (normal + TSan).
+
+- **Timestamp semantics + per-metric telemetry validity** (2026-09-06,
+  issue #368 — reliability release #371 phase 3). New
+  `camera/common/TimestampValue.h` (`ClockDomain`, `TimestampSemantic`,
+  `TimestampValidity`, `TimestampDescriptor`, checked `toNanoseconds()`,
+  cross-domain-refusing `differenceNs()`, `detectCounterWrap()`,
+  `legacyTimestampInterpretation()`); every `ICamera` declares
+  `timestampDescriptor()` and `Frame::rawDeviceTicks` keeps the native
+  counter ([[../camera/ICamera]] table). New `services/TelemetrySample.h`
+  (`MetricValidity`, `MetricSample`, `AcquisitionTelemetrySnapshot`);
+  [[../services/CaptureService]] `telemetrySnapshot()` gives each metric its
+  own validity/freshness/generation, resets everything to Unavailable at
+  session start, and never turns an unsupported field into a zero.
+  `Hdf5Service::write/readAcquisitionProvenance` persist descriptor +
+  telemetry (`timestamp_*`/`telemetry_*`, schema v1; legacy files read as
+  unsupported/unavailable). Status bar + statistics panel render rates via
+  `StatsDisplayManager::formatMetric` (`n/a`, `unsupported`, `N (stale x s)`).
+  Test: `backend.timestamp_telemetry`.
+
+- **Explicit host-frame accounting** (2026-09-06, issue #367 — reliability
+  release #371 phase 2). New Qt-free
+  `include/backend/recording/RecordingAccounting.h`: `FrameOutcome`
+  (Empty / Processed / RejectedByScientificFilter / ProcessingFailed /
+  StoreOverwritten / StoreNotCommitted / StoreMalformed / PersistenceFailed /
+  PendingAtStop / CancelledByPolicy), `RecordingAccounting` counters,
+  `reconcile()` → `RunCompletionState` (Complete / IntentionallyPartial /
+  IncompleteLoss / Failed / Unknown) with the equations `admitted = Σ frame
+  terms` and `persistenceAdmitted = committed + failed + pending +
+  cancelledByPolicy`; an unreconciled run is always `failed`.
+  [[../data-model/FrameStore]] gained a publication boundary
+  (`committedCount()`, typed `readByWriteIndex`, `getLatest` on committed
+  identity, test commit hook). [[../services/ProcessingService]] gained
+  `classifyFrameWithActiveKernel` (a core failure/exception is
+  `ProcessingFailed`, never empty) and per-experiment accounting on the
+  realtime path; the raw-recording loop in [[../architecture/AppBackend]] and
+  `MainWindow::onStopExperiment` reconcile and persist the snapshot through
+  `Hdf5Service::writeRunAccounting` (versioned `accounting_*` attributes,
+  legacy files read as Unknown); [[../frontend/HdfReviewTab]] shows the
+  completion state and per-category counts. Tests:
+  `backend.frame_store_commit`, `processing.experiment_accounting`,
+  `recording.accounting`.
+
+- **Host-camera lifecycle single-owner + MindVision fail-closed conversion**
+  (2026-09-06, issues #365, #366 — reliability release #371 phase 1).
+  [[../services/CaptureService]] now owns an explicit
+  `Idle/Starting/Running/Stopping/Faulted` state machine with a per-session
+  generation (`CaptureLifecycle.h`): `requestStart()` returns a typed
+  `CaptureStartOutcome`, `lifecycleSnapshot()` is the authoritative
+  "camera ready" truth (start acceptance ≠ hardware readiness), a worker that
+  dies on its own parks in `Faulted` with its thread joinable until the next
+  start/stop **reaps** it (no more `std::terminate` on restart-after-fault),
+  and every transition/failure is generation-checked. The camera-ready
+  callback carries `(ICamera*, generation)`; [[../services/TriggerService]]
+  `setCamera(cam, gen)` waits for any in-flight pulse (`pulseMutex_`),
+  clears + counts stale requests, and refuses generation-mismatched requests
+  at fire time. `AppBackend::shutdown()` stops capture with the callback
+  still wired so the trigger thread releases the camera before it is
+  destroyed. [[../camera/MindVisionCamera]] is rebuilt on an injectable
+  `SdkOps` seam (`MindVisionSdk.h`, real binding in `MindVisionSdkReal.cpp`):
+  `start()` fails closed unless `CameraSetIspOutFormat(MONO8)` succeeds *and*
+  `CameraGetIspOutFormat` reads back Mono8, geometry passes checked
+  `width*height*bpp` validation (`MindVisionFrameGeometry.h`), and every
+  incoming frame header is validated against the session allocation before
+  `CameraImageProcess` (mismatch → structured stream fault, never a resized
+  buffer); `stop()` waits (bounded) for in-flight SDK ops before
+  `CameraUnInit` and abandons the handle instead of freeing it under a live
+  call. New `ICamera::lastFailure()` (`CameraFailure{code,message}`) flows
+  into the capture snapshot. Tests: `backend.capture_lifecycle` (blocked
+  grab, slow teardown, start failure, natural exit + direct restart, 120-cycle
+  stress), `backend.trigger_session`, `backend.mindvision_conversion_fault`
+  (format-set failure, RGB/BGR/Mono16 readback, bad dims, overflow,
+  mid-session geometry change, byte-identical Mono8, stop-while-in-flight,
+  wedged driver).
 - **Fix: nanopositioner probe rejected a resting stage** (2026-09-08) — the
   CoreMorrow controller at 0 V reports about -1 mV; `PROBE_VOLTAGE_MIN` was
   0.0, so `AutofocusService::probeComPort` failed about one run in four

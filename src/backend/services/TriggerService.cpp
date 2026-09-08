@@ -54,7 +54,14 @@ TriggerService::~TriggerService() {
 }
 
 void TriggerService::start() {
+    // start() runs on the capture thread (camera-ready callback) while stop()
+    // may run on the GUI thread: thread_ itself needs a lock (issue #365).
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     if (running_.load()) return;
+    if (thread_.joinable()) {
+        // A previous loop that exited is reaped before a new one is assigned.
+        thread_.join();
+    }
     running_.store(true);
     backend::diagnostics::CrashStateMirror::instance().trigger.running.store(true);
     thread_ = std::thread(&TriggerService::triggerLoop, this);
@@ -62,6 +69,9 @@ void TriggerService::start() {
 }
 
 void TriggerService::stop() {
+    // The trigger loop never takes lifecycleMutex_, so joining under it is
+    // deadlock-free; it serializes stop() against a concurrent start().
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     if (!running_.load()) return;
     // Clear running_ while holding triggerMutex_ (the mutex the trigger thread
     // holds when evaluating its wait predicate) before notifying. Storing it
@@ -81,8 +91,29 @@ void TriggerService::stop() {
     SPDLOG_INFO("TriggerService stopped");
 }
 
-void TriggerService::setCamera(camera::common::ICamera* camera) {
-    camera_.store(camera, std::memory_order_release);
+void TriggerService::setCamera(camera::common::ICamera* camera, uint64_t generation) {
+    // Wait for any in-flight pulse: after this returns the trigger thread
+    // holds no reference to the previous camera (issue #365).
+    std::lock_guard<std::mutex> pulseLock(pulseMutex_);
+    const uint64_t newGeneration =
+        camera ? (generation != 0 ? generation
+                                  : autoGeneration_.fetch_add(1, std::memory_order_relaxed) + 1)
+               : 0;
+    size_t cleared = 0;
+    {
+        std::lock_guard<std::mutex> lk(triggerMutex_);
+        // Requests made under the previous session must not fire on the new
+        // one (or on nothing): clear and count them.
+        cleared = pendingRequests_.size();
+        pendingRequests_.clear();
+        camera_.store(camera, std::memory_order_release);
+        boundGeneration_.store(newGeneration, std::memory_order_release);
+    }
+    if (cleared > 0) {
+        droppedStaleRequests_.fetch_add(cleared, std::memory_order_relaxed);
+        SPDLOG_INFO("TriggerService: cleared {} pending request(s) from previous camera session",
+                    cleared);
+    }
     if (camera) {
         camera->configureTriggerOutput("TTLIO12");
     }
@@ -123,7 +154,8 @@ void TriggerService::onTargetGroupResult(const TargetGroupSignal& signal) {
             }
         }
         pendingRequests_.push_back(
-            PendingRequest{signal.frameIndex, signal.hostTimestampUs, requestUs});
+            PendingRequest{signal.frameIndex, signal.hostTimestampUs, requestUs,
+                           boundGeneration_.load(std::memory_order_acquire)});
     }
     triggerCV_.notify_one();
 }
@@ -141,7 +173,22 @@ void TriggerService::triggerLoop() {
             pendingRequests_.pop_front();
         }
 
+        // Own the camera for the whole pulse: setCamera() blocks on this
+        // mutex, so the pointer loaded below stays valid until we release it.
+        std::lock_guard<std::mutex> pulseLock(pulseMutex_);
         auto* cam = camera_.load(std::memory_order_acquire);
+        if (cam && pending.generation != boundGeneration_.load(std::memory_order_acquire)) {
+            // Request from an earlier camera session: never execute it
+            // against the currently bound camera.
+            const uint64_t stale =
+                droppedStaleRequests_.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (stale == 1 || (stale % 100) == 0) {
+                SPDLOG_WARN("TriggerService: dropped stale request from session {} "
+                            "(bound session {}, total stale drops: {})",
+                            pending.generation, boundGeneration_.load(), stale);
+            }
+            continue;
+        }
         if (!cam) {
             // The request was dequeued but there is no camera to drive the
             // pulse: a selected target is lost. Count it instead of dropping

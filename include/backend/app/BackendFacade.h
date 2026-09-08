@@ -1,5 +1,6 @@
 #pragma once
 
+#include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
 
 #include <cstddef>
@@ -19,13 +20,16 @@ namespace backend
 namespace backend::bridge
 {
 
+    // Values are the bridge contract's command_types (bridge-contract.json):
+    // append only, never renumber. 5 is reserved for Operation.
     enum class BackendCommandType
     {
-        Camera,
-        Recording,
-        ProcessingSettings,
-        RecordingLoad,
-        PlaybackSeek,
+        Camera = 0,
+        Recording = 1,
+        ProcessingSettings = 2,
+        RecordingLoad = 3,
+        PlaybackSeek = 4,
+        Experiment = 6,
     };
 
     enum class CameraCommandAction
@@ -96,17 +100,43 @@ namespace backend::bridge
         std::uint64_t frameIndex{0};
     };
 
+    // Experiment lifecycle over the shared ExperimentCoordinator (issue #372
+    // G2/G3). Contract-pinned values (experiment_command_actions).
+    enum class ExperimentCommandAction
+    {
+        EvaluateReadiness = 0,
+        Start = 1,
+        Stop = 2,
+        Status = 3,
+    };
+
+    struct ExperimentCommand
+    {
+        ExperimentCommandAction action{ExperimentCommandAction::Status};
+        std::string outputPath;                 // Start / EvaluateReadiness
+        std::uint64_t readinessGeneration{0};   // Start
+        std::string profileId;                  // Start / EvaluateReadiness
+        bool acknowledgeLatestFrameDrops{false}; // Start
+        bool cancelled{false};                  // Stop
+    };
+
     using BackendCommand = std::variant<CameraCommand,
                                         RecordingCommand,
                                         ProcessingSettingsCommand,
                                         RecordingLoadCommand,
-                                        PlaybackSeekCommand>;
+                                        PlaybackSeekCommand,
+                                        ExperimentCommand>;
 
     struct BackendCommandResult
     {
         bool ok{false};
         BackendCommandType command{BackendCommandType::Camera};
         std::string message;
+        // Typed outcomes of ExperimentCommand Start / Stop so acceptance,
+        // rejection and completion stay distinct. Completion is observed via
+        // ExperimentStatusEvent / fetchExperimentStatus (terminal == true).
+        std::optional<app::ExperimentStartOutcome> experimentStartOutcome;
+        std::optional<app::ExperimentStopOutcome> experimentStopOutcome;
     };
 
     enum class FrameReadySource
@@ -222,12 +252,21 @@ namespace backend::bridge
         std::string message;
     };
 
+    // Forwarded from ExperimentCoordinator's status callback on every
+    // transition (event kind 8 in the bridge contract). Delivered on the
+    // coordinator's calling thread (worker for Stopping/terminal).
+    struct ExperimentStatusEvent
+    {
+        app::ExperimentStatus status;
+    };
+
     using BackendEvent = std::variant<FrameReadyEvent,
                                       CameraStatusEvent,
                                       RecordingStatusEvent,
                                       ProcessingResultEvent,
                                       PlaybackPositionEvent,
-                                      BackendErrorEvent>;
+                                      BackendErrorEvent,
+                                      ExperimentStatusEvent>;
 
     struct BackendFrame
     {
@@ -261,7 +300,16 @@ namespace backend::bridge
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;
 
+        // Experiment readiness (fresh evaluation; the returned generation is
+        // what a Start must present) and lifecycle status pulls. Both return
+        // false when the facade is not initialized.
+        bool fetchExperimentReadiness(app::ExperimentReadinessSnapshot &out,
+                                      const std::string &outputPath = {},
+                                      const std::string &profileId = {}) const;
+        bool fetchExperimentStatus(app::ExperimentStatus &out) const;
+
     private:
+        BackendCommandResult handleExperimentCommand(const ExperimentCommand &command);
         BackendCommandResult handleCameraCommand(const CameraCommand &command);
         BackendCommandResult handleRecordingCommand(const RecordingCommand &command);
         BackendCommandResult handleProcessingSettingsCommand(const ProcessingSettingsCommand &command);

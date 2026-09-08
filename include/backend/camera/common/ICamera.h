@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/camera/common/Frame.h"
+#include "backend/camera/common/TimestampValue.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -92,6 +93,19 @@ namespace camera::common
         uint64_t dataRateMBps = 0; // Throughput in MB/s.
     };
 
+    /**
+     * Structured description of the most recent start/stream failure of a
+     * backend (issues #365/#366). `code` is a stable machine-readable token
+     * (e.g. "mindvision.isp_format_unverified"); `message` is operator text.
+     * Empty code means no failure has been recorded.
+     */
+    struct CameraFailure
+    {
+        std::string code;
+        std::string message;
+        bool empty() const { return code.empty(); }
+    };
+
     class ICamera
     {
     public:
@@ -162,6 +176,22 @@ namespace camera::common
          * Returns false when unsupported, not running, or rejected.
          */
         virtual bool softTrigger() { return false; }
+
+        /**
+         * Most recent structured failure (start rejected, stream faulted).
+         * Backends that fail closed on configuration/geometry mismatches
+         * report the reason here so the capture lifecycle and UI can show it
+         * instead of a generic "failed to start".
+         */
+        virtual CameraFailure lastFailure() const { return {}; }
+
+        /**
+         * Describes the `Frame::timestamp` values this backend produces
+         * (clock domain, tick rate after the adapter's documented
+         * normalization, native tick rate, semantic, validity). Issue #368.
+         * Default: undeclared/unsupported — consumers must not assume a unit.
+         */
+        virtual TimestampDescriptor timestampDescriptor() const { return {}; }
     };
 
 } // namespace camera::common

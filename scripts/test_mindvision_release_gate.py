@@ -98,8 +98,10 @@ class MindVisionReleaseGateTest(unittest.TestCase):
         backend_cmake = self.read("src/backend/CMakeLists.txt")
         self.assertIn("MIB_MINDVISION_LIBRARY", backend_cmake)
 
+        # MindVisionCamera.cpp is SDK-header-free by design (issue #366): all
+        # vendor calls go through the seam bound in MindVisionSdkReal.cpp.
         for relative_path in (
-            "src/backend/camera/mindvision/MindVisionCamera.cpp",
+            "src/backend/camera/mindvision/MindVisionSdkReal.cpp",
             "src/backend/camera/mindvision/MindVisionApply.cpp",
             "src/backend/services/CameraControlService.cpp",
         ):

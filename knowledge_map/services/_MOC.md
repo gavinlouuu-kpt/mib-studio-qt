@@ -10,6 +10,7 @@
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
+- [[HdfExportService]] — Qt-free bounded/cancellable CSV+TIFF export job (issue #344)
 - [[SqliteService]] — small metadata DB
 
 ## Hardware I/O

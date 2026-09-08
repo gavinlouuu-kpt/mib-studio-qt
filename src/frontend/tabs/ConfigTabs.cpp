@@ -1,4 +1,12 @@
 #include "frontend/tabs/ConfigTabs.h"
+#include "frontend/utils/ElidingLabel.h"
+#include "frontend/system/ConfigDocumentStore.h"
+
+#include <QMenu>
+#include <algorithm>
+#include <QAction>
+#include <QEvent>
+#include <QResizeEvent>
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -84,6 +92,21 @@ static QString getUserConfigDir() {
 
 } // namespace
 
+namespace {
+// Page wrapper: the tab's minimum size is the scroll area's (tiny); wide raw
+// forms scroll inside the inspector instead of widening the window (#361).
+QScrollArea* wrapPageInScroll(QWidget* page)
+{
+    auto* scroll = new QScrollArea(page->parentWidget());
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setWidget(page);
+    return scroll;
+}
+} // namespace
+
 ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
     : QWidget(parent), backend_(backend) {
     auto* layout = new QVBoxLayout(this);
@@ -92,73 +115,91 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
     layout->setSizeConstraint(QLayout::SetNoConstraint);
     tabs_ = new QTabWidget(this);
 
-    // App JSON config tab
+    // ---- Issue #361: bounded primary header (whole inspector) --------------
+    // Profile selector, compact state, Save/Reset for config.json, and one
+    // native menu for every secondary/profile-management action. Path and
+    // notices live in their own wrapping rows so long values never widen the
+    // window; every value stays available via tooltip/copy.
+    {
+        headerWidget_ = new QWidget(this);
+        headerWidget_->setObjectName(QStringLiteral("configHeader"));
+        auto* headerV = new QVBoxLayout(headerWidget_);
+        headerV->setContentsMargins(4, 4, 4, 0);
+        headerV->setSpacing(2);
+        auto* row = new QHBoxLayout();
+        row->setSpacing(6);
+        row->addWidget(new QLabel(tr("Profile:"), headerWidget_));
+        profileSelect_ = new QComboBox(headerWidget_);
+        profileSelect_->setObjectName(QStringLiteral("profileSelect"));
+        profileSelect_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        profileSelect_->setMinimumContentsLength(10);
+        profileSelect_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        profileSelect_->setMaximumWidth(420);
+        profileStatusLabel_ = new frontend::ElidingLabel(headerWidget_);
+        profileStatusLabel_->setObjectName(QStringLiteral("profileStateLabel"));
+        profileStatusLabel_->setElideMode(Qt::ElideRight);
+        profileStatusLabel_->setMinimumVisibleCharacters(6);
+        profileStatusLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        jsonReloadBtn_ = new QPushButton(tr("Reset"), headerWidget_);
+        jsonReloadBtn_->setObjectName(QStringLiteral("appConfigResetBtn"));
+        jsonReloadBtn_->setToolTip(tr("Reload config.json from disk, discarding unsaved edits."));
+        jsonSaveBtn_ = new QPushButton(tr("Save"), headerWidget_);
+        jsonSaveBtn_->setObjectName(QStringLiteral("appConfigSaveBtn"));
+        jsonSaveBtn_->setToolTip(tr("Write the editor content to config.json. Camera scripts are applied "
+                                    "separately with Apply to Camera; a saved file is not yet verified on hardware."));
+        moreBtn_ = new QToolButton(headerWidget_);
+        moreBtn_->setObjectName(QStringLiteral("configMoreBtn"));
+        moreBtn_->setText(tr("More…"));
+        moreBtn_->setToolTip(tr("Profile management, file selection and view options"));
+        moreBtn_->setPopupMode(QToolButton::InstantPopup);
+        moreBtn_->setFocusPolicy(Qt::StrongFocus);
+        moreMenu_ = new QMenu(moreBtn_);
+        saveProfileAct_ = moreMenu_->addAction(tr("Save as profile…"), this, &ConfigTabs::onSaveProfile);
+        renameProfileAct_ = moreMenu_->addAction(tr("Rename profile…"), this, &ConfigTabs::onRenameProfile);
+        deleteProfileAct_ = moreMenu_->addAction(tr("Delete profile…"), this, &ConfigTabs::onDeleteProfile);
+        duplicateAsLocalAct_ = moreMenu_->addAction(tr("Duplicate as local profile…"), this, &ConfigTabs::onDuplicateProfileAsLocal);
+        moreMenu_->addSeparator();
+        checkUpdatesAct_ = moreMenu_->addAction(tr("Check for profile updates"), this, &ConfigTabs::onCheckProfileUpdates);
+        updateSelectedAct_ = moreMenu_->addAction(tr("Update selected profile"), this, &ConfigTabs::onUpdateSelectedProfile);
+        showDiffAct_ = moreMenu_->addAction(tr("Show diff against catalog…"), this, &ConfigTabs::onShowProfileDiff);
+        moreMenu_->addSeparator();
+        browseJsonAct_ = moreMenu_->addAction(tr("Open another config.json…"), this, &ConfigTabs::onBrowseJson);
+        clearJsonAct_ = moreMenu_->addAction(tr("Use the default config.json"), this, &ConfigTabs::onClearJson);
+        moreMenu_->addSeparator();
+        jsonTableAct_ = moreMenu_->addAction(tr("Show config as table"));
+        jsonTableAct_->setCheckable(true);
+        connect(jsonTableAct_, &QAction::toggled, this, &ConfigTabs::onJsonTableToggled);
+        moreBtn_->setMenu(moreMenu_);
+        row->addWidget(profileSelect_, 2);
+        row->addWidget(profileStatusLabel_, 1);
+        row->addWidget(jsonReloadBtn_);
+        row->addWidget(jsonSaveBtn_);
+        row->addWidget(moreBtn_);
+        headerV->addLayout(row);
+
+        jsonPathLabel_ = new frontend::ElidingLabel(headerWidget_);
+        jsonPathLabel_->setObjectName(QStringLiteral("appConfigPathLabel"));
+        jsonPathLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        headerV->addWidget(jsonPathLabel_);
+
+        jsonNoticeLabel_ = new QLabel(headerWidget_);
+        jsonNoticeLabel_->setObjectName(QStringLiteral("appConfigNotices"));
+        jsonNoticeLabel_->setWordWrap(true);
+        jsonNoticeLabel_->setTextFormat(Qt::PlainText);
+        jsonNoticeLabel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+        jsonNoticeLabel_->setStyleSheet(QStringLiteral("color: #b05a00;"));
+        jsonNoticeLabel_->setVisible(false);
+        headerV->addWidget(jsonNoticeLabel_);
+        layout->addWidget(headerWidget_);
+    }
+
+    // App JSON config tab (editor / grouped tables)
     {
         auto* page = new QWidget(this);
         auto* v = new QVBoxLayout(page);
+        v->setContentsMargins(4, 4, 4, 4);
         jsonEdit_ = new QPlainTextEdit(page);
         jsonEdit_->setWordWrapMode(QTextOption::NoWrap);
-        auto* row = new QHBoxLayout();
-        jsonReloadBtn_ = new QPushButton(tr("Reset"), page);
-        jsonSaveBtn_ = new QPushButton(tr("Save"), page);
-        jsonBrowseBtn_ = new QPushButton(tr("Browse..."), page);
-        jsonClearBtn_ = new QPushButton(tr("Clear"), page);
-		jsonTableToggle_ = new QToolButton(page);
-		jsonTableToggle_->setText(tr("json/table"));
-        jsonTableToggle_->setToolTip(tr("Toggle table view"));
-        jsonTableToggle_->setCheckable(true);
-        jsonPathLabel_ = new QLabel(page);
-        jsonPathLabel_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
-        jsonPathLabel_->setTextFormat(Qt::PlainText);
-        jsonPathLabel_->setWordWrap(false);
-        jsonPathLabel_->setMinimumWidth(0);
-        jsonPathLabel_->setMaximumWidth(400);
-        jsonUnsavedLabel_ = new QLabel(page);
-        jsonUnsavedLabel_->setText(tr("Unsaved changes – click Save to apply."));
-        jsonUnsavedLabel_->setVisible(false);
-        jsonUnsavedLabel_->setStyleSheet("color: #d17a00;");
-        jsonUnsavedLabel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-        jsonConflictLabel_ = new QLabel(page);
-        jsonConflictLabel_->setText(tr("Config changed elsewhere; reload before saving if you want the latest file."));
-        jsonConflictLabel_->setVisible(false);
-        jsonConflictLabel_->setStyleSheet("color: #b00020;");
-        jsonConflictLabel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-        profileSelect_ = new QComboBox(page);
-        saveProfileBtn_ = new QPushButton(tr("Save Profile"), page);
-        deleteProfileBtn_ = new QPushButton(tr("Delete"), page);
-        renameProfileBtn_ = new QPushButton(tr("Rename"), page);
-        checkUpdatesBtn_ = new QPushButton(tr("Check Updates"), page);
-        updateSelectedBtn_ = new QPushButton(tr("Update Selected"), page);
-        showDiffBtn_ = new QPushButton(tr("Show Diff"), page);
-        duplicateAsLocalBtn_ = new QPushButton(tr("Duplicate as Local"), page);
-        profileStatusLabel_ = new QLabel(page);
-        profileStatusLabel_->setText(tr("No profile selected"));
-        profileStatusLabel_->setTextFormat(Qt::PlainText);
-        profileStatusLabel_->setWordWrap(false);
-        profileStatusLabel_->setMinimumWidth(220);
-        row->addWidget(jsonReloadBtn_);
-        row->addWidget(jsonSaveBtn_);
-        row->addWidget(jsonBrowseBtn_);
-        row->addWidget(jsonClearBtn_);
-		row->addStretch(1);
-		row->addWidget(jsonPathLabel_);
-        row->addSpacing(8);
-        row->addWidget(jsonUnsavedLabel_);
-        row->addSpacing(8);
-        row->addWidget(jsonConflictLabel_);
-        row->addSpacing(8);
-        row->addWidget(new QLabel(tr("Profile:"), page));
-        row->addWidget(profileSelect_);
-        row->addWidget(saveProfileBtn_);
-        row->addWidget(renameProfileBtn_);
-        row->addWidget(deleteProfileBtn_);
-        row->addWidget(checkUpdatesBtn_);
-        row->addWidget(updateSelectedBtn_);
-        row->addWidget(showDiffBtn_);
-        row->addWidget(duplicateAsLocalBtn_);
-        row->addWidget(profileStatusLabel_);
-		row->addWidget(jsonTableToggle_);
-        v->addLayout(row);
 
         // Legacy single table (for backward compatibility)
         jsonModel_ = new JsonTableModel(this);
@@ -184,13 +225,17 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         
         jsonGridContainer_ = new QWidget();
         jsonGridLayout_ = new QGridLayout(jsonGridContainer_);
-        jsonGridLayout_->setColumnStretch(0, 1);
-        jsonGridLayout_->setColumnStretch(1, 1);
-        jsonGridLayout_->setColumnStretch(2, 1);
         jsonGridLayout_->setSpacing(10);
         jsonGridLayout_->setContentsMargins(5, 5, 5, 5);
         
         jsonScrollArea_->setWidget(jsonGridContainer_);
+        jsonScrollArea_->viewport()->installEventFilter(this);
+        jsonRelayoutTimer_ = new QTimer(this);
+        jsonRelayoutTimer_->setSingleShot(true);
+        jsonRelayoutTimer_->setInterval(100);
+        connect(jsonRelayoutTimer_, &QTimer::timeout, this, [this]() {
+            if (jsonScrollArea_) relayoutJsonSections(jsonScrollArea_->viewport()->width());
+        });
 
         jsonStack_->addWidget(jsonEdit_);
         jsonStack_->addWidget(jsonScrollArea_);  // Use scroll area instead of single table
@@ -205,11 +250,11 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         {
             QSettings s;
             const bool showTable = s.value("Preview/ShowTable", true).toBool();
-            jsonTableToggle_->setChecked(showTable);
+            const QSignalBlocker block(jsonTableAct_);
+            jsonTableAct_->setChecked(showTable);
             jsonStack_->setCurrentIndex(showTable ? 1 : 0);
         }
 
-        connect(jsonTableToggle_, &QToolButton::toggled, this, &ConfigTabs::onJsonTableToggled);
 		connect(jsonModel_, &QAbstractItemModel::dataChanged, this,
 		        [this](const QModelIndex&, const QModelIndex&, const QVector<int>&) { rebuildJsonFromTable(); });
 
@@ -222,15 +267,16 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
             if (jsonStack_ && jsonStack_->currentIndex() == 1) {
                 jsonDebounceTimer_->start();
             }
-            if (jsonUnsavedLabel_) jsonUnsavedLabel_->setVisible(true);
+            // Explicit state: dirty is a content comparison (issue #361).
+            jsonDoc_.markEdited(jsonEdit_->toPlainText());
+            updateJsonNotices();
         });
 
         page->setLayout(v);
-        tabs_->addTab(page, tr("App config (config.json)"));
+        tabs_->addTab(page, tr("Processing && app config"));
+        tabs_->setTabToolTip(tabs_->count() - 1, tr("config.json — processing thresholds, acquisition settings, application options"));
         connect(jsonReloadBtn_, &QPushButton::clicked, this, &ConfigTabs::onReloadJson);
         connect(jsonSaveBtn_, &QPushButton::clicked, this, &ConfigTabs::onSaveJson);
-        connect(jsonBrowseBtn_, &QPushButton::clicked, this, &ConfigTabs::onBrowseJson);
-        connect(jsonClearBtn_, &QPushButton::clicked, this, &ConfigTabs::onClearJson);
     }
 
     // Camera JS script tab
@@ -246,9 +292,10 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         jsResetBtn_ = new QPushButton(tr("Reset Camera"), page);
         jsBrowseBtn_ = new QPushButton(tr("Browse..."), page);
         jsClearBtn_ = new QPushButton(tr("Clear"), page);
-        jsPathLabel_ = new QLabel(page);
+        jsPathLabel_ = new frontend::ElidingLabel(page);
+        jsPathLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         jsUnsavedLabel_ = new QLabel(page);
-        jsUnsavedLabel_->setText(tr("Unsaved changes – click Save to apply."));
+        jsUnsavedLabel_->setText(tr("Edited – not saved. Save writes the script; Apply to Camera sends it to the device."));
         jsUnsavedLabel_->setVisible(false);
         jsUnsavedLabel_->setStyleSheet("color: #d17a00;");
         profilesIncludeJsCheck_ = new QCheckBox(tr("Profiles include Camera script"), page);
@@ -263,15 +310,17 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         row->addWidget(jsBrowseBtn_);
         row->addWidget(jsClearBtn_);
         row->addStretch(1);
-        row->addWidget(jsPathLabel_);
-        row->addSpacing(8);
-        row->addWidget(jsUnsavedLabel_);
-        row->addSpacing(8);
         row->addWidget(profilesIncludeJsCheck_);
         v->addLayout(row);
+        auto* jsInfoRow = new QHBoxLayout();
+        jsInfoRow->addWidget(jsPathLabel_, 1);
+        jsUnsavedLabel_->setWordWrap(true);
+        v->addLayout(jsInfoRow);
+        v->addWidget(jsUnsavedLabel_);
         v->addWidget(jsEdit_, 1);
         page->setLayout(v);
-        tabs_->addTab(page, tr("Camera script (egrabberConfig.js)"));
+        tabs_->addTab(wrapPageInScroll(page), tr("Camera script (EGrabber)"));
+        tabs_->setTabToolTip(tabs_->count() - 1, tr("egrabberConfig.js — GenICam camera script"));
         connect(jsReloadBtn_, &QPushButton::clicked, this, &ConfigTabs::onReloadJs);
         connect(jsSaveBtn_, &QPushButton::clicked, this, &ConfigTabs::onSaveJs);
         connect(jsApplyBtn_, &QPushButton::clicked, this, &ConfigTabs::onApplyJs);
@@ -279,7 +328,9 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         connect(jsBrowseBtn_, &QPushButton::clicked, this, &ConfigTabs::onBrowseJs);
         connect(jsClearBtn_, &QPushButton::clicked, this, &ConfigTabs::onClearJs);
         connect(jsEdit_, &QPlainTextEdit::textChanged, this, [this]() {
-            if (jsUnsavedLabel_) jsUnsavedLabel_->setVisible(true);
+            jsDoc_.markEdited(jsEdit_->toPlainText());
+            if (jsUnsavedLabel_) jsUnsavedLabel_->setVisible(jsDoc_.dirty);
+            emit documentStateChanged();
         });
         connect(profilesIncludeJsCheck_, &QCheckBox::toggled, this, &ConfigTabs::onIncludeJsToggled);
     }
@@ -303,9 +354,10 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
                                          "running with trigger_mode 1 (software trigger)."));
         mvBrowseBtn_ = new QPushButton(tr("Browse..."), page);
         mvClearBtn_ = new QPushButton(tr("Clear"), page);
-        mvPathLabel_ = new QLabel(page);
+        mvPathLabel_ = new frontend::ElidingLabel(page);
+        mvPathLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         mvUnsavedLabel_ = new QLabel(page);
-        mvUnsavedLabel_->setText(tr("Unsaved changes – click Save to apply."));
+        mvUnsavedLabel_->setText(tr("Edited – not saved. Save writes the file; Apply to Camera sends it to the device."));
         mvUnsavedLabel_->setVisible(false);
         mvUnsavedLabel_->setStyleSheet("color: #d17a00;");
         row->addWidget(mvReloadBtn_);
@@ -315,23 +367,32 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         row->addWidget(mvBrowseBtn_);
         row->addWidget(mvClearBtn_);
         row->addStretch(1);
-        row->addWidget(mvPathLabel_);
-        row->addSpacing(8);
-        row->addWidget(mvUnsavedLabel_);
         v->addLayout(row);
+        {
+            auto* mvInfoRow = new QHBoxLayout();
+            mvInfoRow->addWidget(mvPathLabel_, 1);
+            v->addLayout(mvInfoRow);
+            mvUnsavedLabel_->setWordWrap(true);
+            v->addWidget(mvUnsavedLabel_);
+        }
 
         // Quick-adjust form for the bench-relevant parameters. Two-way synced
         // with the JSON editor below: widget edits rewrite the JSON keys,
         // editor edits (debounced) repopulate the widgets. Apply/Save always
         // read the editor text, so the form never bypasses the config file.
         auto* mvForm = new QGroupBox(tr("Trigger && strobe parameters"), page);
-        auto* formRow = new QHBoxLayout(mvForm);
-        formRow->addWidget(new QLabel(tr("Trigger"), mvForm));
+        // Two labelled rows (trigger / strobe) instead of one 20-widget row so
+        // the page's minimum width stays within the inspector budget (#361).
+        auto* formGrid = new QGridLayout(mvForm);
+        formGrid->setHorizontalSpacing(6);
+        int mvFormRow = 0, mvFormCol = 0;
+        auto mvFormAdd = [&](QWidget* w) { formGrid->addWidget(w, mvFormRow, mvFormCol++); };
+        mvFormAdd(new QLabel(tr("Trigger"), mvForm));
         mvTriggerModeCombo_ = new QComboBox(mvForm);
         mvTriggerModeCombo_->addItem(tr("0: Free run"), 0);
         mvTriggerModeCombo_->addItem(tr("1: Software"), 1);
         mvTriggerModeCombo_->addItem(tr("2: External"), 2);
-        formRow->addWidget(mvTriggerModeCombo_);
+        mvFormAdd(mvTriggerModeCombo_);
         mvSignalTypeCombo_ = new QComboBox(mvForm);
         mvSignalTypeCombo_->addItem(tr("Rising edge"), 0);
         mvSignalTypeCombo_->addItem(tr("Falling edge"), 1);
@@ -339,50 +400,51 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvSignalTypeCombo_->addItem(tr("Low level"), 3);
         mvSignalTypeCombo_->addItem(tr("Double edge"), 4);
         mvSignalTypeCombo_->setToolTip(tr("External trigger signal type (ext_trig_signal_type)"));
-        formRow->addWidget(mvSignalTypeCombo_);
-        formRow->addWidget(new QLabel(tr("Exposure (µs)"), mvForm));
+        mvFormAdd(mvSignalTypeCombo_);
+        mvFormAdd(new QLabel(tr("Exposure (µs)"), mvForm));
         mvExposureSpin_ = new QDoubleSpinBox(mvForm);
         mvExposureSpin_->setRange(0.8, 838860.0); // MV-XGC51 sensor range
         mvExposureSpin_->setDecimals(1);
         mvExposureSpin_->setValue(1.0);
-        formRow->addWidget(mvExposureSpin_);
-        formRow->addWidget(new QLabel(tr("Delay (µs)"), mvForm));
+        mvFormAdd(mvExposureSpin_);
+        mvFormAdd(new QLabel(tr("Delay (µs)"), mvForm));
         mvTrigDelaySpin_ = new QSpinBox(mvForm);
         mvTrigDelaySpin_->setRange(0, 1000000);
         mvTrigDelaySpin_->setToolTip(tr("Trigger edge to exposure start (acq_trigger_delay_us)"));
-        formRow->addWidget(mvTrigDelaySpin_);
-        formRow->addWidget(new QLabel(tr("Jitter (µs)"), mvForm));
+        mvFormAdd(mvTrigDelaySpin_);
+        mvFormAdd(new QLabel(tr("Jitter (µs)"), mvForm));
         mvJitterSpin_ = new QSpinBox(mvForm);
         mvJitterSpin_->setRange(0, 1000000);
         mvJitterSpin_->setToolTip(tr("Trigger de-glitch filter (ext_trig_jitter_us)"));
-        formRow->addWidget(mvJitterSpin_);
-        formRow->addWidget(new QLabel(tr("Count"), mvForm));
+        mvFormAdd(mvJitterSpin_);
+        mvFormAdd(new QLabel(tr("Count"), mvForm));
         mvTrigCountSpin_ = new QSpinBox(mvForm);
         mvTrigCountSpin_->setRange(1, 1000);
         mvTrigCountSpin_->setToolTip(tr("Frames per trigger (trigger_count)"));
-        formRow->addWidget(mvTrigCountSpin_);
-        formRow->addSpacing(16);
-        formRow->addWidget(new QLabel(tr("Strobe"), mvForm));
+        mvFormAdd(mvTrigCountSpin_);
+        mvFormCol++; // spacing column between trigger and strobe groups
+        mvFormRow = 1; mvFormCol = 0;
+        mvFormAdd(new QLabel(tr("Strobe"), mvForm));
         mvStrobeModeCombo_ = new QComboBox(mvForm);
         mvStrobeModeCombo_->addItem(tr("0: Auto (follows exposure)"), 0);
         mvStrobeModeCombo_->addItem(tr("1: Semi-auto (delay+width)"), 1);
         mvStrobeModeCombo_->addItem(tr("2: Always high"), 2);
         mvStrobeModeCombo_->addItem(tr("3: Always low"), 3);
-        formRow->addWidget(mvStrobeModeCombo_);
-        formRow->addWidget(new QLabel(tr("Delay (µs)"), mvForm));
+        mvFormAdd(mvStrobeModeCombo_);
+        mvFormAdd(new QLabel(tr("Delay (µs)"), mvForm));
         mvStrobeDelaySpin_ = new QSpinBox(mvForm);
         mvStrobeDelaySpin_->setRange(0, 1000000);
-        formRow->addWidget(mvStrobeDelaySpin_);
-        formRow->addWidget(new QLabel(tr("Width (µs)"), mvForm));
+        mvFormAdd(mvStrobeDelaySpin_);
+        mvFormAdd(new QLabel(tr("Width (µs)"), mvForm));
         mvStrobeWidthSpin_ = new QSpinBox(mvForm);
         mvStrobeWidthSpin_->setRange(0, 1000000);
-        formRow->addWidget(mvStrobeWidthSpin_);
+        mvFormAdd(mvStrobeWidthSpin_);
         mvStrobePolarityCombo_ = new QComboBox(mvForm);
         mvStrobePolarityCombo_->addItem(tr("Active high"), 1);
         mvStrobePolarityCombo_->addItem(tr("Active low"), 0);
         mvStrobePolarityCombo_->setToolTip(tr("strobe_polarity"));
-        formRow->addWidget(mvStrobePolarityCombo_);
-        formRow->addStretch(1);
+        mvFormAdd(mvStrobePolarityCombo_);
+        formGrid->setColumnStretch(mvFormCol, 1);
         v->addWidget(mvForm);
 
         v->addWidget(mvEdit_, 1);
@@ -395,7 +457,8 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         auto* pgBusRow = new QHBoxLayout();
         pgBusRow->addWidget(new QLabel(tr("Port"), pgGroup));
         pgPortCombo_ = new QComboBox(pgGroup);
-        pgPortCombo_->setMinimumWidth(220);
+        pgPortCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        pgPortCombo_->setMinimumContentsLength(12);
         pgPortCombo_->setToolTip(tr("System serial port (e.g. /dev/ttyUSB0 or COM3)."));
         pgBusRow->addWidget(pgPortCombo_, 1);
         pgRefreshPortsBtn_ = new QPushButton(tr("Refresh"), pgGroup);
@@ -474,7 +537,8 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         v->addWidget(pgGroup);
 
         page->setLayout(v);
-        tabs_->addTab(page, tr("MindVision config (mindvisionConfig.json)"));
+        tabs_->addTab(wrapPageInScroll(page), tr("Camera trigger && strobe (MindVision)"));
+        tabs_->setTabToolTip(tabs_->count() - 1, tr("mindvisionConfig.json — acquisition trigger, strobe and pulse generator"));
         connect(mvReloadBtn_, &QPushButton::clicked, this, &ConfigTabs::onReloadMv);
         connect(mvSaveBtn_, &QPushButton::clicked, this, &ConfigTabs::onSaveMv);
         connect(mvApplyBtn_, &QPushButton::clicked, this, &ConfigTabs::onApplyMvConfig);
@@ -486,8 +550,10 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvDebounceTimer_->setInterval(150);
         connect(mvDebounceTimer_, &QTimer::timeout, this, &ConfigTabs::onMvTextChangedDebounced);
         connect(mvEdit_, &QPlainTextEdit::textChanged, this, [this]() {
-            if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(true);
+            mvDoc_.markEdited(mvEdit_->toPlainText());
+            if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(mvDoc_.dirty);
             if (!mvSyncGuard_) mvDebounceTimer_->start();
+            emit documentStateChanged();
         });
         for (auto* combo : {mvTriggerModeCombo_, mvSignalTypeCombo_, mvStrobeModeCombo_,
                             mvStrobePolarityCombo_}) {
@@ -517,18 +583,136 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
     onReloadJs();
     onReloadMv();
 
-    // Profiles: populate and wire
-    refreshProfilesList();
+    // Profiles: populate and wire (startup = intentional load of the last profile)
+    refreshProfilesList(/*loadSelection=*/true);
     connect(profileSelect_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ConfigTabs::onProfileSelectionChanged);
-    connect(saveProfileBtn_, &QPushButton::clicked, this, &ConfigTabs::onSaveProfile);
-    connect(deleteProfileBtn_, &QPushButton::clicked, this, &ConfigTabs::onDeleteProfile);
-    connect(renameProfileBtn_, &QPushButton::clicked, this, &ConfigTabs::onRenameProfile);
-    connect(checkUpdatesBtn_, &QPushButton::clicked, this, &ConfigTabs::onCheckProfileUpdates);
-    connect(updateSelectedBtn_, &QPushButton::clicked, this, &ConfigTabs::onUpdateSelectedProfile);
-    connect(showDiffBtn_, &QPushButton::clicked, this, &ConfigTabs::onShowProfileDiff);
-    connect(duplicateAsLocalBtn_, &QPushButton::clicked, this, &ConfigTabs::onDuplicateProfileAsLocal);
     refreshProfileStatusLabel();
+}
+
+// ---- Issue #361: state rendering / compact mode / reflow -------------------
+
+bool ConfigTabs::eventFilter(QObject* watched, QEvent* event)
+{
+    if (jsonScrollArea_ && watched == jsonScrollArea_->viewport() && event->type() == QEvent::Resize) {
+        if (jsonRelayoutTimer_) jsonRelayoutTimer_->start();
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+int ConfigTabs::columnsForWidth(int availableWidth) const
+{
+    // Font-aware minimum card width: ~40 average characters.
+    const int card = std::max(260, fontMetrics().averageCharWidth() * 40);
+    return std::clamp(availableWidth / card, 1, 3);
+}
+
+void ConfigTabs::relayoutJsonSections(int availableWidth, bool force)
+{
+    if (!jsonGridLayout_ || !jsonGridContainer_) return;
+    const int cols = columnsForWidth(availableWidth);
+    if (!force && cols == jsonColumns_) return;
+    jsonColumns_ = cols;
+    // Collect the existing group widgets in section order; no model touched.
+    QStringList names = jsonSectionTables_.keys();
+    names.sort(Qt::CaseInsensitive);
+    QList<QWidget*> groups;
+    for (const QString& name : names) {
+        QString safe = name;
+        safe.replace(QRegularExpression(QString("[^A-Za-z0-9_]")), QString("_"));
+        if (auto* group = jsonGridContainer_->findChild<QGroupBox*>(QString("group_%1").arg(safe))) groups.push_back(group);
+    }
+    while (jsonGridLayout_->count() > 0) {
+        QLayoutItem* item = jsonGridLayout_->takeAt(0);
+        delete item;
+    }
+    for (int c = 0; c < 3; ++c) jsonGridLayout_->setColumnStretch(c, c < cols ? 1 : 0);
+    int row = 0, col = 0;
+    for (QWidget* group : groups) {
+        jsonGridLayout_->addWidget(group, row, col, 1, 1, Qt::AlignTop);
+        group->show();
+        if (++col >= cols) { col = 0; ++row; }
+    }
+    for (int r = 0; r <= row; ++r) jsonGridLayout_->setRowStretch(r, 1);
+}
+
+QString ConfigTabs::compactSummary() const
+{
+    QString profile = profileSelect_ && profileSelect_->currentIndex() > 0 ? profileSelect_->currentText() : tr("No profile");
+    return QStringLiteral("%1 · %2").arg(profile, profileStateText());
+}
+
+QString ConfigTabs::profileStateText() const
+{
+    return profileStatusLabel_ ? profileStatusLabel_->fullText() : QString();
+}
+
+QString ConfigTabs::noticesText() const
+{
+    return jsonNoticeLabel_ && jsonNoticeLabel_->isVisibleTo(const_cast<ConfigTabs*>(this)) ? jsonNoticeLabel_->text() : QString();
+}
+
+void ConfigTabs::setCompactMode(bool compact)
+{
+    if (compactMode_ == compact) return;
+    compactMode_ = compact;
+    if (tabs_) tabs_->setVisible(!compact);
+    updateGeometry();
+}
+
+QString ConfigTabs::appConfigEditorText() const { return jsonEdit_ ? jsonEdit_->toPlainText() : QString(); }
+
+void ConfigTabs::setAppConfigEditorText(const QString& text)
+{
+    if (jsonEdit_) jsonEdit_->setPlainText(text); // emits textChanged -> markEdited
+}
+
+int ConfigTabs::profileCount() const { return profileSelect_ ? profileSelect_->count() - 1 : 0; }
+
+void ConfigTabs::updateProfileActionState()
+{
+    const bool selected = profileSelected_;
+    if (renameProfileAct_) renameProfileAct_->setEnabled(selected);
+    if (deleteProfileAct_) deleteProfileAct_->setEnabled(selected);
+    if (duplicateAsLocalAct_) duplicateAsLocalAct_->setEnabled(selected);
+    if (showDiffAct_) showDiffAct_->setEnabled(selected && profileHasRemote_);
+    if (updateSelectedAct_) updateSelectedAct_->setEnabled(selected && profileUpdateAvailable_);
+}
+
+void ConfigTabs::updateJsonNotices()
+{
+    // Distinct states: Conflict > Edited > Saved > Loaded, plus profile tags.
+    if (profileStatusLabel_) {
+        QString state = jsonDoc_.conflict ? tr("Conflict") : jsonDoc_.dirty ? tr("Edited (unsaved)")
+                        : jsonDoc_.lastSave == ConfigDocumentState::SaveOutcome::Saved ? tr("Saved") : tr("Loaded");
+        if (profileIncompatible_) state += tr(" · incompatible");
+        if (!profileTags_.isEmpty()) state += QStringLiteral(" · ") + profileTags_;
+        profileStatusLabel_->setText(state);
+    }
+    QStringList lines;
+    if (jsonDoc_.conflict) {
+        lines << tr("config.json changed elsewhere while you have unsaved edits. Reset discards your edits and loads the file; "
+                    "Save overwrites the file with your edits.");
+    } else if (jsonDoc_.dirty) {
+        lines << tr("Edited – not saved to config.json. Save writes the file; running processing picks up the saved file. "
+                    "Camera scripts are applied separately (Apply to Camera).");
+    }
+    if (jsonDoc_.lastSave == ConfigDocumentState::SaveOutcome::Failed && !jsonDoc_.lastError.isEmpty()) {
+        lines << tr("Last save failed: %1").arg(jsonDoc_.lastError);
+    }
+    if (profileIncompatible_) {
+        lines << tr("The selected profile requires a different processing contract than the active core; it cannot be verified on this build.");
+    }
+    if (profileUpdateAvailable_) {
+        lines << tr("A newer version of this profile is available in the catalog (More… › Update selected profile).");
+    }
+    if (jsonNoticeLabel_) {
+        jsonNoticeLabel_->setText(lines.join(QStringLiteral("\n")));
+        jsonNoticeLabel_->setVisible(!lines.isEmpty());
+    }
+    if (jsonSaveBtn_) jsonSaveBtn_->setEnabled(true);
+    updateProfileActionState();
+    emit documentStateChanged();
 }
 
 ConfigTabs::~ConfigTabs() {
@@ -556,13 +740,8 @@ QString ConfigTabs::currentJsPath() const {
 
 void ConfigTabs::clearJsonSyncIndicators()
 {
-    if (jsonUnsavedLabel_) {
-        jsonUnsavedLabel_->setVisible(false);
-        jsonUnsavedLabel_->setText(tr("Unsaved changes – click Save to apply."));
-    }
-    if (jsonConflictLabel_) {
-        jsonConflictLabel_->setVisible(false);
-    }
+    // State lives in jsonDoc_ (reset by markLoaded/markSaved); just re-render.
+    updateJsonNotices();
 }
 
 bool ConfigTabs::loadFileToEditor(const QString& path, QPlainTextEdit* editor, QString* err) {
@@ -572,24 +751,62 @@ bool ConfigTabs::loadFileToEditor(const QString& path, QPlainTextEdit* editor, Q
         return false;
     }
     QTextStream in(&f);
+    const QString content = in.readAll();
     const bool blocked = editor->blockSignals(true);
-    editor->setPlainText(in.readAll());
+    editor->setPlainText(content);
     editor->blockSignals(blocked);
     if (editor == jsonEdit_) {
+        jsonDoc_.markLoaded(path, content);
         clearJsonSyncIndicators();
+    } else if (editor == jsEdit_) {
+        jsDoc_.markLoaded(path, content);
+        if (jsUnsavedLabel_) jsUnsavedLabel_->setVisible(false);
+        emit documentStateChanged();
+    } else if (editor == mvEdit_) {
+        mvDoc_.markLoaded(path, content);
+        if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(false);
+        emit documentStateChanged();
     }
-    if (editor == jsEdit_ && jsUnsavedLabel_) jsUnsavedLabel_->setVisible(false);
     return true;
 }
 
 bool ConfigTabs::saveEditorToFile(QPlainTextEdit* editor, const QString& path, QString* err) {
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        if (err) *err = f.errorString();
+    ConfigDocumentState* doc = editor == jsonEdit_ ? &jsonDoc_ : editor == jsEdit_ ? &jsDoc_ : editor == mvEdit_ ? &mvDoc_ : nullptr;
+    const QString text = editor->toPlainText();
+    // Checked write (QSaveFile + verified commit). A file that changed on
+    // disk since it was loaded is a conflict: ask before overwriting (never
+    // in non-interactive/test mode).
+    std::optional<QByteArray> expected;
+    if (doc && doc->path == path) expected = doc->loadedFingerprint;
+    ConfigWriteResult r = ConfigDocumentStore::writeText(path, text, expected, /*force=*/false);
+    if (r.conflict) {
+        bool overwrite = false;
+        if (!nonInteractive_) {
+            overwrite = QMessageBox::question(this, tr("File changed elsewhere"),
+                                              tr("%1 changed on disk since it was loaded.\n\nOverwrite it with your edits?")
+                                                  .arg(QFileInfo(path).fileName()),
+                                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+        }
+        if (!overwrite) {
+            if (doc) doc->markSaveFailed(r.error, /*becauseOfConflict=*/true);
+            if (err) *err = r.error;
+            if (doc == &jsonDoc_) updateJsonNotices();
+            return false;
+        }
+        r = ConfigDocumentStore::writeText(path, text, expected, /*force=*/true);
+    }
+    if (!r.ok) {
+        if (doc) doc->markSaveFailed(r.error);
+        if (err) *err = r.error;
+        if (doc == &jsonDoc_) updateJsonNotices();
         return false;
     }
-    QTextStream out(&f);
-    out << editor->toPlainText();
+    if (doc) {
+        doc->path = path;
+        doc->markSaved(text);
+        if (doc == &jsonDoc_) updateJsonNotices();
+        else emit documentStateChanged();
+    }
     return true;
 }
 
@@ -634,7 +851,7 @@ void ConfigTabs::onReloadJson() {
     QString err;
     if (!loadFileToEditor(path, jsonEdit_, &err)) {
         SPDLOG_WARN("Failed to load config.json from {}: {}", path.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Reset config.json"), tr("Failed to load: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Reset config.json"), tr("Failed to load: %1").arg(err));
         return;
     }
     jsonPathLabel_->setText(path);
@@ -649,10 +866,10 @@ void ConfigTabs::onSaveJson() {
     QString err;
     if (!saveEditorToFile(jsonEdit_, path, &err)) {
         SPDLOG_ERROR("Failed to save config.json to {}: {}", path.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Save config.json"), tr("Failed to save: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Save config.json"), tr("Failed to save: %1").arg(err));
         return;
     }
-    QMessageBox::information(this, tr("Save config.json"), tr("Saved."));
+    if (!nonInteractive_) QMessageBox::information(this, tr("Save config.json"), tr("Saved."));
     clearJsonSyncIndicators();
     if (jsonStack_ && jsonStack_->currentIndex() == 1) {
         refreshJsonTableModel();
@@ -670,7 +887,7 @@ void ConfigTabs::onReloadJs() {
     QString err;
     if (!loadFileToEditor(path, jsEdit_, &err)) {
         SPDLOG_WARN("Failed to load egrabberConfig.js from {}: {}", path.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Reset egrabberConfig.js"), tr("Failed to load: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Reset egrabberConfig.js"), tr("Failed to load: %1").arg(err));
         return;
     }
     jsPathLabel_->setText(path);
@@ -682,10 +899,10 @@ void ConfigTabs::onSaveJs() {
     QString err;
     if (!saveEditorToFile(jsEdit_, path, &err)) {
         SPDLOG_ERROR("Failed to save egrabberConfig.js to {}: {}", path.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Save egrabberConfig.js"), tr("Failed to save: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Save egrabberConfig.js"), tr("Failed to save: %1").arg(err));
         return;
     }
-    QMessageBox::information(this, tr("Save egrabberConfig.js"), tr("Saved."));
+    if (!nonInteractive_) QMessageBox::information(this, tr("Save egrabberConfig.js"), tr("Saved."));
     if (jsUnsavedLabel_) jsUnsavedLabel_->setVisible(false);
 }
 
@@ -713,7 +930,7 @@ void ConfigTabs::onResetCamera() {
 
     if (!ok) {
         SPDLOG_ERROR("Reset Camera failed: {}", backendErr);
-        QMessageBox::warning(this, tr("Reset Camera"),
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Reset Camera"),
                              tr("Reset failed: %1").arg(QString::fromStdString(backendErr)));
         return;
     }
@@ -731,19 +948,19 @@ void ConfigTabs::onApplyJs() {
     {
         QString saveErr;
         if (!saveEditorToFile(jsEdit_, path, &saveErr)) {
-            QMessageBox::warning(this, tr("Apply Camera Script"), tr("Failed to save script: %1").arg(saveErr));
+            if (!nonInteractive_) QMessageBox::warning(this, tr("Apply Camera Script"), tr("Failed to save script: %1").arg(saveErr));
             return;
         }
     }
 
     std::string backendErr;
     if (!backend_.applyCameraScriptFromFile(path.toStdString(), &backendErr)) {
-        QMessageBox::warning(this,
+        if (!nonInteractive_) QMessageBox::warning(this,
                              tr("Apply Camera Script"),
                              tr("Failed to apply script: %1").arg(QString::fromStdString(backendErr)));
         return;
     }
-    QMessageBox::information(this, tr("Apply Camera Script"), tr("Applied to camera. Capture remains stopped."));
+    if (!nonInteractive_) QMessageBox::information(this, tr("Apply Camera Script"), tr("Applied to camera. Capture remains stopped."));
 }
 
 void ConfigTabs::onBrowseJson() {
@@ -763,7 +980,7 @@ void ConfigTabs::onBrowseJson() {
     QString err;
     if (!loadFileToEditor(selected, jsonEdit_, &err)) {
         SPDLOG_WARN("Failed to load external config.json from {}: {}", selected.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Reset config.json"), tr("Failed to load: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Reset config.json"), tr("Failed to load: %1").arg(err));
         return;
     }
     jsonPathLabel_->setText(selected);
@@ -804,7 +1021,7 @@ void ConfigTabs::onBrowseJs() {
     QString err;
     if (!loadFileToEditor(selected, jsEdit_, &err)) {
         SPDLOG_WARN("Failed to load external egrabberConfig.js from {}: {}", selected.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Reset egrabberConfig.js"), tr("Failed to load: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Reset egrabberConfig.js"), tr("Failed to load: %1").arg(err));
         return;
     }
     jsPathLabel_->setText(selected);
@@ -843,7 +1060,7 @@ void ConfigTabs::onReloadMv() {
     QString err;
     if (!loadFileToEditor(path, mvEdit_, &err)) {
         SPDLOG_WARN("Failed to load MindVision config from {}: {}", path.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Reset mindvisionConfig.json"), tr("Failed to load: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Reset mindvisionConfig.json"), tr("Failed to load: %1").arg(err));
         return;
     }
     mvPathLabel_->setText(path);
@@ -855,7 +1072,7 @@ void ConfigTabs::onSaveMv() {
     const QString path = currentMvJsonPath();
     QString err;
     if (!saveEditorToFile(mvEdit_, path, &err)) {
-        QMessageBox::warning(this, tr("Save mindvisionConfig.json"), tr("Failed to save: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Save mindvisionConfig.json"), tr("Failed to save: %1").arg(err));
         return;
     }
     if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(false);
@@ -864,7 +1081,7 @@ void ConfigTabs::onSaveMv() {
 
 void ConfigTabs::onApplyMvConfig() {
     if (!backend_.isMindVisionCameraSelected()) {
-        QMessageBox::warning(this, tr("Apply MindVision Config"),
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Apply MindVision Config"),
                              tr("Select a MindVision camera in the Connect tab first."));
         return;
     }
@@ -873,7 +1090,7 @@ void ConfigTabs::onApplyMvConfig() {
     {
         QString saveErr;
         if (!saveEditorToFile(mvEdit_, path, &saveErr)) {
-            QMessageBox::warning(this, tr("Apply MindVision Config"),
+            if (!nonInteractive_) QMessageBox::warning(this, tr("Apply MindVision Config"),
                                  tr("Failed to save config: %1").arg(saveErr));
             return;
         }
@@ -882,18 +1099,18 @@ void ConfigTabs::onApplyMvConfig() {
 
     std::string backendErr;
     if (!backend_.applyMindVisionConfigFromFile(path.toStdString(), &backendErr)) {
-        QMessageBox::warning(this, tr("Apply MindVision Config"),
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Apply MindVision Config"),
                              tr("Failed to apply: %1").arg(QString::fromStdString(backendErr)));
         return;
     }
-    QMessageBox::information(this, tr("Apply MindVision Config"),
+    if (!nonInteractive_) QMessageBox::information(this, tr("Apply MindVision Config"),
                              tr("Applied to camera. Capture remains stopped."));
 }
 
 void ConfigTabs::onSoftTrigger() {
     std::string err;
     if (!backend_.softTriggerCamera(&err)) {
-        QMessageBox::warning(this, tr("Soft Trigger"), QString::fromStdString(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Soft Trigger"), QString::fromStdString(err));
     }
     // No success dialog — the button is pressed repeatedly during bench tests.
 }
@@ -914,7 +1131,7 @@ void ConfigTabs::onBrowseMv() {
     QString err;
     if (!loadFileToEditor(selected, mvEdit_, &err)) {
         SPDLOG_WARN("Failed to load external mindvisionConfig.json from {}: {}", selected.toStdString(), err.toStdString());
-        QMessageBox::warning(this, tr("Reset mindvisionConfig.json"), tr("Failed to load: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Reset mindvisionConfig.json"), tr("Failed to load: %1").arg(err));
         return;
     }
     mvPathLabel_->setText(selected);
@@ -1198,7 +1415,7 @@ void ConfigTabs::onPulseGenScanToggle() {
     }
     const QString portName = pgPortCombo_->currentData().toString();
     if (portName.isEmpty()) {
-        QMessageBox::warning(this, tr("Pulse Generator"),
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Pulse Generator"),
                              tr("Select a serial port before scanning."));
         return;
     }
@@ -1236,7 +1453,7 @@ void ConfigTabs::onPulseGenScanToggle() {
                 return;
             }
             if (hits.empty()) {
-                QMessageBox::information(this, tr("Pulse Generator"),
+                if (!nonInteractive_) QMessageBox::information(this, tr("Pulse Generator"),
                                          tr("No Modbus devices responded on %1 "
                                             "(addresses 1–16).").arg(portName));
                 return;
@@ -1262,7 +1479,7 @@ void ConfigTabs::onPulseGenScanToggle() {
             if (firstGenerator != 0) {
                 pgAddrSpin_->setValue(firstGenerator);
             }
-            QMessageBox::information(this, tr("Pulse Generator scan — %1").arg(portName),
+            if (!nonInteractive_) QMessageBox::information(this, tr("Pulse Generator scan — %1").arg(portName),
                                      lines.join(QStringLiteral("\n")));
         }, Qt::QueuedConnection);
     });
@@ -1275,7 +1492,7 @@ void ConfigTabs::onPulseGenConnectToggle() {
     } else {
         const QString portName = pgPortCombo_->currentData().toString();
         if (portName.isEmpty()) {
-            QMessageBox::warning(this, tr("Pulse Generator"),
+            if (!nonInteractive_) QMessageBox::warning(this, tr("Pulse Generator"),
                                  tr("No serial port selected. Plug in the RS485 adapter "
                                     "and press Refresh."));
             return;
@@ -1304,7 +1521,7 @@ void ConfigTabs::onPulseGenApplySettings() {
     bool ok = gen.setFrequency(ch, pgFreqSpin_->value());
     ok = gen.setDutyCycle(ch, pgDutySpin_->value()) && ok;
     if (!ok) {
-        QMessageBox::warning(this, tr("Pulse Generator"), tr("Failed to write settings to the module."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Pulse Generator"), tr("Failed to write settings to the module."));
     }
     refreshPulseGenUi();
 }
@@ -1317,7 +1534,7 @@ void ConfigTabs::onPulseGenStart() {
     if (!gen.setFrequency(ch, pgFreqSpin_->value()) ||
         !gen.setDutyCycle(ch, pgDutySpin_->value()) ||
         !gen.setOutputEnabled(ch, true)) {
-        QMessageBox::warning(this, tr("Pulse Generator"), tr("Failed to start the pulse train."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Pulse Generator"), tr("Failed to start the pulse train."));
     }
     refreshPulseGenUi();
 }
@@ -1326,7 +1543,7 @@ void ConfigTabs::onPulseGenStop() {
     auto& gen = backend_.pulseGenerator();
     const int ch = pgChannelSpin_->value() - 1;
     if (!gen.setOutputEnabled(ch, false)) {
-        QMessageBox::warning(this, tr("Pulse Generator"), tr("Failed to stop the pulse train."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Pulse Generator"), tr("Failed to stop the pulse train."));
     }
     refreshPulseGenUi();
 }
@@ -1405,8 +1622,11 @@ void ConfigTabs::refreshJsonTableModel() {
         }
     }
     
-    // Update or create section tables and add to grid
-    const int colsPerRow = 3;
+    // Update or create section tables and add to grid (column count follows
+    // the viewport width; a later resize only moves widgets — issue #361)
+    const int colsPerRow = jsonScrollArea_ ? columnsForWidth(jsonScrollArea_->viewport()->width()) : 3;
+    jsonColumns_ = colsPerRow;
+    for (int c = 0; c < 3; ++c) jsonGridLayout_->setColumnStretch(c, c < colsPerRow ? 1 : 0);
     QStringList sortedSections = grouped.keys();
     sortedSections.sort(Qt::CaseInsensitive);
     
@@ -1509,12 +1729,11 @@ void ConfigTabs::onExternalConfigFileChanged(const QString& path) {
         return;
     }
 
-    // Only reload if there are no unsaved changes to avoid overwriting user edits.
-    if (jsonUnsavedLabel_ && jsonUnsavedLabel_->isVisible()) {
-        if (jsonConflictLabel_) {
-            jsonConflictLabel_->setVisible(true);
-        }
-        SPDLOG_WARN("ConfigTabs: config changed externally while editor has unsaved changes");
+    // Explicit document state decides (issue #361): local edits are retained
+    // and the conflict is shown whether or not this widget is visible.
+    if (!jsonDoc_.markExternalChange()) {
+        updateJsonNotices();
+        SPDLOG_WARN("ConfigTabs: config changed externally while editor has unsaved changes (conflict retained)");
         return;
     }
 
@@ -1563,7 +1782,8 @@ void ConfigTabs::rebuildJsonFromTable() {
 	const bool blocked = jsonEdit_->blockSignals(true);
 	jsonEdit_->setPlainText(QString::fromUtf8(outDoc.toJson(QJsonDocument::Indented)));
 	jsonEdit_->blockSignals(blocked);
-	if (jsonUnsavedLabel_) jsonUnsavedLabel_->setVisible(true);
+	jsonDoc_.markEdited(jsonEdit_->toPlainText());
+	updateJsonNotices();
 }
 
 // ===== Profiles helpers =====
@@ -1596,9 +1816,11 @@ QStringList ConfigTabs::listProfiles() const {
     return result;
 }
 
-void ConfigTabs::refreshProfilesList() {
+void ConfigTabs::refreshProfilesList(bool loadSelection) {
     if (!profileSelect_) return;
-    const QString last = QSettings().value("Profiles/LastProfileName").toString();
+    // Keep the identity currently selected (never its decorated label).
+    const QString current = profileSelect_->currentData().toString();
+    const QString last = !current.isEmpty() ? current : QSettings().value("Profiles/LastProfileName").toString();
     QString err;
     const auto summaries = profileManager_.scanLocalProfiles(
         true, remoteCatalog_ ? &*remoteCatalog_ : nullptr, &err,
@@ -1616,7 +1838,7 @@ void ConfigTabs::refreshProfilesList() {
     if (idx < 0) idx = 0;
     profileSelect_->setCurrentIndex(idx);
     profileSelect_->blockSignals(blocked);
-    if (idx > 0) {
+    if (loadSelection && idx > 0) {
         onProfileSelectionChanged(idx);
     } else {
         refreshProfileStatusLabel();
@@ -1721,42 +1943,41 @@ QString ConfigTabs::profileLabelForSummary(const frontend::ProfileManager::Local
 }
 
 void ConfigTabs::refreshProfileStatusLabel() {
-    if (!profileStatusLabel_) {
-        return;
-    }
     const auto summary = selectedProfileSummary();
+    profileSelected_ = summary.has_value();
+    profileHasRemote_ = summary.has_value() && summary->remoteEntry.has_value();
+    profileIncompatible_ = summary.has_value() && summary->incompatible;
+    profileUpdateAvailable_ = summary.has_value() && summary->updateAvailable;
     if (!summary.has_value()) {
-        profileStatusLabel_->setText(tr("No profile selected"));
-        profileStatusLabel_->setToolTip(QString());
+        profileTags_ = tr("no profile");
+        if (profileStatusLabel_) profileStatusLabel_->setToolTip(QString());
+        updateJsonNotices();
         return;
     }
-
     QStringList details;
     details << (summary->remoteEntry.has_value() ? tr("remote") : tr("local-only"));
-    if (summary->updateAvailable) {
-        details << tr("update available");
+    if (summary->updateAvailable) details << tr("update available");
+    if (summary->dirty) details << tr("differs from catalog");
+    profileTags_ = details.join(QStringLiteral(", "));
+    updateJsonNotices();
+    if (profileStatusLabel_) {
+        const int requiredContract = summary->remoteEntry.has_value()
+            ? summary->remoteEntry->processingContractVersion
+            : summary->metadata.processingContractVersion;
+        profileStatusLabel_->setToolTip(QStringLiteral(
+                                            "Profile: %1\nConfig: %2\nMetadata: %3\n"
+                                            "Required processing contract: %4\nActive processing contract: %5\n"
+                                            "Editor: %6")
+                                            .arg(summary->profileName,
+                                                 summary->hasConfig ? summary->configPath : tr("missing"),
+                                                 summary->hasMetadata ? summary->metaPath : tr("missing"))
+                                            .arg(requiredContract > 0 ? QString::number(requiredContract)
+                                                                      : tr("any"))
+                                            .arg(backend_.processing()
+                                                     .activeProcessingCoreIdentity()
+                                                     .contractVersion)
+                                            .arg(jsonDoc_.stateLabel()));
     }
-    if (summary->dirty) {
-        details << tr("dirty");
-    }
-    if (summary->incompatible) {
-        details << tr("incompatible");
-    }
-    profileStatusLabel_->setText(details.join(QStringLiteral(" | ")));
-    const int requiredContract = summary->remoteEntry.has_value()
-        ? summary->remoteEntry->processingContractVersion
-        : summary->metadata.processingContractVersion;
-    profileStatusLabel_->setToolTip(QStringLiteral(
-                                        "Profile: %1\nConfig: %2\nMetadata: %3\n"
-                                        "Required processing contract: %4\nActive processing contract: %5")
-                                        .arg(summary->profileName,
-                                             summary->hasConfig ? summary->configPath : tr("missing"),
-                                             summary->hasMetadata ? summary->metaPath : tr("missing"))
-                                        .arg(requiredContract > 0 ? QString::number(requiredContract)
-                                                                  : tr("any"))
-                                        .arg(backend_.processing()
-                                                 .activeProcessingCoreIdentity()
-                                                 .contractVersion));
 }
 
 void ConfigTabs::showDiffDialog(const QString& title, const QVector<frontend::ProfileManager::DiffRow>& rows) {
@@ -1797,7 +2018,7 @@ void ConfigTabs::loadSelectedProfileInternal(const QString& profileName) {
     if (profileName.isEmpty()) return;
     const QString cfgPath = profileJsonPath(profileName);
     if (!QFile::exists(cfgPath)) {
-        QMessageBox::warning(this, tr("Load Profile"), tr("Profile missing config.json: %1").arg(profileName));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Load Profile"), tr("Profile missing config.json: %1").arg(profileName));
         return;
     }
     // Set external paths and reload
@@ -1844,12 +2065,12 @@ void ConfigTabs::onSaveProfile() {
     if (name.isNull()) return; // cancelled
     name = sanitizeProfileName(name);
     if (name.isEmpty()) {
-        QMessageBox::warning(this, tr("Save Profile"), tr("Invalid profile name."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Save Profile"), tr("Invalid profile name."));
         return;
     }
     QString err;
     if (!ensureProfilesDirExists(&err)) {
-        QMessageBox::warning(this, tr("Save Profile"), err);
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Save Profile"), err);
         return;
     }
     const QString dir = profileDirPath(name);
@@ -1883,7 +2104,7 @@ void ConfigTabs::onSaveProfile() {
         if (ret != QMessageBox::Yes) return;
     }
     if (!writeTextFile(cfgPath, jsonToWrite, &err)) {
-        QMessageBox::warning(this, tr("Save Profile"), tr("Failed to write config.json: %1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Save Profile"), tr("Failed to write config.json: %1").arg(err));
         return;
     }
 
@@ -1898,7 +2119,7 @@ void ConfigTabs::onSaveProfile() {
                 if (ret2 != QMessageBox::Yes) return;
             }
             if (!writeTextFile(jsPath, jsText, &err)) {
-                QMessageBox::warning(this, tr("Save Profile"), tr("Failed to write egrabberConfig.js: %1").arg(err));
+                if (!nonInteractive_) QMessageBox::warning(this, tr("Save Profile"), tr("Failed to write egrabberConfig.js: %1").arg(err));
                 return;
             }
         }
@@ -1909,7 +2130,7 @@ void ConfigTabs::onSaveProfile() {
         QSettings s;
         s.setValue("Profiles/LastProfileName", name);
     }
-    refreshProfilesList();
+    refreshProfilesList(/*loadSelection=*/false);
     const int idx = profileSelect_ ? profileSelect_->findData(name) : -1;
     if (idx >= 0 && profileSelect_->currentIndex() != idx) {
         profileSelect_->setCurrentIndex(idx); // will trigger load
@@ -1923,7 +2144,7 @@ void ConfigTabs::onSaveProfile() {
 
 void ConfigTabs::onDeleteProfile() {
     if (!profileSelect_ || profileSelect_->currentIndex() <= 0) {
-        QMessageBox::information(this, tr("Delete Profile"), tr("No profile selected."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Delete Profile"), tr("No profile selected."));
         return;
     }
     const QString name = profileSelect_->currentData().toString();
@@ -1947,16 +2168,16 @@ void ConfigTabs::onDeleteProfile() {
     QDir dir(profileDirPath(name));
     bool ok = dir.removeRecursively();
     if (!ok) {
-        QMessageBox::warning(this, tr("Delete Profile"), tr("Failed to delete profile directory."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Delete Profile"), tr("Failed to delete profile directory."));
         return;
     }
     SPDLOG_INFO("Profiles: deleted profile '{}'", name.toStdString());
-    refreshProfilesList();
+    refreshProfilesList(/*loadSelection=*/true);
 }
 
 void ConfigTabs::onRenameProfile() {
     if (!profileSelect_ || profileSelect_->currentIndex() <= 0) {
-        QMessageBox::information(this, tr("Rename Profile"), tr("No profile selected."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Rename Profile"), tr("No profile selected."));
         return;
     }
     const QString oldName = profileSelect_->currentData().toString();
@@ -1967,18 +2188,18 @@ void ConfigTabs::onRenameProfile() {
     newName = sanitizeProfileName(newName);
     if (newName == oldName) return;
     if (newName.isEmpty()) {
-        QMessageBox::warning(this, tr("Rename Profile"), tr("Invalid profile name."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Rename Profile"), tr("Invalid profile name."));
         return;
     }
     const QString oldDir = profileDirPath(oldName);
     const QString newDir = profileDirPath(newName);
     if (QFile::exists(newDir)) {
-        QMessageBox::warning(this, tr("Rename Profile"), tr("A profile with that name already exists."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Rename Profile"), tr("A profile with that name already exists."));
         return;
     }
     QDir base(profilesBaseDir());
     if (!base.rename(oldName, newName)) {
-        QMessageBox::warning(this, tr("Rename Profile"), tr("Failed to rename profile directory."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Rename Profile"), tr("Failed to rename profile directory."));
         return;
     }
     // If active, update settings
@@ -1996,7 +2217,7 @@ void ConfigTabs::onRenameProfile() {
         onReloadJson();
         onReloadJs();
     }
-    refreshProfilesList();
+    refreshProfilesList(/*loadSelection=*/true);
     const int idx = profileSelect_->findData(newName);
     if (idx >= 0) profileSelect_->setCurrentIndex(idx);
     refreshProfileStatusLabel();
@@ -2007,17 +2228,17 @@ void ConfigTabs::onCheckProfileUpdates() {
     QString err;
     const auto catalog = profileManager_.fetchCatalog(catalogUrl, &err);
     if (!catalog.has_value()) {
-        QMessageBox::warning(this, tr("Check Updates"), tr("Failed to fetch catalog:\n%1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Check Updates"), tr("Failed to fetch catalog:\n%1").arg(err));
         SPDLOG_WARN("ConfigTabs: catalog fetch failed from {}: {}", catalogUrl.toString().toStdString(), err.toStdString());
         return;
     }
     if (catalog->catalogSchemaVersion <= 0) {
-        QMessageBox::warning(this, tr("Check Updates"), tr("Catalog is missing catalog_schema_version."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Check Updates"), tr("Catalog is missing catalog_schema_version."));
         return;
     }
 
     remoteCatalog_ = catalog;
-    refreshProfilesList();
+    refreshProfilesList(/*loadSelection=*/false); // passive: never reloads the edited document
 
     const int remoteCount = catalog->profiles.size();
     int updateCount = 0;
@@ -2029,7 +2250,7 @@ void ConfigTabs::onCheckProfileUpdates() {
             ++updateCount;
         }
     }
-    QMessageBox::information(this,
+    if (!nonInteractive_) QMessageBox::information(this,
                              tr("Check Updates"),
                              tr("Catalog refreshed from %1.\n\nProfiles in catalog: %2\nProfiles with updates: %3")
                                  .arg(catalogUrl.toString())
@@ -2040,11 +2261,11 @@ void ConfigTabs::onCheckProfileUpdates() {
 void ConfigTabs::onUpdateSelectedProfile() {
     const auto selected = selectedProfileSummary();
     if (!selected.has_value()) {
-        QMessageBox::information(this, tr("Update Selected"), tr("No profile selected."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Update Selected"), tr("No profile selected."));
         return;
     }
     if (!selected->remoteEntry.has_value()) {
-        QMessageBox::information(this, tr("Update Selected"), tr("The selected profile does not have remote catalog data."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Update Selected"), tr("The selected profile does not have remote catalog data."));
         return;
     }
     const auto ret = QMessageBox::question(this,
@@ -2058,12 +2279,12 @@ void ConfigTabs::onUpdateSelectedProfile() {
 
     QString err;
     if (!profileManager_.installRemoteProfile(*selected->remoteEntry, selected->profileName, &err)) {
-        QMessageBox::warning(this, tr("Update Selected"), tr("Failed to install profile update:\n%1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Update Selected"), tr("Failed to install profile update:\n%1").arg(err));
         SPDLOG_WARN("ConfigTabs: failed to install remote profile '{}': {}", selected->profileName.toStdString(), err.toStdString());
         return;
     }
 
-    refreshProfilesList();
+    refreshProfilesList(/*loadSelection=*/true);
     const QString cfgPath = profileJsonPath(selected->profileName);
     const bool active = QFileInfo(currentJsonPath()).absoluteFilePath() == QFileInfo(cfgPath).absoluteFilePath();
     if (active) {
@@ -2076,42 +2297,42 @@ void ConfigTabs::onUpdateSelectedProfile() {
         }
     }
     refreshProfileStatusLabel();
-    QMessageBox::information(this, tr("Update Selected"), tr("Profile update installed successfully."));
+    if (!nonInteractive_) QMessageBox::information(this, tr("Update Selected"), tr("Profile update installed successfully."));
 }
 
 void ConfigTabs::onShowProfileDiff() {
     const auto selected = selectedProfileSummary();
     if (!selected.has_value()) {
-        QMessageBox::information(this, tr("Show Diff"), tr("No profile selected."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Show Diff"), tr("No profile selected."));
         return;
     }
     if (!remoteCatalog_.has_value() || !selected->remoteEntry.has_value()) {
-        QMessageBox::information(this, tr("Show Diff"), tr("Fetch the public catalog first, then select a remote-managed profile."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Show Diff"), tr("Fetch the public catalog first, then select a remote-managed profile."));
         return;
     }
 
     QByteArray remoteConfig;
     QString remoteErr;
     if (!profileManager_.downloadUrlBlocking(selected->remoteEntry->configUrl, &remoteConfig, &remoteErr)) {
-        QMessageBox::warning(this, tr("Show Diff"), tr("Failed to download remote config:\n%1").arg(remoteErr));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Show Diff"), tr("Failed to download remote config:\n%1").arg(remoteErr));
         return;
     }
 
     QString localErr;
     const auto localBytes = profileManager_.readFileBytes(profileJsonPath(selected->profileName), &localErr);
     if (!localBytes.has_value()) {
-        QMessageBox::warning(this, tr("Show Diff"), tr("Failed to read local config:\n%1").arg(localErr));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Show Diff"), tr("Failed to read local config:\n%1").arg(localErr));
         return;
     }
 
     QString diffErr;
     const auto rows = profileManager_.diffConfigBytes(*localBytes, remoteConfig, &diffErr);
     if (!diffErr.isEmpty()) {
-        QMessageBox::warning(this, tr("Show Diff"), tr("Failed to diff configs:\n%1").arg(diffErr));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Show Diff"), tr("Failed to diff configs:\n%1").arg(diffErr));
         return;
     }
     if (rows.isEmpty()) {
-        QMessageBox::information(this, tr("Show Diff"), tr("No configuration differences detected."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Show Diff"), tr("No configuration differences detected."));
         return;
     }
     showDiffDialog(tr("Profile Diff: %1").arg(selected->profileName), rows);
@@ -2120,7 +2341,7 @@ void ConfigTabs::onShowProfileDiff() {
 void ConfigTabs::onDuplicateProfileAsLocal() {
     const auto selected = selectedProfileSummary();
     if (!selected.has_value()) {
-        QMessageBox::information(this, tr("Duplicate as Local"), tr("No profile selected."));
+        if (!nonInteractive_) QMessageBox::information(this, tr("Duplicate as Local"), tr("No profile selected."));
         return;
     }
     QString newName = QInputDialog::getText(this,
@@ -2133,22 +2354,22 @@ void ConfigTabs::onDuplicateProfileAsLocal() {
     }
     newName = sanitizeProfileName(newName);
     if (newName.isEmpty()) {
-        QMessageBox::warning(this, tr("Duplicate as Local"), tr("Invalid profile name."));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Duplicate as Local"), tr("Invalid profile name."));
         return;
     }
 
     QString err;
     if (!profileManager_.duplicateProfileAsLocal(selected->profileName, newName, &err)) {
-        QMessageBox::warning(this, tr("Duplicate as Local"), tr("Failed to duplicate profile:\n%1").arg(err));
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Duplicate as Local"), tr("Failed to duplicate profile:\n%1").arg(err));
         return;
     }
 
-    refreshProfilesList();
+    refreshProfilesList(/*loadSelection=*/true);
     const int idx = profileSelect_ ? profileSelect_->findData(newName) : -1;
     if (idx >= 0) {
         profileSelect_->setCurrentIndex(idx);
     }
-    QMessageBox::information(this, tr("Duplicate as Local"), tr("Created local profile '%1'.").arg(newName));
+    if (!nonInteractive_) QMessageBox::information(this, tr("Duplicate as Local"), tr("Created local profile '%1'.").arg(newName));
 }
 
 void ConfigTabs::onIncludeJsToggled(bool checked) {

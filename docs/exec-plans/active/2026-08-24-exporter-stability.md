@@ -436,9 +436,22 @@ Windows validation must include the packaged exporter and native Qt app because 
 
 ## Progress
 
-- [ ] PR 1 — Python bounded-memory engine and transactional output
-- [ ] PR 2 — PySide lifecycle, cancellation, close safety, and package smoke
-- [ ] PR 3 — Qt-free native export service and asynchronous Qt adapter
-- [ ] PR 4 — 50-round soak workflows, evidence, and final documentation
-- [ ] Attach soak reports and implementation PR links to #344
+- [x] PR 1 — Python bounded-memory engine and transactional output
+      (`scripts/hdf_export_engine.py`, `scripts/test_export_hdf5_streaming.py`; 2026-09-07)
+- [x] PR 2 — PySide lifecycle, cancellation, close safety
+      (`scripts/export_worker.py`, `scripts/hdf5_export_app.py`,
+      `scripts/test_hdf5_export_app_lifecycle.py`; PyInstaller hidden import added —
+      packaged-executable smoke on Windows still pending)
+- [x] PR 3 — Qt-free native export service and asynchronous Qt adapter
+      (`HdfExportService`, `HdfReviewTab` rewiring, `tests/recording/hdf_export_service_test.cpp`, TSan)
+- [x] PR 4 — 50-round soak harnesses (`scripts/exporter_soak.py`, `recording.hdf_export_soak`,
+      `.github/workflows/exporter-soak.yml`) and evidence in `docs/evidence/2026-09-07-exporter-soak/`
+- [ ] Attach soak reports and implementation PR links to #344 (Linux evidence captured; Windows evidence pending)
 - [ ] Move this plan to `completed/` and close #344
+
+Delivered on branch `claude/host-sdk-reliability-qt-ui-g03ubd` as part of the
+Host SDK reliability release (#371). Decision log addition (2026-09-07): an
+image *write* failure fails the job (partial output discarded) while an
+unsupported frame shape is skipped with a warning, matching the historical
+exporter; an explicit metrics *file* destination confirmed by the save dialog
+is replaced atomically at commit, an existing folder is never merged into.

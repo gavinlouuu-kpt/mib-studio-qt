@@ -274,6 +274,24 @@ bool EGrabberCamera::pollStats(CameraStats& out) const {
     }
 }
 
+TimestampDescriptor EGrabberCamera::timestampDescriptor() const {
+    // Coaxlink BUFFER_INFO_TIMESTAMP / BUFFER_INFO_CUSTOM_PART_TIMESTAMPS are
+    // microseconds since host boot. On Windows that is the QPC domain used by
+    // Tools::getTimestamp(); elsewhere the mapping is unverified.
+    TimestampDescriptor d;
+    d.ticksPerSecond = 1'000'000ULL;
+    d.semantic = TimestampSemantic::TransportReceipt;
+#ifdef _WIN32
+    d.domain = ClockDomain::HostMonotonicUs;
+    d.validity = TimestampValidity::Valid;
+#else
+    d.domain = ClockDomain::Unknown;
+    d.validity = TimestampValidity::Unsupported;
+#endif
+    d.counterBits = 64;
+    return d;
+}
+
 FrameDeliveryCapabilities EGrabberCamera::deliveryCapabilities() const {
     FrameDeliveryCapabilities caps;
     caps.supportsEveryFrame = true;
@@ -500,6 +518,10 @@ bool EGrabberCamera::pollStats(CameraStats& out) const {
 // unsupported, no queue observability) rather than mirroring the SDK path.
 FrameDeliveryCapabilities EGrabberCamera::deliveryCapabilities() const {
     return {};
+}
+
+TimestampDescriptor EGrabberCamera::timestampDescriptor() const {
+    return {}; // stub: no frames, undeclared
 }
 
 FrameDeliveryMode EGrabberCamera::activeDeliveryMode() const {

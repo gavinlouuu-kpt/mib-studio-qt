@@ -252,8 +252,9 @@ int main(int argc, char* argv[]) {
         }
         
         // Create and show main window
+        // Geometry: restored/validated by MainWindow (issue #358); no
+        // unconditional resize here.
         MainWindow w(backend);
-        w.resize(960, 600);
         w.show();
         
         std::cout << "Application started successfully." << std::endl;

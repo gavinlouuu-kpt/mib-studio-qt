@@ -25,6 +25,7 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CaptureService.h"
+#include "frontend/system/ConfigDocumentStore.h"
 #include "frontend/system/PlaybackPanel.h"
 #include "frontend/utils/JsonConfigMerge.h"
 
@@ -116,6 +117,18 @@ namespace frontend
 		{
 			watcher_.removePath(path);
 			watcher_.addPath(path);
+		}
+		// Echo of our own write (or a byte-identical external write): the
+		// content is already loaded and broadcast; do not apply/reload twice
+		// (issue #364).
+		if (!documentFingerprint_.isEmpty())
+		{
+			const auto onDisk = ConfigDocumentStore::currentFingerprint(path);
+			if (onDisk && *onDisk == documentFingerprint_)
+			{
+				SPDLOG_DEBUG("AppConfigWatcher: change event matches the loaded document; skipping reload");
+				return;
+			}
 		}
 		loadAndApplyFromPath(path);
 		// Emit signal to notify other components (e.g., ConfigTabs) that file changed
@@ -251,6 +264,7 @@ namespace frontend
 			return;
 		}
 		const QByteArray data = f.readAll();
+		documentFingerprint_ = ConfigDocumentStore::fingerprintOf(data);
 		// Store raw JSON for HDF5 metadata persistence
 		backend_.setLastConfigJson(data.toStdString());
 
@@ -368,6 +382,12 @@ namespace frontend
 		{
 			const int flushEvery = std::max(1, root.value("buffer_threshold").toInt(1000));
 			backend_.processing().setFlushInterval(static_cast<size_t>(flushEvery));
+		}
+		// Issue #370: byte budget for the experiment buffer (MB; 0 = count-only).
+		if (root.contains("experiment_buffer_max_mb"))
+		{
+			const double mb = std::max(0.0, root.value("experiment_buffer_max_mb").toDouble(0.0));
+			backend_.processing().setMaxBufferedBytes(static_cast<uint64_t>(mb * 1024.0 * 1024.0));
 		}
 
 		// 2.25) Realtime processing mode
@@ -585,100 +605,113 @@ namespace frontend
 		}
 	}
 
-	void AppConfigWatcher::writeBackProcessingConfig()
+	ConfigApplyResult AppConfigWatcher::applyProcessingDraft(const ApplyProcessingDraftRequest& request)
 	{
-		if (watchedPath_.isEmpty())
+		ConfigApplyResult r;
+		r.requestId = request.requestId;
+		r.effectiveConfig = backend_.processing().getProcessingConfig();
+		const QString path = request.path.isEmpty() ? watchedPath_ : request.path;
+		if (path.isEmpty())
 		{
-			SPDLOG_DEBUG("AppConfigWatcher: no watched path, skipping write-back");
-			return;
+			r.error = tr("No active configuration document; nothing was changed.");
+			return r;
+		}
+		if (request.patch.empty())
+		{
+			r.error = tr("Nothing to apply.");
+			return r;
+		}
+		{
+			// Validate the *result* of the patch, not just the patch, so an
+			// inverted range cannot be persisted by editing one side.
+			const auto merged = applyTunePatch(backend_.processing().getProcessingConfig(), request.patch);
+			const QStringList issues = validateTuneConfig(merged);
+			if (!issues.isEmpty())
+			{
+				r.error = issues.join(QStringLiteral("; "));
+				return r;
+			}
 		}
 
-		QFile file(watchedPath_);
+		QFile file(path);
 		if (!file.exists())
 		{
-			SPDLOG_DEBUG("AppConfigWatcher: config file does not exist, skipping write-back");
-			return;
+			r.error = tr("Configuration file does not exist: %1").arg(path);
+			return r;
 		}
-
-		if (!file.open(QIODevice::ReadWrite | QIODevice::Text))
+		if (!file.open(QIODevice::ReadOnly))
 		{
-			SPDLOG_WARN("AppConfigWatcher: failed to open {} for write-back: {}", watchedPath_.toStdString(), file.errorString().toStdString());
-			return;
+			r.error = tr("Cannot read %1: %2").arg(path, file.errorString());
+			return r;
+		}
+		const QByteArray data = file.readAll();
+		file.close();
+		const QByteArray onDisk = ConfigDocumentStore::fingerprintOf(data);
+		if (!request.baselineFingerprint.isEmpty() && request.baselineFingerprint != onDisk)
+		{
+			r.conflict = true;
+			r.error = tr("The configuration file changed since these values were loaded; nothing was written.");
+			return r;
+		}
+		if (!documentFingerprint_.isEmpty() && documentFingerprint_ != onDisk && path == watchedPath_)
+		{
+			// An external change the watcher has not processed yet: retain it.
+			r.conflict = true;
+			r.error = tr("The configuration file changed on disk and has not been reloaded yet; nothing was written.");
+			return r;
 		}
 
-		QByteArray data = file.readAll();
 		QJsonParseError parseError;
 		QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 		if (parseError.error != QJsonParseError::NoError || !doc.isObject())
 		{
-			SPDLOG_WARN("AppConfigWatcher: failed to parse config for write-back");
-			file.close();
-			return;
+			r.error = tr("Configuration file is not valid JSON (%1); nothing was written.")
+						  .arg(parseError.error == QJsonParseError::NoError ? tr("root is not an object") : parseError.errorString());
+			return r;
 		}
-
 		QJsonObject root = doc.object();
-		const auto pcfg = backend_.processing().getProcessingConfig();
-
-		// Update image_processing section
-		QJsonObject ip = root.value("image_processing").toObject();
-		ip.insert("gaussian_blur_size", pcfg.gaussian_blur_size);
-		ip.insert("bg_subtract_threshold", pcfg.bg_subtract_threshold);
-		ip.insert("morph_kernel_size", pcfg.morph_kernel_size);
-		ip.insert("morph_iterations", pcfg.morph_iterations);
-		ip.insert("area_threshold_min", pcfg.area_threshold_min);
-		ip.insert("area_threshold_max", pcfg.area_threshold_max);
-		ip.insert("deformability_threshold_min", pcfg.deformability_threshold_min);
-		ip.insert("deformability_threshold_max", pcfg.deformability_threshold_max);
-		ip.insert("area_ratio_threshold_max", pcfg.area_ratio_threshold_max);
-		ip.insert("ring_ratio_min", pcfg.ring_ratio_min);
-		ip.insert("ring_ratio_max", pcfg.ring_ratio_max);
-		ip.insert("empty_frame_pixel_threshold", pcfg.empty_frame_pixel_threshold);
-		ip.insert("auto_background_enabled", pcfg.auto_background_enabled);
-		ip.insert("auto_background_empty_frames", pcfg.auto_background_empty_frames);
-		ip.insert("auto_background_cooldown_frames", pcfg.auto_background_cooldown_frames);
-
-		// Update filters sub-object
-		QJsonObject fl = ip.value("filters").toObject();
-		fl.insert("enable_border_check", pcfg.enable_border_check);
-		fl.insert("enable_area_range_check", pcfg.enable_area_range_check);
-		fl.insert("enable_deformability_range_check", pcfg.enable_deformability_range_check);
-		fl.insert("enable_area_ratio_check", pcfg.enable_area_ratio_check);
-		fl.insert("enable_ring_ratio_check", pcfg.enable_ring_ratio_check);
-		fl.insert("require_single_inner_contour", pcfg.require_single_inner_contour);
-		ip.insert("filters", fl);
-
-		// Update target_group sub-object
-		QJsonObject tg = ip.value("target_group").toObject();
-		tg.insert("enabled", pcfg.enable_target_group);
-		tg.insert("area_min", pcfg.target_group_area_min);
-		tg.insert("area_max", pcfg.target_group_area_max);
-		tg.insert("deformability_min", pcfg.target_group_deformability_min);
-		tg.insert("deformability_max", pcfg.target_group_deformability_max);
-		tg.insert("emodulus_enabled", pcfg.enable_target_group_emodulus);
-		tg.insert("emodulus_min", pcfg.target_group_emodulus_min);
-		tg.insert("emodulus_max", pcfg.target_group_emodulus_max);
-		ip.insert("target_group", tg);
-
-		// Update multi-image settings
-		QJsonObject mi = ip.value("multi_image").toObject();
-		mi.insert("enabled", pcfg.multi_image_enabled);
-		mi.insert("count", pcfg.multi_image_count);
-		ip.insert("multi_image", mi);
-
-		root.insert("image_processing", ip);
+		applyTunePatchToJson(root, request.patch);
 		doc.setObject(root);
-
-		file.resize(0);
-		file.seek(0);
-		QTextStream out(&file);
 		const QByteArray serialized = doc.toJson(QJsonDocument::Indented);
-		out << serialized;
-		file.close();
 
+		const ConfigWriteResult wr = ConfigDocumentStore::writeText(path, QString::fromUtf8(serialized), onDisk);
+		if (!wr.ok)
+		{
+			r.conflict = wr.conflict;
+			r.error = wr.error;
+			return r;
+		}
+		r.persisted = true;
+		r.fingerprint = wr.fingerprint;
+		if (path == watchedPath_)
+			documentFingerprint_ = wr.fingerprint;
 		backend_.setLastConfigJson(serialized.toStdString());
 
-		SPDLOG_INFO("AppConfigWatcher: wrote back processing config to {}", watchedPath_.toStdString());
-		emit configFileChanged(watchedPath_);
+		// Runtime: apply exactly the same patch, then confirm it read back.
+		auto& processing = backend_.processing();
+		processing.setProcessingConfig(applyTunePatch(processing.getProcessingConfig(), request.patch));
+		r.effectiveConfig = processing.getProcessingConfig();
+		r.applied = tunePatchSatisfiedBy(r.effectiveConfig, request.patch);
+		if (!r.applied)
+			r.error = tr("Saved to %1, but the processing service reports different values.").arg(path);
+
+		SPDLOG_INFO("AppConfigWatcher: applied processing draft request {} ({} field(s)) to {}: persisted={} applied={}",
+					request.requestId, request.patch.values.size(), path.toStdString(), r.persisted, r.applied);
+
+		// One notification for the other consumers (ConfigTabs editor, the
+		// Monitoring panel's baseline). Queued so the caller receives its
+		// result before anyone reacts to the new document; the watcher's own
+		// change event is recognised by fingerprint and not re-broadcast.
+		if (path == watchedPath_)
+		{
+			QTimer::singleShot(0, this, [this, path]() { emit configFileChanged(path); });
+		}
+		return r;
+	}
+
+	void AppConfigWatcher::onApplyProcessingDraft(const frontend::ApplyProcessingDraftRequest& request)
+	{
+		emit processingDraftApplied(applyProcessingDraft(request));
 	}
 
 	void AppConfigWatcher::writeBackCameraConfig(camera::common::FrameDeliveryMode mode)
@@ -696,19 +729,19 @@ namespace frontend
 			return;
 		}
 
-		if (!file.open(QIODevice::ReadWrite | QIODevice::Text))
+		if (!file.open(QIODevice::ReadOnly))
 		{
 			SPDLOG_WARN("AppConfigWatcher: failed to open {} for camera write-back: {}", watchedPath_.toStdString(), file.errorString().toStdString());
 			return;
 		}
 
-		QByteArray data = file.readAll();
+		const QByteArray data = file.readAll();
+		file.close();
 		QJsonParseError parseError;
 		QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 		if (parseError.error != QJsonParseError::NoError || !doc.isObject())
 		{
 			SPDLOG_WARN("AppConfigWatcher: failed to parse config for camera write-back");
-			file.close();
 			return;
 		}
 
@@ -718,13 +751,14 @@ namespace frontend
 		root.insert("camera", cam);
 		doc.setObject(root);
 
-		file.resize(0);
-		file.seek(0);
-		QTextStream out(&file);
 		const QByteArray serialized = doc.toJson(QJsonDocument::Indented);
-		out << serialized;
-		file.close();
-
+		const ConfigWriteResult wr = ConfigDocumentStore::writeText(watchedPath_, QString::fromUtf8(serialized));
+		if (!wr.ok)
+		{
+			SPDLOG_WARN("AppConfigWatcher: camera write-back failed: {}", wr.error.toStdString());
+			return;
+		}
+		documentFingerprint_ = wr.fingerprint;
 		backend_.setLastConfigJson(serialized.toStdString());
 		lastDeliveryMode_ = mode;
 

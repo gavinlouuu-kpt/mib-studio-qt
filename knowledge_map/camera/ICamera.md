@@ -25,6 +25,12 @@
   intentional discards, transport loss, and underruns (never merged), plus
   completed-queue depth and input-buffer count. Fields a backend cannot
   observe keep their `*Valid` flag false ("unknown", not "zero").
+- `CameraFailure` — `{ code, message }` structured reason for the most
+  recent start rejection / stream fault (issues #365/#366). `code` is a
+  stable token (e.g. `mindvision.isp_format_rejected`,
+  `mindvision.frame.frameGeometryMismatch`); [[../services/CaptureService]]
+  copies it into its lifecycle snapshot so the UI/preflight can show *why*
+  instead of a generic "failed to start".
 
 ## Virtual methods
 
@@ -41,6 +47,8 @@ virtual bool checkDeviceHealth() const { return true; }
 virtual void configureTriggerOutput(const std::string& lineSelector) {}
 virtual bool setTriggerOutput(bool high) { return false; }   // SORT pulse out
 virtual bool softTrigger() { return false; }  // software ACQUISITION trigger
+virtual CameraFailure lastFailure() const { return {}; } // structured start/stream fault
+virtual TimestampDescriptor timestampDescriptor() const { return {}; } // Frame::timestamp semantics (issue #368)
 
 // Delivery-mode contract (defaults: EveryFrame-only, no queue telemetry)
 virtual FrameDeliveryCapabilities deliveryCapabilities() const;
@@ -60,6 +68,28 @@ virtual bool pollAcquisitionQueueStats(AcquisitionQueueStats& out) const;
   opposite signal directions and must not be conflated
 - [[../services/CameraControlService]] uses the Euresys SDK directly for
   discovery; it does not go through `ICamera`.
+
+## Timestamp contract (issue #368)
+
+`Frame::timestamp` is **not** assumed to be nanoseconds. Each backend
+declares `timestampDescriptor()` (`TimestampValue.h`): clock domain
+(`deviceTicks` / `hostMonotonicUs` / `hostSteadyNs` / `hostWallClockNs` /
+`unknown`), ticks per second of the stored value after the adapter's
+documented normalization, the native counter rate, the semantic
+(`deviceCapture`, `transportReceipt`, `hostReceipt`, `synthetic`, ...),
+validity, counter width, and session generation. `Frame::rawDeviceTicks`
+keeps the native counter for audit. `TimestampValue::toNanoseconds()` is the
+only conversion boundary (checked, empty on overflow or undeclared units) and
+`differenceNs(a, b)` refuses to subtract across clock domains or across
+device-tick sessions. `Frame::hostTimestampUs` (host monotonic receipt) is a
+separate value on a separate clock and is never mixed with the device stamp.
+
+| Backend | domain | ticks/s stored | native | semantic |
+|---|---|---|---|---|
+| [[MindVisionCamera]] | deviceTicks | 1e9 (ns) | 10 000 (`uiTimeStamp`, 0.1 ms, 32-bit) | deviceCapture |
+| [[EGrabberCamera]] | hostMonotonicUs (Windows; `unknown`/unsupported elsewhere) | 1e6 | — | transportReceipt |
+| [[MockCamera]] | hostSteadyNs | 1e9 | — | synthetic |
+| default / undeclared | unknown | 0 | — | unsupported |
 
 ## Gotchas
 

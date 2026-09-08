@@ -1,0 +1,487 @@
+
+This GDB supports auto-downloading debuginfo from the following URLs:
+  <https://debuginfod.ubuntu.com>
+Enable debuginfod for this session? (y or [n]) [answered N; input not from terminal]
+Debuginfod has been disabled.
+To make this setting permanent, add 'set debuginfod enabled off' to .gdbinit.
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libQt6Gui.so.6
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libQt6Network.so.6
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libQt6OpenGL.so.6
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libglib-2.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libbrotlidec.so.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libproxy.so.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgstbase-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgstreamer-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgobject-2.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgstapp-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgstriff-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgstpbutils-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgstvideo-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgstaudio-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgphoto2.so.6
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgphoto2_port.so.12
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmMSFF.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libOpenEXR-3_1.so.30
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmDSED.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/liblber.so.2
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libbrotlicommon.so.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libcap.so.2
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgmodule-2.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgsttag-1.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/liborc-0.4.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libzvbi.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libtheoraenc.so.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libtheoradec.so.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libvpl.so.2
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libvdpau.so.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmDICT.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmjpeg8.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmjpeg12.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmjpeg16.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmIOD.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdcmCommon.so.3.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libIlmThread-3_1.so.30
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libIex-3_1.so.30
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libfyba.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libogdi.so.4.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libmfhdfalt.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgio-2.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libcjson.so.1
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libnss3.so
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libsmime3.so
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libplc4.so
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libfyut.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libfygm.so.0
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libnssutil3.so
+warning: could not find '.gnu_debugaltlink' file for /lib/x86_64-linux-gnu/libplds4.so
+warning: could not find '.gnu_debugaltlink' file for /usr/lib/x86_64-linux-gnu/qt6/plugins/platforms/libqoffscreen.so
+warning: could not find '.gnu_debugaltlink' file for /usr/lib/x86_64-linux-gnu/qt6/plugins/platforminputcontexts/libibusplatforminputcontextplugin.so
+[New Thread 0x7fffe0bff6c0 (LWP 3913889)]
+[New Thread 0x7fffdbfff6c0 (LWP 3913891)]
+[2026-09-07 15:37:09.714] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/mindvision_diagnostics_2260064587890414920/data/logs/app.log
+[2026-09-07 15:37:09.714] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=false, hdf5=false, processing=true, yolo=false, autofocus=false, trigger=true, capture=true, playback=false
+[2026-09-07 15:37:09.714] [app] [warning] [AppBackend.cpp:335] AppBackend: sqlite bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:37:09.714] [app] [warning] [AppBackend.cpp:344] AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:37:09.714] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:37:09.714] [app] [warning] [EModulusLutCatalog.cpp:550] EModulusLutCatalog: manifest fetch failed and no local cache exists
+[2026-09-07 15:37:09.714] [app] [warning] [AppBackend.cpp:375] AppBackend: LUT catalog resolution failed, falling back to bundled path /tmp/mindvision_diagnostics_2260064587890414920/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt: Bundled LUT not found: /tmp/mindvision_diagnostics_2260064587890414920/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-09-07 15:37:09.887] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/Developer/.worktrees/reliability-qt-test/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 15:37:09.887] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=bundled-fallback, revision=bundled, path=/tmp/mindvision_diagnostics_2260064587890414920/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=unknown, remote_updated=false, bundled_fallback=false, manifest=
+[New Thread 0x7fffdb7fe6c0 (LWP 3913897)]
+[New Thread 0x7fffdaffd6c0 (LWP 3913898)]
+[New Thread 0x7fffda7fc6c0 (LWP 3913899)]
+[New Thread 0x7fffd9ffb6c0 (LWP 3913900)]
+[New Thread 0x7fffd97fa6c0 (LWP 3913901)]
+[New Thread 0x7fffd8ff96c0 (LWP 3913902)]
+[New Thread 0x7fffd87f86c0 (LWP 3913903)]
+[New Thread 0x7fffd7ff76c0 (LWP 3913904)]
+[New Thread 0x7fffd77f66c0 (LWP 3913905)]
+[New Thread 0x7fffd6ff56c0 (LWP 3913906)]
+[New Thread 0x7fffd67f46c0 (LWP 3913907)]
+[New Thread 0x7fffd5ff36c0 (LWP 3913908)]
+[New Thread 0x7fffd57f26c0 (LWP 3913909)]
+[New Thread 0x7fffd4ff16c0 (LWP 3913910)]
+[New Thread 0x7fffd47f06c0 (LWP 3913911)]
+[New Thread 0x7fffd3fef6c0 (LWP 3913912)]
+[New Thread 0x7fffd37ee6c0 (LWP 3913913)]
+[New Thread 0x7fffd2fed6c0 (LWP 3913914)]
+[New Thread 0x7fffd27ec6c0 (LWP 3913915)]
+[New Thread 0x7fffd1feb6c0 (LWP 3913916)]
+[New Thread 0x7fffd17ea6c0 (LWP 3913917)]
+[New Thread 0x7fffd0fe96c0 (LWP 3913918)]
+[New Thread 0x7fffd07e86c0 (LWP 3913919)]
+[New Thread 0x7fffcffe76c0 (LWP 3913920)]
+[2026-09-07 15:37:09.891] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 15:37:09.891] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:37:09.891] [app] [info] [AppBackend.cpp:614] AppBackend: configuring MindVision camera (index=0, config=<none>)
+[2026-09-07 15:37:09.891] [app] [warning] [AppBackend.cpp:687] AppBackend: playback bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:37:09.891] [app] [info] [AppBackend.cpp:707] Backend initialized.
+warning: could not find '.gnu_debugaltlink' file for /usr/lib/x86_64-linux-gnu/qt6/plugins/imageformats/libqico.so
+warning: could not find '.gnu_debugaltlink' file for /usr/lib/x86_64-linux-gnu/qt6/plugins/imageformats/libqgif.so
+warning: could not find '.gnu_debugaltlink' file for /usr/lib/x86_64-linux-gnu/qt6/plugins/imageformats/libqjpeg.so
+[2026-09-07 15:37:09.925] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:37:09.925] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 15:37:09.925] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+[2026-09-07 15:37:09.928] [app] [warning] [NanopositionerTab.cpp:96] NanopositionerTab: failed to open resource defaults/config.json
+[2026-09-07 15:37:09.928] [app] [warning] [NanopositionerTab.cpp:344] Failed to load config.json from /include/config.json
+[2026-09-07 15:37:09.932] [app] [warning] [CameraControlService.cpp:65] CameraControlService hardware operations unavailable: EGrabber SDK is unavailable on this platform
+[New Thread 0x7fffcf6ea6c0 (LWP 3913924)]
+[New Thread 0x7fffceaf66c0 (LWP 3913925)]
+[New Thread 0x7fffce2f56c0 (LWP 3913926)]
+[New Thread 0x7fffcdaf46c0 (LWP 3913927)]
+[New Thread 0x7fffcd2f36c0 (LWP 3913928)]
+[New Thread 0x7fffccaf26c0 (LWP 3913929)]
+[New Thread 0x7fffcc2f16c0 (LWP 3913930)]
+[New Thread 0x7fffcbaf06c0 (LWP 3913931)]
+[New Thread 0x7fffcb2ef6c0 (LWP 3913932)]
+[New Thread 0x7fffcaaee6c0 (LWP 3913933)]
+[New Thread 0x7fffca2ed6c0 (LWP 3913934)]
+[New Thread 0x7fffc9aec6c0 (LWP 3913935)]
+[New Thread 0x7fffc92eb6c0 (LWP 3913936)]
+[New Thread 0x7fffc8aea6c0 (LWP 3913937)]
+[New Thread 0x7fffc82e96c0 (LWP 3913938)]
+[New Thread 0x7fffc7ae86c0 (LWP 3913939)]
+[New Thread 0x7fffc72e76c0 (LWP 3913940)]
+[New Thread 0x7fffc6ae66c0 (LWP 3913941)]
+[New Thread 0x7fffc62e56c0 (LWP 3913942)]
+[New Thread 0x7fffc5ae46c0 (LWP 3913943)]
+[New Thread 0x7fffc52e36c0 (LWP 3913944)]
+[New Thread 0x7fffc4ae26c0 (LWP 3913945)]
+[New Thread 0x7fffc42e16c0 (LWP 3913946)]
+[New Thread 0x7fffc3ae06c0 (LWP 3913947)]
+[New Thread 0x7fffc32df6c0 (LWP 3913948)]
+[New Thread 0x7fffc2ade6c0 (LWP 3913960)]
+[Thread 0x7fffc2ade6c0 (LWP 3913960) exited]
+[Thread 0x7fffc32df6c0 (LWP 3913948) exited]
+[Thread 0x7fffc3ae06c0 (LWP 3913947) exited]
+[Thread 0x7fffc42e16c0 (LWP 3913946) exited]
+[Thread 0x7fffc4ae26c0 (LWP 3913945) exited]
+[Thread 0x7fffc52e36c0 (LWP 3913944) exited]
+[Thread 0x7fffc5ae46c0 (LWP 3913943) exited]
+[Thread 0x7fffc62e56c0 (LWP 3913942) exited]
+[Thread 0x7fffc6ae66c0 (LWP 3913941) exited]
+[Thread 0x7fffc72e76c0 (LWP 3913940) exited]
+[Thread 0x7fffc7ae86c0 (LWP 3913939) exited]
+[Thread 0x7fffc82e96c0 (LWP 3913938) exited]
+[Thread 0x7fffc8aea6c0 (LWP 3913937) exited]
+[Thread 0x7fffc92eb6c0 (LWP 3913936) exited]
+[Thread 0x7fffc9aec6c0 (LWP 3913935) exited]
+[Thread 0x7fffca2ed6c0 (LWP 3913934) exited]
+[Thread 0x7fffcaaee6c0 (LWP 3913933) exited]
+[Thread 0x7fffcb2ef6c0 (LWP 3913932) exited]
+[Thread 0x7fffcbaf06c0 (LWP 3913931) exited]
+[Thread 0x7fffcc2f16c0 (LWP 3913930) exited]
+[Thread 0x7fffccaf26c0 (LWP 3913929) exited]
+[Thread 0x7fffcd2f36c0 (LWP 3913928) exited]
+[Thread 0x7fffcdaf46c0 (LWP 3913927) exited]
+[Thread 0x7fffce2f56c0 (LWP 3913926) exited]
+[Thread 0x7fffceaf66c0 (LWP 3913925) exited]
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:37:14.741] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 15:37:14.741] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 15:37:14.742] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 15:37:14.742] [app] [warning] [OverviewTab.cpp:232] ensureDefaultsFile(overviewConfig.js) failed: Failed to create directory: /include
+[2026-09-07 15:37:14.742] [app] [warning] [OverviewTab.cpp:238] Failed to load overviewConfig.js from /include/overviewConfig.js: No such file or directory
+This plugin does not support propagateSizeHints()
+
+Thread 1 "mindvision_diag" received signal SIGINT, Interrupt.
+0x00007ffff2d1b5fd in __GI___poll (fds=0x555556022840, nfds=2, timeout=6) at ../sysdeps/unix/sysv/linux/poll.c:29
+warning: 29	../sysdeps/unix/sysv/linux/poll.c: No such file or directory
+
+Thread 28 (Thread 0x7fffcf6ea6c0 (LWP 3913924) "mindvision_diag"):
+#0  0x00007ffff2d1b5fd in __GI___poll (fds=0x7fffcf6e0fd0, nfds=2, timeout=-1) at ../sysdeps/unix/sysv/linux/poll.c:29
+#1  0x00007ffff629d12a in ??? () at /home/gavin/Developer/.worktrees/reliability-qt-test/build/vendor/mindvision-sdk/extracted/lib/libMVSDK.so
+#2  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#3  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 27 (Thread 0x7fffcffe76c0 (LWP 3913920) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 26 (Thread 0x7fffd07e86c0 (LWP 3913919) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 25 (Thread 0x7fffd0fe96c0 (LWP 3913918) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 24 (Thread 0x7fffd17ea6c0 (LWP 3913917) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 23 (Thread 0x7fffd1feb6c0 (LWP 3913916) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 22 (Thread 0x7fffd27ec6c0 (LWP 3913915) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 21 (Thread 0x7fffd2fed6c0 (LWP 3913914) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 20 (Thread 0x7fffd37ee6c0 (LWP 3913913) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 19 (Thread 0x7fffd3fef6c0 (LWP 3913912) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 18 (Thread 0x7fffd47f06c0 (LWP 3913911) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 17 (Thread 0x7fffd4ff16c0 (LWP 3913910) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 16 (Thread 0x7fffd57f26c0 (LWP 3913909) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 15 (Thread 0x7fffd5ff36c0 (LWP 3913908) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 14 (Thread 0x7fffd67f46c0 (LWP 3913907) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 13 (Thread 0x7fffd6ff56c0 (LWP 3913906) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 12 (Thread 0x7fffd77f66c0 (LWP 3913905) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 11 (Thread 0x7fffd7ff76c0 (LWP 3913904) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 10 (Thread 0x7fffd87f86c0 (LWP 3913903) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 9 (Thread 0x7fffd8ff96c0 (LWP 3913902) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 8 (Thread 0x7fffd97fa6c0 (LWP 3913901) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 7 (Thread 0x7fffd9ffb6c0 (LWP 3913900) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 6 (Thread 0x7fffda7fc6c0 (LWP 3913899) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 5 (Thread 0x7fffdaffd6c0 (LWP 3913898) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 4 (Thread 0x7fffdb7fe6c0 (LWP 3913897) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=-550360288, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-550360288, abstime=0x0, clockid=0, expected=0, futex_word=0x555555ef4d28) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555ef4d28, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9b8cd in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x555555eef810, cond=0x555555ef4d00) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x555555ef4d00, mutex=0x555555eef810) at ./nptl/pthread_cond_wait.c:627
+#5  0x000055555585b284 in backend::services::ProcessingService::workerLoop() ()
+#6  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#7  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 3 (Thread 0x7fffdbfff6c0 (LWP 3913891) "mindvision_diag"):
+#0  0x00007ffff2c98e51 in __futex_abstimed_wait_common64 (private=1094795585, cancel=true, abstime=0x7fffdbff5f90, op=137, expected=0, futex_word=0x555555eef450) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=1094795585, abstime=0x7fffdbff5f90, clockid=1094795585, expected=0, futex_word=0x555555eef450) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x555555eef450, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x7fffdbff5f90, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x00007ffff2c9c1f6 in __pthread_cond_wait_common (abstime=<optimized out>, clockid=<optimized out>, mutex=0x555555eef400, cond=0x555555eef428) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_clockwait64 (abstime=<optimized out>, clockid=<optimized out>, mutex=0x555555eef400, cond=0x555555eef428) at ./nptl/pthread_cond_wait.c:691
+#5  ___pthread_cond_clockwait64 (cond=0x555555eef428, mutex=0x555555eef400, clockid=<optimized out>, abstime=<optimized out>) at ./nptl/pthread_cond_wait.c:679
+#6  0x00005555557de008 in std::thread::_State_impl<std::thread::_Invoker<std::tuple<spdlog::details::periodic_worker::periodic_worker<long, std::ratio<1l, 1l> >(std::function<void ()> const&, std::chrono::duration<long, std::ratio<1l, 1l> >)::{lambda()#1}> > >::_M_run() ()
+#7  0x00007ffff30ecdb4 in ??? () at /lib/x86_64-linux-gnu/libstdc++.so.6
+#8  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 2 (Thread 0x7fffe0bff6c0 (LWP 3913889) "QDBusConnection"):
+#0  0x00007ffff2d1b5fd in __GI___poll (fds=0x555555ee9a10, nfds=2, timeout=-1) at ../sysdeps/unix/sysv/linux/poll.c:29
+#1  0x00007ffff2f738ce in ??? () at /lib/x86_64-linux-gnu/libglib-2.0.so.0
+#2  0x00007ffff2f13a23 in g_main_context_iteration () at /lib/x86_64-linux-gnu/libglib-2.0.so.0
+#3  0x00007ffff45315ef in QEventDispatcherGlib::processEvents(QFlags<QEventLoop::ProcessEventsFlag>) () at /lib/x86_64-linux-gnu/libQt6Core.so.6
+#4  0x00007ffff43429a3 in QEventLoop::exec(QFlags<QEventLoop::ProcessEventsFlag>) () at /lib/x86_64-linux-gnu/libQt6Core.so.6
+#5  0x00007ffff4410683 in QThread::exec() () at /lib/x86_64-linux-gnu/libQt6Core.so.6
+#6  0x00007ffff2b7ad4d in ??? () at /lib/x86_64-linux-gnu/libQt6DBus.so.6
+#7  0x00007ffff447c48d in ??? () at /lib/x86_64-linux-gnu/libQt6Core.so.6
+#8  0x00007ffff2c9cb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x00007ffff2d29d6c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 1 (Thread 0x7fffe1299600 (LWP 3913874) "mindvision_diag"):
+#0  0x00007ffff2d1b5fd in __GI___poll (fds=0x555556022840, nfds=2, timeout=6) at ../sysdeps/unix/sysv/linux/poll.c:29
+#1  0x00007ffff2f738ce in ??? () at /lib/x86_64-linux-gnu/libglib-2.0.so.0
+#2  0x00007ffff2f13a23 in g_main_context_iteration () at /lib/x86_64-linux-gnu/libglib-2.0.so.0
+#3  0x00007ffff45315ef in QEventDispatcherGlib::processEvents(QFlags<QEventLoop::ProcessEventsFlag>) () at /lib/x86_64-linux-gnu/libQt6Core.so.6
+#4  0x00007ffff43429a3 in QEventLoop::exec(QFlags<QEventLoop::ProcessEventsFlag>) () at /lib/x86_64-linux-gnu/libQt6Core.so.6
+#5  0x00007ffff53c0c4b in QDialog::exec() () at /lib/x86_64-linux-gnu/libQt6Widgets.so.6
+#6  0x00007ffff53f62be in ??? () at /lib/x86_64-linux-gnu/libQt6Widgets.so.6
+#7  0x0000555555686747 in frontend::OverviewTab::onReloadJs() ()
+#8  0x0000555555689b21 in frontend::OverviewTab::OverviewTab(backend::AppBackend&, QWidget*) ()
+#9  0x00005555555fa1aa in MainWindow::MainWindow(backend::AppBackend&, QWidget*) ()
+#10 0x00005555555df66f in main ()

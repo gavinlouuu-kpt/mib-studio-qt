@@ -159,11 +159,16 @@ All gates in one struct. Notable fields:
   the rings only fill while that tab is visible. Stored frames share cv::Mat
   refcounts with the processing loop (no per-frame clone); consumers are
   read-only.
-- **Experiment accumulation** — bounded `std::deque<ProcessedFrame>` populated
-  while `experimentActive_` is true. Deque gives O(1) `pop_front()` when the
-  bounded backlog is full under high frame rates. `flushBufferedFrames(Hdf5Service&)`
-  moves frames into an `ExperimentBatch` via `std::make_move_iterator` (O(1)
-  per Mat, refcount transfer), submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
+- **Experiment accumulation** — the extracted, bounded
+  `ExperimentFrameBuffer` (`experimentBuffer_`, issue #370 —
+  [[../diagnostics/MemoryBudget]]) populated while `experimentActive_` is
+  true, bounded by **frames** (`maxBufferedFrames_`, derived from the flush
+  interval) **and bytes** (`setMaxBufferedBytes`, default 512 MiB, config
+  key `experiment_buffer_max_mb`; 0 = count-only). Every eviction is returned
+  to `appendExperimentFrame` and accounted as `persistenceCancelledByPolicy`.
+  `flushBufferedFrames(Hdf5Service&)`
+  moves frames out with `takeAll()` (O(1) per Mat, refcount transfer),
+  tracks the bytes in flight (`flushQueueBytes_`) and submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
   whose writer thread does the slow append, so capture/processing never blocks
   on disk. The write queue is created lazily on first flush and torn down by
   `finishFlush()` at experiment stop (drains + joins before any direct HDF5
@@ -175,8 +180,21 @@ All gates in one struct. Notable fields:
   (`gray`, `mask`, `grayROI`, `grayFull`, `fullMask`) is freshly allocated per
   iteration and never written after publication. Experiment frames and monitoring
   ring entries share refcounts instead of cloning (PR3 clone elimination).
+  Since issue #370 the per-object records of `processBatch` and the async
+  batch workers share the frame's source + mask the same way (no clone per
+  object; `processing.memory_budget` asserts one source and one mask
+  allocation per frame and identical science).
   Consumers (`Hdf5Service::appendFrames`, monitoring/HDF readers, overlay) are
   all read-only. Enforced by comment at the top of `realtimeInlineLoop`.
+- **Memory ownership report (issue #370)** — `memoryStats()` returns
+  `MemoryStats{experimentBuffer, monitoringRings, batchQueue, flushQueue,
+  snapshot}` as [[../diagnostics/MemoryBudget]] `MemoryOwnerStats`
+  (current/peak bytes + counts, declared bounds, evictions/replacements).
+  `FrameRingBuffer` tracks its bytes and replacements; the async batch queue
+  has a byte budget (`RealtimeBatchSettings::maxQueuedBytes` /
+  `BatchPipelineConfig::maxQueuedBytes`, default 256 MiB) whose drops are
+  counted in `BatchPipelineStats::framesDroppedByByteBudget` (a subset of
+  `framesDropped`) next to `currentQueueBytes` / `maxQueueBytes`.
 - Invalid frame sampling rate defaults to 1-in-100 to bound HDF5 size.
 
 ## Snapshot model (PR4)
@@ -297,6 +315,90 @@ current/max queue depth, batch size, worker count, and running state. See
 `docs/batch_pipeline_architecture.md` for the migration plan from
 `FrameStore -> realtimeLoop` to capture enqueue -> batch worker.
 
+## Frame classification and experiment accounting (issue #367)
+
+- `classifyFrameWithActiveKernel(frame, config, roi, bg)` → `FrameClassification
+  {Empty | Candidate | Malformed | ProcessingFailed, detail}`. A core error or
+  exception is `ProcessingFailed`, a bad geometry/short payload is
+  `Malformed`; neither is ever reported as a valid empty frame.
+  `isFrameEmptyWithActiveKernel` remains as a compatibility wrapper that
+  returns true for everything except `Candidate` — the raw-recording loop no
+  longer uses it.
+- On the realtime inline path every frame that reaches the empty check is
+  **admitted** to `experimentAccounting_` while an experiment is active and
+  ends in exactly one `FrameOutcome`: `Empty`, `ProcessingFailed` (empty-check
+  failure *or* mask failure — the frame is skipped, counted in
+  `getProcessingFailureCount()`, and reported as `PipelineSkipReason::KernelError`),
+  `Processed` (a valid object) or `RejectedByScientificFilter`. Ring-behind
+  skips are admitted as `StoreOverwritten`. `appendExperimentFrame` is a
+  persistence admission; frames evicted by the bounded experiment buffer are
+  `persistenceCancelledByPolicy`; the flush writer adds `persistenceCommitted`.
+  `experimentAccountingSnapshot()` derives the pending / failed persistence
+  terms from the current buffer and flush-queue error state and returns the
+  reconciled snapshot (`RunCompletionState`). `setExperimentAccountingContext(
+  captureGeneration, policyAllowsDrops)` must be called before
+  `startExperiment()` ([[../architecture/ExperimentCoordinator]] does). Frame
+  counts are separate from `objectsDetected`. Guard:
+  `processing.experiment_accounting`.
+- **Start/stop boundaries (2026-09-08).** Outcomes, validations and the
+  experiment-buffer append are gated on
+  `RecordingAccountingTracker::wasAdmitted(idx)` (index range of the run,
+  atomics), *not* on `experimentActive_`: a frame in flight across
+  `startExperiment()` / `endExperiment()` was otherwise counted on one side
+  only (admitted but no outcome, or outcome without admission) and a clean
+  run read "Failed: accounting does not reconcile" by one frame (hit by the
+  CI fast lane and a bench run the same afternoon). `endExperiment()` also
+  waits (≤ 250 ms) for the realtime thread to finish the last admitted frame
+  so the caller's snapshot is complete. Guard: experiment 3 of
+  `processing.experiment_accounting` (40 short runs against a free-running
+  pusher, in both realtime modes; 2 mismatches per pass before the fix, 0
+  after). The experiment-buffer append is gated the same way (a frame the
+  drain wait lets finish must still reach the buffer for the remainder
+  flush), and the **async-batch mode participates too** (review finding,
+  2026-09-08): the producer admits a frame when it hands it to the batch
+  queue (`noteRealtimeAdmitted`; a queue rejection terminates it as
+  `ProcessingFailed`, ring-behind skips as `StoreOverwritten`), the batch
+  callback settles one outcome per frame index (`noteRealtimeValidation`,
+  or `ProcessingFailed` for a frame the core returned empty), and
+  `endExperiment()` also waits (≤ 250 ms) for the batch queue and the
+  in-flight batch (`batchFramesInFlight_`) to settle. Before this, async
+  runs admitted nothing and were labelled Complete regardless of loss.
+- **Settlement at stop is exact.** When the drain gives up (a slow batch
+  pipeline: sanitizer lanes, a loaded machine), `endExperiment()` takes the
+  `experimentSettleMutex_` exclusively, books every admitted-but-unprocessed
+  frame as `PendingAtStop` and marks the run settled; outcome/validation
+  counting and the buffer append take the lock shared and drop anything
+  for a settled run. The accounting therefore always reconciles: what was
+  not processed is declared (`IntentionallyPartial`), never left as
+  "does not reconcile" or invented as Complete. Guard: experiment 4 of
+  `processing.experiment_accounting` (batch stalled for 5 s at stop → 24
+  pending, reconciled, later outcomes dropped; stop stays bounded).
+
+## Background identity + bounded calibration (issue #369)
+
+- `backgroundGeneration()` increments on **every** background publication or
+  clear (`setRealtimeBackgroundGray`, auto-capture, calibration); 0 = never
+  set. `backgroundSha256()` hashes the active background bytes. Both feed the
+  [[../architecture/ExperimentCoordinator]] invalidation key and the frozen
+  run snapshot, so a background change after preflight is a stale Start.
+- `startBackgroundCalibration(BackgroundCalibrationRequest{requiredAccepted
+  = 10, maxAttempts = 200, timeoutMs = 5000})` turns background sampling into
+  a **finite, cancellable operation** on the realtime path: the recipe
+  (config version) is frozen; each realtime frame outcome is observed
+  (`noteRealtimeOutcome` / `noteRealtimeValidation` → `bgCalObserve`), empty
+  frames are accepted into a `CV_64F` mean, non-empty frames are counted as
+  `rejectedNonEmpty` (contamination), failures as
+  `rejectedProcessingFailed`. It ends with exactly one
+  `BackgroundCalibrationState`: `Succeeded` (candidate published atomically
+  under `rtMutex_`, new generation + sha), `FailedInsufficient`
+  (`maxAttempts` reached), `FailedTimeout` (also detected lazily by
+  `backgroundCalibrationStatus()` so a stalled source never looks Running
+  forever), `FailedProcessing` (config changed mid-operation), or
+  `Cancelled`. The previous background stays active on every non-success
+  path. `startBackgroundCalibration` refuses when realtime is not running or
+  another calibration is active; the UI entry point is the Preview canvas
+  context menu ([[../frontend/PreviewPage]]).
+
 ## Gotchas
 
 - **The kernel seam (`IProcessingKernel`) now owns the science decisions:**
@@ -336,10 +438,12 @@ current/max queue depth, batch size, worker count, and running state. See
   (`integration.e2e_live_view_latency`): under sustained overload the default
   stays a few hundred frames behind, vs. tens of thousands with drop-frames
   forced off (~30x).
-- When the experiment backlog reaches `maxBufferedFrames_`, sampled invalid
-  frames are dropped first. Valid frames can evict old invalid frames; valid
-  drops only happen if the backlog is entirely valid and still over cap. This
-  is a last-resort RAM safety valve for long runs where HDF5 is slow or failing.
+- When the experiment backlog reaches `maxBufferedFrames_` **or the byte
+  budget**, sampled invalid frames are dropped first. Valid frames can evict
+  old invalid frames; valid drops only happen if the backlog is entirely
+  valid and still over the bound. This is a last-resort RAM safety valve for
+  long runs where HDF5 is slow or failing; the policy lives in
+  `ExperimentFrameBuffer` and every drop is reported (never silent).
 - `pixelToMicronFactor_` default is `0.4886` — UI lets users change this.
 - YOLO is a separate service ([[YoloService]]); this pipeline does not use it.
 - **Callback ordering invariant**: `TargetGroupCallback` and

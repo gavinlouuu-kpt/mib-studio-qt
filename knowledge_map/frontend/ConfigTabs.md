@@ -10,6 +10,54 @@
 [[../frontend/System-Utilities]] (`AppConfigWatcher`, `ProfileManager`),
 [[Dialogs]] (`ProcessingSettingsDialog`, `MonitoringSettingsDialog`)
 
+## Explicit editor state and bounded header (issue #361)
+
+- **State is a value, not a label.** Each editable document (app
+  `config.json`, camera script, MindVision JSON) has a
+  `ConfigDocumentState` (`frontend/models/ConfigDocumentState.h`): active
+  path, loaded/current SHA-256 fingerprints, `dirty` (content comparison —
+  editing back to the baseline is clean), `conflict` (file changed elsewhere
+  while dirty), last save outcome. `onExternalConfigFileChanged()` consults
+  `jsonDoc_.markExternalChange()` — never a label's `isVisible()` — so a hidden
+  tab, a compact inspector (#362) or a resize can never let an external
+  reload overwrite local edits. `documentStateChanged()` is emitted on every
+  transition; `appConfigDocument()` / `cameraScriptDocument()` /
+  `mindVisionDocument()` expose the values read-only.
+- **Checked saves.** `saveEditorToFile()` writes through
+  [[System-Utilities]] `ConfigDocumentStore` (QSaveFile + verified commit).
+  A stale on-disk baseline is detected before writing and asked about
+  (refused in non-interactive/test mode); a failed or refused save keeps the
+  document Dirty and shows `Last save failed: …`. Saved is shown only after
+  verified persistence. Save (file) stays separate from *Apply to Camera*
+  (JS/MindVision tabs); Verified is never claimed by this widget.
+- **Bounded primary header** (`headerWidget_`, above the tab widget):
+  `Profile:` combo (content-length policy, ≤ 420 px), compact state label
+  (`ElidingLabel`: `Loaded / Edited (unsaved) / Saved / Conflict` +
+  `incompatible` + profile tags), `Reset`, `Save`, and a native **More…**
+  menu (`configMoreBtn`) holding Save as profile, Rename, Delete, Duplicate
+  as local, Check for profile updates, Update selected, Show diff, Open
+  another config.json, Use the default config.json, Show config as table.
+  Second row: elided path (`appConfigPathLabel`); third: wrapping notices
+  (`appConfigNotices`: dirty/conflict/last-save-failed/incompatible/update
+  available). The 220 px status minimum is gone; long names/paths cannot
+  widen the window (`frontend.config_tabs_state` asserts the minimum size
+  hint is unchanged and ≤ the narrow inspector budget).
+- **Passive vs intentional profile refresh.** `refreshProfilesList(bool
+  loadSelection = false)` rebuilds the combo keeping the selection *by
+  identity* and never reloads; only startup and post-mutation callers
+  (delete/rename/update/duplicate) pass `true`. *Check for profile updates*
+  is passive: it cannot reload over an edited document.
+- **Reflow without data change.** `relayoutJsonSections(width)` (debounced
+  100 ms from a viewport resize event filter) moves the existing section
+  `QGroupBox`es into 1/2/3 columns (font-aware ≥ 260 px cards) without
+  touching models, JSON, config or files; `refreshJsonTableModel()` uses the
+  same `columnsForWidth()`. The JS and MindVision pages sit in scroll areas
+  and the MindVision trigger/strobe form is a two-row grid, so their content
+  never becomes window-width pressure.
+- Task-oriented captions: *Processing & app config*, *Camera script
+  (EGrabber)*, *Camera trigger & strobe (MindVision)* (file names in tab
+  tooltips). Raw JSON/table editing is unchanged.
+
 ## Responsibility
 
 - Let the user edit `ProcessingConfig` fields (thresholds, gates,

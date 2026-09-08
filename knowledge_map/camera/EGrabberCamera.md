@@ -65,6 +65,15 @@
   intentional-discard counter (reset at `start()`). No documented counter
   maps to transport loss, so `transportLossValid` stays false.
 
+## Timestamps (issue #368)
+
+`Frame::timestamp` is the Coaxlink `BUFFER_INFO_TIMESTAMP` / per-part custom
+timestamp: microseconds since host boot. `timestampDescriptor()` reports
+`hostMonotonicUs @1e6 Hz, transportReceipt, valid` on Windows (QPC domain =
+`Tools::getTimestamp()`, hence `timestampsHostComparable`), and
+`unknown/unsupported` on other platforms where the mapping is unverified. It
+marks transport receipt, not exposure.
+
 ## Gotchas
 
 - **One GenTL handle per process.** `start()` takes the shared handle from
