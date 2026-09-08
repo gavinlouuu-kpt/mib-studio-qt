@@ -15,6 +15,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <opencv2/core.hpp>
 #include <sstream>
 
 namespace backend::app {
@@ -251,10 +252,14 @@ void ExperimentCoordinator::reportUnresolvedFault(const std::string& code, const
 
 void ExperimentCoordinator::clearUnresolvedFault()
 {
-    std::lock_guard<std::mutex> lk(mutex_);
+    std::unique_lock<std::mutex> lk(mutex_);
     faultActive_ = false;
     faultCode_.clear();
     faultMessage_.clear();
+    if (state_ == ExperimentRunState::Failed) {
+        state_ = ExperimentRunState::Idle;
+        publishLocked(lk, "fault cleared");
+    }
 }
 
 bool ExperimentCoordinator::hasUnresolvedFault() const
@@ -559,12 +564,41 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         result.message = "another experiment transaction is in progress";
         return result;
     }
-    if (state_ != ExperimentRunState::Idle) {
+    if (state_ != ExperimentRunState::Idle && state_ != ExperimentRunState::Failed) {
         result.outcome = state_ == ExperimentRunState::Active ? ExperimentStartOutcome::AlreadyActive
                                                                 : ExperimentStartOutcome::Busy;
         result.message = std::string("experiment is ") + toString(state_);
         return result;
     }
+    if (workerExit_) {
+        result.outcome = ExperimentStartOutcome::Busy;
+        result.message = "experiment coordinator is shut down";
+        return result;
+    }
+
+    // Multi-image series capture requires inline realtime processing. Switch
+    // before the evaluation so the frozen snapshot records the mode the run
+    // actually uses; the finalization restores the previous mode.
+    auto& proc = backend_.processing();
+    {
+        const auto cfg = proc.getProcessingConfig();
+        const bool series = cfg.multi_image_enabled && cfg.multi_image_count > 1;
+        const bool asyncBatch = proc.getRealtimeProcessingMode() ==
+                                services::ProcessingService::RealtimeProcessingMode::AsyncBatch;
+        restoreRealtimeMode_ = false;
+        if (series && asyncBatch) {
+            proc.setRealtimeProcessingMode(services::ProcessingService::RealtimeProcessingMode::Inline);
+            restoreRealtimeMode_ = true;
+            realtimeModeWasAsyncBatch_ = true;
+            SPDLOG_INFO("ExperimentCoordinator: switched realtime mode async_batch -> inline for a multi-image run");
+        }
+    }
+    auto restoreModeOnFailure = [&] {
+        if (restoreRealtimeMode_) {
+            proc.setRealtimeProcessingMode(services::ProcessingService::RealtimeProcessingMode::AsyncBatch);
+            restoreRealtimeMode_ = false;
+        }
+    };
 
     std::string path = request.outputPath;
     if (path.size() < 3 || (path.substr(path.size() - 3) != ".h5" &&
@@ -583,6 +617,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
                          " is stale (current " + std::to_string(result.readiness.generation) +
                          "); re-run the preflight";
         SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        restoreModeOnFailure();
         return result;
     }
     if (!result.readiness.ready) {
@@ -591,12 +626,14 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         for (const auto& id : result.readiness.blockingGateIds()) ids += (ids.empty() ? "" : ", ") + id;
         result.message = "not ready: " + ids;
         SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        restoreModeOnFailure();
         return result;
     }
     if (result.readiness.candidate.deliveryModeActive == "latestFrame" &&
         !request.acknowledgeLatestFrameDrops) {
         result.outcome = ExperimentStartOutcome::NotReady;
         result.message = "Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame";
+        restoreModeOnFailure();
         return result;
     }
 
@@ -619,6 +656,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         state_ = ExperimentRunState::Idle;
         result.outcome = ExperimentStartOutcome::StorageFailed;
         result.message = "failed to open HDF5 file: " + path;
+        restoreModeOnFailure();
+        publishLocked(lk, "start failed");
         return result;
     }
     if (!hdf5.initializeDatasets()) {
@@ -626,6 +665,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         state_ = ExperimentRunState::Idle;
         result.outcome = ExperimentStartOutcome::StorageFailed;
         result.message = "failed to initialize HDF5 datasets in " + path;
+        restoreModeOnFailure();
+        publishLocked(lk, "start failed");
         return result;
     }
     // Provenance first: a run without its frozen snapshot cannot be Complete.
@@ -636,14 +677,22 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         state_ = ExperimentRunState::Idle;
         result.outcome = ExperimentStartOutcome::ProvenanceFailed;
         result.message = "failed to persist the run configuration snapshot";
+        restoreModeOnFailure();
+        publishLocked(lk, "start failed");
         return result;
     }
 
-    // 6-7. Acquire processing ownership and enter Running.
-    auto& proc = backend_.processing();
+    // 6-7. Acquire processing ownership and enter Active.
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
     proc.startExperiment();
     activeRun_ = run;
+    lastRun_ = run;
+    stopRequested_ = cancelRequested_ = fatalRequested_ = false;
+    fatalMessage_.clear();
+    if (!worker_.joinable()) {
+        workerExit_ = false;
+        worker_ = std::thread([this] { worker(); });
+    }
     state_ = ExperimentRunState::Active;
     result.outcome = ExperimentStartOutcome::Started;
     result.message = "experiment started";
@@ -708,10 +757,208 @@ void ExperimentCoordinator::publishLocked(std::unique_lock<std::mutex>& lk, cons
 std::optional<RunConfigurationSnapshot> ExperimentCoordinator::finish()
 {
     std::lock_guard<std::mutex> lk(mutex_);
-    auto run = activeRun_;
+    return activeRun_ ? activeRun_ : lastRun_;
+}
+
+ExperimentCoordinator::~ExperimentCoordinator()
+{
+    shutdown();
+}
+
+ExperimentStopOutcome ExperimentCoordinator::requestStop(bool cancelled)
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (state_ == ExperimentRunState::Stopping || state_ == ExperimentRunState::Starting)
+        return ExperimentStopOutcome::Busy;
+    if (state_ != ExperimentRunState::Active || !activeRun_) return ExperimentStopOutcome::NotActive;
+    if (stopRequested_) return ExperimentStopOutcome::Busy;
+    stopRequested_ = true;
+    cancelRequested_ = cancelled;
+    workerCv_.notify_all();
+    return ExperimentStopOutcome::Accepted;
+}
+
+void ExperimentCoordinator::onFatalSaveError(const std::string& message)
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (state_ != ExperimentRunState::Active || !activeRun_) return;
+    SPDLOG_ERROR("ExperimentCoordinator: fatal save error during run {}: {}",
+                 activeRun_->startGeneration, message);
+    fatalRequested_ = true;
+    fatalMessage_ = message;
+    stopRequested_ = true;
+    workerCv_.notify_all();
+}
+
+void ExperimentCoordinator::worker()
+{
+    std::unique_lock<std::mutex> lk(mutex_);
+    while (true) {
+        workerCv_.wait_for(lk, std::chrono::milliseconds(250),
+                           [&] { return stopRequested_ || workerExit_; });
+        if (stopRequested_ && activeRun_) {
+            const bool failed = fatalRequested_;
+            const std::string msg = fatalMessage_;
+            const bool cancelled = cancelRequested_;
+            stopRequested_ = cancelRequested_ = fatalRequested_ = false;
+            finalizeLocked(lk, cancelled, failed, msg);
+            continue;
+        }
+        stopRequested_ = false;
+        if (workerExit_) break;
+        if (state_ == ExperimentRunState::Active && activeRun_) {
+            auto& proc = backend_.processing();
+            const size_t interval = proc.getFlushInterval();
+            if (interval > 0 && proc.getBufferedFrameCounts().total() >= interval &&
+                backend_.hdf5().isFileOpen()) {
+                status_.flushing = true;
+                lk.unlock();
+                const size_t n = proc.flushBufferedFrames(backend_.hdf5());
+                if (n > 0) SPDLOG_DEBUG("ExperimentCoordinator: periodic flush submitted {} frames", n);
+                lk.lock();
+                status_.flushing = false;
+            }
+        }
+    }
+}
+
+void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, bool cancelled, bool failed,
+                                           const std::string& failMessage)
+{
+    using clock = std::chrono::steady_clock;
+    const auto tBegin = clock::now();
+    auto sinceMs = [](clock::time_point t0) {
+        return std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+    };
+    state_ = failed ? ExperimentRunState::Failed : ExperimentRunState::Stopping;
+    status_.cancelled = cancelled;
+    status_.flushing = true;
+    const RunConfigurationSnapshot run = *activeRun_;
+    publishLocked(lk, failed ? "fatal save error; finalizing" : "stopping");
+    auto& proc = backend_.processing();
+    auto& hdf5 = backend_.hdf5();
+    const bool restoreMode = restoreRealtimeMode_;
+    restoreRealtimeMode_ = false;
+    lk.unlock();
+
+    bool ok = true;
+    bool flushOk = true;
+    const bool fileOpen = hdf5.isFileOpen();
+    // 2. Drain the async write queue (writer thread stopped afterwards).
+    if (fileOpen) {
+        const auto t0 = clock::now();
+        const size_t submitted = proc.flushBufferedFrames(hdf5);
+        if (!proc.finishFlush()) flushOk = false;
+        SPDLOG_INFO("ExperimentCoordinator: final flush submitted {} frames, ok={} ({:.3f} ms)",
+                    submitted, flushOk, sinceMs(t0));
+    }
+    // 3. Stop accumulating.
+    proc.endExperiment();
+    proc.resetRealtimeMetrics();
+    // 4. Remainder that arrived between 2 and 3 goes through the same flush
+    // path so the accounting credits it as committed (bench, 2026-09-08).
+    const auto remainder = proc.getBufferedFrameCounts();
+    if (fileOpen && remainder.total() > 0) {
+        const auto t0 = clock::now();
+        const size_t submitted = proc.flushBufferedFrames(hdf5);
+        const bool remOk = proc.finishFlush();
+        if (!remOk) flushOk = false;
+        SPDLOG_INFO("ExperimentCoordinator: remainder flush submitted {} frames (valid={}, invalid={}), ok={} ({:.3f} ms)",
+                    submitted, remainder.valid, remainder.invalid, remOk, sinceMs(t0));
+    }
+    if (!flushOk) ok = false;
+    const uint64_t endNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    auto accounting = proc.experimentAccountingSnapshot();
+    // 5-6. Metadata, accounting, provenance, config JSON; close.
+    bool metadataOk = true;
+    if (fileOpen) {
+        if (!hdf5.flush()) SPDLOG_WARN("ExperimentCoordinator: H5Fflush before metadata failed");
+        const auto cfg = proc.getProcessingConfig();
+        const auto roi = proc.getRealtimeRoi();
+        cv::Mat bg = proc.getRealtimeBackgroundGray();
+        const auto core = proc.activeProcessingCoreIdentity();
+        const auto t0 = clock::now();
+        metadataOk = hdf5.writeExperimentInfo(run.startWallClockNs, endNs, remainder.valid, remainder.invalid,
+                                              cfg, roi, bg.empty() ? nullptr : &bg, &core);
+        if (!metadataOk) {
+            SPDLOG_ERROR("ExperimentCoordinator: metadata/provenance write failed");
+            ok = false;
+        } else {
+            if (!hdf5.writeRunAccounting(accounting)) {
+                SPDLOG_ERROR("ExperimentCoordinator: run accounting could not be persisted");
+                ok = false;
+            }
+            if (!hdf5.writeAcquisitionProvenance(backend_.capture().timestampDescriptor(),
+                                                 backend_.capture().telemetrySnapshot())) {
+                SPDLOG_ERROR("ExperimentCoordinator: acquisition provenance could not be persisted");
+            }
+            const std::string cfgJson = backend_.getLastConfigJson();
+            if (!cfgJson.empty()) hdf5.writeConfigJson(cfgJson);
+        }
+        SPDLOG_INFO("ExperimentCoordinator: metadata+accounting+provenance took {:.3f} ms", sinceMs(t0));
+        const auto tClose = clock::now();
+        hdf5.closeFile();
+        SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
+    }
+    SPDLOG_INFO("ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
+                run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
+                accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
+    // 7. Restore the realtime mode a multi-image run switched.
+    if (restoreMode) {
+        proc.setRealtimeProcessingMode(services::ProcessingService::RealtimeProcessingMode::AsyncBatch);
+        SPDLOG_INFO("ExperimentCoordinator: restored realtime mode to async_batch");
+    }
+
+    // 8. Terminal status.
+    lk.lock();
     activeRun_.reset();
-    state_ = ExperimentRunState::Idle;
-    return run;
+    status_.endWallClockNs = endNs;
+    status_.terminal = true;
+    status_.finalizationOk = ok && !failed;
+    status_.flushing = false;
+    if (failed) {
+        status_.completion = recording::RunCompletionState::Failed;
+        status_.completionReason = failMessage;
+        faultActive_ = true;
+        faultCode_ = "experiment.saveFailed";
+        faultMessage_ = failMessage;
+    } else {
+        status_.completion = accounting.completion;
+        status_.completionReason = accounting.completionReason;
+        if (!flushOk) {
+            faultActive_ = true;
+            faultCode_ = "experiment.flushFailed";
+            faultMessage_ = "a save error occurred while flushing experiment data to disk";
+        } else if (!metadataOk) {
+            faultActive_ = true;
+            faultCode_ = "experiment.provenanceFailed";
+            faultMessage_ = "mandatory metadata/processing-core provenance could not be saved for the last run";
+        }
+    }
+    state_ = (failed || !ok) ? ExperimentRunState::Failed : ExperimentRunState::Idle;
+    // Keep the snapshot identity in the terminal status (activeRun_ is gone).
+    status_.startGeneration = run.startGeneration;
+    status_.readinessGeneration = run.readinessGeneration;
+    status_.captureGeneration = run.captureGeneration;
+    status_.outputPath = run.outputPath;
+    status_.startWallClockNs = run.startWallClockNs;
+    SPDLOG_INFO("ExperimentCoordinator: run {} finalized in {:.3f} ms (state={}, ok={})",
+                run.startGeneration, sinceMs(tBegin), toString(state_), status_.finalizationOk);
+    publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");
+}
+
+void ExperimentCoordinator::shutdown()
+{
+    std::thread toJoin;
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        if (state_ == ExperimentRunState::Active && activeRun_) stopRequested_ = true;
+        workerExit_ = true;
+        workerCv_.notify_all();
+        toJoin = std::move(worker_);
+    }
+    if (toJoin.joinable()) toJoin.join();
 }
 
 } // namespace backend::app

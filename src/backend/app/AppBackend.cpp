@@ -151,6 +151,12 @@ namespace backend
         // invoke its callbacks on freed services. Every call below is
         // idempotent, so shutdown() may run more than once.
 
+        // An active experiment is finalized (file closed, accounting written)
+        // while every service it needs is still alive.
+        if (experimentCoordinator_) {
+            experimentCoordinator_->shutdown();
+        }
+
         // Stop admitting new trigger requests before anything is torn down.
         if (processingService_) {
             processingService_->setTargetGroupCallback({});
@@ -217,9 +223,12 @@ namespace backend
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
         processingService_ = std::make_unique<services::ProcessingService>();
-        // Funnel experiment flush-write failures through the same fatal-save-error
-        // sink as recording, so the UI surfaces them and stops the experiment.
+        experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
+        // Funnel experiment flush-write failures to the coordinator (which
+        // finalizes the run as Failed) and to the fatal-save-error sink the UI
+        // surfaces.
         processingService_->setFlushErrorCallback([this](const std::string& msg) {
+            if (experimentCoordinator_) experimentCoordinator_->onFatalSaveError(msg);
             reportFatalSaveError(msg);
         });
         playbackService_ = std::make_unique<services::PlaybackService>();
@@ -231,7 +240,6 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
-        experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
 
         bool bootSqlite = true;
         bool bootHdf5 = true;

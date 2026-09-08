@@ -4,7 +4,11 @@
 > snapshot** (issue #369; host-SDK portion of #274). The only thing that can
 > authorize an experiment Start is a readiness evaluation performed by the
 > backend against its *actual* current state — and that authorization is
-> generation-tagged, so a stale preflight never starts a run.
+> generation-tagged, so a stale preflight never starts a run. Since the
+> shared-backend lifecycle work (issue #372 G2/G3) it also owns the run
+> after Start: periodic flush, Stop, finalization and the terminal
+> accounting outcome, so the Qt window and the bridge are two clients of
+> one object and neither touches `Hdf5Service` for a run.
 
 **Source:** `src/backend/app/ExperimentCoordinator.cpp`,
 `include/backend/app/ExperimentCoordinator.h`,
@@ -45,10 +49,68 @@
      `Hdf5Service::writeRunSnapshotJson` (`ProvenanceFailed` closes and
      removes the file). A run without its frozen snapshot is never Running.
   5. `setExperimentAccountingContext(captureGeneration, latestFrame)` +
-     `ProcessingService::startExperiment()`; publish `Running`.
-- `finish()` releases the frozen snapshot and returns to `Idle`; the caller
-  ([[../frontend/MainWindow]] stop path) still owns flush / metadata /
-  `closeFile()`.
+     `ProcessingService::startExperiment()`; start the worker thread (first
+     run only); publish `Active`. Before step 2 a multi-image series run
+     switches the realtime mode `AsyncBatch -> Inline` (so the frozen
+     snapshot records the mode actually used); the finalization restores it.
+- `requestStop(cancelled)` returns `ExperimentStopOutcome::Accepted` and
+  hands the finalization to the worker; `Busy` while Starting/Stopping or a
+  stop is already queued; `NotActive` when there is no run. Completion is
+  observed through `status()` / the status callback (`terminal == true`).
+- `onFatalSaveError(message)` (wired from
+  `ProcessingService::setFlushErrorCallback` by [[AppBackend]]) marks the run
+  `Failed` and runs the same finalization so the file is closed and readable.
+- `shutdown()` (from `AppBackend::shutdown()` and the destructor) finalizes
+  an active run and joins the worker; idempotent; after it `start()` returns
+  `Busy`.
+- `finish()` no longer changes state: it returns the active (or most recently
+  finalized) run snapshot for callers that log the identity.
+- `status()` / `setStatusCallback(cb)`: `ExperimentStatus` (state,
+  generations, output path, start/end wall-clock, live buffered counts,
+  persistence admitted/committed/failed, `flushing`, `cancelled`,
+  `terminal`, `finalizationOk`, `completion` + reason, fault code/message,
+  message). The callback fires on every transition **outside the mutex** and
+  consumers must not block (same rule as the facade event sink). The
+  terminal status of the last run stays readable while Idle until the next
+  start resets it.
+- `reportUnresolvedFault(code, message)` / `clearUnresolvedFault()`: a save
+  or provenance failure from the last run blocks the next Start
+  (`lifecycle.fault` gate) until the operator acknowledges it;
+  `clearUnresolvedFault()` also moves a `Failed` coordinator back to `Idle`.
+
+## Run states
+
+`ExperimentRunState` lives in `ExperimentReadiness.h` with the bridge
+contract's values (`experiment_states`): `Idle=0, Starting=1, Active=2,
+Stopping=3, Failed=4` (append only). `Failed` is the resting state after a
+failed finalization (fault latched); `Idle` after a clean one.
+
+## Finalization sequence (worker, on `requestStop` / fatal / shutdown)
+
+1. Publish `Stopping` (or `Failed` for a fatal save error).
+2. `flushBufferedFrames(hdf5)` + `finishFlush()`: drain the async write
+   queue; the writer thread has stopped afterwards.
+3. `endExperiment()`; `resetRealtimeMetrics()`.
+4. Remainder that arrived between 2 and 3 goes through `flushBufferedFrames`
+   + `finishFlush` again so `persistenceCommitted` credits it (a direct
+   `appendFrames` left a clean run labelled IntentionallyPartial; bench,
+   2026-09-08).
+5. `Hdf5Service::flush()`; `writeExperimentInfo(...)` (start/end wall-clock,
+   remainder counts, processing config, ROI, background, core identity);
+   `writeRunAccounting(experimentAccountingSnapshot())`;
+   `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`.
+6. `closeFile()`.
+7. Restore the realtime mode if Start switched it.
+8. Terminal status: `terminal=true`, `completion` from the reconciled
+   accounting (`Failed` for a fatal save error), `finalizationOk=false` if
+   2/4/5/6 failed, in which case the unresolved fault
+   `experiment.flushFailed` / `experiment.provenanceFailed` /
+   `experiment.saveFailed` is latched and the state is `Failed`.
+
+The worker also runs the periodic flush while Active: every 250 ms it
+submits `flushBufferedFrames(hdf5)` when the buffered count reaches
+`ProcessingService::getFlushInterval()` (`status().flushing` is true during
+the submission).
 - `reportUnresolvedFault(code, message)` / `clearUnresolvedFault()`: a save
   or provenance failure from the last run blocks the next Start
   (`lifecycle.fault` gate) until the operator acknowledges it.
@@ -85,7 +147,10 @@ path, realtime mode, application version/build/OS. `runSnapshotToJson()` /
 
 ## Threading
 
-`mutex_` serializes evaluate/start/finish/fault calls; evaluation only reads
+`mutex_` serializes evaluate/start/requestStop/fault calls and the worker's
+state changes; the worker releases it for every I/O step (flush,
+metadata, close) so `status()` stays cheap during finalization. The status
+callback is invoked with the mutex released. Evaluation only reads
 service snapshots (`lifecycleSnapshot()`, `telemetrySnapshot()`,
 `getProcessingConfig()`, …) and never takes a service lock while holding one
 of its own for long. Safe to call from a UI timer. `start()` holds the mutex
@@ -99,5 +164,9 @@ across the HDF5 open + provenance write, which is why a second caller gets
 - `camera.source` fails on a *fallback* (hardware requested, mock built) and
   only warns on an *explicit* mock selection; [[AppBackend]] records the
   distinction (`cameraSourceInfo()`), never silently.
-- The coordinator does not close the HDF5 file on `finish()`; the stop path
-  writes experiment info / accounting / provenance and closes it.
+- `finish()` does **not** finalize anything any more; call `requestStop()`
+  and wait for `status().terminal`. Clients that call `Hdf5Service::closeFile()`
+  themselves race the worker.
+- A `requestStop()` right after `start()` returned is accepted; the worker
+  wakes immediately (condition variable), so the run may finalize with zero
+  admitted frames and still be `Complete`.

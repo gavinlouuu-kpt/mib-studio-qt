@@ -36,6 +36,7 @@
 #include <fstream>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -327,12 +328,13 @@ int main()
         req.readinessGeneration = coord.evaluateReadiness(out1, "profile-A").generation;
         MIB_EXPECT(coord.start(req).outcome == ExperimentStartOutcome::AlreadyActive, "AlreadyActive while running");
 
-        // Finish through the existing stop path.
-        proc.endExperiment();
+        // Finalize through the coordinator (backend-owned stop path).
+        MIB_EXPECT(coord.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");
+        MIB_REQUIRE(waitFor([&] { return coord.status().terminal; }, std::chrono::seconds(20)), "run finalizes");
         const auto finished = coord.finish();
         MIB_EXPECT(finished.has_value() && finished->startGeneration == frozen.startGeneration, "finish returns the run");
-        MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Idle && !coord.activeRun().has_value(), "idle after finish");
-        backend.hdf5().closeFile();
+        MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Idle && !coord.activeRun().has_value(), "idle after finalize");
+        MIB_EXPECT(!backend.hdf5().isFileOpen(), "coordinator closed the file");
 
         backend::services::Hdf5Service reader;
         MIB_REQUIRE(reader.loadFile(out1), "reload run file");
@@ -353,8 +355,10 @@ int main()
         auto& coordinator = backend.experiment();
         const auto idle = coordinator.status();
         MIB_EXPECT(idle.state == backend::app::ExperimentRunState::Idle, "idle before start");
-        MIB_EXPECT(!idle.terminal && idle.completion == backend::recording::RunCompletionState::Unknown,
-                   "no completion before a run");
+        // The terminal outcome of the previous run stays readable until the
+        // next start (clients that missed the callback can still pull it).
+        MIB_EXPECT(idle.terminal && idle.completion == backend::recording::RunCompletionState::Complete,
+                   "previous run's terminal outcome still readable while idle");
 
         std::vector<backend::app::ExperimentRunState> seen;
         std::mutex seenMutex;
@@ -383,10 +387,129 @@ int main()
                        "callback observed Starting then Active");
         }
         coordinator.setStatusCallback({});
-        proc.endExperiment();
-        MIB_REQUIRE(coordinator.finish().has_value(), "finish the status run");
-        backend.hdf5().closeFile();
-        MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "idle after finish");
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");
+        MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)), "status run finalizes");
+        MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "idle after finalize");
+    }
+
+    // ---- 6c. Backend-owned finalization -----------------------------------------
+    {
+        wd.mark("finalize complete");
+        auto& coordinator = backend.experiment();
+        std::optional<backend::app::ExperimentStatus> terminal;
+        std::vector<backend::app::ExperimentRunState> seen;
+        std::mutex tMutex;
+        coordinator.setStatusCallback([&](const backend::app::ExperimentStatus& s) {
+            std::lock_guard<std::mutex> lk(tMutex);
+            seen.push_back(s.state);
+            if (s.terminal) terminal = s;
+        });
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::NotActive, "NotActive when idle");
+        const auto out = (td.path() / "finalize_run.h5").string();
+        auto r = coordinator.evaluateReadiness(out);
+        MIB_REQUIRE(r.ready, "ready for finalize test");
+        ExperimentStartRequest req;
+        req.outputPath = out;
+        req.readinessGeneration = r.generation;
+        const auto started = coordinator.start(req);
+        MIB_REQUIRE(started.started(), "start: " + started.message);
+        // Let frames accumulate so a remainder exists at stop.
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        MIB_EXPECT(coordinator.status().validBuffered + coordinator.status().invalidBuffered > 0,
+                   "status reports buffered frames while active");
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");
+        {
+            const auto second = coordinator.requestStop(false);
+            MIB_EXPECT(second == backend::app::ExperimentStopOutcome::Busy ||
+                           second == backend::app::ExperimentStopOutcome::NotActive,
+                       "second stop while stopping is Busy (or NotActive once finalized)");
+        }
+        MIB_REQUIRE(waitFor([&] { std::lock_guard<std::mutex> lk(tMutex); return terminal.has_value(); },
+                            std::chrono::seconds(20)), "terminal status published");
+        std::lock_guard<std::mutex> lk(tMutex);
+        std::fprintf(stderr, "finalize: state=%s ok=%d completion=%s (%s) persisted=%llu/%llu\n",
+                     backend::app::toString(terminal->state), terminal->finalizationOk ? 1 : 0,
+                     backend::recording::toString(terminal->completion), terminal->completionReason.c_str(),
+                     (unsigned long long)terminal->persistenceCommitted,
+                     (unsigned long long)terminal->persistenceAdmitted);
+        MIB_EXPECT(terminal->finalizationOk, "finalization ok");
+        MIB_EXPECT(terminal->state == backend::app::ExperimentRunState::Idle, "Idle after a clean stop");
+        MIB_EXPECT(terminal->completion == backend::recording::RunCompletionState::Complete ||
+                       terminal->completion == backend::recording::RunCompletionState::IntentionallyPartial,
+                   "clean run completion: " + terminal->completionReason);
+        MIB_EXPECT(terminal->persistenceCommitted == terminal->persistenceAdmitted, "stop-time remainder credited");
+        MIB_EXPECT(terminal->persistenceCommitted > 0, "frames were persisted");
+        MIB_EXPECT(terminal->endWallClockNs >= terminal->startWallClockNs && terminal->startWallClockNs > 0,
+                   "terminal status carries the run times");
+        MIB_EXPECT(terminal->startGeneration == started.run.startGeneration, "terminal status carries the run identity");
+        MIB_EXPECT(seen.size() >= 4 && seen[0] == backend::app::ExperimentRunState::Starting &&
+                       seen[1] == backend::app::ExperimentRunState::Active &&
+                       seen[2] == backend::app::ExperimentRunState::Stopping &&
+                       seen.back() == backend::app::ExperimentRunState::Idle,
+                   "callback observed Starting, Active, Stopping, Idle");
+        MIB_EXPECT(!backend.hdf5().isFileOpen(), "file closed by the coordinator");
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::NotActive, "NotActive after finalize");
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(out), "finalized file reloads");
+        backend::recording::RecordingAccountingSnapshot back;
+        MIB_REQUIRE(reader.readRunAccounting(back), "accounting persisted by the coordinator");
+        MIB_EXPECT(back.reconciled, "persisted accounting reconciles");
+        uint64_t t0 = 0, t1 = 0; size_t v = 0, iv = 0;
+        MIB_EXPECT(reader.readExperimentInfo(t0, t1, v, iv) && t0 == terminal->startWallClockNs,
+                   "experiment info persisted by the coordinator");
+        reader.closeFile();
+        coordinator.setStatusCallback({});
+    }
+    {
+        wd.mark("fatal save error");
+        auto& coordinator = backend.experiment();
+        const auto out = (td.path() / "fatal_run.h5").string();
+        auto r = coordinator.evaluateReadiness(out);
+        MIB_REQUIRE(r.ready, "ready for fatal test");
+        ExperimentStartRequest req;
+        req.outputPath = out;
+        req.readinessGeneration = r.generation;
+        MIB_REQUIRE(coordinator.start(req).started(), "start");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        coordinator.onFatalSaveError("injected writer failure");
+        MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)),
+                    "fatal error finalizes");
+        const auto s = coordinator.status();
+        MIB_EXPECT(s.state == backend::app::ExperimentRunState::Failed, "Failed after a fatal save error");
+        MIB_EXPECT(!s.finalizationOk, "finalization not ok");
+        MIB_EXPECT(s.completion == backend::recording::RunCompletionState::Failed, "completion Failed");
+        MIB_EXPECT(s.completionReason == "injected writer failure", "completion reason is the fault message");
+        MIB_EXPECT(s.faultCode == "experiment.saveFailed", "fault code reported in status");
+        MIB_EXPECT(!backend.hdf5().isFileOpen(), "file closed after failure");
+        MIB_EXPECT(coordinator.hasUnresolvedFault(), "fault latched for the next preflight");
+        MIB_EXPECT(!coordinator.evaluateReadiness(out).ready, "readiness blocked while the fault is latched");
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::NotActive, "NotActive when Failed");
+        coordinator.clearUnresolvedFault();
+        MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "Idle once the fault is cleared");
+        backend::services::Hdf5Service reader;
+        MIB_EXPECT(reader.loadFile(out), "failed run's file is readable");
+        reader.closeFile();
+    }
+    {
+        wd.mark("shutdown while active");
+        auto& coordinator = backend.experiment();
+        const auto out = (td.path() / "shutdown_run.h5").string();
+        auto r = coordinator.evaluateReadiness(out);
+        MIB_REQUIRE(r.ready, "ready for shutdown test");
+        ExperimentStartRequest req;
+        req.outputPath = out;
+        req.readinessGeneration = r.generation;
+        MIB_REQUIRE(coordinator.start(req).started(), "start");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        coordinator.shutdown();
+        const auto s = coordinator.status();
+        MIB_EXPECT(s.terminal && s.state == backend::app::ExperimentRunState::Idle, "shutdown finalizes the run");
+        MIB_EXPECT(!backend.hdf5().isFileOpen(), "shutdown closes the file");
+        coordinator.shutdown(); // idempotent
+        ExperimentStartRequest again;
+        again.outputPath = (td.path() / "after_shutdown.h5").string();
+        again.readinessGeneration = coordinator.evaluateReadiness(again.outputPath).generation;
+        MIB_EXPECT(coordinator.start(again).outcome == ExperimentStartOutcome::Busy, "no start after shutdown");
     }
 
     // ---- 7. Bounded background calibration ------------------------------------

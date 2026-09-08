@@ -106,8 +106,10 @@ with source frames. See `docs/howto/pipeline-latency-diagnosis.md`.
 
 ## Shutdown
 
-`shutdown()` first clears the target-group and background-capture callbacks
-(no new trigger requests are admitted), then stops capture **with the
+`shutdown()` first calls `ExperimentCoordinator::shutdown()` so an active
+run is finalized (file closed, accounting written) while every service it
+needs is still alive, then clears the target-group and background-capture
+callbacks (no new trigger requests are admitted), then stops capture **with the
 camera-ready callback still wired** so that [[../services/TriggerService]]
 unbinds (waiting for any in-flight pulse) and stops while the camera object
 is still alive on the capture thread (issue #365 — the previous order cleared
@@ -230,9 +232,12 @@ no contour processing.
 
 `setFatalSaveErrorCallback(cb)` / `reportFatalSaveError(msg)` funnel both
 recording **and** experiment-flush ([[../services/ProcessingService]]) write
-failures to one callback. `MainWindow` marshals it to the UI thread, stops the
-active operation, and shows a modal Save Error dialog — failed saves are never
-silent.
+failures to one callback. An experiment-flush failure first reaches
+`ExperimentCoordinator::onFatalSaveError()` (the coordinator is constructed
+right after `processingService_` for this), which finalizes the run as
+`Failed` and closes the file; the UI callback then only reports. `MainWindow`
+marshals it to the UI thread and shows a modal Save Error dialog — failed
+saves are never silent.
 
 ## Memory budget snapshot (issue #370)
 

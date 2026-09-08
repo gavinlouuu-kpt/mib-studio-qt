@@ -6,17 +6,24 @@
 // start() re-evaluates, refuses a stale generation (any invalidation input
 // changed since the presented evaluation), opens persistence, freezes the
 // immutable RunConfigurationSnapshot, persists it, and only then enters
-// Running. Failure at any step rolls back without publishing a run.
+// Active. Failure at any step rolls back without publishing a run.
+//
+// The coordinator also owns the run's lifetime after Start (issue #372 G2/G3):
+// a worker thread runs the periodic flush while Active and the whole
+// finalization on requestStop() (drain, metadata, accounting, provenance,
+// close), so no client (Qt window or bridge) touches Hdf5Service for a run.
 #pragma once
 
 #include "backend/app/ExperimentReadiness.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace backend {
 class AppBackend;
@@ -34,6 +41,7 @@ struct ExperimentStartRequest {
 class ExperimentCoordinator {
 public:
     explicit ExperimentCoordinator(AppBackend& backend);
+    ~ExperimentCoordinator();
 
     // Application identity recorded in every run snapshot.
     void setApplicationIdentity(std::string version, std::string buildId, std::string os);
@@ -49,8 +57,23 @@ public:
     // presented readiness generation.
     ExperimentStartResult start(const ExperimentStartRequest& request);
 
-    // Mark the run finished (the caller drives finalization through the
-    // existing stop path; this releases the frozen snapshot and returns it).
+    // Ask the worker to finalize the active run. Returns immediately;
+    // completion is observed through status()/the status callback
+    // (terminal == true). Busy while a finalization is already running,
+    // NotActive when there is no run.
+    ExperimentStopOutcome requestStop(bool cancelled);
+
+    // Fatal save-error funnel (writer thread): marks the run Failed and
+    // finalizes it so the file is closed and readable.
+    void onFatalSaveError(const std::string& message);
+
+    // Bounded, idempotent: finalizes an active run and joins the worker.
+    // Called from AppBackend::shutdown() and the destructor.
+    void shutdown();
+
+    // Returns the frozen snapshot of the run that is active or was most
+    // recently finalized; kept for callers that log the run identity. It no
+    // longer changes state: finalization is owned by the coordinator.
     std::optional<RunConfigurationSnapshot> finish();
 
     // Lifecycle status (issue #372 G2/G3). The callback fires on every
@@ -102,6 +125,11 @@ private:
     // Publish the current snapshot: copies it, releases `lk`, invokes the
     // callback, re-acquires `lk`.
     void publishLocked(std::unique_lock<std::mutex>& lk, const char* message);
+    void worker();
+    // Runs the finalization sequence with `lk` released for the I/O and
+    // re-acquired before the terminal state is written.
+    void finalizeLocked(std::unique_lock<std::mutex>& lk, bool cancelled, bool failed,
+                        const std::string& failMessage);
 
     AppBackend& backend_;
     mutable std::mutex mutex_;
@@ -121,6 +149,19 @@ private:
     ExperimentStatus status_;
     mutable std::mutex callbackMutex_;
     StatusCallback statusCallback_;
+    // Worker thread (periodic flush + finalization). Guarded by mutex_.
+    std::thread worker_;
+    std::condition_variable workerCv_;
+    bool workerExit_{false};
+    bool stopRequested_{false};
+    bool cancelRequested_{false};
+    bool fatalRequested_{false};
+    std::string fatalMessage_;
+    std::optional<RunConfigurationSnapshot> lastRun_;
+    // Multi-image series runs force inline realtime processing; restored on
+    // finalize (moved here from the Qt window).
+    bool restoreRealtimeMode_{false};
+    bool realtimeModeWasAsyncBatch_{false};
 };
 
 } // namespace backend::app
