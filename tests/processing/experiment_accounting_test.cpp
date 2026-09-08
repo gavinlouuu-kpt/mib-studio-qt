@@ -17,6 +17,7 @@
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <functional>
@@ -191,6 +192,60 @@ int main()
                    "persistence terms exact under the cap");
         MIB_EXPECT(a.reconciled && a.completion == rec::RunCompletionState::IntentionallyPartial,
                    "declared buffer policy -> IntentionallyPartial, not Complete");
+    }
+
+    // ---- Experiment 3: start/stop boundaries under a continuous stream ----------
+    // A frame admitted just before startExperiment() must not be counted as
+    // an outcome of the run, and a frame admitted before endExperiment() must
+    // be counted even if its outcome lands after it. Either skew makes a
+    // clean run "Failed: accounting does not reconcile" (bench + CI lane,
+    // 2026-09-08). Many short runs against a free-running pusher hit the
+    // boundaries with high probability.
+    wd.mark("experiment 3");
+    svc.setFlushInterval(1000);
+    {
+        std::atomic<bool> pushing{true};
+        std::atomic<uint64_t> pushed{0};
+        std::thread pusher([&] {
+            uint64_t ts = 10'000'000;
+            int i = 0;
+            while (pushing.load(std::memory_order_relaxed)) {
+                pushMat(*store, mib::test::ringFrame(96, 96, i++ % 7), ++ts);
+                pushed.fetch_add(1, std::memory_order_relaxed);
+                std::this_thread::sleep_for(std::chrono::microseconds(300));
+            }
+        });
+        int mismatches = 0;
+        constexpr int kRuns = 40;
+        for (int run = 0; run < kRuns; ++run) {
+            wd.mark("experiment 3 run");
+            svc.setExperimentAccountingContext(100 + run, false);
+            svc.startExperiment();
+            std::this_thread::sleep_for(std::chrono::milliseconds(15 + (run % 5)));
+            svc.endExperiment();
+            const auto a = svc.experimentAccountingSnapshot();
+            const bool frameTermsOk = a.admitted == a.empty + a.processed + a.scientificallyRejected +
+                                                    a.processingFailed + a.storeOverwritten +
+                                                    a.storeNotCommitted + a.storeMalformed;
+            if (!frameTermsOk || !a.reconciled) {
+                ++mismatches;
+                std::fprintf(stderr, "exp3 run %d: admitted=%llu empty=%llu processed=%llu rejected=%llu "
+                             "failed=%llu ow=%llu pAdmitted=%llu pending=%llu completion=%s (%s)\n",
+                             run, (unsigned long long)a.admitted, (unsigned long long)a.empty,
+                             (unsigned long long)a.processed, (unsigned long long)a.scientificallyRejected,
+                             (unsigned long long)a.processingFailed, (unsigned long long)a.storeOverwritten,
+                             (unsigned long long)a.persistenceAdmitted,
+                             (unsigned long long)a.persistencePendingAtStop, rec::toString(a.completion),
+                             a.completionReason.c_str());
+            }
+            // Drain the buffer the way the coordinator does between runs.
+            svc.clearAccumulatedFrames();
+        }
+        pushing.store(false);
+        pusher.join();
+        std::fprintf(stderr, "exp3: %d runs, %d boundary mismatches, %llu frames pushed\n", kRuns, mismatches,
+                     (unsigned long long)pushed.load());
+        MIB_EXPECT(mismatches == 0, "no start/stop boundary accounting skew across " + std::to_string(kRuns) + " runs");
     }
 
     svc.stopRealtime();

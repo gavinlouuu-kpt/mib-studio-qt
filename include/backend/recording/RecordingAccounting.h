@@ -184,29 +184,44 @@ public:
         pendingAtStop = 0; persistenceAdmitted = 0; persistenceCommitted = 0;
         persistenceFailed = 0; persistencePendingAtStop = 0; persistenceCancelledByPolicy = 0;
         objectsDetected = 0;
-        hasIndexRange_ = false; firstIndex_ = 0; lastIndex_ = 0; sequenceGaps = 0;
+        hasIndexRange_.store(false); firstIndex_.store(0); lastIndex_.store(0); sequenceGaps = 0;
         sequenceGapFrames = 0; sessionGeneration_ = sessionGeneration;
         policyAllowsDrops_ = policyAllowsDrops; fatalError_ = false;
         fatalMessage_.clear();
     }
 
     // Record that index `idx` was admitted; tracks first/last and gaps.
-    // Producer-thread only.
+    // Producer-thread only (the range fields are atomics so wasAdmitted()
+    // may be read from any thread).
     void admit(uint64_t idx)
     {
         admitted.fetch_add(1, std::memory_order_relaxed);
-        if (!hasIndexRange_) {
-            hasIndexRange_ = true;
-            firstIndex_ = idx;
-            lastIndex_ = idx;
+        if (!hasIndexRange_.load(std::memory_order_relaxed)) {
+            firstIndex_.store(idx, std::memory_order_relaxed);
+            lastIndex_.store(idx, std::memory_order_relaxed);
+            hasIndexRange_.store(true, std::memory_order_release);
             return;
         }
-        if (idx > lastIndex_ + 1) {
+        const uint64_t last = lastIndex_.load(std::memory_order_relaxed);
+        if (idx > last + 1) {
             sequenceGaps.fetch_add(1, std::memory_order_relaxed);
-            sequenceGapFrames.fetch_add(idx - lastIndex_ - 1, std::memory_order_relaxed);
+            sequenceGapFrames.fetch_add(idx - last - 1, std::memory_order_relaxed);
         }
-        if (idx > lastIndex_) lastIndex_ = idx;
+        if (idx > last) lastIndex_.store(idx, std::memory_order_release);
     }
+
+    // True when `idx` was admitted under this run. Outcomes and persistence
+    // admissions are gated on this rather than on "experiment active", so a
+    // frame in flight across startExperiment()/endExperiment() is counted
+    // exactly when its admission was (start/stop boundary skew, 2026-09-08).
+    bool wasAdmitted(uint64_t idx) const
+    {
+        if (!hasIndexRange_.load(std::memory_order_acquire)) return false;
+        return idx >= firstIndex_.load(std::memory_order_relaxed) &&
+               idx <= lastIndex_.load(std::memory_order_acquire);
+    }
+    uint64_t lastAdmittedIndex() const { return lastIndex_.load(std::memory_order_acquire); }
+    bool hasAdmitted() const { return hasIndexRange_.load(std::memory_order_acquire); }
 
     // Frames the run never got to read (e.g. evicted from the ring before the
     // consumer reached them): admitted and terminated in one step, without
@@ -259,9 +274,9 @@ public:
         s.persistencePendingAtStop = persistencePendingAtStop.load(std::memory_order_relaxed);
         s.persistenceCancelledByPolicy = persistenceCancelledByPolicy.load(std::memory_order_relaxed);
         s.objectsDetected = objectsDetected.load(std::memory_order_relaxed);
-        s.hasIndexRange = hasIndexRange_;
-        s.firstFrameIndex = firstIndex_;
-        s.lastFrameIndex = lastIndex_;
+        s.hasIndexRange = hasIndexRange_.load(std::memory_order_acquire);
+        s.firstFrameIndex = firstIndex_.load(std::memory_order_relaxed);
+        s.lastFrameIndex = lastIndex_.load(std::memory_order_relaxed);
         s.sequenceGaps = sequenceGaps.load(std::memory_order_relaxed);
         s.sequenceGapFrames = sequenceGapFrames.load(std::memory_order_relaxed);
         s.sessionGeneration = sessionGeneration_;
@@ -293,9 +308,9 @@ public:
     std::atomic<uint64_t> sequenceGapFrames{0};
 
 private:
-    bool hasIndexRange_{false};
-    uint64_t firstIndex_{0};
-    uint64_t lastIndex_{0};
+    std::atomic<bool> hasIndexRange_{false};
+    std::atomic<uint64_t> firstIndex_{0};
+    std::atomic<uint64_t> lastIndex_{0};
     uint64_t sessionGeneration_{0};
     bool policyAllowsDrops_{false};
     bool fatalError_{false};

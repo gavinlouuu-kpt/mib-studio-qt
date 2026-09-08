@@ -337,8 +337,21 @@ current/max queue depth, batch size, worker count, and running state. See
   terms from the current buffer and flush-queue error state and returns the
   reconciled snapshot (`RunCompletionState`). `setExperimentAccountingContext(
   captureGeneration, policyAllowsDrops)` must be called before
-  `startExperiment()` (MainWindow does). Frame counts are separate from
-  `objectsDetected`. Guard: `processing.experiment_accounting`.
+  `startExperiment()` ([[../architecture/ExperimentCoordinator]] does). Frame
+  counts are separate from `objectsDetected`. Guard:
+  `processing.experiment_accounting`.
+- **Start/stop boundaries (2026-09-08).** Outcomes, validations and the
+  experiment-buffer append are gated on
+  `RecordingAccountingTracker::wasAdmitted(idx)` (index range of the run,
+  atomics), *not* on `experimentActive_`: a frame in flight across
+  `startExperiment()` / `endExperiment()` was otherwise counted on one side
+  only (admitted but no outcome, or outcome without admission) and a clean
+  run read "Failed: accounting does not reconcile" by one frame (hit by the
+  CI fast lane and a bench run the same afternoon). `endExperiment()` also
+  waits (≤ 250 ms) for the realtime thread to finish the last admitted frame
+  so the caller's snapshot is complete. Guard: experiment 3 of
+  `processing.experiment_accounting` (40 short runs against a free-running
+  pusher; 2 mismatches per pass before the fix, 0 after).
 
 ## Background identity + bounded calibration (issue #369)
 

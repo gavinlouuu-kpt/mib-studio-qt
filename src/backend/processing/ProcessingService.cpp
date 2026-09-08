@@ -503,6 +503,16 @@ void ProcessingService::startExperiment() {
 void ProcessingService::endExperiment() {
     experimentActive_.store(false);
     backend::diagnostics::CrashStateMirror::instance().processing.experimentActive.store(false);
+    // Let the realtime thread finish the frame it admitted under the run so
+    // the accounting snapshot taken by the caller is complete (bounded).
+    if (experimentAccounting_.hasAdmitted() && rtRunning_.load(std::memory_order_acquire)) {
+        const uint64_t last = experimentAccounting_.lastAdmittedIndex();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        while (rtLastProcessed_.load(std::memory_order_acquire) < last &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    }
     const BufferedFrameCounts counts = experimentBuffer_.counts();
     SPDLOG_INFO("ProcessingService: experiment ended, valid frames: {}, invalid frames: {}",
                 counts.valid, counts.invalid);
@@ -878,11 +888,13 @@ void ProcessingService::noteRealtimeLost(uint64_t count) {
 
 void ProcessingService::noteRealtimeOutcome(uint64_t idx, backend::recording::FrameOutcome outcome,
                                             const backend::playback::Frame* frame) {
-    (void)idx;
     if (outcome == backend::recording::FrameOutcome::ProcessingFailed) {
         processingFailures_.fetch_add(1, std::memory_order_relaxed);
     }
-    if (experimentActive_.load(std::memory_order_relaxed)) experimentAccounting_.count(outcome);
+    // Count the outcome iff the admission was counted (not "iff active"):
+    // a frame in flight across start/endExperiment is otherwise counted on
+    // one side only and a clean run reads "does not reconcile".
+    if (experimentAccounting_.wasAdmitted(idx)) experimentAccounting_.count(outcome);
     if (bgCalActive_.load(std::memory_order_acquire)) bgCalObserve(outcome, frame);
 }
 
@@ -1027,12 +1039,11 @@ void ProcessingService::noteRealtimeValidation(uint64_t idx, const std::vector<F
     // A non-empty frame during background calibration is contamination
     // regardless of whether an experiment is active (issue #369).
     if (bgCalActive_.load(std::memory_order_acquire)) bgCalObserve(outcome, nullptr);
-    if (!experimentActive_.load(std::memory_order_relaxed)) return;
+    if (!experimentAccounting_.wasAdmitted(idx)) return;
     experimentAccounting_.count(outcome);
     uint64_t objects = 0;
     for (const auto& r : validations) if (r.isValid) ++objects;
     if (objects > 0) experimentAccounting_.objectsDetected.fetch_add(objects, std::memory_order_relaxed);
-    (void)idx;
 }
 
 bool ProcessingService::isImageEmptyWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
@@ -2734,8 +2745,9 @@ void ProcessingService::realtimeInlineLoop() {
                 // experiment/snapshot
                 cv::Mat grayFull;
 
-                // Also accumulate frames for experiment if active
-                if (experimentActive_.load()) {
+                // Also accumulate frames for experiment if active (and this
+                // frame's admission was counted under the run).
+                if (experimentActive_.load() && experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);
@@ -3171,8 +3183,9 @@ void ProcessingService::realtimeInlineLoop() {
                                  backend::Tools::getProcessMemoryMB());
                 }
 
-                // Also accumulate frames for experiment if active
-                if (experimentActive_.load()) {
+                // Also accumulate frames for experiment if active (and this
+                // frame's admission was counted under the run).
+                if (experimentActive_.load() && experimentAccounting_.wasAdmitted(idx)) {
                     // Determine if we should save this frame
                     bool shouldSave = false;
                     if (validation.isValid) {
@@ -3613,8 +3626,9 @@ void ProcessingService::realtimeInlineLoop() {
                                  backend::Tools::getProcessMemoryMB());
                 }
 
-                // Also accumulate frames for experiment if active
-                if (experimentActive_.load()) {
+                // Also accumulate frames for experiment if active (and this
+                // frame's admission was counted under the run).
+                if (experimentActive_.load() && experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);
