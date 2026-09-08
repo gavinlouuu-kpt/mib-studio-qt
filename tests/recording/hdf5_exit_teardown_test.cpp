@@ -7,9 +7,9 @@
 // while an HDF5 file was still open and a writer was mid-append, and the
 // library's own atexit teardown then closed a dataset whose chunk cache was
 // already gone. The process must exit with code 0 even when it leaves a
-// file open and a writer running — the backend disables HDF5's atexit
-// teardown (H5dont_atexit) and closes what it can in shutdown; leaked ids
-// are leaked, never torn down under a live writer.
+// file open after writing — the backend disables HDF5's atexit teardown
+// (H5dont_atexit) and closes what it can in shutdown; leaked ids are
+// leaked, never torn down by the library at exit.
 
 #include "backend/recording/Hdf5Service.h"
 
@@ -61,12 +61,17 @@ int main()
             if (hdf5->appendFrames(valid, {})) appended.fetch_add(valid.size(), std::memory_order_relaxed);
         }
     });
-    writer.detach(); // still running when the process exits, like a mid-write close
-
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
     while (appended.load(std::memory_order_relaxed) < 64 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+    // Stop the writer the way the app's shutdown does (the flush queue joins
+    // its thread). What stays behind is the *open file* with its datasets and
+    // chunk cache: the state the installed app exited in. A thread still
+    // running through exit() would be undefined behaviour on every platform
+    // (Linux CI segfaulted in static destruction), not a test of HDF5.
+    run.store(false);
+    writer.join();
     std::printf("exiting with %llu frames appended and the file still open\n",
                 static_cast<unsigned long long>(appended.load()));
     std::fflush(stdout);

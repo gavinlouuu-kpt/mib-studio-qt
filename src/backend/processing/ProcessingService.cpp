@@ -483,6 +483,7 @@ void ProcessingService::startExperiment() {
     lastDropLogUs_.store(0, std::memory_order_relaxed);
     resetRealtimeMetrics();
     experimentAccounting_.reset(experimentAccountingGeneration_, experimentAccountingPolicyAllowsDrops_);
+    experimentSettled_.store(false, std::memory_order_release);
     backend::diagnostics::PipelineTimingRecorder::instance().resetLiveLatency();
     // Reset auto-capture counter when experiment starts
     consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
@@ -518,6 +519,24 @@ void ProcessingService::endExperiment() {
                 (rtBatchPipelineActive_.load(std::memory_order_acquire) && batchPending())) &&
                std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    }
+    // Settle the run exactly: frames admitted but still unprocessed when the
+    // drain gave up (a slow batch pipeline, e.g. under a sanitizer) are
+    // booked as PendingAtStop under the settlement lock, and every later
+    // outcome/append for this run is dropped. The accounting always
+    // reconciles; what was not processed is declared, never invented.
+    {
+        std::unique_lock settle(experimentSettleMutex_);
+        if (!experimentSettled_.exchange(true, std::memory_order_acq_rel)) {
+            const auto s = experimentAccounting_.snapshot();
+            const uint64_t terms = s.frameTermsSum();
+            if (s.admitted > terms) {
+                const uint64_t unsettled = s.admitted - terms;
+                experimentAccounting_.count(backend::recording::FrameOutcome::PendingAtStop, unsettled);
+                SPDLOG_WARN("ProcessingService: {} admitted frame(s) still unprocessed at experiment stop "
+                            "(booked as pendingAtStop)", unsettled);
+            }
         }
     }
     const BufferedFrameCounts counts = experimentBuffer_.counts();
@@ -904,8 +923,15 @@ void ProcessingService::noteRealtimeOutcome(uint64_t idx, backend::recording::Fr
     }
     // Count the outcome iff the admission was counted (not "iff active"):
     // a frame in flight across start/endExperiment is otherwise counted on
-    // one side only and a clean run reads "does not reconcile".
-    if (experimentAccounting_.wasAdmitted(idx)) experimentAccounting_.count(outcome);
+    // one side only and a clean run reads "does not reconcile". After
+    // endExperiment() settled the run (settlement lock), late outcomes are
+    // dropped: their frames were already booked as PendingAtStop.
+    {
+        std::shared_lock settle(experimentSettleMutex_);
+        if (!experimentSettled_.load(std::memory_order_relaxed) && experimentAccounting_.wasAdmitted(idx)) {
+            experimentAccounting_.count(outcome);
+        }
+    }
     if (bgCalActive_.load(std::memory_order_acquire)) bgCalObserve(outcome, frame);
 }
 
@@ -1050,7 +1076,8 @@ void ProcessingService::noteRealtimeValidation(uint64_t idx, const std::vector<F
     // A non-empty frame during background calibration is contamination
     // regardless of whether an experiment is active (issue #369).
     if (bgCalActive_.load(std::memory_order_acquire)) bgCalObserve(outcome, nullptr);
-    if (!experimentAccounting_.wasAdmitted(idx)) return;
+    std::shared_lock settle(experimentSettleMutex_);
+    if (experimentSettled_.load(std::memory_order_relaxed) || !experimentAccounting_.wasAdmitted(idx)) return;
     experimentAccounting_.count(outcome);
     uint64_t objects = 0;
     for (const auto& r : validations) if (r.isValid) ++objects;
@@ -2087,7 +2114,7 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
     // Persist iff this frame's admission was counted under the run (not
     // "iff active"): frames still in the batch pipeline when endExperiment()
     // runs are drained there and reach the buffer for the remainder flush.
-    if (experimentAccounting_.wasAdmitted(frameIndex)) {
+    if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(frameIndex)) {
         bool shouldSave = validation.isValid;
         if (!validation.isValid) {
             const size_t counter = invalidFrameCounter_.fetch_add(1, std::memory_order_relaxed);
@@ -2810,7 +2837,7 @@ void ProcessingService::realtimeInlineLoop() {
                 // frame in flight across endExperiment() (which the drain wait
                 // there lets finish) must still reach the buffer so the
                 // remainder flush persists it (review, 2026-09-08).
-                if (experimentAccounting_.wasAdmitted(idx)) {
+                if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);
@@ -3251,7 +3278,7 @@ void ProcessingService::realtimeInlineLoop() {
                 // frame in flight across endExperiment() (which the drain wait
                 // there lets finish) must still reach the buffer so the
                 // remainder flush persists it (review, 2026-09-08).
-                if (experimentAccounting_.wasAdmitted(idx)) {
+                if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx)) {
                     // Determine if we should save this frame
                     bool shouldSave = false;
                     if (validation.isValid) {
@@ -3697,7 +3724,7 @@ void ProcessingService::realtimeInlineLoop() {
                 // frame in flight across endExperiment() (which the drain wait
                 // there lets finish) must still reach the buffer so the
                 // remainder flush persists it (review, 2026-09-08).
-                if (experimentAccounting_.wasAdmitted(idx)) {
+                if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);

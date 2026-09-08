@@ -273,3 +273,13 @@ free-run/conservative — only the shipped file carries the bench values).
 - Naming: "trigger output" / `TriggerService` vocabulary means the **sort
   pulse** (camera → sorter). The acquisition trigger (pulse generator →
   camera) uses `softTrigger` / `acq_trigger_*` / `ext_trig_*` naming.
+
+## Abandoned handle and its buffer (2026-09-08)
+
+When `stop()` cannot drain an in-flight SDK call within
+`inFlightDrainTimeout_` it abandons the handle (never `CameraUnInit` under a
+live call) and parks the ISP output buffer in `abandonedBuffer_`; the
+destructor frees it once `inFlightOps_` is zero (the wedged call returned),
+otherwise it stays leaked for good. LeakSanitizer flagged the unconditional
+leak in `backend.mindvision_conversion_fault` ("wedged driver").
+

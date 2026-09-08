@@ -99,7 +99,23 @@ static bool readDumpException(const fs::path& dump, unsigned long* code, unsigne
 }
 #endif
 
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define MIB_UNDER_SANITIZER 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define MIB_UNDER_SANITIZER 1
+#endif
+#endif
+
 int main(int argc, char* argv[]) {
+#ifdef MIB_UNDER_SANITIZER
+    // ASan takes SIGSEGV for itself (the app handler never runs) and TSan
+    // reports the handler's allocations as signal-unsafe; the dump/sidecar
+    // contract is verified in the plain lanes. Exit 77 = CTest skip.
+    (void)argc; (void)argv;
+    std::cout << "crash_reporter_segv_test: skipped under a sanitizer\n";
+    return 77;
+#endif
     if (argc >= 3 && std::string(argv[1]) == "--crash-child") {
         return runCrashChild(fs::path(argv[2]));
     }
@@ -119,6 +135,9 @@ int main(int argc, char* argv[]) {
 
     fs::path json;
     CHECK(findArtifact(dir, "-sigsegv.json", &json) || findArtifact(dir, "-seh.json", &json));
+#ifdef _WIN32
+    // The "crash" object and the kept PDB are the Windows path (dbghelp /
+    // CodeView); POSIX builds write the plain state sidecar.
     if (!json.empty()) {
         std::ifstream f(json);
         std::stringstream ss;
@@ -132,7 +151,6 @@ int main(int argc, char* argv[]) {
         if (g_failures) std::cerr << "sidecar: " << text.substr(text.find("\"crash\""), 400) << "\n";
     }
 
-#ifdef _WIN32
     fs::path dump;
     CHECK(findArtifact(dir, "-sigsegv.dmp", &dump) || findArtifact(dir, "-seh.dmp", &dump));
     if (!dump.empty()) {

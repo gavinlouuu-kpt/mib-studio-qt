@@ -582,6 +582,12 @@ private:
     // Frames dequeued by a batch worker whose callback has not returned yet
     // (endExperiment() drains on it together with the queue).
     std::atomic<uint64_t> batchFramesInFlight_{0};
+    // Experiment accounting settlement (issue #367): endExperiment() books
+    // still-unprocessed admitted frames as PendingAtStop under the exclusive
+    // lock; outcome/validation counting takes it shared, so no outcome can
+    // land after the settlement. Reset by startExperiment().
+    std::shared_mutex experimentSettleMutex_;
+    std::atomic<bool> experimentSettled_{false};
     std::atomic<uint64_t> batchBatchesProcessed_{0};
     std::atomic<uint64_t> batchAlgoMicrosTotal_{0};
     std::atomic<size_t> batchMaxQueueDepth_{0};

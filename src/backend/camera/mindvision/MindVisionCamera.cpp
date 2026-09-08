@@ -78,6 +78,14 @@ MindVisionCamera::MindVisionCamera(int cameraIndex, std::string configPath,
 MindVisionCamera::~MindVisionCamera()
 {
     stop();
+    std::unique_lock<std::mutex> lock(stateMutex_);
+    if (abandonedBuffer_ && inFlightOps_ == 0)
+    {
+        // The wedged call has returned since the handle was abandoned; the
+        // buffer can be released safely now.
+        sdk_->alignFree(abandonedBuffer_);
+        abandonedBuffer_ = nullptr;
+    }
 }
 
 void MindVisionCamera::applyConfig(const CameraConfig &config)
@@ -323,6 +331,10 @@ void MindVisionCamera::closeHandleLocked(std::unique_lock<std::mutex> &lock)
         recordFailure("mindvision.inflight_drain_timeout",
                       "MindVision SDK call did not return before stop; handle abandoned");
         hCamera_ = -1;
+        // Keep the buffer pointer: the driver may still write into it, so it
+        // is released by the destructor once inFlightOps_ reaches zero (or
+        // leaked for good if it never does).
+        abandonedBuffer_ = outBuffer_;
         outBuffer_ = nullptr;
         outBufferBytes_ = 0;
         return;

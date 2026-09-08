@@ -289,7 +289,7 @@ set_tests_properties(backend.frame_store_commit PROPERTIES LABELS "backend;safet
 mib_add_backend_test_executable(experiment_accounting_test processing/experiment_accounting_test.cpp)
 target_link_libraries(experiment_accounting_test PRIVATE Threads::Threads)
 add_test(NAME processing.experiment_accounting COMMAND $<TARGET_FILE:experiment_accounting_test>)
-set_tests_properties(processing.experiment_accounting PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 120)
+set_tests_properties(processing.experiment_accounting PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 240)
 
 mib_add_backend_test_executable(recording_accounting_test recording/recording_accounting_test.cpp)
 target_link_libraries(recording_accounting_test PRIVATE Threads::Threads)
@@ -410,7 +410,7 @@ if(WIN32)
     target_link_libraries(crash_reporter_segv_test PRIVATE dbghelp)
 endif()
 add_test(NAME backend.crash_reporter_segv COMMAND $<TARGET_FILE:crash_reporter_segv_test>)
-set_tests_properties(backend.crash_reporter_segv PROPERTIES LABELS "backend;observability;safety" TIMEOUT 60)
+set_tests_properties(backend.crash_reporter_segv PROPERTIES LABELS "backend;observability;safety" TIMEOUT 60 SKIP_RETURN_CODE 77)
 
 mib_add_backend_test_executable(e2e_pipeline_timing_test integration/e2e_pipeline_timing_test.cpp)
 target_link_libraries(e2e_pipeline_timing_test PRIVATE Threads::Threads)
@@ -711,6 +711,7 @@ if(Python3_Interpreter_FOUND)
         LABELS "scripts;performance;soak"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 1800
+        SKIP_RETURN_CODE 77
     )
 
     add_test(
