@@ -83,7 +83,13 @@
 `ExperimentRunState` lives in `ExperimentReadiness.h` with the bridge
 contract's values (`experiment_states`): `Idle=0, Starting=1, Active=2,
 Stopping=3, Failed=4` (append only). `Failed` is the resting state after a
-failed finalization (fault latched); `Idle` after a clean one.
+failed finalization (fault latched); `Idle` after a clean one. The other
+enums the bridge contract pins carry explicit values too (ABI 13):
+`ExperimentStartOutcome` (`experiment_start_outcomes`, `Started=0 … Busy=6`),
+`ExperimentStopOutcome` (`experiment_stop_outcomes`), `GateStatus`
+(`readiness_gate_statuses`, `Pass=0 … NotRequired=4`) and
+`RunCompletionState` (`run_completion_states`, `Complete=0 … Unknown=4`);
+append only, never renumber.
 
 ## Finalization sequence (worker, on `requestStop` / fatal / shutdown)
 

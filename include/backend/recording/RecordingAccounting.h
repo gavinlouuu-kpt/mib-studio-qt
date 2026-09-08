@@ -47,12 +47,13 @@ inline const char* toString(FrameOutcome o)
 }
 
 // Final state of a run/file.
+// Contract-pinned (bridge-contract.json run_completion_states); append only.
 enum class RunCompletionState {
-    Complete,            // every admitted frame reconciled; no loss, no failure
-    IntentionallyPartial,// declared policy dropped/cancelled frames (LatestFrame, buffer cap)
-    IncompleteLoss,      // undeclared loss: store overwrite/not-committed/malformed or processing failure
-    Failed,              // persistence failure, fatal error, or accounting does not reconcile
-    Unknown,             // legacy file without accounting
+    Complete = 0,            // every admitted frame reconciled; no loss, no failure
+    IntentionallyPartial = 1,// declared policy dropped/cancelled frames (LatestFrame, buffer cap)
+    IncompleteLoss = 2,      // undeclared loss: store overwrite/not-committed/malformed or processing failure
+    Failed = 3,              // persistence failure, fatal error, or accounting does not reconcile
+    Unknown = 4,             // legacy file without accounting
 };
 
 inline const char* toString(RunCompletionState s)
