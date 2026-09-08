@@ -231,9 +231,9 @@ int main()
             svc.endExperiment();
             const auto a = svc.experimentAccountingSnapshot();
             admittedTotal += a.admitted;
-            const bool frameTermsOk = a.admitted == a.empty + a.processed + a.scientificallyRejected +
-                                                    a.processingFailed + a.storeOverwritten +
-                                                    a.storeNotCommitted + a.storeMalformed;
+            // Every admitted frame terminates in exactly one outcome, including
+            // the declared ones (pendingAtStop after a settlement, cancelledByPolicy).
+            const bool frameTermsOk = a.frameTermsSum() == a.admitted;
             if (!frameTermsOk || !a.reconciled) {
                 ++mismatches;
                 std::fprintf(stderr, "exp3 run %d: admitted=%llu empty=%llu processed=%llu rejected=%llu "
