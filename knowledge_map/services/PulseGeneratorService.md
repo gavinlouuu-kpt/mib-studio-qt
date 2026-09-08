@@ -18,8 +18,8 @@ from the vendor manual), `tests/backend/serial_bus_pty_test.cpp`
 
 `(physical bus, serial settings, Modbus slave address)` — the pulse-generator
 **channel** is a setting below that identity. The service is a *client* of a
-shared [[SerialBus]] session (`SerialBusManager` hands out one `QSerialPort`
-owner per adapter), so two or more generators — and unrelated Modbus devices —
+shared [[SerialBus]] session (`SerialBusManager` hands out one
+[[ISerialPort]] owner per adapter), so two or more generators — and unrelated Modbus devices —
 can share one USB/RS485 adapter at different addresses. A second generator on
 the same bus is a second `PulseGeneratorService` instance built on the same
 `SerialBusManager`.

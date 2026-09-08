@@ -1,0 +1,91 @@
+name: Bridge CI
+
+# Phase 2 of epic #246: the Rust <-> C++ bridge (crates/mib-bridge, ADR 0003).
+# Builds the Qt-free backend archives, then compiles + runs the headless bridge
+# contract test. No Qt, no webkit, no display.
+
+on:
+  push:
+    branches: [dev/react-tauri, develop, "agent-b/**"]
+    paths:
+      - "crates/mib-bridge/**"
+      - "include/backend/**"
+      - "src/backend/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/workflows/bridge-ci.yml"
+  pull_request:
+    branches: [dev/react-tauri, develop, "agent-b/**"]
+    paths:
+      - "crates/mib-bridge/**"
+      - "include/backend/**"
+      - "src/backend/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/workflows/bridge-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bridge:
+    name: Rust <-> C++ bridge (headless)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Linux system packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            git \
+            libgl1-mesa-dev \
+            libhdf5-dev \
+            libopencv-dev \
+            libspdlog-dev \
+            libsqlite3-dev \
+            libxkbcommon-dev \
+            nlohmann-json3-dev \
+            pkg-config
+          # No Qt SDK, no webkit2gtk: the bridge links the Qt-free backend and
+          # runs headless (epic #246 Phase 2).
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Qt-free backend archives
+        shell: bash
+        run: |
+          set -o pipefail
+          # Headless lane, no camera SDK: develop enables MindVision by
+          # default, so opt out explicitly (SDK-free build, MIB_HAS_MINDVISION=0).
+          cmake --preset linux-backend-only -DMIB_ENABLE_MINDVISION=OFF
+          cmake --build --preset linux-backend-only-build \
+            --target mib_backend mib_processing
+
+      - name: Build and test the bridge (headless)
+        shell: bash
+        working-directory: crates/mib-bridge
+        env:
+          # Archives were built in the previous step; don't re-drive cmake.
+          MIB_BRIDGE_NO_CMAKE: "1"
+          # HDF5 shared libs live in a versioned subdir on Ubuntu.
+          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu/hdf5/serial
+          # Offline CI: avoid the network LUT-manifest fetch at startup.
+          MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
+        run: |
+          set -o pipefail
+          cargo test --no-fail-fast

@@ -20,6 +20,7 @@
 - [[SerialBus]] — shared RS485/Modbus bus sessions (one `QSerialPort` owner
   per adapter, strict response correlation); transport for the two below
 - [[SyringePumpService]] — dual-pump Modbus RTU over serial
+- [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
   source) via Modbus RTU over serial; addressed device on a shared bus
 

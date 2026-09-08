@@ -2,9 +2,9 @@ name: Backend CI
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [main, master, develop, dev/react-tauri]
   pull_request:
-    branches: [main, master, develop]
+    branches: [main, master, develop, dev/react-tauri]
 
 permissions:
   contents: read
@@ -46,9 +46,10 @@ jobs:
             libxkbcommon-dev \
             nlohmann-json3-dev \
             pkg-config \
-            python3-pip \
-            qt6-base-dev \
-            qt6-serialport-dev
+            python3-pip
+          # No Qt SDK: the backend is fully Qt-free (epic #246 Phase 1 exit
+          # gate). Installing no qt6-* packages proves linux-backend-only
+          # configures/builds/tests without Qt.
 
       - name: Provision pinned MindVision SDK
         shell: bash

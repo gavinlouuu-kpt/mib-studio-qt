@@ -11,8 +11,6 @@
 
 #include "support/assert.h"
 
-#include <QByteArray>
-
 #include <string>
 
 namespace mv = backend::camera::mindvision;
@@ -20,7 +18,7 @@ namespace mv = backend::camera::mindvision;
 namespace {
 mv::ParseResult parse(const char* json)
 {
-    return mv::parseConfig(QByteArray(json));
+    return mv::parseConfig(std::string(json));
 }
 } // namespace
 

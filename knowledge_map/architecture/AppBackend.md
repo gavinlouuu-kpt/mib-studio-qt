@@ -67,6 +67,15 @@ profile catalog:
   remote update outcome.
 - `MIB_STUDIO_EMODULUS_LUT_CACHE_DIR` can redirect the cache path for tests
   or local validation.
+- **Qt-free (epic #246, ADR 0002):** the catalog is `std::string`/
+  `std::filesystem`/`nlohmann` with SHA-256 via `processingCore*Sha256`. The
+  raw HTTP GET is delegated to a shell-injected `HttpGetFn`
+  (`AppBackend::setLutHttpFetcher`), and the cache base dir is injected via
+  `setLutAppDataDir` so the on-disk location is unchanged. The Qt shell wires a
+  QtNetwork fetcher in `main.cpp` ([[../frontend/System-Utilities]] →
+  `LutHttpFetcher`); a Tauri/Rust shell will supply a native one. This dropped
+  `Qt6::Network` from the backend. `file://` URLs (tests/headless) need no
+  fetcher.
 
 ### Boot-time service toggles (`MIB_DISABLED_SERVICES`)
 
@@ -160,7 +169,9 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
   (external-trigger pulse source, created alongside the syringe-pump service).
   Both serial services are constructed against the backend-owned
   [[../services/SerialBus]] `SerialBusManager` (declared before them so it
-  outlives their sessions) — one shared `QSerialPort` owner per RS485 adapter
+  outlives their sessions) — one shared [[../services/ISerialPort]] owner per
+  RS485 adapter; `serialBus()` exposes the manager so tests inject a fake
+  serial-port factory
 
 ### Requested vs effective camera source (issue #369)
 

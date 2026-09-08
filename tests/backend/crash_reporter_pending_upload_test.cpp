@@ -67,7 +67,6 @@ static CrashReporter::Config baseConfig(const fs::path& dir) {
     cfg.uploadPendingOnStart = true;
     cfg.installSignalHandlers = false;
     cfg.installTerminateHandler = false;
-    cfg.installQtMessageHandler = false;
 #if defined(MIB_USE_SENTRY) && MIB_USE_SENTRY
     // Syntactically valid DSN; whether sentry_init actually succeeds is
     // environment-dependent (e.g. crashpad_handler presence), so tests key

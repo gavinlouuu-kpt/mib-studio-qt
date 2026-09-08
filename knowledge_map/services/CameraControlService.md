@@ -18,6 +18,11 @@
   Reserves the shared Euresys GenTL handle before calling the MindVision SDK
   (see Gotchas).
 - `applyMindVisionConfig(cameraIndex, configPath, errorOut)` — apply a JSON
+  config to a selected MindVision device before capture starts. The file is
+  read with `std::ifstream` (Qt-free, epic #246) and the parse + bounds
+  validation is the shared pure `parseConfig(const std::string&)` documented in
+  [[../camera/MindVisionCamera]] (`MindVisionConfig.h`); this service applies
+  only its historical field subset (resolution/exposure/trigger/gain).
   config to a selected MindVision device before capture starts. The parse +
   bounds validation is the shared pure `parseConfig` documented in
   [[../camera/MindVisionCamera]] (`MindVisionConfig.h`); the application also

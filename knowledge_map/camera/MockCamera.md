@@ -3,8 +3,9 @@
 > Folder-backed [[ICamera]] for development and tests. Reads PNG/TIFF/JPEG
 > images from a directory and replays them at a configured interval.
 
-**Source:** `src/camera/mock/MockCamera.cpp`,
-`include/camera/mock/MockCamera.h`
+**Source:** `src/backend/camera/mock/MockCamera.cpp`,
+`include/backend/camera/mock/MockCamera.h`
+**Tests:** `tests/camera/mock_camera_smoke_test.cpp`
 **Related:** [[ICamera]], [[../build-and-run/Run-Modes]]
 (mock env vars), [[../frontend/ConnectTab]]
 
@@ -32,6 +33,18 @@ bool loopFiles{true};
   to hit `frameInterval`. Returns false when `loopFiles == false` and
   the list is exhausted.
 
+## Decode (`loadFrameFromPath`)
+
+Decoding is **Qt-free** (epic #246): `cv::imread(path, IMREAD_GRAYSCALE)` for
+every supported extension (PNG/JPEG/BMP/TIFF via OpenCV `imgcodecs`, already
+linked). Output is always PFNC Mono8 (`0x01080001`) with rows packed tightly
+(`linePitch == width`; the non-continuous `cv::Mat` case is copied row-by-row
+via `step[0]`). This replaced a `QImageReader` primary path + OpenCV-only-for-
+TIFF fallback. Two intentional deltas vs. the old path: `linePitch` is now
+always `width` (was Qt's possibly-padded `bytesPerLine()`; downstream tolerates
+pitch ≥ width), and QImage's EXIF auto-transform is gone (irrelevant for
+synthetic mock frames). This removed the last backend `QImage` use, letting
+`Qt6::Gui` drop from the backend link.
 ## Timestamps (issue #368)
 
 `Frame::timestamp` is `std::chrono::steady_clock` nanoseconds at delivery

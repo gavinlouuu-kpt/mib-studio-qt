@@ -17,6 +17,11 @@
     available via `dbghelp.lib`).
   - `std::signal` handlers for SIGSEGV / SIGABRT / SIGFPE / SIGILL.
   - `std::set_terminate` for uncaught C++ exceptions.
+- **Qt-free (epic #246):** the Qt log routing (`qInstallMessageHandler` →
+  spdlog, criticals/fatals → Sentry) moved out of this backend service into
+  the frontend `[[../frontend/System-Utilities]]` (`QtLogBridge`), installed
+  from `main.cpp` after `init()`. It calls back into `captureMessage()`. The
+  backend links no Qt.
   - `qInstallMessageHandler` to route Qt warnings/criticals into spdlog
     and forward fatal Qt messages as Sentry events.
 - When Sentry is active (`isSentryActive() == true`):
@@ -63,6 +68,8 @@
 
 ```cpp
 struct Config { dsn; release; environment; crashDir; databaseDir;
+                installSignalHandlers; installTerminateHandler;
+                uploadPendingOnStart; };
                 tracesSampleRate; installSignalHandlers;
                 installQtMessageHandler; installTerminateHandler;
                 uploadPendingOnStart; maxRetainedDumps;

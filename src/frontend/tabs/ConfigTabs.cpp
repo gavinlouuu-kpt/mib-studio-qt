@@ -1282,20 +1282,22 @@ void ConfigTabs::refreshPulseGenPorts() {
     pgPortCombo_->clear();
     const auto ports = backend::services::serialbus::availablePorts();
     for (const auto& p : ports) {
-        QString label = p.systemName;
+        const QString systemName = QString::fromStdString(p.systemName);
+        const QString serialNumber = QString::fromStdString(p.serialNumber);
+        QString label = systemName;
         QStringList extra;
-        if (!p.description.isEmpty()) extra << p.description;
-        if (!p.serialNumber.isEmpty()) extra << tr("S/N %1").arg(p.serialNumber);
+        if (!p.description.empty()) extra << QString::fromStdString(p.description);
+        if (!serialNumber.isEmpty()) extra << tr("S/N %1").arg(serialNumber);
         if (p.vendorId != 0) {
             extra << QStringLiteral("%1:%2")
                          .arg(p.vendorId, 4, 16, QLatin1Char('0'))
                          .arg(p.productId, 4, 16, QLatin1Char('0'));
         }
         if (!extra.isEmpty()) label += QStringLiteral(" — ") + extra.join(QStringLiteral(", "));
-        pgPortCombo_->addItem(label, p.systemName);
+        pgPortCombo_->addItem(label, systemName);
         const int idx = pgPortCombo_->count() - 1;
-        pgPortCombo_->setItemData(idx, p.systemLocation, Qt::ToolTipRole);
-        pgPortCombo_->setItemData(idx, p.serialNumber, PortRoleSerialNumber);
+        pgPortCombo_->setItemData(idx, QString::fromStdString(p.systemLocation), Qt::ToolTipRole);
+        pgPortCombo_->setItemData(idx, serialNumber, PortRoleSerialNumber);
         pgPortCombo_->setItemData(idx, static_cast<uint>(p.vendorId), PortRoleVid);
         pgPortCombo_->setItemData(idx, static_cast<uint>(p.productId), PortRolePid);
     }
@@ -1433,7 +1435,7 @@ void ConfigTabs::onPulseGenScanToggle() {
         using LinkError = backend::services::PulseGeneratorService::LinkError;
         LinkError scanError = LinkError::None;
         const auto hits = backend_.pulseGenerator().scanBus(
-            portName, settings, 1, 16, pgScanCancel_, 250, &scanError);
+            portName.toStdString(), settings, 1, 16, pgScanCancel_, 250, &scanError);
         QMetaObject::invokeMethod(this, [this, portName, hits, scanError]() {
             pgScanRunning_ = false;
             refreshPulseGenUi();
@@ -1500,7 +1502,7 @@ void ConfigTabs::onPulseGenConnectToggle() {
         const auto settings = pulseGenSettingsFromUi(pgBaudCombo_, pgDataBitsCombo_,
                                                      pgParityCombo_, pgStopBitsCombo_);
         const auto addr = static_cast<uint8_t>(pgAddrSpin_->value());
-        if (!gen.connect(portName, settings, addr)) {
+        if (!gen.connect(portName.toStdString(), settings, addr)) {
             QMessageBox::warning(
                 this, tr("Pulse Generator"),
                 tr("Failed to connect on %1 (baud %2, addr %3): %4. "

@@ -30,6 +30,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreCache.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreEd25519.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
@@ -184,6 +185,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h
     ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLutCatalog.cpp
@@ -228,14 +230,28 @@ else()
     )
 endif()
 
-# Explicitly enable AUTOMOC for this target to ensure MOC files are generated.
+# Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the
+# backend links no Qt SerialPort (epic #246).
+if(WIN32)
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortWin32.cpp
+    )
+else()
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortPosix.cpp
+    )
+endif()
+
+# The backend is Qt-free (epic #246): no Q_OBJECT, so AUTOMOC has nothing to
+# generate and is disabled.
 set_target_properties(mib_backend PROPERTIES
-    AUTOMOC ON
+    AUTOMOC OFF
     ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
 )
 
 target_compile_definitions(mib_backend PUBLIC
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
+    MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
 )
 
 if(MIB_HAS_EGRABBER)
@@ -282,19 +298,16 @@ endif()
 
 target_link_libraries(mib_backend PUBLIC
     spdlog::spdlog
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Network
-    Qt6::SerialPort
 )
 
 if(TARGET nlohmann_json::nlohmann_json)
     target_link_libraries(mib_backend PUBLIC nlohmann_json::nlohmann_json)
 endif()
 
-# CrashReporter requires dbghelp on Windows for MiniDumpWriteDump.
+# CrashReporter requires dbghelp on Windows for MiniDumpWriteDump; the serial
+# port enumeration (SerialPortWin32.cpp) uses SetupAPI.
 if(WIN32)
-    target_link_libraries(mib_backend PUBLIC dbghelp)
+    target_link_libraries(mib_backend PUBLIC dbghelp setupapi)
 endif()
 
 # Wire optional sentry-native. When MIB_USE_SENTRY=OFF (or the fetch failed)

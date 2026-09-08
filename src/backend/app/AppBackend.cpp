@@ -1,3 +1,7 @@
+// windows.h (via the MindVision SDK headers below) must not define min/max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/Tools.h"
@@ -36,12 +40,8 @@
 #include <limits>
 #include <string>
 #include <utility>
-#include <QString>
 #include <spdlog/spdlog.h>
 #ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <windows.h>
 #include <shlobj.h>
 #endif
@@ -373,16 +373,23 @@ namespace backend
         if (bootProcessing)
         {
             std::filesystem::path bundledLutPath = exeDir / "resources" / "isoelastic_curve" / "scaled_isoelastic_data_LUT_6.16-4.24.txt";
-            backend::EModulusLutCatalog lutCatalog;
+            std::string appVersion;
+#ifdef MIB_STUDIO_QT_VERSION
+            appVersion = MIB_STUDIO_QT_VERSION;
+#endif
+            // HTTP GET is injected by the shell (ADR 0002); backend links no Qt
+            // networking. Without a fetcher, remote fetch is skipped (cache/bundled).
+            backend::EModulusLutCatalog lutCatalog(lutHttpGet_, appVersion, lutAppDataDir_);
             backend::EModulusLutCatalog::ManagedLutInfo lutInfo;
-            QString activeLutPath = QString::fromStdString(bundledLutPath.string());
-            QString managedLutPath = activeLutPath;
-            QString managedError;
-            if (!lutCatalog.ensureManagedLut(QString::fromStdString(bundledLutPath.string()), &managedLutPath, &lutInfo, &managedError))
+            const std::string bundledLutStr = bundledLutPath.string();
+            std::string activeLutPath = bundledLutStr;
+            std::string managedLutPath = activeLutPath;
+            std::string managedError;
+            if (!lutCatalog.ensureManagedLut(bundledLutStr, &managedLutPath, &lutInfo, &managedError))
             {
                 SPDLOG_WARN("AppBackend: LUT catalog resolution failed, falling back to bundled path {}: {}",
-                            bundledLutPath.string(), managedError.toStdString());
-                activeLutPath = QString::fromStdString(bundledLutPath.string());
+                            bundledLutStr, managedError);
+                activeLutPath = bundledLutStr;
                 lutInfo.sourceType = "bundled-fallback";
                 lutInfo.revision = "bundled";
                 lutInfo.localPath = activeLutPath;
@@ -393,12 +400,11 @@ namespace backend
                 activeLutPath = managedLutPath;
             }
 
-            if (!processingService_->loadEModulusLut(activeLutPath.toStdString()))
+            if (!processingService_->loadEModulusLut(activeLutPath))
             {
-                const QString bundledLutPathStr = QString::fromStdString(bundledLutPath.string());
-                if (activeLutPath != bundledLutPathStr && processingService_->loadEModulusLut(bundledLutPath.string()))
+                if (activeLutPath != bundledLutStr && processingService_->loadEModulusLut(bundledLutStr))
                 {
-                    activeLutPath = bundledLutPathStr;
+                    activeLutPath = bundledLutStr;
                     lutInfo.sourceType = "bundled-fallback";
                     lutInfo.revision = "bundled";
                     lutInfo.localPath = activeLutPath;
@@ -411,13 +417,13 @@ namespace backend
                 }
             }
             SPDLOG_INFO("AppBackend: Young's modulus LUT source={}, revision={}, path={}, checksum_status={}, remote_updated={}, bundled_fallback={}, manifest={}",
-                        lutInfo.sourceType.toStdString(),
-                        lutInfo.revision.toStdString(),
-                        lutInfo.localPath.toStdString().empty() ? activeLutPath.toStdString() : lutInfo.localPath.toStdString(),
-                        lutInfo.checksumStatus.toStdString(),
+                        lutInfo.sourceType,
+                        lutInfo.revision,
+                        lutInfo.localPath.empty() ? activeLutPath : lutInfo.localPath,
+                        lutInfo.checksumStatus,
                         lutInfo.remoteUpdated,
                         lutInfo.usedBundledFallback,
-                        lutInfo.manifestUrl.toStdString());
+                        lutInfo.manifestUrl);
             processingService_->start();
         }
         else
@@ -587,6 +593,11 @@ namespace backend
                 selectedMvCameraIndex_ = -1;
                 selectedLabel_.clear();
                 lastMindVisionConfigPath_.clear();
+                // Keep the selection snapshot authoritative (BE-2).
+                mockFrameDir_ = options.folder.string();
+                mockIntervalMs_ = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(options.frameInterval).count());
+                mockLoop_ = options.loopFiles;
                 effectiveCameraSource_ = "mock";
             };
 
@@ -743,6 +754,38 @@ namespace backend
         selectedLabel_.clear();
         lastMindVisionConfigPath_.clear();
         mockCameraConfigured_ = true;
+        mockFrameDir_ = options.folder.string();
+        mockIntervalMs_ = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(options.frameInterval).count());
+        mockLoop_ = options.loopFiles;
+    }
+
+    AppBackend::CameraSelectionSnapshot AppBackend::cameraSelection() const
+    {
+        CameraSelectionSnapshot out;
+        if (mockCameraConfigured_)
+        {
+            out.mode = CameraSelectionSnapshot::Mode::Mock;
+        }
+        else if (selectedMvCameraIndex_ >= 0)
+        {
+            out.mode = CameraSelectionSnapshot::Mode::MindVision;
+        }
+        else if (selectedIfIndex_ >= 0 && selectedDevIndex_ >= 0)
+        {
+            out.mode = CameraSelectionSnapshot::Mode::Hardware;
+        }
+        out.interfaceIndex = selectedIfIndex_;
+        out.deviceIndex = selectedDevIndex_;
+        out.label = selectedLabel_;
+        out.mindVisionIndex = selectedMvCameraIndex_;
+        out.mindVisionConfigPath = lastMindVisionConfigPath_;
+        out.cameraScriptPath = lastCameraScriptPath_;
+        out.mockFrameDir = mockFrameDir_;
+        out.mockIntervalMs = mockIntervalMs_;
+        out.mockLoop = mockLoop_;
+        out.configured = isCameraConfigured();
+        return out;
     }
 
     void AppBackend::setHardwareCameraSelection(int interfaceIndex, int deviceIndex, const std::string &label)
@@ -865,7 +908,13 @@ namespace backend
             captureService_->stop();
         }
         SPDLOG_INFO("Applying camera script to {} from {}", selectedLabel_, path);
-        return cameraControlService_->applyScriptToDevice(selectedIfIndex_, selectedDevIndex_, path, errorOut);
+        const bool ok =
+            cameraControlService_->applyScriptToDevice(selectedIfIndex_, selectedDevIndex_, path, errorOut);
+        if (ok)
+        {
+            lastCameraScriptPath_ = path;
+        }
+        return ok;
     }
 
     bool AppBackend::applyMindVisionConfigFromFile(const std::string &path, std::string *errorOut)
@@ -951,6 +1000,8 @@ namespace backend
     }
 
     app::ExperimentCoordinator &AppBackend::experiment() { return *experimentCoordinator_; }
+
+    services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 
     bool AppBackend::isCameraConfigured() const
     {
@@ -1074,7 +1125,7 @@ namespace backend
             // Hoisted per-poll-batch: refreshed only when configVersion changes.
             // Staleness window is one poll iteration (~ms), which is acceptable
             // and documented. Per-frame refresh was the dominant lock cost (P1).
-            uint64_t lastConfigVer = std::numeric_limits<uint64_t>::max();
+            uint64_t lastConfigVer = (std::numeric_limits<uint64_t>::max)();
             services::ProcessingConfig config;
             services::ProcessingService::Roi roi;
             std::shared_ptr<const cv::Mat> bgShared;

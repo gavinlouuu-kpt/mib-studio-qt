@@ -25,7 +25,6 @@ public:
         double tracesSampleRate{0.20};      // Sentry performance sample rate.
         bool uploadPendingOnStart{true};
         bool installSignalHandlers{true};
-        bool installQtMessageHandler{true};
         bool installTerminateHandler{true};
         size_t maxRetainedDumps{50};        // per-class retention bound
                                             // (pending .dmp, .queued, orphan

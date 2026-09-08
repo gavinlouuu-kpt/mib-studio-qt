@@ -1,64 +1,37 @@
 #pragma once
 
-#include <QByteArray>
-#include <QString>
+#include "backend/services/ISerialPort.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
-
-class QSerialPort;
 
 namespace backend::services::serialbus {
 
 /**
- * Shared RS485/Modbus RTU bus layer.
+ * Shared RS485/Modbus RTU bus layer (Qt-free).
  *
  * RS485 is a multi-drop bus: one physical USB/RS485 adapter can carry several
- * Modbus RTU devices at different slave addresses, so the QSerialPort handle
- * must be owned once per adapter and shared by every service that talks on it.
+ * Modbus RTU devices at different slave addresses, so the serial port must be
+ * owned once per adapter and shared by every service that talks on it.
  * SerialBusManager hands out one ModbusBusSession per (system port name,
  * serial settings); the session serializes all transactions (inter-frame
  * delay + strict request/response correlation) so concurrent clients can
  * never cross-associate responses.
  */
 
-// Serial line settings that identify a bus configuration. Two clients may
-// share one adapter only when every field matches — a mismatch is a
-// misconfiguration, not a second session.
-struct SerialSettings {
-    int baudRate{9600};
-    int dataBits{8};   // 5..8
-    char parity{'N'};  // 'N' none, 'E' even, 'O' odd
-    int stopBits{1};   // 1 or 2
+using SerialSettings = backend::services::SerialSettings;
+using PortInfo = backend::services::SerialPortInfo;
+using Bytes = std::vector<uint8_t>;
 
-    bool operator==(const SerialSettings& o) const
-    {
-        return baudRate == o.baudRate && dataBits == o.dataBits &&
-               parity == o.parity && stopBits == o.stopBits;
-    }
-    bool operator!=(const SerialSettings& o) const { return !(*this == o); }
-};
-
-// One enumerated serial port with the USB identity fields (when present) that
-// survive a device-node rename across reboots/replug.
-struct PortInfo {
-    QString systemName;     // "ttyUSB0", "COM3"
-    QString systemLocation; // "/dev/ttyUSB0", "\\\\.\\COM3"
-    QString description;
-    QString manufacturer;
-    QString serialNumber;
-    uint16_t vendorId{0};
-    uint16_t productId{0};
-};
-
-// Cross-platform enumeration via QSerialPortInfo. An explicit call each time —
-// no caching — so a Refresh action in the GUI always reflects hot-plug state.
+// Cross-platform enumeration; see ISerialPort.h.
 std::vector<PortInfo> availablePorts();
 
 enum class BusError {
@@ -81,17 +54,16 @@ const char* toString(BusError error);
 struct Transaction {
     BusError error{BusError::Timeout};
     uint8_t exceptionCode{0}; // valid when error == ModbusException
-    QByteArray response;      // full validated frame when error is None/ModbusException
+    Bytes response;           // full validated frame when error is None/ModbusException
 };
 
-// Exclusive owner of one QSerialPort. Construct only through
+// Exclusive owner of one ISerialPort. Construct only through
 // SerialBusManager::acquire(); hold via shared_ptr — the port closes when the
 // last client releases its reference.
 //
-// The QSerialPort lives on a dedicated I/O thread (created and used only
-// there, no event loop), so it can never race the acquiring thread's Qt event
-// loop: transact() marshals the request to that thread and blocks for the
-// result. Any thread may call transact(); callers are serialized.
+// The port lives on a dedicated I/O thread (created and used only there), so
+// transact() marshals the request to that thread and blocks for the result.
+// Any thread may call transact(); callers are serialized.
 class ModbusBusSession {
 public:
     ~ModbusBusSession();
@@ -106,27 +78,28 @@ public:
     // slave address (stale/delayed traffic) are discarded and the read
     // continues until the deadline; corrupt or unframeable bytes fail the
     // transaction rather than being reinterpreted.
-    Transaction transact(const QByteArray& request, int timeoutMs = 1000);
+    Transaction transact(const Bytes& request, int timeoutMs = 1000);
 
-    QString portName() const { return portName_; }
+    std::string portName() const { return portName_; }
     SerialSettings settings() const { return settings_; }
     bool isOpen() const { return portOpen_.load(); }
 
 private:
     friend class SerialBusManager;
-    ModbusBusSession(const QString& portName, const SerialSettings& settings);
+    ModbusBusSession(std::string portName, const SerialSettings& settings, SerialPortFactory factory);
 
     // Spawns the I/O thread, which opens the port; blocks for the outcome.
-    bool start(BusError* error, QString* errorDetail);
+    bool start(BusError* error, std::string* errorDetail);
     void ioLoop();
     bool openPortOnIoThread(); // io thread only
-    Transaction runTransaction(const QByteArray& request, int timeoutMs); // io thread only
+    Transaction runTransaction(const Bytes& request, int timeoutMs); // io thread only
 
-    const QString portName_;
+    const std::string portName_;
     const SerialSettings settings_;
+    SerialPortFactory factory_;
 
     // Touched only by the I/O thread.
-    QSerialPort* serial_{nullptr};
+    std::unique_ptr<ISerialPort> serial_;
     std::chrono::steady_clock::time_point lastBusActivity_{};
 
     std::thread ioThread_;
@@ -135,7 +108,7 @@ private:
     // Handshake between callers and the I/O thread.
     std::mutex jobMutex_;
     std::condition_variable jobCv_;
-    const QByteArray* jobRequest_{nullptr};
+    const Bytes* jobRequest_{nullptr};
     int jobTimeoutMs_{0};
     Transaction jobResult_;
     bool jobPending_{false};
@@ -143,7 +116,7 @@ private:
     bool stopRequested_{false};
     bool openDone_{false};
     BusError openErrorCode_{BusError::PortUnavailable};
-    QString openErrorDetail_;
+    std::string openErrorDetail_;
     std::atomic<bool> portOpen_{false};
 };
 
@@ -154,22 +127,28 @@ private:
 // registry lock, so a dying session and a fresh acquire cannot interleave.
 class SerialBusManager {
 public:
-    SerialBusManager() = default;
+    SerialBusManager();
     ~SerialBusManager() = default;
 
     SerialBusManager(const SerialBusManager&) = delete;
     SerialBusManager& operator=(const SerialBusManager&) = delete;
 
-    std::shared_ptr<ModbusBusSession> acquire(const QString& portName,
+    // Inject the serial-port factory (defaults to the platform port). Tests
+    // supply a fake to drive the Modbus protocol without hardware. Applies to
+    // sessions opened afterwards.
+    void setSerialPortFactory(SerialPortFactory factory);
+
+    std::shared_ptr<ModbusBusSession> acquire(const std::string& portName,
                                               const SerialSettings& settings,
                                               BusError* error = nullptr,
-                                              QString* errorDetail = nullptr);
+                                              std::string* errorDetail = nullptr);
 
 private:
-    static QString normalizeKey(const QString& portName);
+    static std::string normalizeKey(const std::string& portName);
 
     std::mutex mutex_;
-    std::map<QString, std::weak_ptr<ModbusBusSession>> sessions_;
+    SerialPortFactory factory_;
+    std::map<std::string, std::weak_ptr<ModbusBusSession>> sessions_;
 };
 
 } // namespace backend::services::serialbus

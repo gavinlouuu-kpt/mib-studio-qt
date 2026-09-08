@@ -27,6 +27,347 @@
   `%LOCALAPPDATA%\MIB_Studio_Qt\symbols\<build id>\` (guard
   `backend.crash_reporter_segv`).
 
+- **Integration branch synced with develop (PR #379 merge) + Windows/CI
+  fixes** (2026-09-08, `agent-b/shared-backend-integration`) — Merge of
+  `0fbaf8c0`. Things that only showed up on Windows or a fresh build tree:
+  MSVC conformance mode (`/permissive- /Zc:__cplusplus`) is now set in
+  `cmake/MIBCompilerSettings.cmake` (Qt used to propagate it; the Qt-free
+  backend tests had lost it), the ported Agent B tests compile on MSVC
+  (`camera_script_apply`, `recording.accounting` without Qt,
+  `e2e.experiment_coordinator` re-targeted at the shared coordinator with the
+  readiness-generation handshake), the Qt-free LUT catalog accepts
+  `file://C:/...` URLs, and every frontend test executable compiles
+  `resources/defaults.qrc` itself — ConfigTabs seeds `<exe>/../include` from
+  `:/defaults` on a fresh tree and, without the resource, blocked headless
+  tests in a modal warning. CI: the bridge/desktop headless lanes build with
+  `-DMIB_ENABLE_MINDVISION=OFF` (develop enables the SDK by default), the
+  manylinux wheel container gets `json-devel` and `ProcessingConfigJson.h`
+  falls back to `nlohmann/json.hpp` when `json_fwd.hpp` is not packaged.
+
+- **Serial bus ported onto ISerialPort; backend Qt-free again**
+  (2026-09-08, `agent-b/shared-backend-integration`) — The reliability
+  RS485 layer (`SerialBus`, `SyringePumpService`, `PulseGeneratorService`,
+  `ModbusRtu.h` with `expectedFrameLength`/`classifyResponse`) now runs on
+  the Qt-free `ISerialPort` (new `SerialSettings`, `openNamed()`,
+  `lastSystemError()`, `enumerateSerialPorts()` via SetupAPI / sysfs;
+  `SerialBusManager::setSerialPortFactory()` is the test seam, exposed as
+  `AppBackend::serialBus()`). `mib_backend` links no Qt; the bridge link
+  manifest carries no Qt libraries; `build.rs` no longer needs
+  `/permissive-`. Frontend `ConfigTabs` converts port names at its boundary.
+  Tests: `backend.syringe_pump_fake_serial`, `backend.pump_bridge_facade`
+  (now through the bus manager), `backend.pulse_generator_frame`,
+  `backend.modbus_rtu`, `backend.facade_boundary`, bridge crate 16/16 on
+  Windows; `backend.serial_bus_pty` ported (POSIX-only, verified by CI).
+
+- **UX redesign: UX-9 — Operator vs Service/Commissioning mode** (2026-07-21,
+  epic #304, issue #313) — New `desktop/src/commissioning.ts`: `canActuate` and
+  friends gate hardware-actuating trigger tests (service mode → not during a run
+  → trigger attached → armed). Every session starts in Operator mode; a menubar
+  toggle enters Service mode behind a confirm with a persistent banner. The
+  Monitoring trigger controls (Sort Trigger, Set Pulse, Periodic Test) render
+  only in Service mode behind a one-shot Arm; a running periodic test stays
+  stoppable in Operator mode. 9 vitest cases (`commissioning.test.ts`). Details:
+  `knowledge_map/task/2026-07-21-ux9-commissioning-mode.md`.
+
+- **UX redesign: UX-8 — persistent active-context bar** (2026-07-21, epic #304,
+  issue #312) — New `desktop/src/contextBar.ts`: `deriveContextBar(facts)`
+  builds the always-visible bottom bar (Profile / Camera / Calibration / Status
+  / Operator / Storage / Warnings), each a value + ok/warn/blocked/pending
+  status + optional navigate target. Status mirrors the guided-workflow
+  readiness (UX-1); Warnings counts preflight+quality attention items;
+  camera/calibration from the bridged selection + px→µm. Profile (UX-2),
+  operator, and storage free-space are shown as explicit `pending` until
+  bridged. 11 vitest cases (`contextBar.test.ts`). Details:
+  `knowledge_map/task/2026-07-21-ux8-context-bar.md`.
+
+- **UX redesign: UX-4 (slice) — Camera & Alignment quality gates**
+  (2026-07-21, epic #304, issue #308) — New `desktop/src/quality.ts`:
+  `deriveQualityGates(input)` derives Focus / Background / ROI / Calibration
+  gates (pass/warn/fail/unknown) from bridged signals (autofocus ring-ratio +
+  freshness, config background/ROI, frame size, px→µm), rendered as a strip
+  under the live image in the Camera & Alignment tab. Illumination, channel-wall
+  ROI insets (#295), Auto-Focus, and save-to-profile (UX-2) are follow-ups.
+  12 vitest cases (`quality.test.ts`). Details:
+  `knowledge_map/task/2026-07-21-ux4-quality-gates.md`.
+
+- **UX redesign: UX-3 — profile-aware hardware preflight checklist**
+  (2026-07-21, epic #304, issue #307) — New `desktop/src/preflight.ts`:
+  `derivePreflight(input, requirements)` turns the Preflight stage into an
+  explicit per-subsystem checklist (camera, processing-core/trust, capture,
+  autofocus, sample/sheath pumps, trigger, storage) with
+  Passed/Warning/Failed/Not-required status, requirement badges,
+  expected-vs-detected identity, cause + recovery, and a `criticalPassed` gate.
+  Device requirements will come from the profile (not bridged yet →
+  `DEFAULT_REQUIREMENTS`); storage stays informational pending a backend
+  contract. Shell polls camera/core/autofocus/pumps/trigger off the capture
+  loop while on the Preflight tab. 14 vitest cases (`preflight.test.ts`).
+  Stacked on UX-1 (#316). Details:
+  `knowledge_map/task/2026-07-21-ux3-hardware-preflight.md`.
+
+- **UX redesign: UX-1 — guided four-stage operator workflow** (2026-07-21,
+  epic #304, issue #305) — New `desktop/src/workflow.ts`: a pure
+  `deriveWorkflow(facts)` that layers authoritative stage state
+  (Not started / Needs attention / Ready / Running / Complete), blocking
+  checks, and a single recommended next action on the Connect / Overview /
+  Experiment / Review tabs. Derived from backend snapshots plus explicit
+  operator confirmations — camera detection alone never completes Preflight,
+  and a device/core change invalidates the confirmation. Shell renders status
+  on each tab (text + dot, never colour alone) and a "Next" banner, and lands
+  startup on the earliest incomplete stage. 18 vitest cases
+  (`workflow.test.ts`, new `npm test` + Desktop CI step). Per-stage content is
+  the rest of epic #304 (UX-2…UX-11). Details:
+  `knowledge_map/task/2026-07-21-ux1-guided-workflow.md`.
+
+- **Qt → React/Tauri migration: BE-9 — Tauri platform services (Linux
+  subset)** (2026-07-16, epic #246, issue #279) — New
+  `desktop/src-tauri/src/platform.rs` (stable app paths, atomic persisted
+  shell preferences, webview log sink into the app log dir) and
+  `updater.rs` (update-manifest SHA-256 verification that fails closed, unit
+  tested). Opener actions are capability-scoped (`https://**` +
+  reveal-in-dir only). Shell: working Open Data Folder / Documentation menu
+  actions, preferences-backed sidebar persistence, log mirroring. Windows
+  packaging/updater/Sentry/QSettings-migration remain open on #279.
+  Details: `knowledge_map/task/2026-07-16-tauri-platform-services.md`.
+
+- **Qt → React/Tauri migration: BE-8 — autofocus/nanopositioner bridge**
+  (2026-07-16, epic #246, issue #278) — Bridge ABI **v11**: facade
+  `AutofocusCommand` surface (connect/disconnect/enable/jog/config) with
+  structured validation, the pump↔autofocus COM-port conflict rule, safe
+  disable-before-disconnect, a full plain-value `Config` round-trip (no
+  QSettings), and a status pull with **explicit focus-metric freshness**
+  (ring-ratio age) so stale metrics are observable. Sidebar now shows live
+  autofocus state. The stub-transport sweep test and real closed-loop
+  acceptance remain open on #278 (Coremor SDK is Windows-only; Linux builds
+  the platform stub). Details:
+  `knowledge_map/task/2026-07-16-autofocus-bridge.md`.
+
+- **Qt → React/Tauri migration: BE-7 — syringe-pump commands/status bridge**
+  (2026-07-16, epic #246, issue #277) — Bridge ABI **v10**: facade
+  `PumpCommand` surface + authoritative per-pump snapshots for the Sample and
+  Sheath dLSP pumps over the Qt-free `ISerialPort` seam, with structured
+  parameter validation, serial-port conflict rules (other pump / autofocus
+  controller), safe stop-on-disconnect, and the Modbus address scan running
+  as a BE-1 tracked operation. Fake-Modbus facade e2e in CTest
+  (`backend.pump_bridge_facade`); real dLSP hardware acceptance stays open on
+  #277. Details: `knowledge_map/task/2026-07-16-syringe-pump-bridge.md`.
+
+- **Qt → React/Tauri migration: BE-6 — paged HDF5 review + export jobs**
+  (2026-07-16, epic #246, issue #276) — Bridge ABI **v9**: review metadata
+  (mode/counts/ROI/provenance/dataset capabilities), bounded metrics pages
+  from a metadata-only cache, single image/mask hyperslab pulls, and a
+  cancellable Qt-parity metrics CSV export job (new Qt-free
+  `backend::review::writeMetricsCsv`) running as a BE-1 tracked operation on
+  its own read-only reader with partial-output cleanup. RecordingLoad now
+  replaces the open file and is rejected during an active experiment. Shell
+  Review tab gains real Valid/Invalid Frames scrubbers, a paged metrics
+  table, and the export action. Batch/reanalysis jobs remain open on #276.
+  Details: `knowledge_map/task/2026-07-16-hdf5-review-bridge.md`.
+
+- **Qt → React/Tauri migration: BE-3 — processing config round-trip,
+  ROI/background, core identity** (2026-07-16, epic #246, issue #273) —
+  Bridge ABI **v8**: lossless config document pull/merge-apply (new Qt-free
+  `backend::processing::config_json` serializer matching the config.json
+  `image_processing` schema; monotonic `config_version` for change
+  detection), ROI set/get, binary background image get/set/clear (+ Tauri
+  "set from current frame"), and processing-core identity/pin status.
+  Profiles + config.json file load/save/watch remain open on #273 (need
+  BE-9 path services). Details:
+  `knowledge_map/task/2026-07-16-processing-config-bridge.md`.
+
+- **Qt → React/Tauri migration: BE-2 — camera discovery/selection/status
+  bridge** (2026-07-16, epic #246, issue #272) — Bridge ABI **v7**: typed
+  discovery (`fetch_camera_discovery` over `CameraControlService`, plus a
+  synthetic mock entry for headless testing), an authoritative selected-device
+  snapshot on `AppBackend` (`cameraSelection()` — mode/indices/labels/config +
+  script paths/mock params, survives capture restarts), flat exports for
+  hardware/MindVision selection, camera-script apply, and hardware reset, with
+  structured errors for invalid indices/paths. The shell's Connect tab lists
+  real devices with Refresh/Connect. Windows hardware acceptance remains open
+  on #272. Details: `knowledge_map/task/2026-07-16-camera-discovery-bridge.md`.
+
+- **Qt → React/Tauri migration: BE-5 — bounded monitoring snapshots + sorter
+  trigger contracts** (2026-07-16, epic #246, issue #275) — Bridge ABI **v6**:
+  monitoring enable/disable/clear commands (visibility-gated accumulation),
+  a bounded metrics-only snapshot pull with stable `(frame, object)` IDs and
+  observable ring evictions, and trigger commands/status (pulse duration,
+  manual pulse, periodic test via a new `TriggerService` generator thread).
+  `MockCamera` gained trigger-output emulation so the chain is
+  headless-testable. Details:
+  `knowledge_map/task/2026-07-16-monitoring-trigger-bridge.md`.
+
+- **Qt → React/Tauri migration: BE-4 — backend-owned experiment coordinator**
+  (2026-07-16, epic #246, issue #274) — New `backend::ExperimentCoordinator`
+  state machine owns experiment preconditions, HDF5 setup, the multi-image
+  inline-mode override, periodic + final flush, write-queue drain ordering,
+  metadata/provenance-after-data-flush, fatal-save recovery, and idempotent
+  shutdown — orchestration formerly in Qt `MainWindow`/`ExperimentController`.
+  Facade `ExperimentCommand{Start,Stop,Cancel,Status}` + `ExperimentStatus`
+  events + status pull; experiments are BE-1 tracked operations. Exact
+  invalid-flushed accounting added to `ProcessingService`. Bridge ABI **v5**;
+  Tauri/TS wired; shell Experiment controls now drive the real backend.
+  Tests: `e2e.experiment_coordinator` (CTest) +
+  `experiment_lifecycle_end_to_end` (cargo). Details:
+  `knowledge_map/task/2026-07-16-experiment-coordinator-bridge.md`.
+
+- **Qt → React/Tauri migration: BE-1 — bridge contract source of truth,
+  operation state, bounded event queue** (2026-07-16, epic #246, issue #271,
+  ADR 0004) — `crates/mib-bridge/contract/bridge-contract.json` is now the
+  machine-checked contract (C++ static_asserts, Rust JSON test, generated
+  `desktop/src/bridgeContract.ts` + CI drift gate). `BackendFacade` tracks
+  long-running actions as operations (IDs, Started/Progress/terminal events,
+  cancel flags, shutdown-cancels-all); the shim event queue is bounded
+  drop-oldest with an observable `QueueOverflow` marker; error sources extended
+  for the remaining workflows. Bridge ABI **v4** (additive). Details:
+  `knowledge_map/task/2026-07-16-bridge-contract-operation-state.md`.
+
+- **Qt → React/Tauri migration: UI-1 — operator shell parity with the Qt UI**
+  (2026-07-16, epic #246, issue #266) — Replaced the developer-oriented
+  Phase 3/4 form in `desktop/src/App.tsx` with the Qt operator layout: menu
+  row, collapsible telemetry sidebar, Connect / Overview / Experiment / Review
+  tabs (Start/Stop Camera in the header), nested Preview / Monitoring and
+  config tabs, Review frame/table split, and a metrics status bar. All bridge
+  schema-v3 actions stay wired; un-bridged controls are visible but disabled
+  with tooltips naming the blocking backend issue (BE-2…BE-9, #272–#279).
+  New `desktop/src/App.css`. Details:
+  `knowledge_map/task/2026-07-16-react-tauri-qt-ui-parity.md`.
+
+- **Qt → React/Tauri migration: Phase 4 slice 2 — processing settings + stats
+  overlay** (2026-07-15, epic #246) — Added a `BackendFacade::fetchProcessingStats`
+  const pull (fps + pixel→micron over `ProcessingService`) and exposed bridge
+  schema **v3** commands `apply_processing` + `fetch_processing_stats`. The
+  `desktop/` app gained a Processing panel (realtime toggle + pixel→micron scale
+  + a live fps overlay polled each tick). `build.rs` now relinks on backend
+  archive changes. Headless tests: `mib-bridge::processing_settings_and_stats` +
+  desktop `processing_settings_round_trip`. Details:
+  `knowledge_map/task/2026-07-15-tauri-phase4-processing-overlay.md`.
+
+- **Qt → React/Tauri migration: Phase 4 slice 1 — recording + review**
+  (2026-07-15, epic #246) — Extended `mib-bridge` to schema **v2** with additive
+  review commands (`load_recording`, `playback_seek_index`,
+  `fetch_frame_by_index`) and exposed them + `start/stop_recording` as Tauri
+  commands. The `desktop/` app gained a Recording panel (record the live mock
+  stream to HDF5) and a Review panel (load a recording + scrub by frame index,
+  bounded by `PlaybackPosition` events). Headless tests:
+  `mib-bridge::record_then_load_and_review` + desktop
+  `record_and_review_round_trip`; Xvfb smoke green. Details:
+  `knowledge_map/task/2026-07-15-tauri-phase4-recording-review.md`.
+
+- **Qt → React/Tauri migration: Phase 3 — first Tauri vertical slice (mock
+  camera)** (2026-07-15, epic #246) — New `desktop/` React + Tauri v2 app that
+  drives the Qt-free backend through `mib-bridge`. `src-tauri` exposes the bridge
+  as `#[tauri::command]`s (`init`, `configure_mock`, `start_capture`/`stop`,
+  `seek_latest`, `poll_events`, `fetch_frame`, `frame_bytes`); frame pixels ship
+  as a binary `tauri::ipc::Response` (no base64). The React frontend
+  (`bridge.ts` + `App.tsx`) configures a mock camera, starts capture, and renders
+  live Mono8 frames to a canvas. Verified headless via a `cargo test` bridge
+  round-trip and an Xvfb GUI smoke (`desktop/scripts/xvfb-smoke.sh`); CI in
+  `desktop-ci.yml`. The feared webkit/display hard block was surmountable
+  (webkit installs on ubuntu-24.04; GUI runs under Xvfb). Two findings fed back
+  to Phase 2: the bridge is now `Send` (for Tauri `State`), and desktop uses a
+  binary+`rlib` crate-type (non-PIC archives can't link a `cdylib`). Details:
+  `knowledge_map/architecture/Desktop-Shell.md`,
+  `knowledge_map/task/2026-07-15-tauri-desktop-phase3-slice.md`.
+
+- **Qt → React/Tauri migration: Phase 2 — production Rust ↔ C++ bridge (cxx)**
+  (2026-07-15, epic #246) — New crate `crates/mib-bridge`: a `cxx` bridge that
+  wraps `backend::bridge::BackendFacade` so a Rust shell can drive the Qt-free
+  backend with no Qt / no webkit / no display. Rust owns an opaque
+  `BackendBridge` (`UniquePtr`) composing `AppBackend` + `BackendFacade`, with
+  flat command submitters (mock-camera configure, start/stop capture, start/stop
+  recording, playback-seek), a poll-drained event queue (events serialised to a
+  typed-slot `BridgeEvent`, enqueued non-blocking on the backend thread), and an
+  on-demand `fetch_latest_frame` (metadata + one owned byte copy — **no per-frame
+  base64**, per epic principle #4 / ADR 0003). `build.rs` drives the
+  `linux-backend-only` preset for the static archives and links them; a headless
+  `cargo test` contract test runs the full init → configure → start → pull-frame
+  → seek → `FrameReady` → stop → shutdown lifecycle; `bridge-ci.yml` is the CI
+  lane. Command/event set is versioned (`bridge_abi_version() == 1`). Decision in
+  ADR `docs/decisions/0003-rust-cxx-bridge.md`; details:
+  `knowledge_map/task/2026-07-15-rust-cxx-bridge-phase2.md`.
+
+- **Qt → React/Tauri migration: Phase 1 COMPLETE — backend-only builds with no
+  Qt SDK** (2026-07-15, epic #246) — Reached the Phase 1 exit gate. The 7
+  `frontend;utility` tests (which link `Qt6::Core` and compile
+  `src/frontend/utils` sources that legitimately use Qt — QSettings,
+  QCryptographicHash, QUrl, QDir) are gated behind `if(NOT MIB_BUILD_BACKEND_ONLY)`
+  in `tests/CMakeLists.txt` (they still build/run in the full/Windows build);
+  `cmake/MIBDependencies.cmake` no longer `find_package`s Qt6 for backend-only;
+  the global `CMAKE_AUTOMOC/UIC/RCC` are gated off; and `backend-ci.yml` installs
+  no `qt6-*` packages. Proven by **uninstalling the Qt6 SDK locally** and running
+  `cmake --preset linux-backend-only` → build → `ctest`: 66/66 green with zero Qt
+  present. Details:
+  `knowledge_map/task/2026-07-15-qt-decoupling-exit-gate.md`.
+
+- **Qt → React/Tauri migration: backend de-Qt slice 5 — `mib_backend` is now
+  Qt-free** (2026-07-15, epic #246) — The crash-reporter's Qt log handler
+  (`qInstallMessageHandler` → spdlog / Sentry) moved out of the backend into the
+  frontend `src/frontend/system/QtLogBridge.cpp` (installed from `main.cpp`,
+  calls back to `CrashReporter::captureMessage`); the dead `#include <QString>`
+  in `AppBackend.cpp` was removed. With no Qt symbols left, **`Qt6::Core` is
+  dropped from `mib_backend` and `AUTOMOC` is turned OFF** — `nm`/`ldd` confirm
+  the backend library and its test binaries reference zero Qt. Also de-Qt-ed 6
+  backend/integration/hardware tests that only built a throwaway
+  `QCoreApplication` (dead since the LUT catalog stopped checking for a Qt app
+  instance). Full `linux-backend-only` suite green (73/73). The backend-only
+  *build* still `find_package`s `Qt6::Core` solely for 7 `frontend;utility`
+  tests — de-Qt-ing those is the last step to the Phase 1 exit gate (no Qt SDK).
+  Details: `knowledge_map/task/2026-07-15-qt-decoupling-crashreporter.md`.
+
+- **Qt → React/Tauri migration: backend de-Qt slice 4 (LUT catalog HTTP seam)**
+  (2026-07-15, epic #246, ADR 0002) — `EModulusLutCatalog` is now Qt-free: the
+  update/verify/cache/fallback state machine stays in C++ (nlohmann JSON,
+  `std::filesystem`, `processingCore*Sha256`, ISO-8601 strings, a small semver
+  compare), and the raw HTTP GET is delegated to an injected
+  `backend::HttpGetFn`. The Qt shell wires a QtNetwork fetcher
+  (`src/frontend/system/LutHttpFetcher.cpp`) via `AppBackend::setLutHttpFetcher`
+  and passes the app-data dir via `setLutAppDataDir` so the cache location is
+  unchanged; `file://` URLs need no fetcher (tests/headless). This dropped
+  `Qt6::Network`, so the backend now links **only `Qt6::Core`**. The catalog
+  test was rewritten Qt-free; full `linux-backend-only` suite green (73/73);
+  `ldd` confirms no `Qt6Network`. Details:
+  `knowledge_map/task/2026-07-15-qt-decoupling-lut-catalog.md`.
+
+- **Qt → React/Tauri migration: backend de-Qt slice 3 (serial abstraction)**
+  (2026-07-15, epic #246) — `SyringePumpService` serial I/O now goes through a
+  Qt-free `ISerialPort` (`include/backend/services/ISerialPort.h`) with POSIX
+  (termios) and Win32 implementations, created via an injected
+  `SerialPortFactory` (mirrors `CaptureService`'s `CameraFactory`). The service
+  and `scanModbusAddresses` are now fully Qt-free, so `Qt6::SerialPort` is
+  dropped from the backend link and removed from the backend-only Qt component
+  set (`cmake/MIBDependencies.cmake` now `Core Network`). New tests: a
+  `FakeSerialPort` Modbus-slave drives connect/setFlowRate/pollStatus headless
+  (`syringe_pump_fake_serial_test`), and a pty loopback exercises the real
+  termios transport (`serial_port_posix_loopback_test`). Full
+  `linux-backend-only` suite green (73/73). Also added `dev/react-tauri` to the
+  `backend-ci`/`docs-ci` triggers. Details:
+  `knowledge_map/task/2026-07-15-qt-decoupling-serial-abstraction.md`.
+
+- **Qt → React/Tauri migration: backend de-Qt slice 2 (mock-camera decode)**
+  (2026-07-15, epic #246) — `MockCamera::loadFrameFromPath` now decodes every
+  supported format with OpenCV `cv::imread` (Qt-free), replacing the
+  `QImageReader` primary path; output stays PFNC Mono8 with rows packed tightly
+  (`linePitch == width`). This removed the last backend `QImage` use, so
+  `Qt6::Gui` is dropped from the `mib_backend` link and moved to the
+  frontend-only Qt component set in `cmake/MIBDependencies.cmake` —
+  `MIB_BUILD_BACKEND_ONLY` no longer needs Qt Gui. `mock_camera_smoke_test`
+  gained pixel-value and TIFF-decode assertions. Details:
+  `knowledge_map/task/2026-07-15-qt-decoupling-mockcamera-decode.md`.
+
+- **Qt → React/Tauri migration: Phase 0 + first backend de-Qt slice**
+  (2026-07-15, epic #246) — Recorded the platform decision in ADR
+  `docs/decisions/0001-react-tauri-migration.md` (React + Tauri v2;
+  `BackendFacade` is the UI-neutral C++ seam) with the living breakdown,
+  Qt inventory, feature-parity matrix, and performance budgets in
+  `docs/exec-plans/active/2026-07-15-qt-decoupling-and-tauri-migration.md`.
+  First code slice removes Qt from two backend header contracts:
+  `ModbusRtu.h` frames are now `std::vector<uint8_t>` (was `QByteArray`), and
+  `MindVisionConfig.h` parses with `nlohmann_json` (was Qt JSON), with callers
+  reading files via `std::ifstream`. `SyringePumpService` converts to/from
+  `QByteArray` only at the `QSerialPort` seam. Existing
+  `modbus_rtu_test`/`mindvision_config_test` updated and pass (behavior
+  unchanged); both are now Qt-free. Backend still links Qt pending later
+  clusters. Details:
+  `knowledge_map/task/2026-07-15-qt-decoupling-phase1-slice1.md`.
 - **Shared backend experiment lifecycle (issue #372 G2/G3)** (2026-09-08) —
   `ExperimentCoordinator` now owns the run after Start: a worker thread runs
   the periodic flush and, on `requestStop()`, the whole finalization (drain,
@@ -1540,3 +1881,19 @@ See [[Task-Log-Index]] for the full list. Highlights:
 Active development branches use the `claude/` prefix (e.g.
 `claude/create-agent-onboarding-docs-J9j66`). Main is the integration
 branch.
+
+## 2026-09-07 — Agent B atomic frame transport (staging)
+
+Reproduced interleaved live/indexed metadata-pixel corruption before fixing it.
+Atomic binary packets replace Tauri mutable image caches; strict bounded decode,
+lossless frame identities and owned view scheduling have deterministic tests.
+See [[../task/2026-09-07-agent-b-frame-transactions]]. Native validation and
+accepted Agent A backend integration remain open; this is not a release claim.
+
+## 2026-09-07 — Agent B exact event contract continuation
+
+The atomic-frame PR passed native Desktop CI (Qt-free build, Tauri, 12 Rust
+checks, frontend and Xvfb smoke). The next transport slice adds exact event
+integers, a typed adapter, nullable processing metrics and shared producer/
+consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
+Full native experiment acceptance remains open.

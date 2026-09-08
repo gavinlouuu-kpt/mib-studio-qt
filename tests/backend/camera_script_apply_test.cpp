@@ -11,9 +11,7 @@
 #include "support/assert.h"
 #include "support/tempdir.h"
 
-#include <QtGlobal>
-#include <QCoreApplication>
-
+#include <cstdlib>
 #include <fstream>
 #include <string>
 
@@ -21,8 +19,13 @@ int main(int argc, char* argv[])
 {
     // Route the startup LUT lookup to a file: URL so initialize() does no
     // network I/O (keeps this unit test fast/offline).
-    qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/lut.json");
-    QCoreApplication app(argc, argv);
+#ifdef _WIN32
+    _putenv_s("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/lut.json");
+#else
+    setenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/lut.json", 1);
+#endif
+    (void)argc;
+    (void)argv;
 
     mib::test::TempDir td("mib_camera_script");
     backend::AppBackend backend;

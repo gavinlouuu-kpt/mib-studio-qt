@@ -24,7 +24,6 @@
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
-#include <QCoreApplication>
 
 #include <chrono>
 #include <cstdio>
@@ -79,7 +78,8 @@ rec::RecordingAccountingSnapshot reopenAccounting(const std::string& path, bool&
 
 int main(int argc, char** argv)
 {
-    QCoreApplication app(argc, argv);
+    (void)argc;
+    (void)argv;
     mib::test::Watchdog wd(60);
 
     // ---- 1. Pure reconciliation ------------------------------------------------

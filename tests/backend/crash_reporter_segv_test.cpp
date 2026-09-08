@@ -47,7 +47,6 @@ static int runCrashChild(const fs::path& crashDir) {
     cfg.uploadPendingOnStart = false;
     cfg.installSignalHandlers = true;
     cfg.installTerminateHandler = true;
-    cfg.installQtMessageHandler = false;
     CrashReporter::init(cfg);
 
     std::thread t([] { CrashReporter::triggerCrashForTesting(CrashReporter::FaultKind::NullDeref); });

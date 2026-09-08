@@ -84,3 +84,14 @@ Processing-core changes are never applied mid-operation. The GUI requires all
 capture/experiment/recording/batch work to stop, then activates the prepared
 kernel transactionally. Existing plugin modules are retained rather than
 unloaded while thread teardown could still hold function pointers.
+
+## Agent B frame transaction slice (2026-09-07)
+
+The Tauri adapter now encodes one owned BridgeFrame into one binary response;
+metadata and pixels are never separate mutable-cache pulls. Native calls retain
+the existing bridge mutex serialization. Encoding uses the returned owned value
+after releasing that mutex; no worker or second backend authority was added.
+The frontend scheduler bounds aggregate pending pulls and discards retired view
+responses. Details and limitations: `docs/architecture/frame-packet-v1.md`.
+The accepted readiness/configuration/finalization/recovery handoff is still open
+under #372; this slice does not establish native experiment acceptance.

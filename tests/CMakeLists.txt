@@ -42,6 +42,25 @@ mib_add_backend_test_executable(modbus_rtu_test backend/modbus_rtu_test.cpp)
 add_test(NAME backend.modbus_rtu COMMAND $<TARGET_FILE:modbus_rtu_test>)
 set_tests_properties(backend.modbus_rtu PROPERTIES LABELS "backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(syringe_pump_fake_serial_test backend/syringe_pump_fake_serial_test.cpp)
+add_test(NAME backend.syringe_pump_fake_serial COMMAND $<TARGET_FILE:syringe_pump_fake_serial_test>)
+set_tests_properties(backend.syringe_pump_fake_serial PROPERTIES LABELS "backend" TIMEOUT 30)
+
+# BE-7 (#277): facade PumpCommand surface over the fake Modbus serial — both
+# pump identities, structured errors, COM-port conflict rules, safe disconnect.
+mib_add_backend_test_executable(pump_bridge_facade_test backend/pump_bridge_facade_test.cpp)
+add_test(NAME backend.pump_bridge_facade COMMAND $<TARGET_FILE:pump_bridge_facade_test>)
+set_tests_properties(backend.pump_bridge_facade PROPERTIES LABELS "backend;bridge" TIMEOUT 60)
+
+mib_add_backend_test_executable(serial_port_posix_loopback_test backend/serial_port_posix_loopback_test.cpp)
+add_test(NAME backend.serial_port_posix_loopback COMMAND $<TARGET_FILE:serial_port_posix_loopback_test>)
+set_tests_properties(backend.serial_port_posix_loopback PROPERTIES LABELS "backend" TIMEOUT 30)
+
+# Qt-free serial port enumeration (SetupAPI / sysfs) behind serialbus::availablePorts().
+mib_add_backend_test_executable(serial_port_enumeration_test backend/serial_port_enumeration_test.cpp)
+add_test(NAME backend.serial_port_enumeration COMMAND $<TARGET_FILE:serial_port_enumeration_test>)
+set_tests_properties(backend.serial_port_enumeration PROPERTIES LABELS "backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(autofocus_math_test backend/autofocus_math_test.cpp)
 add_test(NAME backend.autofocus_math COMMAND $<TARGET_FILE:autofocus_math_test>)
 set_tests_properties(backend.autofocus_math PROPERTIES LABELS "backend" TIMEOUT 30)
@@ -145,6 +164,13 @@ set_tests_properties(performance.memory_budget PROPERTIES LABELS "performance;me
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:backend_facade_boundary_test>)
 set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")
+
+# BE-4 (#274): backend-owned experiment lifecycle state machine — pipeline e2e
+# over the facade command surface plus fault-injection (fatal save error,
+# double start/stop, shutdown during active experiment).
+mib_add_backend_test_executable(experiment_coordinator_test backend/experiment_coordinator_test.cpp)
+add_test(NAME e2e.experiment_coordinator COMMAND $<TARGET_FILE:experiment_coordinator_test>)
+set_tests_properties(e2e.experiment_coordinator PROPERTIES LABELS "backend;bridge;e2e" TIMEOUT 180)
 
 mib_add_backend_test_executable(mindvision_selection_state_test backend/mindvision_selection_state_test.cpp)
 add_test(NAME backend.mindvision_selection_state COMMAND $<TARGET_FILE:mindvision_selection_state_test>)
@@ -455,6 +481,14 @@ mib_add_backend_test_executable(hw_egrabber_script_test hardware/hw_egrabber_scr
 add_test(NAME hardware.egrabber_script COMMAND $<TARGET_FILE:hw_egrabber_script_test>)
 set_tests_properties(hardware.egrabber_script PROPERTIES LABELS "hardware;camera" SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+# Frontend utility tests exercise src/frontend/utils code that legitimately uses
+# Qt (Qt-JSON, QSettings, QCryptographicHash, QDir, ...) and is only built in the
+# full (frontend) build. They link Qt6::Core directly, so gate them out of
+# MIB_BUILD_BACKEND_ONLY — that lets the backend-only build require no Qt SDK
+# (epic #246 Phase 1 exit gate). They still build/run in the full build
+# (Windows CI), the only place the frontend is compiled.
+if(NOT MIB_BUILD_BACKEND_ONLY)
+
 add_executable(json_flatten_roundtrip_test
     ${PROJECT_SOURCE_DIR}/tests/frontend/json_flatten_roundtrip_test.cpp
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/JsonFlatten.cpp
@@ -627,6 +661,8 @@ set_target_properties(update_catalog_test PROPERTIES
 )
 add_test(NAME frontend.update_catalog COMMAND $<TARGET_FILE:update_catalog_test>)
 set_tests_properties(frontend.update_catalog PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
+
+endif() # NOT MIB_BUILD_BACKEND_ONLY (frontend;utility tests)
 
 if(Python3_Interpreter_FOUND)
     add_test(

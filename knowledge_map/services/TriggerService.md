@@ -63,14 +63,21 @@ OS scheduling in a 500 fps mock run).
 
 ## Manual & periodic test paths
 
-- Manual single pulse: `sortTriggerBtn` in
-  [[../frontend/ExperimentMonitoringTab]] calls
-  `onTargetGroupResult(services::TargetGroupSignal{.isTargetGroup=true})` once.
-- Periodic test pulses: `periodicTriggerBtn` + `periodicTriggerIntervalSpin`
-  in the same tab arm a `QTimer` that calls
-  `onTargetGroupResult(services::TargetGroupSignal{.isTargetGroup=true})`
-  every N ms. Useful for bring-up / oscilloscope checks without needing
-  a running pipeline that classifies real "target group" frames.
+- Manual single pulse: `manualPulse()` fires one synthetic target-group
+  signal (`onTargetGroupResult({.isTargetGroup=true})`). The Qt
+  `sortTriggerBtn` in [[../frontend/ExperimentMonitoringTab]] and the bridge
+  `trigger_manual_pulse` command (BE-5, #275) both route here.
+- Periodic test pulses: since BE-5 the generator is **service-owned** —
+  `startPeriodicTest(intervalMs)` / `stopPeriodicTest()` run a dedicated
+  thread that calls `manualPulse()` every N ms (idempotent; `stop()` also
+  stops it). The Qt tab's `QTimer` predates this; the bridge commands
+  `trigger_periodic_start/stop` use the service path. Useful for bring-up /
+  oscilloscope checks without a pipeline classifying real target frames.
+- Status: `hasCamera()`, `isPeriodicTestActive()`,
+  `getPeriodicTestIntervalMs()` back the bridge `fetch_trigger_status` pull.
+- Headless testing: `MockCamera` emulates the trigger output line
+  (`setTriggerOutput` latches + counts and returns true), so pulses count
+  without hardware.
 
 ## Gotchas
 

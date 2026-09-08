@@ -193,13 +193,25 @@ it reports `config_.deliveryMode`.
 
 ## JSON config parsing (`MindVisionConfig.h`) and applying (`MindVisionApply.h`)
 
-The config-file parse + validation is a pure, QtCore-only function shared by
+The config-file parse + validation is a pure, **Qt-free** function shared by
 both `MindVisionCamera::applyJsonConfig` and
+[[../services/CameraControlService]]`::applyMindVisionJsonToCamera` (the two had
+**drifted** — the camera applied ~19 fields, the control service only 7 — and
+neither validated bounds). As of the Qt-decoupling work (epic #246) it parses
+with `nlohmann_json` instead of Qt JSON, and both call sites read the file with
+`std::ifstream` instead of `QFile`:
 [[../services/CameraControlService]]`::applyMindVisionJsonToCamera`:
 
-- `backend::camera::mindvision::parseConfig(QByteArray)` → `ParseResult{ok,
+- `backend::camera::mindvision::parseConfig(const std::string&)` → `ParseResult{ok,
   config, error, warnings}`. Malformed JSON or a non-object root → `ok=false`
   with `error`. Otherwise every numeric field is clamped to a safe range and one
+  warning is recorded per clamp. Field accessors mirror the old
+  `QJsonValue::toInt/toDouble/toBool(default)` leniency: a missing key or a
+  wrong-typed value falls back to the default rather than throwing.
+- Critical clamps: `width`/`height` forced `>= 1` (a non-positive ROI was
+  unusable), `exposure_time_us > 0`, and **`strobe_pulse_width_us` /
+  `strobe_delay_us` forced `>= 0`** — a negative value previously wrapped to a
+  multi-second pulse when cast to the SDK's unsigned type.
   warning is recorded per clamp.
 - Critical clamps: `width`/`height` forced `>= 1`, `exposure_time_us > 0`,
   `strobe_pulse_width_us` / `strobe_delay_us` / `ext_trig_jitter_us` /

@@ -3,11 +3,14 @@
 #include <QDir>
 #include <QMessageBox>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QString>
 #include <QStringList>
 #include <QSysInfo>
 
 #include "backend/app/AppBackend.h"
+#include "frontend/system/LutHttpFetcher.h"
+#include "frontend/system/QtLogBridge.h"
 #include "backend/diagnostics/CrashStateMirror.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CrashReporter.h"
@@ -218,6 +221,10 @@ int main(int argc, char* argv[]) {
         // AppBackend::initialize() and CrashReporter uses spdlog for its own
         // diagnostic messages once Logger comes online.
         installCrashReporter(exeDir, dataDirStd);
+        // Route Qt's process-wide log stream to spdlog/Sentry. The handler used
+        // to live in the backend CrashReporter; it now lives here so the backend
+        // links no Qt (epic #246).
+        mib::frontend::installQtLogBridge();
 
         // Early diagnostic output
         std::cout << "MIB Studio Qt starting..." << std::endl;
@@ -226,6 +233,12 @@ int main(int argc, char* argv[]) {
 
         // Initialize backend with proper path
         backend::AppBackend backend;
+        // Inject the Qt HTTP fetcher + app-data dir so the backend (which links
+        // no Qt networking, ADR 0002) can update the E-modulus LUT and cache it
+        // in the historical location.
+        backend.setLutHttpFetcher(mib::frontend::makeQtLutHttpGet());
+        backend.setLutAppDataDir(
+            QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString());
         if (!backend.initialize(dataDirStd)) {
             // Determine log location (may be in user AppData if installed in Program Files)
             QString logLocation = dataDir + "\\logs\\app.log";

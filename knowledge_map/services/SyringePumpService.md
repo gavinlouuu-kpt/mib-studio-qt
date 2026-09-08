@@ -9,12 +9,15 @@
 
 ## Responsibility
 
+- Maintain two independent [[ISerialPort]] connections
+  (`PumpId::Sample`, `PumpId::Sheath`), created via an injected
+  `SerialPortFactory` (defaults to the platform port).
 - Maintain two independent pump connections (`PumpId::Sample`,
   `PumpId::Sheath`). Serial I/O goes through the shared [[SerialBus]]
   session for each adapter (acquired from the `AppBackend`-owned
   `SerialBusManager`), so a pump can share an RS485 adapter with other Modbus
   devices instead of failing on a second open. `connect()` has two overloads:
-  the historical Windows COM-number one, and a `QString` system-port-name one
+  the historical Windows COM-number one, and a `std::string` system-port-name one
   (`"ttyUSB0"`, `"COM3"`) that makes Linux adapter sharing reachable; the
   `COMn` synthesis lives only in the int overload. Reconnecting while
   connected releases the old session first (a non-recursive-mutex deadlock
@@ -38,6 +41,18 @@ Private: CRC-16, `buildReadRequest`, `buildWriteSingleRequest`,
 `buildWriteMultipleRequest`, big-endian ABCD float ↔ two 16-bit registers,
 `readHoldingRegisters`, `writeSingleRegister`,
 `writeMultipleRegisters`.
+
+The pure framing primitives live in `include/backend/services/ModbusRtu.h`
+(`backend::services::modbus`), unit-tested by
+`tests/backend/modbus_rtu_test.cpp`. As of the Qt-decoupling work (epic #246)
+this service is **fully Qt-free**: frames are `std::vector<uint8_t>`
+(`modbus::Frame`, not `QByteArray`) and transport goes through [[ISerialPort]]
+(POSIX termios / Win32) instead of `QSerialPort`. `connect()` and
+`scanModbusAddresses()` acquire sessions from the shared [[SerialBus]]
+manager, whose injected `SerialPortFactory` lets a `FakeSerialPort` drive the
+whole Modbus round-trip headless
+(`tests/backend/syringe_pump_fake_serial_test.cpp`). This keeps
+`Qt6::SerialPort` (and Qt Core) out of the backend link.
 
 Public scan helper probes `REG_RUN_COMMAND` (`0x0001`) with Modbus function
 `0x03` over an address range (default 1..8) and returns responsive addresses.

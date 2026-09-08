@@ -1,124 +1,141 @@
+// emodulus_lut_catalog_test
+//
+// Exercises the Qt-free EModulusLutCatalog (epic #246, ADR 0002): the
+// update/verify/cache/fallback state machine, driven entirely through file://
+// URLs so no HTTP fetcher is needed. Verifies a remote update is downloaded,
+// verified, cached at the managed path, and loadable; then that a broken
+// manifest degrades gracefully to the last-known-good local copy.
+
 #include "backend/processing/EModulusLut.h"
 #include "backend/processing/EModulusLutCatalog.h"
+#include "backend/processing/ProcessingCoreLoader.h" // processingCoreBytesSha256
 
-#include <QByteArray>
-#include <QCoreApplication>
-#include <QCryptographicHash>
-#include <QDateTime>
-#include <QDir>
-#include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QUrl>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <random>
+#include <string>
+#include <vector>
+
+namespace fs = std::filesystem;
 
 namespace {
 
-bool writeTextFile(const QString& path, const QByteArray& data) {
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        std::cerr << "Failed to open " << path.toStdString() << " for write: " << file.errorString().toStdString() << '\n';
-        return false;
-    }
-    if (file.write(data) != data.size()) {
-        std::cerr << "Failed to write " << path.toStdString() << ": " << file.errorString().toStdString() << '\n';
-        return false;
-    }
-    return true;
+void setEnv(const char* name, const std::string& value) {
+#if defined(_WIN32)
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
 }
 
-QByteArray sha256Hex(const QByteArray& bytes) {
-    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex();
+bool writeTextFile(const fs::path& path, const std::string& data) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        std::cerr << "Failed to open " << path.string() << " for write\n";
+        return false;
+    }
+    f.write(data.data(), static_cast<std::streamsize>(data.size()));
+    return static_cast<bool>(f);
 }
 
-QString tempPathSuffix(const QString& root, const QString& relative) {
-    return QDir(root).absoluteFilePath(relative);
+std::string sha256Hex(const std::string& bytes) {
+    return backend::processing::processingCoreBytesSha256(
+        reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+}
+
+std::string fileUrl(const fs::path& absPath) {
+    return "file://" + absPath.generic_string();
+}
+
+fs::path makeTempRoot() {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<unsigned long long> dist;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const auto p = fs::temp_directory_path() / ("mib_emodulus_lut_test_" + std::to_string(dist(gen)));
+        std::error_code ec;
+        if (fs::create_directories(p, ec)) return p;
+    }
+    return fs::temp_directory_path() / "mib_emodulus_lut_test_fallback";
 }
 
 } // namespace
 
-int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("MIB_Studio_Qt"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("1.0.0"));
+int main() {
+    const fs::path root = makeTempRoot();
+    const fs::path cacheDir = root / "cache";
+    const fs::path bundledDir = root / "bundled" / "isoelastic_curve";
+    const fs::path remoteDir = root / "remote";
+    std::error_code ec;
+    fs::create_directories(cacheDir, ec);
+    fs::create_directories(bundledDir, ec);
+    fs::create_directories(remoteDir, ec);
 
-    const QString root = QString::fromStdString(std::filesystem::temp_directory_path().string()) +
-                         QStringLiteral("/mib_emodulus_lut_test_") +
-                         QString::number(QDateTime::currentMSecsSinceEpoch());
-    QDir().mkpath(root);
+    setEnv("MIB_STUDIO_EMODULUS_LUT_CACHE_DIR", cacheDir.string());
 
-    const QString cacheDir = tempPathSuffix(root, QStringLiteral("cache"));
-    const QString bundledDir = tempPathSuffix(root, QStringLiteral("bundled/isoelastic_curve"));
-    const QString remoteDir = tempPathSuffix(root, QStringLiteral("remote"));
-    QDir().mkpath(cacheDir);
-    QDir().mkpath(bundledDir);
-    QDir().mkpath(remoteDir);
+    const fs::path bundledPath = bundledDir / "scaled_isoelastic_data_LUT_6.16-4.24.txt";
+    // Minimal non-degenerate LUT (2x2 spread, uniform value).
+    const std::string bundledBytes =
+        "5.0\t0.1\t12.5\n5.0\t0.3\t12.5\n15.0\t0.1\t12.5\n15.0\t0.3\t12.5\n";
+    if (!writeTextFile(bundledPath, bundledBytes)) return 1;
 
-    qputenv("MIB_STUDIO_EMODULUS_LUT_CACHE_DIR", cacheDir.toUtf8());
+    const fs::path remotePath = remoteDir / "scaled_isoelastic_data_LUT_6.16-4.24.txt";
+    const std::string remoteBytes =
+        "5.0\t0.1\t42.0\n5.0\t0.3\t42.0\n15.0\t0.1\t42.0\n15.0\t0.3\t42.0\n";
+    if (!writeTextFile(remotePath, remoteBytes)) return 2;
 
-    const QString bundledPath = tempPathSuffix(bundledDir, QStringLiteral("scaled_isoelastic_data_LUT_6.16-4.24.txt"));
-    // Minimal non-degenerate LUT: EModulusLut rejects files whose area or
-    // deform column is constant (zero axis range), so give it a 2x2 spread
-    // with a uniform value.
-    const QByteArray bundledBytes = QByteArrayLiteral(
-        "5.0\t0.1\t12.5\n5.0\t0.3\t12.5\n15.0\t0.1\t12.5\n15.0\t0.3\t12.5\n");
-    if (!writeTextFile(bundledPath, bundledBytes)) {
-        return 1;
-    }
+    const fs::path manifestPath = remoteDir / "latest.json";
+    nlohmann::json manifest;
+    manifest["manifest_schema_version"] = 1;
+    manifest["lut_id"] = "scaled_isoelastic_data_LUT_6.16-4.24";
+    manifest["display_name"] = "Scaled Isoelastic LUT";
+    manifest["revision"] = "2026.06.11-1";
+    manifest["download_url"] = fileUrl(remotePath);
+    manifest["sha256"] = sha256Hex(remoteBytes);
+    manifest["size_bytes"] = static_cast<std::int64_t>(remoteBytes.size());
+    manifest["published_at"] = "2026-06-11T00:00:00.000Z";
+    manifest["app_min_version"] = "0.1.0";
+    if (!writeTextFile(manifestPath, manifest.dump(2))) return 3;
 
-    const QString remotePath = tempPathSuffix(remoteDir, QStringLiteral("scaled_isoelastic_data_LUT_6.16-4.24.txt"));
-    const QByteArray remoteBytes = QByteArrayLiteral(
-        "5.0\t0.1\t42.0\n5.0\t0.3\t42.0\n15.0\t0.1\t42.0\n15.0\t0.3\t42.0\n");
-    if (!writeTextFile(remotePath, remoteBytes)) {
-        return 2;
-    }
+    setEnv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", fileUrl(manifestPath));
 
-    const QString manifestPath = tempPathSuffix(remoteDir, QStringLiteral("latest.json"));
-    QJsonObject manifest;
-    manifest.insert(QStringLiteral("manifest_schema_version"), 1);
-    manifest.insert(QStringLiteral("lut_id"), QStringLiteral("scaled_isoelastic_data_LUT_6.16-4.24"));
-    manifest.insert(QStringLiteral("display_name"), QStringLiteral("Scaled Isoelastic LUT"));
-    manifest.insert(QStringLiteral("revision"), QStringLiteral("2026.06.11-1"));
-    manifest.insert(QStringLiteral("download_url"), QUrl::fromLocalFile(remotePath).toString());
-    manifest.insert(QStringLiteral("sha256"), QString::fromLatin1(sha256Hex(remoteBytes)));
-    manifest.insert(QStringLiteral("size_bytes"), remoteBytes.size());
-    manifest.insert(QStringLiteral("published_at"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
-    manifest.insert(QStringLiteral("app_min_version"), QStringLiteral("0.1.0"));
-    if (!writeTextFile(manifestPath, QJsonDocument(manifest).toJson(QJsonDocument::Indented))) {
-        return 3;
-    }
-
-    qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", QUrl::fromLocalFile(manifestPath).toString().toUtf8());
-
-    backend::EModulusLutCatalog catalog;
-    QString resolvedPath;
+    // appVersion 1.0.0 satisfies app_min_version 0.1.0; no HTTP fetcher needed
+    // because every URL is file://.
+    backend::EModulusLutCatalog catalog(nullptr, "1.0.0");
+    std::string resolvedPath;
     backend::EModulusLutCatalog::ManagedLutInfo info;
-    QString error;
-    if (!catalog.ensureManagedLut(bundledPath, &resolvedPath, &info, &error)) {
-        std::cerr << "ensureManagedLut failed: " << error.toStdString() << '\n';
+    std::string error;
+    if (!catalog.ensureManagedLut(bundledPath.string(), &resolvedPath, &info, &error)) {
+        std::cerr << "ensureManagedLut failed: " << error << '\n';
         return 4;
     }
 
-    const QString managedPath = backend::EModulusLutCatalog::localLutPath();
+    const std::string managedPath = catalog.lutPath();
     if (resolvedPath != managedPath) {
-        std::cerr << "Expected managed path " << managedPath.toStdString() << " but got " << resolvedPath.toStdString() << '\n';
+        std::cerr << "Expected managed path " << managedPath << " but got " << resolvedPath << '\n';
         return 5;
     }
-    if (!QFile::exists(managedPath)) {
-        std::cerr << "Managed LUT file missing: " << managedPath.toStdString() << '\n';
+    if (!fs::exists(fs::path(managedPath))) {
+        std::cerr << "Managed LUT file missing: " << managedPath << '\n';
         return 6;
     }
-    if (info.remoteUpdated != true) {
+    if (!info.remoteUpdated) {
         std::cerr << "Expected remoteUpdated to be true\n";
         return 7;
     }
+    if (info.checksumStatus != "verified") {
+        std::cerr << "Expected checksum_status verified, got " << info.checksumStatus << '\n';
+        return 14;
+    }
 
     backend::EModulusLut lut;
-    if (!lut.loadFromFile(managedPath.toStdString())) {
+    if (!lut.loadFromFile(managedPath)) {
         std::cerr << "Failed to load managed LUT\n";
         return 8;
     }
@@ -128,30 +145,28 @@ int main(int argc, char** argv) {
         return 9;
     }
 
-    // Break the manifest and ensure the last-known-good local copy is still used.
-    const QString badManifestPath = tempPathSuffix(remoteDir, QStringLiteral("broken.json"));
-    if (!writeTextFile(badManifestPath, QByteArrayLiteral("{not-json"))) {
-        return 10;
-    }
-    qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", QUrl::fromLocalFile(badManifestPath).toString().toUtf8());
+    // Break the manifest; the last-known-good local copy must be retained.
+    const fs::path badManifestPath = remoteDir / "broken.json";
+    if (!writeTextFile(badManifestPath, "{not-json")) return 10;
+    setEnv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", fileUrl(badManifestPath));
 
-    QString fallbackResolvedPath;
+    std::string fallbackResolvedPath;
     backend::EModulusLutCatalog::ManagedLutInfo fallbackInfo;
-    QString fallbackError;
-    if (!catalog.ensureManagedLut(bundledPath, &fallbackResolvedPath, &fallbackInfo, &fallbackError)) {
-        std::cerr << "Fallback ensureManagedLut failed: " << fallbackError.toStdString() << '\n';
+    std::string fallbackError;
+    if (!catalog.ensureManagedLut(bundledPath.string(), &fallbackResolvedPath, &fallbackInfo, &fallbackError)) {
+        std::cerr << "Fallback ensureManagedLut failed: " << fallbackError << '\n';
         return 11;
     }
     if (fallbackResolvedPath != managedPath) {
         std::cerr << "Fallback resolved path changed unexpectedly\n";
         return 12;
     }
-    if (!QFile::exists(managedPath)) {
+    if (!fs::exists(fs::path(managedPath))) {
         std::cerr << "Managed LUT disappeared after fallback\n";
         return 13;
     }
 
-    std::error_code ec;
-    std::filesystem::remove_all(root.toStdString(), ec);
+    fs::remove_all(root, ec);
+    std::cout << "EModulusLutCatalog Qt-free update/verify/fallback verified\n";
     return 0;
 }

@@ -1,0 +1,37 @@
+[package]
+name = "mib-studio-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "MIB Studio desktop shell (React + Tauri v2) — Phase 3 of epic #246"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+mib-bridge = { path = "../../crates/mib-bridge", features = ["contract-fixtures"] }
+# Backend-constructing tests must run serially: the C++ backend has
+# process-global state, so cargo's default parallel test execution can SIGSEGV
+# when two AppBackends race in one process.
+serial_test = "3"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+# Capability-scoped native open-folder / external-URL actions (BE-9, #279).
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Updater manifest verification — SHA-256 must fail closed (BE-9, #279).
+sha2 = "0.10"
+hex = "0.4"
+cxx = "1"
+mib-bridge = { path = "../../crates/mib-bridge" }
+
+# Desktop-only: an rlib consumed by the binary (main.rs) that links the C++
+# backend archives into an executable. The mobile crate-types (cdylib/staticlib)
+# are intentionally omitted — the non-PIC C++ archives cannot link into a
+# shared object (see knowledge_map/architecture/Rust-Bridge.md).
+[lib]
+name = "mib_studio_desktop_lib"
+crate-type = ["rlib"]

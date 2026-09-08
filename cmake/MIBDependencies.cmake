@@ -1,12 +1,13 @@
 # Optional sentry-native integration (CMake-managed clone).
 include(Sentry)
 
-set(MIB_QT_COMPONENTS Core Gui SerialPort Network)
+# Qt is a frontend-only dependency now (epic #246): the backend is fully Qt-free
+# — Gui went with the OpenCV mock-camera decode, SerialPort with ISerialPort,
+# Network with the injected LUT HTTP seam (ADR 0002), and Core with the crash
+# reporter's Qt log handler moving to the frontend. So MIB_BUILD_BACKEND_ONLY
+# (⊇ MIB_BUILD_PROCESSING_ONLY) needs no Qt SDK at all — the Phase 1 exit gate.
 if(NOT MIB_BUILD_BACKEND_ONLY)
-    list(APPEND MIB_QT_COMPONENTS Widgets Charts Concurrent)
-endif()
-if(NOT MIB_BUILD_PROCESSING_ONLY)
-    find_package(Qt6 COMPONENTS ${MIB_QT_COMPONENTS} REQUIRED)
+    find_package(Qt6 COMPONENTS Core Gui Network Widgets Charts Concurrent REQUIRED)
 endif()
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG QUIET)

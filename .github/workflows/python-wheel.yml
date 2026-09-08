@@ -184,7 +184,7 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: >-
             dnf install -y --setopt=install_weak_deps=False epel-release &&
             dnf install -y --setopt=install_weak_deps=False
-            opencv-devel hdf5-devel spdlog-devel
+            opencv-devel hdf5-devel spdlog-devel json-devel
           CIBW_TEST_COMMAND: >-
             python -c "import mib_processing as mp;
             assert mp.CONTRACT_VERSION == 1;

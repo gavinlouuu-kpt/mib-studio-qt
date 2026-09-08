@@ -13,6 +13,8 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[architecture/ExperimentCoordinator]] — experiment readiness gates + frozen run snapshot
 - [[architecture/Threading-Model]]
 - [[architecture/Data-Flow]]
+- [[architecture/Rust-Bridge]] — Rust ↔ C++ bridge (React + Tauri migration)
+- [[architecture/Desktop-Shell]] — React + Tauri v2 desktop app (Phase 3)
 
 ### Services (`src/backend/services/`)
 - [[services/_MOC|Services MOC]]
@@ -20,6 +22,8 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
+  [[services/TriggerService]], [[services/SyringePumpService]],
+  [[services/ISerialPort]]
   [[services/TriggerService]], [[services/SerialBus]],
   [[services/SyringePumpService]], [[services/PulseGeneratorService]]
 - Optional: [[services/YoloService]], [[services/RecorderService]],

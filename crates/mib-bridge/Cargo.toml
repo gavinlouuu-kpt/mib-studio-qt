@@ -1,0 +1,35 @@
+[package]
+name = "mib-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Rust <-> C++ bridge over the Qt-free mib_backend BackendFacade (epic #246, ADR 0003)"
+license = "MIT"
+publish = false
+
+[lib]
+name = "mib_bridge"
+crate-type = ["rlib"]
+
+[features]
+# Test-only producer fixtures; never exposed as a Tauri command or fallback.
+contract-fixtures = []
+
+[dependencies]
+cxx = "1"
+
+[build-dependencies]
+cxx-build = "1"
+# Windows: reads the CMake-derived link manifest (tools/gen_bridge_link_manifest.py).
+serde_json = "1"
+
+[dev-dependencies]
+# The contract tests each construct a full AppBackend, whose C++ backend has
+# process-global state (spdlog, HDF5, OpenCV). cargo runs tests in parallel by
+# default, so two backends racing in one process can SIGSEGV — serialize them.
+serial_test = "3"
+# Parses contract/bridge-contract.json — the single source of truth the Rust
+# enums are asserted against (BE-1, ADR 0004).
+serde_json = "1"
+
+# The bridge links the static mib_backend / mib_processing archives, which pull
+# in OpenCV / HDF5 / SQLite / spdlog. Those are built by CMake (see build.rs).
