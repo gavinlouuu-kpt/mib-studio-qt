@@ -5,6 +5,21 @@
 
 ## Features shipped
 
+- **Crash dump review + fixes from the code review** (2026-09-08) — 62 crash
+  reports in `%LOCALAPPDATA%\MIB_Studio_Qt\crashes` (never uploaded) and
+  five WER dumps reviewed with WinDbg; findings in
+  `docs/evidence/2026-09-08-crash-dump-review.md`. The one symbolized crash
+  (installed 1.0.7, exit with an HDF5 file open) is mitigated by
+  `H5dont_atexit()` in `Hdf5Service` (guard `recording.hdf5_exit_teardown`).
+  From the review of the shared-backend work: the experiment-buffer append
+  is gated on the admitted index range like the outcome counting, and the
+  async-batch realtime mode now participates in the accounting (admission
+  at enqueue, one outcome per frame in the batch callback, `endExperiment()`
+  drains the batch queue + in-flight batch); experiment 3 of
+  `processing.experiment_accounting` runs in both modes. Open from the dumps:
+  the OpenCV ROI assertion (`cv::Mat::Mat` with an ROI outside the frame)
+  seen 7× on 1.0.7, and the intermittent silent exit crash after a run.
+
 - **Serial bus ported onto ISerialPort; backend Qt-free again**
   (2026-09-08, `agent-b/shared-backend-integration`) — The reliability
   RS485 layer (`SerialBus`, `SyringePumpService`, `PulseGeneratorService`,

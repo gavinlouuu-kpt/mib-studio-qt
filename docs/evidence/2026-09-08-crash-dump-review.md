@@ -1,0 +1,107 @@
+# Crash dump review — bench PC, 2026-09-08
+
+Scope: every crash artifact the bench PC held from previous usage of MIB
+Studio Qt, read on 2026-09-08 with WinDbg (`cdbX64`, Microsoft symbol
+server, the dev build's PDB where it matched) and the app's own crash
+sidecars (`CrashStateMirror` JSON next to each dump).
+
+## Where the artifacts were
+
+| Location | What | Count |
+|---|---|---|
+| `%LOCALAPPDATA%\CrashDumps\` (Windows Error Reporting) | full user dumps of `mib_studio_qt.exe` | 5 (2026-06-01, 06-03 ×3, 09-07) |
+| same | frontend test binaries (`camera_action_state_test`, `ui_layout_test`) | 3 (2026-09-08, the offscreen-platform fail-fast fixed the same morning) |
+| `%LOCALAPPDATA%\MIB_Studio_Qt\crashes\` (the app's crashpad queue) | `*-sigsegv.dmp` + `*.json` state sidecars, `*-exception.txt` | 62 reports / 55 dumps, 2026-08-05 → 2026-09-08, **none uploaded** (`.queued`/`.queued2`) |
+| `C:\ProgramData\Microsoft\Windows\WER\ReportArchive\` | `AppCrash` (09-07) + two `AppHang` (09-03) for the installed app | 3 |
+
+The app's crash directory is per user, not per build: the dev builds run
+from `build\Release` write there too, so "no crash files under
+`build\Release\data\crashes`" says nothing. Look in `%LOCALAPPDATA%`.
+
+## 1. Installed app 1.0.7, 2026-09-07 15:52 — exit with an HDF5 file open
+
+WER bucket `INVALID_POINTER_READ_c0000005_hdf5.dll!Unknown`, exception
+`c0000005` at `hdf5!H5Pset_fapl_windows+0x4a0` (Conan hdf5 build
+`69734edb`, identical bytes to the dev build's `hdf5.dll`). Symbolized
+faulting stack (innermost first):
+
+```
+hdf5!H5FL_blk_free / H5FL_seq_free          <- freed chunk cache
+hdf5!H5D__chunk_... / H5D_close
+hdf5!H5VL__native_dataset_close / H5VL_dataset_close
+hdf5!H5I_clear_type / H5D_top_term_package
+hdf5!H5_term_library                         <- HDF5 atexit teardown
+ucrtbase!execute_onexit_table
+ntdll!LdrpCallInitRoutine  (hdf5.dll DLL_PROCESS_DETACH)
+ntdll!LdrShutdownProcess / RtlExitUserProcess
+kernel32!ExitProcessImplementation
+ucrtbase!common_exit <- raise+0x11b
+mib_studio_qt+0x1014de
+```
+
+Sidecar at the crash: capture running (5000 fps), realtime running,
+`experiment_active=false`, **`hdf5.file_open=true`,
+`hdf5.path=D:/data/guanshuo/2026.09.07/0.h5`**. The process was exiting
+(this was the lingering stable instance being closed at the start of the
+bench session) with that file still open; HDF5's own atexit handler then
+closed the dataset whose chunk cache had already been released while a
+writer was still active. 1.0.7 (link timestamp 2026-07-20) predates the
+coordinator-owned finalization on PR #379.
+
+Mitigation landed (both branches): `Hdf5Service` calls `H5dont_atexit()`
+once before the first HDF5 call, so the library never tears itself down in
+the CRT exit chain; files are closed by their owning services (recording
+stop, experiment finalization, `Hdf5Service` destructor) and whatever is
+still open at exit is leaked, never closed under a live writer. Guard:
+`recording.hdf5_exit_teardown` (opens a file, appends on a detached writer,
+`std::exit(0)` with the file open; must exit 0). Note: that test did **not**
+reproduce the crash before the mitigation (6/6 clean), so it guards the
+property, not the bug; the evidence for the mechanism is the symbolized
+stack above.
+
+## 2. Installed app 1.0.7 — 55 queued "sigsegv" reports (2026-08-05 → 09-08)
+
+Every sidecar shows the app idle at the time of the report (capture not
+running, no experiment, no file open), most with the last frame rate at
+50 or 5000 fps, i.e. **crashes on exit after use**, silently caught by
+crashpad. The same signature appears for the dev builds run on this bench
+today (13:26, 14:14, 15:35 — each the close of a run that included an
+experiment; a plain capture-only close did not trigger it). None of these
+dumps could be symbolized: the app's own handler writes the dump from the
+handler thread (exception record = the dump writer's breakpoint), and the
+dev PDB no longer matched. Three scripted start → record → stop → close
+cycles with the current build (`27806d4c` + the accounting fix) exited
+cleanly (exit 0, no new report); the crash is intermittent, and its
+mechanism is most plausibly the same class as §1 (exit-time teardown of
+HDF5/thread state), which the mitigation also covers. **Open item**: keep
+the current PDB with each bench binary and re-symbolize the next occurrence
+(`%LOCALAPPDATA%\MIB_Studio_Qt\crashes\*.dmp` + `cdbX64 -z <dmp> -c "!analyze -v; ~*k"`).
+
+Also open: the queued reports were never uploaded (`.queued2`); Sentry
+upload is not reaching the server from this PC.
+
+## 3. Installed app 1.0.7 — OpenCV ROI assertion (2026-08-18 ×2, 09-01 ×4, 09-07 ×1)
+
+`*-exception.txt`: `OpenCV(4.12.0) matrix.cpp:807: (-215:Assertion failed)
+0 <= roi.x && 0 <= roi.width && roi.x + roi.width <= m.cols && ... in
+cv::Mat::Mat`. Sidecars: capture stopped, realtime stopped (two with
+`realtime_running=true`), no experiment. An ROI larger than the frame is
+applied to a `cv::Mat` somewhere on the non-experiment path (background or
+ROI change against a frame of a different geometry). Not reproduced here;
+the reliability branch's readiness gate `processing.roi` and the
+`RealtimeService` ROI clamps cover the realtime path, but the crash site is
+not identified. **Open item** for the beta: find the `cv::Mat(roi)`
+construction that is not clamped (candidates: background capture,
+`Hdf5Service`/review image extraction, monitoring crop) and clamp or reject.
+
+## 4. AppHang reports (2026-09-03), installed app
+
+Two `AppHangB1` entries ("stopped responding and was closed"); no dump.
+Consistent with the 108 s modal-during-finalization behaviour fixed on the
+reliability branch (`931afe2c`, then moved into the coordinator).
+
+## 5. Frontend test dumps (2026-09-08 morning)
+
+`camera_action_state_test`, `ui_layout_test`: fail-fast `0xc0000409` from
+the missing Qt offscreen platform plugin in headless CTest; fixed the same
+morning by `cmake/MIBQtOffscreenTests.cmake`.

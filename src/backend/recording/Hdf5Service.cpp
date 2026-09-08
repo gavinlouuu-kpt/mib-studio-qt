@@ -12,6 +12,7 @@
 
 #include <vector>
 #include <cstdlib>
+#include <mutex>
 #include <cstring>
 #include <stdexcept>
 #include <chrono>
@@ -227,6 +228,16 @@ namespace backend::services
 
     Hdf5Service::Hdf5Service() : impl_(std::make_unique<Impl>())
     {
+        // Never let the HDF5 library tear itself down in the CRT's atexit
+        // chain. The installed app crashed on 2026-09-07 (WER bucket
+        // INVALID_POINTER_READ_c0000005_hdf5.dll) exactly there: the process
+        // exited with a file still open while a writer was mid-append, and
+        // H5_term_library -> H5D_close freed a chunk cache that was already
+        // gone. Files are closed explicitly by the owning services (and by
+        // this destructor); whatever is still open at exit is leaked, not
+        // torn down under a live writer. Must precede the first H5 call.
+        static std::once_flag noAtexit;
+        std::call_once(noAtexit, [] { H5dont_atexit(); });
     }
 
     Hdf5Service::~Hdf5Service()
