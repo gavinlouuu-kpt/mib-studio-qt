@@ -63,6 +63,10 @@ jobs:
           # No Qt SDK, no webkit2gtk: the bridge links the Qt-free backend and
           # runs headless (epic #246 Phase 2).
 
+      - name: Provision pinned MindVision SDK
+        shell: bash
+        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

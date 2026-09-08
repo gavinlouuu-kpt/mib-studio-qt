@@ -71,6 +71,10 @@ jobs:
             libjavascriptcoregtk-4.1-dev \
             xvfb
 
+      - name: Provision pinned MindVision SDK
+        shell: bash
+        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
