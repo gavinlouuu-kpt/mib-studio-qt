@@ -5,6 +5,23 @@
 
 ## Features shipped
 
+- **Fix: clean runs labelled IntentionallyPartial; accounting dialog held the
+  file open** (2026-09-08) — Found by the first recording soak with real
+  detections (mock camera fed with the Hugging Face `gavinlouuu/512x96stream`
+  frames, 5 min at 1000 fps, 36,592 frames persisted): every frame was in
+  the HDF5 (36,075 valid + 517 invalid rows matched the counters) but the 49
+  frames the frontend appended at stop stayed `persistencePendingAtStop`, so
+  `reconcile()` returned IntentionallyPartial. `MainWindow::finishStopExperiment`
+  appended `getValidFrames()` copies directly, bypassing the write queue that
+  credits `persistenceCommitted`, and the copies stayed "buffered". It now
+  routes the remainder through `flushBufferedFrames()` + `finishFlush()`
+  (verified: 284/284 committed, 0 pending). The same run showed the
+  "Experiment Accounting" QMessageBox blocking finalization for 108 s with
+  the HDF5 still open; it is now deferred until after `closeFile()` and
+  `finish()`. Both are the G3 gap of the #372 handoff (finalization owned by
+  the Qt window) and argue for moving finalization into the coordinator. See
+  [[../frontend/MainWindow]].
+
 - **Windows bench acceptance of the reliability release branch** (2026-09-08)
   — `claude/host-sdk-reliability-qt-ui-g03ubd` did not compile on Windows
   (MSVC `min`/`max` macros vs `std::numeric_limits<T>::max()` in

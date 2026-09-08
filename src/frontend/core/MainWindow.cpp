@@ -1595,29 +1595,41 @@ void MainWindow::finishStopExperiment(bool flushOk)
         SPDLOG_INFO("stop-lag: endExperiment+resetRealtimeMetrics took {:.3f} ms", sinceMs(t0));
     }
 
-    // Get final frame counts (should be empty after flush, but check anyway)
+    // Frames that arrived between the asynchronous flush and endExperiment()
+    // are still in the experiment buffer. Hand them to the backend's own flush
+    // path rather than appending them directly: flushBufferedFrames() moves
+    // them out of the buffer and the write queue credits
+    // persistenceCommitted, so the run accounting below sees them as
+    // committed. A direct hdf5.appendFrames() of getValidFrames() copies left
+    // them counted as "pending at stop" and labelled a clean run
+    // IntentionallyPartial (bench finding, 2026-09-08).
     const auto tGetFramesStart = stop_clock::now();
-    auto validFrames = processing.getValidFrames();
-    auto invalidFrames = processing.getInvalidFrames();
-    SPDLOG_INFO("stop-lag: get{{Valid,Invalid}}Frames took {:.3f} ms (valid={}, invalid={})",
-                sinceMs(tGetFramesStart), validFrames.size(), invalidFrames.size());
+    const auto remainder = processing.getBufferedFrameCounts();
+    const size_t remainderValid = remainder.valid;
+    const size_t remainderInvalid = remainder.invalid;
+    SPDLOG_INFO("stop-lag: buffered remainder after endExperiment: valid={}, invalid={} ({:.3f} ms)",
+                remainderValid, remainderInvalid, sinceMs(tGetFramesStart));
 
     // Record experiment end time
     uint64_t experimentEndTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                        std::chrono::system_clock::now().time_since_epoch())
                                        .count();
 
+    // Modal dialogs are deferred until the file is closed and the run is
+    // finished: a QMessageBox here blocked finalization for as long as the
+    // operator took to dismiss it (bench: 108 s with the HDF5 still open).
+    QString deferredAccountingWarning;
     // Save any remaining frames and write experiment info
     if (hdf5.isFileOpen())
     {
-        if (!validFrames.empty() || !invalidFrames.empty())
+        if (remainderValid + remainderInvalid > 0)
         {
             const auto t0 = stop_clock::now();
-            // Save any remaining frames that weren't flushed
-            const bool appendOk = hdf5.appendFrames(validFrames, invalidFrames);
-            SPDLOG_INFO("stop-lag: appendFrames(remaining) took {:.3f} ms "
-                        "(valid={}, invalid={})",
-                        sinceMs(t0), validFrames.size(), invalidFrames.size());
+            const size_t submitted = processing.flushBufferedFrames(hdf5);
+            const bool appendOk = processing.finishFlush();
+            SPDLOG_INFO("stop-lag: final flushBufferedFrames(remaining) took {:.3f} ms "
+                        "(submitted={}, valid={}, invalid={}, ok={})",
+                        sinceMs(t0), submitted, remainderValid, remainderInvalid, appendOk);
             if (!appendOk)
             {
                 QMessageBox::warning(this, tr("Warning"),
@@ -1626,8 +1638,8 @@ void MainWindow::finishStopExperiment(bool flushOk)
         }
 
         // Write experiment metadata (including background image for reproducibility if set)
-        size_t totalValid = validFrames.size();
-        size_t totalInvalid = invalidFrames.size();
+        size_t totalValid = remainderValid;
+        size_t totalInvalid = remainderInvalid;
         // Note: We can't easily track total frames written via append, so we use current counts
         // In a production system, you'd want to track cumulative counts
         if (!hdf5.flush())
@@ -1689,8 +1701,7 @@ void MainWindow::finishStopExperiment(bool flushOk)
                                tr("Review the frame accounting in the Review tab before using this run."));
             runStatusModel_->latchFailure(runOperationId_,
                                           QString::fromLatin1(backend::recording::toString(accounting.completion)));
-            QMessageBox::warning(
-                this, tr("Experiment Accounting"),
+            deferredAccountingWarning =
                 tr("The run is recorded as '%1': %2\n\nEmpty %3 · processed %4 · rejected %5 · "
                    "processing failed %6 · store loss %7 · persisted %8/%9 · persistence failed %10")
                     .arg(QString::fromLatin1(backend::recording::toString(accounting.completion)))
@@ -1703,7 +1714,7 @@ void MainWindow::finishStopExperiment(bool flushOk)
                                                  accounting.storeMalformed))
                     .arg(static_cast<qulonglong>(accounting.persistenceCommitted))
                     .arg(static_cast<qulonglong>(accounting.persistenceAdmitted))
-                    .arg(static_cast<qulonglong>(accounting.persistenceFailed)));
+                    .arg(static_cast<qulonglong>(accounting.persistenceFailed));
         }
 
         // Save full config.json content for backtracking
@@ -1749,6 +1760,11 @@ void MainWindow::finishStopExperiment(bool flushOk)
     runStatusModel_->setPhase(frontend::RunPhase::Complete, runOperationId_);
     restoreRealtimeModeIfNeeded();
     updateExperimentButtonStates(); // This will also call updateTabStates() to enable Overview and Review tabs
+
+    if (!deferredAccountingWarning.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Experiment Accounting"), deferredAccountingWarning);
+    }
 
     const auto cfgAtStop = processing.getProcessingConfig();
     const double stopTotalMs = sinceMs(tStopBegin);

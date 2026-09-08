@@ -207,6 +207,19 @@ created in `setupStatusSurfaces()`:
 
 ## Gotchas
 
+- **Stop-time remainder goes through the backend flush path.** After the
+  asynchronous flush and `endExperiment()`, frames that arrived in between
+  are still in the experiment buffer. `finishStopExperiment` hands them to
+  `ProcessingService::flushBufferedFrames()` + `finishFlush()` so the write
+  queue credits `persistenceCommitted`. Appending `getValidFrames()` copies
+  directly (the pre-2026-09-08 code) left them counted as
+  `persistencePendingAtStop` and labelled a clean run IntentionallyPartial
+  (bench: 49 of 36,592 frames). Regression evidence: mock HF-stream run on
+  2026-09-08 reconciles 284/284 with 0 pending.
+- **No modal before the HDF5 file is closed.** The "Experiment Accounting"
+  warning is built during finalization but shown only after `closeFile()`
+  and `experiment().finish()`; shown earlier it held the file open for as
+  long as the operator took to dismiss it (108 s on the bench).
 - `closeEvent` stops experiment services, then stops the capture service
   before the window destructs. Mis-ordering causes the stale `StreamModule`
   stats seen in `docs/howto/safe-start-stop-egrabber.md`. This and the
