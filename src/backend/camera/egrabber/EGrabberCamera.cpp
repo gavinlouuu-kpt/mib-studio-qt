@@ -1,4 +1,7 @@
 #include "backend/camera/egrabber/EGrabberCamera.h"
+#if MIB_HAS_EGRABBER
+#include "backend/camera/egrabber/GenTLHolder.h"
+#endif
 
 #include <spdlog/spdlog.h>
 
@@ -43,7 +46,7 @@ bool EGrabberCamera::start() {
     }
 
     try {
-        genTL_ = std::make_unique<EGenTL>();
+        genTL_ = backend::camera::egrabber::sharedGenTL();
         {
             // Construct outside the lock (device open can be slow), publish
             // under triggerMutex_ so the trigger thread never sees a torn
