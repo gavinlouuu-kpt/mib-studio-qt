@@ -45,6 +45,9 @@ using namespace Euresys;
 #endif
 
 #include "backend/camera/mindvision/MindVisionApply.h"
+#if MIB_HAS_EGRABBER
+#include "backend/camera/egrabber/GenTLHolder.h"
+#endif
 #include "backend/camera/mindvision/MindVisionConfig.h"
 
 #include <cstdlib>
@@ -153,7 +156,8 @@ namespace backend::services
         std::vector<DiscoveredCamera> results;
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabberDiscovery discovery(genTL);
             discovery.discover();
 
@@ -237,7 +241,8 @@ namespace backend::services
         std::vector<DiscoveredFramegrabber> results;
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabberDiscovery discovery(genTL);
             discovery.discover();
 
@@ -305,7 +310,8 @@ namespace backend::services
     {
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabber<CallbackOnDemand> g(genTL, interfaceIndex, deviceIndex);
 
             SPDLOG_INFO("Applying script to camera [{}:{}]: {}", interfaceIndex, deviceIndex, scriptPath);
@@ -339,7 +345,8 @@ namespace backend::services
     {
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabber<CallbackOnDemand> g(genTL, interfaceIndex, deviceIndex);
 
             try
@@ -409,33 +416,16 @@ namespace backend::services
     {
         std::vector<DiscoveredCamera> results;
 #if MIB_HAS_EGRABBER
-        // The MindVision SDK's CameraEnumerateDevice() leaves the Euresys GenTL
-        // producer unopenable for the rest of the process: every later EGenTL
-        // construction fails with GC_ERR_RESOURCE_IN_USE (GenTL -1004), the
-        // order of the two SDKs does not matter, and no MindVision call undoes
-        // it (CameraSdkInit alone is harmless). Verified on a Coaxlink Quad
-        // CXP-12 with MindVision SDK 2.1.10 and eGrabber 25.10; regression
-        // guard: tests/hardware/hw_discovery_reentry_test.cpp. So a process
-        // that has an EGrabber framegrabber never enumerates MindVision
-        // devices. Decided once per process (PCIe grabbers do not hot-plug).
-        static const bool blockedByEGrabber = [this]()
+        // The MindVision SDK's CoaXPress plugin (CXPCamera_X64.Interface) loads
+        // coaxlink.cti and calls GCInitLib during CameraEnumerateDevice(). Only
+        // one GenTL open is allowed per process, so if the plugin gets there
+        // first every later EGrabber open fails with GenTL -1004 for the life
+        // of the process. Reserve our shared handle first: the plugin's attempt
+        // then fails harmlessly and both SDKs keep working, in any order.
+        // Regression guard: tests/hardware/hw_discovery_reentry_test.cpp.
+        if (!backend::camera::egrabber::ensureSharedGenTL())
         {
-            const char *force = std::getenv("MIB_MINDVISION_ENUMERATE_WITH_EGRABBER");
-            if (force != nullptr && *force == '1')
-            {
-                SPDLOG_WARN("CameraControlService: MIB_MINDVISION_ENUMERATE_WITH_EGRABBER=1 - "
-                            "MindVision enumeration allowed alongside EGrabber; the EGrabber "
-                            "camera will be unusable afterwards in this process");
-                return false;
-            }
-            return !discoverFramegrabbers().empty();
-        }();
-        if (blockedByEGrabber)
-        {
-            SPDLOG_INFO("CameraControlService: MindVision enumeration skipped - an EGrabber "
-                        "framegrabber is present and the MindVision SDK would lock it out "
-                        "(set MIB_MINDVISION_ENUMERATE_WITH_EGRABBER=1 to override)");
-            return results;
+            SPDLOG_DEBUG("CameraControlService: no Euresys producer to reserve before MindVision enumeration");
         }
 #endif
         try

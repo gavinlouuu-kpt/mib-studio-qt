@@ -53,7 +53,9 @@ private:
     CameraConfig config_{};
 #if MIB_HAS_EGRABBER
     mutable std::unique_ptr<Euresys::EGrabber<Euresys::CallbackOnDemand>> grabber_;
-    std::unique_ptr<Euresys::EGenTL> genTL_;
+    // Shared process-wide producer handle (see GenTLHolder.h); released
+    // by stop(), but the holder keeps the producer open for the process.
+    std::shared_ptr<Euresys::EGenTL> genTL_;
 #endif
 
     uint64_t width_ = 0;
