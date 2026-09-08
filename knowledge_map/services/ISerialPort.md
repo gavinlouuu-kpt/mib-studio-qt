@@ -9,7 +9,11 @@
 `src/backend/services/SerialPortPosix.cpp` (termios),
 `src/backend/services/SerialPortWin32.cpp` (Win32)
 **Tests:** `tests/backend/serial_port_posix_loopback_test.cpp` (pty loopback),
-`tests/backend/syringe_pump_fake_serial_test.cpp` (fake slave)
+`tests/backend/syringe_pump_fake_serial_test.cpp` (fake slave),
+`tests/backend/serial_port_enumeration_test.cpp` (`backend.serial_port_enumeration`:
+well-formed unique names, `serialbus::availablePorts()` mirror; with
+`MIB_TEST_EXPECT_PORT=COM6` on the bench it checked the nanopositioner's USB
+VID/PID/serial against Windows PnP)
 **Related:** [[SyringePumpService]], [[../build-and-run/Dependencies]]
 
 ## Responsibility

@@ -56,6 +56,11 @@ mib_add_backend_test_executable(serial_port_posix_loopback_test backend/serial_p
 add_test(NAME backend.serial_port_posix_loopback COMMAND $<TARGET_FILE:serial_port_posix_loopback_test>)
 set_tests_properties(backend.serial_port_posix_loopback PROPERTIES LABELS "backend" TIMEOUT 30)
 
+# Qt-free serial port enumeration (SetupAPI / sysfs) behind serialbus::availablePorts().
+mib_add_backend_test_executable(serial_port_enumeration_test backend/serial_port_enumeration_test.cpp)
+add_test(NAME backend.serial_port_enumeration COMMAND $<TARGET_FILE:serial_port_enumeration_test>)
+set_tests_properties(backend.serial_port_enumeration PROPERTIES LABELS "backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(autofocus_math_test backend/autofocus_math_test.cpp)
 add_test(NAME backend.autofocus_math COMMAND $<TARGET_FILE:autofocus_math_test>)
 set_tests_properties(backend.autofocus_math PROPERTIES LABELS "backend" TIMEOUT 30)
