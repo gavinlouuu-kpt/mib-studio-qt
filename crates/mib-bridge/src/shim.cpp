@@ -10,6 +10,12 @@
 #include "backend/services/CameraControlService.h"
 #include "backend/services/SyringePumpService.h"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
@@ -125,7 +131,21 @@ BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
 // total) plus queue_overflow_total(). MIB_BRIDGE_MAX_QUEUE overrides the
 // capacity (min 4) — used by the bounded-queue contract test.
 std::size_t queueCapacityFromEnv() {
-    if (const char* raw = std::getenv("MIB_BRIDGE_MAX_QUEUE")) {
+    // Read through the OS environment, not the C runtime's startup copy: on
+    // Windows the MSVC CRT snapshots the environment at process start, so a
+    // variable set later by the host (Rust's std::env::set_var uses
+    // SetEnvironmentVariable) is invisible to std::getenv.
+    std::string rawEnv;
+#ifdef _WIN32
+    {
+        char buf[64];
+        const DWORD n = GetEnvironmentVariableA("MIB_BRIDGE_MAX_QUEUE", buf, sizeof(buf));
+        if (n > 0 && n < sizeof(buf)) rawEnv.assign(buf, n);
+    }
+#else
+    if (const char* e = std::getenv("MIB_BRIDGE_MAX_QUEUE")) rawEnv = e;
+#endif
+    if (const char* raw = rawEnv.empty() ? nullptr : rawEnv.c_str()) {
         const long parsed = std::strtol(raw, nullptr, 10);
         if (parsed > 0) {
             return std::clamp<std::size_t>(static_cast<std::size_t>(parsed), 4, 4096);
@@ -261,7 +281,12 @@ BridgeEvent toBridgeEvent(const backend::bridge::BackendEvent& ev) {
 
 } // namespace
 
-#ifdef MIB_BRIDGE_CONTRACT_FIXTURES
+// Test-only fixture producers. Always compiled: cxx-build does not emit the
+// C++ side of `#[cfg(feature = ...)]` bridge functions (the Rust wrappers are
+// still generated under the feature), so guarding these with a preprocessor
+// define leaves the desktop test binary with unresolved externals (seen on
+// Linux CI for PR #375 and on the Windows bench). They are reachable only
+// through the feature-gated Rust declarations; no Tauri command exposes them.
 BridgeFrame contract_fixture_frame() {
     backend::bridge::BackendFrame frame{};
     frame.frameIndex = 9007199254740993ULL;
@@ -315,7 +340,7 @@ rust::Vec<BridgeEvent> contract_fixture_events() {
     events.push_back(toBridgeEvent(frame));
     return events;
 }
-#endif
+
 
 struct BackendBridge::Impl {
     backend::AppBackend app;

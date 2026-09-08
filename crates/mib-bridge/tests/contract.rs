@@ -80,7 +80,11 @@ fn autofocus_commands_and_config_roundtrip() {
     // Structured parameter errors and safe failure without hardware.
     assert!(!bridge.pin_mut().autofocus_connect(-1, 115200, 1).ok);
     assert!(!bridge.pin_mut().autofocus_connect(3, 115200, 999).ok);
-    let connect = bridge.pin_mut().autofocus_connect(3, 115200, 1);
+    // A port number no host can have: on a Windows bench a low number such as
+    // COM3 may exist (e.g. the Intel AMT serial-over-LAN port) and the Coremor
+    // DLL will open it and tolerate an implausible first read, so "fails
+    // without hardware" must not depend on which ports the host happens to have.
+    let connect = bridge.pin_mut().autofocus_connect(250, 115200, 1);
     assert!(!connect.ok, "connect must fail without the Coremor SDK/hardware");
 
     // Control on a disconnected controller fails cleanly; disable is safe.

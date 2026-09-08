@@ -19,6 +19,8 @@ cxx = "1"
 
 [build-dependencies]
 cxx-build = "1"
+# Windows: reads the CMake-derived link manifest (tools/gen_bridge_link_manifest.py).
+serde_json = "1"
 
 [dev-dependencies]
 # The contract tests each construct a full AppBackend, whose C++ backend has

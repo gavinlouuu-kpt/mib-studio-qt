@@ -375,9 +375,14 @@ pub mod ffi {
         /// `shutdown()` then destroys the backend.
         type BackendBridge;
 
-        #[cfg(feature = "contract-fixtures")]
+        // Declared unconditionally: cxx-build does not emit the C++ wrappers
+        // for `#[cfg(feature = ...)]` bridge functions while rustc still
+        // compiles the Rust side under the feature, which left the desktop
+        // test binaries with unresolved `contract_fixture_*` externals
+        // (Linux CI for PR #375 and the Windows bench). The producers are
+        // test fixtures in shim.cpp; nothing outside the feature-gated Rust
+        // callers below can reach them and no Tauri command exposes them.
         fn contract_fixture_events() -> Vec<BridgeEvent>;
-        #[cfg(feature = "contract-fixtures")]
         fn contract_fixture_frame() -> BridgeFrame;
 
         /// Construct a fresh, uninitialized bridge.
