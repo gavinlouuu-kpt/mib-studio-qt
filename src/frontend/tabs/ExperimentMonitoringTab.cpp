@@ -1,4 +1,5 @@
 #include "frontend/tabs/ExperimentMonitoringTab.h"
+#include "frontend/tabs/MonitoringRoiCrop.h"
 #include "ui_ExperimentMonitoringTab.h"
 
 #include <QTimer>
@@ -958,9 +959,9 @@ namespace frontend
             if (showValidOverlay_ && !frame.processedImage.empty())
             {
                 // If monitoring stores ROI-only images, use them directly. Otherwise, crop.
-                bool alreadyRoi = (frame.originalImage.cols == roi.w && frame.originalImage.rows == roi.h);
-                cv::Mat roiOriginal = alreadyRoi ? frame.originalImage : frame.originalImage(cv::Rect(roi.x, roi.y, roi.w, roi.h));
-                cv::Mat roiMask = alreadyRoi ? frame.processedImage : frame.processedImage(cv::Rect(roi.x, roi.y, roi.w, roi.h));
+                // Clamped crop: the frame may predate the current ROI (crash review 2026-09-08).
+                cv::Mat roiOriginal = frontend::monitoring::cropToRoi(frame.originalImage, roi.x, roi.y, roi.w, roi.h);
+                cv::Mat roiMask = frontend::monitoring::cropToRoi(frame.processedImage, roi.x, roi.y, roi.w, roi.h);
                 roiImage = createOverlayImage(roiOriginal, roiMask, &frame.validation);
             }
             else
@@ -1032,9 +1033,9 @@ namespace frontend
 
             if (showInvalidOverlay_ && !frame.processedImage.empty())
             {
-                bool alreadyRoi = (frame.originalImage.cols == roi.w && frame.originalImage.rows == roi.h);
-                cv::Mat roiOriginal = alreadyRoi ? frame.originalImage : frame.originalImage(cv::Rect(roi.x, roi.y, roi.w, roi.h));
-                cv::Mat roiMask = alreadyRoi ? frame.processedImage : frame.processedImage(cv::Rect(roi.x, roi.y, roi.w, roi.h));
+                // Clamped crop: the frame may predate the current ROI (crash review 2026-09-08).
+                cv::Mat roiOriginal = frontend::monitoring::cropToRoi(frame.originalImage, roi.x, roi.y, roi.w, roi.h);
+                cv::Mat roiMask = frontend::monitoring::cropToRoi(frame.processedImage, roi.x, roi.y, roi.w, roi.h);
                 roiImage = createOverlayImage(roiOriginal, roiMask, &frame.validation);
             }
             else

@@ -78,6 +78,11 @@ mib_add_backend_test_executable(recording_isframeempty_roi_test backend/recordin
 add_test(NAME backend.recording_isframeempty_roi COMMAND $<TARGET_FILE:recording_isframeempty_roi_test>)
 set_tests_properties(backend.recording_isframeempty_roi PROPERTIES LABELS "backend;processing;recording" TIMEOUT 30)
 
+# Monitoring tab ROI crop is clamped (cv::Mat ROI assertion aborts on 1.0.7).
+mib_add_backend_test_executable(monitoring_roi_crop_test frontend/monitoring_roi_crop_test.cpp)
+add_test(NAME frontend.monitoring_roi_crop COMMAND $<TARGET_FILE:monitoring_roi_crop_test>)
+set_tests_properties(frontend.monitoring_roi_crop PROPERTIES LABELS "frontend;safety" TIMEOUT 30)
+
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:pr4_monitoring_snapshot_test>)
 set_tests_properties(backend.pr4_monitoring_snapshot PROPERTIES LABELS "backend;processing;monitoring" TIMEOUT 30)
@@ -396,6 +401,16 @@ mib_add_backend_test_executable(crash_reporter_terminate_test backend/crash_repo
 target_link_libraries(crash_reporter_terminate_test PRIVATE Threads::Threads)
 add_test(NAME backend.crash_reporter_terminate COMMAND $<TARGET_FILE:crash_reporter_terminate_test>)
 set_tests_properties(backend.crash_reporter_terminate PROPERTIES LABELS "backend;observability" TIMEOUT 60)
+
+# A hardware fault leaves a dump with the faulting context and a sidecar
+# naming the fault (crash review 2026-09-08).
+mib_add_backend_test_executable(crash_reporter_segv_test backend/crash_reporter_segv_test.cpp)
+target_link_libraries(crash_reporter_segv_test PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(crash_reporter_segv_test PRIVATE dbghelp)
+endif()
+add_test(NAME backend.crash_reporter_segv COMMAND $<TARGET_FILE:crash_reporter_segv_test>)
+set_tests_properties(backend.crash_reporter_segv PROPERTIES LABELS "backend;observability;safety" TIMEOUT 60)
 
 mib_add_backend_test_executable(e2e_pipeline_timing_test integration/e2e_pipeline_timing_test.cpp)
 target_link_libraries(e2e_pipeline_timing_test PRIVATE Threads::Threads)

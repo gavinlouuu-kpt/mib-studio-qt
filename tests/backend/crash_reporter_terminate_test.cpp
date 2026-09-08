@@ -46,7 +46,6 @@ static int runCrashChild(const fs::path& crashDir) {
     cfg.uploadPendingOnStart = false;
     cfg.installSignalHandlers = true;
     cfg.installTerminateHandler = true;
-    cfg.installQtMessageHandler = false;
     CrashReporter::init(cfg);
 
     // The exception escapes the thread entry point → std::terminate on the

@@ -16,9 +16,16 @@
   async-batch realtime mode now participates in the accounting (admission
   at enqueue, one outcome per frame in the batch callback, `endExperiment()`
   drains the batch queue + in-flight batch); experiment 3 of
-  `processing.experiment_accounting` runs in both modes. Open from the dumps:
-  the OpenCV ROI assertion (`cv::Mat::Mat` with an ROI outside the frame)
-  seen 7× on 1.0.7, and the intermittent silent exit crash after a run.
+  `processing.experiment_accounting` runs in both modes. The OpenCV ROI
+  assertion seen 7× on 1.0.7 was the Monitoring tab cropping accumulated
+  frames with the current, unclamped ROI (fixed via
+  `frontend/tabs/MonitoringRoiCrop.h`, guard `frontend.monitoring_roi_crop`).
+  The intermittent silent exit crash after a run is still open, but the next
+  occurrence will be symbolizable: the SIGSEGV path now writes the dump with
+  the CRT's exception pointers, the sidecar carries a `crash` object and the
+  exe build id, and `init()` keeps the running binary's PDB under
+  `%LOCALAPPDATA%\MIB_Studio_Qt\symbols\<build id>\` (guard
+  `backend.crash_reporter_segv`).
 
 - **Serial bus ported onto ISerialPort; backend Qt-free again**
   (2026-09-08, `agent-b/shared-backend-integration`) — The reliability

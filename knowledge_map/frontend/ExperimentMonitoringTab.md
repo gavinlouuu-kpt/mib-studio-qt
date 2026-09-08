@@ -95,6 +95,15 @@ exposed subset of `ProcessingConfig`, owned by the pure
 
 ## Gotchas
 
+- **Crop with the clamped ROI, never the raw one.** Monitoring frames were
+  accumulated under the ROI / camera geometry active when they were
+  processed; the current `getRealtimeRoi()` may not fit them (ROI edited,
+  camera or config switched). Cropping them with an unclamped
+  `cv::Rect(roi)` aborted the installed 1.0.7 app seven times
+  (`cv::Mat::Mat` ROI assertion, crash review 2026-09-08). The overlay and
+  extract paths go through `frontend/tabs/MonitoringRoiCrop.h`
+  (`cropToRoi`: ROI-sized frame as is, else `clampRoiToFrame`, empty frame
+  → empty crop). Guard: `frontend.monitoring_roi_crop`.
 - Histograms are computed client-side from the monitoring rings — not
   persisted.
 - `loadCurrentConfig()` refreshes the histogram ring-ratio defaults as well
