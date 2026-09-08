@@ -1,3 +1,7 @@
+// windows.h (via the MindVision SDK headers below) must not define min/max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "backend/app/AppBackend.h"
 
 #include "backend/services/Logger.h"
@@ -32,9 +36,6 @@
 #include <utility>
 #include <spdlog/spdlog.h>
 #ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <windows.h>
 #include <shlobj.h>
 #endif
@@ -980,7 +981,7 @@ namespace backend
             // Hoisted per-poll-batch: refreshed only when configVersion changes.
             // Staleness window is one poll iteration (~ms), which is acceptable
             // and documented. Per-frame refresh was the dominant lock cost (P1).
-            uint64_t lastConfigVer = std::numeric_limits<uint64_t>::max();
+            uint64_t lastConfigVer = (std::numeric_limits<uint64_t>::max)();
             services::ProcessingConfig config;
             services::ProcessingService::Roi roi;
             std::shared_ptr<const cv::Mat> bgShared;

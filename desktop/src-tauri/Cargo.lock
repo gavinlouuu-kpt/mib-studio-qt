@@ -2069,6 +2069,7 @@ version = "0.1.0"
 dependencies = [
  "cxx",
  "cxx-build",
+ "serde_json",
 ]
 
 [[package]]
