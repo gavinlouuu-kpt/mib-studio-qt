@@ -1,3 +1,4 @@
+import golden from "../../crates/mib-bridge/contract/fixtures/frame-v1.json";
 import { expect, it } from "vitest";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { FRAME_PACKET } from "./bridgeContract";
@@ -34,4 +35,12 @@ it("rejects incompatible headers and invalid empty frame",()=>{
 it("accepts unavailable frame without inventing pixels",()=>{
   const b=fixture().slice(0,96); new DataView(b).setUint32(8,0,true); new Uint8Array(b,16).fill(0);
   expect(decodeFramePacket(b,1).valid).toBe(false); expect(decodeFramePacket(b,1).data.length).toBe(0);
+});
+
+it("decodes the binary golden also emitted by the C++/Rust producer test",()=>{
+  const bytes=Uint8Array.from(golden.hex.match(/../g)!,h=>parseInt(h,16));
+  const packet=decodeFramePacket(bytes.buffer,1);
+  expect(packet.frame_index).toBe(golden.frame_index);
+  expect(packet.timestamp_ns).toBe(golden.timestamp_ns);
+  expect(Array.from(packet.data)).toEqual(golden.pixels);
 });

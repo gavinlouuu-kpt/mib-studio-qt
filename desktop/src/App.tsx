@@ -1,3 +1,5 @@
+import { formatMetric } from "./eventAdapter";
+import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -61,16 +63,6 @@ const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Stopping]: "Stopping",
   [EXPERIMENT_STATES.Failed]: "Failed",
 };
-
-function formatRuntime(startNs: number, endNs: number): string {
-  if (!startNs) return "00:00:00";
-  const endMs = endNs > 0 ? endNs / 1e6 : Date.now();
-  const totalS = Math.max(0, Math.floor((endMs - startNs / 1e6) / 1000));
-  const h = String(Math.floor(totalS / 3600)).padStart(2, "0");
-  const m = String(Math.floor((totalS % 3600) / 60)).padStart(2, "0");
-  const s = String(totalS % 60).padStart(2, "0");
-  return `${h}:${m}:${s}`;
-}
 
 type MainTab = "connect" | "overview" | "experiment" | "review";
 
@@ -209,8 +201,8 @@ export default function App() {
   const [reviewPath, setReviewPath] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [reviewTab, setReviewTab] = useState<"raw" | "valid" | "invalid" | "charts">("raw");
-  const [range, setRange] = useState({ earliest: 0, latest: 0, count: 0 });
-  const [reviewIndex, setReviewIndex] = useState(0);
+  const [range, setRange] = useState({ earliest: "0", latest: "0", count: "0" });
+  const [reviewIndex, setReviewIndex] = useState("0");
   // Paged review (bridge schema v9, BE-6).
   const [reviewMeta, setReviewMeta] = useState<ReviewMetadata | null>(null);
   const [metricsPage, setMetricsPage] = useState<ReviewMetricsPage | null>(null);
@@ -311,35 +303,28 @@ export default function App() {
     [],
   );
 
-  const applyEvents = useCallback(
-    (events: BridgeEvent[]) => {
-      for (const e of events) {
-        if (e.kind === "CameraStatus") {
-          setCamStatus(`${e.b1 ? "running" : e.b0 ? "configured" : "unconfigured"} (${e.text || "camera"})`);
-        } else if (e.kind === "PlaybackPosition") {
-          // u2 earliest, u3 latest, u4 available.
-          setRange({ earliest: e.u2, latest: e.u3, count: e.u4 });
-        } else if (e.kind === "BackendError") {
-          append(`backend error: ${e.text}`);
-        } else if (e.kind === "OperationStatus") {
-          // u0 id, u2 state (2 Completed, 3 Failed, 4 Cancelled, 5 TimedOut).
-          if (e.u2 === 2) append(`operation ${e.u0} completed: ${e.text}`);
-          else if (e.u2 >= 3) append(`operation ${e.u0} ${e.u2 === 3 ? "failed" : e.u2 === 4 ? "cancelled" : "timed out"}: ${e.text}`);
-        } else if (e.kind === "QueueOverflow") {
-          append(`event queue overflow: ${e.u0} coalesced (total ${e.u1})`);
-        } else if (e.kind === "ExperimentStatus") {
-          // Transitions surface in the log; the full snapshot is pulled in the
-          // tick loop (fetch_experiment_status) to keep one source of truth.
-          if (e.u0 === EXPERIMENT_STATES.Failed) append(`experiment failed: ${e.text}`);
-          else if (e.text) append(`experiment: ${e.text}`);
-          void bridge.fetchExperimentStatus().then(setExpStatus).catch(() => {});
-        }
-        // Kinds this build does not know (additive, newer bridge) fall through
-        // and are ignored — never fatal (ADR 0004).
+  const applyEvents = useCallback((events: BridgeEvent[]) => {
+    for (const e of events) {
+      if (e.kind === "CameraStatus") {
+        setCamStatus(`${e.running ? "running" : e.configured ? "configured" : "unconfigured"} (${e.label || "camera"})`);
+      } else if (e.kind === "PlaybackPosition") {
+        setRange({earliest:e.earliest,latest:e.latest,count:e.available});
+      } else if (e.kind === "BackendError") {
+        append(`backend error: ${e.message}${e.textTruncated ? " (details truncated)" : ""}`);
+      } else if (e.kind === "OperationStatus") {
+        if (e.state === 2) append(`operation ${e.operationId} completed: ${e.message}`);
+        else if (e.state >= 3) append(`operation ${e.operationId} ${e.state === 3 ? "failed" : e.state === 4 ? "cancelled" : "timed out"}: ${e.message}`);
+      } else if (e.kind === "QueueOverflow") {
+        append(`notification loss: ${e.notificationsDropped} discarded (total ${e.notificationsDroppedTotal}); authoritative reconciliation required`);
+      } else if (e.kind === "ExperimentStatus") {
+        if(e.state === EXPERIMENT_STATES.Failed) append(`experiment failed: ${e.message}`);
+        else if(e.message) append(`experiment: ${e.message}`);
+        // Regular bounded status polling retrieves current truth independently.
+      } else if(e.kind === "Unknown") {
+        append(`unrecognized notification ${e.receivedKind}; authoritative reconciliation required`);
       }
-    },
-    [append],
-  );
+    }
+  },[append]);
 
   const procEnabledRef = useRef(procEnabled);
   procEnabledRef.current = procEnabled;
@@ -659,7 +644,8 @@ export default function App() {
 
   // ---- Review ----
 
-  const onScrub = useCallback((idx: number) => {
+  const onScrub = useCallback((input: number | string) => {
+    const idx = decimalU64(input);
     setReviewIndex(idx);
     framePulls.current.request("review", async () => {
       const result = await bridge.seekIndex(idx);
@@ -738,9 +724,9 @@ export default function App() {
   const r = ratesRef.current;
   const displayFps = running ? r.displayFps : 0;
   const dataRate = running ? r.dataRateMBs : 0;
-  const algoFps = stats?.valid ? stats.algo_fps1s : 0;
-  const validFps = stats?.valid ? stats.valid_fps1s : 0;
-  const invalidFps = stats?.valid ? stats.invalid_fps1s : 0;
+  const algoFps = stats?.valid ? stats.algo_fps1s : null;
+  const validFps = stats?.valid ? stats.valid_fps1s : null;
+  const invalidFps = stats?.valid ? stats.invalid_fps1s : null;
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
   const expActive = expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
@@ -750,7 +736,7 @@ export default function App() {
       ? "Camera must be running before starting an experiment"
       : expActive
         ? "Experiment is already running"
-        : undefined;
+        : "Authoritative readiness is unavailable in this backend revision";
 
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = !ready
@@ -771,12 +757,9 @@ export default function App() {
     ? `${deviceIdentity}|core:${coreStatus?.valid ? coreStatus.active_version : ""}`
     : "";
   const alignmentSignature = deviceIdentity;
-  const experimentCompleted =
-    expState === EXPERIMENT_STATES.Idle &&
-    !!expStatus?.valid &&
-    !expStatus.cancelled &&
-    expStatus.output_path !== "" &&
-    expStatus.valid_saved + expStatus.invalid_saved > 0;
+  // Saved rows plus Idle do not prove successful finalization. The accepted
+  // backend must supply a retained exact terminal outcome before showing Complete.
+  const experimentCompleted = false;
 
   const workflowFacts: WorkflowFacts = {
     backendReady: ready,
@@ -856,7 +839,7 @@ export default function App() {
     roiH: Number(roiFields.h) || 0,
     frameW: lastMeta?.width ?? 0,
     frameH: lastMeta?.height ?? 0,
-    pixelToMicron: stats?.valid ? stats.pixel_to_micron : Number(pixelToMicron) || 0,
+    pixelToMicron: stats?.pixel_to_micron ?? NaN,
   };
   const quality = deriveQualityGates(qualityInput);
 
@@ -868,7 +851,7 @@ export default function App() {
     cameraConfigured,
     cameraRunning: running,
     cameraLabel: camSelection?.label || (camSelection?.mode === 1 ? "Mock camera" : ""),
-    pixelToMicron: stats?.valid ? stats.pixel_to_micron : Number(pixelToMicron) || 0,
+    pixelToMicron: stats?.pixel_to_micron ?? NaN,
     currentStageTitle: currentStage.title,
     currentStageStatus: currentStage.status,
     allStagesComplete: workflow.recommended === null,
@@ -1025,9 +1008,9 @@ export default function App() {
           </div>
           <div className="side-section">
             <h4>Processing</h4>
-            <SideRow k="Algo FPS:" v={stats?.valid ? algoFps.toFixed(1) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Valid FPS:" v={stats?.valid ? validFps.toFixed(1) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Invalid FPS:" v={stats?.valid ? invalidFps.toFixed(1) : "—"} cls={stats?.valid ? "" : "dim"} />
+            <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />
+            <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />
+            <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />
             <SideRow k="px→µm:" v={stats?.valid ? String(stats.pixel_to_micron) : "—"} cls={stats?.valid ? "" : "dim"} />
           </div>
           <div className="side-section">
@@ -1056,13 +1039,13 @@ export default function App() {
               v={EXPERIMENT_STATE_NAMES[expState] ?? "Inactive"}
               cls={expActive ? "ok" : expState === EXPERIMENT_STATES.Failed ? "" : "dim"}
             />
-            <SideRow k="Valid Buffered:" v={String(expStatus?.valid_buffered ?? 0)} />
-            <SideRow k="Invalid Buffered:" v={String(expStatus?.invalid_buffered ?? 0)} />
+            <SideRow k="Valid Buffered:" v={expStatus?.valid ? expStatus.valid_buffered : "Unavailable"} />
+            <SideRow k="Invalid Buffered:" v={expStatus?.valid ? expStatus.invalid_buffered : "Unavailable"} />
             <SideRow k="Flush Status:" v={expStatus?.flushing ? "Flushing" : "Idle"} />
-            <SideRow k="Valid Images Saved:" v={String(expStatus?.valid_saved ?? 0)} />
+            <SideRow k="Valid Images Saved:" v={expStatus?.valid ? expStatus.valid_saved : "Unavailable"} />
             <SideRow
               k="Runtime:"
-              v={expActive ? formatRuntime(expStatus?.start_time_ns ?? 0, 0) : "00:00:00"}
+              v="Unavailable (clock domain unverified)"
             />
           </div>
           <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
@@ -1549,8 +1532,8 @@ export default function App() {
                               </div>
                               {stats?.valid && (
                                 <p className="mono">
-                                  algo {stats.algo_fps1s.toFixed(1)} · valid {stats.valid_fps1s.toFixed(1)} · invalid{" "}
-                                  {stats.invalid_fps1s.toFixed(1)} fps · px→µm {stats.pixel_to_micron}
+                                  algo {formatMetric(stats.algo_fps1s)} · valid {formatMetric(stats.valid_fps1s)} · invalid{" "}
+                                  {formatMetric(stats.invalid_fps1s)} fps · px→µm {stats.pixel_to_micron}
                                 </p>
                               )}
                               <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
@@ -1835,7 +1818,7 @@ export default function App() {
                         {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
                         <canvas ref={reviewCanvasRef} className={fitWindow ? "fit" : ""} />
                       </div>
-                      {reviewing && reviewTab === "raw" && range.count > 0 && (
+                      {reviewing && reviewTab === "raw" && BigInt(range.count) > 0n && (
                         <>
                           <input
                             type="range"
@@ -1843,7 +1826,9 @@ export default function App() {
                             min={range.earliest}
                             max={range.latest}
                             value={reviewIndex}
-                            onChange={(e) => onScrub(Number(e.target.value))}
+                            onChange={(e) => onScrub(e.target.value)}
+                            disabled={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
+                            title={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
                             aria-label="Frame scrubber"
                           />
                           <span className="mono">
@@ -1980,10 +1965,10 @@ export default function App() {
           Log {showLog ? "▾" : "▸"} ({log.length})
         </button>
         <span className="metrics">
-          Display={displayFps.toFixed(1)} fps | Algo={algoFps.toFixed(1)}/s | Valid={validFps.toFixed(1)}/s | Invalid=
-          {invalidFps.toFixed(1)}/s | Camera={running ? "running" : camStatus}, {dataRate.toFixed(1)} MB/s | Experiment:{" "}
+          Display={displayFps.toFixed(1)} fps | Algo={formatMetric(algoFps)}/s | Valid={formatMetric(validFps)}/s | Invalid=
+          {formatMetric(invalidFps)}/s | Camera={running ? "running" : camStatus}, {dataRate.toFixed(1)} MB/s | Experiment:{" "}
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
-          {expActive ? ` (buffered ${(expStatus?.valid_buffered ?? 0) + (expStatus?.invalid_buffered ?? 0)})` : ""}
+          {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
         </span>
       </footer>
       {showLog && (

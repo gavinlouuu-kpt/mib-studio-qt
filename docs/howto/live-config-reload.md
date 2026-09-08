@@ -4,6 +4,7 @@ This app reloads `config.json` at runtime whenever it is modified and saved, and
 
 - Processing parameters (`image_processing`) are applied to `ProcessingService` so realtime processing and classification reflect the new pipeline.
 - Flush interval (`buffer_threshold`) updates the round‑robin flush cadence.
+- Experiment buffer byte budget (`experiment_buffer_max_mb`, optional; default 512 MB, `0` = frame-count bound only) updates `ProcessingService::setMaxBufferedBytes` (issue #370).
 - Display refresh (`display_fps`) updates the `PlaybackPanel` timer without restarting the app.
 - Autofocus parameters are applied to `AutofocusService::Config`.
 

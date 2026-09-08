@@ -4,3 +4,5 @@ pub const HEADER_BYTES: usize = 96;
 pub const MAX_PAYLOAD_BYTES: u64 = 33554432;
 pub const MAX_PIXELS: u64 = 16777216;
 pub const MAX_DIMENSION: u64 = 8192;
+pub const JSON_TRANSPORT_VERSION: u32 = 1;
+pub const MAX_EVENT_TEXT_BYTES: usize = 4096;

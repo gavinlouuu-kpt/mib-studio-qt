@@ -9,6 +9,7 @@ publish = false
 tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
+mib-bridge = { path = "../../crates/mib-bridge", features = ["contract-fixtures"] }
 # Backend-constructing tests must run serially: the C++ backend has
 # process-global state, so cargo's default parallel test execution can SIGSEGV
 # when two AppBackends race in one process.

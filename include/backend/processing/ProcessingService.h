@@ -1,6 +1,10 @@
 #pragma once
 
+#include "backend/recording/RecordingAccounting.h"
+
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -13,7 +17,9 @@
 #include <opencv2/core.hpp>
 #include <deque>
 #include <cmath>
+#include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/EModulusLut.h"
+#include "backend/processing/ExperimentFrameBuffer.h"
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/HdfWriteQueue.h"
@@ -31,26 +37,15 @@ struct TargetGroupEvent {
     bool isTargetGroup{false};
     int objectId{-1};
     int trackId{-1};
+    // Source-frame identity for end-to-end latency correlation (see
+    // PipelineTimingRecorder). frameIndex is the FrameStore write index;
+    // hostTimestampUs is the host monotonic acquisition stamp (0 if unknown).
+    uint64_t frameIndex{0};
+    uint64_t hostTimestampUs{0};
 };
 
-struct ProcessedFrame {
-    uint64_t index{0};
-    uint64_t timestampNs{0};
-    cv::Mat originalImage;
-    cv::Mat processedImage; // mask
-    FilterResult validation;
-    // Multi-image series: additional images captured after the trigger frame.
-    // seriesImages[0] is the trigger image (same as originalImage), followed by subsequent frames.
-    // Empty when multi-image mode is disabled.
-    std::vector<cv::Mat> seriesImages;
-};
-
-struct BufferedFrameCounts {
-    size_t valid{0};
-    size_t invalid{0};
-
-    size_t total() const { return valid + invalid; }
-};
+// ProcessedFrame / BufferedFrameCounts live in ProcessingTypes.h (shared with
+// ExperimentFrameBuffer, issue #370).
 
 // One unit of work handed to the experiment flush write queue.
 struct ExperimentBatch {
@@ -83,7 +78,11 @@ public:
         size_t maxQueuedFrames{4096};
         size_t workerCount{1};
         int maxBatchDelayMs{10};
+        // Byte budget for queued input frames (issue #370); 0 = count-only.
+        uint64_t maxQueuedBytes{kDefaultBatchQueueMaxBytes};
     };
+    static constexpr uint64_t kDefaultBatchQueueMaxBytes = 256ULL * 1024 * 1024;
+    static constexpr uint64_t kDefaultExperimentBufferMaxBytes = 512ULL * 1024 * 1024;
 
     ProcessingService();
     ~ProcessingService();
@@ -207,6 +206,27 @@ public:
     void setFlushInterval(size_t frames); // Flush every N frames (default: 1000)
     size_t getFlushInterval() const;
     size_t getMaxBufferedFrames() const;
+    // Byte budget for the experiment buffer (issue #370): frames beyond it
+    // are evicted under the same declared policy as the frame cap (sampled
+    // invalid first) and accounted as persistenceCancelledByPolicy. 0 = none.
+    void setMaxBufferedBytes(uint64_t bytes);
+    uint64_t getMaxBufferedBytes() const;
+
+    // ---- Memory ownership report (issue #370) -------------------------------
+    // Current/peak bytes + counts per owner inside this service. Shared
+    // (refcounted) images retained by two owners are counted in both — each
+    // number is what that owner alone keeps alive (an upper bound).
+    struct MemoryStats {
+        backend::diagnostics::MemoryOwnerStats experimentBuffer; // frames awaiting flush
+        backend::diagnostics::MemoryOwnerStats monitoringRings;  // presentation rings (valid+invalid)
+        backend::diagnostics::MemoryOwnerStats batchQueue;       // async batch input queue
+        backend::diagnostics::MemoryOwnerStats flushQueue;       // batches handed to the HDF5 writer
+        backend::diagnostics::MemoryOwnerStats snapshot;         // latest realtime snapshot (mask)
+        std::vector<backend::diagnostics::MemoryOwnerStats> all() const {
+            return {experimentBuffer, monitoringRings, batchQueue, flushQueue, snapshot};
+        }
+    };
+    MemoryStats memoryStats() const;
     
     // Invalid frame sampling (save every Nth invalid frame to reduce file size)
     void setInvalidFrameSamplingRate(size_t rate); // Save every Nth invalid frame (default: 100, 1 = save all)
@@ -230,8 +250,31 @@ public:
         invalidFps1s_.store(0.0, std::memory_order_relaxed);
         algoAvgUs1s_.store(0.0, std::memory_order_relaxed);
         algoAvgUs1sUpdatedUs_.store(0, std::memory_order_relaxed);
+        resetIdentificationCounters();
     }
     
+    // ---- Identification funnel + loss counters (monotonic, always-on) ----
+    // Accumulated on the realtime inline path once per processed frame, off the
+    // trigger-critical section. Cheap relaxed atomics, readable from any thread.
+    // Rates are derived by the consumer from deltas against a wall clock. This
+    // is the quantitative basis for "loss of target identification": the funnel
+    // (frames -> objects -> valid -> target-group -> served) plus the per-reason
+    // rejection histogram, plus unserved extra targets a single frame produced.
+    struct IdentificationCounters {
+        uint64_t framesProcessed{0};   // frames reaching object validation
+        uint64_t framesWithObjects{0}; // frames with >=1 detected object
+        uint64_t validObjects{0};      // objects passing all range gates
+        uint64_t invalidObjects{0};    // objects failing >=1 gate
+        uint64_t targetGroupObjects{0};         // valid objects in the sort target group
+        uint64_t unservedTargetGroupObjects{0}; // target-group objects beyond the frame's
+                                                // first — no pulse is dispatched for them
+        // Invalid-reason histogram, indexed by science::InvalidReasonCode:
+        // {NoContour, Border, Area, Ring, Deform, AreaRatio}.
+        uint64_t reasonCounts[6]{};
+    };
+    IdentificationCounters getIdentificationCounters() const;
+    void resetIdentificationCounters();
+
     // Totals for current experiment
     uint64_t getTotalValidFlushed() const { return totalValidFlushed_.load(std::memory_order_relaxed); }
     uint64_t getTotalInvalidFlushed() const { return totalInvalidFlushed_.load(std::memory_order_relaxed); }
@@ -257,11 +300,84 @@ public:
 
     // Selected-core variant used by runtime paths. The static overloads above
     // remain as compatibility helpers and use bundled behavior.
+    // Compatibility wrapper over classifyFrameWithActiveKernel: returns true
+    // for Empty AND for Malformed/ProcessingFailed (callers that need to tell
+    // those apart must use the typed API — issue #367).
     bool isFrameEmptyWithActiveKernel(
         const backend::playback::Frame& frame,
         const ProcessingConfig& config,
         const Roi& roi,
         const std::shared_ptr<const cv::Mat>& background) const;
+
+    // Typed empty-frame classification (issue #367). A processing failure
+    // or a malformed frame is never reported as a valid empty frame.
+    struct FrameClassification {
+        enum class Kind { Empty, Candidate, Malformed, ProcessingFailed };
+        Kind kind{Kind::ProcessingFailed};
+        std::string detail; // populated for Malformed / ProcessingFailed
+        bool isEmpty() const { return kind == Kind::Empty; }
+        bool isCandidate() const { return kind == Kind::Candidate; }
+    };
+    FrameClassification classifyFrameWithActiveKernel(
+        const backend::playback::Frame& frame,
+        const ProcessingConfig& config,
+        const Roi& roi,
+        const std::shared_ptr<const cv::Mat>& background) const;
+
+    // Frames whose processing core call failed on the realtime path (never
+    // counted as empty). Monotonic for the service lifetime.
+    uint64_t getProcessingFailureCount() const {
+        return processingFailures_.load(std::memory_order_relaxed);
+    }
+
+    // Experiment frame accounting (issue #367). Reset by startExperiment();
+    // set the context (capture session generation, declared drop policy)
+    // before starting. The snapshot derives the persistence pending/failed
+    // terms from the current buffer + flush-queue state, so it is exact
+    // after finishFlush().
+    void setExperimentAccountingContext(uint64_t captureGeneration, bool policyAllowsDrops);
+    backend::recording::RecordingAccountingSnapshot experimentAccountingSnapshot() const;
+
+    // ---- Background identity + bounded calibration (issue #369) ----------
+    // Generation increments on every successful background publication
+    // (manual set, auto-capture, or calibration); 0 = never set.
+    uint64_t backgroundGeneration() const { return backgroundGeneration_.load(std::memory_order_acquire); }
+    // SHA-256 of the active background bytes (empty when none).
+    std::string backgroundSha256() const;
+
+    struct BackgroundCalibrationRequest {
+        uint32_t requiredAccepted{10};  // empty frames to average
+        uint32_t maxAttempts{200};      // frames examined before giving up
+        uint64_t timeoutMs{5000};       // wall-clock bound
+    };
+    enum class BackgroundCalibrationState {
+        Idle, Running, Succeeded, FailedInsufficient, FailedTimeout, FailedProcessing, Cancelled
+    };
+    struct BackgroundCalibrationStatus {
+        BackgroundCalibrationState state{BackgroundCalibrationState::Idle};
+        uint64_t operationGeneration{0};   // increments per start
+        uint64_t frozenConfigVersion{0};   // config version the recipe was frozen at
+        uint32_t attempted{0};
+        uint32_t accepted{0};
+        uint32_t rejectedNonEmpty{0};      // contaminated frames
+        uint32_t rejectedProcessingFailed{0};
+        uint64_t publishedBackgroundGeneration{0}; // set on success
+        std::string publishedSha256;
+        std::string message;
+        bool finished() const {
+            return state != BackgroundCalibrationState::Idle && state != BackgroundCalibrationState::Running;
+        }
+    };
+    // Finite, cancellable background acquisition on the realtime path: the
+    // recipe (config version) is frozen; empty frames are accepted and
+    // averaged, non-empty/failed frames rejected and counted; success
+    // publishes the candidate atomically (previous background stays active
+    // until then). Ends with an explicit result at requiredAccepted,
+    // maxAttempts, timeout, or cancel. Returns false if realtime is not
+    // running or another calibration is active.
+    bool startBackgroundCalibration(const BackgroundCalibrationRequest& request, std::string* error = nullptr);
+    void cancelBackgroundCalibration();
+    BackgroundCalibrationStatus backgroundCalibrationStatus() const;
 
     // ---- Batch mask generation ----
     // Pure pipeline: Gaussian blur -> (optional) background subtract -> binary
@@ -310,6 +426,7 @@ public:
         size_t maxQueuedFrames{4096};
         size_t workerCount{1};
         int maxBatchDelayMs{10};
+        uint64_t maxQueuedBytes{kDefaultBatchQueueMaxBytes}; // 0 = count-only (issue #370)
         ProcessingConfig processing;
         cv::Mat background;
         Roi roi{0, 0, 0, 0};
@@ -318,10 +435,13 @@ public:
     struct BatchPipelineStats {
         uint64_t framesAccepted{0};
         uint64_t framesDropped{0};
+        uint64_t framesDroppedByByteBudget{0}; // subset of framesDropped (issue #370)
         uint64_t framesProcessed{0};
         uint64_t batchesProcessed{0};
         size_t currentQueueDepth{0};
         size_t maxQueueDepth{0};
+        uint64_t currentQueueBytes{0};
+        uint64_t maxQueueBytes{0};
         size_t batchSize{0};
         size_t workerCount{0};
         bool running{false};
@@ -335,7 +455,8 @@ public:
     // emit completed batches through the callback.
     bool startBatchPipeline(BatchPipelineConfig config, BatchResultCallback callback);
     void stopBatchPipeline();
-    bool enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs = 0);
+    bool enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs = 0,
+                           uint64_t hostTimestampUs = 0);
     bool enqueueBatchFrame(const backend::playback::Frame& frame, uint64_t index);
     BatchPipelineStats getBatchPipelineStats() const;
 
@@ -365,6 +486,20 @@ private:
         cv::Mat gray;
         uint64_t index{0};
         uint64_t timestampNs{0};
+        uint64_t hostTimestampUs{0};
+    };
+
+    // Per-frame stamps handed to publishRealtimeValidationCallbacks so the
+    // shared callback chokepoint can emit one PipelineTimingRecorder record
+    // per processed frame. All fields are host monotonic microseconds;
+    // algoStartUs/algoEndUs are 0 in async-batch mode (aggregate batch timing
+    // only). present=false (the default) records nothing.
+    struct RealtimeFrameTiming {
+        bool present{false};
+        uint64_t frameIndex{0};
+        uint64_t grabUs{0};
+        uint64_t algoStartUs{0};
+        uint64_t algoEndUs{0};
     };
 
     void workerLoop();
@@ -375,14 +510,21 @@ private:
     BatchPipelineConfig makeRealtimeBatchPipelineConfig() const;
     void refreshRealtimeBatchPipelineConfig();
     void publishRealtimeBatchFrame(ProcessedFrame&& frame);
-    void publishRealtimeValidationCallbacks(const std::vector<FilterResult>& validations, uint64_t timestampNs);
+    void publishRealtimeValidationCallbacks(const std::vector<FilterResult>& validations,
+                                            uint64_t timestampNs,
+                                            const RealtimeFrameTiming& timing);
+    // Update the identification funnel + invalid-reason histogram from one
+    // frame's validations. Called off the trigger-critical path (after the
+    // trigger callback has already fired) with the loop's cached config.
+    void accumulateIdentificationCounters(const std::vector<FilterResult>& validations,
+                                          const ProcessingConfig& config,
+                                          double pixelToMicronFactor);
     void appendRealtimeMonitoringFrame(uint64_t index,
                                        uint64_t timestampNs,
                                        const FilterResult& validation,
                                        const cv::Mat& originalImage,
                                        const cv::Mat& processedImage);
     bool appendExperimentFrame(ProcessedFrame&& frame, bool isValid);
-    DroppedFrameCounts trimExperimentBuffersLocked(size_t maxBufferedFrames);
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
     FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi, 
                                       const ProcessingConfig& config, const cv::Mat& originalImage);
@@ -437,10 +579,22 @@ private:
     std::atomic<uint64_t> batchFramesAccepted_{0};
     std::atomic<uint64_t> batchFramesDropped_{0};
     std::atomic<uint64_t> batchFramesProcessed_{0};
+    // Frames dequeued by a batch worker whose callback has not returned yet
+    // (endExperiment() drains on it together with the queue).
+    std::atomic<uint64_t> batchFramesInFlight_{0};
+    // Experiment accounting settlement (issue #367): endExperiment() books
+    // still-unprocessed admitted frames as PendingAtStop under the exclusive
+    // lock; outcome/validation counting takes it shared, so no outcome can
+    // land after the settlement. Reset by startExperiment().
+    std::shared_mutex experimentSettleMutex_;
+    std::atomic<bool> experimentSettled_{false};
     std::atomic<uint64_t> batchBatchesProcessed_{0};
     std::atomic<uint64_t> batchAlgoMicrosTotal_{0};
     std::atomic<size_t> batchMaxQueueDepth_{0};
     std::atomic<size_t> batchWorkerCount_{0};
+    // Queued input bytes (issue #370): add on enqueue, subtract on dequeue.
+    backend::diagnostics::ByteAccountant batchQueueBytes_;
+    std::atomic<uint64_t> batchFramesDroppedByBytes_{0};
 
     // Realtime processing state
     std::thread realtimeThread_;
@@ -464,20 +618,46 @@ private:
     std::shared_ptr<cv::Mat> rtBgGray_; // shared_ptr to avoid cloning on access
     std::atomic<uint64_t> rtLastProcessed_{0};
 
-    std::mutex snapshotMutex_;
+    mutable std::mutex snapshotMutex_;
     std::shared_ptr<const RealtimeSnapshot> latestSnapshot_; // pointer-swap on publish (no mutex-held copy)
 
-    // Frame accumulation for experiment — deque for O(1) pop_front under backpressure
-    mutable std::mutex framesMutex_;
-    std::deque<ProcessedFrame> validFrames_;
-    std::deque<ProcessedFrame> invalidFrames_;
+    // Frame accumulation for experiment (issue #370: extracted, bounded by
+    // frames AND bytes, every eviction reported).
+    ExperimentFrameBuffer experimentBuffer_;
+    std::atomic<uint64_t> maxBufferedBytes_{kDefaultExperimentBufferMaxBytes};
 
     // Experiment flush write queue (decouples HDF5 writes from frame
     // accumulation). Created lazily on the first flush, drained by finishFlush.
-    std::mutex flushQueueMutex_;
+    mutable std::mutex flushQueueMutex_;
     std::unique_ptr<backend::recording::HdfWriteQueue<ExperimentBatch>> flushQueue_;
+    // Bytes of batches submitted to the writer and not yet written (issue #370).
+    backend::diagnostics::ByteAccountant flushQueueBytes_;
     std::function<void(const std::string&)> flushErrorCb_;
     std::atomic<bool> experimentActive_{false};
+    // Issue #367: per-experiment frame accounting + lifetime processing
+    // failure counter. Written by the realtime thread, the flush writer, and
+    // appendExperimentFrame; read by experimentAccountingSnapshot().
+    backend::recording::RecordingAccounting experimentAccounting_;
+    std::atomic<uint64_t> processingFailures_{0};
+    uint64_t experimentAccountingGeneration_{0};
+    bool experimentAccountingPolicyAllowsDrops_{false};
+    void noteRealtimeOutcome(uint64_t idx, backend::recording::FrameOutcome outcome,
+                             const backend::playback::Frame* frame = nullptr);
+    // Background calibration state (issue #369); bgCalMutex_ guards the
+    // accumulator, status_ fields are read under it too.
+    mutable std::mutex bgCalMutex_;
+    BackgroundCalibrationStatus bgCalStatus_;
+    BackgroundCalibrationRequest bgCalRequest_;
+    uint64_t bgCalOperationCounter_{0};
+    cv::Mat bgCalAccumulator_; // CV_64FC1 running sum of accepted frames
+    std::chrono::steady_clock::time_point bgCalDeadline_{};
+    std::atomic<bool> bgCalActive_{false};
+    std::atomic<uint64_t> backgroundGeneration_{0};
+    void bgCalObserve(backend::recording::FrameOutcome outcome, const backend::playback::Frame* frame);
+    void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
+    void noteRealtimeAdmitted(uint64_t idx);
+    void noteRealtimeLost(uint64_t count);
+    void noteRealtimeValidation(uint64_t idx, const std::vector<FilterResult>& validations);
     
     // Monitoring frames (always accumulated, separate from experiment)
     mutable std::mutex monitoringFramesMutex_;
@@ -489,15 +669,28 @@ private:
             : capacity_(capacity), data_(capacity) {}
 
         void clear() {
+            for (auto& f : data_) f = ProcessedFrame{}; // release retained images
             size_ = 0;
             head_ = 0;
+            bytes_ = 0;
         }
 
         size_t size() const { return size_; }
         size_t capacity() const { return capacity_; }
+        // Image bytes the ring keeps alive (issue #370); bounded by capacity.
+        uint64_t bytes() const { return bytes_; }
+        uint64_t peakBytes() const { return peakBytes_; }
+        uint64_t replaced() const { return replaced_; }
 
         void push_back(ProcessedFrame&& frame) {
+            const uint64_t incoming = processedFrameBytes(frame);
+            if (size_ == capacity_) {
+                bytes_ -= std::min(bytes_, processedFrameBytes(data_[head_]));
+                ++replaced_;
+            }
             data_[head_] = std::move(frame);
+            bytes_ += incoming;
+            if (bytes_ > peakBytes_) peakBytes_ = bytes_;
             head_ = (head_ + 1) % capacity_;
             if (size_ < capacity_) {
                 ++size_;
@@ -520,6 +713,9 @@ private:
         std::vector<ProcessedFrame> data_;
         size_t size_{0};
         size_t head_{0}; // next write position
+        uint64_t bytes_{0};
+        uint64_t peakBytes_{0};
+        uint64_t replaced_{0}; // entries overwritten by the bounded ring
     };
 
     FrameRingBuffer monitoringValidFrames_{1000};
@@ -572,6 +768,17 @@ private:
     std::atomic<uint64_t> droppedValidFrames_{0};
     std::atomic<uint64_t> droppedInvalidFrames_{0};
     std::atomic<uint64_t> lastDropLogUs_{0};
+
+    // Identification funnel + loss counters (see IdentificationCounters). The
+    // reason array is indexed by science::InvalidReasonCode (size checked with
+    // a static_assert in the .cpp).
+    std::atomic<uint64_t> idFramesProcessed_{0};
+    std::atomic<uint64_t> idFramesWithObjects_{0};
+    std::atomic<uint64_t> idValidObjects_{0};
+    std::atomic<uint64_t> idInvalidObjects_{0};
+    std::atomic<uint64_t> idTargetGroupObjects_{0};
+    std::atomic<uint64_t> idUnservedTargetGroupObjects_{0};
+    std::atomic<uint64_t> idReasonCounts_[6]{};
     
     // Pixel to micron conversion factor (default: 0.4886)
     std::atomic<double> pixelToMicronFactor_{0.4886};

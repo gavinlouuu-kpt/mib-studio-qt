@@ -32,9 +32,13 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake git libgl1-mesa-dev libhdf5-dev libopencv-dev \
+            build-essential cmake curl git libgl1-mesa-dev libhdf5-dev libopencv-dev \
             libspdlog-dev libsqlite3-dev libxkbcommon-dev nlohmann-json3-dev \
             pkg-config python3-pip qt6-base-dev qt6-serialport-dev
+
+      - name: Provision pinned MindVision SDK
+        shell: bash
+        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
 
       - name: Configure
         shell: bash
@@ -53,4 +57,4 @@ jobs:
           N="${{ github.event.inputs.repeats || '40' }}"
           ctest --test-dir build/linux-backend --output-on-failure --timeout 240 \
             --repeat until-fail:${N} \
-            -R "integration.e2e_pipeline_stress|integration.e2e_trigger_timing|integration.e2e_live_view_latency|integration.e2e_realtime_throughput|integration.e2e_batch_backpressure|backend.frame_store_resize_under_load"
+            -R "integration.e2e_pipeline_stress|integration.e2e_trigger_timing|integration.e2e_live_view_latency|integration.e2e_realtime_throughput|integration.e2e_batch_backpressure|backend.frame_store_resize_under_load|performance.memory_budget"

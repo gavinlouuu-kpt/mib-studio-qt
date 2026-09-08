@@ -229,11 +229,19 @@ if (-not $SkipBuild) {
     Write-Host "`n--- Step 3: Build Release ---" -ForegroundColor Cyan
 
     if ($DryRun) {
+        Write-Host "[DRY RUN] Would provision the pinned MindVision SDK and configure MIB_ENABLE_MINDVISION=ON" -ForegroundColor Gray
         Write-Host "[DRY RUN] Would reconfigure Release with the repository processing-core signer trust pin" -ForegroundColor Gray
         Write-Host "[DRY RUN] Would build the full Release target set and run CTest" -ForegroundColor Gray
     } else {
+        Write-Host "Provisioning the pinned MindVision SDK..." -ForegroundColor Yellow
+        $mindVisionSdk = & "$PSScriptRoot\scripts\provision-mindvision-sdk.ps1" `
+            -Destination "$PSScriptRoot\build\vendor\mindvision-sdk" `
+            -PassThru
         Write-Host "Configuring the repository processing-core signer trust pin..." -ForegroundColor Yellow
         cmake -S $PSScriptRoot -B "$PSScriptRoot\build" `
+            -DMIB_ENABLE_MINDVISION=ON `
+            "-DMIB_MINDVISION_SDK_ROOT=$($mindVisionSdk.SdkRoot)" `
+            "-DMIB_MINDVISION_RUNTIME_DIR=$($mindVisionSdk.RuntimeDir)" `
             -DMIB_REQUIRE_PROCESSING_CORE_SIGNER_SPKI=ON `
             "-DMIB_PROCESSING_CORE_SIGNER_SPKI_SHA256=$processingCoreSignerSpki" `
             "-DMIB_RELEASE_VERSION_OVERRIDE=$newVersion" `
@@ -256,6 +264,11 @@ if (-not $SkipBuild) {
         cmake --build "$PSScriptRoot\build" --config Release
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Build failed" -ForegroundColor Red
+            exit 1
+        }
+        $mindVisionRuntime = "$PSScriptRoot\build\Release\MVCAMSDK_X64.dll"
+        if (-not (Test-Path -LiteralPath $mindVisionRuntime -PathType Leaf)) {
+            Write-Host "ERROR: MindVision runtime is missing from the release payload: $mindVisionRuntime" -ForegroundColor Red
             exit 1
         }
         Write-Host "Running Release tests..." -ForegroundColor Yellow

@@ -180,6 +180,14 @@ The current release workflow publishes Windows x86_64 only; CI now also
 builds, audits, and signature-rehearses the Linux x86_64 `.so`, and the live
 signed Linux publication plus distro validation remain tracked in A13/#245.
 
+Python wheels are architecture-independent from that native-plugin rollout.
+Each `mib-processing-v<version>` release requires the complete CPython
+3.10–3.13 × `manylinux_2_28_{x86_64,aarch64}` wheel matrix (8 wheels).
+Every wheel is installed and imported in its matching cibuildwheel container;
+ARM64 uses QEMU on the x86_64 Actions runner. Release creation and immutable
+release reuse both fail if any Python/architecture pair is absent or an
+unexpected wheel is present.
+
 A Python consumer selects the first wheel compatible with its ordered PEP 425
 tags, downloads and SHA-256-verifies it, then fetches `profile_catalog_url` /
 `emodulus_lut_manifest_url` for the config and LUT pinned to the same

@@ -9,6 +9,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/services/ISerialPort.h"
+#include "backend/services/SerialBus.h"
 #include "backend/services/ModbusRtu.h"
 #include "backend/services/SyringePumpService.h"
 
@@ -16,7 +17,9 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <random>
 #include <vector>
 
@@ -45,7 +48,11 @@ namespace
             return static_cast<int>(req.size());
         }
         bool waitForBytesWritten(int) override { return true; }
-        bool waitForReadyRead(int) override { return !rx_.empty(); }
+        bool waitForReadyRead(int timeoutMs) override
+    {
+        if (rx_.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+        return !rx_.empty();
+    }
         std::vector<uint8_t> readAll() override
         {
             std::vector<uint8_t> r;
@@ -123,14 +130,18 @@ int main()
     namespace bridge = backend::bridge;
 
     const auto dataDir = makeTempDir();
+#if defined(_WIN32)
+    _putenv_s("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/manifest.json");
+#else
     setenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/manifest.json", 1);
+#endif
 
     {
         backend::AppBackend backendApp;
         bridge::BackendFacade facade(backendApp);
         MIB_REQUIRE(facade.initialize(dataDir.string()), "facade initializes");
 
-        backendApp.syringePump().setSerialPortFactory(
+        backendApp.serialBus().setSerialPortFactory(
             [] { return std::make_unique<FakeSerialPort>(1); });
 
         auto dispatchPump = [&facade](bridge::PumpCommand cmd) {

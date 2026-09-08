@@ -152,4 +152,73 @@ inline bool extractReadData(const Frame& resp, uint16_t count, Frame& out)
     return out.size() == dataBytes;
 }
 
+// Expected total length of a response frame once its header bytes are in,
+// derived from the function code (and, for FC03, the byte-count field):
+//  -1  -> need more bytes before the length is known
+//  -2  -> unknown function code, cannot frame the stream
+inline int expectedFrameLength(const Frame& partial)
+{
+    if (partial.size() < 2) return -1;
+    const uint8_t func = partial[1];
+    if (func & 0x80) return 5; // exception: addr + func|0x80 + code + crc
+    switch (func) {
+    case kFuncReadHolding:
+        if (partial.size() < 3) return -1;
+        return 5 + partial[2]; // addr+func+byteCount+data+crc
+    case kFuncWriteSingle:
+    case kFuncWriteMultiple:
+        return 8; // echo frame
+    default:
+        return -2;
+    }
+}
+
+// Strict request/response correlation. A response is accepted only when CRC,
+// slave address, function code, and the frame's own length fields all match
+// the outstanding request — anything else is classified, never guessed at.
+enum class ResponseVerdict {
+    Ok,            // well-formed reply to this exact request
+    Exception,     // well-formed Modbus exception from the addressed device
+    TooShort,      // fewer than the 4-byte RTU minimum
+    CrcMismatch,   // corrupt frame (possible duplicate-address collision)
+    WrongAddress,  // valid frame from a different slave address (stale/delayed)
+    WrongFunction, // valid frame from the right device, wrong function code
+    Malformed      // right addr+func but length/byte-count/echo fields disagree
+};
+
+inline ResponseVerdict classifyResponse(const Frame& request, const Frame& response)
+{
+    if (request.size() < 2) return ResponseVerdict::Malformed;
+    if (response.size() < 4) return ResponseVerdict::TooShort;
+    if (!responseCrcValid(response)) return ResponseVerdict::CrcMismatch;
+    const uint8_t reqAddr = request[0];
+    const uint8_t reqFunc = request[1];
+    if (response[0] != reqAddr) return ResponseVerdict::WrongAddress;
+    const uint8_t respFunc = response[1];
+    if (respFunc == (reqFunc | 0x80)) {
+        return response.size() == 5 ? ResponseVerdict::Exception : ResponseVerdict::Malformed;
+    }
+    if (respFunc != reqFunc) return ResponseVerdict::WrongFunction;
+    switch (reqFunc) {
+    case kFuncReadHolding: {
+        if (request.size() < 6) return ResponseVerdict::Malformed;
+        const uint16_t count = static_cast<uint16_t>((request[4] << 8) | request[5]);
+        Frame ignored;
+        return extractReadData(response, count, ignored) ? ResponseVerdict::Ok
+                                                         : ResponseVerdict::Malformed;
+    }
+    case kFuncWriteSingle:
+    case kFuncWriteMultiple: {
+        // Echo frames repeat the register address (FC06: + value, FC16: + count).
+        if (response.size() != 8 || request.size() < 6) return ResponseVerdict::Malformed;
+        if (response[2] != request[2] || response[3] != request[3]) {
+            return ResponseVerdict::Malformed;
+        }
+        return ResponseVerdict::Ok;
+    }
+    default:
+        return ResponseVerdict::Malformed;
+    }
+}
+
 } // namespace backend::services::modbus

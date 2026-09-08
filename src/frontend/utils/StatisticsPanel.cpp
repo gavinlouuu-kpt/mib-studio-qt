@@ -184,8 +184,12 @@ namespace frontend
         {
             cameraStatusValue_->setText(tr("Running"));
             cameraStatusValue_->setStyleSheet("font-weight: bold; color: green;");
-            cameraFpsValue_->setText(QString::number(data.cameraFps, 'f', 1));
-            cameraDataRateValue_->setText(QString::number(data.cameraDataRateMBps, 'f', 1) + " MB/s");
+            cameraFpsValue_->setText(data.cameraFpsText.isEmpty()
+                                         ? QString::number(data.cameraFps, 'f', 1)
+                                         : data.cameraFpsText);
+            cameraDataRateValue_->setText((data.cameraDataRateText.isEmpty()
+                                               ? QString::number(data.cameraDataRateMBps, 'f', 1)
+                                               : data.cameraDataRateText) + " MB/s");
         }
         else
         {

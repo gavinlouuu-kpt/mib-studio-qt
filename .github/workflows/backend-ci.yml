@@ -2,9 +2,9 @@ name: Backend CI
 
 on:
   push:
-    branches: [main, master, dev/react-tauri]
+    branches: [main, master, develop, dev/react-tauri]
   pull_request:
-    branches: [main, master, dev/react-tauri]
+    branches: [main, master, develop, dev/react-tauri]
 
 permissions:
   contents: read
@@ -35,7 +35,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
+            curl \
             git \
+            libcurl4-openssl-dev \
             libgl1-mesa-dev \
             libhdf5-dev \
             libopencv-dev \
@@ -48,6 +50,10 @@ jobs:
           # No Qt SDK: the backend is fully Qt-free (epic #246 Phase 1 exit
           # gate). Installing no qt6-* packages proves linux-backend-only
           # configures/builds/tests without Qt.
+
+      - name: Provision pinned MindVision SDK
+        shell: bash
+        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
 
       - name: Install Conan
         shell: bash

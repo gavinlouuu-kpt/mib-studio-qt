@@ -55,6 +55,12 @@ std::string fileUrlToPath(const std::string& url) {
     const std::string prefix = "file://";
     if (url.rfind(prefix, 0) != 0) return url; // already a path
     std::string rest = url.substr(prefix.size());
+    // Windows drive paths: "file://C:/x" and "file:///C:/x" -> "C:/x".
+    const auto isDrive = [](const std::string& s, std::size_t at) {
+        return s.size() > at + 1 && std::isalpha(static_cast<unsigned char>(s[at])) && s[at + 1] == ':';
+    };
+    if (isDrive(rest, 0)) return rest;
+    if (rest.size() > 1 && rest[0] == '/' && isDrive(rest, 1)) return rest.substr(1);
     // file://host/path -> drop host; file:///path -> rest starts with '/'.
     if (!rest.empty() && rest[0] != '/') {
         const auto slash = rest.find('/');

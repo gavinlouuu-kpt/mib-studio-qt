@@ -11,8 +11,9 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/linux/conan_toolchain.cmake",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "ON",
         "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
-        "MIB_USE_SENTRY": "OFF"
+        "MIB_USE_SENTRY": "ON"
       },
       "condition": {
         "type": "equals",
@@ -29,8 +30,9 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_IGNORE_PREFIX_PATH": "/home/gavin/miniconda3;/home/linuxbrew/.linuxbrew",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "ON",
         "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
-        "MIB_USE_SENTRY": "OFF"
+        "MIB_USE_SENTRY": "ON"
       },
       "condition": {
         "type": "equals",
@@ -49,8 +51,9 @@
         "MIB_BUILD_BACKEND_ONLY": "ON",
         "BUILD_TESTING": "ON",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "ON",
         "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
-        "MIB_USE_SENTRY": "OFF"
+        "MIB_USE_SENTRY": "ON"
       },
       "condition": {
         "type": "equals",
@@ -76,7 +79,8 @@
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan_toolchain.cmake",
-        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW"
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "MIB_ENABLE_MINDVISION": "ON"
       }
     }
   ],

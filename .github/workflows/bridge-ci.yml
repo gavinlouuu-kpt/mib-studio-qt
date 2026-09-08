@@ -6,7 +6,7 @@ name: Bridge CI
 
 on:
   push:
-    branches: [dev/react-tauri]
+    branches: [dev/react-tauri, develop, "agent-b/**"]
     paths:
       - "crates/mib-bridge/**"
       - "include/backend/**"
@@ -16,7 +16,7 @@ on:
       - "CMakePresets.json"
       - ".github/workflows/bridge-ci.yml"
   pull_request:
-    branches: [dev/react-tauri]
+    branches: [dev/react-tauri, develop, "agent-b/**"]
     paths:
       - "crates/mib-bridge/**"
       - "include/backend/**"
@@ -70,7 +70,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --preset linux-backend-only
+          # Headless lane, no camera SDK: develop enables MindVision by
+          # default, so opt out explicitly (SDK-free build, MIB_HAS_MINDVISION=0).
+          cmake --preset linux-backend-only -DMIB_ENABLE_MINDVISION=OFF
           cmake --build --preset linux-backend-only-build \
             --target mib_backend mib_processing
 

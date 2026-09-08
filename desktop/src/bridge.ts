@@ -3,42 +3,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 export type { FrameMeta, FramePacket } from "./framePacket";
-
-export interface CmdResult {
-  ok: boolean;
-  command: number;
-  message: string;
-  /** Non-zero when the command started/targeted a tracked long-running
-   *  operation (bridge schema v4); correlates with OperationStatus events. */
-  operation_id: number;
-}
-
-export interface ProcessingStats {
-  valid: boolean;
-  algo_fps1s: number;
-  valid_fps1s: number;
-  invalid_fps1s: number;
-  pixel_to_micron: number;
-}
-
-/** Experiment lifecycle snapshot (bridge schema v5, BE-4). `state` is a
- *  contract EXPERIMENT_STATES value. */
-export interface ExperimentStatus {
-  valid: boolean;
-  state: number;
-  start_time_ns: number;
-  end_time_ns: number;
-  valid_buffered: number;
-  invalid_buffered: number;
-  valid_saved: number;
-  invalid_saved: number;
-  dropped_valid: number;
-  dropped_invalid: number;
-  flushing: boolean;
-  cancelled: boolean;
-  output_path: string;
-  message: string;
-}
+import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus, decodeProcessingStats, wireU64, type CmdResult } from "./eventAdapter";
+export type { BridgeEvent, CmdResult, ExperimentReadiness, ExperimentStatus, ProcessingStats, ReadinessGate } from "./eventAdapter";
 
 /** Autofocus/nanopositioner status (schema v11, BE-8). `ring_ratio_age_us`
  *  makes focus-metric staleness explicit (0 = never updated). */
@@ -243,21 +209,17 @@ export interface TriggerStatus {
   periodic_interval_ms: number;
 }
 
-export interface BridgeEvent {
-  kind: string;
-  u0: number; u1: number; u2: number; u3: number; u4: number; u5: number;
-  f0: number; f1: number; f2: number;
-  b0: boolean; b1: boolean;
-  text: string;
+async function invokeCommand(command: string, args?: Record<string, unknown>): Promise<CmdResult> {
+  return decodeCommandResult(await invoke<unknown>(command,args));
 }
 
 // Presentation generation guards only; authoritative session identity is still
 // an Agent A dependency. Local source mutations make older replies unusable.
 let frameGeneration = 0;
 let sourceMutations = 0;
-async function sourceMutation<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+async function sourceMutation(command: string, args?: Record<string, unknown>): Promise<CmdResult> {
   frameGeneration++; sourceMutations++;
-  try { return await invoke<T>(command, args); }
+  try { return await invokeCommand(command, args); }
   finally { sourceMutations--; frameGeneration++; }
 }
 async function pullFrame(command: string, kind: number, args?: Record<string, unknown>) {
@@ -273,34 +235,38 @@ export const bridge = {
   isInitialized: () => invoke<boolean>("is_initialized"),
   init: (dataDir: string) => invoke<boolean>("init", { dataDir }),
   configureMock: (frameDir: string, frameIntervalMs: number, loopFiles: boolean) =>
-    sourceMutation<CmdResult>("configure_mock", { frameDir, frameIntervalMs, loopFiles }),
-  startCapture: () => sourceMutation<CmdResult>("start_capture"),
-  stopCapture: () => sourceMutation<CmdResult>("stop_capture"),
-  seekLatest: () => invoke<CmdResult>("seek_latest"),
-  pollEvents: () => invoke<BridgeEvent[]>("poll_events"),
+    sourceMutation("configure_mock", { frameDir, frameIntervalMs, loopFiles }),
+  startCapture: () => sourceMutation("start_capture"),
+  stopCapture: () => sourceMutation("stop_capture"),
+  seekLatest: () => invokeCommand("seek_latest"),
+  pollEvents: async () => decodeEvents(await invoke<unknown>("poll_events_exact")),
   fetchFrame: () => pullFrame("fetch_frame_packet", 1),
   // Recording + review (bridge schema v2).
-  startRecording: (filePath: string) => invoke<CmdResult>("start_recording", { filePath }),
-  stopRecording: () => invoke<CmdResult>("stop_recording"),
-  loadRecording: (filePath: string) => sourceMutation<CmdResult>("load_recording", { filePath }),
-  seekIndex: (frameIndex: number) => invoke<CmdResult>("seek_index", { frameIndex }),
+  startRecording: (filePath: string) => invokeCommand("start_recording", { filePath }),
+  stopRecording: () => invokeCommand("stop_recording"),
+  loadRecording: (filePath: string) => sourceMutation("load_recording", { filePath }),
+  seekIndex: (frameIndex: number | string | bigint) => invokeCommand("seek_index", { frameIndex: decimalU64(frameIndex) }),
   fetchFrameByIndex: async (frameIndex: number | string | bigint) =>
     pullFrame("fetch_indexed_frame_packet", 2, { frameIndex: decimalU64(frameIndex) }),
   // Processing (bridge schema v3).
   applyProcessing: (realtimeEnabled: boolean, pixelToMicron: number) =>
-    sourceMutation<CmdResult>("apply_processing", { realtimeEnabled, pixelToMicron }),
-  fetchProcessingStats: () => invoke<ProcessingStats>("fetch_processing_stats"),
+    sourceMutation("apply_processing", { realtimeEnabled, pixelToMicron }),
+  fetchProcessingStats: async () => decodeProcessingStats(await invoke<unknown>("fetch_processing_stats")),
   // Operation state + bounded-queue observability (bridge schema v4, BE-1).
-  cancelOperation: (operationId: number) =>
-    invoke<CmdResult>("cancel_operation", { operationId }),
-  queueOverflowTotal: () => invoke<number>("queue_overflow_total"),
+  cancelOperation: (operationId: number | string | bigint) =>
+    invokeCommand("cancel_operation", { operationId: decimalU64(operationId) }),
+  queueOverflowTotal: async () => wireU64(await invoke<unknown>("queue_overflow_total")),
   // Experiment lifecycle (bridge schema v5, BE-4) — the backend owns
   // preconditions, accumulation, flush, metadata ordering, and recovery.
   experimentStart: (outputPath: string) =>
-    invoke<CmdResult>("experiment_start", { outputPath }),
-  experimentStop: () => invoke<CmdResult>("experiment_stop"),
-  experimentCancel: () => invoke<CmdResult>("experiment_cancel"),
-  fetchExperimentStatus: () => invoke<ExperimentStatus>("fetch_experiment_status"),
+    invokeCommand("experiment_start", { outputPath }),
+  experimentStop: () => invokeCommand("experiment_stop"),
+  experimentCancel: () => invokeCommand("experiment_cancel"),
+  fetchExperimentStatus: async () => decodeExperimentStatus(await invoke<unknown>("fetch_experiment_status")),
+  // ABI 13: gate list + the generation a Start must present (the bridge's
+  // experimentStart evaluates it itself; this is for the preflight UI).
+  fetchExperimentReadiness: async (outputPath: string) =>
+    decodeExperimentReadiness(await invoke<unknown>("fetch_experiment_readiness", { outputPath })),
   // Platform/shell services (BE-9): stable app paths, persisted shell
   // preferences (survive webview-storage clearing), and shell logging into
   // the app log directory.
@@ -315,31 +281,31 @@ export const bridge = {
     invoke<void>("shell_log", { level, message }),
   // Autofocus / nanopositioner (schema v11, BE-8).
   autofocusConnect: (comPort: number, baudRate: number, deviceAddress: number) =>
-    invoke<CmdResult>("autofocus_connect", { comPort, baudRate, deviceAddress }),
-  autofocusDisconnect: () => invoke<CmdResult>("autofocus_disconnect"),
+    invokeCommand("autofocus_connect", { comPort, baudRate, deviceAddress }),
+  autofocusDisconnect: () => invokeCommand("autofocus_disconnect"),
   autofocusSetEnabled: (enabled: boolean) =>
-    invoke<CmdResult>("autofocus_set_enabled", { enabled }),
-  autofocusJog: (up: boolean) => invoke<CmdResult>("autofocus_jog", { up }),
+    invokeCommand("autofocus_set_enabled", { enabled }),
+  autofocusJog: (up: boolean) => invokeCommand("autofocus_jog", { up }),
   autofocusSetConfig: (config: AutofocusConfig) =>
-    invoke<CmdResult>("autofocus_set_config", { config }),
+    invokeCommand("autofocus_set_config", { config }),
   fetchAutofocusStatus: () => invoke<AutofocusStatus>("fetch_autofocus_status"),
   fetchAutofocusConfig: () => invoke<AutofocusConfig>("fetch_autofocus_config"),
   // Syringe pumps (schema v10, BE-7): pump 0 = Sample, 1 = Sheath.
   pumpConnect: (pump: number, comPort: number, baudRate: number, modbusAddress: number) =>
-    invoke<CmdResult>("pump_connect", { pump, comPort, baudRate, modbusAddress }),
-  pumpDisconnect: (pump: number) => invoke<CmdResult>("pump_disconnect", { pump }),
+    invokeCommand("pump_connect", { pump, comPort, baudRate, modbusAddress }),
+  pumpDisconnect: (pump: number) => invokeCommand("pump_disconnect", { pump }),
   pumpSetFlowRate: (pump: number, rate: number, unit: number) =>
-    invoke<CmdResult>("pump_set_flow_rate", { pump, rate, unit }),
+    invokeCommand("pump_set_flow_rate", { pump, rate, unit }),
   pumpSetDirection: (pump: number, direction: number) =>
-    invoke<CmdResult>("pump_set_direction", { pump, direction }),
-  pumpStart: (pump: number) => invoke<CmdResult>("pump_start", { pump }),
-  pumpStop: (pump: number) => invoke<CmdResult>("pump_stop", { pump }),
+    invokeCommand("pump_set_direction", { pump, direction }),
+  pumpStart: (pump: number) => invokeCommand("pump_start", { pump }),
+  pumpStop: (pump: number) => invokeCommand("pump_stop", { pump }),
   pumpPurge: (pump: number, direction: number) =>
-    invoke<CmdResult>("pump_purge", { pump, direction }),
-  pumpStopPurge: (pump: number) => invoke<CmdResult>("pump_stop_purge", { pump }),
+    invokeCommand("pump_purge", { pump, direction }),
+  pumpStopPurge: (pump: number) => invokeCommand("pump_stop_purge", { pump }),
   pumpSetSyringeVolume: (pump: number, volume: number, unit: number) =>
-    invoke<CmdResult>("pump_set_syringe_volume", { pump, volume, unit }),
-  pumpPollStatus: (pump: number) => invoke<CmdResult>("pump_poll_status", { pump }),
+    invokeCommand("pump_set_syringe_volume", { pump, volume, unit }),
+  pumpPollStatus: (pump: number) => invokeCommand("pump_poll_status", { pump }),
   fetchPumpStatus: (pump: number) => invoke<PumpStatus>("fetch_pump_status", { pump }),
   pumpScanAddresses: (
     comPort: number,
@@ -348,7 +314,7 @@ export const bridge = {
     endAddress: number,
     timeoutMs: number,
   ) =>
-    invoke<CmdResult>("pump_scan_addresses", { comPort, baudRate, startAddress, endAddress, timeoutMs }),
+    invokeCommand("pump_scan_addresses", { comPort, baudRate, startAddress, endAddress, timeoutMs }),
   // Paged HDF5 review + export jobs (schema v9, BE-6).
   fetchReviewMetadata: () => invoke<ReviewMetadata>("fetch_review_metadata"),
   fetchReviewMetricsPage: (valid: boolean, offset: number, count: number) =>
@@ -356,43 +322,43 @@ export const bridge = {
   fetchReviewImage: async (dataset: number, index: number | string | bigint) =>
     pullFrame("fetch_review_frame_packet", 3, { dataset, index: decimalU64(index) }),
   reviewExportCsv: (outputPath: string) =>
-    invoke<CmdResult>("review_export_csv", { outputPath }),
+    invokeCommand("review_export_csv", { outputPath }),
   // Processing config / ROI / background / core identity (schema v8, BE-3).
   fetchProcessingConfigJson: () =>
     invoke<{ valid: boolean; json: string }>("fetch_processing_config_json"),
   applyProcessingConfigJson: (json: string) =>
-    sourceMutation<CmdResult>("apply_processing_config_json", { json }),
+    sourceMutation("apply_processing_config_json", { json }),
   setProcessingRoi: (x: number, y: number, w: number, h: number) =>
-    sourceMutation<CmdResult>("set_processing_roi", { x, y, w, h }),
+    sourceMutation("set_processing_roi", { x, y, w, h }),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
-    sourceMutation<CmdResult>("set_background_from_current_frame"),
-  clearBackgroundImage: () => sourceMutation<CmdResult>("clear_background_image"),
+    sourceMutation("set_background_from_current_frame"),
+  clearBackgroundImage: () => sourceMutation("clear_background_image"),
   fetchProcessingCoreStatus: () =>
     invoke<ProcessingCoreStatus>("fetch_processing_core_status"),
   // Camera discovery/selection (bridge schema v7, BE-2).
   fetchCameraDiscovery: () => invoke<CameraDiscovery>("fetch_camera_discovery"),
   fetchCameraSelection: () => invoke<CameraSelection>("fetch_camera_selection"),
   selectHardwareCamera: (interfaceIndex: number, deviceIndex: number, label: string) =>
-    sourceMutation<CmdResult>("select_hardware_camera", { interfaceIndex, deviceIndex, label }),
+    sourceMutation("select_hardware_camera", { interfaceIndex, deviceIndex, label }),
   selectMindVisionCamera: (cameraIndex: number, label: string, configPath: string) =>
-    sourceMutation<CmdResult>("select_mindvision_camera", { cameraIndex, label, configPath }),
+    sourceMutation("select_mindvision_camera", { cameraIndex, label, configPath }),
   applyCameraScript: (scriptPath: string) =>
-    sourceMutation<CmdResult>("apply_camera_script", { scriptPath }),
-  resetHardwareCamera: () => sourceMutation<CmdResult>("reset_hardware_camera"),
+    sourceMutation("apply_camera_script", { scriptPath }),
+  resetHardwareCamera: () => sourceMutation("reset_hardware_camera"),
   // Monitoring + sorter trigger (bridge schema v6, BE-5). Monitoring is
   // visibility-gated: enable only while the Monitoring view is shown.
   monitoringSetActive: (active: boolean) =>
-    invoke<CmdResult>("monitoring_set_active", { active }),
-  monitoringClear: () => invoke<CmdResult>("monitoring_clear"),
+    invokeCommand("monitoring_set_active", { active }),
+  monitoringClear: () => invokeCommand("monitoring_clear"),
   fetchMonitoringSnapshot: (maxRows: number) =>
     invoke<MonitoringSnapshot>("fetch_monitoring_snapshot", { maxRows }),
   triggerSetPulseDuration: (pulseUs: number) =>
-    invoke<CmdResult>("trigger_set_pulse_duration", { pulseUs }),
-  triggerManualPulse: () => invoke<CmdResult>("trigger_manual_pulse"),
+    invokeCommand("trigger_set_pulse_duration", { pulseUs }),
+  triggerManualPulse: () => invokeCommand("trigger_manual_pulse"),
   triggerPeriodicStart: (intervalMs: number) =>
-    invoke<CmdResult>("trigger_periodic_start", { intervalMs }),
-  triggerPeriodicStop: () => invoke<CmdResult>("trigger_periodic_stop"),
+    invokeCommand("trigger_periodic_start", { intervalMs }),
+  triggerPeriodicStop: () => invokeCommand("trigger_periodic_stop"),
   fetchTriggerStatus: () => invoke<TriggerStatus>("fetch_trigger_status"),
   /** Deprecated: split-frame access cannot guarantee identity. */
   frameBytes: async (): Promise<Uint8Array> => { throw new Error("FRAME_PROTOCOL_UPGRADE_REQUIRED"); },

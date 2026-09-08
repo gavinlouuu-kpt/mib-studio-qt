@@ -199,3 +199,30 @@ Two gates, both without a real display:
 - An **empty `data_dir`** passed to the `init` command resolves to Tauri's
   `app_data_dir` — `AppBackend::initialize("")` rejects an empty path (found
   by driving the UI under Xvfb: init always failed before this).
+
+## Exact event contract continuation (ABI 12)
+
+The desktop now uses versioned `poll_events_exact` JSON and one named event
+adapter. Commands/experiment snapshots retain u64 identities as decimal strings;
+legacy cxx slots are preserved with exact companion fields where floats previously
+lost precision. Processing metrics preserve unavailable/non-finite values instead
+of zero; unknown clock domains cannot produce elapsed-time claims. See
+`docs/architecture/event-json-v1.md` and
+[[../task/2026-09-07-agent-b-event-contracts]] for executed evidence and gaps.
+
+## Experiment status and readiness (ABI 13, issue #372)
+
+`fetch_experiment_status` returns the shared coordinator's full status
+(`start/readiness/capture_generation`, `persistence_*`, `terminal`,
+`finalization_ok`, `completion` as a `run_completion_states` value,
+`completion_reason`, `fault_code/message`) and the new
+`fetch_experiment_readiness(outputPath)` the gate list
+(`readiness_gate_statuses`; Fail/Unavailable block) with the generation a
+Start must present. The event JSON gains the typed companions listed in
+`docs/architecture/event-json-v1.md`; `experiment_completion` is a decimal
+string like every enum slot. `eventAdapter.ts` decodes both
+(`decodeExperimentStatus`, `decodeExperimentReadiness`) and refuses unknown
+completion / gate-status values; `bridge.ts` exposes
+`fetchExperimentReadiness`. Guards: `eventAdapter.test.ts` (golden decode
+with typed fields, readiness gates, unknown enum refusal),
+`event_transport::tests::cpp_rust_json_matches_shared_golden`.

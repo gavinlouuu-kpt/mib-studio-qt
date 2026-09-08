@@ -128,3 +128,18 @@ creation of an export engine. Its existing tests include
 
 Code commit for this session: `c7a9a6b`. The candidate manifest records fixture,
 lockfile and implementation hashes without a self-referential commit hash.
+
+## Continuation: event contracts and prior CI
+
+#374 native Desktop CI run 34085079050 passed on 0e2d92b: Qt-free archives,
+Tauri build, 12 desktop Rust tests, frontend/build/drift and Xvfb smoke. This
+supersedes the earlier pending native-build status for that exact revision only.
+It does not establish actual webview workflow, full CTest, Qt comparison or
+accepted-backend evidence.
+
+Next stacked branch agent-b/event-contracts adds lossless event/command/run
+snapshot JSON, exact companions for floating integer slots, named event decoding,
+explicit invalid metrics and shared cross-language fixtures. Local tests: 116
+passing; strict frontend build passes. New native fixture CI is required.
+Details: `docs/architecture/event-json-v1.md` and
+`knowledge_map/task/2026-09-07-agent-b-event-contracts.md`.

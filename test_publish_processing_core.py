@@ -28,6 +28,17 @@ def make_wheel(root: Path, version: str = "0.1.0", python: str = "cp311") -> Pat
     return wheel
 
 
+def make_pyproject(root: Path, version: str = "0.1.0") -> Path:
+    # CLI tests must not depend on the real repository version: the publisher
+    # cross-checks the authoritative pyproject, so fixtures carry their own.
+    path = root / "pyproject.toml"
+    path.write_text(
+        f'[project]\nname = "mib-processing"\nversion = "{version}"\n',
+        encoding="utf-8",
+    )
+    return path
+
+
 def make_manifest(root: Path, version: str, published_at: str = "2026-07-13T00:00:00Z") -> dict:
     wheel = make_wheel(root, version)
     return publish_processing_core.build_manifest(
@@ -453,6 +464,7 @@ class CommandLineTest(unittest.TestCase):
             make_wheel(destination)
 
         with (
+            tempfile.TemporaryDirectory() as temp_dir,
             mock.patch.object(
                 publish_processing_core,
                 "inspect_github_release",
@@ -463,6 +475,8 @@ class CommandLineTest(unittest.TestCase):
         ):
             result = publish_processing_core.main([
                 "--from-release", "mib-processing-v0.1.0",
+                "--wheel-version", "0.1.0",
+                "--pyproject", str(make_pyproject(Path(temp_dir))),
                 "--endpoint", "https://r2.invalid",
                 "--upload-method", "s3",
             ])
@@ -492,6 +506,8 @@ class CommandLineTest(unittest.TestCase):
             for output in outputs:
                 result = publish_processing_core.main([
                     "--from-release", "mib-processing-v0.1.0",
+                    "--wheel-version", "0.1.0",
+                    "--pyproject", str(make_pyproject(root)),
                     "--dry-run",
                     "--manifest-out", str(output),
                 ])
@@ -530,6 +546,8 @@ class CommandLineTest(unittest.TestCase):
 
             result = publish_processing_core.main([
                 "--from-release", "mib-processing-v0.1.0",
+                "--wheel-version", "0.1.0",
+                "--pyproject", str(make_pyproject(root)),
                 "--release-assets-dir", str(assets),
                 "--published-at", "2026-07-13T00:00:00Z",
                 "--dry-run",
@@ -567,6 +585,8 @@ class CommandLineTest(unittest.TestCase):
             ):
                 result = publish_processing_core.main([
                     "--wheel", str(wheel),
+                    "--wheel-version", "0.1.0",
+                    "--pyproject", str(make_pyproject(wheel.parent)),
                     "--published-at", "2026-07-13T00:00:00Z",
                     "--endpoint", "https://r2.invalid",
                     "--upload-method", "s3",
@@ -594,6 +614,8 @@ class CommandLineTest(unittest.TestCase):
             ):
                 result = publish_processing_core.main([
                     "--wheel", str(wheel),
+                    "--wheel-version", "0.1.0",
+                    "--pyproject", str(make_pyproject(wheel.parent)),
                     "--published-at", "2026-07-13T00:00:00Z",
                     "--endpoint", "https://r2.invalid",
                     "--upload-method", "s3",
@@ -607,6 +629,8 @@ class CommandLineTest(unittest.TestCase):
             with mock.patch.object(publish_processing_core, "upload_object") as upload:
                 result = publish_processing_core.main([
                     "--wheel", str(wheel),
+                    "--wheel-version", "0.1.0",
+                    "--pyproject", str(make_pyproject(wheel.parent)),
                     "--endpoint", "https://r2.invalid",
                     "--upload-method", "s3",
                 ])
