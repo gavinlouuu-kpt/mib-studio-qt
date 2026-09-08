@@ -277,6 +277,13 @@ mib_add_backend_test_executable(hdf5_resilience_test recording/hdf5_resilience_t
 add_test(NAME recording.hdf5_resilience COMMAND $<TARGET_FILE:hdf5_resilience_test>)
 set_tests_properties(recording.hdf5_resilience PROPERTIES LABELS "recording;backend;hdf5")
 
+# Process exit with an HDF5 file left open under a live writer must not crash
+# in the library's atexit teardown (installed-app WER crash, 2026-09-07).
+mib_add_backend_test_executable(hdf5_exit_teardown_test recording/hdf5_exit_teardown_test.cpp)
+target_link_libraries(hdf5_exit_teardown_test PRIVATE Threads::Threads)
+add_test(NAME recording.hdf5_exit_teardown COMMAND $<TARGET_FILE:hdf5_exit_teardown_test>)
+set_tests_properties(recording.hdf5_exit_teardown PROPERTIES LABELS "recording;backend;hdf5;safety" TIMEOUT 60)
+
 mib_add_backend_test_executable(hdf5_save_performance_test recording/hdf5_save_performance_test.cpp)
 add_test(NAME recording.hdf5_save_performance COMMAND $<TARGET_FILE:hdf5_save_performance_test>)
 set_tests_properties(recording.hdf5_save_performance PROPERTIES LABELS "recording;backend;hdf5;performance")

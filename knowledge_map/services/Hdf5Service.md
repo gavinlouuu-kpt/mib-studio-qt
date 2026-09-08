@@ -189,3 +189,19 @@ the run info; legacy files return `false` with an Unsupported descriptor.
   before `stopFrameRecording()` returned. With interval flushing, a kill
   between flushes can leave up to `MIB_HDF5_FLUSH_INTERVAL_MS` of frames
   unflushed.
+
+## Process exit and the HDF5 atexit teardown (2026-09-08)
+
+The constructor calls `H5dont_atexit()` once (before any other HDF5 call),
+so the library never tears itself down in the CRT exit chain. The installed
+1.0.7 app crashed exactly there on 2026-09-07 (WER bucket
+`INVALID_POINTER_READ_c0000005_hdf5.dll`: `H5_term_library` →
+`H5D_close` → `H5FL_blk_free` on a chunk cache already released) because
+the process exited with an experiment file still open under a live writer.
+Files are closed by their owners (recording stop, experiment finalization,
+this destructor); whatever is still open at exit is leaked, never closed by
+the library under a running thread. Guard: `recording.hdf5_exit_teardown`
+(exits with a file open and a detached writer; must exit 0 — it guards the
+property, it did not reproduce the crash). Evidence:
+`docs/evidence/2026-09-08-crash-dump-review.md`.
+
