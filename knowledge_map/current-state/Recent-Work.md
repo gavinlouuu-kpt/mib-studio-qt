@@ -5,6 +5,80 @@
 
 ## Features shipped
 
+- **Fix: nanopositioner probe rejected a resting stage** (2026-09-08) — the
+  CoreMorrow controller at 0 V reports about -1 mV; `PROBE_VOLTAGE_MIN` was
+  0.0, so `AutofocusService::probeComPort` failed about one run in four
+  (`hardware.nanopositioner` flaked 1/4 on the bench) and the app's boot
+  path fell back to "saved nanopositioner COM6 did not validate; scanning all
+  ports". Floor is now -0.05 V. See [[../services/AutofocusService]].
+
+- **Fix: app locked out of the EGrabber camera at boot on beta fa6e6ba
+  ("No camera found" while the Connect tab lists it)** (2026-09-08) —
+  Hardware-bench validation of `v1.0.7-beta.fa6e6ba` on the Coaxlink Quad
+  CXP-12 / EoSens 2.0MCX12 bench: the standalone hardware tests streamed
+  from the camera, but the app reported "No camera found" and then every
+  Connect / capture start / camera-script attempt failed with `GenTL error
+  -1004, GCInitLib: Requested resource is already in use`, 4 of 4 launches.
+  Root cause (isolated with a direct probe, both call orders, persistent
+  after 3 s): the MindVision SDK's `CameraEnumerateDevice()` leaves the
+  Euresys GenTL producer unopenable for the rest of the process; there is no
+  SDK teardown. Stable v1.0.7 never had the bug because MindVision was
+  compiled out; `42cd7a54` enabled it by default, and `discoverAllCameras`
+  (DeviceInitManager worker) ran MindVision enumeration 450 ms after the
+  Connect tab's EGrabber discovery. Fix: [[../services/CameraControlService]]
+  `discoverMindVisionCameras()` decides once per process — if
+  `discoverFramegrabbers()` finds an EGrabber device, MindVision enumeration
+  is skipped with an INFO line (`MIB_MINDVISION_ENUMERATE_WITH_EGRABBER=1`
+  overrides). New hardware test `hardware.discovery_reentry` replays the boot
+  sequence with switches for thread and MindVision step; it failed in all
+  four modes before the fix and passes after. Full hardware lane green after
+  the fix; app auto-connects and captures again. Files:
+  `CameraControlService.cpp`, `tests/hardware/hw_discovery_reentry_test.cpp`,
+  `tests/CMakeLists.txt`.
+
+- **Fix: `-terminate` crash artifacts never produced on Windows for
+  exceptions escaping a worker thread** (2026-09-07) — the beta
+  pipeline's Windows CI (CTest in `build-windows.yml`) was failing
+  `backend.crash_reporter_terminate` on every `develop` push since issue
+  #347's fix (011f565), blocking the auto-beta release. Root cause:
+  [[../services/CrashReporter]]'s `SetUnhandledExceptionFilter(sehHandler)`
+  silently replaces the CRT's own top-level filter, which is what
+  normally recognizes the MSVC C++ exception SEH code (`0xE06D7363`) and
+  calls `std::terminate()`. Without that translation, an exception
+  escaping every C++ frame never reached `terminateHandler` —
+  `sehHandler` intercepted it first, wrote generic `-seh.*` files, and
+  let Windows tear the process down directly. Two `sehHandler`-based
+  attempts changed nothing, which showed the real mechanism: MSVC's
+  `std::thread` shim is `noexcept` (terminate is called in the search
+  phase, the top-level filter never runs), MSVC's `set_terminate` is
+  **per-thread** so the worker thread only ever had the CRT default
+  `abort()` (→ `-sigabrt.*` via the SIGABRT fallback), and MSVC's
+  `current_exception()` is null for uncaught exceptions. Fix: a
+  first-chance vectored exception handler that, on every C++ throw on any
+  thread, lazily installs `terminateHandler` for that thread and captures
+  `what()` from the exception record's ThrowInfo into a `thread_local`
+  record that `terminateHandler` writes into `-terminate.txt`;
+  `sehHandler` forwards a C++ exception that does reach the top-level
+  filter to `std::terminate()`. The test now lists the crash dir on
+  failure. Verified locally (Linux): full `linux-backend-only` CTest
+  suite green. Windows-only code path; only verifiable end-to-end via the
+  `build-windows.yml` CI lane. With that green, the same lane exposed
+  `camera.delivery_mode_contract` as timer-resolution-flaky on Windows:
+  `QueueBackedTestCamera` slept in <=1 ms slices, but a default ~15.6 ms
+  Windows tick made its "2000 fps" producer run at ~64 fps -- the same
+  rate as the quantized "slow" 5 ms consumer -- so the queue never
+  exceeded depth 1 and LatestFrame never discarded (pass/fail depended on
+  whether something on the runner had raised the timer resolution). The
+  producer is now deadline-based with catch-up bursts (bounded to one
+  queue's worth per wake), keeping the nominal rate honest on any timer.
+  That in turn exposed a latent race in `camera.delivery_mode_overload`'s
+  lag metric (producer head read *after* the grab, outside the lock, while
+  underruns consume sequence numbers): the head is now sampled under the
+  grab lock (`newestCompletedSequenceAtLastGrab()`), making "lag at grab" a
+  true logical distance.
+  Files: `CrashReporter.cpp`, `crash_reporter_terminate_test.cpp`,
+  `tests/support/queue_camera.h`.
+
 - **Shared RS485 bus + Linux serial discovery for the pulse generator**
   (2026-08-31, issue #323 follow-up) — the pulse-generator stack is now
   usable on Linux and correct on multi-drop RS485. New
