@@ -45,6 +45,13 @@ struct Rig {
     CaptureService::CameraFactory factory()
     {
         return [this]() {
+            // The observation record outlives each camera and is shared by
+            // every camera this factory creates. A new session legitimately
+            // admitted after a previous camera was destroyed (e.g. the
+            // "slow stop + concurrent start" case on a coarse-timer host)
+            // must not inherit the old camera's destroyed flag, or its own
+            // calls would be misreported as access-after-destroy.
+            obs->destroyed.store(false, std::memory_order_release);
             auto cam = std::make_unique<FakeLifecycleCamera>(script, obs.get());
             camera = cam.get();
             return std::unique_ptr<camera::common::ICamera>(std::move(cam));

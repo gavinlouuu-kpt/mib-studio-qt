@@ -336,3 +336,7 @@ if(MSVC)
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
     )
 endif()
+
+# Windows: headless Qt frontend tests need the offscreen platform plugin (see cmake/MIBQtOffscreenTests.cmake).
+include(MIBQtOffscreenTests)
+mib_apply_qt_offscreen_plugin_path()

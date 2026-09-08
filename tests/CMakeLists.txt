@@ -763,3 +763,7 @@ if(Python3_Interpreter_FOUND)
         TIMEOUT 30
     )
 endif()
+
+# Windows: headless Qt frontend tests need the offscreen platform plugin (see cmake/MIBQtOffscreenTests.cmake).
+include(MIBQtOffscreenTests)
+mib_apply_qt_offscreen_plugin_path()
