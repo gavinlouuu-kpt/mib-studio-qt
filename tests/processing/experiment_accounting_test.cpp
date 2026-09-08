@@ -46,7 +46,7 @@ void pushMat(backend::playback::FrameStore& s, const cv::Mat& m, uint64_t ts)
 
 int main()
 {
-    mib::test::Watchdog wd(40);
+    mib::test::Watchdog wd(120); // experiment 4 waits out a 5 s stalled batch; sanitizer lanes are slow
     mib::test::TempDir td("experiment_accounting");
 
     auto store = std::make_shared<backend::playback::FrameStore>(4096);
@@ -258,6 +258,55 @@ int main()
                                                 : "inline runs admit frames into the accounting");
     }
     svc.setRealtimeProcessingMode(ProcessingService::RealtimeProcessingMode::Inline);
+
+    // ---- Experiment 4: stop with frames still in the batch pipeline --------
+    // A slow batch pipeline (sanitizer lanes, a loaded machine) may hold
+    // admitted frames past the bounded stop-time drain. endExperiment() then
+    // settles them as PendingAtStop under the settlement lock and every later
+    // outcome is dropped, so the run still reconciles (declared partial, not
+    // "does not reconcile" / invented Complete). Force it with a batch that
+    // only fires after 5 s.
+    wd.mark("experiment 4");
+    {
+        const auto previous = svc.getRealtimeBatchSettings();
+        ProcessingService::RealtimeBatchSettings slow = previous;
+        slow.batchSize = 4096;
+        slow.maxQueuedFrames = 4096;
+        slow.workerCount = 1;
+        slow.maxBatchDelayMs = 5000;
+        svc.setRealtimeBatchSettings(slow);
+        svc.setRealtimeProcessingMode(ProcessingService::RealtimeProcessingMode::AsyncBatch);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        svc.setExperimentAccountingContext(200, false);
+        svc.startExperiment();
+        uint64_t ts = 20'000'000;
+        for (int i = 0; i < 24; ++i) {
+            pushMat(*store, mib::test::ringFrame(96, 96, i % 7), ++ts);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const auto t0 = std::chrono::steady_clock::now();
+        svc.endExperiment();
+        const auto stopMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        const auto a = svc.experimentAccountingSnapshot();
+        std::fprintf(stderr, "exp4: admitted=%llu terms=%llu pendingAtStop=%llu completion=%s (%s) stop=%.0f ms\n",
+                     (unsigned long long)a.admitted, (unsigned long long)a.frameTermsSum(),
+                     (unsigned long long)a.pendingAtStop, rec::toString(a.completion), a.completionReason.c_str(), stopMs);
+        MIB_EXPECT(a.admitted >= 20, "frames were admitted into the stalled batch pipeline");
+        MIB_EXPECT(a.pendingAtStop > 0, "unprocessed admitted frames are booked as pendingAtStop");
+        MIB_EXPECT(a.frameTermsSum() == a.admitted && a.reconciled, "run reconciles after settlement");
+        MIB_EXPECT(a.completion == rec::RunCompletionState::IntentionallyPartial,
+                   "declared pending-at-stop is IntentionallyPartial, not Failed");
+        MIB_EXPECT(stopMs < 1500.0, "the stop-time drain stays bounded");
+        // The stalled batch fires later; its outcomes must not change the settled run.
+        std::this_thread::sleep_for(std::chrono::milliseconds(5500));
+        const auto b = svc.experimentAccountingSnapshot();
+        MIB_EXPECT(b.frameTermsSum() == a.frameTermsSum() && b.pendingAtStop == a.pendingAtStop,
+                   "late outcomes after the settlement are dropped");
+        svc.setRealtimeProcessingMode(ProcessingService::RealtimeProcessingMode::Inline);
+        svc.setRealtimeBatchSettings(previous);
+        svc.clearAccumulatedFrames();
+    }
 
     svc.stopRealtime();
     svc.stop();

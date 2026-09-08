@@ -113,6 +113,10 @@ private:
     int hCamera_{-1};
     uint8_t *outBuffer_{nullptr};
     std::size_t outBufferBytes_{0};
+    // Output buffer left behind by an abandoned handle (wedged SDK call at
+    // stop); freed by the destructor once no SDK call is in flight, never
+    // under a live call.
+    std::uint8_t* abandonedBuffer_{nullptr};
     backend::camera::mindvision::SessionGeometry sessionGeometry_{};
     int triggerOutputIndex_{-1};
     // trigger_mode from the applied JSON config (0 continuous, 1 software,

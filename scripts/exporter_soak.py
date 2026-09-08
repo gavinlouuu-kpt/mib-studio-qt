@@ -17,7 +17,7 @@ gates from #344:
 Modes: ``gui`` drives the real ExportWindow/ExportWorker/QThread path
 offscreen; ``engine`` calls ``run_export_job`` directly (no Qt).
 
-Exit codes: 0 pass, 1 gate failure, 2 setup error, 99 watchdog.
+Exit codes: 0 pass, 1 gate failure, 77 skipped (PySide6/h5py unavailable), 99 watchdog.
 """
 
 from __future__ import annotations
@@ -283,8 +283,10 @@ def main() -> int:
     try:
         return run_soak(args)
     except ImportError as exc:
-        print(f"setup error: {exc}", file=sys.stderr)
-        return 2
+        # A runner without PySide6/h5py cannot execute the soak at all; that is
+        # a skip (CTest SKIP_RETURN_CODE 77), not a gate failure.
+        print(f"setup error: {exc} (skipping: soak dependencies unavailable)", file=sys.stderr)
+        return 77
 
 
 if __name__ == "__main__":

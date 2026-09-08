@@ -363,6 +363,16 @@ current/max queue depth, batch size, worker count, and running state. See
   `endExperiment()` also waits (≤ 250 ms) for the batch queue and the
   in-flight batch (`batchFramesInFlight_`) to settle. Before this, async
   runs admitted nothing and were labelled Complete regardless of loss.
+- **Settlement at stop is exact.** When the drain gives up (a slow batch
+  pipeline: sanitizer lanes, a loaded machine), `endExperiment()` takes the
+  `experimentSettleMutex_` exclusively, books every admitted-but-unprocessed
+  frame as `PendingAtStop` and marks the run settled; outcome/validation
+  counting and the buffer append take the lock shared and drop anything
+  for a settled run. The accounting therefore always reconciles: what was
+  not processed is declared (`IntentionallyPartial`), never left as
+  "does not reconcile" or invented as Complete. Guard: experiment 4 of
+  `processing.experiment_accounting` (batch stalled for 5 s at stop → 24
+  pending, reconciled, later outcomes dropped; stop stays bounded).
 
 ## Background identity + bounded calibration (issue #369)
 
