@@ -5,6 +5,39 @@
 
 ## Features shipped
 
+- **Windows bench acceptance of the reliability release branch** (2026-09-08)
+  — `claude/host-sdk-reliability-qt-ui-g03ubd` did not compile on Windows
+  (MSVC `min`/`max` macros vs `std::numeric_limits<T>::max()` in
+  `MindVisionFrameGeometry.h` and a new `std::max` after `<windows.h>` in
+  `MainWindow.cpp`; Linux CI never sees either) — fixed with the macro-proof
+  `(std::numeric_limits<T>::max)()` spelling and `NOMINMAX`. All seven new
+  Qt-widget tests then fail-fast crashed under CTest on Windows because they
+  force `QT_QPA_PLATFORM=offscreen` and windeployqt ships only
+  `qwindows.dll`; the Windows crash dialog held each dead process until the
+  CTest timeout, which is what the 120-240 s "stalls" were. New
+  `cmake/MIBQtOffscreenTests.cmake` (`mib_apply_qt_offscreen_plugin_path()`,
+  called at the end of both CMakeLists that register `frontend.*` tests)
+  points the tests at the Conan Qt plugin directory per configuration and at
+  the system font directory (the offscreen platform has no font database on
+  Windows, which inflated every text metric and failed the layout-budget
+  assertions in `frontend.ui_layout`, `frontend.config_tabs_state`,
+  `frontend.monitoring_tune`). `backend.capture_lifecycle` failed
+  deterministically on Windows in the "slow stop + concurrent start" case:
+  the rig shares one `Observations` across the cameras its factory creates
+  and never cleared `destroyed`, so a second session legitimately admitted
+  during the 150 ms stop (the 2 ms sleeps are ~15 ms on a coarse-timer
+  host) was misreported as access-after-destroy; the factory now clears the
+  flag. Bench results after the fixes, merged with develop (`b309061a`,
+  which carries the shared GenTL handle and the crash-reporter /
+  delivery-mode test fixes this branch predates): fast lane 93/94 (only
+  `scripts.exporter_soak`, needs PySide6 on the host), integration 10/10,
+  hardware 5/5 (pump skipped), frontend 19/19; app auto-connects to the
+  EoSens/Coaxlink camera, streams 1920x1080 for 3 min with threads 97→91,
+  handles 730→714, working set plateauing at 10.2 GB (the 5000-slot
+  FrameStore), closes cleanly mid-capture, no crash artifacts. See
+  [[../services/CameraControlService]] for the GenTL lockout this branch
+  must pick up from develop.
+
 - **MindVision hardware-host acceptance evidence** (2026-09-07, epic #371).
   The real MV-XG51GM passed `hardware.camera` on an immediate rerun and a
   temporary `CameraController` harness completed 50 start/stop generations
