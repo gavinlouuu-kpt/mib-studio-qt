@@ -5,6 +5,37 @@
 
 ## Features shipped
 
+- **Fix: nanopositioner probe rejected a resting stage** (2026-09-08) — the
+  CoreMorrow controller at 0 V reports about -1 mV; `PROBE_VOLTAGE_MIN` was
+  0.0, so `AutofocusService::probeComPort` failed about one run in four
+  (`hardware.nanopositioner` flaked 1/4 on the bench) and the app's boot
+  path fell back to "saved nanopositioner COM6 did not validate; scanning all
+  ports". Floor is now -0.05 V. See [[../services/AutofocusService]].
+
+- **Fix: app locked out of the EGrabber camera at boot on beta fa6e6ba
+  ("No camera found" while the Connect tab lists it)** (2026-09-08) —
+  Hardware-bench validation of `v1.0.7-beta.fa6e6ba` on the Coaxlink Quad
+  CXP-12 / EoSens 2.0MCX12 bench: the standalone hardware tests streamed
+  from the camera, but the app reported "No camera found" and then every
+  Connect / capture start / camera-script attempt failed with `GenTL error
+  -1004, GCInitLib: Requested resource is already in use`, 4 of 4 launches.
+  Root cause (isolated with a direct probe, both call orders, persistent
+  after 3 s): the MindVision SDK's `CameraEnumerateDevice()` leaves the
+  Euresys GenTL producer unopenable for the rest of the process; there is no
+  SDK teardown. Stable v1.0.7 never had the bug because MindVision was
+  compiled out; `42cd7a54` enabled it by default, and `discoverAllCameras`
+  (DeviceInitManager worker) ran MindVision enumeration 450 ms after the
+  Connect tab's EGrabber discovery. Fix: [[../services/CameraControlService]]
+  `discoverMindVisionCameras()` decides once per process — if
+  `discoverFramegrabbers()` finds an EGrabber device, MindVision enumeration
+  is skipped with an INFO line (`MIB_MINDVISION_ENUMERATE_WITH_EGRABBER=1`
+  overrides). New hardware test `hardware.discovery_reentry` replays the boot
+  sequence with switches for thread and MindVision step; it failed in all
+  four modes before the fix and passes after. Full hardware lane green after
+  the fix; app auto-connects and captures again. Files:
+  `CameraControlService.cpp`, `tests/hardware/hw_discovery_reentry_test.cpp`,
+  `tests/CMakeLists.txt`.
+
 - **Fix: `-terminate` crash artifacts never produced on Windows for
   exceptions escaping a worker thread** (2026-09-07) — the beta
   pipeline's Windows CI (CTest in `build-windows.yml`) was failing
