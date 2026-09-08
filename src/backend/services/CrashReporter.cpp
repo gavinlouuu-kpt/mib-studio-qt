@@ -50,6 +50,9 @@ struct CrashGlobals {
     CrashReporter::Config config{};
     CrashReporter::StateSnapshotFn stateSnapshot;
     std::mutex stateSnapshotMutex;
+#ifdef _WIN32
+    void* vectoredHandler{nullptr};  // AddVectoredExceptionHandler cookie
+#endif
 };
 
 CrashGlobals& globals() {
@@ -212,7 +215,128 @@ LONG writeMinidumpInternal(EXCEPTION_POINTERS* eptr,
     return ok ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH;
 }
 
+// SEH exception code MSVC raises for a C++ `throw` (ehdata.h's
+// EH_EXCEPTION_NUMBER; only the stable numeric code is needed here).
+constexpr DWORD kCxxExceptionCode = 0xE06D7363;
+
+// Per-thread record of the most recent C++ throw, filled in by
+// cxxThrowVectoredHandler (below). Read by terminateHandler, because on MSVC
+// std::current_exception() is null inside a terminate handler for an
+// *uncaught* exception (the CRT only populates it while a catch block is
+// executing), so this is the only way to get the escaping exception's
+// what() into the "-terminate.txt" note.
+struct LastThrowRecord {
+    bool valid{false};
+    char what[512]{};
+};
+thread_local LastThrowRecord t_lastThrow;
+thread_local bool t_terminateHandlerInstalled = false;
+
+void terminateHandler();
+
+// Layout of the MSVC C++ EH metadata reachable from an EXCEPTION_RECORD with
+// code kCxxExceptionCode (ehdata.h). On x64/ARM64 every "pointer" below is a
+// 32-bit image-relative offset from ExceptionInformation[3]. Only the fields
+// needed to locate a std::exception subobject are modelled.
+struct MsvcPmd { int mdisp; int pdisp; int vdisp; };
+struct MsvcCatchableType {
+    unsigned properties;
+    int pType;                 // -> MsvcTypeDescriptor
+    MsvcPmd thisDisplacement;  // adjustment from the thrown object to this base
+    int sizeOrOffset;
+    int copyFunction;
+};
+struct MsvcCatchableTypeArray { int nCatchableTypes; int arrayOfCatchableTypes[1]; };
+struct MsvcThrowInfo { unsigned attributes; int pmfnUnwind; int pForwardCompat; int pCatchableTypeArray; };
+struct MsvcTypeDescriptor { const void* pVFTable; void* spare; char name[1]; };
+
+// Copies what() of the thrown object into `out` when the object is catchable
+// as std::exception. Runs at throw time on the throwing thread. SEH-guarded
+// and free of C++ objects with destructors (a __try function may not have
+// any) so a malformed record can never turn a plain throw into a crash.
+bool extractStdExceptionWhat(const EXCEPTION_RECORD* rec, char* out, size_t outSize) noexcept {
+#if defined(_M_X64) || defined(_M_ARM64)
+    __try {
+        if (rec->NumberParameters < 4) return false;
+        const ULONG_PTR magic = rec->ExceptionInformation[0];
+        if (magic < 0x19930520u || magic > 0x19930522u) return false;  // EH_MAGIC_NUMBER1..3
+        char* object = reinterpret_cast<char*>(rec->ExceptionInformation[1]);
+        const auto* throwInfo = reinterpret_cast<const MsvcThrowInfo*>(rec->ExceptionInformation[2]);
+        const char* base = reinterpret_cast<const char*>(rec->ExceptionInformation[3]);
+        if (!object || !throwInfo || !base || throwInfo->pCatchableTypeArray == 0) return false;
+
+        const auto* cta = reinterpret_cast<const MsvcCatchableTypeArray*>(base + throwInfo->pCatchableTypeArray);
+        const int n = cta->nCatchableTypes;
+        if (n <= 0 || n > 64) return false;
+        for (int i = 0; i < n; ++i) {
+            const auto* ct = reinterpret_cast<const MsvcCatchableType*>(base + cta->arrayOfCatchableTypes[i]);
+            const auto* td = reinterpret_cast<const MsvcTypeDescriptor*>(base + ct->pType);
+            if (std::strcmp(td->name, ".?AVexception@std@@") != 0) continue;
+
+            char* p = object;
+            if (ct->thisDisplacement.pdisp >= 0) {
+                const char* vbtable = *reinterpret_cast<char* const*>(p + ct->thisDisplacement.pdisp);
+                p += ct->thisDisplacement.pdisp +
+                     *reinterpret_cast<const int*>(vbtable + ct->thisDisplacement.vdisp);
+            }
+            p += ct->thisDisplacement.mdisp;
+            const char* what = reinterpret_cast<const std::exception*>(p)->what();
+            if (!what) return false;
+            strncpy_s(out, outSize, what, _TRUNCATE);
+            return true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+#else
+    (void)rec; (void)out; (void)outSize;
+#endif
+    return false;
+}
+
+// First-chance vectored handler: runs on the throwing thread for every C++
+// throw in the process, before any frame handler. Two jobs, both needed to
+// make "-terminate" artifacts work on Windows:
+//
+//  1. MSVC's set_terminate is PER-THREAD and not inherited (MS docs: "each
+//     new thread needs to install its own terminate function"). init() can
+//     only install terminateHandler on the calling thread, so an exception
+//     escaping a worker thread hit the CRT default (plain abort()) and only
+//     ever produced "-sigabrt" artifacts via the SIGABRT fallback. Installing
+//     the handler here, lazily on first throw, covers every thread that can
+//     possibly reach terminate() through an exception.
+//  2. Capture what() now (see LastThrowRecord).
+//
+// Always returns EXCEPTION_CONTINUE_SEARCH: it never handles anything, so it
+// cannot interfere with normal catch dispatch or with Crashpad.
+LONG WINAPI cxxThrowVectoredHandler(EXCEPTION_POINTERS* eptr) {
+    if (!eptr || !eptr->ExceptionRecord ||
+        eptr->ExceptionRecord->ExceptionCode != kCxxExceptionCode) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (!t_terminateHandlerInstalled) {
+        std::set_terminate(terminateHandler);
+        t_terminateHandlerInstalled = true;
+    }
+    // A rethrow (`throw;`) carries no object pointer; keep the original.
+    const EXCEPTION_RECORD* rec = eptr->ExceptionRecord;
+    if (rec->NumberParameters >= 2 && rec->ExceptionInformation[1] != 0) {
+        t_lastThrow.valid = extractStdExceptionWhat(rec, t_lastThrow.what, sizeof(t_lastThrow.what));
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 LONG WINAPI sehHandler(EXCEPTION_POINTERS* eptr) {
+    // A C++ exception only reaches the top-level filter when no frame claimed
+    // it AND no noexcept frame terminated it first (e.g. off a thread whose
+    // entry point is not noexcept). Installing this filter displaced the
+    // CRT's own __CxxUnhandledExceptionFilter, whose sole job is to turn that
+    // into std::terminate(); do the same so the terminate path (handler
+    // installed per-thread by cxxThrowVectoredHandler) owns the artifacts.
+    if (eptr && eptr->ExceptionRecord &&
+        eptr->ExceptionRecord->ExceptionCode == kCxxExceptionCode) {
+        std::terminate();
+    }
+
     auto& g = globals();
     bool expected = false;
     if (!g.handlingCrash.compare_exchange_strong(expected, true)) {
@@ -289,14 +413,28 @@ void terminateHandler() {
         // When terminate() was reached via an unhandled exception, record
         // its message alongside the snapshot (same .txt convention as
         // captureException).
+        std::string what;
+        bool haveWhat = false;
         if (std::current_exception()) {
-            std::string what = "unknown (non-std::exception)";
+            what = "unknown (non-std::exception)";
+            haveWhat = true;
             try {
                 std::rethrow_exception(std::current_exception());
             } catch (const std::exception& e) {
                 what = e.what();
             } catch (...) {
             }
+        }
+#ifdef _WIN32
+        // MSVC: current_exception() is null for an uncaught exception; use
+        // the record cxxThrowVectoredHandler captured at throw time on this
+        // thread (best effort — it is the last throw on this thread).
+        else if (t_lastThrow.valid) {
+            what = t_lastThrow.what;
+            haveWhat = true;
+        }
+#endif
+        if (haveWhat) {
             std::ofstream f(base.string() + ".txt");
             f << "terminate: " << what << "\n";
         }
@@ -695,6 +833,18 @@ bool CrashReporter::init(const Config& cfg) {
 
     if (cfg.installTerminateHandler) {
         std::set_terminate(terminateHandler);
+#ifdef _WIN32
+        // set_terminate above only covers the calling thread on MSVC; the
+        // vectored handler installs it on every other thread at its first
+        // throw and records the thrown what() (see cxxThrowVectoredHandler).
+        // First-chance (1) so it runs before any frame handler, including
+        // the noexcept std::thread entry shim that terminates escaping
+        // exceptions during the search phase.
+        if (!g.vectoredHandler) {
+            g.vectoredHandler = ::AddVectoredExceptionHandler(1, cxxThrowVectoredHandler);
+        }
+        t_terminateHandlerInstalled = true;
+#endif
     }
 
     if (cfg.installQtMessageHandler) {
@@ -717,6 +867,12 @@ void CrashReporter::shutdown() {
     if (!g.initialized.load()) return;
 #if defined(MIB_USE_SENTRY) && MIB_USE_SENTRY
     sentry_close();
+#endif
+#ifdef _WIN32
+    if (g.vectoredHandler) {
+        ::RemoveVectoredExceptionHandler(g.vectoredHandler);
+        g.vectoredHandler = nullptr;
+    }
 #endif
     g.sentryActive.store(false);
     g.initialized.store(false);

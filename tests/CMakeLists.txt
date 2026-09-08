@@ -767,3 +767,7 @@ endif()
 # Windows: headless Qt frontend tests need the offscreen platform plugin (see cmake/MIBQtOffscreenTests.cmake).
 include(MIBQtOffscreenTests)
 mib_apply_qt_offscreen_plugin_path()
+mib_add_backend_test_executable(hw_discovery_reentry_test hardware/hw_discovery_reentry_test.cpp)
+target_link_libraries(hw_discovery_reentry_test PRIVATE Threads::Threads)
+add_test(NAME hardware.discovery_reentry COMMAND $<TARGET_FILE:hw_discovery_reentry_test>)
+set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;camera" SKIP_RETURN_CODE 77 TIMEOUT 120)

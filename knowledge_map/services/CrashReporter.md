@@ -256,6 +256,39 @@ sentry-cli releases finalize "mib_studio_qt@$version"
   escapes a worker thread entry point reaches the terminate handler,
   which leaves a `.dmp` + `.json` + `.txt` and gets the event to Sentry
   on the next launch.
+- **Windows `-terminate` artifacts need the vectored exception handler
+  (`cxxThrowVectoredHandler`), not just `std::set_terminate`.** Three
+  MSVC facts, none of which apply to glibc (so Linux `backend-ci.yml`
+  never saw the problem; only `build-windows.yml`'s CTest did):
+  1. **`set_terminate` is per-thread** and not inherited by new threads
+     (MS docs: "each new thread needs to install its own terminate
+     function"). `init()` can only install `terminateHandler` on the
+     calling thread, so an exception escaping a worker thread hit the CRT
+     default — a plain `abort()` — and only ever produced `-sigabrt.*`
+     via the SIGABRT fallback.
+  2. **MSVC's `std::thread` entry shim is `noexcept`**, so an escaping
+     exception makes the frame handler call `terminate()` during the SEH
+     *search* phase. `sehHandler` (`SetUnhandledExceptionFilter`) is never
+     reached on that path — editing it cannot fix this.
+  3. **`std::current_exception()` is null in a terminate handler for an
+     uncaught exception** on MSVC (the CRT only sets it while a catch
+     block runs), so even a working handler had no `what()` for the
+     `.txt` note.
+  Fix: a first-chance `AddVectoredExceptionHandler(1, …)` that runs on the
+  throwing thread for every C++ `throw` (`0xE06D7363`) process-wide and
+  (a) lazily calls `std::set_terminate(terminateHandler)` on that thread,
+  (b) copies `what()` into a `thread_local` `LastThrowRecord` by walking
+  the exception record's ThrowInfo → CatchableTypeArray for a
+  `std::exception` subobject (x64/ARM64 image-relative layout, SEH-guarded
+  so a malformed record can't turn a throw into a crash). It always
+  returns `EXCEPTION_CONTINUE_SEARCH`, so it never interferes with catch
+  dispatch or Crashpad. `terminateHandler` uses the record when
+  `current_exception()` is null; it is best-effort (the last throw on
+  that thread). `sehHandler` additionally forwards a C++ exception that
+  does reach the top-level filter (a thread whose entry point is not
+  `noexcept`) to `std::terminate()`, replacing the CRT's displaced
+  `__CxxUnhandledExceptionFilter`. The handler is removed in
+  `shutdown()`.
 - Building with `MIB_USE_SENTRY=OFF` (or with no DSN) keeps the local
   minidump path active — useful for offline / air-gapped deployments.
 - **`sentry_capture_minidump` vs `sentry_capture_event`:** The upload

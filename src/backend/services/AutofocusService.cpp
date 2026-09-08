@@ -19,7 +19,10 @@ namespace backend::services {
 
 namespace {
     // Plausible voltage range for XMT nanopositioner (V). Used to validate probe response.
-    constexpr double PROBE_VOLTAGE_MIN = 0.0;
+    // A CoreMorrow controller resting at 0 V reports ADC noise of about -1 mV
+    // (-0.0004 .. -0.002 V measured on the bench), so the floor sits slightly
+    // below zero; a genuinely bad response (timeout/garbage) is far outside.
+    constexpr double PROBE_VOLTAGE_MIN = -0.05;
     constexpr double PROBE_VOLTAGE_MAX = 250.0;
     constexpr int SERIAL_OPEN_ATTEMPTS = 3;
     constexpr auto SERIAL_RETRY_DELAY = std::chrono::milliseconds(150);
