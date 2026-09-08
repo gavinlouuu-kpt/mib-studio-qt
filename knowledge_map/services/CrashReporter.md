@@ -187,6 +187,25 @@ Operator setup (org slug, auth token, self-hosted URL) is documented in
                       queued (.queued/.queued2), pending .dmp, orphan .json
 ```
 
+### What a dump and its sidecar carry (2026-09-08)
+
+The SIGSEGV/SIGFPE/SIGILL path recovers the `EXCEPTION_POINTERS` the MSVC
+CRT publishes to signal handlers (`_pxcptinfoptrs`) and passes them to
+`MiniDumpWriteDump`, so the dump's exception stream is the fault (code,
+address, faulting thread), not the dump writer's breakpoint. Before this
+every `-sigsegv.dmp` on the bench was unusable in `!analyze` (55 of them,
+crash review 2026-09-08). The `.json` sidecar gains a `"crash"` object:
+`code`, `address`, `module` + `module_offset`, `thread_id`, `access`
+(read/write/execute) and `target` for access violations, and
+`exe_build_id` — the PDB GUID+age read from the exe's CodeView debug
+directory at `init()` (also logged). `init()` copies the exe's PDB, when
+one sits next to it (dev builds), to `<crashDir>/../symbols/<build id>/`
+so a dump from a bench binary stays symbolizable after the tree is
+rebuilt: `cdbX64 -z <dmp> -y <that folder> -c "!analyze -v; ~*k"`.
+Guard: `backend.crash_reporter_segv` (null write on a worker thread; the
+parent reads the dump's exception stream back with dbghelp and checks the
+sidecar and the kept PDB).
+
 ## Symbolication
 
 Minidumps are useless without matching PDB. The CMake config emits

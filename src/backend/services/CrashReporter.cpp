@@ -40,6 +40,16 @@
 namespace backend::services {
 
 namespace {
+#ifdef _WIN32
+// Build identity of the running executable (PDB GUID + age, the symbol-server
+// key) so a dump can be matched to its PDB later even after the bench
+// rebuilt the tree. Read once at init from the CodeView debug directory.
+struct BuildIdentity {
+    std::string buildId;   // "<GUID hex><age>", e.g. symbol store folder name
+    std::string pdbPath;   // PDB path recorded in the image
+    std::string exePath;
+};
+#endif
 
 // Process-global state for the crash handler. All fields are read from the
 // signal / SEH context, so they must use atomics / fixed buffers.
@@ -52,6 +62,9 @@ struct CrashGlobals {
     std::mutex stateSnapshotMutex;
 #ifdef _WIN32
     void* vectoredHandler{nullptr};  // AddVectoredExceptionHandler cookie
+#ifdef _WIN32
+    BuildIdentity build;             // PDB GUID+age of the running exe (symbol key)
+#endif
 #endif
 };
 
@@ -113,6 +126,81 @@ std::string snapshotStateJson() {
         return g.stateSnapshot();
     }
     return R"({"note":"state mirror unavailable at crash time"})";
+}
+
+#ifdef _WIN32
+BuildIdentity readBuildIdentity() {
+    BuildIdentity id;
+    char exe[MAX_PATH]{};
+    if (::GetModuleFileNameA(nullptr, exe, MAX_PATH) == 0) return id;
+    id.exePath = exe;
+    HMODULE module = ::GetModuleHandleA(nullptr);
+    ULONG size = 0;
+    auto* dbg = static_cast<IMAGE_DEBUG_DIRECTORY*>(
+        ::ImageDirectoryEntryToDataEx(module, TRUE, IMAGE_DIRECTORY_ENTRY_DEBUG, &size, nullptr));
+    if (!dbg || size < sizeof(IMAGE_DEBUG_DIRECTORY)) return id;
+    const size_t count = size / sizeof(IMAGE_DEBUG_DIRECTORY);
+    for (size_t i = 0; i < count; ++i) {
+        if (dbg[i].Type != IMAGE_DEBUG_TYPE_CODEVIEW || dbg[i].AddressOfRawData == 0) continue;
+        struct CvRsds { DWORD sig; GUID guid; DWORD age; char pdb[1]; };
+        const auto* cv = reinterpret_cast<const CvRsds*>(
+            reinterpret_cast<const BYTE*>(module) + dbg[i].AddressOfRawData);
+        if (cv->sig != 0x53445352 /* 'RSDS' */) continue;
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%08lX%04hX%04hX%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX%lu",
+                      cv->guid.Data1, cv->guid.Data2, cv->guid.Data3,
+                      cv->guid.Data4[0], cv->guid.Data4[1], cv->guid.Data4[2], cv->guid.Data4[3],
+                      cv->guid.Data4[4], cv->guid.Data4[5], cv->guid.Data4[6], cv->guid.Data4[7],
+                      static_cast<unsigned long>(cv->age));
+        id.buildId = buf;
+        id.pdbPath = cv->pdb;
+        break;
+    }
+    return id;
+}
+
+// JSON fragment describing a hardware exception: code, address, module and
+// offset, faulting thread. Crash-handler safe (fixed buffers, no allocation
+// beyond the returned string).
+std::string describeException(EXCEPTION_POINTERS* eptr, const BuildIdentity& id) {
+    char buf[1024];
+    if (!eptr || !eptr->ExceptionRecord) {
+        std::snprintf(buf, sizeof(buf), R"({"exception_context":"unavailable","exe_build_id":"%s"})",
+                      id.buildId.c_str());
+        return buf;
+    }
+    const EXCEPTION_RECORD* rec = eptr->ExceptionRecord;
+    const auto address = reinterpret_cast<std::uintptr_t>(rec->ExceptionAddress);
+    char moduleName[MAX_PATH] = "";
+    std::uintptr_t offset = 0;
+    HMODULE module = nullptr;
+    if (::GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                             reinterpret_cast<LPCSTR>(rec->ExceptionAddress), &module) && module) {
+        ::GetModuleFileNameA(module, moduleName, MAX_PATH);
+        offset = address - reinterpret_cast<std::uintptr_t>(module);
+    }
+    const char* base = std::strrchr(moduleName, '\\');
+    base = base ? base + 1 : moduleName;
+    const unsigned long long p0 = rec->NumberParameters > 0 ? rec->ExceptionInformation[0] : 0;
+    const unsigned long long p1 = rec->NumberParameters > 1 ? rec->ExceptionInformation[1] : 0;
+    std::snprintf(buf, sizeof(buf),
+                  R"({"code":"0x%08lX","address":"0x%llX","module":"%s","module_offset":"0x%llX","thread_id":%lu,)"
+                  R"("access":"%s","target":"0x%llX","exe_build_id":"%s"})",
+                  static_cast<unsigned long>(rec->ExceptionCode),
+                  static_cast<unsigned long long>(address), base,
+                  static_cast<unsigned long long>(offset), ::GetCurrentThreadId(),
+                  rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ? (p0 == 0 ? "read" : p0 == 1 ? "write" : "execute") : "n/a",
+                  p1, id.buildId.c_str());
+    return buf;
+}
+#endif // _WIN32
+
+// Append a "crash" object to the state snapshot JSON (which is an object).
+std::string withCrashObject(std::string state, const std::string& crashJson) {
+    const auto close = state.find_last_of('}');
+    if (close == std::string::npos) return state;
+    state.insert(close, std::string(",\"crash\":") + crashJson);
+    return state;
 }
 
 // Safe to call from a crash handler — only uses C-runtime file APIs.
@@ -351,7 +439,7 @@ LONG WINAPI sehHandler(EXCEPTION_POINTERS* eptr) {
         const auto dump = std::filesystem::path(base.string() + ".dmp");
         const auto json = std::filesystem::path(base.string() + ".json");
         writeMinidumpInternal(eptr, dump);
-        writeStateJsonSidecar(json);
+        writeStateJsonSidecar(json, withCrashObject(snapshotStateJson(), describeException(eptr, g.build)));
     } catch (...) {
         // Swallow — we are already crashing.
     }
@@ -384,11 +472,23 @@ extern "C" void signalHandler(int sig) {
         std::filesystem::create_directories(g.config.crashDir, ec);
         const auto base = makeCrashFilenameBase(g.config.crashDir, name);
 #ifdef _WIN32
+        // The MSVC CRT invokes SIGSEGV/SIGFPE/SIGILL handlers from its own
+        // SEH filter and publishes the EXCEPTION_POINTERS in _pxcptinfoptrs.
+        // Without them the dump's exception record was the dump writer's own
+        // breakpoint and !analyze showed nothing (55 useless dumps on the
+        // bench, crash review 2026-09-08).
+        EXCEPTION_POINTERS* eptr = nullptr;
+        if (sig == SIGSEGV || sig == SIGFPE || sig == SIGILL) {
+            eptr = static_cast<EXCEPTION_POINTERS*>(_pxcptinfoptrs);
+        }
         const auto dump = std::filesystem::path(base.string() + ".dmp");
-        writeMinidumpInternal(nullptr, dump);
-#endif
+        writeMinidumpInternal(eptr, dump);
+        const auto json = std::filesystem::path(base.string() + ".json");
+        writeStateJsonSidecar(json, withCrashObject(snapshotStateJson(), describeException(eptr, g.build)));
+#else
         const auto json = std::filesystem::path(base.string() + ".json");
         writeStateJsonSidecar(json);
+#endif
     } catch (...) {
         // Crashing already — never throw out of here.
     }
@@ -810,6 +910,26 @@ bool CrashReporter::init(const Config& cfg) {
     // events. The on_crash callback writes local JSON sidecars instead.
     if (!g.sentryActive.load()) {
 #ifdef _WIN32
+        g.build = readBuildIdentity();
+        SPDLOG_INFO("CrashReporter: exe {} build id {} pdb {}", g.build.exePath,
+                    g.build.buildId.empty() ? "unknown" : g.build.buildId,
+                    g.build.pdbPath.empty() ? "none" : g.build.pdbPath);
+        // Dev builds run straight from the build tree, which the next build
+        // overwrites; keep this binary's PDB under <crashDir>/../symbols/<id>
+        // so its dumps stay symbolizable (cdbX64 -y that folder).
+        if (!g.build.buildId.empty()) {
+            std::error_code ec;
+            const std::filesystem::path pdbNext =
+                std::filesystem::path(g.build.exePath).replace_extension(".pdb");
+            const std::filesystem::path store =
+                g.config.crashDir.parent_path() / "symbols" / g.build.buildId;
+            const std::filesystem::path kept = store / pdbNext.filename();
+            if (std::filesystem::is_regular_file(pdbNext, ec) && !std::filesystem::exists(kept, ec)) {
+                std::filesystem::create_directories(store, ec);
+                std::filesystem::copy_file(pdbNext, kept, ec);
+                if (!ec) SPDLOG_INFO("CrashReporter: kept PDB for build {} at {}", g.build.buildId, kept.string());
+            }
+        }
         ::SetUnhandledExceptionFilter(sehHandler);
 #endif
         if (cfg.installSignalHandlers) {

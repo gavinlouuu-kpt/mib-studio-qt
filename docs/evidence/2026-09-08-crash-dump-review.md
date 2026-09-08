@@ -67,15 +67,22 @@ running, no experiment, no file open), most with the last frame rate at
 crashpad. The same signature appears for the dev builds run on this bench
 today (13:26, 14:14, 15:35 — each the close of a run that included an
 experiment; a plain capture-only close did not trigger it). None of these
-dumps could be symbolized: the app's own handler writes the dump from the
-handler thread (exception record = the dump writer's breakpoint), and the
-dev PDB no longer matched. Three scripted start → record → stop → close
-cycles with the current build (`27806d4c` + the accounting fix) exited
-cleanly (exit 0, no new report); the crash is intermittent, and its
-mechanism is most plausibly the same class as §1 (exit-time teardown of
-HDF5/thread state), which the mitigation also covers. **Open item**: keep
-the current PDB with each bench binary and re-symbolize the next occurrence
-(`%LOCALAPPDATA%\MIB_Studio_Qt\crashes\*.dmp` + `cdbX64 -z <dmp> -c "!analyze -v; ~*k"`).
+dumps could be symbolized: the app's own handler wrote the dump without the
+exception pointers (exception record = the dump writer's breakpoint), and
+the dev PDB no longer matched. **Fixed for future dumps** (same day): the
+signal path now passes the CRT's `_pxcptinfoptrs` to `MiniDumpWriteDump`,
+the sidecar carries a `"crash"` object (code, module+offset, thread,
+access, `exe_build_id`), and `init()` keeps the running binary's PDB under
+`%LOCALAPPDATA%\MIB_Studio_Qt\symbols\<build id>\`
+(guard `backend.crash_reporter_segv`). Nine scripted start → record → stop → close
+cycles with the current build (`27806d4c` + the accounting fix, then + the
+reporter change) exited cleanly (exit 0, no new report); the crash is
+intermittent, and its mechanism is most plausibly the same class as §1
+(exit-time teardown of HDF5/thread state), which the mitigation also
+covers. The next occurrence will be symbolizable: the dump now carries the
+fault context and the sidecar names module+offset and the build id whose
+PDB is kept in `%LOCALAPPDATA%\MIB_Studio_Qt\symbols\<build id>\`
+(`cdbX64 -z <dmp> -y <that folder> -c "!analyze -v; ~*k"`).
 
 Also open: the queued reports were never uploaded (`.queued2`); Sentry
 upload is not reaching the server from this PC.
@@ -87,12 +94,14 @@ upload is not reaching the server from this PC.
 cv::Mat::Mat`. Sidecars: capture stopped, realtime stopped (two with
 `realtime_running=true`), no experiment. An ROI larger than the frame is
 applied to a `cv::Mat` somewhere on the non-experiment path (background or
-ROI change against a frame of a different geometry). Not reproduced here;
-the reliability branch's readiness gate `processing.roi` and the
-`RealtimeService` ROI clamps cover the realtime path, but the crash site is
-not identified. **Open item** for the beta: find the `cv::Mat(roi)`
-construction that is not clamped (candidates: background capture,
-`Hdf5Service`/review image extraction, monitoring crop) and clamp or reject.
+ROI change against a frame of a different geometry). **Crash site identified and fixed** (same day): `ExperimentMonitoringTab`
+cropped the accumulated monitoring frames (overlay and extract paths) with
+the *current* ROI via an unclamped `cv::Rect(roi.x, roi.y, roi.w, roi.h)`;
+frames accumulated under an earlier ROI / camera geometry (ROI edited,
+camera or config switched, capture stopped — exactly the sidecar state)
+trip the assertion. Both paths now go through
+`frontend/tabs/MonitoringRoiCrop.h` (`cropToRoi`, clamped via
+`clampRoiToFrame`); guard `frontend.monitoring_roi_crop`.
 
 ## 4. AppHang reports (2026-09-03), installed app
 
