@@ -13,6 +13,7 @@
 #pragma once
 
 #include "backend/processing/IProcessingKernel.h"
+#include "backend/recording/RecordingAccounting.h"
 
 #include <cstdint>
 #include <string>
@@ -150,6 +151,62 @@ struct ExperimentStartResult {
     ExperimentReadinessSnapshot readiness; // the re-evaluation performed at start
     RunConfigurationSnapshot run;          // valid when outcome == Started
     bool started() const { return outcome == ExperimentStartOutcome::Started; }
+};
+
+// Lifecycle state of the coordinator. Values are the bridge contract's
+// experiment_states (bridge-contract.json); append only, never renumber.
+enum class ExperimentRunState { Idle = 0, Starting = 1, Active = 2, Stopping = 3, Failed = 4 };
+
+inline const char* toString(ExperimentRunState s)
+{
+    switch (s) {
+    case ExperimentRunState::Idle: return "idle";
+    case ExperimentRunState::Starting: return "starting";
+    case ExperimentRunState::Active: return "active";
+    case ExperimentRunState::Stopping: return "stopping";
+    case ExperimentRunState::Failed: return "failed";
+    }
+    return "unknown";
+}
+
+// Typed outcome of requestStop().
+enum class ExperimentStopOutcome { Accepted = 0, NotActive = 1, Busy = 2 };
+
+inline const char* toString(ExperimentStopOutcome o)
+{
+    switch (o) {
+    case ExperimentStopOutcome::Accepted: return "accepted";
+    case ExperimentStopOutcome::NotActive: return "notActive";
+    case ExperimentStopOutcome::Busy: return "busy";
+    }
+    return "unknown";
+}
+
+// Pullable lifecycle snapshot; also delivered through the coordinator's
+// status callback on every transition. Qt-free by design so the bridge can
+// carry it verbatim.
+struct ExperimentStatus {
+    ExperimentRunState state{ExperimentRunState::Idle};
+    uint64_t startGeneration{0};
+    uint64_t readinessGeneration{0};
+    uint64_t captureGeneration{0};
+    std::string outputPath;
+    uint64_t startWallClockNs{0};     // 0 until known
+    uint64_t endWallClockNs{0};
+    uint64_t validBuffered{0};        // live, from ProcessingService
+    uint64_t invalidBuffered{0};
+    uint64_t persistenceAdmitted{0};
+    uint64_t persistenceCommitted{0};
+    uint64_t persistenceFailed{0};
+    bool flushing{false};
+    bool cancelled{false};
+    bool terminal{false};             // finalization finished (Idle or Failed)
+    bool finalizationOk{false};       // every finalize step succeeded
+    backend::recording::RunCompletionState completion{backend::recording::RunCompletionState::Unknown};
+    std::string completionReason;
+    std::string faultCode;            // unresolved fault, if any
+    std::string faultMessage;
+    std::string message;              // last human-readable transition note
 };
 
 // Serialize the frozen run snapshot for HDF5 provenance (stable key order).

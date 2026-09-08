@@ -35,6 +35,7 @@
 #include <cstdio>
 #include <fstream>
 #include <functional>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -301,7 +302,7 @@ int main()
         std::fprintf(stderr, "concurrent: started=%d busy=%d other=%d\n", started.load(), busy.load(), other.load());
         MIB_EXPECT(started == 1, "exactly one start succeeds");
         MIB_EXPECT(busy == 3 && other == 0, "the rest are typed Busy/AlreadyActive");
-        MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Running, "running");
+        MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Active, "running");
         MIB_EXPECT(backend.hdf5().isFileOpen(), "HDF5 open for the run");
         auto active = coord.activeRun();
         MIB_REQUIRE(active.has_value(), "active run snapshot");
@@ -344,6 +345,48 @@ int main()
                    "snapshot JSON content");
         MIB_EXPECT(readinessJson.find("\"camera.session\"") != std::string::npos, "readiness JSON persisted");
         reader.closeFile();
+    }
+
+    // ---- 6b. Status snapshot + callback (shared-backend lifecycle) --------------
+    {
+        wd.mark("status snapshot");
+        auto& coordinator = backend.experiment();
+        const auto idle = coordinator.status();
+        MIB_EXPECT(idle.state == backend::app::ExperimentRunState::Idle, "idle before start");
+        MIB_EXPECT(!idle.terminal && idle.completion == backend::recording::RunCompletionState::Unknown,
+                   "no completion before a run");
+
+        std::vector<backend::app::ExperimentRunState> seen;
+        std::mutex seenMutex;
+        coordinator.setStatusCallback([&](const backend::app::ExperimentStatus& s) {
+            std::lock_guard<std::mutex> lk(seenMutex);
+            seen.push_back(s.state);
+        });
+
+        const auto out = (td.path() / "status_run.h5").string();
+        const auto r = coordinator.evaluateReadiness(out);
+        MIB_REQUIRE(r.ready, "ready for status test");
+        ExperimentStartRequest req;
+        req.outputPath = out;
+        req.readinessGeneration = r.generation;
+        const auto started = coordinator.start(req);
+        MIB_REQUIRE(started.started(), "started: " + started.message);
+        const auto active = coordinator.status();
+        MIB_EXPECT(active.state == backend::app::ExperimentRunState::Active, "Active after start");
+        MIB_EXPECT(active.startGeneration == started.run.startGeneration, "status carries the run identity");
+        MIB_EXPECT(active.outputPath == started.run.outputPath, "status carries the output path");
+        MIB_EXPECT(active.startWallClockNs == started.run.startWallClockNs, "status carries the start time");
+        {
+            std::lock_guard<std::mutex> lk(seenMutex);
+            MIB_EXPECT(seen.size() == 2 && seen[0] == backend::app::ExperimentRunState::Starting &&
+                           seen[1] == backend::app::ExperimentRunState::Active,
+                       "callback observed Starting then Active");
+        }
+        coordinator.setStatusCallback({});
+        proc.endExperiment();
+        MIB_REQUIRE(coordinator.finish().has_value(), "finish the status run");
+        backend.hdf5().closeFile();
+        MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "idle after finish");
     }
 
     // ---- 7. Bounded background calibration ------------------------------------

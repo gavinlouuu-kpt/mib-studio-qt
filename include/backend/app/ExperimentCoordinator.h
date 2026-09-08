@@ -24,19 +24,6 @@ class AppBackend;
 
 namespace backend::app {
 
-enum class ExperimentRunState { Idle, Starting, Running, Stopping };
-
-inline const char* toString(ExperimentRunState s)
-{
-    switch (s) {
-    case ExperimentRunState::Idle: return "idle";
-    case ExperimentRunState::Starting: return "starting";
-    case ExperimentRunState::Running: return "running";
-    case ExperimentRunState::Stopping: return "stopping";
-    }
-    return "unknown";
-}
-
 struct ExperimentStartRequest {
     std::string outputPath;         // HDF5 destination (extension normalized)
     uint64_t readinessGeneration{0}; // generation the caller preflighted with
@@ -65,6 +52,13 @@ public:
     // Mark the run finished (the caller drives finalization through the
     // existing stop path; this releases the frozen snapshot and returns it).
     std::optional<RunConfigurationSnapshot> finish();
+
+    // Lifecycle status (issue #372 G2/G3). The callback fires on every
+    // transition, outside the coordinator mutex; consumers must not block
+    // (same rule as the facade event sink).
+    using StatusCallback = std::function<void(const ExperimentStatus&)>;
+    void setStatusCallback(StatusCallback cb);
+    ExperimentStatus status() const;
 
     ExperimentRunState state() const;
     // Frozen snapshot of the active run (empty when Idle).
@@ -104,6 +98,10 @@ private:
                                                const std::string& profileId);
     RunConfigurationSnapshot candidateLocked(const std::string& outputPath,
                                              const std::string& profileId) const;
+    ExperimentStatus snapshotLocked() const;
+    // Publish the current snapshot: copies it, releases `lk`, invokes the
+    // callback, re-acquires `lk`.
+    void publishLocked(std::unique_lock<std::mutex>& lk, const char* message);
 
     AppBackend& backend_;
     mutable std::mutex mutex_;
@@ -119,6 +117,10 @@ private:
     bool faultActive_{false};
     std::string faultCode_;
     std::string faultMessage_;
+    // Terminal/lifecycle fields that outlive activeRun_ (reset on start).
+    ExperimentStatus status_;
+    mutable std::mutex callbackMutex_;
+    StatusCallback statusCallback_;
 };
 
 } // namespace backend::app

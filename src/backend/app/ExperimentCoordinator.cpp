@@ -560,7 +560,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         return result;
     }
     if (state_ != ExperimentRunState::Idle) {
-        result.outcome = state_ == ExperimentRunState::Running ? ExperimentStartOutcome::AlreadyActive
+        result.outcome = state_ == ExperimentRunState::Active ? ExperimentStartOutcome::AlreadyActive
                                                                 : ExperimentStartOutcome::Busy;
         result.message = std::string("experiment is ") + toString(state_);
         return result;
@@ -601,6 +601,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     }
 
     state_ = ExperimentRunState::Starting;
+    status_ = ExperimentStatus{};
+    publishLocked(lk, "starting");
 
     // 4. Freeze the run snapshot from the evaluated candidate.
     RunConfigurationSnapshot run = result.readiness.candidate;
@@ -642,14 +644,65 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
     proc.startExperiment();
     activeRun_ = run;
-    state_ = ExperimentRunState::Running;
+    state_ = ExperimentRunState::Active;
     result.outcome = ExperimentStartOutcome::Started;
     result.message = "experiment started";
     result.run = run;
     SPDLOG_INFO("ExperimentCoordinator: started run {} (readiness gen {}, capture gen {}, camera {}{}) -> {}",
                 run.startGeneration, run.readinessGeneration, run.captureGeneration, run.camera.effective,
                 run.camera.simulated ? " [simulated]" : "", path);
+    publishLocked(lk, "active");
     return result;
+}
+
+void ExperimentCoordinator::setStatusCallback(StatusCallback cb)
+{
+    std::lock_guard<std::mutex> lk(callbackMutex_);
+    statusCallback_ = std::move(cb);
+}
+
+ExperimentStatus ExperimentCoordinator::snapshotLocked() const
+{
+    ExperimentStatus s = status_;
+    s.state = state_;
+    if (activeRun_) {
+        s.startGeneration = activeRun_->startGeneration;
+        s.readinessGeneration = activeRun_->readinessGeneration;
+        s.captureGeneration = activeRun_->captureGeneration;
+        s.outputPath = activeRun_->outputPath;
+        s.startWallClockNs = activeRun_->startWallClockNs;
+    }
+    const auto& proc = backend_.processing();
+    const auto counts = proc.getBufferedFrameCounts();
+    s.validBuffered = counts.valid;
+    s.invalidBuffered = counts.invalid;
+    const auto acc = proc.experimentAccountingSnapshot();
+    s.persistenceAdmitted = acc.persistenceAdmitted;
+    s.persistenceCommitted = acc.persistenceCommitted;
+    s.persistenceFailed = acc.persistenceFailed;
+    s.faultCode = faultActive_ ? faultCode_ : std::string{};
+    s.faultMessage = faultActive_ ? faultMessage_ : std::string{};
+    return s;
+}
+
+ExperimentStatus ExperimentCoordinator::status() const
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    return snapshotLocked();
+}
+
+void ExperimentCoordinator::publishLocked(std::unique_lock<std::mutex>& lk, const char* message)
+{
+    status_.message = message ? message : "";
+    ExperimentStatus s = snapshotLocked();
+    StatusCallback cb;
+    {
+        std::lock_guard<std::mutex> clk(callbackMutex_);
+        cb = statusCallback_;
+    }
+    lk.unlock();
+    if (cb) cb(s);
+    lk.lock();
 }
 
 std::optional<RunConfigurationSnapshot> ExperimentCoordinator::finish()
