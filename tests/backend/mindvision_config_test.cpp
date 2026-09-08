@@ -118,6 +118,61 @@ int main()
                    "oversize ROI clamped to upper bound");
     }
 
+    // 10) Acquisition-trigger fields: defaults when absent.
+    {
+        const auto r = parse("{}");
+        MIB_REQUIRE(r.ok, "empty object parses");
+        MIB_EXPECT(r.config.extTrigSignalType == 0 && r.config.extTrigJitterUs == 0 &&
+                       r.config.acqTriggerDelayUs == 0 && r.config.triggerCount == 1,
+                   "acquisition-trigger defaults");
+    }
+
+    // 11) Acquisition-trigger fields: full ext-trigger config round-trips.
+    {
+        const auto r = parse(R"({
+            "trigger_mode": 2, "ext_trig_signal_type": 1,
+            "ext_trig_jitter_us": 10, "acq_trigger_delay_us": 25, "trigger_count": 3
+        })");
+        MIB_REQUIRE(r.ok, "ext-trigger config parses");
+        MIB_EXPECT(r.warnings.empty(), "in-range trigger config produces no warnings");
+        MIB_EXPECT(r.config.triggerMode == 2 && r.config.extTrigSignalType == 1 &&
+                       r.config.extTrigJitterUs == 10 && r.config.acqTriggerDelayUs == 25 &&
+                       r.config.triggerCount == 3,
+                   "ext-trigger fields preserved");
+    }
+
+    // 12) strobe_mode range widened to [0,3] (3 = always low).
+    {
+        const auto ok3 = parse(R"({"strobe_mode": 3})");
+        MIB_EXPECT(ok3.ok && ok3.config.strobeMode == 3 && ok3.warnings.empty(),
+                   "strobe_mode 3 accepted without warning");
+        const auto over = parse(R"({"strobe_mode": 4})");
+        MIB_EXPECT(over.ok && over.config.strobeMode == 3 && !over.warnings.empty(),
+                   "strobe_mode 4 clamps to 3 with warning");
+    }
+
+    // 13) ext_trig_signal_type clamps into [0,4].
+    {
+        const auto r = parse(R"({"ext_trig_signal_type": 5})");
+        MIB_EXPECT(r.ok && r.config.extTrigSignalType == 4, "signal type clamped to 4");
+    }
+
+    // 14) trigger_count 0 would silently capture nothing per trigger — clamps
+    //     up to 1 with a warning.
+    {
+        const auto r = parse(R"({"trigger_count": 0})");
+        MIB_EXPECT(r.ok && r.config.triggerCount == 1, "trigger_count clamped to 1");
+        MIB_EXPECT(!r.warnings.empty(), "trigger_count clamp warns");
+    }
+
+    // 15) Negative jitter/delay clamp to 0 (same unsigned-cast hazard as strobe).
+    {
+        const auto r = parse(R"({"ext_trig_jitter_us": -5, "acq_trigger_delay_us": -1})");
+        MIB_EXPECT(r.ok && r.config.extTrigJitterUs == 0 && r.config.acqTriggerDelayUs == 0,
+                   "negative jitter/delay clamped to 0");
+        MIB_EXPECT(r.warnings.size() >= 2, "each negative trigger field warns");
+    }
+
     if (mib::test::exitCode() == 0) {
         std::printf("MindVision config parse/bounds validation verified\n");
     }

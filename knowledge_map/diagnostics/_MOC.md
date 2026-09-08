@@ -7,6 +7,13 @@
 
 - [[CrashStateMirror]] — lock-free state snapshot store read by the crash
   handler to produce per-crash `.json` sidecars.
+- [[PipelineTimingRecorder]] — lock-free per-frame latency recorder
+  (acquisition → algorithm → trigger stamps + skip accounting) behind the
+  pipeline-delay diagnosis workflow.
+- [[MemoryBudget]] — byte-budgeted ownership report (issue #370): per-owner
+  current/peak/bound bytes with explicit Measured / Estimated / Unknown
+  knowledge, the extracted `ExperimentFrameBuffer`, and the memory
+  benchmark evidence.
 
 ## Related services / conventions
 

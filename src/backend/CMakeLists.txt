@@ -33,9 +33,12 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/PipelineTimingRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/Tools.cpp
 )
@@ -193,10 +196,14 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/RecorderService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/PlaybackService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionApply.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
@@ -253,7 +260,11 @@ else()
 endif()
 
 if(MIB_HAS_MINDVISION)
-    target_compile_definitions(mib_backend PUBLIC MIB_HAS_MINDVISION=1)
+    target_compile_definitions(mib_backend PUBLIC
+        MIB_HAS_MINDVISION=1
+        # Verified against every pinned R2 SDK by the platform provisioners.
+        MIB_MINDVISION_USE_PRIORITY_API=1
+    )
 else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_MINDVISION=0)
 endif()
@@ -277,11 +288,22 @@ if(MIB_HAS_MINDVISION)
     target_include_directories(mib_backend PUBLIC
         ${MIB_MINDVISION_INCLUDE_DIR}
     )
+    if(NOT WIN32)
+        target_link_libraries(mib_backend PUBLIC
+            ${MIB_MINDVISION_LIBRARY}
+        )
+    endif()
 endif()
 
 target_link_libraries(mib_backend PUBLIC
     spdlog::spdlog
 )
+
+# Integration branch (shared backend, #372): the reliability serial-bus stack
+# (SerialBus, SyringePumpService, PulseGeneratorService) and the crash
+# reporter's Qt message handler use Qt Core / Qt SerialPort types. Agent B's
+# rebase (handoff gap G7) ports them onto ISerialPort and drops this again.
+target_link_libraries(mib_backend PUBLIC Qt6::Core Qt6::SerialPort)
 
 if(TARGET nlohmann_json::nlohmann_json)
     target_link_libraries(mib_backend PUBLIC nlohmann_json::nlohmann_json)

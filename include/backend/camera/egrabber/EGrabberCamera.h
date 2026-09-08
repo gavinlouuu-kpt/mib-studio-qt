@@ -36,6 +36,12 @@ public:
 
     bool grabFrame(Frame& out) override;
     bool pollStats(CameraStats& out) const override;
+    // Frame::timestamp = Coaxlink BUFFER_INFO_TIMESTAMP / per-part custom
+    // timestamps: microseconds since host boot (QPC domain on Windows).
+    TimestampDescriptor timestampDescriptor() const override;
+    FrameDeliveryCapabilities deliveryCapabilities() const override;
+    FrameDeliveryMode activeDeliveryMode() const override;
+    bool pollAcquisitionQueueStats(AcquisitionQueueStats& out) const override;
     bool checkDeviceHealth() const;
 
     void configureTriggerOutput(const std::string& lineSelector) override;
@@ -60,6 +66,12 @@ private:
 
     mutable CameraStats lastStats_{};
     std::deque<Frame> pendingFrames_;
+    // Mode confirmed at the most recent successful start(); before any start
+    // activeDeliveryMode() falls back to config_.deliveryMode.
+    std::optional<FrameDeliveryMode> confirmedDeliveryMode_;
+    // Stale completed buffers dropped by the LatestFrame drain. Atomic: read
+    // by pollAcquisitionQueueStats() while the capture thread increments it.
+    std::atomic<uint64_t> intentionallyDiscardedFrames_{0};
     // Atomic: read lock-free by the trigger thread (setTriggerOutput) and by
     // isRunning() while the capture thread writes it under stateMutex_.
     std::atomic<bool> running_{false};
@@ -70,9 +82,14 @@ private:
     // stateMutex_, which stop() holds across ~360 ms of teardown sleeps.
     mutable std::mutex triggerMutex_;
 
-    // Trigger output state
+    // Trigger output state. triggerLineApplied_ tracks whether LineSelector
+    // has been written on the current grabber_'s nodemap: the selection is
+    // GenApi client state owned by that EGrabber instance, so it survives
+    // between pulses and only needs (re)applying after start() or a trigger
+    // reconfiguration. Guarded by triggerMutex_ alongside grabber_.
     std::string triggerLineSelector_;
     bool triggerConfigured_{false};
+    bool triggerLineApplied_{false};
 };
 
 } // namespace camera::common

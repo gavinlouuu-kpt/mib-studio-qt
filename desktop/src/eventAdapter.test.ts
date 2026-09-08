@@ -6,7 +6,7 @@ const fixture=()=>structuredClone(golden);
 it("decodes the shared C++/Rust JSON golden into named fields",()=>{
   const events=decodeEvents(fixture());
   expect(events[0]).toMatchObject({kind:"OperationStatus",operationId:"9007199254740993",state:2,progress:"18446744073709551615",total:"18446744073709551615"});
-  expect(events[1]).toMatchObject({kind:"ExperimentStatus",endTimeNs:"18446744073709551615",droppedValid:"9007199254740993",droppedInvalid:"18446744073709551615"});
+  expect(events[1]).toMatchObject({kind:"ExperimentStatus",endTimeNs:"18446744073709551615",validSaved:"9007199254740993",droppedValid:"18437736874454810615",droppedInvalid:"7"});
   expect(events[2]).toMatchObject({algorithmFps:{value:null,validity:"invalid",freshness:"unavailable"},validFps:{value:0,validity:"reported",freshness:"unavailable"},invalidFps:{value:null,validity:"invalid"}});
   expect(events[3]).toMatchObject({kind:"FrameReady",source:2,byteSize:"4"});
   for(const e of events) expect(e).not.toHaveProperty("u0");

@@ -1,0 +1,60 @@
+[2026-09-07 15:39:19.174] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/mindvision_diagnostics_3177953734250294973/data/logs/app.log
+[2026-09-07 15:39:19.175] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=false, hdf5=false, processing=true, yolo=false, autofocus=false, trigger=true, capture=true, playback=false
+[2026-09-07 15:39:19.175] [app] [warning] [AppBackend.cpp:335] AppBackend: sqlite bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:39:19.175] [app] [warning] [AppBackend.cpp:344] AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:39:19.175] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:39:19.175] [app] [warning] [EModulusLutCatalog.cpp:550] EModulusLutCatalog: manifest fetch failed and no local cache exists
+[2026-09-07 15:39:19.175] [app] [warning] [AppBackend.cpp:375] AppBackend: LUT catalog resolution failed, falling back to bundled path /tmp/mindvision_diagnostics_3177953734250294973/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt: Bundled LUT not found: /tmp/mindvision_diagnostics_3177953734250294973/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-09-07 15:39:19.302] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/Developer/.worktrees/reliability-qt-test/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 15:39:19.302] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=bundled-fallback, revision=bundled, path=/tmp/mindvision_diagnostics_3177953734250294973/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=unknown, remote_updated=false, bundled_fallback=false, manifest=
+[2026-09-07 15:39:19.303] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 15:39:19.303] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:39:19.303] [app] [info] [AppBackend.cpp:614] AppBackend: configuring MindVision camera (index=0, config=<none>)
+[2026-09-07 15:39:19.303] [app] [warning] [AppBackend.cpp:687] AppBackend: playback bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:39:19.303] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 15:39:19.327] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:39:19.327] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 15:39:19.327] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+[2026-09-07 15:39:19.333] [app] [warning] [CameraControlService.cpp:65] CameraControlService hardware operations unavailable: EGrabber SDK is unavailable on this platform
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:39:23.741] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 15:39:23.742] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 15:39:23.743] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 15:39:23.744] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 15:39:23.769] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 15:39:23.769] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 15:39:23.769] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 15:39:23.769] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 15:39:23.769] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 15:39:23.769] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 15:39:23.769] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 15:39:23.769] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 15:39:23.769] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 15:39:23.778] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 15:39:23.803] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 15:39:23.811] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 15:39:23.812] [app] [info] [MainWindow.cpp:877] MainWindow: geometry default 800x800@0,0 (screen 0)
+[2026-09-07 15:39:23.812] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:39:23.812] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+E0907 15:39:28.020455 3935517 MVCAMAPI.cpp:382] CameraInit Failed, err:32774,Version:2.1.0.49,FriendlyName:MV-XG51GM#A9FE6AF1,SN:056061120465
+[2026-09-07 15:39:28.020] [app] [error] [MindVisionCamera.cpp:92] MindVisionCamera: CameraInit failed (status=32774) (mindvision.init_failed)
+[2026-09-07 15:39:28.020] [app] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+FAIL state=faulted failure=CameraInit failed (status=32774)
+[2026-09-07 15:39:28.028] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped

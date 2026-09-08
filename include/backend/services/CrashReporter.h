@@ -26,6 +26,11 @@ public:
         bool uploadPendingOnStart{true};
         bool installSignalHandlers{true};
         bool installTerminateHandler{true};
+        size_t maxRetainedDumps{50};        // per-class retention bound
+                                            // (pending .dmp, .queued, orphan
+                                            // .json sidecars)
+        int queuedRetryAfterDays{7};        // a .dmp.queued older than this
+                                            // is re-submitted once (0 = off)
     };
 
     // Returns true if at least the local minidump path is armed. Returns
@@ -34,6 +39,7 @@ public:
     static bool init(const Config& cfg);
     static void shutdown();
     static bool isInitialized();
+    static bool isSentryActive();
 
     // Diagnostic decorations attached to subsequent crash events.
     static void setTag(std::string_view key, std::string_view value);

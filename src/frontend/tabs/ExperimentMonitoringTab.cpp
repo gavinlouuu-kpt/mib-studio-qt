@@ -24,8 +24,13 @@
 #else
 #include <QBarCategoryAxis>
 #endif
+#include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
+#include <QMetaMethod>
+#include <QPushButton>
+#include <QSignalBlocker>
+#include <QVariant>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QCheckBox>
@@ -50,6 +55,7 @@
 #include "frontend/widgets/ZoomableChartView.h"
 #include "backend/app/AppBackend.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/processing/ProcessingScience.h"
 #include "backend/services/TriggerService.h"
 
 #include <spdlog/spdlog.h>
@@ -69,69 +75,48 @@ std::vector<InvalidReason> getInvalidReasons(
     const backend::services::ProcessingConfig& config,
     double pixelToMicronFactor = 1.0)
 {
+    // Which reasons apply comes from the shared classifier so this tooltip and
+    // the live invalid-reason histogram never disagree. The detailed value text
+    // is built here (the classifier returns codes only).
+    namespace science = backend::processing::science;
+    const double areaUm = result.area * pixelToMicronFactor * pixelToMicronFactor;
+
     std::vector<InvalidReason> reasons;
-
-    // Check early-exit conditions first (metrics not computed in these cases)
-    if (config.require_single_inner_contour && result.innerContourCount == 0) {
-        reasons.push_back({"No contour", "No inner contour found"});
-        return reasons;
-    }
-
-    if (config.enable_border_check && result.touchesBorder) {
-        reasons.push_back({"Border", "Contour touches ROI border"});
-        // When border check fails, metrics are not computed — don't check them
-        return reasons;
-    }
-
-    // Convert pixel area to μm² to match config threshold units
-    double areaUm = result.area * pixelToMicronFactor * pixelToMicronFactor;
-
-    // Metrics were computed — check which range checks failed
-    if (config.enable_area_range_check) {
-        if (areaUm < config.area_threshold_min || areaUm > config.area_threshold_max) {
-            reasons.push_back({
-                "Area",
-                QString("Area: %1 μm² (range: %2-%3)")
-                    .arg(areaUm, 0, 'f', 0)
-                    .arg(config.area_threshold_min)
-                    .arg(config.area_threshold_max)
-            });
-        }
-    }
-
-    if (config.enable_ring_ratio_check) {
-        if (result.ringRatio <= config.ring_ratio_min || result.ringRatio >= config.ring_ratio_max) {
-            reasons.push_back({
-                "Ring",
-                QString("Ring ratio: %1 (range: %2-%3)")
-                    .arg(result.ringRatio, 0, 'f', 1)
-                    .arg(config.ring_ratio_min, 0, 'f', 1)
-                    .arg(config.ring_ratio_max, 0, 'f', 1)
-            });
-        }
-    }
-
-    if (config.enable_deformability_range_check) {
-        if (result.deformability < config.deformability_threshold_min ||
-            result.deformability > config.deformability_threshold_max) {
-            reasons.push_back({
-                "Deform",
-                QString("Deformability: %1 (range: %2-%3)")
-                    .arg(result.deformability, 0, 'f', 3)
-                    .arg(config.deformability_threshold_min, 0, 'f', 3)
-                    .arg(config.deformability_threshold_max, 0, 'f', 3)
-            });
-        }
-    }
-
-    if (config.enable_area_ratio_check) {
-        if (result.areaRatio > config.area_ratio_threshold_max) {
-            reasons.push_back({
-                "Ratio",
-                QString("Area ratio: %1 (max: %2)")
-                    .arg(result.areaRatio, 0, 'f', 2)
-                    .arg(config.area_ratio_threshold_max, 0, 'f', 2)
-            });
+    for (auto code : science::classifyInvalidReasons(result, config, pixelToMicronFactor)) {
+        switch (code) {
+        case science::InvalidReasonCode::NoContour:
+            reasons.push_back({"No contour", "No inner contour found"});
+            break;
+        case science::InvalidReasonCode::Border:
+            reasons.push_back({"Border", "Contour touches ROI border"});
+            break;
+        case science::InvalidReasonCode::Area:
+            reasons.push_back({"Area",
+                               QString("Area: %1 μm² (range: %2-%3)")
+                                   .arg(areaUm, 0, 'f', 0)
+                                   .arg(config.area_threshold_min)
+                                   .arg(config.area_threshold_max)});
+            break;
+        case science::InvalidReasonCode::Ring:
+            reasons.push_back({"Ring",
+                               QString("Ring ratio: %1 (range: %2-%3)")
+                                   .arg(result.ringRatio, 0, 'f', 1)
+                                   .arg(config.ring_ratio_min, 0, 'f', 1)
+                                   .arg(config.ring_ratio_max, 0, 'f', 1)});
+            break;
+        case science::InvalidReasonCode::Deform:
+            reasons.push_back({"Deform",
+                               QString("Deformability: %1 (range: %2-%3)")
+                                   .arg(result.deformability, 0, 'f', 3)
+                                   .arg(config.deformability_threshold_min, 0, 'f', 3)
+                                   .arg(config.deformability_threshold_max, 0, 'f', 3)});
+            break;
+        case science::InvalidReasonCode::AreaRatio:
+            reasons.push_back({"Ratio",
+                               QString("Area ratio: %1 (max: %2)")
+                                   .arg(result.areaRatio, 0, 'f', 2)
+                                   .arg(config.area_ratio_threshold_max, 0, 'f', 2)});
+            break;
         }
     }
 
@@ -211,210 +196,404 @@ namespace frontend
         delete ui;
     }
 
+    // ------------------------------------------------------------------
+    // Tune panel (issue #364): criteria grouped with their enable state,
+    // full names + units, fixed Apply/Revert footer outside the scroll
+    // area, explicit draft state. The panel never mutates the backend or
+    // the config file itself; Apply is a request to the config coordinator.
+    // ------------------------------------------------------------------
+
+    void ExperimentMonitoringTab::bindTuneField(TuneField field, QWidget* widget, QWidget* rowLabel,
+                                                std::function<QVariant()> read, std::function<void(const QVariant&)> write)
+    {
+        TuneBinding b;
+        b.field = field;
+        b.widget = widget;
+        b.rowLabel = rowLabel;
+        b.read = std::move(read);
+        b.write = std::move(write);
+        widget->setAccessibleName(tuneFieldLabel(field));
+        if (widget->toolTip().isEmpty()) widget->setToolTip(tuneFieldLabel(field));
+        tuneBindings_.push_back(std::move(b));
+    }
+
     void ExperimentMonitoringTab::setupTuneParamsPanel()
     {
         auto* placeholder = ui->tuneParamsPlaceholder;
-        placeholder->setMinimumWidth(220);
-        placeholder->setMaximumWidth(280);
+        placeholder->setObjectName(QStringLiteral("tunePanel"));
+        placeholder->setMinimumWidth(kTunePanelMinWidth);
+        placeholder->setMaximumWidth(kTunePanelMaxWidth);
 
         auto* outerLayout = new QVBoxLayout(placeholder);
         outerLayout->setContentsMargins(0, 0, 0, 0);
         outerLayout->setSpacing(0);
 
-        // Scrollable content area (always visible)
-        auto* scrollArea = new QScrollArea(placeholder);
-        scrollArea->setWidgetResizable(true);
-        scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        scrollArea->setFrameShape(QFrame::NoFrame);
+        tuneScrollArea_ = new QScrollArea(placeholder);
+        tuneScrollArea_->setObjectName(QStringLiteral("tuneScrollArea"));
+        tuneScrollArea_->setWidgetResizable(true);
+        tuneScrollArea_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        tuneScrollArea_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        tuneScrollArea_->setFrameShape(QFrame::NoFrame);
 
         tunePanelContent_ = new QWidget();
+        tunePanelContent_->setObjectName(QStringLiteral("tunePanelContent"));
         auto* contentLayout = new QVBoxLayout(tunePanelContent_);
         contentLayout->setContentsMargins(4, 4, 4, 4);
         contentLayout->setSpacing(6);
 
-        // --- Title ---
-        auto* titleLabel = new QLabel(tr("<b>Tune Params</b>"), tunePanelContent_);
-        contentLayout->addWidget(titleLabel);
-
-        // --- Filter Thresholds ---
-        auto* threshGroup = new QGroupBox(tr("Filter Thresholds"), tunePanelContent_);
-        auto* threshLayout = new QVBoxLayout(threshGroup);
-        threshLayout->setSpacing(4);
-
-        auto addSpinRow = [](QVBoxLayout* layout, const QString& label, QSpinBox*& spin,
-                             int min, int max, int step, int val) {
-            auto* row = new QHBoxLayout();
-            row->addWidget(new QLabel(label));
-            spin = new QSpinBox();
+        auto addHeading = [&](const QString& objectName, const QString& title, const QString& hint) {
+            auto* heading = new QLabel(QStringLiteral("<b>%1</b>").arg(title), tunePanelContent_);
+            heading->setObjectName(objectName);
+            heading->setWordWrap(true);
+            heading->setAccessibleName(title);
+            contentLayout->addWidget(heading);
+            if (!hint.isEmpty()) {
+                auto* hintLabel = new QLabel(hint, tunePanelContent_);
+                hintLabel->setObjectName(objectName + QStringLiteral("Hint"));
+                hintLabel->setWordWrap(true);
+                hintLabel->setStyleSheet(QStringLiteral("color: palette(mid);"));
+                contentLayout->addWidget(hintLabel);
+            }
+        };
+        auto makeForm = [](QWidget* host) {
+            auto* form = new QFormLayout(host);
+            form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+            form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+            form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+            form->setContentsMargins(6, 2, 6, 6);
+            form->setHorizontalSpacing(6);
+            form->setVerticalSpacing(3);
+            return form;
+        };
+        // Checkable group = the criterion's enable state; Qt disables the
+        // value controls while unchecked, their configured values stay
+        // visible and the checkbox text carries the state (not color).
+        auto makeCriterion = [&](const QString& title, const QString& objectName, TuneField enableField, const QString& tooltip) {
+            auto* box = new QGroupBox(title, tunePanelContent_);
+            box->setObjectName(objectName);
+            box->setCheckable(true);
+            box->setToolTip(tooltip);
+            bindTuneField(enableField, box, nullptr,
+                          [box]() { return QVariant(box->isChecked()); },
+                          [box](const QVariant& v) { box->setChecked(v.toBool()); });
+            connect(box, &QGroupBox::toggled, this, [this, enableField](bool on) { onTuneFieldEdited(enableField, on); });
+            contentLayout->addWidget(box);
+            return box;
+        };
+        auto addIntField = [&](QFormLayout* form, const QString& rowLabel, TuneField field, const QString& objectName,
+                               int min, int max, int step) {
+            auto* spin = new QSpinBox();
+            spin->setObjectName(objectName);
             spin->setRange(min, max);
             spin->setSingleStep(step);
-            spin->setValue(val);
-            row->addWidget(spin);
-            layout->addLayout(row);
+            spin->setSuffix(tuneFieldUnit(field));
+            spin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            auto* label = new QLabel(rowLabel);
+            label->setBuddy(spin);
+            form->addRow(label, spin);
+            bindTuneField(field, spin, label,
+                          [spin]() { return QVariant(spin->value()); },
+                          [spin](const QVariant& v) { spin->setValue(v.toInt()); });
+            connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, [this, field](int v) { onTuneFieldEdited(field, v); });
+            return spin;
         };
-
-        auto addDblSpinRow = [](QVBoxLayout* layout, const QString& label, QDoubleSpinBox*& spin,
-                                double min, double max, double step, int decimals, double val) {
-            auto* row = new QHBoxLayout();
-            row->addWidget(new QLabel(label));
-            spin = new QDoubleSpinBox();
+        auto addDoubleField = [&](QFormLayout* form, const QString& rowLabel, TuneField field, const QString& objectName,
+                                  double min, double max, double step) {
+            auto* spin = new QDoubleSpinBox();
+            spin->setObjectName(objectName);
             spin->setRange(min, max);
             spin->setSingleStep(step);
-            spin->setDecimals(decimals);
-            spin->setValue(val);
-            row->addWidget(spin);
-            layout->addLayout(row);
+            spin->setDecimals(tuneFieldDecimals(field));
+            spin->setSuffix(tuneFieldUnit(field));
+            spin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            auto* label = new QLabel(rowLabel);
+            label->setBuddy(spin);
+            form->addRow(label, spin);
+            bindTuneField(field, spin, label,
+                          [spin]() { return QVariant(spin->value()); },
+                          [spin](const QVariant& v) { spin->setValue(v.toDouble()); });
+            connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, field](double v) { onTuneFieldEdited(field, v); });
+            return spin;
         };
+        // --- Cell acceptance filters ---------------------------------------
+        addHeading(QStringLiteral("acceptanceHeading"), tr("Cell acceptance filters"),
+                   tr("An object must pass every enabled criterion to count as a valid cell."));
+        {
+            auto* box = makeCriterion(tr("Area (µm²)"), QStringLiteral("criterionArea"), TuneField::AreaEnabled,
+                                      tr("Accept objects whose projected area lies within this range (µm², after pixel-to-micron conversion)."));
+            auto* form = makeForm(box);
+            addIntField(form, tr("Minimum"), TuneField::AreaMin, QStringLiteral("areaMinSpin"), 0, 100000, 10);
+            addIntField(form, tr("Maximum"), TuneField::AreaMax, QStringLiteral("areaMaxSpin"), 0, 100000, 10);
+        }
+        {
+            auto* box = makeCriterion(tr("Deformability"), QStringLiteral("criterionDeformability"), TuneField::DeformabilityEnabled,
+                                      tr("Accept objects whose deformability (1 − circularity, unitless) lies within this range."));
+            auto* form = makeForm(box);
+            addDoubleField(form, tr("Minimum"), TuneField::DeformabilityMin, QStringLiteral("deformMinSpin"), 0.0, 1.0, 0.01);
+            addDoubleField(form, tr("Maximum"), TuneField::DeformabilityMax, QStringLiteral("deformMaxSpin"), 0.0, 1.0, 0.01);
+        }
+        {
+            auto* box = makeCriterion(tr("Ring ratio"), QStringLiteral("criterionRingRatio"), TuneField::RingRatioEnabled,
+                                      tr("Accept objects whose ring ratio (focus indicator reported by the processing core, unitless) lies within this range."));
+            auto* form = makeForm(box);
+            addDoubleField(form, tr("Minimum"), TuneField::RingRatioMin, QStringLiteral("ringMinSpin"), 0.0, 100.0, 0.5);
+            addDoubleField(form, tr("Maximum"), TuneField::RingRatioMax, QStringLiteral("ringMaxSpin"), 0.0, 100.0, 0.5);
+        }
+        {
+            auto* box = makeCriterion(tr("Area ratio"), QStringLiteral("criterionAreaRatio"), TuneField::AreaRatioEnabled,
+                                      tr("Reject objects whose convex-hull to contour area ratio (unitless) exceeds the maximum."));
+            auto* form = makeForm(box);
+            addDoubleField(form, tr("Maximum"), TuneField::AreaRatioMax, QStringLiteral("areaRatioMaxSpin"), 0.0, 10.0, 0.1);
+        }
+        // Enable-only criteria: the checkable title is the whole setting; a
+        // wrapping description explains it (a QCheckBox caption cannot wrap
+        // and would force the compact width to overflow).
+        auto addDescription = [&](QGroupBox* box, const QString& text) {
+            auto* layout = new QVBoxLayout(box);
+            layout->setContentsMargins(6, 2, 6, 6);
+            auto* label = new QLabel(text, box);
+            label->setObjectName(box->objectName() + QStringLiteral("Description"));
+            label->setWordWrap(true);
+            label->setStyleSheet(QStringLiteral("color: palette(mid);"));
+            layout->addWidget(label);
+        };
+        addDescription(makeCriterion(tr("Border exclusion"), QStringLiteral("criterionBorder"), TuneField::BorderEnabled,
+                                     tr("Border exclusion: an object whose contour touches the ROI edge is rejected.")),
+                       tr("Reject objects touching the ROI edge."));
+        addDescription(makeCriterion(tr("Single inner contour"), QStringLiteral("criterionSingleInner"), TuneField::SingleInnerContourEnabled,
+                                     tr("Single inner contour: objects with zero or several inner contours are rejected.")),
+                       tr("Reject objects with zero or several inner contours."));
 
-        addSpinRow(threshLayout, tr("Area Min"), areaMinSpin_, 0, 100000, 10, 250);
-        addSpinRow(threshLayout, tr("Area Max"), areaMaxSpin_, 0, 100000, 10, 1000);
-        addDblSpinRow(threshLayout, tr("Deform Min"), deformMinSpin_, 0.0, 1.0, 0.01, 2, 0.0);
-        addDblSpinRow(threshLayout, tr("Deform Max"), deformMaxSpin_, 0.0, 1.0, 0.01, 2, 1.0);
-        addDblSpinRow(threshLayout, tr("Area Ratio Max"), areaRatioMaxSpin_, 0.0, 10.0, 0.1, 2, 1.5);
-        addDblSpinRow(threshLayout, tr("Ring Min"), ringMinSpin_, 0.0, 100.0, 0.5, 1, 15.0);
-        addDblSpinRow(threshLayout, tr("Ring Max"), ringMaxSpin_, 0.0, 100.0, 0.5, 1, 25.0);
-        contentLayout->addWidget(threshGroup);
+        // --- Target group / sorting gate --------------------------------
+        addHeading(QStringLiteral("targetHeading"), tr("Target group / sorting gate"),
+                   tr("Applied to valid cells only: selects which of them fire the sort trigger. Never changes validity."));
+        {
+            auto* box = makeCriterion(tr("Target group gate"), QStringLiteral("targetGroupBox"), TuneField::TargetGroupEnabled,
+                                      tr("When enabled, a valid cell inside both ranges is reported as target group and fires the sort trigger."));
+            auto* form = makeForm(box);
+            addIntField(form, tr("Area minimum"), TuneField::TargetAreaMin, QStringLiteral("targetAreaMinSpin"), 0, 100000, 10);
+            addIntField(form, tr("Area maximum"), TuneField::TargetAreaMax, QStringLiteral("targetAreaMaxSpin"), 0, 100000, 10);
+            addDoubleField(form, tr("Deformability minimum"), TuneField::TargetDeformabilityMin, QStringLiteral("targetDeformMinSpin"), 0.0, 1.0, 0.01);
+            addDoubleField(form, tr("Deformability maximum"), TuneField::TargetDeformabilityMax, QStringLiteral("targetDeformMaxSpin"), 0.0, 1.0, 0.01);
+        }
 
-        // --- Filter Enables ---
-        auto* enableGroup = new QGroupBox(tr("Filter Enables"), tunePanelContent_);
-        auto* enableLayout = new QVBoxLayout(enableGroup);
-        enableLayout->setSpacing(2);
-
-        borderCheckBox_ = new QCheckBox(tr("Border Check"));
-        areaRangeCheckBox_ = new QCheckBox(tr("Area Range"));
-        deformRangeCheckBox_ = new QCheckBox(tr("Deformability Range"));
-        areaRatioCheckBox_ = new QCheckBox(tr("Area Ratio"));
-        ringRatioCheckBox_ = new QCheckBox(tr("Ring Ratio"));
-        singleInnerCheckBox_ = new QCheckBox(tr("Single Inner Contour"));
-
-        enableLayout->addWidget(borderCheckBox_);
-        enableLayout->addWidget(areaRangeCheckBox_);
-        enableLayout->addWidget(deformRangeCheckBox_);
-        enableLayout->addWidget(areaRatioCheckBox_);
-        enableLayout->addWidget(ringRatioCheckBox_);
-        enableLayout->addWidget(singleInnerCheckBox_);
-        contentLayout->addWidget(enableGroup);
-
-        // --- Target Group ---
-        auto* targetGroup = new QGroupBox(tr("Target Group"), tunePanelContent_);
-        auto* targetLayout = new QVBoxLayout(targetGroup);
-        targetLayout->setSpacing(4);
-
-        targetGroupEnableBox_ = new QCheckBox(tr("Enable"));
-        targetLayout->addWidget(targetGroupEnableBox_);
-
-        addSpinRow(targetLayout, tr("Area Min"), targetAreaMinSpin_, 0, 100000, 10, 300);
-        addSpinRow(targetLayout, tr("Area Max"), targetAreaMaxSpin_, 0, 100000, 10, 800);
-        addDblSpinRow(targetLayout, tr("Deform Min"), targetDeformMinSpin_, 0.0, 1.0, 0.01, 2, 0.0);
-        addDblSpinRow(targetLayout, tr("Deform Max"), targetDeformMaxSpin_, 0.0, 1.0, 0.01, 2, 0.3);
-        contentLayout->addWidget(targetGroup);
-
-        // --- Multi-Image ---
-        auto* multiImageGroup = new QGroupBox(tr("Multi-Image"), tunePanelContent_);
-        auto* multiImageLayout = new QVBoxLayout(multiImageGroup);
-        multiImageLayout->setSpacing(4);
-
-        multiImageEnableBox_ = new QCheckBox(tr("Enable"));
-        multiImageLayout->addWidget(multiImageEnableBox_);
-
-        addSpinRow(multiImageLayout, tr("Images per trigger"), multiImageCountSpin_, 1, 32, 1, 1);
-        contentLayout->addWidget(multiImageGroup);
-
-        // --- Apply Button ---
-        auto* applyBtn = new QPushButton(tr("Apply"), tunePanelContent_);
-        connect(applyBtn, &QPushButton::clicked, this, &ExperimentMonitoringTab::onApplyParams);
-        contentLayout->addWidget(applyBtn);
+        // --- Multi-image acquisition -------------------------------------
+        addHeading(QStringLiteral("multiImageHeading"), tr("Multi-image acquisition"), QString());
+        {
+            auto* box = makeCriterion(tr("Record image series"), QStringLiteral("multiImageBox"), TuneField::MultiImageEnabled,
+                                      tr("Capture N consecutive frames per valid detection; metrics come from the first frame."));
+            auto* form = makeForm(box);
+            addIntField(form, tr("Images per trigger"), TuneField::MultiImageCount, QStringLiteral("multiImageCountSpin"), 1, 32, 1);
+        }
 
         contentLayout->addStretch(1);
+        tuneScrollArea_->setWidget(tunePanelContent_);
+        outerLayout->addWidget(tuneScrollArea_, 1);
 
-        scrollArea->setWidget(tunePanelContent_);
-        outerLayout->addWidget(scrollArea, 1);
+        // --- Fixed footer (outside the scroll area) ------------------------
+        auto* line = new QFrame(placeholder);
+        line->setFrameShape(QFrame::HLine);
+        line->setFrameShadow(QFrame::Sunken);
+        outerLayout->addWidget(line);
+        tuneFooter_ = new QWidget(placeholder);
+        tuneFooter_->setObjectName(QStringLiteral("tuneFooter"));
+        auto* footerLayout = new QVBoxLayout(tuneFooter_);
+        footerLayout->setContentsMargins(4, 4, 4, 4);
+        footerLayout->setSpacing(3);
+        tuneStateLabel_ = new QLabel(tuneFooter_);
+        tuneStateLabel_->setObjectName(QStringLiteral("tuneStateLabel"));
+        tuneStateLabel_->setWordWrap(true);
+        tuneStateLabel_->setTextFormat(Qt::PlainText);
+        tuneValidationLabel_ = new QLabel(tuneFooter_);
+        tuneValidationLabel_->setObjectName(QStringLiteral("tuneValidationLabel"));
+        tuneValidationLabel_->setWordWrap(true);
+        tuneValidationLabel_->setTextFormat(Qt::PlainText);
+        tuneValidationLabel_->setVisible(false);
+        auto* buttons = new QHBoxLayout();
+        buttons->setSpacing(4);
+        tuneApplyBtn_ = new QPushButton(tr("Apply changes"), tuneFooter_);
+        tuneApplyBtn_->setObjectName(QStringLiteral("tuneApplyBtn"));
+        tuneApplyBtn_->setToolTip(tr("Persist the changed criteria to the active configuration file and apply them to processing."));
+        tuneRevertBtn_ = new QPushButton(tr("Revert"), tuneFooter_);
+        tuneRevertBtn_->setObjectName(QStringLiteral("tuneRevertBtn"));
+        tuneRevertBtn_->setToolTip(tr("Discard unapplied edits and reload the current configuration."));
+        buttons->addWidget(tuneApplyBtn_, 1);
+        buttons->addWidget(tuneRevertBtn_);
+        footerLayout->addWidget(tuneStateLabel_);
+        footerLayout->addWidget(tuneValidationLabel_);
+        footerLayout->addLayout(buttons);
+        outerLayout->addWidget(tuneFooter_, 0);
+        connect(tuneApplyBtn_, &QPushButton::clicked, this, &ExperimentMonitoringTab::onApplyParams);
+        connect(tuneRevertBtn_, &QPushButton::clicked, this, &ExperimentMonitoringTab::onRevertParams);
 
         // Load current config values into widgets
         loadCurrentConfig();
     }
 
-    void ExperimentMonitoringTab::loadCurrentConfig()
+    QWidget* ExperimentMonitoringTab::tunePanel() const { return ui ? ui->tuneParamsPlaceholder : nullptr; }
+
+    QString ExperimentMonitoringTab::tuneStateText() const { return tuneStateLabel_ ? tuneStateLabel_->text() : QString(); }
+
+    QWidget* ExperimentMonitoringTab::tuneFieldWidget(TuneField field) const
     {
-        auto cfg = backend_.processing().getProcessingConfig();
+        for (const auto& b : tuneBindings_)
+            if (b.field == field) return b.widget;
+        return nullptr;
+    }
 
-        // Block signals to avoid triggering anything during load
-        areaMinSpin_->setValue(cfg.area_threshold_min);
-        areaMaxSpin_->setValue(cfg.area_threshold_max);
-        deformMinSpin_->setValue(cfg.deformability_threshold_min);
-        deformMaxSpin_->setValue(cfg.deformability_threshold_max);
-        areaRatioMaxSpin_->setValue(cfg.area_ratio_threshold_max);
-        ringMinSpin_->setValue(cfg.ring_ratio_min);
-        ringMaxSpin_->setValue(cfg.ring_ratio_max);
+    bool ExperimentMonitoringTab::setTuneFieldForTests(TuneField field, const QVariant& value)
+    {
+        for (const auto& b : tuneBindings_) {
+            if (b.field != field) continue;
+            b.write(value);
+            return true;
+        }
+        return false;
+    }
 
-        borderCheckBox_->setChecked(cfg.enable_border_check);
-        areaRangeCheckBox_->setChecked(cfg.enable_area_range_check);
-        deformRangeCheckBox_->setChecked(cfg.enable_deformability_range_check);
-        areaRatioCheckBox_->setChecked(cfg.enable_area_ratio_check);
-        ringRatioCheckBox_->setChecked(cfg.enable_ring_ratio_check);
-        singleInnerCheckBox_->setChecked(cfg.require_single_inner_contour);
+    void ExperimentMonitoringTab::populateTuneWidgetsFromDraft()
+    {
+        tuneLoading_ = true;
+        for (const auto& b : tuneBindings_) {
+            QSignalBlocker blocker(b.widget);
+            b.write(draft_.field(b.field));
+        }
+        tuneLoading_ = false;
+        refreshTuneChangeMarkers();
+    }
 
-        // Sync histogram axis defaults from ring ratio config and refresh the chart defaults.
+    void ExperimentMonitoringTab::refreshTuneChangeMarkers()
+    {
+        for (const auto& b : tuneBindings_) {
+            const bool changed = draft_.isChanged(b.field);
+            b.widget->setProperty("changed", changed);
+            if (changed) {
+                const QVariant was = draft_.baselineField(b.field);
+                b.widget->setAccessibleDescription(tr("Unapplied change (applied value: %1)").arg(was.toString()));
+                b.widget->setToolTip(tr("%1 — unapplied change (applied value: %2)").arg(tuneFieldLabel(b.field), was.toString()));
+            } else {
+                b.widget->setAccessibleDescription(QString());
+                b.widget->setToolTip(tuneFieldLabel(b.field));
+            }
+            if (b.rowLabel) {
+                auto* label = qobject_cast<QLabel*>(b.rowLabel);
+                if (label) {
+                    QString text = label->text();
+                    const bool marked = text.endsWith(QStringLiteral(" *"));
+                    if (changed && !marked) label->setText(text + QStringLiteral(" *"));
+                    else if (!changed && marked) label->setText(text.chopped(2));
+                }
+            }
+        }
+    }
+
+    void ExperimentMonitoringTab::refreshTuneFooter()
+    {
+        if (!tuneStateLabel_) return;
+        tuneStateLabel_->setText(draft_.stateText());
+        tuneStateLabel_->setAccessibleName(tr("Tune panel state: %1").arg(draft_.stateText()));
+        const QStringList issues = draft_.dirty() ? draft_.validationIssues() : QStringList();
+        tuneValidationLabel_->setText(issues.join(QLatin1Char('\n')));
+        tuneValidationLabel_->setVisible(!issues.isEmpty());
+        const bool canApply = draft_.dirty() && draft_.valid() && !draft_.conflict() && !draft_.applying();
+        tuneApplyBtn_->setEnabled(canApply);
+        tuneRevertBtn_->setEnabled((draft_.dirty() || draft_.conflict()) && !draft_.applying());
+        // Enabled/disabled criteria must not be inferred from editability
+        // while applying: controls are read-only for the duration.
+        if (tunePanelContent_) tunePanelContent_->setEnabled(!draft_.applying());
+    }
+
+    void ExperimentMonitoringTab::onTuneFieldEdited(TuneField field, const QVariant& value)
+    {
+        if (tuneLoading_) return;
+        draft_.setField(field, value);
+        refreshTuneChangeMarkers();
+        refreshTuneFooter();
+        emit tuneStateChanged();
+    }
+
+    void ExperimentMonitoringTab::loadCurrentConfig() { loadCurrentConfig(QByteArray()); }
+
+    void ExperimentMonitoringTab::loadCurrentConfig(const QByteArray& documentFingerprint)
+    {
+        const auto cfg = backend_.processing().getProcessingConfig();
+        if (!documentFingerprint.isEmpty()) documentFingerprint_ = documentFingerprint;
+        const auto outcome = draft_.noteExternalBaseline(cfg);
+        switch (outcome) {
+        case ProcessingConfigDraft::ExternalOutcome::Refreshed:
+        case ProcessingConfigDraft::ExternalOutcome::Unchanged:
+            populateTuneWidgetsFromDraft();
+            // Sync histogram axis defaults from ring ratio config and refresh the chart defaults.
+            setHistogramXRange(cfg.ring_ratio_min, cfg.ring_ratio_max);
+            break;
+        case ProcessingConfigDraft::ExternalOutcome::Conflict:
+            // Local edits retained; the footer says so. The chart range still
+            // follows the authoritative config.
+            setHistogramXRange(cfg.ring_ratio_min, cfg.ring_ratio_max);
+            SPDLOG_WARN("Tune panel: external configuration change while {} edit(s) are unapplied; keeping the draft (conflict)", draft_.changeCount());
+            break;
+        case ProcessingConfigDraft::ExternalOutcome::Deferred:
+            break;
+        }
+        refreshTuneFooter();
+        emit tuneStateChanged();
+    }
+
+    void ExperimentMonitoringTab::onRevertParams()
+    {
+        draft_.revert();
+        populateTuneWidgetsFromDraft();
+        const auto& cfg = draft_.baseline();
         setHistogramXRange(cfg.ring_ratio_min, cfg.ring_ratio_max);
-
-        targetGroupEnableBox_->setChecked(cfg.enable_target_group);
-        targetAreaMinSpin_->setValue(cfg.target_group_area_min);
-        targetAreaMaxSpin_->setValue(cfg.target_group_area_max);
-        targetDeformMinSpin_->setValue(cfg.target_group_deformability_min);
-        targetDeformMaxSpin_->setValue(cfg.target_group_deformability_max);
-
-        multiImageEnableBox_->setChecked(cfg.multi_image_enabled);
-        multiImageCountSpin_->setValue(std::max(1, cfg.multi_image_count));
+        refreshTuneFooter();
+        emit tuneStateChanged();
     }
 
     void ExperimentMonitoringTab::onApplyParams()
     {
-        auto cfg = backend_.processing().getProcessingConfig();
+        const uint64_t requestId = draft_.beginApply();
+        if (requestId == 0) {
+            refreshTuneFooter();
+            return;
+        }
+        ApplyProcessingDraftRequest request;
+        request.requestId = requestId;
+        request.baselineFingerprint = documentFingerprint_;
+        request.patch = draft_.patch();
+        refreshTuneFooter();
+        static const QMetaMethod applySignal = QMetaMethod::fromSignal(&ExperimentMonitoringTab::applyRequested);
+        if (!isSignalConnected(applySignal)) {
+            draft_.failApply(tr("no configuration coordinator is connected"));
+            refreshTuneFooter();
+            emit tuneStateChanged();
+            return;
+        }
+        QStringList fields;
+        for (const auto& [field, value] : request.patch.values)
+            fields << QStringLiteral("%1=%2").arg(QLatin1String(toString(field)), value.toString());
+        SPDLOG_INFO("Tune panel: apply request {} ({})", requestId, fields.join(QStringLiteral(", ")).toStdString());
+        emit tuneStateChanged();
+        emit applyRequested(request);
+    }
 
-        // Filter thresholds
-        cfg.area_threshold_min = areaMinSpin_->value();
-        cfg.area_threshold_max = areaMaxSpin_->value();
-        cfg.deformability_threshold_min = deformMinSpin_->value();
-        cfg.deformability_threshold_max = deformMaxSpin_->value();
-        cfg.area_ratio_threshold_max = areaRatioMaxSpin_->value();
-        cfg.ring_ratio_min = ringMinSpin_->value();
-        cfg.ring_ratio_max = ringMaxSpin_->value();
-
-        // Filter enables
-        cfg.enable_border_check = borderCheckBox_->isChecked();
-        cfg.enable_area_range_check = areaRangeCheckBox_->isChecked();
-        cfg.enable_deformability_range_check = deformRangeCheckBox_->isChecked();
-        cfg.enable_area_ratio_check = areaRatioCheckBox_->isChecked();
-        cfg.enable_ring_ratio_check = ringRatioCheckBox_->isChecked();
-        cfg.require_single_inner_contour = singleInnerCheckBox_->isChecked();
-
-        // Target group
-        cfg.enable_target_group = targetGroupEnableBox_->isChecked();
-        cfg.target_group_area_min = targetAreaMinSpin_->value();
-        cfg.target_group_area_max = targetAreaMaxSpin_->value();
-        cfg.target_group_deformability_min = targetDeformMinSpin_->value();
-        cfg.target_group_deformability_max = targetDeformMaxSpin_->value();
-
-        // Multi-image acquisition
-        cfg.multi_image_enabled = multiImageEnableBox_->isChecked();
-        cfg.multi_image_count = multiImageCountSpin_->value();
-
-        backend_.processing().setProcessingConfig(cfg);
-
-        SPDLOG_INFO("Tune panel: applied config (area=[{},{}], deform=[{:.2f},{:.2f}], "
-                     "ring=[{:.1f},{:.1f}], border={}, areaRange={}, deformRange={}, "
-                     "areaRatio={}, ringRatio={}, singleInner={}, targetGroup={}, "
-                     "multiImage={}/{} )",
-                     cfg.area_threshold_min, cfg.area_threshold_max,
-                     cfg.deformability_threshold_min, cfg.deformability_threshold_max,
-                     cfg.ring_ratio_min, cfg.ring_ratio_max,
-                     cfg.enable_border_check, cfg.enable_area_range_check,
-                     cfg.enable_deformability_range_check, cfg.enable_area_ratio_check,
-                     cfg.enable_ring_ratio_check,
-                     cfg.require_single_inner_contour, cfg.enable_target_group,
-                     cfg.multi_image_enabled, cfg.multi_image_count);
-
-        emit processingConfigApplied();
+    void ExperimentMonitoringTab::onApplyResult(const frontend::ConfigApplyResult& result)
+    {
+        if (!draft_.completeApply(result)) {
+            SPDLOG_WARN("Tune panel: ignoring apply result for request {} (active {})", result.requestId, draft_.activeRequest());
+            return;
+        }
+        if (result.ok()) {
+            populateTuneWidgetsFromDraft();
+            setHistogramXRange(result.effectiveConfig.ring_ratio_min, result.effectiveConfig.ring_ratio_max);
+            SPDLOG_INFO("Tune panel: request {} persisted and applied", result.requestId);
+        } else {
+            refreshTuneChangeMarkers();
+            SPDLOG_WARN("Tune panel: request {} not applied (persisted={}, applied={}, conflict={}): {}",
+                        result.requestId, result.persisted, result.applied, result.conflict, result.error.toStdString());
+        }
+        refreshTuneFooter();
+        emit tuneStateChanged();
     }
 
     void ExperimentMonitoringTab::setupCharts() {

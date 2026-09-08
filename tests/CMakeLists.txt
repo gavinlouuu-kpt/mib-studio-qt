@@ -81,9 +81,50 @@ mib_add_backend_test_executable(roi_crop_test backend/roi_crop_test.cpp)
 add_test(NAME backend.roi_crop COMMAND $<TARGET_FILE:roi_crop_test>)
 set_tests_properties(backend.roi_crop PROPERTIES LABELS "backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(pulse_generator_frame_test backend/pulse_generator_frame_test.cpp)
+add_test(NAME backend.pulse_generator_frame COMMAND $<TARGET_FILE:pulse_generator_frame_test>)
+set_tests_properties(backend.pulse_generator_frame PROPERTIES LABELS "backend" TIMEOUT 30)
+
+# Shared RS485 bus + pulse-generator discovery/control over a POSIX pty
+# (compiles to a trivial pass on Windows).
+mib_add_backend_test_executable(serial_bus_pty_test backend/serial_bus_pty_test.cpp)
+target_link_libraries(serial_bus_pty_test PRIVATE Threads::Threads)
+add_test(NAME backend.serial_bus_pty COMMAND $<TARGET_FILE:serial_bus_pty_test>)
+set_tests_properties(backend.serial_bus_pty PROPERTIES LABELS "backend" TIMEOUT 60)
+
 mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config_test.cpp)
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mindvision_config_test>)
 set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera" TIMEOUT 30)
+
+# Issue #366: MindVision Mono8/geometry fail-closed conversion, driven through
+# the injectable SDK seam (no hardware, no vendor headers).
+mib_add_backend_test_executable(mindvision_conversion_fault_test backend/mindvision_conversion_fault_test.cpp)
+target_link_libraries(mindvision_conversion_fault_test PRIVATE Threads::Threads)
+add_test(NAME backend.mindvision_conversion_fault COMMAND $<TARGET_FILE:mindvision_conversion_fault_test>)
+set_tests_properties(backend.mindvision_conversion_fault PROPERTIES LABELS "backend;camera;safety" TIMEOUT 60)
+
+# Issue #365: single-owner capture lifecycle (start/stop/fault/restart,
+# blocked grab, slow teardown, stress) and trigger session ownership.
+mib_add_backend_test_executable(capture_lifecycle_test backend/capture_lifecycle_test.cpp)
+target_link_libraries(capture_lifecycle_test PRIVATE Threads::Threads)
+add_test(NAME backend.capture_lifecycle COMMAND $<TARGET_FILE:capture_lifecycle_test>)
+set_tests_properties(backend.capture_lifecycle PROPERTIES LABELS "backend;camera;stress" TIMEOUT 120)
+
+mib_add_backend_test_executable(trigger_session_test backend/trigger_session_test.cpp)
+target_link_libraries(trigger_session_test PRIVATE Threads::Threads)
+add_test(NAME backend.trigger_session COMMAND $<TARGET_FILE:trigger_session_test>)
+set_tests_properties(backend.trigger_session PROPERTIES LABELS "backend;camera" TIMEOUT 60)
+
+# Issue #368: timestamp semantics + per-metric telemetry validity/freshness.
+mib_add_backend_test_executable(timestamp_telemetry_test backend/timestamp_telemetry_test.cpp)
+target_link_libraries(timestamp_telemetry_test PRIVATE Threads::Threads)
+add_test(NAME backend.timestamp_telemetry COMMAND $<TARGET_FILE:timestamp_telemetry_test>)
+set_tests_properties(backend.timestamp_telemetry PROPERTIES LABELS "backend;camera;recording;hdf5" TIMEOUT 120)
+
+mib_add_backend_test_executable(experiment_readiness_test backend/experiment_readiness_test.cpp)
+target_link_libraries(experiment_readiness_test PRIVATE Threads::Threads)
+add_test(NAME backend.experiment_readiness COMMAND $<TARGET_FILE:experiment_readiness_test>)
+set_tests_properties(backend.experiment_readiness PROPERTIES LABELS "backend;processing;recording;hdf5;safety" TIMEOUT 180)
 
 mib_add_backend_test_executable(camera_script_apply_test backend/camera_script_apply_test.cpp)
 add_test(NAME backend.camera_script_apply COMMAND $<TARGET_FILE:camera_script_apply_test>)
@@ -98,6 +139,17 @@ mib_add_backend_test_executable(pipeline_timing_benchmark performance/pipeline_t
 target_link_libraries(pipeline_timing_benchmark PRIVATE Threads::Threads)
 add_test(NAME performance.pipeline_timing COMMAND $<TARGET_FILE:pipeline_timing_benchmark>)
 set_tests_properties(performance.pipeline_timing PROPERTIES LABELS "performance" TIMEOUT 180)
+
+# Issue #370: byte-budgeted ownership — deterministic policy test + benchmark.
+mib_add_backend_test_executable(memory_budget_test processing/memory_budget_test.cpp)
+target_link_libraries(memory_budget_test PRIVATE Threads::Threads)
+add_test(NAME processing.memory_budget COMMAND $<TARGET_FILE:memory_budget_test>)
+set_tests_properties(processing.memory_budget PROPERTIES LABELS "processing;backend;safety;memory" TIMEOUT 180)
+
+mib_add_backend_test_executable(memory_budget_bench performance/memory_budget_bench.cpp)
+target_link_libraries(memory_budget_bench PRIVATE Threads::Threads)
+add_test(NAME performance.memory_budget COMMAND $<TARGET_FILE:memory_budget_bench>)
+set_tests_properties(performance.memory_budget PROPERTIES LABELS "performance;memory" TIMEOUT 600)
 
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:backend_facade_boundary_test>)
@@ -118,6 +170,16 @@ mib_add_backend_test_executable(mock_camera_smoke_test camera/mock_camera_smoke_
 add_test(NAME camera.mock_smoke COMMAND $<TARGET_FILE:mock_camera_smoke_test>)
 set_tests_properties(camera.mock_smoke PROPERTIES LABELS "camera;backend")
 
+mib_add_backend_test_executable(delivery_mode_overload_test camera/delivery_mode_overload_test.cpp)
+target_link_libraries(delivery_mode_overload_test PRIVATE Threads::Threads)
+add_test(NAME camera.delivery_mode_overload COMMAND $<TARGET_FILE:delivery_mode_overload_test>)
+set_tests_properties(camera.delivery_mode_overload PROPERTIES LABELS "camera;backend" TIMEOUT 60)
+
+mib_add_backend_test_executable(delivery_mode_contract_test camera/delivery_mode_contract_test.cpp)
+target_link_libraries(delivery_mode_contract_test PRIVATE Threads::Threads)
+add_test(NAME camera.delivery_mode_contract COMMAND $<TARGET_FILE:delivery_mode_contract_test>)
+set_tests_properties(camera.delivery_mode_contract PROPERTIES LABELS "camera;backend" TIMEOUT 60)
+
 mib_add_backend_test_executable(processing_science_seam_test processing/processing_science_seam_test.cpp)
 add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:processing_science_seam_test>)
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -125,6 +187,10 @@ set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backe
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:processing_science_golden_test>)
 set_tests_properties(processing.science_golden PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_identification_metrics_test processing/processing_identification_metrics_test.cpp)
+add_test(NAME processing.identification_metrics COMMAND $<TARGET_FILE:processing_identification_metrics_test>)
+set_tests_properties(processing.identification_metrics PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_pipeline_smoke_test processing/processing_pipeline_smoke_test.cpp)
 add_test(NAME processing.pipeline_smoke COMMAND $<TARGET_FILE:processing_pipeline_smoke_test>)
@@ -204,6 +270,22 @@ mib_add_backend_test_executable(processing_batch_pipeline_test processing/proces
 add_test(NAME backend.processing_batch_pipeline COMMAND $<TARGET_FILE:processing_batch_pipeline_test>)
 set_tests_properties(backend.processing_batch_pipeline PROPERTIES LABELS "processing;backend")
 
+# Issue #367: explicit frame accounting.
+mib_add_backend_test_executable(frame_store_commit_test backend/frame_store_commit_test.cpp)
+target_link_libraries(frame_store_commit_test PRIVATE Threads::Threads)
+add_test(NAME backend.frame_store_commit COMMAND $<TARGET_FILE:frame_store_commit_test>)
+set_tests_properties(backend.frame_store_commit PROPERTIES LABELS "backend;safety" TIMEOUT 60)
+
+mib_add_backend_test_executable(experiment_accounting_test processing/experiment_accounting_test.cpp)
+target_link_libraries(experiment_accounting_test PRIVATE Threads::Threads)
+add_test(NAME processing.experiment_accounting COMMAND $<TARGET_FILE:experiment_accounting_test>)
+set_tests_properties(processing.experiment_accounting PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 120)
+
+mib_add_backend_test_executable(recording_accounting_test recording/recording_accounting_test.cpp)
+target_link_libraries(recording_accounting_test PRIVATE Threads::Threads)
+add_test(NAME recording.accounting COMMAND $<TARGET_FILE:recording_accounting_test>)
+set_tests_properties(recording.accounting PROPERTIES LABELS "recording;backend;hdf5;safety" TIMEOUT 180)
+
 mib_add_backend_test_executable(processing_fault_injection_test processing/processing_fault_injection_test.cpp)
 add_test(NAME processing.fault_injection COMMAND $<TARGET_FILE:processing_fault_injection_test>)
 set_tests_properties(processing.fault_injection PROPERTIES LABELS "processing;backend")
@@ -223,6 +305,19 @@ set_tests_properties(recording.hdf5_save_performance PROPERTIES LABELS "recordin
 mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_roundtrip_test.cpp)
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:experiment_roundtrip_test>)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
+
+# Issue #344: native Qt-free export service (round-trip, cancellation, faults,
+# bounded names, repeated runs with HDF5 open-object accounting). The
+# `performance`-labelled variant is the 50-round soak release gate.
+mib_add_backend_test_executable(hdf_export_service_test recording/hdf_export_service_test.cpp)
+target_link_libraries(hdf_export_service_test PRIVATE Threads::Threads)
+add_test(NAME recording.hdf_export_service COMMAND $<TARGET_FILE:hdf_export_service_test>)
+set_tests_properties(recording.hdf_export_service PROPERTIES LABELS "recording;backend;hdf5;safety" TIMEOUT 300)
+add_test(NAME recording.hdf_export_soak COMMAND $<TARGET_FILE:hdf_export_service_test>)
+set_tests_properties(recording.hdf_export_soak PROPERTIES
+    LABELS "recording;performance;soak"
+    ENVIRONMENT "MIB_EXPORT_SOAK_CYCLES=50"
+    TIMEOUT 900)
 
 mib_add_backend_test_executable(kin6_batch_pipeline_evidence integration/kin6_batch_pipeline_evidence.cpp)
 
@@ -270,6 +365,36 @@ mib_add_backend_test_executable(e2e_trigger_timing_test integration/e2e_trigger_
 target_link_libraries(e2e_trigger_timing_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_trigger_timing COMMAND $<TARGET_FILE:e2e_trigger_timing_test>)
 set_tests_properties(integration.e2e_trigger_timing PROPERTIES LABELS "integration;e2e;trigger" TIMEOUT 120)
+
+mib_add_backend_test_executable(frame_store_wait_test backend/frame_store_wait_test.cpp)
+target_link_libraries(frame_store_wait_test PRIVATE Threads::Threads)
+add_test(NAME backend.frame_store_wait COMMAND $<TARGET_FILE:frame_store_wait_test>)
+set_tests_properties(backend.frame_store_wait PROPERTIES LABELS "backend" TIMEOUT 60)
+
+mib_add_backend_test_executable(pipeline_timing_recorder_test backend/pipeline_timing_recorder_test.cpp)
+target_link_libraries(pipeline_timing_recorder_test PRIVATE Threads::Threads)
+add_test(NAME backend.pipeline_timing_recorder COMMAND $<TARGET_FILE:pipeline_timing_recorder_test>)
+set_tests_properties(backend.pipeline_timing_recorder PROPERTIES LABELS "backend;diagnostics" TIMEOUT 30)
+
+mib_add_backend_test_executable(crash_reporter_pending_upload_test backend/crash_reporter_pending_upload_test.cpp)
+add_test(NAME backend.crash_reporter_pending_upload COMMAND $<TARGET_FILE:crash_reporter_pending_upload_test>)
+set_tests_properties(backend.crash_reporter_pending_upload PROPERTIES LABELS "backend;observability" TIMEOUT 60)
+
+mib_add_backend_test_executable(crash_reporter_terminate_test backend/crash_reporter_terminate_test.cpp)
+target_link_libraries(crash_reporter_terminate_test PRIVATE Threads::Threads)
+add_test(NAME backend.crash_reporter_terminate COMMAND $<TARGET_FILE:crash_reporter_terminate_test>)
+set_tests_properties(backend.crash_reporter_terminate PROPERTIES LABELS "backend;observability" TIMEOUT 60)
+
+mib_add_backend_test_executable(e2e_pipeline_timing_test integration/e2e_pipeline_timing_test.cpp)
+target_link_libraries(e2e_pipeline_timing_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_pipeline_timing COMMAND $<TARGET_FILE:e2e_pipeline_timing_test>)
+set_tests_properties(integration.e2e_pipeline_timing PROPERTIES LABELS "integration;e2e;trigger;diagnostics" TIMEOUT 120)
+
+# Manual diagnosis harness (no add_test: needs a local frames folder).
+# Full mock pipeline dry-run with latency instrumentation — see
+# docs/howto/pipeline-latency-diagnosis.md.
+mib_add_backend_test_executable(mock_pipeline_timing_run tools/mock_pipeline_timing_run.cpp)
+target_link_libraries(mock_pipeline_timing_run PRIVATE Threads::Threads)
 
 mib_add_backend_test_executable(e2e_pipeline_stress_test integration/e2e_pipeline_stress_test.cpp)
 target_link_libraries(e2e_pipeline_stress_test PRIVATE Threads::Threads)
@@ -430,6 +555,68 @@ set_target_properties(hdf_review_export_paths_test PROPERTIES
 add_test(NAME frontend.hdf_review_export_paths COMMAND $<TARGET_FILE:hdf_review_export_paths_test>)
 set_tests_properties(frontend.hdf_review_export_paths PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
 
+# Issues #358/#359: pure window/sidebar geometry decisions (no QApplication).
+add_executable(window_geometry_policy_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/window_geometry_policy_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/utils/WindowGeometryPolicy.cpp
+)
+target_include_directories(window_geometry_policy_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(window_geometry_policy_test PRIVATE Qt6::Core)
+set_target_properties(window_geometry_policy_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+)
+add_test(NAME frontend.window_geometry_policy COMMAND $<TARGET_FILE:window_geometry_policy_test>)
+set_tests_properties(frontend.window_geometry_policy PROPERTIES LABELS "frontend;utility;layout" TIMEOUT 30)
+
+# Issue #361: pure editor-document state + checked QSaveFile document store.
+add_executable(config_document_state_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/config_document_state_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/ConfigDocumentStore.cpp
+)
+target_include_directories(config_document_state_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(config_document_state_test PRIVATE Qt6::Core)
+set_target_properties(config_document_state_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+add_test(NAME frontend.config_document_state COMMAND $<TARGET_FILE:config_document_state_test>)
+set_tests_properties(frontend.config_document_state PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
+
+# Issue #364: pure processing tune-panel draft model (field mapping, patch
+# precision, dirty/conflict/apply lifecycle). QtCore + the Qt-free backend
+# types only.
+add_executable(processing_config_draft_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/processing_config_draft_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/models/ProcessingConfigDraft.cpp
+)
+target_include_directories(processing_config_draft_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(processing_config_draft_test PRIVATE Qt6::Core mib_processing)
+set_target_properties(processing_config_draft_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+add_test(NAME frontend.config_draft COMMAND $<TARGET_FILE:processing_config_draft_test>)
+set_tests_properties(frontend.config_draft PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
+
+# Issue #363: pure run-state / alert model semantics (QtCore only; automoc for the QObject header).
+add_executable(run_status_model_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/run_status_model_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/models/RunStatusModel.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/models/RunStatusModel.h
+)
+target_include_directories(run_status_model_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(run_status_model_test PRIVATE Qt6::Core)
+set_target_properties(run_status_model_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOMOC ON)
+add_test(NAME frontend.run_status_model COMMAND $<TARGET_FILE:run_status_model_test>)
+set_tests_properties(frontend.run_status_model PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
+
 add_executable(update_catalog_test
     ${PROJECT_SOURCE_DIR}/tests/frontend/update_catalog_test.cpp
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/UpdateCatalog.cpp
@@ -452,12 +639,51 @@ endif() # NOT MIB_BUILD_BACKEND_ONLY (frontend;utility tests)
 
 if(Python3_Interpreter_FOUND)
     add_test(
+        NAME scripts.mindvision_release_gate
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_mindvision_release_gate.py
+    )
+    set_tests_properties(scripts.mindvision_release_gate PROPERTIES
+        LABELS "scripts;camera;release"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.export_hdf5_paths
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_export_hdf5_paths.py
     )
     set_tests_properties(scripts.export_hdf5_paths PROPERTIES
         LABELS "scripts;hdf5"
         TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.export_hdf5_streaming
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_export_hdf5_streaming.py
+    )
+    set_tests_properties(scripts.export_hdf5_streaming PROPERTIES
+        LABELS "scripts;hdf5;safety"
+        TIMEOUT 120
+    )
+
+    add_test(
+        NAME scripts.hdf5_export_app_lifecycle
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_hdf5_export_app_lifecycle.py
+    )
+    set_tests_properties(scripts.hdf5_export_app_lifecycle PROPERTIES
+        LABELS "scripts;hdf5;safety"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 300
+    )
+
+    # 50-round PySide soak release gate (scheduled/manual; excluded from fast lanes).
+    add_test(
+        NAME scripts.exporter_soak
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/exporter_soak.py --cycles 50 --mode gui
+    )
+    set_tests_properties(scripts.exporter_soak PROPERTIES
+        LABELS "scripts;performance;soak"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 1800
     )
 
     add_test(
@@ -568,3 +794,11 @@ if(Python3_Interpreter_FOUND)
         TIMEOUT 30
     )
 endif()
+
+# Windows: headless Qt frontend tests need the offscreen platform plugin (see cmake/MIBQtOffscreenTests.cmake).
+include(MIBQtOffscreenTests)
+mib_apply_qt_offscreen_plugin_path()
+mib_add_backend_test_executable(hw_discovery_reentry_test hardware/hw_discovery_reentry_test.cpp)
+target_link_libraries(hw_discovery_reentry_test PRIVATE Threads::Threads)
+add_test(NAME hardware.discovery_reentry COMMAND $<TARGET_FILE:hw_discovery_reentry_test>)
+set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;camera" SKIP_RETURN_CODE 77 TIMEOUT 120)

@@ -1,5 +1,5 @@
 # Default version (fallback if git is not available or no tags exist)
-set(DEFAULT_VERSION "1.0.3")
+set(DEFAULT_VERSION "1.0.7")
 
 # Release publishers pass both values explicitly so the binary identity being
 # tested is the same identity later used for the tag, installer, and manifest.

@@ -713,11 +713,13 @@ fn experiment_lifecycle_end_to_end() {
         .configure_mock_camera(&frame_dir.to_string_lossy(), 5, true)
         .ok);
 
-    // Precondition: camera must be running (Qt-parity failure message).
+    // Precondition: the shared coordinator's readiness gate `camera.session`
+    // blocks Start without a running camera (issue #369/#372); the refusal
+    // names the blocking gate ids, never a free-text reason.
     let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy());
     assert!(!early.ok, "experiment started without a running camera");
     assert!(
-        early.message.contains("Camera must be running"),
+        early.message.contains("camera.session"),
         "unexpected precondition message: {}",
         early.message
     );

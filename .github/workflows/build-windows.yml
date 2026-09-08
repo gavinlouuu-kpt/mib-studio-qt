@@ -1,6 +1,24 @@
 name: Build Windows
 
 on:
+  push:
+    branches: [develop]
+    # Dev-lane release gate: a develop merge only cuts an auto-beta when it
+    # can change the shipped desktop app. Docs, vault, tooling/exploration,
+    # wheel-lane, and other-workflow merges must not advance the beta channel
+    # (later patterns win; the final re-include keeps edits to this workflow
+    # itself releasing so pipeline changes are exercised).
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!knowledge_map/**'
+      - '!tools/**'
+      - '!tests/**'
+      - '!bindings/python/**'
+      - '!mkdocs.yml'
+      - '!**.md'
+      - '!.github/**'
+      - '.github/workflows/build-windows.yml'
   workflow_dispatch:
     inputs:
       mode:
@@ -20,11 +38,17 @@ on:
           - minor
           - major
 
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: windows-2022
     permissions:
       contents: write
+      # Release mode opens the fallback-version sync PR into develop.
+      pull-requests: write
 
     steps:
       - name: Checkout
@@ -173,6 +197,15 @@ jobs:
           curl.exe --fail --location --retry 3 --output resources\installers\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
         shell: pwsh
 
+      - name: Provision pinned MindVision SDK
+        shell: pwsh
+        run: |
+          $sdk = .\scripts\provision-mindvision-sdk.ps1 `
+            -Destination build\vendor\mindvision-sdk `
+            -PassThru
+          "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
+          "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
+
       # ── Build ──────────────────────────────────────────────────
       - name: Conan install
         shell: pwsh
@@ -217,12 +250,14 @@ jobs:
           # public identifier on the Sentry side, but we still treat it as a
           # secret because anyone who knows it can submit events that count
           # against quota.
-          # Hosted GitHub runners do not have the proprietary MindVision SDK.
-          # Keep this explicit so CI continues to exercise the portable stub.
+          # The pinned R2 artifact is provisioned above. Keep MindVision
+          # explicit so a stale CMake cache can never produce a release stub.
           $args = @(
             '--preset',
             'windows-default',
-            '-DMIB_ENABLE_MINDVISION=OFF',
+            '-DMIB_ENABLE_MINDVISION=ON',
+            "-DMIB_MINDVISION_SDK_ROOT=$env:MIB_MINDVISION_SDK_ROOT",
+            "-DMIB_MINDVISION_RUNTIME_DIR=$env:MIB_MINDVISION_RUNTIME_DIR",
             '-DMIB_REQUIRE_PROCESSING_CORE_SIGNER_SPKI=ON',
             "-DMIB_PROCESSING_CORE_SIGNER_SPKI_SHA256=$env:PROCESSING_CORE_SIGNER_SPKI_SHA256",
             '-DMIB_RELEASE_VERSION_OVERRIDE=${{ steps.version.outputs.artifact_version }}',
@@ -260,7 +295,8 @@ jobs:
         run: |
           $required = @(
             'build\Release\mib_studio_qt.exe',
-            'build\Release\mib_studio_qt.pdb'
+            'build\Release\mib_studio_qt.pdb',
+            'build\Release\MVCAMSDK_X64.dll'
           )
           $missing = @()
           foreach ($p in $required) {
@@ -333,6 +369,11 @@ jobs:
           # EXE it finds. --include-sources embeds the original source paths
           # into the symbol map for nicer stack frames.
           sentry-cli debug-files upload --include-sources build\Release
+
+          # Verify that the uploaded symbols contain valid debug IDs so
+          # minidumps submitted via sentry_capture_minidump can be
+          # symbolicated. Fails the step if no debug info is found.
+          sentry-cli debug-files check build\Release\mib_studio_qt.pdb
 
           # Tie this build to a Sentry release so events arriving with
           # release="mib_studio_qt@$version" group cleanly in the UI.
@@ -438,14 +479,25 @@ jobs:
       # Stable release mode is allowed to mutate refs only after configure,
       # build, tests, screenshot artifact handling, packaging, exact-artifact
       # validation, and artifact upload have all succeeded.
-      - name: Publish verified release refs
+      #
+      # TAG-FIRST: only the release tag is pushed, pointing at the exact
+      # trigger SHA that was built and validated. `main` is never pushed —
+      # its branch protection (PR + required checks) rejects direct pushes,
+      # including this workflow's own GITHUB_TOKEN (GH006, see the v1.0.7
+      # first attempt). Version resolution is tag-based everywhere
+      # (scripts/resolve_desktop_release_version.py takes the max of
+      # DEFAULT_VERSION and reachable v* tags; cmake/MIBVersion.cmake reads
+      # git tags at configure time), so the tag alone is sufficient for all
+      # future version math. The DEFAULT_VERSION fallback bump and any
+      # refreshed manual screenshots ride back to develop in a sync PR
+      # opened by the follow-up step below.
+      - name: Publish verified release tag
         if: inputs.mode == 'release'
         shell: pwsh
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           TRIGGER_SHA: ${{ github.sha }}
-          SCREENSHOTS_OK: ${{ steps.screenshots.outputs.ok }}
         run: |
           if ('${{ github.ref }}' -ne 'refs/heads/main') {
             throw 'Stable release mode must be dispatched from refs/heads/main'
@@ -458,25 +510,72 @@ jobs:
 
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add -- cmake/MIBVersion.cmake
-          if ($env:SCREENSHOTS_OK -eq 'true') {
-            git add -- docs/manual/images
-          }
-          git diff --cached --check
-          if ($LASTEXITCODE -ne 0) { throw 'Release commit failed whitespace validation' }
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) { throw 'Prospective release produced no version commit' }
-          git commit -m "chore: bump version to $env:RELEASE_VERSION"
-          if ($LASTEXITCODE -ne 0) { throw 'Release commit failed' }
 
           git show-ref --verify --quiet "refs/tags/$env:RELEASE_TAG"
           if ($LASTEXITCODE -eq 0) {
             throw "Release tag $env:RELEASE_TAG already exists; refusing to move it"
           }
-          git tag -a "$env:RELEASE_TAG" -m "Version $env:RELEASE_VERSION"
+          git tag -a "$env:RELEASE_TAG" -m "Version $env:RELEASE_VERSION" $env:TRIGGER_SHA
           if ($LASTEXITCODE -ne 0) { throw 'Release tag creation failed' }
-          git push --atomic origin HEAD:main "refs/tags/$env:RELEASE_TAG"
-          if ($LASTEXITCODE -ne 0) { throw 'Atomic main/tag push failed' }
+          git push origin "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw 'Release tag push failed' }
+
+      # Best-effort follow-up: land the DEFAULT_VERSION fallback bump (and
+      # refreshed screenshots) back on develop through the normal PR lane.
+      # The release itself is already published via the tag above, so a
+      # failure here warns instead of aborting the remaining publish steps.
+      # Note: PRs opened with GITHUB_TOKEN do not auto-trigger CI; if the
+      # checks are needed, close and reopen the PR (human actor) to start
+      # them.
+      - name: Open fallback-version sync PR into develop
+        if: inputs.mode == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          SCREENSHOTS_OK: ${{ steps.screenshots.outputs.ok }}
+        run: |
+          $syncBranch = "chore/release-$env:RELEASE_TAG-sync"
+          try {
+            git add -- cmake/MIBVersion.cmake
+            if ($env:SCREENSHOTS_OK -eq 'true') {
+              git add -- docs/manual/images
+            }
+            git diff --cached --check
+            if ($LASTEXITCODE -ne 0) { throw 'Sync commit failed whitespace validation' }
+            git diff --cached --quiet
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host 'No fallback/screenshot changes to sync; skipping PR'
+              exit 0
+            }
+            git commit -m "chore: sync DEFAULT_VERSION fallback to $env:RELEASE_VERSION after $env:RELEASE_TAG"
+            if ($LASTEXITCODE -ne 0) { throw 'Sync commit failed' }
+            git push origin "HEAD:refs/heads/$syncBranch"
+            if ($LASTEXITCODE -ne 0) { throw 'Sync branch push failed' }
+            $prBody = @(
+              "Automated follow-up to the $env:RELEASE_TAG stable release (tag-first flow).",
+              "",
+              "Updates the no-git ``DEFAULT_VERSION`` fallback in ``cmake/MIBVersion.cmake``",
+              "to $env:RELEASE_VERSION and lands any refreshed manual screenshots. Version",
+              "resolution itself is tag-based, so this PR only keeps the fallback fresh.",
+              "",
+              "If required checks did not start (PRs opened by GITHUB_TOKEN do not trigger",
+              "CI), close and reopen this PR to run them."
+            ) -join [Environment]::NewLine
+            & gh pr create --base develop --head $syncBranch `
+              --title "chore: sync version fallback after $env:RELEASE_TAG" `
+              --body $prBody
+            if ($LASTEXITCODE -ne 0) { throw 'Sync PR creation failed' }
+          } catch {
+            Write-Host "::warning::Fallback sync PR failed ($_); the $env:RELEASE_TAG release is unaffected. Sync cmake/MIBVersion.cmake DEFAULT_VERSION to $env:RELEASE_VERSION manually via a PR to develop."
+          }
+          # This step is best-effort by contract (see the comment above the
+          # step): a caught failure must not fail the job, or the release /
+          # R2 publish steps below never run (v1.0.7: gh pr create was
+          # denied by repo policy and the leftover $LASTEXITCODE=1 killed
+          # the job before "Create GitHub Release").
+          exit 0
 
       # ── GitHub Release ─────────────────────────────────────────
       - name: Create GitHub Release
@@ -496,7 +595,7 @@ jobs:
             # Beta: pre-release; gh creates the tag server-side on this commit
             & gh release create $tag @installers --title "v$version" --generate-notes --prerelease --target ${{ github.sha }}
           } else {
-            # Release: full release (verified main + tag were atomically pushed above)
+            # Release: full release (verified tag at the trigger SHA was pushed above)
             & gh release create $tag @installers --title "v$version" --generate-notes
           }
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed' }

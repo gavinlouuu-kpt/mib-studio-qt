@@ -111,7 +111,7 @@ fn windows_build(repo: &Path, include_dir: &Path) {
         .flag("/std:c++17")
         .flag("/EHsc")
         .flag("/utf-8")
-        .flag("/Zc:__cplusplus")
+        .flag("/Zc:__cplusplus").flag("/permissive-")
         .define("NOMINMAX", None)
         .define("WIN32_LEAN_AND_MEAN", None)
         .include(include_dir);

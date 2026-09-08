@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, develop, dev/react-tauri]
   pull_request:
-    branches: [main, dev/react-tauri]
+    branches: [main, develop, dev/react-tauri]
 
 jobs:
   knowledge-base:

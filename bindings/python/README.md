@@ -22,16 +22,27 @@ pip install "https://github.com/KPT1020/mib-studio-qt/releases/download/<tag>/mi
 See `.github/workflows/python-wheel.yml` for how wheels are built and
 released.
 
-Linux releases are repaired `manylinux_2_28_x86_64` wheels for CPython
-3.10–3.13. CI installs each repaired wheel, runs conformance, and imports the
-CPython 3.12 artifact in a `python:3.12-slim` container with Biowork's
-production `libgl1`/`libglib2.0-0` runtime prerequisites before a tag can
-publish. These libraries are in the manylinux system allowlist and therefore
-remain OS-provided. The build uses `MIB_BUILD_PROCESSING_ONLY=ON`, so Qt and
-the desktop service graph are not configured into the wheel. The pinned AlmaLinux 8
-manylinux image enables EPEL before installing the OpenCV, HDF5, and spdlog
-build packages; those libraries are repaired into the portable wheel rather
-than assumed to exist in the target image.
+Linux releases are repaired `manylinux_2_28` wheels for CPython 3.10–3.13 on
+`x86_64` and `aarch64`. cibuildwheel installs and imports every
+wheel inside its matching architecture container; the ARM64 lane registers
+QEMU on the x86_64 GitHub runner. The x86_64 jobs additionally run the full
+pytest/conformance suite, and import the CPython 3.12 artifact in a
+`python:3.12-slim` container with Biowork's production
+`libgl1`/`libglib2.0-0` runtime prerequisites before a tag can publish. These
+libraries are in the manylinux system allowlist and therefore remain
+OS-provided.
+
+ARM currently means ARM64/aarch64. The pinned cibuildwheel 2.22 release treats
+ARMv7 as experimental and has no CPython 3.12 manylinux ARMv7 target, so ARM32
+cannot participate in the same complete Python 3.10–3.13 release matrix.
+
+The build uses `MIB_BUILD_PROCESSING_ONLY=ON`, so Qt and the desktop service
+graph are not configured into the wheel. The AlmaLinux 8 x86_64 and aarch64
+images enable EPEL before installing the OpenCV, HDF5, and spdlog
+build packages. `auditwheel` repairs the resulting runtime libraries into each
+portable wheel rather than assuming they exist on the target host. Linux
+32-bit x86 is intentionally unsupported because NumPy dropped i686 wheels and
+the processing workload is not a practical fit for a 32-bit address space.
 
 ## Build from source
 

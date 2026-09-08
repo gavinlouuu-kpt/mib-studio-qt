@@ -1,5 +1,7 @@
 #include "backend/app/BackendFacade.h"
 
+#include "backend/app/ExperimentCoordinator.h"
+
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackgroundFrame.h"
 #include "backend/camera/mock/MockCamera.h"
@@ -180,53 +182,30 @@ namespace backend::bridge
 
         initialized_ = true;
 
-        // Backend-owned experiment coordinator (BE-4): adapt its status stream
-        // into bridge events, tie the running experiment to a tracked
-        // operation, and funnel fatal save errors into experiment events plus
-        // a safe stop.
-        if (!experiment_)
-        {
-            experiment_ = std::make_unique<ExperimentCoordinator>(backend_);
-        }
-        experiment_->setStatusCallback([this](const ExperimentCoordinator::Status &s) {
-            ExperimentStatusEvent event;
-            event.state = s.state;
-            event.startTimeNs = s.startTimeNs;
-            event.endTimeNs = s.endTimeNs;
-            event.validBuffered = s.validBuffered;
-            event.invalidBuffered = s.invalidBuffered;
-            event.validSaved = s.validSaved;
-            event.invalidSaved = s.invalidSaved;
-            event.droppedValid = s.droppedValid;
-            event.droppedInvalid = s.droppedInvalid;
-            event.flushing = s.flushing;
-            event.cancelled = s.cancelled;
-            event.message = s.message;
-            emitEvent(event);
-
-            if (s.state == ExperimentCoordinator::State::Idle ||
-                s.state == ExperimentCoordinator::State::Failed)
+        // Shared experiment coordinator (issue #372): forward its status
+        // stream as ExperimentStatusEvent, tie the running experiment to a
+        // tracked operation (BE-1), and surface fatal save errors as events
+        // (AppBackend already funnels them into the coordinator).
+        backend_.experiment().setStatusCallback([this](const app::ExperimentStatus &status) {
+            emitEvent(ExperimentStatusEvent{status});
+            if (status.terminal)
             {
                 if (const std::uint64_t opId = experimentOperationId_.exchange(0))
                 {
                     finishOperation(opId,
-                                    s.state == ExperimentCoordinator::State::Failed
+                                    status.state == app::ExperimentRunState::Failed
                                         ? BackendOperationState::Failed
-                                        : (s.cancelled ? BackendOperationState::Cancelled
-                                                       : BackendOperationState::Completed),
-                                    s.message);
+                                        : (status.cancelled ? BackendOperationState::Cancelled
+                                                            : BackendOperationState::Completed),
+                                    status.completionReason.empty() ? status.message : status.completionReason);
                 }
             }
         });
         backend_.setFatalSaveErrorCallback([this](const std::string &message) {
-            // Fires on writer threads: emit + signal only, never join here.
+            // Fires on writer threads: emit only, never join here.
             emitEvent(BackendErrorEvent{BackendErrorSource::Experiment,
                                         BackendCommandType::Experiment,
                                         message});
-            if (experiment_)
-            {
-                experiment_->onFatalSaveError(message);
-            }
         });
 
         emitEvent(makeCameraStatus(backend_.isCameraConfigured()
@@ -246,10 +225,8 @@ namespace backend::bridge
         // shutdown never corrupts it — BE-4), then drain/cancel the remaining
         // tracked operations so their consumers see a terminal event before
         // service teardown (BE-1 shutdown policy).
-        if (experiment_)
-        {
-            experiment_->shutdown();
-        }
+        backend_.experiment().shutdown();
+        backend_.experiment().setStatusCallback({});
         cancelAllOperations("Backend shutdown");
         // Review export jobs observe their (now set) cancel flags and clean
         // partial outputs; join them so no callback fires after destruction.
@@ -389,6 +366,94 @@ namespace backend::bridge
         }, command);
     }
 
+    bool BackendFacade::fetchExperimentReadiness(app::ExperimentReadinessSnapshot &out,
+                                                 const std::string &outputPath,
+                                                 const std::string &profileId) const
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = backend_.experiment().evaluateReadiness(outputPath, profileId);
+        return true;
+    }
+
+    bool BackendFacade::fetchExperimentStatus(app::ExperimentStatus &out) const
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = backend_.experiment().status();
+        return true;
+    }
+
+    BackendCommandResult BackendFacade::handleExperimentCommand(const ExperimentCommand &command)
+    {
+        BackendCommandResult result;
+        result.command = BackendCommandType::Experiment;
+        auto &coordinator = backend_.experiment();
+        switch (command.action)
+        {
+        case ExperimentCommandAction::EvaluateReadiness:
+        {
+            const auto readiness = coordinator.evaluateReadiness(command.outputPath, command.profileId);
+            result.ok = true;
+            result.message = readiness.ready ? "ready" : "not ready";
+            if (!readiness.ready)
+            {
+                for (const auto &id : readiness.blockingGateIds())
+                {
+                    result.message += (result.message == "not ready" ? ": " : ", ") + id;
+                }
+            }
+            return result;
+        }
+        case ExperimentCommandAction::Start:
+        {
+            app::ExperimentStartRequest request;
+            request.outputPath = command.outputPath;
+            request.readinessGeneration = command.readinessGeneration;
+            request.profileId = command.profileId;
+            request.acknowledgeLatestFrameDrops = command.acknowledgeLatestFrameDrops;
+            const auto started = coordinator.start(request);
+            result.experimentStartOutcome = started.outcome;
+            result.ok = started.started();
+            result.message = started.message;
+            if (!result.ok)
+            {
+                emitEvent(BackendErrorEvent{BackendErrorSource::Experiment, BackendCommandType::Experiment,
+                                            started.message});
+                return result;
+            }
+            const std::uint64_t opId =
+                beginOperation(BackendOperationKind::Experiment, nullptr, command.outputPath);
+            experimentOperationId_.store(opId);
+            result.operationId = opId;
+            return result;
+        }
+        case ExperimentCommandAction::Stop:
+        {
+            const auto outcome = coordinator.requestStop(command.cancelled);
+            result.experimentStopOutcome = outcome;
+            result.ok = outcome == app::ExperimentStopOutcome::Accepted;
+            result.message = app::toString(outcome);
+            result.operationId = experimentOperationId_.load();
+            return result;
+        }
+        case ExperimentCommandAction::Status:
+        {
+            const auto status = coordinator.status();
+            emitEvent(ExperimentStatusEvent{status});
+            result.ok = true;
+            result.message = app::toString(status.state);
+            result.operationId = experimentOperationId_.load();
+            return result;
+        }
+        }
+        return lifecycleError(BackendCommandType::Experiment, "unknown experiment action");
+    }
+
     bool BackendFacade::fetchLatestFrame(BackendFrame &out) const
     {
         if (!initialized_)
@@ -452,7 +517,7 @@ namespace backend::bridge
         {
         case CameraCommandAction::ConfigureMockCamera:
         {
-            camera::mock::MockCameraOptions options;
+            ::camera::mock::MockCameraOptions options;
             options.folder = std::filesystem::path(command.mockFrameDirectory);
             options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
             options.loopFiles = command.mockLoopFiles;
@@ -509,6 +574,17 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Configured));
             return {true, BackendCommandType::Camera, "Camera script applied"};
         }
+        case CameraCommandAction::SoftTriggerCamera:
+        {
+            std::string error;
+            if (!backend_.softTriggerCamera(&error))
+            {
+                const std::string message = error.empty() ? "Software trigger failed" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            return {true, BackendCommandType::Camera, "Software trigger fired"};
+        }
         case CameraCommandAction::ResetSelectedHardwareCamera:
         {
             std::string error;
@@ -536,7 +612,7 @@ namespace backend::bridge
         case CameraCommandAction::StopCapture:
             // Qt-parity precondition: the camera cannot stop underneath an
             // active experiment — stop the experiment first (BE-4).
-            if (experiment_ && experiment_->isActive())
+            if (backend_.experiment().state() == app::ExperimentRunState::Active)
             {
                 const std::string message =
                     "Cannot stop camera while experiment is active. Please stop the experiment first.";
@@ -731,7 +807,7 @@ namespace backend::bridge
     {
         // The review file cannot replace the HDF5 handle underneath an
         // active experiment (they share the service).
-        if (experiment_ && experiment_->isActive())
+        if (backend_.experiment().state() == app::ExperimentRunState::Active)
         {
             const std::string message = "Cannot load a recording while an experiment is active";
             emitEvent(BackendErrorEvent{BackendErrorSource::Review,
@@ -841,67 +917,6 @@ namespace backend::bridge
         }
 
         return {false, BackendCommandType::Operation, "Unknown operation command"};
-    }
-
-    BackendCommandResult BackendFacade::handleExperimentCommand(const ExperimentCommand &command)
-    {
-        if (!experiment_)
-        {
-            return {false, BackendCommandType::Experiment, "Experiment coordinator unavailable"};
-        }
-
-        switch (command.action)
-        {
-        case ExperimentCommandAction::Start:
-        {
-            std::string error;
-            if (!experiment_->start(command.outputPath, &error))
-            {
-                emitEvent(BackendErrorEvent{BackendErrorSource::Experiment,
-                                            BackendCommandType::Experiment, error});
-                return {false, BackendCommandType::Experiment, error};
-            }
-            const std::uint64_t opId =
-                beginOperation(BackendOperationKind::Experiment, nullptr, command.outputPath);
-            experimentOperationId_.store(opId);
-            return {true, BackendCommandType::Experiment, "Experiment started", opId};
-        }
-        case ExperimentCommandAction::Stop:
-        case ExperimentCommandAction::Cancel:
-        {
-            const bool cancel = command.action == ExperimentCommandAction::Cancel;
-            std::string error;
-            if (!experiment_->requestStop(cancel, &error))
-            {
-                return {false, BackendCommandType::Experiment, error};
-            }
-            return {true, BackendCommandType::Experiment,
-                    cancel ? "Experiment cancel requested" : "Experiment stop requested",
-                    experimentOperationId_.load()};
-        }
-        case ExperimentCommandAction::Status:
-        {
-            const auto s = experiment_->status();
-            ExperimentStatusEvent event;
-            event.state = s.state;
-            event.startTimeNs = s.startTimeNs;
-            event.endTimeNs = s.endTimeNs;
-            event.validBuffered = s.validBuffered;
-            event.invalidBuffered = s.invalidBuffered;
-            event.validSaved = s.validSaved;
-            event.invalidSaved = s.invalidSaved;
-            event.droppedValid = s.droppedValid;
-            event.droppedInvalid = s.droppedInvalid;
-            event.flushing = s.flushing;
-            event.cancelled = s.cancelled;
-            event.message = s.message;
-            emitEvent(event);
-            return {true, BackendCommandType::Experiment, "Experiment status emitted",
-                    experimentOperationId_.load()};
-        }
-        }
-
-        return {false, BackendCommandType::Experiment, "Unknown experiment command"};
     }
 
     BackendCommandResult BackendFacade::handlePlaybackSeekCommand(const PlaybackSeekCommand &command)
@@ -1857,16 +1872,6 @@ namespace backend::bridge
         out.mockLoop = snapshot.mockLoop;
         out.configured = snapshot.configured;
         out.running = backend_.capture().isRunning();
-        return true;
-    }
-
-    bool BackendFacade::fetchExperimentStatus(ExperimentCoordinator::Status &out) const
-    {
-        if (!initialized_ || !experiment_)
-        {
-            return false;
-        }
-        out = experiment_->status();
         return true;
     }
 

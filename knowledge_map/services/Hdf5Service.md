@@ -112,6 +112,42 @@ that predates provenance. The writer records the bundled identity when no
 explicit identity is supplied, preserving deterministic metadata for older
 call sites.
 
+## Run accounting (issue #367)
+
+`writeRunAccounting(RecordingAccountingSnapshot)` / `readRunAccounting(...)`
+persist and read the versioned `accounting_*` attributes described in
+[[../data-model/HDF5-Storage]] on whichever info group exists. Producers:
+`AppBackend` raw recording (after `writeRecordingInfo`) and
+`MainWindow::onStopExperiment` (after `writeExperimentInfo`, from
+`ProcessingService::experimentAccountingSnapshot()`). Consumer:
+[[../frontend/HdfReviewTab]] status text. Types live in
+`include/backend/recording/RecordingAccounting.h` (Qt-free, header-only).
+
+## Open-object diagnostics (issue #344)
+
+`globalOpenObjectCountForDiagnostics()` (static) and
+`openObjectCountForDiagnostics()` wrap `H5Fget_obj_count` so tests and
+debug logging can prove HDF5 handles return to baseline after repeated
+jobs ([[HdfExportService]] stress test). HDF5 ids never leave this class.
+
+## Run configuration snapshot (issue #369)
+
+`writeRunSnapshotJson(runJson, readinessJson)` / `readRunSnapshotJson(...)`
+store the frozen `RunConfigurationSnapshot` and the readiness evaluation it
+was started from as variable-length UTF-8 string attributes
+(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` = 1)
+on the `/run_provenance` group. [[../architecture/ExperimentCoordinator]]
+writes them immediately after `initializeDatasets()` and before the run may
+enter Running; a failure rolls the Start back and removes the file.
+
+## Acquisition provenance (issue #368)
+
+`writeAcquisitionProvenance(descriptor, telemetry)` /
+`readAcquisitionProvenance(...)` persist the session `TimestampDescriptor` and
+the per-metric telemetry with validity (see [[../data-model/HDF5-Storage]]).
+Written by `AppBackend` raw recording and `MainWindow::onStopExperiment` after
+the run info; legacy files return `false` with an Unsupported descriptor.
+
 ## Gotchas
 
 - `openFile(path)` creates the destination's parent directory tree

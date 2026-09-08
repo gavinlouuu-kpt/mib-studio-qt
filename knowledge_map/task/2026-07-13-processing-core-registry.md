@@ -34,8 +34,9 @@ reconstructing it with current schema/formatting rules.
 
 ## Release and version workflow
 
-The wheel workflow now covers Python 3.10–3.13 and its existing full-parity
-conformance gate. A Windows job builds the native DLL/sidecar and requires
+The wheel workflow now covers Python 3.10–3.13 across `x86_64` and `aarch64`,
+with an install/import smoke test for all 8 wheels and the
+existing full-parity conformance gate on x86_64. A Windows job builds the native DLL/sidecar and requires
 Authenticode signing on release tags. The release job attaches all artifacts,
 then publishes to R2 using repository secrets. Missing signing or R2 secrets
 fails a tag workflow rather than silently creating an unusable stable version.

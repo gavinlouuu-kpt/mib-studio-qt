@@ -12,6 +12,11 @@
 - Wrap an `Euresys::EGrabber` handle scoped to a specific
   `(interfaceIndex, deviceIndex)` selection.
 - Implement `start`, `stop`, `grabFrame`, `pollStats`.
+- Implement the delivery-mode contract (`deliveryCapabilities`,
+  `activeDeliveryMode`, `pollAcquisitionQueueStats`): both `EveryFrame` and
+  `LatestFrame` are supported, mode changes require a restart, and Coaxlink
+  buffer timestamps are host-comparable on Windows only (µs since computer
+  startup, same domain as `Tools::getTimestamp` QPC µs).
 - Expose `configureTriggerOutput` + `setTriggerOutput` for
   [[../services/TriggerService]].
 - Surface `checkDeviceHealth()` to detect camera disappearance.
@@ -28,6 +33,46 @@
 - **Start/stop safety** — `docs/howto/safe-start-stop-egrabber.md` and
   task `knowledge_map/task/2025-11-14-safe-start-stop-egrabber.md`.
 - **Device reset flow** — task `knowledge_map/task/camera-reset.md`.
+
+## Delivery modes (issue #331)
+
+- **Start sequencing:** `start()` calls `grabber_->start()` once and lets the
+  SDK do the ordering — it starts the data stream first, then executes
+  `AcquisitionStart` on the remote device. Never send a manual
+  `AcquisitionStart` before `grabber_->start()`: remote acquisition must be
+  started exactly once, and only after the data stream is ready. The
+  defensive `AcquisitionStop`-before-start block stays, and `stop()` remains
+  symmetric (remote `AcquisitionStop`, then `grabber_->stop()`).
+- **EveryFrame** keeps the plain FIFO pop: every completed buffer is copied
+  and delivered in acquisition order.
+- **LatestFrame** drains stale buffers in `replenishPendingFrames()` *before*
+  the expensive copy: while `getPendingEventCount<NewBufferData>() > 1`, pop
+  a `ScopedBuffer` and let it destruct immediately (requeues to the input
+  FIFO), counting each drop in the atomic `intentionallyDiscardedFrames_`;
+  then pop and copy the final (freshest) buffer. Never
+  `flushEvent<NewBufferData>()` — it would discard events without releasing
+  the buffers they own.
+- **BufferPartCount=1 in LatestFrame:** forced at `start()` regardless of
+  `config_.bufferPartCount` (warn if the config asked for more) — multi-frame
+  batching per buffer would add exactly the latency the mode exists to avoid.
+- **`activeDeliveryMode()`** reports the mode confirmed at the most recent
+  successful `start()` (`confirmedDeliveryMode_`); before any start it falls
+  back to `config_.deliveryMode`.
+- **`pollAcquisitionQueueStats()`** maps GenTL stream counters:
+  `STREAM_INFO_NUM_AWAIT_DELIVERY` → completed queue depth,
+  `STREAM_INFO_NUM_QUEUED` → input buffer count, `STREAM_INFO_NUM_UNDERRUN` →
+  underruns, `STREAM_INFO_NUM_DELIVERED` → delivered frames, plus the
+  intentional-discard counter (reset at `start()`). No documented counter
+  maps to transport loss, so `transportLossValid` stays false.
+
+## Timestamps (issue #368)
+
+`Frame::timestamp` is the Coaxlink `BUFFER_INFO_TIMESTAMP` / per-part custom
+timestamp: microseconds since host boot. `timestampDescriptor()` reports
+`hostMonotonicUs @1e6 Hz, transportReceipt, valid` on Windows (QPC domain =
+`Tools::getTimestamp()`, hence `timestampsHostComparable`), and
+`unknown/unsupported` on other platforms where the mapping is unverified. It
+marks transport receipt, not exposure.
 
 ## Gotchas
 
@@ -52,3 +97,14 @@
   trigger pulse racing a camera stop fails cleanly instead of dereferencing a
   destroyed grabber. `running_` is `std::atomic<bool>` for the same reason
   (read lock-free by the trigger thread and `isRunning()`).
+- **One register write per pulse edge (issue #227):** `LineSelector` is
+  GenApi nodemap state owned by this `grabber_` instance, so
+  `setTriggerOutput` selects the line once (tracked by `triggerLineApplied_`,
+  reset on `start()` / `configureTriggerOutput()` / any write failure) and
+  then writes only `LineSource` per edge — halving the PCIe control
+  transactions per pulse. The profile config script (which also touches
+  `LineSelector`) runs through a **separate** short-lived `EGrabber` handle
+  in [[../services/CameraControlService]] `applyScriptToDevice`, so it
+  cannot disturb this instance's selection; a fresh `start()` re-selects
+  anyway. Do not add other `LineSelector` writes on *this* grabber handle
+  without clearing `triggerLineApplied_`.

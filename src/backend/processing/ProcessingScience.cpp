@@ -262,6 +262,47 @@ bool contourTouchesRoiBorder(const std::vector<cv::Point>& contour,
     return false;
 }
 
+std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result,
+                                                      const ProcessingConfig& config,
+                                                      double pixelToMicronFactor) {
+    std::vector<InvalidReasonCode> reasons;
+    if (result.isValid) {
+        return reasons;
+    }
+
+    // Early exits mirror the gating: when there is no inner contour, or the
+    // contour touches the border, per-object metrics are not computed, so the
+    // metric-range reasons below would read uninitialised gates. Report only
+    // the early-exit reason in those cases (matches getInvalidReasons()).
+    if (config.require_single_inner_contour && result.innerContourCount == 0) {
+        reasons.push_back(InvalidReasonCode::NoContour);
+        return reasons;
+    }
+    if (config.enable_border_check && result.touchesBorder) {
+        reasons.push_back(InvalidReasonCode::Border);
+        return reasons;
+    }
+
+    const double areaUm = result.area * pixelToMicronFactor * pixelToMicronFactor;
+    if (config.enable_area_range_check &&
+        (areaUm < config.area_threshold_min || areaUm > config.area_threshold_max)) {
+        reasons.push_back(InvalidReasonCode::Area);
+    }
+    if (config.enable_ring_ratio_check &&
+        (result.ringRatio <= config.ring_ratio_min || result.ringRatio >= config.ring_ratio_max)) {
+        reasons.push_back(InvalidReasonCode::Ring);
+    }
+    if (config.enable_deformability_range_check &&
+        (result.deformability < config.deformability_threshold_min ||
+         result.deformability > config.deformability_threshold_max)) {
+        reasons.push_back(InvalidReasonCode::Deform);
+    }
+    if (config.enable_area_ratio_check && result.areaRatio > config.area_ratio_threshold_max) {
+        reasons.push_back(InvalidReasonCode::AreaRatio);
+    }
+    return reasons;
+}
+
 namespace {
 
 FilterResult evaluateInnerContourObject(

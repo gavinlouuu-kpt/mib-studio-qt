@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
 
@@ -30,18 +31,18 @@ namespace backend::bridge
     // append-only: never renumber or repurpose.
     enum class BackendCommandType
     {
-        Camera,
-        Recording,
-        ProcessingSettings,
-        RecordingLoad,
-        PlaybackSeek,
-        Operation,
-        Experiment,
-        Monitoring,
-        Trigger,
-        Review,
-        Pump,
-        Autofocus,
+        Camera = 0,
+        Recording = 1,
+        ProcessingSettings = 2,
+        RecordingLoad = 3,
+        PlaybackSeek = 4,
+        Operation = 5,
+        Experiment = 6,
+        Monitoring = 7,
+        Trigger = 8,
+        Review = 9,
+        Pump = 10,
+        Autofocus = 11,
     };
 
     enum class CameraCommandAction
@@ -51,6 +52,7 @@ namespace backend::bridge
         SelectMindVisionCamera,
         ApplyCameraScript,
         ResetSelectedHardwareCamera,
+        SoftTriggerCamera,
         StartCapture,
         StopCapture,
     };
@@ -163,20 +165,24 @@ namespace backend::bridge
         std::uint64_t operationId{0};
     };
 
-    // Experiment lifecycle (BE-4, issue #274): thin command surface over the
-    // backend-owned ExperimentCoordinator state machine.
+    // Experiment lifecycle over the shared ExperimentCoordinator (issue #372
+    // G2/G3). Contract-pinned values (experiment_command_actions).
     enum class ExperimentCommandAction
     {
-        Start,
-        Stop,
-        Cancel,
-        Status,
+        EvaluateReadiness = 0,
+        Start = 1,
+        Stop = 2,
+        Status = 3,
     };
 
     struct ExperimentCommand
     {
         ExperimentCommandAction action{ExperimentCommandAction::Status};
-        std::string outputPath; // Start only
+        std::string outputPath;                 // Start / EvaluateReadiness
+        std::uint64_t readinessGeneration{0};   // Start
+        std::string profileId;                  // Start / EvaluateReadiness
+        bool acknowledgeLatestFrameDrops{false}; // Start
+        bool cancelled{false};                  // Stop
     };
 
     // Monitoring accumulation control (BE-5): visibility-gated enable/disable
@@ -303,6 +309,11 @@ namespace backend::bridge
         // Non-zero when the command started (or targeted) a tracked operation;
         // correlates with OperationStatusEvent::operationId.
         std::uint64_t operationId{0};
+        // Typed outcomes of ExperimentCommand Start / Stop so acceptance,
+        // rejection and completion stay distinct. Completion is observed via
+        // ExperimentStatusEvent / fetchExperimentStatus (terminal == true).
+        std::optional<app::ExperimentStartOutcome> experimentStartOutcome;
+        std::optional<app::ExperimentStopOutcome> experimentStopOutcome;
     };
 
     enum class FrameReadySource
@@ -427,23 +438,12 @@ namespace backend::bridge
         std::string message;
     };
 
-    // Experiment lifecycle snapshot pushed on every coordinator transition and
-    // periodic-flush tick (BE-4). The full status (incl. output path) is also
-    // pullable via fetchExperimentStatus.
+    // Forwarded from ExperimentCoordinator's status callback on every
+    // transition (event kind 8 in the bridge contract). Delivered on the
+    // coordinator's calling thread (worker for Stopping/terminal).
     struct ExperimentStatusEvent
     {
-        ExperimentCoordinator::State state{ExperimentCoordinator::State::Idle};
-        std::uint64_t startTimeNs{0};
-        std::uint64_t endTimeNs{0};
-        std::uint64_t validBuffered{0};
-        std::uint64_t invalidBuffered{0};
-        std::uint64_t validSaved{0};
-        std::uint64_t invalidSaved{0};
-        std::uint64_t droppedValid{0};
-        std::uint64_t droppedInvalid{0};
-        bool flushing{false};
-        bool cancelled{false};
-        std::string message;
+        app::ExperimentStatus status;
     };
 
     // Variant order defines the bridge event-kind values — append-only.
@@ -694,7 +694,6 @@ namespace backend::bridge
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;
         bool fetchProcessingStats(BackendProcessingStats &out) const;
-        bool fetchExperimentStatus(ExperimentCoordinator::Status &out) const;
         // Bounded monitoring pull (BE-5): at most maxRows most-recent metric
         // rows across the valid+invalid ring buffers (metrics only, no images).
         bool fetchMonitoringSnapshot(BackendMonitoringSnapshot &out, std::size_t maxRows) const;
@@ -756,6 +755,14 @@ namespace backend::bridge
         bool requestOperationCancel(std::uint64_t operationId);
         std::size_t activeOperationCount() const;
 
+        // Experiment readiness (fresh evaluation; the returned generation is
+        // what a Start must present) and lifecycle status pulls. Both return
+        // false when the facade is not initialized.
+        bool fetchExperimentReadiness(app::ExperimentReadinessSnapshot &out,
+                                      const std::string &outputPath = {},
+                                      const std::string &profileId = {}) const;
+        bool fetchExperimentStatus(app::ExperimentStatus &out) const;
+
     private:
         BackendCommandResult handleCameraCommand(const CameraCommand &command);
         BackendCommandResult handleRecordingCommand(const RecordingCommand &command);
@@ -795,7 +802,6 @@ namespace backend::bridge
         // Backend-owned experiment state machine (BE-4). The running
         // experiment is also a tracked operation so it can be correlated and
         // cancelled through the generic operation surface.
-        std::unique_ptr<ExperimentCoordinator> experiment_;
         std::atomic<std::uint64_t> experimentOperationId_{0};
 
         // Review state (BE-6): the loaded file path (jobs open their own

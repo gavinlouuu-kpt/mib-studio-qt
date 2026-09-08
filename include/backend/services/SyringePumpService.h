@@ -1,7 +1,5 @@
 #pragma once
 
-#include "backend/services/ISerialPort.h"
-
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -9,6 +7,15 @@
 #include <mutex>
 #include <string>
 #include <vector>
+
+#include <QString>
+
+class QByteArray;
+
+namespace backend::services::serialbus {
+class ModbusBusSession;
+class SerialBusManager;
+} // namespace backend::services::serialbus
 
 namespace backend::services {
 
@@ -48,15 +55,18 @@ public:
         bool stalled{false};
     };
 
-    SyringePumpService();
+    // Pump serial I/O goes through the shared RS485 bus layer so a pump and
+    // other Modbus devices (e.g. the pulse generator) can share one adapter.
+    explicit SyringePumpService(serialbus::SerialBusManager& busManager);
     ~SyringePumpService();
 
-    // Inject the serial-port factory (defaults to the platform port). Tests
-    // supply a fake to drive the Modbus protocol without hardware.
-    void setSerialPortFactory(SerialPortFactory factory);
-
-    // Connection management
+    // Connection management. The int overload keeps the historical Windows
+    // COM-number API; the QString overload takes a system port name
+    // ("ttyUSB0", "COM3") so a pump can share a Linux RS485 adapter with
+    // other Modbus services. Reconnecting while connected is safe (the old
+    // session is released first).
     bool connect(PumpId id, int comPort, int baudRate, uint8_t modbusAddress);
+    bool connect(PumpId id, const QString& portName, int baudRate, uint8_t modbusAddress);
     void disconnect(PumpId id);
     bool isConnected(PumpId id) const;
 
@@ -89,31 +99,30 @@ public:
         int timeoutMs = 300);
 
 private:
-    // Modbus RTU helpers. Frames are byte vectors; transport goes through the
-    // Qt-free ISerialPort (see ModbusRtu.h for the framing primitives).
+    // Modbus RTU helpers
     static uint16_t crc16(const uint8_t* data, size_t len);
-    std::vector<uint8_t> buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count);
-    std::vector<uint8_t> buildWriteSingleRequest(uint8_t addr, uint16_t reg, uint16_t value);
-    std::vector<uint8_t> buildWriteMultipleRequest(uint8_t addr, uint16_t startReg, const std::vector<uint8_t>& regData);
-    bool sendRequest(int pumpIdx, const std::vector<uint8_t>& request, std::vector<uint8_t>& response, int expectedBytes);
+    QByteArray buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count);
+    QByteArray buildWriteSingleRequest(uint8_t addr, uint16_t reg, uint16_t value);
+    QByteArray buildWriteMultipleRequest(uint8_t addr, uint16_t startReg, const QByteArray& regData);
+    bool sendRequest(int pumpIdx, const QByteArray& request, QByteArray& response, int expectedBytes);
 
     // Float32 <-> register conversion (big-endian / ABCD word order)
-    static std::vector<uint8_t> floatToRegisters(float value);
+    static QByteArray floatToRegisters(float value);
     static float registersToFloat(const uint8_t* data);
 
     // Read helpers
-    bool readHoldingRegisters(int pumpIdx, uint16_t startReg, uint16_t count, std::vector<uint8_t>& data);
+    bool readHoldingRegisters(int pumpIdx, uint16_t startReg, uint16_t count, QByteArray& data);
     bool writeSingleRegister(int pumpIdx, uint16_t reg, uint16_t value);
-    bool writeMultipleRegisters(int pumpIdx, uint16_t startReg, const std::vector<uint8_t>& regData);
+    bool writeMultipleRegisters(int pumpIdx, uint16_t startReg, const QByteArray& regData);
 
     struct PumpConnection {
-        std::unique_ptr<ISerialPort> serial;
+        std::shared_ptr<serialbus::ModbusBusSession> bus;
         PumpConfig config;
         PumpStatus status;
         mutable std::mutex mutex;
     };
 
-    SerialPortFactory serialPortFactory_;
+    serialbus::SerialBusManager& busManager_;
     std::array<PumpConnection, PUMP_COUNT> pumps_;
 };
 

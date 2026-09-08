@@ -5,6 +5,14 @@
 **Related:** [[Threading-Model]], [[AppBackend]],
 [[../data-model/FrameStore]], [[../services/ProcessingService]]
 
+Frame freshness at the head of this pipeline is governed by the
+**frame delivery mode** ([[../domain/Glossary]]): `EveryFrame` keeps the
+camera SDK's completed-buffer FIFO ordered and complete, `LatestFrame`
+drains stale completed buffers inside the camera backend before
+[[../services/CaptureService]] ever copies a frame. Downstream queues
+(FrameStore, processing) are unaffected by the mode; their drops are
+counted separately.
+
 ## Realtime path (no experiment active)
 
 ```

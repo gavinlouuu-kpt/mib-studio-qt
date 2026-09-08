@@ -14,6 +14,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import export_hdf5  # noqa: E402
+import hdf_export_engine  # noqa: E402
 
 EXPECTED_CSV_HEADER = (
     "Frame Type,Index,Timestamp,Object Id,Object Count,Deformability,Area,Area (um²),"
@@ -180,10 +181,11 @@ class ExportHdf5PathPolicyTest(unittest.TestCase):
             self.assertEqual(second.read_text(encoding="utf-8").splitlines()[0], EXPECTED_CSV_HEADER)
 
     def test_export_hdf5_repeated_image_and_all_exports_use_generated_folders(self) -> None:
+        # Issue #344: images stream through hdf_export_engine.write_frame_image;
+        # the fake image payloads are not real arrays, so stub the writer.
         with tempfile.TemporaryDirectory() as temp_dir, self._hdf5_dependency_patch(), \
              mock.patch.object(export_hdf5, "HAS_CV2", True), \
-             mock.patch.object(export_hdf5, "export_images_to_tiff", return_value=1), \
-             mock.patch.object(export_hdf5, "export_series_images_to_tiff", return_value=0):
+             mock.patch.object(hdf_export_engine, "write_frame_image", return_value=True):
             root = Path(temp_dir)
             source = root / "sample.hdf5"
             source.write_text("fake hdf5", encoding="utf-8")

@@ -12,6 +12,10 @@
   from [[../frontend/ConnectTab]] ("Configure Mock…") or forced via
   `MIB_CAMERA_MODE=mock`. (The former separate `mock_studio_qt` target was
   removed — mock support lives in the production binary.)
+  Desktop builds compile the MindVision provider by default on Windows,
+  Linux, and macOS. Official Windows binaries compile both EGrabber and MindVision;
+  `MVCAMSDK_X64.dll` ships beside the executable, while the workstation still
+  needs the vendor device driver installed.
 - **`screenshot_tour.exe`** — headless mock-mode UI tour that regenerates
   the user-manual screenshots. See [[../frontend/Screenshot-Tour]].
 

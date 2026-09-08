@@ -3396,4 +3396,417 @@ namespace backend::services {
         return true;
     }
 
+    // ---- Run accounting provenance (issue #367) ------------------------------
+
+    namespace {
+    const char* runInfoGroupPath(hid_t fileId)
+    {
+        if (H5Lexists(fileId, "/experiment_info", H5P_DEFAULT) > 0) return "/experiment_info";
+        if (H5Lexists(fileId, "/recording_info", H5P_DEFAULT) > 0) return "/recording_info";
+        return nullptr;
+    }
+    } // namespace
+
+    bool Hdf5Service::writeRunAccounting(const backend::recording::RecordingAccountingSnapshot& in)
+    {
+        if (!isFileOpen()) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) {
+            SPDLOG_ERROR("writeRunAccounting: neither /experiment_info nor /recording_info exists");
+            return false;
+        }
+        // Always persist the reconciled form so the stored completion state
+        // can never disagree with the stored counters.
+        const auto a = backend::recording::reconcile(in);
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        auto writeU64 = [&](const char* name, uint64_t value) {
+            hid_t attr = H5Aexists(group, name) > 0
+                             ? H5Aopen(group, name, H5P_DEFAULT)
+                             : H5Acreate2(group, name, H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        auto writeU8 = [&](const char* name, bool value) {
+            const uint8_t v = value ? 1 : 0;
+            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+            if (attr < 0) attr = H5Acreate2(group, name, H5T_NATIVE_UINT8, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_UINT8, &v) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        auto writeStr = [&](const char* name, const std::string& value) {
+            if (H5Aexists(group, name) > 0) H5Adelete(group, name);
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, name, type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = value.c_str();
+                if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+        };
+
+        writeU64("accounting_schema_version", backend::recording::RecordingAccountingSnapshot::kSchemaVersion);
+        writeU64("accounting_admitted_frames", a.admitted);
+        writeU64("accounting_empty_frames", a.empty);
+        writeU64("accounting_processed_frames", a.processed);
+        writeU64("accounting_scientifically_rejected_frames", a.scientificallyRejected);
+        writeU64("accounting_processing_failed_frames", a.processingFailed);
+        writeU64("accounting_store_overwritten_frames", a.storeOverwritten);
+        writeU64("accounting_store_not_committed_frames", a.storeNotCommitted);
+        writeU64("accounting_store_malformed_frames", a.storeMalformed);
+        writeU64("accounting_cancelled_by_policy_frames", a.cancelledByPolicy);
+        writeU64("accounting_pending_at_stop_frames", a.pendingAtStop);
+        writeU64("accounting_persistence_admitted_frames", a.persistenceAdmitted);
+        writeU64("accounting_persistence_committed_frames", a.persistenceCommitted);
+        writeU64("accounting_persistence_failed_frames", a.persistenceFailed);
+        writeU64("accounting_persistence_pending_at_stop_frames", a.persistencePendingAtStop);
+        writeU64("accounting_persistence_cancelled_by_policy_frames", a.persistenceCancelledByPolicy);
+        writeU64("accounting_objects_detected", a.objectsDetected);
+        writeU8("accounting_has_index_range", a.hasIndexRange);
+        writeU64("accounting_first_frame_index", a.firstFrameIndex);
+        writeU64("accounting_last_frame_index", a.lastFrameIndex);
+        writeU64("accounting_sequence_gaps", a.sequenceGaps);
+        writeU64("accounting_sequence_gap_frames", a.sequenceGapFrames);
+        writeU64("accounting_session_generation", a.sessionGeneration);
+        writeU8("accounting_policy_allows_drops", a.policyAllowsDrops);
+        writeU8("accounting_fatal_error", a.fatalError);
+        writeStr("accounting_fatal_message", a.fatalMessage);
+        writeStr("accounting_completion_state", backend::recording::toString(a.completion));
+        writeStr("accounting_completion_reason", a.completionReason);
+        writeU8("accounting_reconciled", a.reconciled);
+
+        H5Sclose(scalar);
+        H5Gclose(group);
+        if (!ok) {
+            SPDLOG_ERROR("writeRunAccounting: failed to persist one or more accounting attributes");
+            return false;
+        }
+        SPDLOG_INFO("Run accounting persisted on {}: completion={} reconciled={} admitted={} "
+                    "empty={} processed={} rejected={} processingFailed={} storeLoss={} "
+                    "persisted={}/{} failed={}",
+                    groupPath, backend::recording::toString(a.completion), a.reconciled, a.admitted,
+                    a.empty, a.processed, a.scientificallyRejected, a.processingFailed,
+                    a.storeOverwritten + a.storeNotCommitted + a.storeMalformed,
+                    a.persistenceCommitted, a.persistenceAdmitted, a.persistenceFailed);
+        return true;
+    }
+
+    bool Hdf5Service::readRunAccounting(backend::recording::RecordingAccountingSnapshot& out) const
+    {
+        out = backend::recording::RecordingAccountingSnapshot{};
+        out.completion = backend::recording::RunCompletionState::Unknown;
+        if (!isFileOpen()) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        if (H5Aexists(group, "accounting_schema_version") <= 0) {
+            // Legacy file: no accounting was recorded; explicitly Unknown.
+            H5Gclose(group);
+            return false;
+        }
+        auto readU64 = [&](const char* name, uint64_t& v) {
+            if (H5Aexists(group, name) <= 0) return false;
+            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+            if (attr < 0) return false;
+            const bool ok = H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0;
+            H5Aclose(attr);
+            return ok;
+        };
+        auto readU8 = [&](const char* name, bool& v) {
+            if (H5Aexists(group, name) <= 0) return false;
+            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+            if (attr < 0) return false;
+            uint8_t raw = 0;
+            const bool ok = H5Aread(attr, H5T_NATIVE_UINT8, &raw) >= 0;
+            H5Aclose(attr);
+            if (ok) v = raw != 0;
+            return ok;
+        };
+        auto readStr = [&](const char* name, std::string& v) {
+            if (H5Aexists(group, name) <= 0) return false;
+            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+            if (attr < 0) return false;
+            hid_t type = H5Aget_type(attr);
+            bool ok = false;
+            if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                char* ptr = nullptr;
+                ok = H5Aread(attr, type, &ptr) >= 0;
+                if (ok) v = ptr ? ptr : "";
+                if (ptr) H5free_memory(ptr);
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attr);
+            return ok;
+        };
+        readU64("accounting_schema_version", out.schemaVersion);
+        readU64("accounting_admitted_frames", out.admitted);
+        readU64("accounting_empty_frames", out.empty);
+        readU64("accounting_processed_frames", out.processed);
+        readU64("accounting_scientifically_rejected_frames", out.scientificallyRejected);
+        readU64("accounting_processing_failed_frames", out.processingFailed);
+        readU64("accounting_store_overwritten_frames", out.storeOverwritten);
+        readU64("accounting_store_not_committed_frames", out.storeNotCommitted);
+        readU64("accounting_store_malformed_frames", out.storeMalformed);
+        readU64("accounting_cancelled_by_policy_frames", out.cancelledByPolicy);
+        readU64("accounting_pending_at_stop_frames", out.pendingAtStop);
+        readU64("accounting_persistence_admitted_frames", out.persistenceAdmitted);
+        readU64("accounting_persistence_committed_frames", out.persistenceCommitted);
+        readU64("accounting_persistence_failed_frames", out.persistenceFailed);
+        readU64("accounting_persistence_pending_at_stop_frames", out.persistencePendingAtStop);
+        readU64("accounting_persistence_cancelled_by_policy_frames", out.persistenceCancelledByPolicy);
+        readU64("accounting_objects_detected", out.objectsDetected);
+        readU8("accounting_has_index_range", out.hasIndexRange);
+        readU64("accounting_first_frame_index", out.firstFrameIndex);
+        readU64("accounting_last_frame_index", out.lastFrameIndex);
+        readU64("accounting_sequence_gaps", out.sequenceGaps);
+        readU64("accounting_sequence_gap_frames", out.sequenceGapFrames);
+        readU64("accounting_session_generation", out.sessionGeneration);
+        readU8("accounting_policy_allows_drops", out.policyAllowsDrops);
+        readU8("accounting_fatal_error", out.fatalError);
+        readStr("accounting_fatal_message", out.fatalMessage);
+        std::string completion;
+        readStr("accounting_completion_state", completion);
+        out.completion = backend::recording::runCompletionStateFromString(completion);
+        readStr("accounting_completion_reason", out.completionReason);
+        readU8("accounting_reconciled", out.reconciled);
+        H5Gclose(group);
+        return true;
+    }
+
+    // ---- Acquisition time/telemetry provenance (issue #368) --------------------
+
+    bool Hdf5Service::writeAcquisitionProvenance(const ::camera::common::TimestampDescriptor& d,
+                                                 const AcquisitionTelemetrySnapshot& t)
+    {
+        if (!isFileOpen()) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        auto writeU64 = [&](const std::string& name, uint64_t value) {
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) attr = H5Acreate2(group, name.c_str(), H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        auto writeStr = [&](const std::string& name, const std::string& value) {
+            if (H5Aexists(group, name.c_str()) > 0) H5Adelete(group, name.c_str());
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, name.c_str(), type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = value.c_str();
+                if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+        };
+        writeU64("timestamp_schema_version", ::camera::common::TimestampDescriptor::kSchemaVersion);
+        writeStr("timestamp_clock_domain", ::camera::common::toString(d.domain));
+        writeU64("timestamp_ticks_per_second", d.ticksPerSecond);
+        writeU64("timestamp_native_ticks_per_second", d.nativeTicksPerSecond);
+        writeStr("timestamp_semantic", ::camera::common::toString(d.semantic));
+        writeStr("timestamp_validity", ::camera::common::toString(d.validity));
+        writeU64("timestamp_counter_bits", d.counterBits);
+        writeU64("timestamp_session_generation", d.sessionGeneration);
+        writeStr("timestamp_host_receipt_domain", "hostMonotonicUs"); // hostTimestampUs column semantics
+        writeU64("telemetry_session_generation", t.sessionGeneration);
+        auto writeMetric = [&](const char* name, const MetricSample& m) {
+            const std::string base = std::string("telemetry_") + name;
+            writeU64(base + "_value", m.value);
+            writeStr(base + "_validity", toString(m.validity));
+            writeU64(base + "_sample_host_time_us", m.sampleHostTimeUs);
+        };
+        writeMetric("frames_delivered", t.framesDelivered);
+        writeMetric("capture_frame_rate", t.captureFrameRate);
+        writeMetric("capture_data_rate_mbps", t.captureDataRateMBps);
+        writeMetric("sdk_completed_queue_depth", t.sdkCompletedQueueDepth);
+        writeMetric("sdk_input_buffer_count", t.sdkInputBufferCount);
+        writeMetric("buffer_underruns", t.bufferUnderruns);
+        writeMetric("transport_lost_frames", t.transportLostFrames);
+        writeMetric("intentionally_discarded_frames", t.intentionallyDiscardedFrames);
+        writeMetric("frame_age_us", t.frameAgeUs);
+        writeMetric("publish_latency_us", t.publishLatencyUs);
+        H5Sclose(scalar);
+        H5Gclose(group);
+        if (!ok) SPDLOG_ERROR("writeAcquisitionProvenance: failed to persist one or more attributes");
+        return ok;
+    }
+
+    bool Hdf5Service::readAcquisitionProvenance(::camera::common::TimestampDescriptor& d,
+                                                AcquisitionTelemetrySnapshot& t) const
+    {
+        d = {};
+        d.validity = ::camera::common::TimestampValidity::Unsupported; // legacy default
+        t = {};
+        if (!isFileOpen()) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        if (H5Aexists(group, "timestamp_schema_version") <= 0) {
+            H5Gclose(group);
+            return false;
+        }
+        auto readU64 = [&](const std::string& name, uint64_t& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            const bool ok = H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0;
+            H5Aclose(attr);
+            return ok;
+        };
+        auto readStr = [&](const std::string& name, std::string& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            hid_t type = H5Aget_type(attr);
+            bool ok = false;
+            if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                char* ptr = nullptr;
+                ok = H5Aread(attr, type, &ptr) >= 0;
+                if (ok) v = ptr ? ptr : "";
+                if (ptr) H5free_memory(ptr);
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attr);
+            return ok;
+        };
+        std::string str;
+        uint64_t u = 0;
+        if (readStr("timestamp_clock_domain", str)) d.domain = ::camera::common::clockDomainFromString(str);
+        if (readU64("timestamp_ticks_per_second", u)) d.ticksPerSecond = u;
+        if (readU64("timestamp_native_ticks_per_second", u)) d.nativeTicksPerSecond = u;
+        if (readStr("timestamp_semantic", str)) d.semantic = ::camera::common::timestampSemanticFromString(str);
+        if (readStr("timestamp_validity", str)) d.validity = ::camera::common::timestampValidityFromString(str);
+        if (readU64("timestamp_counter_bits", u)) d.counterBits = static_cast<uint32_t>(u);
+        if (readU64("timestamp_session_generation", u)) d.sessionGeneration = u;
+        if (readU64("telemetry_session_generation", u)) t.sessionGeneration = u;
+        auto readMetric = [&](const char* name, MetricSample& m) {
+            const std::string base = std::string("telemetry_") + name;
+            readU64(base + "_value", m.value);
+            if (readStr(base + "_validity", str)) m.validity = metricValidityFromString(str);
+            readU64(base + "_sample_host_time_us", m.sampleHostTimeUs);
+            m.sessionGeneration = t.sessionGeneration;
+        };
+        readMetric("frames_delivered", t.framesDelivered);
+        readMetric("capture_frame_rate", t.captureFrameRate);
+        readMetric("capture_data_rate_mbps", t.captureDataRateMBps);
+        readMetric("sdk_completed_queue_depth", t.sdkCompletedQueueDepth);
+        readMetric("sdk_input_buffer_count", t.sdkInputBufferCount);
+        readMetric("buffer_underruns", t.bufferUnderruns);
+        readMetric("transport_lost_frames", t.transportLostFrames);
+        readMetric("intentionally_discarded_frames", t.intentionallyDiscardedFrames);
+        readMetric("frame_age_us", t.frameAgeUs);
+        readMetric("publish_latency_us", t.publishLatencyUs);
+        t.timestampDescriptor = d;
+        H5Gclose(group);
+        return true;
+    }
+
+    // ---- Open-object diagnostics (issue #344) ------------------------------------
+
+    long long Hdf5Service::globalOpenObjectCountForDiagnostics()
+    {
+        const ssize_t n = H5Fget_obj_count(static_cast<hid_t>(H5F_OBJ_ALL), H5F_OBJ_ALL);
+        return n < 0 ? -1 : static_cast<long long>(n);
+    }
+
+    long long Hdf5Service::openObjectCountForDiagnostics() const
+    {
+        if (!isFileOpen()) return 0;
+        const ssize_t n = H5Fget_obj_count(impl_->fileId_, H5F_OBJ_ALL);
+        return n < 0 ? -1 : static_cast<long long>(n);
+    }
+
+    // ---- Run configuration snapshot (issue #369) --------------------------------
+
+    bool Hdf5Service::writeRunSnapshotJson(const std::string& runSnapshotJson,
+                                           const std::string& readinessJson)
+    {
+        if (!isFileOpen()) return false;
+        hid_t group = H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) > 0
+                          ? H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT)
+                          : H5Gcreate2(impl_->fileId_, "/run_provenance", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        auto writeStr = [&](const char* name, const std::string& value) {
+            if (H5Aexists(group, name) > 0) H5Adelete(group, name);
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, name, type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = value.c_str();
+                if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+        };
+        auto writeU64 = [&](const char* name, uint64_t value) {
+            hid_t attr = H5Aexists(group, name) > 0
+                             ? H5Aopen(group, name, H5P_DEFAULT)
+                             : H5Acreate2(group, name, H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        writeU64("run_snapshot_schema_version", 1);
+        writeStr("run_snapshot_json", runSnapshotJson);
+        writeStr("readiness_json", readinessJson);
+        H5Sclose(scalar);
+        H5Gclose(group);
+        if (ok && !flush()) SPDLOG_WARN("writeRunSnapshotJson: flush after provenance write failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readRunSnapshotJson(std::string& runSnapshotJson, std::string* readinessJson) const
+    {
+        runSnapshotJson.clear();
+        if (readinessJson) readinessJson->clear();
+        if (!isFileOpen()) return false;
+        if (H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) <= 0) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT);
+        if (group < 0) return false;
+        auto readStr = [&](const char* name, std::string& v) {
+            if (H5Aexists(group, name) <= 0) return false;
+            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+            if (attr < 0) return false;
+            hid_t type = H5Aget_type(attr);
+            bool ok = false;
+            if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                char* ptr = nullptr;
+                ok = H5Aread(attr, type, &ptr) >= 0;
+                if (ok) v = ptr ? ptr : "";
+                if (ptr) H5free_memory(ptr);
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attr);
+            return ok;
+        };
+        const bool ok = readStr("run_snapshot_json", runSnapshotJson);
+        if (readinessJson) readStr("readiness_json", *readinessJson);
+        H5Gclose(group);
+        return ok && !runSnapshotJson.empty();
+    }
+
 } // namespace backend::services

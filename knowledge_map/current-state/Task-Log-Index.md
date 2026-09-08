@@ -6,13 +6,19 @@
 
 ## By theme
 
-### Camera lifecycle & EGrabber
+### Reliability release (epic #371)
+- `task/2026-09-07-reliability-release-371.md` — phase order, commits,
+  evidence pointers, open hardware items
+- `task/2026-08-24-exporter-stability.md` — #344 exporter phase
+
+### Camera lifecycle & hardware SDKs
 - `task/2025-11-14-safe-start-stop-egrabber.md`
 - `task/camera-reset.md`
 - `task/fps_mbs_zero.md`
 - `task/fix_hdfreviewtab_linker_error.md`
 - `task/qt_qpa_platform_plugin_missing_windows.md`
 - `task/2026-04-20-linux-build-windows-hardware-guards.md`
+- `task/2026-08-03-issue-338-mindvision-release-builds.md`
 
 ### Cloud/Linux build environment
 - `task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix.md`
@@ -52,11 +58,15 @@
 - `task/2026-04-15-trigger-timing-bug.md`
 - `task/2026-04-16-thread-performance-audit.md`
 - `task/2026-07-02-realtime-performance-plan.md`
+- `task/2026-07-15-ultra96-direct-ddr.md`
+- `task/2026-07-17-pipeline-latency-instrumentation.md`
+- `task/2026-07-17-realtime-latency-fixes.md`
 
 ### Portable processing / Biowork
 - `task/2026-07-13-hot-swappable-processing-core-native.md`
 - `task/2026-07-13-processing-conformance.md`
 - `task/2026-07-13-processing-core-registry.md`
+- `task/2026-08-07-issue-341-processing-core-wheel-architectures.md`
 
 ### Qt → React/Tauri migration (epic #246)
 - `task/2026-07-15-qt-decoupling-phase1-slice1.md`
@@ -71,6 +81,7 @@
 - `task/2026-07-15-tauri-phase4-processing-overlay.md`
 
 ## By filename (all 43)
+## By filename (selected historical records)
 
 ```
 2025-11-14-safe-start-stop-egrabber.md
@@ -102,6 +113,9 @@
 2026-07-15-tauri-desktop-phase3-slice.md
 2026-07-15-tauri-phase4-recording-review.md
 2026-07-15-tauri-phase4-processing-overlay.md
+2026-08-07-issue-341-processing-core-wheel-architectures.md
+2026-07-15-ultra96-direct-ddr.md
+2026-08-03-issue-338-mindvision-release-builds.md
 camera-reset.md
 diagnostic-logging.md
 external-config-browse.md

@@ -44,11 +44,15 @@ pub mod ffi {
         /// Synthetic bounded-queue marker (schema v4): u0 events dropped since
         /// the last poll, u1 dropped total. Emitted first in a poll batch.
         QueueOverflow = 7,
-        /// Experiment lifecycle snapshot (schema v5): u0 state, u1
-        /// validBuffered, u2 invalidBuffered, u3 validSaved, u4 invalidSaved,
-        /// u5 startTimeNs; f0 endTimeNs, f1 droppedValid, f2 droppedInvalid;
-        /// b0 flushing, b1 cancelled; text message. Full status (incl. output
-        /// path) via `fetch_experiment_status`.
+        /// Experiment lifecycle snapshot (schema v5; shared backend since
+        /// #372): u0 state, u1 validBuffered, u2 invalidBuffered,
+        /// u3 persistenceCommitted (legacy "validSaved"), u4 0 (legacy
+        /// "invalidSaved", split no longer tracked), u5 startWallClockNs;
+        /// f0/experiment_end_time_ns endWallClockNs,
+        /// f1/experiment_dropped_valid persistence pending,
+        /// f2/experiment_dropped_invalid persistenceFailed; b0 flushing,
+        /// b1 cancelled; text message. Full status (incl. output path) via
+        /// `fetch_experiment_status`.
         ExperimentStatus = 8,
     }
 
@@ -95,8 +99,11 @@ pub mod ffi {
         pub pixel_to_micron: f64,
     }
 
-    /// Pollable experiment lifecycle snapshot (schema v5, BE-4). `valid` is
-    /// false when the backend is not initialized.
+    /// Pollable experiment lifecycle snapshot (schema v5, BE-4; shared
+    /// backend since #372). `valid` is false when the backend is not
+    /// initialized. Legacy fields: `valid_saved` = persistence committed,
+    /// `invalid_saved` = 0, `dropped_valid` = persistence pending,
+    /// `dropped_invalid` = persistence failed.
     #[derive(Debug, Clone, Default)]
     pub struct BridgeExperimentStatus {
         pub valid: bool,

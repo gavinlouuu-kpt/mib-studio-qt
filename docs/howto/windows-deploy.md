@@ -28,6 +28,8 @@ If your Conan Qt package does not include debug Qt DLLs, windeploy for Debug may
 ## Notes
 - No env vars needed when plugins are deployed next to the exe.
 - If you must run from a different folder, set `QT_QPA_PLATFORM_PLUGIN_PATH` to the `platforms` directory.
-- When `MIB_ENABLE_MINDVISION=ON`, the post-build deployment step also copies
-  the MindVision runtime DLL next to the exe. The SDK itself is not vendored;
-  it must already be installed and discoverable at configure time.
+- Windows defaults `MIB_ENABLE_MINDVISION=ON`, and the post-build deployment
+  step copies `MVCAMSDK_X64.dll` next to the exe. Official release paths
+  provision the pinned SDK from R2; local builds may run
+  `scripts/provision-mindvision-sdk.ps1` or use an installed SDK. The target
+  machine still needs the MindVision device driver.

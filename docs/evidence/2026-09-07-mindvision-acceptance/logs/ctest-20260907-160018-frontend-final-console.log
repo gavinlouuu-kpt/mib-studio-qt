@@ -1,0 +1,52 @@
+Internal ctest changing into directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system
+Test project /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system
+      Start  74: frontend.json_flatten_roundtrip
+ 1/19 Test  #74: frontend.json_flatten_roundtrip .....   Passed    0.00 sec
+      Start  75: frontend.json_config_merge
+ 2/19 Test  #75: frontend.json_config_merge ..........   Passed    0.00 sec
+      Start  76: frontend.processing_core_catalog
+ 3/19 Test  #76: frontend.processing_core_catalog ....   Passed    0.00 sec
+      Start  77: frontend.application_settings
+ 4/19 Test  #77: frontend.application_settings .......   Passed    0.06 sec
+      Start  78: frontend.processing_core_settings
+ 5/19 Test  #78: frontend.processing_core_settings ...   Passed    0.01 sec
+      Start  79: frontend.hdf_review_export_paths
+ 6/19 Test  #79: frontend.hdf_review_export_paths ....   Passed    0.00 sec
+      Start  80: frontend.window_geometry_policy
+ 7/19 Test  #80: frontend.window_geometry_policy .....   Passed    0.00 sec
+      Start  81: frontend.config_document_state
+ 8/19 Test  #81: frontend.config_document_state ......   Passed    0.02 sec
+      Start  82: frontend.config_draft
+ 9/19 Test  #82: frontend.config_draft ...............   Passed    0.00 sec
+      Start  83: frontend.run_status_model
+10/19 Test  #83: frontend.run_status_model ...........   Passed    0.00 sec
+      Start  84: frontend.update_catalog
+11/19 Test  #84: frontend.update_catalog .............   Passed    0.00 sec
+      Start 102: frontend.processing_core_dialog
+12/19 Test #102: frontend.processing_core_dialog .....   Passed    0.09 sec
+      Start 103: frontend.camera_action_state
+13/19 Test #103: frontend.camera_action_state ........   Passed    0.34 sec
+      Start 104: frontend.ui_layout
+14/19 Test #104: frontend.ui_layout ..................   Passed   25.33 sec
+      Start 105: frontend.config_tabs_state
+15/19 Test #105: frontend.config_tabs_state ..........   Passed    1.34 sec
+      Start 106: frontend.preview_layout
+16/19 Test #106: frontend.preview_layout .............   Passed    1.59 sec
+      Start 107: frontend.run_status_ui
+17/19 Test #107: frontend.run_status_ui ..............   Passed    4.59 sec
+      Start 108: frontend.monitoring_tune
+18/19 Test #108: frontend.monitoring_tune ............   Passed    0.57 sec
+      Start 109: frontend.config_apply
+19/19 Test #109: frontend.config_apply ...............   Passed    3.57 sec
+
+100% tests passed, 0 tests failed out of 19
+
+Label Time Summary:
+camera        =   0.34 sec*proc (1 test)
+frontend      =  37.54 sec*proc (19 tests)
+layout        =  33.42 sec*proc (6 tests)
+processing    =   0.09 sec*proc (1 test)
+safety        =  35.77 sec*proc (9 tests)
+utility       =   0.13 sec*proc (11 tests)
+
+Total Test time (real) =  37.55 sec

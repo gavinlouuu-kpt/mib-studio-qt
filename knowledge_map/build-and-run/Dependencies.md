@@ -18,10 +18,13 @@
 - **Euresys EGrabber SDK** — `egrabber-sample-programs/` (reference source
   tree); actual SDK is assumed installed system-side. See
   `docs/integration/egrabber.md`.
-- **MindVision SDK** — not vendored. Configure with
-  `MIB_ENABLE_MINDVISION=ON` on Windows and point CMake at the SDK root via
-  `MIB_MINDVISION_SDK_ROOT` or `MIB_MINDVISION_SDK_DIR`. The build expects
-  the MindVision include tree plus `MVCAMSDK.dll` or `MVCAMSDK_X64.dll`.
+- **MindVision SDK** — not vendored in git. Every desktop OS enables it by default.
+  Local builds discover an installed SDK through `MIB_MINDVISION_SDK_ROOT` /
+  `MIB_MINDVISION_SDK_DIR` (and optional `MIB_MINDVISION_RUNTIME_DIR`).
+  Windows paths use `scripts/provision-mindvision-sdk.ps1`; Linux/macOS use
+  `scripts/provision-mindvision-sdk.sh`. The scripts fetch SHA-256-pinned team
+  R2 artifacts and extract only the headers plus the current platform/CPU's
+  shared library.
 - **Coremor XMT DLL** — `include/Coremor/` (`.h`, `.lib`, `.dll`). Used by
   [[../services/AutofocusService]].
 
@@ -53,10 +56,12 @@
   - Coremor include/lib wiring is only added when `MIB_HAS_EGRABBER=1`.
 - MindVision SDK linkage is gated separately by `MIB_ENABLE_MINDVISION` /
   `MIB_HAS_MINDVISION`:
-  - CMake locates the MindVision SDK include tree and runtime DLL only when
-    `MIB_ENABLE_MINDVISION=ON` on Windows.
-- Default builds keep MindVision disabled so Linux/cloud CI does not require
-  proprietary SDK files.
+  - CMake locates the dynamic-loader header/DLL on Windows and the direct API
+    header/shared library on Linux or macOS.
+  - Desktop and backend-only presets set `MIB_ENABLE_MINDVISION=ON`; Linux CI
+    provisions the pinned SDK before configure.
+  - Processing-only builds remain SDK-free so portable processing artifacts
+    do not acquire camera dependencies.
 - `QtNetwork` is linked by the backend library so `AppBackend` can manage the
   Young's modulus LUT manifest/cache directly during startup.
 

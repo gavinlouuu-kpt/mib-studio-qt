@@ -1,0 +1,109 @@
+name: Exporter Soak
+
+# Issue #344 release gate: 50 consecutive exports in one process for the
+# PySide export tool (real ExportWindow/ExportWorker/QThread path, offscreen)
+# and for the native Qt-free HdfExportService. Records duration, RSS,
+# worker/thread lifecycle counts, HDF5 open-object counts and output
+# manifests; the JSON report is uploaded as an artifact. Schedule + manual.
+on:
+  schedule:
+    - cron: "45 4 * * *"
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "Export rounds per surface"
+        required: false
+        default: "50"
+
+permissions:
+  contents: read
+
+jobs:
+  python-soak:
+    name: PySide exporter soak (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libxcb-cursor0
+          python3 -m pip install --upgrade pip
+          python3 -m pip install PySide6 h5py numpy opencv-python-headless psutil
+
+      - name: Engine + lifecycle tests
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          python3 scripts/test_export_hdf5_paths.py
+          python3 scripts/test_export_hdf5_streaming.py
+          python3 scripts/test_hdf5_export_app_lifecycle.py
+
+      - name: 50-round GUI + engine soak
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          N="${{ github.event.inputs.cycles || '50' }}"
+          mkdir -p artifacts/exporter-soak
+          python3 scripts/exporter_soak.py --cycles "$N" --mode gui --report artifacts/exporter-soak/gui.json
+          python3 scripts/exporter_soak.py --cycles "$N" --mode engine --report artifacts/exporter-soak/engine.json
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exporter-soak-python
+          path: artifacts/exporter-soak
+
+  native-soak:
+    name: Native HdfExportService soak (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Linux system packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake curl git libgl1-mesa-dev libhdf5-dev libopencv-dev \
+            libspdlog-dev libsqlite3-dev libxkbcommon-dev nlohmann-json3-dev \
+            pkg-config python3-pip qt6-base-dev qt6-serialport-dev
+
+      - name: Provision pinned MindVision SDK
+        shell: bash
+        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          cmake --preset linux-backend-only
+          cmake --build --preset linux-backend-only-build --target hdf_export_service_test
+
+      - name: 50-round native soak
+        shell: bash
+        env:
+          MIB_EXPORT_SOAK_CYCLES: ${{ github.event.inputs.cycles || '50' }}
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/exporter-soak
+          ./build/linux-backend/hdf_export_service_test 2>&1 | tee artifacts/exporter-soak/native.log
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exporter-soak-native
+          path: artifacts/exporter-soak
