@@ -15,7 +15,6 @@
 
 #include <fstream>
 #include <iterator>
-#include <QFile>
 
 #include <spdlog/spdlog.h>
 

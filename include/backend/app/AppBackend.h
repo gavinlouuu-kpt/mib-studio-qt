@@ -151,6 +151,9 @@ namespace backend
 
         // Backend-owned experiment readiness + Start transaction (issue #369).
         app::ExperimentCoordinator& experiment();
+        // Shared RS485 bus registry (pump, pulse generator); tests inject a
+        // fake serial-port factory here.
+        services::serialbus::SerialBusManager& serialBus();
 
         // Frame recording mode: record non-empty frames directly to HDF5 (images + metadata only, no contour processing)
         // Returns false if recording cannot start (e.g., capture not running, file error)

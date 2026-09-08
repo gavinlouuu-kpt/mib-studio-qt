@@ -9,8 +9,6 @@
 #include <mutex>
 #include <vector>
 
-#include <QByteArray>
-#include <QString>
 
 namespace backend::services {
 
@@ -60,7 +58,7 @@ public:
     static const char* toString(LinkError error);
 
     struct Config {
-        QString portName;         // system port name: "ttyUSB0", "COM3"
+        std::string portName;         // system port name: "ttyUSB0", "COM3"
         SerialSettings serial{};  // 9600 8N1 module factory default
         uint8_t modbusAddress{1};
     };
@@ -98,8 +96,8 @@ public:
     // addressed device by reading back all channel registers, seeding
     // ChannelState from the hardware (a channel reads as enabled when its duty
     // is non-zero). Never writes during connect.
-    bool connect(const QString& portName, const SerialSettings& settings, uint8_t modbusAddress);
-    bool connect(const QString& portName, int baudRate, uint8_t modbusAddress);
+    bool connect(const std::string& portName, const SerialSettings& settings, uint8_t modbusAddress);
+    bool connect(const std::string& portName, int baudRate, uint8_t modbusAddress);
     void disconnect();
     bool isConnected() const;
     LinkError lastError() const;
@@ -111,7 +109,7 @@ public:
     // Synchronous — run it off the GUI thread and use `cancel` to abort.
     // When the port itself cannot be acquired, returns empty and reports why
     // through `error` (so callers can distinguish that from a silent bus).
-    std::vector<ScanHit> scanBus(const QString& portName, const SerialSettings& settings,
+    std::vector<ScanHit> scanBus(const std::string& portName, const SerialSettings& settings,
                                  uint8_t from, uint8_t to, const std::atomic<bool>& cancel,
                                  int perAddressTimeoutMs = 250, LinkError* error = nullptr);
 
@@ -132,18 +130,18 @@ public:
     static uint32_t frequencyToRegisterValue(double hz);  // round(Hz * 100)
     static uint16_t dutyToRegisterValue(double percent);  // round(% * 100)
     // FC16 write of [freq high word, freq low word] at register 3*channel.
-    static QByteArray buildFrequencyFrame(uint8_t addr, int channel, double hz);
+    static std::vector<uint8_t> buildFrequencyFrame(uint8_t addr, int channel, double hz);
     // FC06 write of the duty register 3*channel + 2.
-    static QByteArray buildDutyFrame(uint8_t addr, int channel, double percent);
+    static std::vector<uint8_t> buildDutyFrame(uint8_t addr, int channel, double percent);
     // True when the raw bytes of the 12-register identity read are plausible
     // for this module: per channel, frequency raw is 0 or within
     // [400 Hz, 40 kHz]×100 and duty raw ≤ 100%×100. Guards against adopting
     // (and later writing into) an unrelated Modbus device that merely serves
     // 12 holding registers at address 0.
-    static bool identityLooksLikeGenerator(const QByteArray& identityData);
+    static bool identityLooksLikeGenerator(const std::vector<uint8_t>& identityData);
 
 private:
-    bool writeFrame(const QByteArray& request);
+    bool writeFrame(const std::vector<uint8_t>& request);
     static bool validChannel(int channel);
     static LinkError mapBusError(serialbus::BusError error);
 

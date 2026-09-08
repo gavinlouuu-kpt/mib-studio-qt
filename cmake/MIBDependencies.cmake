@@ -7,7 +7,7 @@ include(Sentry)
 # reporter's Qt log handler moving to the frontend. So MIB_BUILD_BACKEND_ONLY
 # (⊇ MIB_BUILD_PROCESSING_ONLY) needs no Qt SDK at all — the Phase 1 exit gate.
 if(NOT MIB_BUILD_BACKEND_ONLY)
-    find_package(Qt6 COMPONENTS Core Gui Network Widgets Charts Concurrent SerialPort REQUIRED)
+    find_package(Qt6 COMPONENTS Core Gui Network Widgets Charts Concurrent REQUIRED)
 endif()
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG QUIET)

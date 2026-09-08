@@ -19,8 +19,6 @@
 #include <thread>
 #include <vector>
 
-#include <QtGlobal>
-#include <QString>
 
 #ifdef _WIN32
 #  define NOMINMAX
@@ -451,22 +449,6 @@ void terminateHandler() {
     } catch (...) {
     }
     std::abort();
-}
-
-void qtMessageHandler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg) {
-    const std::string m = msg.toStdString();
-    const char* file = ctx.file ? ctx.file : "";
-    const char* fn   = ctx.function ? ctx.function : "";
-
-    switch (type) {
-        case QtDebugMsg:    SPDLOG_DEBUG("[Qt] {} ({}:{} {})", m, file, ctx.line, fn); break;
-        case QtInfoMsg:     SPDLOG_INFO ("[Qt] {} ({}:{} {})", m, file, ctx.line, fn); break;
-        case QtWarningMsg:  SPDLOG_WARN ("[Qt] {} ({}:{} {})", m, file, ctx.line, fn); break;
-        case QtCriticalMsg: SPDLOG_ERROR("[Qt] {} ({}:{} {})", m, file, ctx.line, fn);
-                             CrashReporter::captureMessage("Qt critical: " + m); break;
-        case QtFatalMsg:    SPDLOG_CRITICAL("[Qt FATAL] {} ({}:{} {})", m, file, ctx.line, fn);
-                             CrashReporter::captureMessage("Qt fatal: " + m); break;
-    }
 }
 
 void recoverLegacyUploaded(const std::filesystem::path& dir) {

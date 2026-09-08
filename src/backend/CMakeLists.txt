@@ -299,19 +299,14 @@ target_link_libraries(mib_backend PUBLIC
     spdlog::spdlog
 )
 
-# Integration branch (shared backend, #372): the reliability serial-bus stack
-# (SerialBus, SyringePumpService, PulseGeneratorService) and the crash
-# reporter's Qt message handler use Qt Core / Qt SerialPort types. Agent B's
-# rebase (handoff gap G7) ports them onto ISerialPort and drops this again.
-target_link_libraries(mib_backend PUBLIC Qt6::Core Qt6::SerialPort)
-
 if(TARGET nlohmann_json::nlohmann_json)
     target_link_libraries(mib_backend PUBLIC nlohmann_json::nlohmann_json)
 endif()
 
-# CrashReporter requires dbghelp on Windows for MiniDumpWriteDump.
+# CrashReporter requires dbghelp on Windows for MiniDumpWriteDump; the serial
+# port enumeration (SerialPortWin32.cpp) uses SetupAPI.
 if(WIN32)
-    target_link_libraries(mib_backend PUBLIC dbghelp)
+    target_link_libraries(mib_backend PUBLIC dbghelp setupapi)
 endif()
 
 # Wire optional sentry-native. When MIB_USE_SENTRY=OFF (or the fetch failed)

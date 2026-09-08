@@ -169,7 +169,9 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
   (external-trigger pulse source, created alongside the syringe-pump service).
   Both serial services are constructed against the backend-owned
   [[../services/SerialBus]] `SerialBusManager` (declared before them so it
-  outlives their sessions) — one shared `QSerialPort` owner per RS485 adapter
+  outlives their sessions) — one shared [[../services/ISerialPort]] owner per
+  RS485 adapter; `serialBus()` exposes the manager so tests inject a fake
+  serial-port factory
 
 ### Requested vs effective camera source (issue #369)
 

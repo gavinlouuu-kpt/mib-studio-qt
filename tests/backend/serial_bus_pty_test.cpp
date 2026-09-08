@@ -32,10 +32,8 @@ int main() { return 0; }
 #include "support/assert.h"
 #include "support/watchdog.h"
 
-#include <QByteArray>
-#include <QCoreApplication>
-#include <QString>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -117,19 +115,18 @@ private:
         regs_[device][channel * 3 + 1] = static_cast<uint16_t>(raw & 0xFFFF);
     }
 
-    void send(const QByteArray& frame)
+    void send(const std::vector<uint8_t>& frame)
     {
-        ssize_t off = 0;
+        size_t off = 0;
         while (off < frame.size()) {
-            const ssize_t n = ::write(fd_, frame.constData() + off,
-                                      static_cast<size_t>(frame.size() - off));
+            const ssize_t n = ::write(fd_, frame.data() + off, frame.size() - off);
             if (n <= 0) return;
-            off += n;
+            off += static_cast<size_t>(n);
         }
     }
 
     // Request length from its function code; -1 = need more bytes, -2 = junk.
-    static int requestLength(const QByteArray& buf)
+    static int requestLength(const std::vector<uint8_t>& buf)
     {
         if (buf.size() < 2) return -1;
         switch (static_cast<uint8_t>(buf[1])) {
@@ -144,7 +141,7 @@ private:
         }
     }
 
-    void handle(const QByteArray& req)
+    void handle(const std::vector<uint8_t>& req)
     {
         std::scoped_lock lock(regsMutex_); // main thread reads regs_ in assertions
         const uint8_t addr = static_cast<uint8_t>(req[0]);
@@ -154,10 +151,10 @@ private:
         }
 
         if (addr == 3) { // generic device: always an exception
-            QByteArray resp;
-            resp.append(static_cast<char>(addr));
-            resp.append(static_cast<char>(func | 0x80));
-            resp.append(static_cast<char>(0x02));
+            std::vector<uint8_t> resp;
+            resp.push_back(static_cast<uint8_t>(addr));
+            resp.push_back(static_cast<uint8_t>(func | 0x80));
+            resp.push_back(static_cast<uint8_t>(0x02));
             modbus::appendCrc(resp);
             send(resp);
             return;
@@ -166,38 +163,38 @@ private:
             // Valid FC03 shape, implausible register values (all 0xFFFF).
             const uint16_t count = static_cast<uint16_t>(
                 (static_cast<uint8_t>(req[4]) << 8) | static_cast<uint8_t>(req[5]));
-            QByteArray resp;
-            resp.append(static_cast<char>(addr));
-            resp.append(static_cast<char>(func));
-            resp.append(static_cast<char>(count * 2));
-            resp.append(count * 2, static_cast<char>(0xFF));
+            std::vector<uint8_t> resp;
+            resp.push_back(static_cast<uint8_t>(addr));
+            resp.push_back(static_cast<uint8_t>(func));
+            resp.push_back(static_cast<uint8_t>(count * 2));
+            resp.insert(resp.end(), static_cast<size_t>(count) * 2, 0xFF);
             modbus::appendCrc(resp);
             send(resp);
             return;
         }
         if (addr == 7) { // truncated: header only, then silence
-            QByteArray resp;
-            resp.append(static_cast<char>(addr));
-            resp.append(static_cast<char>(func));
-            resp.append(static_cast<char>(24));
+            std::vector<uint8_t> resp;
+            resp.push_back(static_cast<uint8_t>(addr));
+            resp.push_back(static_cast<uint8_t>(func));
+            resp.push_back(static_cast<uint8_t>(24));
             send(resp);
             return;
         }
         if (addr == 8) { // corrupt CRC
-            QByteArray resp;
-            resp.append(static_cast<char>(addr));
-            resp.append(static_cast<char>(func | 0x80));
-            resp.append(static_cast<char>(0x01));
+            std::vector<uint8_t> resp;
+            resp.push_back(static_cast<uint8_t>(addr));
+            resp.push_back(static_cast<uint8_t>(func | 0x80));
+            resp.push_back(static_cast<uint8_t>(0x01));
             modbus::appendCrc(resp);
-            resp[resp.size() - 1] = static_cast<char>(resp[resp.size() - 1] ^ 0x5A);
+            resp.back() ^= 0x5A;
             send(resp);
             return;
         }
         if (addr == 9) { // answers as somebody else
-            QByteArray resp;
-            resp.append(static_cast<char>(10));
-            resp.append(static_cast<char>(func | 0x80));
-            resp.append(static_cast<char>(0x01));
+            std::vector<uint8_t> resp;
+            resp.push_back(static_cast<uint8_t>(10));
+            resp.push_back(static_cast<uint8_t>(func | 0x80));
+            resp.push_back(static_cast<uint8_t>(0x01));
             modbus::appendCrc(resp);
             send(resp);
             return;
@@ -216,21 +213,21 @@ private:
             if (start + count > 12) {
                 // Out-of-map read (e.g. the pump service probing its own
                 // registers): answer illegal-data-address instead of silence.
-                QByteArray resp;
-                resp.append(static_cast<char>(addr));
-                resp.append(static_cast<char>(func | 0x80));
-                resp.append(static_cast<char>(0x02));
+                std::vector<uint8_t> resp;
+                resp.push_back(static_cast<uint8_t>(addr));
+                resp.push_back(static_cast<uint8_t>(func | 0x80));
+                resp.push_back(static_cast<uint8_t>(0x02));
                 modbus::appendCrc(resp);
                 send(resp);
                 return;
             }
-            QByteArray resp;
-            resp.append(static_cast<char>(addr));
-            resp.append(static_cast<char>(func));
-            resp.append(static_cast<char>(count * 2));
+            std::vector<uint8_t> resp;
+            resp.push_back(static_cast<uint8_t>(addr));
+            resp.push_back(static_cast<uint8_t>(func));
+            resp.push_back(static_cast<uint8_t>(count * 2));
             for (int r = start; r < start + count; ++r) {
-                resp.append(static_cast<char>(regs_[device][r] >> 8));
-                resp.append(static_cast<char>(regs_[device][r] & 0xFF));
+                resp.push_back(static_cast<uint8_t>(regs_[device][r] >> 8));
+                resp.push_back(static_cast<uint8_t>(regs_[device][r] & 0xFF));
             }
             modbus::appendCrc(resp);
             send(resp);
@@ -255,7 +252,7 @@ private:
                     (static_cast<uint8_t>(req[7 + r * 2]) << 8) |
                     static_cast<uint8_t>(req[8 + r * 2]));
             }
-            QByteArray resp = req.left(6);
+            std::vector<uint8_t> resp(req.begin(), req.begin() + 6);
             modbus::appendCrc(resp);
             send(resp);
             return;
@@ -267,22 +264,22 @@ private:
 
     void loop()
     {
-        QByteArray buffer;
+        std::vector<uint8_t> buffer;
         while (!stop_.load()) {
             struct pollfd pfd{fd_, POLLIN, 0};
             const int rc = ::poll(&pfd, 1, 20);
             if (rc <= 0 || !(pfd.revents & POLLIN)) continue;
-            char chunk[256];
+            uint8_t chunk[256];
             const ssize_t n = ::read(fd_, chunk, sizeof(chunk));
             if (n <= 0) continue;
-            buffer.append(chunk, static_cast<int>(n));
+            buffer.insert(buffer.end(), chunk, chunk + n);
             while (true) {
                 const int len = requestLength(buffer);
                 if (len == -1) break;
                 if (len == -2) { buffer.clear(); break; }
-                if (buffer.size() < len) break;
-                const QByteArray req = buffer.left(len);
-                buffer.remove(0, len);
+                if (static_cast<int>(buffer.size()) < len) break;
+                const std::vector<uint8_t> req(buffer.begin(), buffer.begin() + len);
+                buffer.erase(buffer.begin(), buffer.begin() + len);
                 if (modbus::responseCrcValid(req)) {
                     handle(req);
                 }
@@ -300,9 +297,8 @@ private:
 
 } // namespace
 
-int main(int argc, char** argv)
+int main()
 {
-    QCoreApplication app(argc, argv);
     mib::test::Watchdog watchdog(60);
 
     // --- pty setup ---------------------------------------------------------
@@ -312,7 +308,7 @@ int main(int argc, char** argv)
     MIB_REQUIRE(::grantpt(masterFd) == 0 && ::unlockpt(masterFd) == 0, "grantpt/unlockpt");
     char slavePathBuf[128];
     MIB_REQUIRE(::ptsname_r(masterFd, slavePathBuf, sizeof(slavePathBuf)) == 0, "ptsname_r");
-    const QString slavePath = QString::fromLatin1(slavePathBuf);
+    const std::string slavePath(slavePathBuf);
     {
         struct termios tio{};
         MIB_REQUIRE(::tcgetattr(masterFd, &tio) == 0, "tcgetattr");
@@ -471,7 +467,7 @@ int main(int argc, char** argv)
                    "impostor refusal reports IncompatibleDevice");
     }
 
-    // --- pump shares the same adapter through the QString port API ----------
+    // --- pump shares the same adapter through the string port API -----------
     watchdog.mark("pump shares bus");
     {
         backend::services::SyringePumpService pump(manager);

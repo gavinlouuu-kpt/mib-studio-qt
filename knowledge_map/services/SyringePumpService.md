@@ -17,7 +17,7 @@
   session for each adapter (acquired from the `AppBackend`-owned
   `SerialBusManager`), so a pump can share an RS485 adapter with other Modbus
   devices instead of failing on a second open. `connect()` has two overloads:
-  the historical Windows COM-number one, and a `QString` system-port-name one
+  the historical Windows COM-number one, and a `std::string` system-port-name one
   (`"ttyUSB0"`, `"COM3"`) that makes Linux adapter sharing reachable; the
   `COMn` synthesis lives only in the int overload. Reconnecting while
   connected releases the old session first (a non-recursive-mutex deadlock
@@ -48,10 +48,11 @@ The pure framing primitives live in `include/backend/services/ModbusRtu.h`
 this service is **fully Qt-free**: frames are `std::vector<uint8_t>`
 (`modbus::Frame`, not `QByteArray`) and transport goes through [[ISerialPort]]
 (POSIX termios / Win32) instead of `QSerialPort`. `connect()` and
-`scanModbusAddresses()` obtain ports from the injected `SerialPortFactory`, so a
-`FakeSerialPort` can drive the whole Modbus round-trip headless
-(`tests/backend/syringe_pump_fake_serial_test.cpp`). This dropped
-`Qt6::SerialPort` from the backend link.
+`scanModbusAddresses()` acquire sessions from the shared [[SerialBus]]
+manager, whose injected `SerialPortFactory` lets a `FakeSerialPort` drive the
+whole Modbus round-trip headless
+(`tests/backend/syringe_pump_fake_serial_test.cpp`). This keeps
+`Qt6::SerialPort` (and Qt Core) out of the backend link.
 
 Public scan helper probes `REG_RUN_COMMAND` (`0x0001`) with Modbus function
 `0x03` over an address range (default 1..8) and returns responsive addresses.

@@ -6,6 +6,8 @@
 
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include <fcntl.h>
@@ -20,6 +22,9 @@ namespace {
 speed_t baudConstant(int baud)
 {
     switch (baud) {
+        case 1200:   return B1200;
+        case 2400:   return B2400;
+        case 4800:   return B4800;
         case 9600:   return B9600;
         case 19200:  return B19200;
         case 38400:  return B38400;
@@ -49,6 +54,15 @@ public:
 
     bool openPath(const std::string& devicePath, int baudRate)
     {
+        SerialSettings s;
+        s.baudRate = baudRate;
+        return openNamed(devicePath, s);
+    }
+
+    bool openNamed(const std::string& systemName, const SerialSettings& settings) override
+    {
+        const std::string devicePath = systemName.rfind('/', 0) == 0 ? systemName : "/dev/" + systemName;
+        const int baudRate = settings.baudRate;
         close();
         fd_ = ::open(devicePath.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
         if (fd_ < 0) {
@@ -63,12 +77,16 @@ public:
             return false;
         }
 
-        cfmakeraw(&tty); // 8-bit, no canonical processing, no echo
-        // 8N1, no flow control, local + receiver enabled.
-        tty.c_cflag &= ~static_cast<tcflag_t>(PARENB);   // no parity
-        tty.c_cflag &= ~static_cast<tcflag_t>(CSTOPB);   // one stop bit
+        cfmakeraw(&tty); // no canonical processing, no echo
+        // Line settings (8N1 default), no flow control, local + receiver enabled.
+        tty.c_cflag &= ~static_cast<tcflag_t>(PARENB | PARODD);
+        if (settings.parity == 'E') tty.c_cflag |= PARENB;
+        if (settings.parity == 'O') tty.c_cflag |= (PARENB | PARODD);
+        tty.c_cflag &= ~static_cast<tcflag_t>(CSTOPB);
+        if (settings.stopBits == 2) tty.c_cflag |= CSTOPB;
         tty.c_cflag &= ~static_cast<tcflag_t>(CSIZE);
-        tty.c_cflag |= CS8;                              // 8 data bits
+        tty.c_cflag |= settings.dataBits == 5 ? CS5 : settings.dataBits == 6 ? CS6
+                     : settings.dataBits == 7 ? CS7 : CS8;
         tty.c_cflag &= ~static_cast<tcflag_t>(CRTSCTS);  // no hardware flow control
         tty.c_cflag |= (CLOCAL | CREAD);
         tty.c_iflag &= ~static_cast<tcflag_t>(IXON | IXOFF | IXANY); // no software flow control
@@ -161,15 +179,18 @@ public:
     }
 
     std::string lastError() const override { return error_; }
+    int lastSystemError() const override { return systemError_; }
 
 private:
     void setErrno(const std::string& what)
     {
+        systemError_ = errno;
         error_ = what + ": " + std::strerror(errno);
     }
 
     int fd_{-1};
     std::string error_;
+    int systemError_{0};
 };
 
 } // namespace
@@ -189,6 +210,47 @@ std::unique_ptr<ISerialPort> makeSerialPortForPathForTesting(const std::string& 
         return nullptr;
     }
     return port;
+}
+
+namespace {
+std::string readSysfs(const std::filesystem::path& p)
+{
+    std::ifstream f(p);
+    std::string s;
+    if (f) std::getline(f, s);
+    while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
+    return s;
+}
+} // namespace
+
+// sysfs enumeration: every tty with a device link; USB identity read from the
+// nearest ancestor that carries idVendor/idProduct.
+std::vector<SerialPortInfo> enumerateSerialPorts()
+{
+    namespace fs = std::filesystem;
+    std::vector<SerialPortInfo> ports;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator("/sys/class/tty", ec)) {
+        const fs::path device = entry.path() / "device";
+        if (!fs::exists(device, ec)) continue;
+        SerialPortInfo p;
+        p.systemName = entry.path().filename().string();
+        p.systemLocation = "/dev/" + p.systemName;
+        fs::path node = fs::canonical(device, ec);
+        for (int depth = 0; depth < 5 && !node.empty() && ec.value() == 0; ++depth) {
+            if (fs::exists(node / "idVendor", ec)) {
+                p.vendorId = static_cast<uint16_t>(std::strtoul(readSysfs(node / "idVendor").c_str(), nullptr, 16));
+                p.productId = static_cast<uint16_t>(std::strtoul(readSysfs(node / "idProduct").c_str(), nullptr, 16));
+                p.manufacturer = readSysfs(node / "manufacturer");
+                p.description = readSysfs(node / "product");
+                p.serialNumber = readSysfs(node / "serial");
+                break;
+            }
+            node = node.parent_path();
+        }
+        ports.push_back(std::move(p));
+    }
+    return ports;
 }
 
 } // namespace backend::services

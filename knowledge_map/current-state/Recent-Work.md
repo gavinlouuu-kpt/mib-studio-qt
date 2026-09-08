@@ -5,6 +5,21 @@
 
 ## Features shipped
 
+- **Serial bus ported onto ISerialPort; backend Qt-free again**
+  (2026-09-08, `agent-b/shared-backend-integration`) — The reliability
+  RS485 layer (`SerialBus`, `SyringePumpService`, `PulseGeneratorService`,
+  `ModbusRtu.h` with `expectedFrameLength`/`classifyResponse`) now runs on
+  the Qt-free `ISerialPort` (new `SerialSettings`, `openNamed()`,
+  `lastSystemError()`, `enumerateSerialPorts()` via SetupAPI / sysfs;
+  `SerialBusManager::setSerialPortFactory()` is the test seam, exposed as
+  `AppBackend::serialBus()`). `mib_backend` links no Qt; the bridge link
+  manifest carries no Qt libraries; `build.rs` no longer needs
+  `/permissive-`. Frontend `ConfigTabs` converts port names at its boundary.
+  Tests: `backend.syringe_pump_fake_serial`, `backend.pump_bridge_facade`
+  (now through the bus manager), `backend.pulse_generator_frame`,
+  `backend.modbus_rtu`, `backend.facade_boundary`, bridge crate 16/16 on
+  Windows; `backend.serial_bus_pty` ported (POSIX-only, verified by CI).
+
 - **UX redesign: UX-9 — Operator vs Service/Commissioning mode** (2026-07-21,
   epic #304, issue #313) — New `desktop/src/commissioning.ts`: `canActuate` and
   friends gate hardware-actuating trigger tests (service mode → not during a run

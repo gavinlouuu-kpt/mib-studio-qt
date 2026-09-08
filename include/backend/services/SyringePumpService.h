@@ -8,9 +8,6 @@
 #include <string>
 #include <vector>
 
-#include <QString>
-
-class QByteArray;
 
 namespace backend::services::serialbus {
 class ModbusBusSession;
@@ -61,12 +58,12 @@ public:
     ~SyringePumpService();
 
     // Connection management. The int overload keeps the historical Windows
-    // COM-number API; the QString overload takes a system port name
+    // COM-number API; the string overload takes a system port name
     // ("ttyUSB0", "COM3") so a pump can share a Linux RS485 adapter with
     // other Modbus services. Reconnecting while connected is safe (the old
     // session is released first).
     bool connect(PumpId id, int comPort, int baudRate, uint8_t modbusAddress);
-    bool connect(PumpId id, const QString& portName, int baudRate, uint8_t modbusAddress);
+    bool connect(PumpId id, const std::string& portName, int baudRate, uint8_t modbusAddress);
     void disconnect(PumpId id);
     bool isConnected(PumpId id) const;
 
@@ -101,19 +98,19 @@ public:
 private:
     // Modbus RTU helpers
     static uint16_t crc16(const uint8_t* data, size_t len);
-    QByteArray buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count);
-    QByteArray buildWriteSingleRequest(uint8_t addr, uint16_t reg, uint16_t value);
-    QByteArray buildWriteMultipleRequest(uint8_t addr, uint16_t startReg, const QByteArray& regData);
-    bool sendRequest(int pumpIdx, const QByteArray& request, QByteArray& response, int expectedBytes);
+    std::vector<uint8_t> buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count);
+    std::vector<uint8_t> buildWriteSingleRequest(uint8_t addr, uint16_t reg, uint16_t value);
+    std::vector<uint8_t> buildWriteMultipleRequest(uint8_t addr, uint16_t startReg, const std::vector<uint8_t>& regData);
+    bool sendRequest(int pumpIdx, const std::vector<uint8_t>& request, std::vector<uint8_t>& response, int expectedBytes);
 
     // Float32 <-> register conversion (big-endian / ABCD word order)
-    static QByteArray floatToRegisters(float value);
+    static std::vector<uint8_t> floatToRegisters(float value);
     static float registersToFloat(const uint8_t* data);
 
     // Read helpers
-    bool readHoldingRegisters(int pumpIdx, uint16_t startReg, uint16_t count, QByteArray& data);
+    bool readHoldingRegisters(int pumpIdx, uint16_t startReg, uint16_t count, std::vector<uint8_t>& data);
     bool writeSingleRegister(int pumpIdx, uint16_t reg, uint16_t value);
-    bool writeMultipleRegisters(int pumpIdx, uint16_t startReg, const QByteArray& regData);
+    bool writeMultipleRegisters(int pumpIdx, uint16_t startReg, const std::vector<uint8_t>& regData);
 
     struct PumpConnection {
         std::shared_ptr<serialbus::ModbusBusSession> bus;

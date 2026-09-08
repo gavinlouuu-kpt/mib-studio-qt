@@ -38,9 +38,9 @@ uint16_t PulseGeneratorService::dutyToRegisterValue(double percent) {
     return static_cast<uint16_t>(std::lround(clampDuty(percent) * 100.0));
 }
 
-QByteArray PulseGeneratorService::buildFrequencyFrame(uint8_t addr, int channel, double hz) {
+std::vector<uint8_t> PulseGeneratorService::buildFrequencyFrame(uint8_t addr, int channel, double hz) {
     const uint32_t value = frequencyToRegisterValue(hz);
-    QByteArray regData(4, 0);
+    std::vector<uint8_t> regData(4, 0);
     regData[0] = static_cast<char>((value >> 24) & 0xFF); // high word, high byte
     regData[1] = static_cast<char>((value >> 16) & 0xFF); // high word, low byte
     regData[2] = static_cast<char>((value >> 8) & 0xFF);  // low word, high byte
@@ -48,7 +48,7 @@ QByteArray PulseGeneratorService::buildFrequencyFrame(uint8_t addr, int channel,
     return modbus::buildWriteMultipleRequest(addr, regFreq(channel), regData);
 }
 
-QByteArray PulseGeneratorService::buildDutyFrame(uint8_t addr, int channel, double percent) {
+std::vector<uint8_t> PulseGeneratorService::buildDutyFrame(uint8_t addr, int channel, double percent) {
     return modbus::buildWriteSingleRequest(addr, regDuty(channel), dutyToRegisterValue(percent));
 }
 
@@ -56,11 +56,11 @@ bool PulseGeneratorService::validChannel(int channel) {
     return channel >= 0 && channel < CHANNEL_COUNT;
 }
 
-bool PulseGeneratorService::identityLooksLikeGenerator(const QByteArray& identityData) {
+bool PulseGeneratorService::identityLooksLikeGenerator(const std::vector<uint8_t>& identityData) {
     if (identityData.size() != CHANNEL_COUNT * 6) {
         return false;
     }
-    const auto* regs = reinterpret_cast<const uint8_t*>(identityData.constData());
+    const auto* regs = reinterpret_cast<const uint8_t*>(identityData.data());
     constexpr uint32_t minFreqRaw = static_cast<uint32_t>(MIN_FREQUENCY_HZ * 100.0);
     constexpr uint32_t maxFreqRaw = static_cast<uint32_t>(MAX_FREQUENCY_HZ * 100.0);
     for (int ch = 0; ch < CHANNEL_COUNT; ++ch) {
@@ -119,7 +119,7 @@ PulseGeneratorService::LinkError PulseGeneratorService::mapBusError(serialbus::B
 // ---------------------------------------------------------------------------
 // Bus I/O
 // ---------------------------------------------------------------------------
-bool PulseGeneratorService::writeFrame(const QByteArray& request) {
+bool PulseGeneratorService::writeFrame(const std::vector<uint8_t>& request) {
     if (!bus_) {
         status_.lastError = LinkError::NotConnected;
         return false;
@@ -144,13 +144,13 @@ PulseGeneratorService::~PulseGeneratorService() {
     disconnect();
 }
 
-bool PulseGeneratorService::connect(const QString& portName, int baudRate, uint8_t modbusAddress) {
+bool PulseGeneratorService::connect(const std::string& portName, int baudRate, uint8_t modbusAddress) {
     SerialSettings settings;
     settings.baudRate = baudRate;
     return connect(portName, settings, modbusAddress);
 }
 
-bool PulseGeneratorService::connect(const QString& portName, const SerialSettings& settings,
+bool PulseGeneratorService::connect(const std::string& portName, const SerialSettings& settings,
                                     uint8_t modbusAddress) {
     std::scoped_lock lock(mutex_);
 
@@ -162,20 +162,20 @@ bool PulseGeneratorService::connect(const QString& portName, const SerialSetting
     config_.modbusAddress = modbusAddress;
 
     serialbus::BusError busError = serialbus::BusError::None;
-    QString detail;
+    std::string detail;
     bus_ = busManager_.acquire(portName, settings, &busError, &detail);
     if (!bus_) {
         status_.lastError = mapBusError(busError);
         SPDLOG_ERROR("PulseGeneratorService: cannot open {}: {} ({})",
-                     portName.toStdString(), serialbus::toString(busError),
-                     detail.toStdString());
+                     portName, serialbus::toString(busError),
+                     detail);
         return false;
     }
 
     // Verify the addressed device and seed channel state from the hardware:
     // all four channels' freq/duty registers in one read. Does NOT write
     // anything, so a generator that is already pulsing keeps pulsing.
-    const QByteArray request =
+    const std::vector<uint8_t> request =
         modbus::buildReadRequest(modbusAddress, 0, IDENTITY_REG_COUNT);
     const auto result = bus_->transact(request, SERIAL_TIMEOUT_MS);
     if (result.error != serialbus::BusError::None) {
@@ -183,16 +183,16 @@ bool PulseGeneratorService::connect(const QString& portName, const SerialSetting
                                 ? LinkError::IncompatibleDevice
                                 : mapBusError(result.error);
         SPDLOG_ERROR("PulseGeneratorService: device not verified on {} addr={}: {} "
-                     "— check wiring and address", portName.toStdString(),
+                     "— check wiring and address", portName,
                      modbusAddress, serialbus::toString(result.error));
         bus_.reset();
         return false;
     }
-    QByteArray data;
+    std::vector<uint8_t> data;
     if (!modbus::extractReadData(result.response, IDENTITY_REG_COUNT, data)) {
         status_.lastError = LinkError::IncompatibleDevice;
         SPDLOG_ERROR("PulseGeneratorService: unexpected identity-read shape from {} addr={}",
-                     portName.toStdString(), modbusAddress);
+                     portName, modbusAddress);
         bus_.reset();
         return false;
     }
@@ -203,11 +203,11 @@ bool PulseGeneratorService::connect(const QString& portName, const SerialSetting
         status_.lastError = LinkError::IncompatibleDevice;
         SPDLOG_ERROR("PulseGeneratorService: device on {} addr={} answers the identity read "
                      "but its register values are not plausible for this module — refusing",
-                     portName.toStdString(), modbusAddress);
+                     portName, modbusAddress);
         bus_.reset();
         return false;
     }
-    const auto* regs = reinterpret_cast<const uint8_t*>(data.constData());
+    const auto* regs = reinterpret_cast<const uint8_t*>(data.data());
     for (int ch = 0; ch < CHANNEL_COUNT; ++ch) {
         const int off = ch * 6;
         const uint32_t freqRaw = (static_cast<uint32_t>(regs[off]) << 24) |
@@ -225,7 +225,7 @@ bool PulseGeneratorService::connect(const QString& portName, const SerialSetting
     status_.connected = true;
     status_.lastError = LinkError::None;
     SPDLOG_INFO("PulseGeneratorService: connected on {} addr={} (ch1: {} Hz, {} %)",
-                portName.toStdString(), modbusAddress,
+                portName, modbusAddress,
                 status_.channels[0].frequencyHz, status_.channels[0].dutyPercent);
     return true;
 }
@@ -241,7 +241,7 @@ void PulseGeneratorService::disconnect() {
     bus_.reset();
     status_.connected = false;
     SPDLOG_INFO("PulseGeneratorService: disconnected from {} addr={}",
-                config_.portName.toStdString(), config_.modbusAddress);
+                config_.portName, config_.modbusAddress);
 }
 
 bool PulseGeneratorService::isConnected() const {
@@ -258,7 +258,7 @@ PulseGeneratorService::LinkError PulseGeneratorService::lastError() const {
 // Discovery
 // ---------------------------------------------------------------------------
 std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
-    const QString& portName, const SerialSettings& settings, uint8_t from, uint8_t to,
+    const std::string& portName, const SerialSettings& settings, uint8_t from, uint8_t to,
     const std::atomic<bool>& cancel, int perAddressTimeoutMs, LinkError* error) {
     std::vector<ScanHit> hits;
     if (error) {
@@ -280,7 +280,7 @@ std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
         bus = busManager_.acquire(portName, settings, &busError, nullptr);
         if (!bus) {
             SPDLOG_ERROR("PulseGeneratorService: scan cannot open {}: {}",
-                         portName.toStdString(), serialbus::toString(busError));
+                         portName, serialbus::toString(busError));
             if (error) {
                 *error = mapBusError(busError);
             }
@@ -295,14 +295,14 @@ std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
         }
         // Read-only FC03 identity probe — scanning must never write frequency,
         // duty, or any other register.
-        const QByteArray request = modbus::buildReadRequest(
+        const std::vector<uint8_t> request = modbus::buildReadRequest(
             static_cast<uint8_t>(addr), 0, IDENTITY_REG_COUNT);
         const auto result = bus->transact(request, perAddressTimeoutMs);
         switch (result.error) {
         case serialbus::BusError::None: {
             // Right shape — but only plausible register values earn the
             // "pulse generator" label (see identityLooksLikeGenerator).
-            QByteArray data;
+            std::vector<uint8_t> data;
             const bool plausible =
                 modbus::extractReadData(result.response, IDENTITY_REG_COUNT, data) &&
                 identityLooksLikeGenerator(data);

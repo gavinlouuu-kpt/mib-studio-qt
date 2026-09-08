@@ -50,10 +50,6 @@ using namespace Euresys;
 #include <fstream>
 #include <iterator>
 #include <cstdlib>
-#include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QString>
 #endif
 
 namespace backend::services

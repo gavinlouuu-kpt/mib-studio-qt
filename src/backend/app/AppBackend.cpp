@@ -1001,6 +1001,8 @@ namespace backend
 
     app::ExperimentCoordinator &AppBackend::experiment() { return *experimentCoordinator_; }
 
+    services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
+
     bool AppBackend::isCameraConfigured() const
     {
         // Camera is configured if a hardware, MindVision, or mock camera is selected.

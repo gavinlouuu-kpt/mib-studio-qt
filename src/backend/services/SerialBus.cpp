@@ -1,12 +1,22 @@
 #include "backend/services/SerialBus.h"
 #include "backend/services/ModbusRtu.h"
 
-#include <QSerialPort>
-#include <QSerialPortInfo>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <thread>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <cerrno>
+#endif
 
 namespace backend::services::serialbus {
 
@@ -18,61 +28,37 @@ namespace {
     // second device answering the same address shows up here.
     constexpr int COLLISION_LISTEN_MS = 5;
 
-    QSerialPort::Parity toQtParity(char parity)
+    std::string hex(const Bytes& b)
     {
-        switch (parity) {
-        case 'E': return QSerialPort::EvenParity;
-        case 'O': return QSerialPort::OddParity;
-        default:  return QSerialPort::NoParity;
+        std::string out;
+        char buf[4];
+        for (size_t i = 0; i < b.size(); ++i) {
+            std::snprintf(buf, sizeof(buf), "%02x", b[i]);
+            if (i) out += ' ';
+            out += buf;
         }
+        return out;
     }
 
-    QSerialPort::DataBits toQtDataBits(int bits)
+    // Classify an open() failure from the OS error code, never from text.
+    BusError classifyOpenError(int systemError)
     {
-        switch (bits) {
-        case 5: return QSerialPort::Data5;
-        case 6: return QSerialPort::Data6;
-        case 7: return QSerialPort::Data7;
-        default: return QSerialPort::Data8;
-        }
-    }
-
-    QSerialPort::StopBits toQtStopBits(int bits)
-    {
-        return bits == 2 ? QSerialPort::TwoStop : QSerialPort::OneStop;
-    }
-
-    // Classify an open() failure from the typed QSerialPort error, never from
-    // the translated errorString text.
-    BusError classifyOpenError(QSerialPort::SerialPortError error)
-    {
-        switch (error) {
-        case QSerialPort::PermissionError:
+#if defined(_WIN32)
+        if (systemError == ERROR_ACCESS_DENIED || systemError == ERROR_SHARING_VIOLATION) {
             return BusError::PortBusy; // held by another process, or no rights
-        case QSerialPort::DeviceNotFoundError:
-        default:
-            return BusError::PortUnavailable;
         }
+#else
+        if (systemError == EBUSY || systemError == EACCES || systemError == EPERM) {
+            return BusError::PortBusy;
+        }
+#endif
+        return BusError::PortUnavailable;
     }
 } // namespace
 
 std::vector<PortInfo> availablePorts()
 {
-    std::vector<PortInfo> ports;
-    const auto infos = QSerialPortInfo::availablePorts();
-    ports.reserve(static_cast<size_t>(infos.size()));
-    for (const QSerialPortInfo& info : infos) {
-        PortInfo p;
-        p.systemName = info.portName();
-        p.systemLocation = info.systemLocation();
-        p.description = info.description();
-        p.manufacturer = info.manufacturer();
-        p.serialNumber = info.serialNumber();
-        p.vendorId = info.hasVendorIdentifier() ? info.vendorIdentifier() : 0;
-        p.productId = info.hasProductIdentifier() ? info.productIdentifier() : 0;
-        ports.push_back(std::move(p));
-    }
-    return ports;
+    return enumerateSerialPorts();
 }
 
 const char* toString(BusError error)
@@ -97,8 +83,9 @@ const char* toString(BusError error)
 // ---------------------------------------------------------------------------
 // ModbusBusSession
 // ---------------------------------------------------------------------------
-ModbusBusSession::ModbusBusSession(const QString& portName, const SerialSettings& settings)
-    : portName_(portName), settings_(settings)
+ModbusBusSession::ModbusBusSession(std::string portName, const SerialSettings& settings,
+                                   SerialPortFactory factory)
+    : portName_(std::move(portName)), settings_(settings), factory_(std::move(factory))
 {
 }
 
@@ -112,10 +99,10 @@ ModbusBusSession::~ModbusBusSession()
     if (ioThread_.joinable()) {
         ioThread_.join(); // the io thread closes the port before exiting
     }
-    SPDLOG_INFO("SerialBus: session on {} closed", portName_.toStdString());
+    SPDLOG_INFO("SerialBus: session on {} closed", portName_);
 }
 
-bool ModbusBusSession::start(BusError* error, QString* errorDetail)
+bool ModbusBusSession::start(BusError* error, std::string* errorDetail)
 {
     ioThread_ = std::thread([this] { ioLoop(); });
     std::unique_lock lock(jobMutex_);
@@ -132,34 +119,29 @@ bool ModbusBusSession::start(BusError* error, QString* errorDetail)
 
 bool ModbusBusSession::openPortOnIoThread()
 {
-    serial_ = new QSerialPort();
-    serial_->setPortName(portName_);
-    serial_->setBaudRate(settings_.baudRate);
-    serial_->setDataBits(toQtDataBits(settings_.dataBits));
-    serial_->setParity(toQtParity(settings_.parity));
-    serial_->setStopBits(toQtStopBits(settings_.stopBits));
-    serial_->setFlowControl(QSerialPort::NoFlowControl);
-
-    if (!serial_->open(QIODevice::ReadWrite)) {
-        SPDLOG_ERROR("SerialBus: failed to open {}: {}", portName_.toStdString(),
-                     serial_->errorString().toStdString());
+    serial_ = factory_ ? factory_() : makePlatformSerialPort();
+    if (!serial_) {
         std::scoped_lock lock(jobMutex_);
-        openErrorCode_ = classifyOpenError(serial_->error());
-        openErrorDetail_ = serial_->errorString();
-        delete serial_;
-        serial_ = nullptr;
+        openErrorCode_ = BusError::PortUnavailable;
+        openErrorDetail_ = "no serial port implementation";
         return false;
     }
-    SPDLOG_INFO("SerialBus: {} opened ({} {}{}{})", portName_.toStdString(),
-                settings_.baudRate, settings_.dataBits, settings_.parity, settings_.stopBits);
+    if (!serial_->openNamed(portName_, settings_)) {
+        SPDLOG_ERROR("SerialBus: failed to open {}: {}", portName_, serial_->lastError());
+        std::scoped_lock lock(jobMutex_);
+        openErrorCode_ = classifyOpenError(serial_->lastSystemError());
+        openErrorDetail_ = serial_->lastError();
+        serial_.reset();
+        return false;
+    }
+    SPDLOG_INFO("SerialBus: {} opened ({} {}{}{})", portName_, settings_.baudRate,
+                settings_.dataBits, settings_.parity, settings_.stopBits);
     return true;
 }
 
 void ModbusBusSession::ioLoop()
 {
-    // The QSerialPort is created, used, and destroyed only on this thread
-    // (blocking waitFor* API, no event loop), so no other thread's Qt event
-    // dispatch can ever touch its buffers.
+    // The port is created, used, and destroyed only on this thread.
     const bool opened = openPortOnIoThread();
     portOpen_.store(opened);
     {
@@ -179,7 +161,7 @@ void ModbusBusSession::ioLoop()
         if (stopRequested_) {
             break;
         }
-        const QByteArray request = *jobRequest_;
+        const Bytes request = *jobRequest_;
         const int timeoutMs = jobTimeoutMs_;
         lock.unlock();
 
@@ -198,12 +180,11 @@ void ModbusBusSession::ioLoop()
         if (serial_->isOpen()) {
             serial_->close();
         }
-        delete serial_;
-        serial_ = nullptr;
+        serial_.reset();
     }
 }
 
-Transaction ModbusBusSession::transact(const QByteArray& request, int timeoutMs)
+Transaction ModbusBusSession::transact(const Bytes& request, int timeoutMs)
 {
     std::scoped_lock callLock(callMutex_);
     Transaction result;
@@ -222,7 +203,7 @@ Transaction ModbusBusSession::transact(const QByteArray& request, int timeoutMs)
     return jobResult_;
 }
 
-Transaction ModbusBusSession::runTransaction(const QByteArray& request, int timeoutMs)
+Transaction ModbusBusSession::runTransaction(const Bytes& request, int timeoutMs)
 {
     Transaction result;
 
@@ -237,10 +218,9 @@ Transaction ModbusBusSession::runTransaction(const QByteArray& request, int time
 
     // Drain stale bytes (e.g. a response that arrived after a previous
     // transaction's deadline) so they cannot be attributed to this request.
-    const QByteArray stale = serial_->readAll();
-    if (!stale.isEmpty()) {
-        SPDLOG_DEBUG("SerialBus: {} discarded {} stale bytes: {}", portName_.toStdString(),
-                     stale.size(), stale.toHex(' ').constData());
+    const Bytes stale = serial_->readAll();
+    if (!stale.empty()) {
+        SPDLOG_DEBUG("SerialBus: {} discarded {} stale bytes: {}", portName_, stale.size(), hex(stale));
     }
 
     // RTU inter-frame silence, measured from the last bus activity so an
@@ -250,23 +230,21 @@ Transaction ModbusBusSession::runTransaction(const QByteArray& request, int time
         std::this_thread::sleep_for(INTER_FRAME_DELAY - sinceLast);
     }
 
-    SPDLOG_DEBUG("SerialBus: {} TX [{}]: {}", portName_.toStdString(),
-                 request.size(), request.toHex(' ').constData());
+    SPDLOG_DEBUG("SerialBus: {} TX [{}]: {}", portName_, request.size(), hex(request));
 
-    if (serial_->write(request) != request.size()) {
-        SPDLOG_ERROR("SerialBus: {} failed to write {} bytes", portName_.toStdString(),
-                     request.size());
+    if (serial_->write(request) != static_cast<int>(request.size())) {
+        SPDLOG_ERROR("SerialBus: {} failed to write {} bytes", portName_, request.size());
         result.error = BusError::WriteFailed;
         return result;
     }
     if (!serial_->waitForBytesWritten(timeoutMs)) {
-        SPDLOG_ERROR("SerialBus: {} write timeout", portName_.toStdString());
+        SPDLOG_ERROR("SerialBus: {} write timeout", portName_);
         result.error = BusError::WriteFailed;
         return result;
     }
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-    QByteArray buffer;
+    Bytes buffer;
     // When a complete frame from another slave address is discarded, remember
     // it so a final timeout is reported as WrongAddress, not a silent Timeout.
     bool sawWrongAddress = false;
@@ -276,22 +254,22 @@ Transaction ModbusBusSession::runTransaction(const QByteArray& request, int time
         result.error = error;
         return result;
     };
+    const auto append = [](Bytes& dst, const Bytes& src) { dst.insert(dst.end(), src.begin(), src.end()); };
 
     while (true) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
-            SPDLOG_ERROR("SerialBus: {} timeout ({} bytes buffered): {}", portName_.toStdString(),
-                         buffer.size(), buffer.toHex(' ').constData());
+            SPDLOG_ERROR("SerialBus: {} timeout ({} bytes buffered): {}", portName_, buffer.size(), hex(buffer));
             return finish(sawWrongAddress ? BusError::WrongAddress : BusError::Timeout);
         }
         const int remainingMs = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
-        if (buffer.isEmpty() || modbus::expectedFrameLength(buffer) < 0 ||
-            buffer.size() < modbus::expectedFrameLength(buffer)) {
+        const int expected = modbus::expectedFrameLength(buffer);
+        if (buffer.empty() || expected < 0 || static_cast<int>(buffer.size()) < expected) {
             if (!serial_->waitForReadyRead(std::max(1, remainingMs))) {
                 continue; // deadline check at loop top decides
             }
-            buffer.append(serial_->readAll());
+            append(buffer, serial_->readAll());
         }
 
         const int frameLen = modbus::expectedFrameLength(buffer);
@@ -299,28 +277,25 @@ Transaction ModbusBusSession::runTransaction(const QByteArray& request, int time
             continue; // need more header bytes
         }
         if (frameLen == -2) {
-            SPDLOG_ERROR("SerialBus: {} unframeable bytes: {}", portName_.toStdString(),
-                         buffer.toHex(' ').constData());
+            SPDLOG_ERROR("SerialBus: {} unframeable bytes: {}", portName_, hex(buffer));
             return finish(BusError::FrameError);
         }
-        if (buffer.size() < frameLen) {
+        if (static_cast<int>(buffer.size()) < frameLen) {
             continue; // frame incomplete
         }
 
-        const QByteArray frame = buffer.left(frameLen);
+        const Bytes frame(buffer.begin(), buffer.begin() + frameLen);
         const auto verdict = modbus::classifyResponse(request, frame);
         if (verdict == modbus::ResponseVerdict::WrongAddress) {
             // Stale/delayed frame from another device: discard, keep reading.
             SPDLOG_WARN("SerialBus: {} discarding frame from addr {} while waiting on addr {}",
-                        portName_.toStdString(), static_cast<uint8_t>(frame[0]),
-                        static_cast<uint8_t>(request[0]));
-            buffer.remove(0, frameLen);
+                        portName_, frame[0], request[0]);
+            buffer.erase(buffer.begin(), buffer.begin() + frameLen);
             sawWrongAddress = true;
             continue;
         }
 
-        SPDLOG_DEBUG("SerialBus: {} RX [{}]: {}", portName_.toStdString(),
-                     frame.size(), frame.toHex(' ').constData());
+        SPDLOG_DEBUG("SerialBus: {} RX [{}]: {}", portName_, frame.size(), hex(frame));
 
         switch (verdict) {
         case modbus::ResponseVerdict::Ok:
@@ -328,37 +303,33 @@ Transaction ModbusBusSession::runTransaction(const QByteArray& request, int time
             break;
         case modbus::ResponseVerdict::CrcMismatch:
             SPDLOG_ERROR("SerialBus: {} CRC mismatch (possible duplicate-address collision): {}",
-                         portName_.toStdString(), frame.toHex(' ').constData());
+                         portName_, hex(frame));
             return finish(BusError::CrcError);
         case modbus::ResponseVerdict::WrongFunction:
-            SPDLOG_ERROR("SerialBus: {} wrong function code in response: {}",
-                         portName_.toStdString(), frame.toHex(' ').constData());
+            SPDLOG_ERROR("SerialBus: {} wrong function code in response: {}", portName_, hex(frame));
             return finish(BusError::WrongFunction);
         default:
-            SPDLOG_ERROR("SerialBus: {} malformed response: {}", portName_.toStdString(),
-                         frame.toHex(' ').constData());
+            SPDLOG_ERROR("SerialBus: {} malformed response: {}", portName_, hex(frame));
             return finish(BusError::FrameError);
         }
 
         // Valid frame. Anything already buffered past it, or arriving in the
         // collision-listen window, means a second device answered too.
-        buffer.remove(0, frameLen);
-        if (buffer.isEmpty() && serial_->waitForReadyRead(COLLISION_LISTEN_MS)) {
-            buffer.append(serial_->readAll());
+        buffer.erase(buffer.begin(), buffer.begin() + frameLen);
+        if (buffer.empty() && serial_->waitForReadyRead(COLLISION_LISTEN_MS)) {
+            append(buffer, serial_->readAll());
         }
-        if (!buffer.isEmpty()) {
+        if (!buffer.empty()) {
             SPDLOG_ERROR("SerialBus: {} {} trailing bytes after a valid frame — "
                          "duplicate-address collision suspected: {}",
-                         portName_.toStdString(), buffer.size(), buffer.toHex(' ').constData());
+                         portName_, buffer.size(), hex(buffer));
             return finish(BusError::CollisionSuspected);
         }
 
         if (verdict == modbus::ResponseVerdict::Exception) {
-            result.exceptionCode = static_cast<uint8_t>(frame[2]);
+            result.exceptionCode = frame[2];
             SPDLOG_ERROR("SerialBus: {} Modbus exception 0x{:02X} (func=0x{:02X}, addr={})",
-                         portName_.toStdString(), result.exceptionCode,
-                         static_cast<uint8_t>(frame[1]) & 0x7F,
-                         static_cast<uint8_t>(frame[0]));
+                         portName_, result.exceptionCode, frame[1] & 0x7F, frame[0]);
             result.response = frame;
             return finish(BusError::ModbusException);
         }
@@ -370,24 +341,33 @@ Transaction ModbusBusSession::runTransaction(const QByteArray& request, int time
 // ---------------------------------------------------------------------------
 // SerialBusManager
 // ---------------------------------------------------------------------------
-QString SerialBusManager::normalizeKey(const QString& portName)
+SerialBusManager::SerialBusManager() : factory_([] { return makePlatformSerialPort(); }) {}
+
+void SerialBusManager::setSerialPortFactory(SerialPortFactory factory)
 {
-    // "COM3", "\\.\COM3", "ttyUSB0" and "/dev/ttyUSB0" must map to one bus.
-    QString key = portName.trimmed();
-    key.remove(QStringLiteral("\\\\.\\"));
-    const int slash = key.lastIndexOf(QLatin1Char('/'));
-    if (slash >= 0) {
-        key = key.mid(slash + 1);
-    }
-    return key.toLower();
+    std::scoped_lock lock(mutex_);
+    factory_ = std::move(factory);
 }
 
-std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const QString& portName,
+std::string SerialBusManager::normalizeKey(const std::string& portName)
+{
+    // "COM3", "\\.\COM3", "ttyUSB0" and "/dev/ttyUSB0" must map to one bus.
+    std::string key = portName;
+    key.erase(0, key.find_first_not_of(" \t"));
+    if (const auto end = key.find_last_not_of(" \t"); end != std::string::npos) key.erase(end + 1);
+    if (key.rfind("\\\\.\\", 0) == 0) key.erase(0, 4);
+    if (const auto slash = key.find_last_of('/'); slash != std::string::npos) key = key.substr(slash + 1);
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return key;
+}
+
+std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& portName,
                                                             const SerialSettings& settings,
                                                             BusError* error,
-                                                            QString* errorDetail)
+                                                            std::string* errorDetail)
 {
-    const QString key = normalizeKey(portName);
+    const std::string key = normalizeKey(portName);
     std::scoped_lock lock(mutex_);
 
     auto it = sessions_.find(key);
@@ -395,12 +375,10 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const QString& portN
         if (auto existing = it->second.lock()) {
             if (existing->settings() != settings) {
                 SPDLOG_ERROR("SerialBus: {} already open with different settings "
-                             "({} vs requested {})", portName.toStdString(),
+                             "({} vs requested {})", portName,
                              existing->settings().baudRate, settings.baudRate);
                 if (error) *error = BusError::PortBusy;
-                if (errorDetail) {
-                    *errorDetail = QStringLiteral("port already in use with different serial settings");
-                }
+                if (errorDetail) *errorDetail = "port already in use with different serial settings";
                 return nullptr;
             }
             if (error) *error = BusError::None;
@@ -409,9 +387,9 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const QString& portN
         sessions_.erase(it);
     }
 
-    auto* raw = new ModbusBusSession(portName, settings);
+    auto* raw = new ModbusBusSession(portName, settings, factory_);
     BusError openError = BusError::PortUnavailable;
-    QString detail;
+    std::string detail;
     if (!raw->start(&openError, &detail)) {
         delete raw;
         if (error) *error = openError;

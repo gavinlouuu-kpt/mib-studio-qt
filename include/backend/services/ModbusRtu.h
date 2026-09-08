@@ -1,14 +1,19 @@
 // Modbus RTU framing primitives, extracted from SyringePumpService so the
 // protocol logic (CRC, frame layout, float<->register packing) can be unit
 // tested without a serial port. These are pure functions — no device I/O.
+//
+// Frames are represented as std::vector<uint8_t> so this contract carries no
+// Qt dependency (part of the Qt -> React/Tauri backend decoupling, epic #246).
+// SyringePumpService converts to/from QByteArray only at the QSerialPort seam.
 #pragma once
-
-#include <QByteArray>
 
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 namespace backend::services::modbus {
+
+using Frame = std::vector<uint8_t>;
 
 // Standard Modbus function codes.
 inline constexpr uint8_t kFuncReadHolding = 0x03;
@@ -32,27 +37,20 @@ inline uint16_t crc16(const uint8_t* data, size_t len)
     return crc;
 }
 
-inline void appendCrc(QByteArray& frame)
+inline void appendCrc(Frame& frame)
 {
-    const uint16_t crc =
-        crc16(reinterpret_cast<const uint8_t*>(frame.constData()),
-              static_cast<size_t>(frame.size()));
-    frame.append(static_cast<char>(crc & 0xFF));        // CRC low byte first (RTU)
-    frame.append(static_cast<char>((crc >> 8) & 0xFF)); // CRC high byte
+    const uint16_t crc = crc16(frame.data(), frame.size());
+    frame.push_back(static_cast<uint8_t>(crc & 0xFF));        // CRC low byte first (RTU)
+    frame.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF)); // CRC high byte
 }
 
 // float32 -> 2 registers (4 bytes), ABCD big-endian word order: high word
 // first. Inverse of registersToFloat.
-inline QByteArray floatToRegisters(float value)
+inline Frame floatToRegisters(float value)
 {
-    QByteArray result(4, 0);
     uint8_t bytes[4];
     std::memcpy(bytes, &value, 4);
-    result[0] = static_cast<char>(bytes[3]);
-    result[1] = static_cast<char>(bytes[2]);
-    result[2] = static_cast<char>(bytes[1]);
-    result[3] = static_cast<char>(bytes[0]);
-    return result;
+    return Frame{bytes[3], bytes[2], bytes[1], bytes[0]};
 }
 
 // 4 bytes (ABCD big-endian word order) -> float32.
@@ -69,50 +67,52 @@ inline float registersToFloat(const uint8_t* data)
 }
 
 // FC03 read-holding-registers request: [addr|0x03|startReg(BE)|count(BE)|crc(LE)]
-inline QByteArray buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count)
+inline Frame buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count)
 {
-    QByteArray frame(6, 0);
-    frame[0] = static_cast<char>(addr);
-    frame[1] = static_cast<char>(kFuncReadHolding);
-    frame[2] = static_cast<char>((startReg >> 8) & 0xFF);
-    frame[3] = static_cast<char>(startReg & 0xFF);
-    frame[4] = static_cast<char>((count >> 8) & 0xFF);
-    frame[5] = static_cast<char>(count & 0xFF);
+    Frame frame{
+        addr,
+        kFuncReadHolding,
+        static_cast<uint8_t>((startReg >> 8) & 0xFF),
+        static_cast<uint8_t>(startReg & 0xFF),
+        static_cast<uint8_t>((count >> 8) & 0xFF),
+        static_cast<uint8_t>(count & 0xFF),
+    };
     appendCrc(frame);
     return frame;
 }
 
 // FC06 write-single-register request: [addr|0x06|reg(BE)|value(BE)|crc(LE)]
-inline QByteArray buildWriteSingleRequest(uint8_t addr, uint16_t reg, uint16_t value)
+inline Frame buildWriteSingleRequest(uint8_t addr, uint16_t reg, uint16_t value)
 {
-    QByteArray frame(6, 0);
-    frame[0] = static_cast<char>(addr);
-    frame[1] = static_cast<char>(kFuncWriteSingle);
-    frame[2] = static_cast<char>((reg >> 8) & 0xFF);
-    frame[3] = static_cast<char>(reg & 0xFF);
-    frame[4] = static_cast<char>((value >> 8) & 0xFF);
-    frame[5] = static_cast<char>(value & 0xFF);
+    Frame frame{
+        addr,
+        kFuncWriteSingle,
+        static_cast<uint8_t>((reg >> 8) & 0xFF),
+        static_cast<uint8_t>(reg & 0xFF),
+        static_cast<uint8_t>((value >> 8) & 0xFF),
+        static_cast<uint8_t>(value & 0xFF),
+    };
     appendCrc(frame);
     return frame;
 }
 
 // FC16 write-multiple-registers request:
 // [addr|0x10|startReg(BE)|regCount(BE)|byteCount|data...|crc(LE)]
-inline QByteArray buildWriteMultipleRequest(uint8_t addr, uint16_t startReg,
-                                            const QByteArray& regData)
+inline Frame buildWriteMultipleRequest(uint8_t addr, uint16_t startReg,
+                                       const Frame& regData)
 {
     const uint16_t regCount = static_cast<uint16_t>(regData.size() / 2);
     const uint8_t byteCount = static_cast<uint8_t>(regData.size());
-    QByteArray frame;
+    Frame frame;
     frame.reserve(7 + regData.size() + 2);
-    frame.append(static_cast<char>(addr));
-    frame.append(static_cast<char>(kFuncWriteMultiple));
-    frame.append(static_cast<char>((startReg >> 8) & 0xFF));
-    frame.append(static_cast<char>(startReg & 0xFF));
-    frame.append(static_cast<char>((regCount >> 8) & 0xFF));
-    frame.append(static_cast<char>(regCount & 0xFF));
-    frame.append(static_cast<char>(byteCount));
-    frame.append(regData);
+    frame.push_back(addr);
+    frame.push_back(kFuncWriteMultiple);
+    frame.push_back(static_cast<uint8_t>((startReg >> 8) & 0xFF));
+    frame.push_back(static_cast<uint8_t>(startReg & 0xFF));
+    frame.push_back(static_cast<uint8_t>((regCount >> 8) & 0xFF));
+    frame.push_back(static_cast<uint8_t>(regCount & 0xFF));
+    frame.push_back(byteCount);
+    frame.insert(frame.end(), regData.begin(), regData.end());
     appendCrc(frame);
     return frame;
 }
@@ -121,34 +121,34 @@ inline QByteArray buildWriteMultipleRequest(uint8_t addr, uint16_t startReg,
 
 // True if the trailing little-endian CRC matches the body. False for frames
 // shorter than 4 bytes (addr+func+crc minimum).
-inline bool responseCrcValid(const QByteArray& resp)
+inline bool responseCrcValid(const Frame& resp)
 {
     if (resp.size() < 4) return false;
-    const size_t bodyLen = static_cast<size_t>(resp.size()) - 2;
+    const size_t bodyLen = resp.size() - 2;
     const uint16_t received = static_cast<uint16_t>(
-        (static_cast<uint8_t>(resp[resp.size() - 1]) << 8) |
-        static_cast<uint8_t>(resp[resp.size() - 2]));
-    return received == crc16(reinterpret_cast<const uint8_t*>(resp.constData()), bodyLen);
+        (static_cast<uint16_t>(resp[resp.size() - 1]) << 8) |
+        static_cast<uint16_t>(resp[resp.size() - 2]));
+    return received == crc16(resp.data(), bodyLen);
 }
 
 // True if the function-code high bit is set (Modbus exception response).
-inline bool isExceptionFrame(const QByteArray& resp)
+inline bool isExceptionFrame(const Frame& resp)
 {
-    return resp.size() >= 2 && (static_cast<uint8_t>(resp[1]) & 0x80) != 0;
+    return resp.size() >= 2 && (resp[1] & 0x80) != 0;
 }
 
 // Validates a read-holding response and extracts the `count` registers' bytes.
 // Returns false (out cleared) unless the frame is exactly
 // addr+func+byteCount+data+crc long AND the device's byteCount field equals
 // count*2 — so callers never index past a short/truncated/garbled frame.
-inline bool extractReadData(const QByteArray& resp, uint16_t count, QByteArray& out)
+inline bool extractReadData(const Frame& resp, uint16_t count, Frame& out)
 {
     out.clear();
-    const int dataBytes = static_cast<int>(count) * 2;
-    const int expected = 3 + dataBytes + 2; // addr+func+byteCount + data + crc
+    const size_t dataBytes = static_cast<size_t>(count) * 2;
+    const size_t expected = 3 + dataBytes + 2; // addr+func+byteCount + data + crc
     if (resp.size() != expected) return false;
-    if (static_cast<uint8_t>(resp[2]) != static_cast<uint8_t>(dataBytes)) return false;
-    out = resp.mid(3, dataBytes);
+    if (resp[2] != static_cast<uint8_t>(dataBytes)) return false;
+    out.assign(resp.begin() + 3, resp.begin() + 3 + dataBytes);
     return out.size() == dataBytes;
 }
 
@@ -156,15 +156,15 @@ inline bool extractReadData(const QByteArray& resp, uint16_t count, QByteArray& 
 // derived from the function code (and, for FC03, the byte-count field):
 //  -1  -> need more bytes before the length is known
 //  -2  -> unknown function code, cannot frame the stream
-inline int expectedFrameLength(const QByteArray& partial)
+inline int expectedFrameLength(const Frame& partial)
 {
     if (partial.size() < 2) return -1;
-    const uint8_t func = static_cast<uint8_t>(partial[1]);
+    const uint8_t func = partial[1];
     if (func & 0x80) return 5; // exception: addr + func|0x80 + code + crc
     switch (func) {
     case kFuncReadHolding:
         if (partial.size() < 3) return -1;
-        return 5 + static_cast<uint8_t>(partial[2]); // addr+func+byteCount+data+crc
+        return 5 + partial[2]; // addr+func+byteCount+data+crc
     case kFuncWriteSingle:
     case kFuncWriteMultiple:
         return 8; // echo frame
@@ -186,15 +186,15 @@ enum class ResponseVerdict {
     Malformed      // right addr+func but length/byte-count/echo fields disagree
 };
 
-inline ResponseVerdict classifyResponse(const QByteArray& request, const QByteArray& response)
+inline ResponseVerdict classifyResponse(const Frame& request, const Frame& response)
 {
     if (request.size() < 2) return ResponseVerdict::Malformed;
     if (response.size() < 4) return ResponseVerdict::TooShort;
     if (!responseCrcValid(response)) return ResponseVerdict::CrcMismatch;
-    const uint8_t reqAddr = static_cast<uint8_t>(request[0]);
-    const uint8_t reqFunc = static_cast<uint8_t>(request[1]);
-    if (static_cast<uint8_t>(response[0]) != reqAddr) return ResponseVerdict::WrongAddress;
-    const uint8_t respFunc = static_cast<uint8_t>(response[1]);
+    const uint8_t reqAddr = request[0];
+    const uint8_t reqFunc = request[1];
+    if (response[0] != reqAddr) return ResponseVerdict::WrongAddress;
+    const uint8_t respFunc = response[1];
     if (respFunc == (reqFunc | 0x80)) {
         return response.size() == 5 ? ResponseVerdict::Exception : ResponseVerdict::Malformed;
     }
@@ -202,9 +202,8 @@ inline ResponseVerdict classifyResponse(const QByteArray& request, const QByteAr
     switch (reqFunc) {
     case kFuncReadHolding: {
         if (request.size() < 6) return ResponseVerdict::Malformed;
-        const uint16_t count = static_cast<uint16_t>(
-            (static_cast<uint8_t>(request[4]) << 8) | static_cast<uint8_t>(request[5]));
-        QByteArray ignored;
+        const uint16_t count = static_cast<uint16_t>((request[4] << 8) | request[5]);
+        Frame ignored;
         return extractReadData(response, count, ignored) ? ResponseVerdict::Ok
                                                          : ResponseVerdict::Malformed;
     }

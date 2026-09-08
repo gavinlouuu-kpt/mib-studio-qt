@@ -226,10 +226,10 @@ legacy slots: `u3` = persistence committed, `u4` = 0, `experiment_dropped_valid`
 = persistence pending, `experiment_dropped_invalid` = persistence failed.
 `fetch_experiment_status` carries the full status (generations, completion
 reason, fault code/message); `fetch_experiment_readiness(output_path)` the
-gate list. `bridge_abi_version()` returns `13`. `build.rs` passes
-`/permissive-` on MSVC because Qt headers reach the shim through the facade
-on the integration branch (`mib_backend` links Qt Core/SerialPort there until
-the serial bus is ported onto `ISerialPort`, handoff gap G7). Guards:
+gate list. `bridge_abi_version()` returns `13`. The reliability serial bus
+([[../services/SerialBus]]) is ported onto [[../services/ISerialPort]] on this
+branch, so `mib_backend` links no Qt and the bridge link manifest carries no
+Qt libraries (handoff gap G7, backend part). Guards:
 `experiment_lifecycle_end_to_end` (readiness gate `camera.session` blocks,
 Start → Active → Stop → terminal Complete with the remainder committed, typed
 terminal event, file reloads), `rust_enums_match_contract_json`.
