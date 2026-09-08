@@ -3,8 +3,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 export type { FrameMeta, FramePacket } from "./framePacket";
-import { decodeEvents, decodeCommandResult, decodeExperimentStatus, decodeProcessingStats, wireU64, type CmdResult } from "./eventAdapter";
-export type { BridgeEvent, CmdResult, ExperimentStatus, ProcessingStats } from "./eventAdapter";
+import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus, decodeProcessingStats, wireU64, type CmdResult } from "./eventAdapter";
+export type { BridgeEvent, CmdResult, ExperimentReadiness, ExperimentStatus, ProcessingStats, ReadinessGate } from "./eventAdapter";
 
 /** Autofocus/nanopositioner status (schema v11, BE-8). `ring_ratio_age_us`
  *  makes focus-metric staleness explicit (0 = never updated). */
@@ -263,6 +263,10 @@ export const bridge = {
   experimentStop: () => invokeCommand("experiment_stop"),
   experimentCancel: () => invokeCommand("experiment_cancel"),
   fetchExperimentStatus: async () => decodeExperimentStatus(await invoke<unknown>("fetch_experiment_status")),
+  // ABI 13: gate list + the generation a Start must present (the bridge's
+  // experimentStart evaluates it itself; this is for the preflight UI).
+  fetchExperimentReadiness: async (outputPath: string) =>
+    decodeExperimentReadiness(await invoke<unknown>("fetch_experiment_readiness", { outputPath })),
   // Platform/shell services (BE-9): stable app paths, persisted shell
   // preferences (survive webview-storage clearing), and shell logging into
   // the app log directory.

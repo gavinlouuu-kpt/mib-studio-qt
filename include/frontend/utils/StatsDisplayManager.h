@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QString>
+
+#include "backend/services/TelemetrySample.h"
 #include <cstdint>
 #include <cstddef>
 
@@ -23,6 +25,11 @@ namespace frontend
 
         // Get fetch time in milliseconds (for diagnostics)
         double lastFetchTimeMs() const { return lastFetchTimeMs_; }
+
+        // Render one telemetry metric truthfully (issue #368): a valid value
+        // as a number, a stale one with its age, and unavailable /
+        // unsupported / error as text — never as a measured zero.
+        static QString formatMetric(const backend::services::MetricSample& metric);
 
     signals:
         void statsUpdated(const QString &statusText);

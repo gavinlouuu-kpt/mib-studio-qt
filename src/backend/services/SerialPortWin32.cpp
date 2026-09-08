@@ -6,8 +6,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <setupapi.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <string>
 #include <thread>
 
@@ -21,15 +23,24 @@ public:
 
     bool open(int comPort, int baudRate) override
     {
+        SerialSettings s;
+        s.baudRate = baudRate;
+        return openNamed("COM" + std::to_string(comPort), s);
+    }
+
+    bool openNamed(const std::string& systemName, const SerialSettings& settings) override
+    {
         close();
         // \\.\COMn form is required for COM10 and above.
-        const std::string path = "\\\\.\\COM" + std::to_string(comPort);
+        const std::string path = systemName.rfind("\\\\.\\", 0) == 0 ? systemName
+                                                                   : "\\\\.\\" + systemName;
         handle_ = ::CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
                                 nullptr, OPEN_EXISTING, 0, nullptr);
         if (handle_ == INVALID_HANDLE_VALUE) {
             setLastError("CreateFile " + path);
             return false;
         }
+        const int baudRate = settings.baudRate;
 
         DCB dcb{};
         dcb.DCBlength = sizeof(dcb);
@@ -39,11 +50,11 @@ public:
             return false;
         }
         dcb.BaudRate = static_cast<DWORD>(baudRate);
-        dcb.ByteSize = 8;
-        dcb.Parity = NOPARITY;
-        dcb.StopBits = ONESTOPBIT;
+        dcb.ByteSize = static_cast<BYTE>(settings.dataBits >= 5 && settings.dataBits <= 8 ? settings.dataBits : 8);
+        dcb.Parity = settings.parity == 'E' ? EVENPARITY : settings.parity == 'O' ? ODDPARITY : NOPARITY;
+        dcb.StopBits = settings.stopBits == 2 ? TWOSTOPBITS : ONESTOPBIT;
         dcb.fBinary = TRUE;
-        dcb.fParity = FALSE;
+        dcb.fParity = settings.parity == 'E' || settings.parity == 'O' ? TRUE : FALSE;
         dcb.fOutxCtsFlow = FALSE;
         dcb.fOutxDsrFlow = FALSE;
         dcb.fDtrControl = DTR_CONTROL_DISABLE;
@@ -136,6 +147,7 @@ public:
     }
 
     std::string lastError() const override { return error_; }
+    int lastSystemError() const override { return systemError_; }
 
 private:
     DWORD queuedBytes()
@@ -150,11 +162,13 @@ private:
 
     void setLastError(const std::string& what)
     {
-        error_ = what + " failed (GetLastError=" + std::to_string(::GetLastError()) + ")";
+        systemError_ = static_cast<int>(::GetLastError());
+        error_ = what + " failed (GetLastError=" + std::to_string(systemError_) + ")";
     }
 
     HANDLE handle_{INVALID_HANDLE_VALUE};
     std::string error_;
+    int systemError_{0};
 };
 
 } // namespace
@@ -169,6 +183,64 @@ std::unique_ptr<ISerialPort> makeSerialPortForPathForTesting(const std::string& 
 {
     // Path-based (pty) opening is a POSIX-only test seam.
     return nullptr;
+}
+
+// SetupAPI enumeration of the COM-port device interface class: friendly name,
+// manufacturer, and the USB VID/PID parsed from the hardware id.
+std::vector<SerialPortInfo> enumerateSerialPorts()
+{
+    std::vector<SerialPortInfo> ports;
+    static const GUID kComPortClass = {0x86E0D1E0L, 0x8089, 0x11D0, {0x9C, 0xE4, 0x08, 0x00, 0x3E, 0x30, 0x1F, 0x73}};
+    const HDEVINFO devs = ::SetupDiGetClassDevsA(&kComPortClass, nullptr, nullptr,
+                                                 DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devs == INVALID_HANDLE_VALUE) return ports;
+    SP_DEVINFO_DATA info{};
+    info.cbSize = sizeof(info);
+    for (DWORD i = 0; ::SetupDiEnumDeviceInfo(devs, i, &info); ++i) {
+        SerialPortInfo p;
+        const HKEY key = ::SetupDiOpenDevRegKey(devs, &info, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
+        if (key != INVALID_HANDLE_VALUE) {
+            char name[64];
+            DWORD size = sizeof(name);
+            DWORD type = 0;
+            if (::RegQueryValueExA(key, "PortName", nullptr, &type, reinterpret_cast<LPBYTE>(name), &size) == ERROR_SUCCESS &&
+                type == REG_SZ) {
+                p.systemName = name;
+            }
+            ::RegCloseKey(key);
+        }
+        if (p.systemName.empty()) continue;
+        p.systemLocation = "\\\\.\\" + p.systemName;
+        char text[512];
+        if (::SetupDiGetDeviceRegistryPropertyA(devs, &info, SPDRP_FRIENDLYNAME, nullptr,
+                                                reinterpret_cast<PBYTE>(text), sizeof(text), nullptr)) {
+            p.description = text;
+        }
+        if (::SetupDiGetDeviceRegistryPropertyA(devs, &info, SPDRP_MFG, nullptr,
+                                                reinterpret_cast<PBYTE>(text), sizeof(text), nullptr)) {
+            p.manufacturer = text;
+        }
+        if (::SetupDiGetDeviceRegistryPropertyA(devs, &info, SPDRP_HARDWAREID, nullptr,
+                                                reinterpret_cast<PBYTE>(text), sizeof(text), nullptr)) {
+            const std::string id(text);
+            const auto vid = id.find("VID_");
+            const auto pid = id.find("PID_");
+            if (vid != std::string::npos && pid != std::string::npos) {
+                p.vendorId = static_cast<uint16_t>(std::strtoul(id.c_str() + vid + 4, nullptr, 16));
+                p.productId = static_cast<uint16_t>(std::strtoul(id.c_str() + pid + 4, nullptr, 16));
+            }
+        }
+        char instanceId[512];
+        if (::SetupDiGetDeviceInstanceIdA(devs, &info, instanceId, sizeof(instanceId), nullptr)) {
+            // USB\VID_xxxx&PID_xxxx\<serial>
+            const std::string inst(instanceId);
+            const auto slash = inst.find_last_of('\\');
+            if (slash != std::string::npos && inst.rfind("USB", 0) == 0) p.serialNumber = inst.substr(slash + 1);
+        }
+        ports.push_back(std::move(p));
+    }
+    ::SetupDiDestroyDeviceInfoList(devs);
+    return ports;
 }
 
 } // namespace backend::services

@@ -11,7 +11,8 @@
 ## Step 2 — Understand the shared state
 
 4. [[data-model/FrameStore]] — the ring buffer every layer shares.
-5. [[architecture/AppBackend]] — how services are wired together.
+5. [[architecture/AppBackend]] — how services are wired together
+   (and [[architecture/ExperimentCoordinator]] — how an experiment Start is authorized).
 6. [[architecture/Threading-Model]] — who runs on which thread.
 
 ## Step 3 — Pick the relevant cluster
@@ -23,6 +24,7 @@ Jump to the notes that match your task:
 | Frame acquisition / camera | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`) |
 | Image analysis / metrics | [[services/ProcessingService]] + [[domain/Microscopy-Pipeline]] |
 | Saving/reading experiment files | [[services/Hdf5Service]] + [[data-model/HDF5-Storage]] |
+| Exporting CSV/TIFF from HDF5 (native or PySide tool) | [[services/HdfExportService]] + [[frontend/HdfReviewTab]] + [[task/2026-08-24-exporter-stability]] |
 | Live preview / ROI / overlays | [[frontend/PreviewPage]], [[frontend/ConfigTabs]] |
 | Post-experiment review | [[frontend/HdfReviewTab]] |
 | Live charts during a run | [[frontend/ExperimentMonitoringTab]] |
@@ -32,6 +34,10 @@ Jump to the notes that match your task:
 | Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |
 | React + Tauri migration / Rust bridge | [[architecture/Rust-Bridge]] + `docs/decisions/0003-rust-cxx-bridge.md` |
 | React + Tauri desktop app (`desktop/`) | [[architecture/Desktop-Shell]] |
+| Syringe pumps | [[services/SyringePumpService]] + [[frontend/SyringePumpTab]] |
+| Pulse generator / shared RS485 bus | [[services/PulseGeneratorService]] + [[services/SerialBus]] + [[frontend/ConfigTabs]] |
+| Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |
+| Pipeline / trigger latency diagnosis | [[diagnostics/PipelineTimingRecorder]] + `docs/howto/pipeline-latency-diagnosis.md` |
 | Build / deploy | [[build-and-run/Build]], [[build-and-run/Run-Modes]] |
 | User manual / generated screenshots | [[frontend/Screenshot-Tour]] + `docs/manual/README.md` |
 

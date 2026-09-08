@@ -21,6 +21,8 @@ This folder hosts living documentation as we build functionality. Keep content c
   screenshots regenerate via `screenshot_tour`
   (`python3 scripts/check_screenshots.py` keeps pages and images in sync)
 - Integration: EGrabber — see `integration/egrabber.md`
+- Integration: Ultra96 FPGA image pipeline — see
+  [integration/ultra96-fpga-image-pipeline.md](integration/ultra96-fpga-image-pipeline.md)
 - Tasks/issues live in `knowledge_map/task/`
 - Cloudflare R2 app updates and profile catalogs — see
   [howto/auto-update-r2.md](howto/auto-update-r2.md)
@@ -29,6 +31,8 @@ This folder hosts living documentation as we build functionality. Keep content c
   [gold_standard_metrics.md](gold_standard_metrics.md) and
   [portable-processing-sync.md](portable-processing-sync.md)
 - Post-processing tools (export, reanalyse) — see [howto/tools.md](howto/tools.md)
+- Branching model & release pipeline (develop → main) — see
+  [howto/branching-and-releases.md](howto/branching-and-releases.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)
 - Agent map — see [../AGENTS.md](../AGENTS.md)
 

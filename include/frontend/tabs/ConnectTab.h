@@ -6,6 +6,7 @@
 #include <optional>
 
 namespace backend { class AppBackend; }
+namespace camera::common { enum class FrameDeliveryMode; }
 namespace Ui { class ConnectTab; }
 namespace frontend { class DeviceInitManager; }
 
@@ -28,9 +29,16 @@ public:
     /** Called by DeviceInitManager on main thread when discovery finds 2+ cameras. Updates status only. */
     void reportMultipleCameras();
 
+    /** Programmatically select a delivery mode; runs the same setConfig + persist path as a user change. */
+    void setDeliveryMode(camera::common::FrameDeliveryMode mode);
+    /** Reflect an externally applied mode in the combo without re-applying or persisting it. */
+    void syncDeliveryMode(camera::common::FrameDeliveryMode mode);
+
 signals:
     void connected();
     void noCamerasFound();
+    /** Emitted after the user (or setDeliveryMode) changed the delivery mode and it was applied to CaptureService. */
+    void deliveryModeChanged(camera::common::FrameDeliveryMode mode);
 
 public slots:
     // If DeviceInitManager is set, delegates to it (non-blocking). Otherwise runs discovery on UI thread.
@@ -40,6 +48,7 @@ private slots:
     void onRefresh();
     void onConnect();
     void onConfigureMock();
+    void onDeliveryModeComboChanged(int index);
 
 private:
     void populateDevices();

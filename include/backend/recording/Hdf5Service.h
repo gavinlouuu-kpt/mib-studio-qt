@@ -17,6 +17,8 @@ namespace backend::services {
 }
 
 #include "backend/processing/ProcessingService.h"
+#include "backend/recording/RecordingAccounting.h"
+#include "backend/services/TelemetrySample.h"
 
 namespace backend::services {
 
@@ -144,6 +146,40 @@ public:
                             bool multiImageEnabled = false,
                             uint64_t multiImageCount = 1,
                             const backend::processing::ProcessingCoreIdentity* processingCore = nullptr);
+
+    // Run accounting provenance (issue #367). Writes the reconciled
+    // RecordingAccountingSnapshot as versioned `accounting_*` attributes on
+    // /experiment_info or /recording_info (whichever exists — the caller's
+    // writeExperimentInfo/writeRecordingInfo must have run first). A file whose
+    // required accounting does not reconcile is recorded as `failed`, never
+    // `complete`. readRunAccounting returns false (completion = Unknown) for
+    // legacy files that predate the schema; it never reinterprets old counts.
+    bool writeRunAccounting(const backend::recording::RecordingAccountingSnapshot& accounting);
+    bool readRunAccounting(backend::recording::RecordingAccountingSnapshot& accounting) const;
+
+    // Frozen run configuration snapshot + readiness evaluation (issue #369),
+    // stored as JSON attributes on the /run_provenance group. Written at Start
+    // (before the run may be considered complete); readable from Review.
+    bool writeRunSnapshotJson(const std::string& runSnapshotJson, const std::string& readinessJson);
+
+    // Diagnostics (issue #344): number of HDF5 objects (files, datasets,
+    // groups, types, attributes) currently open in this process, and for this
+    // file. Used by repeated-export stress tests and debug logging to prove
+    // handles return to baseline; HDF5 ids never leave this class.
+    static long long globalOpenObjectCountForDiagnostics();
+    long long openObjectCountForDiagnostics() const;
+    bool readRunSnapshotJson(std::string& runSnapshotJson, std::string* readinessJson = nullptr) const;
+
+    // Acquisition time/telemetry provenance (issue #368, `timestamp_schema_version`
+    // = 1): the session's TimestampDescriptor (what `timestampNs` really holds)
+    // and the final per-metric telemetry with validity, as `timestamp_*` /
+    // `telemetry_*` attributes on the run info group. readAcquisitionProvenance
+    // returns false for legacy files and leaves the descriptor Unsupported —
+    // see ::camera::common::legacyTimestampInterpretation().
+    bool writeAcquisitionProvenance(const ::camera::common::TimestampDescriptor& descriptor,
+                                    const AcquisitionTelemetrySnapshot& telemetry);
+    bool readAcquisitionProvenance(::camera::common::TimestampDescriptor& descriptor,
+                                   AcquisitionTelemetrySnapshot& telemetry) const;
 
     // Recording-mode readers (counterparts to the write* functions above).
     // isRecordingFile() detects a recording-mode file via the presence of

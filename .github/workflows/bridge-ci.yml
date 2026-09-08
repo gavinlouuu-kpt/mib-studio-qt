@@ -70,7 +70,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --preset linux-backend-only
+          # Headless lane, no camera SDK: develop enables MindVision by
+          # default, so opt out explicitly (SDK-free build, MIB_HAS_MINDVISION=0).
+          cmake --preset linux-backend-only -DMIB_ENABLE_MINDVISION=OFF
           cmake --build --preset linux-backend-only-build \
             --target mib_backend mib_processing
 

@@ -45,13 +45,29 @@ always `width` (was Qt's possibly-padded `bytesPerLine()`; downstream tolerates
 pitch ≥ width), and QImage's EXIF auto-transform is gone (irrelevant for
 synthetic mock frames). This removed the last backend `QImage` use, letting
 `Qt6::Gui` drop from the backend link.
+## Timestamps (issue #368)
+
+`Frame::timestamp` is `std::chrono::steady_clock` nanoseconds at delivery
+(`timestampDescriptor()`: `hostSteadyNs @1e9 Hz, synthetic`). It is a
+different unit from `Tools::getTimestamp()` microseconds, so the mock does
+not claim `timestampsHostComparable`.
 
 ## Gotchas
 
-- Mock camera does not support trigger output (`setTriggerOutput` returns
-  false) — [[../services/TriggerService]] pulses become no-ops.
+- Mock camera **simulates** trigger output: `setTriggerOutput` flips an
+  atomic line level and counts rising edges (`triggerPulseCount()`), always
+  returning true, so [[../services/TriggerService]] fires real pulses (and
+  [[../diagnostics/PipelineTimingRecorder]] records them) in headless
+  pipeline dry-runs — see `tests/tools/mock_pipeline_timing_run.cpp` and
+  `docs/howto/pipeline-latency-diagnosis.md`. No electrical output exists,
+  of course.
 - Timestamps are synthesized from steady-clock deltas, not device ticks —
   useful for dev, not for absolute timing.
+- Delivery modes: frames are synthesized on demand (pull source), so both
+  `EveryFrame` and `LatestFrame` are supported and behave identically —
+  `pollAcquisitionQueueStats` reports a genuinely-zero completed queue and
+  no restart is required for mode changes. The queue policies themselves
+  are exercised by `tests/support/queue_camera.h`, not by MockCamera.
 - See `docs/howto/mock-camera-dev-mode.md` and task
   `knowledge_map/task/mock_camera_dev_mode.md`.
 - `data/mock_frames/frame_00000.tiff` is checked in as a minimal sample.

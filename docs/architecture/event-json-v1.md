@@ -1,4 +1,4 @@
-# Lossless desktop event JSON v1 (bridge ABI 12)
+# Lossless desktop event JSON v1 (bridge ABI 13)
 
 The cxx ABI and desktop JSON protocol are versioned independently from science.
 ABI 12 appends exact integer companions to BridgeEvent while preserving every
@@ -82,3 +82,31 @@ The prior frame PR's Desktop CI run 34085079050 passed on remote commit
 The logs include legacy missing-HDF5-attribute diagnostics; no provenance
 completeness is inferred from those tests. Full CTest/Qt/native E2E, scientific
 comparison, Windows, sanitizer and resource acceptance remain open.
+
+## ExperimentStatus since ABI 13 (shared backend, issue #372)
+
+The experiment lifecycle is owned by the shared `ExperimentCoordinator`;
+the bridge carries its status on the legacy slots plus exact typed
+companions, all present on every event (zero/false for other kinds):
+
+| Field | Meaning |
+|---|---|
+| `u0` | `experiment_states` value |
+| `u1`, `u2` | valid / invalid frames buffered (live) |
+| `u3` (`validSaved`) | persistence committed |
+| `u4` (`invalidSaved`) | always `0` (the saved split is no longer tracked) |
+| `u5` | start wall-clock ns |
+| `experiment_end_time_ns` (`f0`) | end wall-clock ns |
+| `experiment_dropped_valid` (`f1`) | persistence pending = admitted − committed − failed |
+| `experiment_dropped_invalid` (`f2`) | persistence failed |
+| `experiment_start_generation` | run identity (decimal string) |
+| `experiment_persistence_admitted` / `_committed` / `_failed` | exact persistence terms |
+| `experiment_completion` | `run_completion_states` value; `Unknown` until `experiment_terminal` |
+| `experiment_terminal` | finalization finished (Idle or Failed); the outcome is final |
+| `experiment_finalization_ok` | every finalize step succeeded |
+
+`fetch_experiment_status` returns the full status (generations, completion
+reason, fault code/message) and `fetch_experiment_readiness(outputPath)` the
+gate list (`readiness_gate_statuses` values; Fail and Unavailable block) with
+the generation a Start must present. `experiment_start` evaluates readiness
+itself and presents that generation; the backend refuses a stale one.

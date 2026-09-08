@@ -2,7 +2,13 @@
 
 #include "backend/processing/ProcessingTypes.h"
 
+// Distro packages of nlohmann/json (e.g. EPEL json-devel in the manylinux
+// wheel container) ship only the single-include json.hpp.
+#if __has_include(<nlohmann/json_fwd.hpp>)
 #include <nlohmann/json_fwd.hpp>
+#else
+#include <nlohmann/json.hpp>
+#endif
 
 #include <string>
 

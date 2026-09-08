@@ -26,15 +26,14 @@ struct BridgeReviewMetadata;
 struct BridgeReviewMetricsPage;
 struct BridgeEvent;
 struct BridgeExperimentStatus;
+struct BridgeExperimentReadiness;
 struct BridgeFrame;
 struct BridgeMonitoringSnapshot;
 struct BridgeProcessingStats;
 struct BridgeTriggerStatus;
 
-#ifdef MIB_BRIDGE_CONTRACT_FIXTURES
 rust::Vec<BridgeEvent> contract_fixture_events();
 BridgeFrame contract_fixture_frame();
-#endif
 
 class BackendBridge {
 public:
@@ -64,6 +63,7 @@ public:
     BridgeCommandResult experiment_stop();
     BridgeCommandResult experiment_cancel();
     BridgeExperimentStatus fetch_experiment_status();
+    BridgeExperimentReadiness fetch_experiment_readiness(rust::Str output_path);
     BridgeCommandResult autofocus_connect(std::int32_t com_port, std::int32_t baud_rate,
                                           std::int32_t device_address);
     BridgeCommandResult autofocus_disconnect();

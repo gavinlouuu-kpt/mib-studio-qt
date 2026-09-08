@@ -29,22 +29,42 @@ public:
     bool grabFrame(camera::common::Frame& out) override;
     bool pollStats(camera::common::CameraStats& out) const override;
 
+    // The mock source synthesizes frames on demand, so there is no SDK queue
+    // to drain: both delivery modes are supported and behave identically, with
+    // a genuinely-zero completed-buffer backlog.
+    camera::common::FrameDeliveryCapabilities deliveryCapabilities() const override {
+        camera::common::FrameDeliveryCapabilities caps;
+        caps.supportsEveryFrame = true;
+        caps.supportsLatestFrame = true;
+        caps.modeChangeRequiresRestart = false;
+        return caps;
+    }
+    camera::common::FrameDeliveryMode activeDeliveryMode() const override {
+        return config_.deliveryMode;
+    }
+    bool pollAcquisitionQueueStats(camera::common::AcquisitionQueueStats& out) const override;
+    // Frame::timestamp = steady_clock nanoseconds at delivery (synthetic; a
+    // different unit from Tools::getTimestamp's microseconds).
+    camera::common::TimestampDescriptor timestampDescriptor() const override {
+        camera::common::TimestampDescriptor d;
+        d.domain = camera::common::ClockDomain::HostSteadyNs;
+        d.ticksPerSecond = 1'000'000'000ULL;
+        d.semantic = camera::common::TimestampSemantic::Synthetic;
+        d.validity = camera::common::TimestampValidity::Valid;
+        return d;
+    }
+
+    // Simulated digital trigger output so TriggerService works end-to-end in
+    // mock mode (headless pipeline dry-runs, latency instrumentation). The
+    // "line" only records level changes; rising edges are counted.
+    void configureTriggerOutput(const std::string& lineSelector) override;
+    bool setTriggerOutput(bool high) override;
+    uint64_t triggerPulseCount() const {
+        return triggerPulseCount_.load(std::memory_order_relaxed);
+    }
+
     void setFrameInterval(std::chrono::microseconds interval);
     void setLooping(bool loop);
-
-    // Trigger-output emulation (BE-5): the mock camera accepts trigger pulses
-    // so the sorter trigger chain (manual/periodic test) is headless-testable.
-    // Real hardware drives an actual output line; here we just latch state.
-    bool setTriggerOutput(bool high) override {
-        triggerLineHigh_.store(high, std::memory_order_relaxed);
-        if (high) {
-            triggerPulses_.fetch_add(1, std::memory_order_relaxed);
-        }
-        return true;
-    }
-    std::uint64_t triggerPulseCount() const {
-        return triggerPulses_.load(std::memory_order_relaxed);
-    }
 
 private:
     void refreshFileList();
@@ -60,10 +80,11 @@ private:
     std::atomic<bool> running_{false};
     std::chrono::steady_clock::time_point lastFrameTime_{};
     mutable camera::common::CameraStats stats_{};
+    std::atomic<uint64_t> deliveredFrames_{0};
 
-    // Trigger-output emulation state (BE-5)
+    // Simulated trigger line (written by the trigger thread).
     std::atomic<bool> triggerLineHigh_{false};
-    std::atomic<std::uint64_t> triggerPulses_{0};
+    std::atomic<uint64_t> triggerPulseCount_{0};
 };
 
 } // namespace camera::mock

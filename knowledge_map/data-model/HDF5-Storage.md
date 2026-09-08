@@ -26,8 +26,52 @@
   metadata only; no contour metrics).
 - `/recording_info` — raw-recording totals/config plus the same nine
   processing-core provenance attributes as `/experiment_info`.
+- **Run accounting (issue #367, `accounting_schema_version` = 1)** — written
+  by `Hdf5Service::writeRunAccounting` as `accounting_*` attributes on
+  `/experiment_info` or `/recording_info`: `admitted_frames`, `empty_frames`,
+  `processed_frames`, `scientifically_rejected_frames`,
+  `processing_failed_frames`, `store_overwritten_frames`,
+  `store_not_committed_frames`, `store_malformed_frames`,
+  `cancelled_by_policy_frames`, `pending_at_stop_frames`,
+  `persistence_{admitted,committed,failed,pending_at_stop,cancelled_by_policy}_frames`,
+  `objects_detected`, `has_index_range` / `first_frame_index` /
+  `last_frame_index`, `sequence_gaps` / `sequence_gap_frames`,
+  `session_generation`, `policy_allows_drops`, `fatal_error` /
+  `fatal_message`, `completion_state` (`complete` | `intentionallyPartial` |
+  `incompleteLoss` | `failed`), `completion_reason`, `reconciled`. The stored
+  form is always the *reconciled* snapshot, so a file whose required
+  accounting does not reconcile is stored as `failed`, never `complete`.
+  `readRunAccounting` returns `false` (completion `unknown`) for files that
+  predate the schema; legacy `total_recorded_frames` /
+  `total_filtered_empty_frames` are never reinterpreted.
+- **Acquisition time/telemetry provenance (issue #368,
+  `timestamp_schema_version` = 1)** — `Hdf5Service::writeAcquisitionProvenance`
+  stores `timestamp_clock_domain`, `timestamp_ticks_per_second`,
+  `timestamp_native_ticks_per_second`, `timestamp_semantic`,
+  `timestamp_validity`, `timestamp_counter_bits`, `timestamp_session_generation`,
+  `timestamp_host_receipt_domain` (what the per-frame `hostTimestampUs` column
+  means) and, per metric, `telemetry_<name>_value` / `_validity` /
+  `_sample_host_time_us` for frames delivered, capture frame/data rate, SDK
+  queue depth, input buffers, underruns, transport loss, intentional
+  discards, frame age and publish latency. The per-frame `timestampNs`
+  column name is historical: its unit/domain is whatever the descriptor says.
+  Files without the schema read back as `unknown`/`unsupported`
+  (`camera::common::legacyTimestampInterpretation()` documents what old
+  values held per producer); nothing is rewritten.
 - Chart snapshot datasets — 2D/3D `cv::Mat` saved via
   `saveChartSnapshot(path, image)`.
+
+- **Run configuration snapshot (issue #369, `run_snapshot_schema_version`
+  = 1)** — `Hdf5Service::writeRunSnapshotJson` stores the frozen
+  `RunConfigurationSnapshot` (`run_snapshot_json`, stable key order: camera
+  requested/effective/simulated/fallback, delivery mode, timestamp
+  descriptor, ROI, frame geometry, processing core + pin, config version /
+  sha, `config.json` sha, profile, pixel-to-micron, background
+  generation/sha, trigger binding, output path, application identity) and
+  the readiness evaluation (`readiness_json`, per-gate status/reason) as
+  attributes on `/run_provenance`. Written at Start, before any frame;
+  `readRunSnapshotJson` returns false (never a fabricated snapshot) for
+  older files. See [[../architecture/ExperimentCoordinator]].
 
 ## Write paths
 

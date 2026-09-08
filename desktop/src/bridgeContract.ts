@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 12;
+export const BRIDGE_ABI_VERSION = 13;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -82,6 +82,45 @@ export const EXPERIMENT_STATES = {
   Active: 2,
   Stopping: 3,
   Failed: 4,
+} as const;
+
+export const EXPERIMENT_COMMAND_ACTIONS = {
+  EvaluateReadiness: 0,
+  Start: 1,
+  Stop: 2,
+  Status: 3,
+} as const;
+
+export const EXPERIMENT_START_OUTCOMES = {
+  Started: 0,
+  NotReady: 1,
+  StaleReadiness: 2,
+  AlreadyActive: 3,
+  StorageFailed: 4,
+  ProvenanceFailed: 5,
+  Busy: 6,
+} as const;
+
+export const EXPERIMENT_STOP_OUTCOMES = {
+  Accepted: 0,
+  NotActive: 1,
+  Busy: 2,
+} as const;
+
+export const RUN_COMPLETION_STATES = {
+  Complete: 0,
+  IntentionallyPartial: 1,
+  IncompleteLoss: 2,
+  Failed: 3,
+  Unknown: 4,
+} as const;
+
+export const READINESS_GATE_STATUSES = {
+  Pass: 0,
+  Warn: 1,
+  Fail: 2,
+  Unavailable: 3,
+  NotRequired: 4,
 } as const;
 
 export const ERROR_SOURCES = {
@@ -256,7 +295,14 @@ export const EVENT_PAYLOADS = {
     "droppedInvalid": "experiment_dropped_invalid",
     "flushing": "b0",
     "cancelled": "b1",
-    "message": "text"
+    "message": "text",
+    "startGeneration": "experiment_start_generation",
+    "persistenceAdmitted": "experiment_persistence_admitted",
+    "persistenceCommitted": "experiment_persistence_committed",
+    "persistenceFailed": "experiment_persistence_failed",
+    "completion": "experiment_completion",
+    "terminal": "experiment_terminal",
+    "finalizationOk": "experiment_finalization_ok"
   }
 } as const;
 

@@ -19,7 +19,11 @@ int main(int argc, char* argv[])
 {
     // Route the startup LUT lookup to a file: URL so initialize() does no
     // network I/O (keeps this unit test fast/offline).
+#ifdef _WIN32
+    _putenv_s("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/lut.json");
+#else
     setenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/lut.json", 1);
+#endif
     (void)argc;
     (void)argv;
 

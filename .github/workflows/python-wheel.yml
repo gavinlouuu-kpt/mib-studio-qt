@@ -29,6 +29,8 @@ on:
       - 'test_publish_processing_core.py'
       - 'test_bump_mib_processing_version.py'
       - 'test_contract_version_consistency.py'
+      - 'test_processing_core_wheel_architectures.py'
+      - 'test_processing_core_signer_release_gate.py'
       - 'test_verify_processing_core_manifest.py'
       - 'verify-processing-core-manifest.py'
       - 'docs/gold_standard_metrics.schema.json'
@@ -64,6 +66,8 @@ on:
       - 'test_publish_processing_core.py'
       - 'test_bump_mib_processing_version.py'
       - 'test_contract_version_consistency.py'
+      - 'test_processing_core_wheel_architectures.py'
+      - 'test_processing_core_signer_release_gate.py'
       - 'test_verify_processing_core_manifest.py'
       - 'verify-processing-core-manifest.py'
       - 'docs/gold_standard_metrics.schema.json'
@@ -115,7 +119,7 @@ jobs:
           PY
 
   build-and-test:
-    name: Build + test wheel (Python ${{ matrix.python-version }})
+    name: Build + test wheel (${{ matrix.label }})
     needs: validate-source-version
     runs-on: ubuntu-24.04
     strategy:
@@ -123,13 +127,37 @@ jobs:
       matrix:
         include:
           - python-version: '3.10'
-            python-tag: cp310
+            build_selector: cp310-manylinux_x86_64
+            arch: x86_64
+            artifact_suffix: py3.10-x86_64
+            label: CPython 3.10 / x86_64
+            full_test: true
           - python-version: '3.11'
-            python-tag: cp311
+            build_selector: cp311-manylinux_x86_64
+            arch: x86_64
+            artifact_suffix: py3.11-x86_64
+            label: CPython 3.11 / x86_64
+            full_test: true
           - python-version: '3.12'
-            python-tag: cp312
+            build_selector: cp312-manylinux_x86_64
+            arch: x86_64
+            artifact_suffix: py3.12-x86_64
+            label: CPython 3.12 / x86_64
+            full_test: true
           - python-version: '3.13'
-            python-tag: cp313
+            build_selector: cp313-manylinux_x86_64
+            arch: x86_64
+            artifact_suffix: py3.13-x86_64
+            label: CPython 3.13 / x86_64
+            full_test: true
+          - python-version: '3.12'
+            build_selector: >-
+              cp310-manylinux_aarch64 cp311-manylinux_aarch64
+              cp312-manylinux_aarch64 cp313-manylinux_aarch64
+            arch: aarch64
+            artifact_suffix: pyall-aarch64
+            label: CPython 3.10-3.13 / aarch64
+            full_test: false
 
     steps:
       - name: Checkout
@@ -137,30 +165,39 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up QEMU for ARM64 wheel build and smoke tests
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Build repaired manylinux wheel
         uses: pypa/cibuildwheel@v2.22.0
         with:
           package-dir: bindings/python
           output-dir: wheelhouse
         env:
-          CIBW_BUILD: ${{ matrix.python-tag }}-manylinux_x86_64
-          CIBW_ARCHS_LINUX: x86_64
+          CIBW_BUILD: ${{ matrix.build_selector }}
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: >-
             dnf install -y --setopt=install_weak_deps=False epel-release &&
             dnf install -y --setopt=install_weak_deps=False
-            opencv-devel hdf5-devel spdlog-devel
+            opencv-devel hdf5-devel spdlog-devel json-devel
           CIBW_TEST_COMMAND: >-
             python -c "import mib_processing as mp;
             assert mp.CONTRACT_VERSION == 1;
             print(mp.__version__, mp.CONTRACT_VERSION)"
 
       - name: Set up Python
+        if: matrix.full_test
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install wheel + test dependencies
+        if: matrix.full_test
         run: |
           set -euo pipefail
           python -m pip install wheelhouse/*.whl
@@ -168,30 +205,36 @@ jobs:
             "tomli>=2; python_version < '3.11'"
 
       - name: Run pytest
+        if: matrix.full_test
         working-directory: bindings/python
         run: python -m pytest tests/ -v
 
       - name: Verify registry publisher and version tooling
+        if: matrix.full_test
         run: |
           python -m unittest -v \
             test_publish_processing_core.py \
             test_publish_profiles.py \
             test_bump_mib_processing_version.py \
             test_contract_version_consistency.py \
+            test_processing_core_wheel_architectures.py \
+            test_processing_core_signer_release_gate.py \
             test_verify_processing_core_manifest.py
 
       - name: Verify importable version + contract
+        if: matrix.full_test
         run: |
           python -c "import mib_processing as mp; print('version', mp.__version__); print('contract_version', mp.CONTRACT_VERSION); assert mp.CONTRACT_VERSION == 1"
 
       - name: Run full-parity conformance harness
+        if: matrix.full_test
         run: |
           set -euo pipefail
           python scripts/run_processing_conformance.py \
             --candidate-out artifacts/mib-processing-conformance.json
 
       - name: Verify portable wheel in Biowork production base
-        if: matrix.python-version == '3.12'
+        if: matrix.full_test && matrix.python-version == '3.12'
         run: |
           set -euo pipefail
           docker run --rm \
@@ -207,7 +250,7 @@ jobs:
             '
 
       - name: Upload conformance candidate
-        if: always()
+        if: always() && matrix.full_test
         uses: actions/upload-artifact@v6
         with:
           name: mib-processing-conformance-py${{ matrix.python-version }}
@@ -217,7 +260,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v6
         with:
-          name: mib_processing-wheel-py${{ matrix.python-version }}
+          name: mib_processing-wheel-${{ matrix.artifact_suffix }}
           path: wheelhouse/*.whl
           if-no-files-found: error
 
@@ -276,6 +319,13 @@ jobs:
         run: >-
           conan install . -of build --build=missing -s build_type=Release -pr ci
           -o "opencv/*:shared=False"
+
+      - name: Provision pinned MindVision SDK
+        shell: pwsh
+        run: |
+          $sdk = ./scripts/provision-mindvision-sdk.ps1 -PassThru
+          "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
+          "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
 
       - name: Configure and build native plugin
         shell: pwsh
@@ -442,6 +492,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
+            curl \
             git \
             libgl1-mesa-dev \
             libhdf5-dev \
@@ -456,6 +507,10 @@ jobs:
             qt6-base-dev \
             qt6-serialport-dev
 
+      - name: Provision pinned MindVision SDK
+        shell: bash
+        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+
       - name: Configure and build native plugin
         shell: bash
         env:
@@ -464,6 +519,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset linux-backend-only \
+            -DMIB_USE_SENTRY=OFF \
             -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-v') && 'ON' || 'OFF' }} \
             -DMIB_PROCESSING_CORE_APP_MIN_VERSION="$APP_MIN_VERSION" \
             -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$APP_MAX_VERSION"
@@ -890,23 +946,28 @@ jobs:
           }
           wheel_pattern = re.compile(
               rf"mib_processing-{re.escape(version)}-cp(310|311|312|313)-cp\1-"
-              r"manylinux_2_28_x86_64\.whl"
+              r"manylinux_2_28_(x86_64|aarch64)\.whl"
           )
           wheels = {name for name in names if name.endswith(".whl")}
-          python_tags = {
-              match.group(1)
+          wheel_targets = {
+              (match.group(1), match.group(2))
               for name in wheels
               if (match := wheel_pattern.fullmatch(name))
           }
+          expected_wheel_targets = {
+              (python_tag, architecture)
+              for python_tag in {"310", "311", "312", "313"}
+              for architecture in {"x86_64", "aarch64"}
+          }
           expected = wheels | expected_native
           if (
-              len(wheels) != 4
-              or python_tags != {"310", "311", "312", "313"}
+              len(wheels) != 8
+              or wheel_targets != expected_wheel_targets
               or names != expected
           ):
               raise SystemExit(
                   "staged release asset set is not canonical; "
-                  f"names={sorted(names)}, python_tags={sorted(python_tags)}"
+                  f"names={sorted(names)}, wheel_targets={sorted(wheel_targets)}"
               )
           print("Flat release asset set is complete and canonical.")
           PY
@@ -951,24 +1012,29 @@ jobs:
           }
           wheel_pattern = re.compile(
               rf"mib_processing-{re.escape(version)}-cp(310|311|312|313)-cp\1-"
-              r"manylinux_2_28_x86_64\.whl"
+              r"manylinux_2_28_(x86_64|aarch64)\.whl"
           )
-          python_tags = {
-              match.group(1)
+          wheel_targets = {
+              (match.group(1), match.group(2))
               for name in wheels
               if (match := wheel_pattern.fullmatch(name))
           }
+          expected_wheel_targets = {
+              (python_tag, architecture)
+              for python_tag in {"310", "311", "312", "313"}
+              for architecture in {"x86_64", "aarch64"}
+          }
           unexpected = sorted(names - set(wheels) - expected_native)
           if (
-              len(wheels) != 4
-              or python_tags != {"310", "311", "312", "313"}
+              len(wheels) != 8
+              or wheel_targets != expected_wheel_targets
               or not expected_native.issubset(names)
               or unexpected
           ):
               raise SystemExit(
                   "existing release does not have the complete canonical asset set; "
                   f"wheels={wheels}, native_missing={sorted(expected_native - names)}, "
-                  f"unexpected={unexpected}"
+                  f"wheel_targets={sorted(wheel_targets)}, unexpected={unexpected}"
               )
           print("Existing immutable release asset set is complete; reusing it for R2 publish.")
           PY
@@ -977,6 +1043,9 @@ jobs:
             if [ "$PROCESSING_CHANNEL" = beta ]; then
               release_flags+=(--prerelease)
             fi
+            # Never claim the repository "Latest" badge: that must always
+            # point at the newest stable desktop release, not core wheels.
+            release_flags+=(--latest=false)
             gh release create "$tag" \
               --repo "${{ github.repository }}" \
               --verify-tag \

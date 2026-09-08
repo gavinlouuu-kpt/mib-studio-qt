@@ -2,6 +2,7 @@
   <qresource prefix="/defaults">
     <file alias="config.json">defaults/config.json</file>
     <file alias="egrabberConfig.js">defaults/egrabberConfig.js</file>
+    <file alias="mindvisionConfig.json">defaults/mindvisionConfig.json</file>
     <file alias="overviewConfig.js">defaults/overviewConfig.js</file>
   </qresource>
 </RCC>

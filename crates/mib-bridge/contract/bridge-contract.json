@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 12,
+  "abi_version": 13,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -50,6 +50,40 @@
     "Active": 2,
     "Stopping": 3,
     "Failed": 4
+  },
+  "experiment_command_actions": {
+    "EvaluateReadiness": 0,
+    "Start": 1,
+    "Stop": 2,
+    "Status": 3
+  },
+  "experiment_start_outcomes": {
+    "Started": 0,
+    "NotReady": 1,
+    "StaleReadiness": 2,
+    "AlreadyActive": 3,
+    "StorageFailed": 4,
+    "ProvenanceFailed": 5,
+    "Busy": 6
+  },
+  "experiment_stop_outcomes": {
+    "Accepted": 0,
+    "NotActive": 1,
+    "Busy": 2
+  },
+  "run_completion_states": {
+    "Complete": 0,
+    "IntentionallyPartial": 1,
+    "IncompleteLoss": 2,
+    "Failed": 3,
+    "Unknown": 4
+  },
+  "readiness_gate_statuses": {
+    "Pass": 0,
+    "Warn": 1,
+    "Fail": 2,
+    "Unavailable": 3,
+    "NotRequired": 4
   },
   "error_sources": {
     "Lifecycle": 0,
@@ -230,12 +264,25 @@
       "droppedInvalid": "experiment_dropped_invalid",
       "flushing": "b0",
       "cancelled": "b1",
-      "message": "text"
+      "message": "text",
+      "startGeneration": "experiment_start_generation",
+      "persistenceAdmitted": "experiment_persistence_admitted",
+      "persistenceCommitted": "experiment_persistence_committed",
+      "persistenceFailed": "experiment_persistence_failed",
+      "completion": "experiment_completion",
+      "terminal": "experiment_terminal",
+      "finalizationOk": "experiment_finalization_ok"
     }
   },
   "frame_ready_sources": {
     "LiveCapture": 0,
     "Playback": 1,
     "BackgroundCapture": 2
+  },
+  "experiment_status_semantics": {
+    "since_abi": 13,
+    "legacy_slots": "validSaved = persistence committed; invalidSaved = 0 (split no longer tracked); droppedValid = persistence pending (admitted - committed - failed); droppedInvalid = persistence failed",
+    "typed_fields": "startGeneration/persistence*/completion/terminal/finalizationOk are exact; completion is a run_completion_states value, Unknown until terminal",
+    "snapshot": "fetch_experiment_status carries the full status (generations, fault code/message, completion reason); fetch_experiment_readiness carries the gate list with readiness_gate_statuses values and the generation a Start must present"
   }
 }

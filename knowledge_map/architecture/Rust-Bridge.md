@@ -208,3 +208,28 @@ lost precision. Processing metrics preserve unavailable/non-finite values instea
 of zero; unknown clock domains cannot produce elapsed-time claims. See
 `docs/architecture/event-json-v1.md` and
 [[../task/2026-09-07-agent-b-event-contracts]] for executed evidence and gaps.
+
+## Shared-backend experiment lifecycle (ABI 13, issue #372)
+
+The migration `ExperimentCoordinator` is gone; the bridge drives the
+reliability coordinator through `BackendFacade::ExperimentCommand`
+(`experiment_start` evaluates readiness and presents its generation,
+`experiment_cancel` is Stop + cancelled). New contract groups:
+`experiment_command_actions`, `experiment_start_outcomes`,
+`experiment_stop_outcomes`, `run_completion_states`,
+`readiness_gate_statuses` (pinned by `static_assert`s in `shim.cpp` against
+the C++ enums, in `contract.rs` for Rust and by the generated
+`bridgeContract.ts`). `BridgeEvent` gains exact companions
+(`experiment_start_generation`, `experiment_persistence_{admitted,committed,failed}`,
+`experiment_completion`, `experiment_terminal`, `experiment_finalization_ok`);
+legacy slots: `u3` = persistence committed, `u4` = 0, `experiment_dropped_valid`
+= persistence pending, `experiment_dropped_invalid` = persistence failed.
+`fetch_experiment_status` carries the full status (generations, completion
+reason, fault code/message); `fetch_experiment_readiness(output_path)` the
+gate list. `bridge_abi_version()` returns `13`. The reliability serial bus
+([[../services/SerialBus]]) is ported onto [[../services/ISerialPort]] on this
+branch, so `mib_backend` links no Qt and the bridge link manifest carries no
+Qt libraries (handoff gap G7, backend part). Guards:
+`experiment_lifecycle_end_to_end` (readiness gate `camera.session` blocks,
+Start → Active → Stop → terminal Complete with the remainder committed, typed
+terminal event, file reloads), `rust_enums_match_contract_json`.

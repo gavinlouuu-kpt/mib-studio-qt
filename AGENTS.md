@@ -1,8 +1,7 @@
 # Agent Guide — MIB Studio Qt
 
-C++17 / Qt 6.7.3 desktop app for real-time microscopy image capture,
-processing, and HDF5 experiment storage. OpenCV for image processing, Euresys
-EGrabber for hardware cameras, optional ONNX Runtime YOLO segmentation.
+C++17 / Qt 6.7.3 microscopy app: OpenCV imaging, Euresys EGrabber and
+MindVision cameras, HDF5 storage, and optional ONNX YOLO.
 
 This file is a map, not a manual. Deep knowledge lives in the vault and docs.
 
@@ -36,17 +35,25 @@ commit/PR. The source-file to vault-note mapping is in
 ## Build and Run
 
 ```bash
-cmake --preset windows-default            # Windows, VS2022 x64, Conan toolchain
-cmake --build build --config Debug
+./scripts/provision-mindvision-sdk.sh      # Linux/macOS; populates build/vendor
 cmake --preset linux-backend-only         # Linux, backend lib + tests only
 cmake --build --preset linux-backend-only-build
 ```
+
+Windows: run `./scripts/provision-mindvision-sdk.ps1`, then configure/build the
+`windows-default` preset. MindVision is default-on for desktop builds;
+`MIB_BUILD_PROCESSING_ONLY=ON` remains SDK-free.
 
 - `mib_studio_qt` — the app; mock camera via ConnectTab "Configure Mock…" or
   `MIB_CAMERA_MODE=mock` + `MIB_MOCK_CAMERA_DIR=<path>` (see
   [`knowledge_map/build-and-run/Run-Modes.md`](knowledge_map/build-and-run/Run-Modes.md))
 - `screenshot_tour` — headless UI tour regenerating the user-manual
   screenshots ([`docs/manual/README.md`](docs/manual/README.md))
+
+**Fresh cloud agent / container:** provision packages first (`apt-get update` —
+the index is stale). Ubuntu Noble's Qt 6.4.2 builds and passes backend CTest; or
+build only `mib_processing` for the fastest Qt-free loop. Exact commands:
+[`docs/howto/linux-build.md`](docs/howto/linux-build.md).
 
 ## Verification
 
@@ -97,11 +104,14 @@ part of the change.
 
 ## Hard Conventions
 
+- **Know your architecture layer before changing backend code**
+  ([`Overview`](knowledge_map/architecture/Overview.md), [`backend-boundaries`](docs/architecture/backend-boundaries.md)).
+  The Qt-free processing core in `src/backend/processing/` is an ABI-stable, signed, swappable plugin —
+  preserve `ProcessingCoreAbi.h` + gold-standard conformance; a behavior change needs a version bump + re-sign.
 - **spdlog** for logging; never `std::cout` in app code.
 - Headers mirror source layout under `include/`.
 - Review existing `Tools` ([`src/backend/app/Tools.cpp`](src/backend/app/Tools.cpp)) before writing new utilities.
 - Prefer ready-made EGrabber SDK patterns over hand-rolled camera code.
 - Runtime data (logs, sqlite, HDF5, mock frames) lives under `data/`.
 - Test performance metrics go to MLflow at `mlflow.yofo.bio` via
-  `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` env vars — never
-  hardcode credentials.
+  `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` env vars (never hardcode).

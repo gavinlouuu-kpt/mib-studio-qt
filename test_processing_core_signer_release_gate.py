@@ -144,14 +144,19 @@ class ProcessingCoreSignerReleaseWiringTest(unittest.TestCase):
         self.assertIn("nested release asset", content)
         self.assertNotIn("Get-ChildItem build -Recurse -File -Filter \"$stem.dll\"", content)
 
-    def test_linux_release_wheels_are_manylinux_and_imported_in_biowork_base(self) -> None:
+    def test_linux_release_wheels_cover_supported_manylinux_architectures(self) -> None:
         content = self.read(".github/workflows/python-wheel.yml")
         self.assertIn("pypa/cibuildwheel@v2.22.0", content)
-        self.assertIn("CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28", content)
+        for architecture in ("X86_64", "AARCH64"):
+            self.assertIn(
+                f"CIBW_MANYLINUX_{architecture}_IMAGE:",
+                content,
+            )
         self.assertIn("MIB_BUILD_PROCESSING_ONLY", self.read("bindings/python/pyproject.toml"))
         self.assertIn("python:3.12-slim", content)
         self.assertIn("Verify portable wheel in Biowork production base", content)
-        self.assertIn("manylinux_2_28_x86_64\\.whl", content)
+        self.assertIn("manylinux_2_28_(x86_64|aarch64)\\.whl", content)
+        self.assertIn("len(wheels) != 8", content)
         self.assertNotIn("NOT an auditwheel/manylinux-portable wheel", content)
 
     def test_native_release_uses_independent_fixtures_and_audited_private_dependencies(self) -> None:
@@ -252,13 +257,21 @@ class DesktopReleaseSafetyWiringTest(unittest.TestCase):
 
         tests = content.index("name: Run tests")
         package = content.index("name: Build update package")
-        publish_refs = content.index("name: Publish verified release refs")
+        publish_refs = content.index("name: Publish verified release tag")
         self.assertLess(tests, publish_refs)
         self.assertLess(package, publish_refs)
         publish_block = content[publish_refs:]
-        self.assertIn("git commit", publish_block)
         self.assertIn("git tag", publish_block)
-        self.assertIn("git push --atomic", publish_block)
+        # Tag-first flow: only the release tag ref is ever pushed. main is
+        # branch-protected (PR + required checks) and rejects direct pushes,
+        # including the workflow's own GITHUB_TOKEN — the fallback-version
+        # bump rides a sync PR into develop instead of a branch push.
+        self.assertIn('git push origin "refs/tags/$env:RELEASE_TAG"', publish_block)
+        self.assertNotIn("HEAD:main", content)
+        self.assertNotIn("git push --atomic", content)
+        sync_pr = content.index("name: Open fallback-version sync PR into develop")
+        self.assertLess(publish_refs, sync_pr)
+        self.assertIn("gh pr create --base develop", content[sync_pr:])
 
     def test_manual_release_consumes_only_exact_versioned_installers(self) -> None:
         content = self.read(".github/workflows/build-windows.yml")

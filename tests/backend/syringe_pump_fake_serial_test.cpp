@@ -8,12 +8,15 @@
 
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/ISerialPort.h"
+#include "backend/services/SerialBus.h"
 #include "backend/services/ModbusRtu.h"
 
 #include "support/assert.h"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <thread>
 #include <vector>
 
 namespace m = backend::services::modbus;
@@ -43,7 +46,13 @@ public:
         return static_cast<int>(req.size());
     }
     bool waitForBytesWritten(int) override { return true; }
-    bool waitForReadyRead(int) override { return !rx_.empty(); }
+    bool waitForReadyRead(int timeoutMs) override
+    {
+        // The bus session polls until its deadline; a silent device must not
+        // spin the I/O thread.
+        if (rx_.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+        return !rx_.empty();
+    }
     std::vector<uint8_t> readAll() override
     {
         std::vector<uint8_t> r;
@@ -96,11 +105,12 @@ private:
     std::vector<uint8_t> rx_;
 };
 
-// SyringePumpService is non-copyable/non-movable (mutex + unique_ptr members),
-// so configure an existing instance in place rather than returning by value.
-void configure(SyringePumpService& svc, Mode mode, uint8_t addr = 1)
+// The pump talks through the shared bus registry (SerialBus.h); the fake
+// serial port is injected there, so every session the pump acquires is a
+// fake dLSP slave.
+void configure(backend::services::serialbus::SerialBusManager& bus, Mode mode, uint8_t addr = 1)
 {
-    svc.setSerialPortFactory([mode, addr] { return std::make_unique<FakeSerialPort>(mode, addr); });
+    bus.setSerialPortFactory([mode, addr] { return std::make_unique<FakeSerialPort>(mode, addr); });
 }
 
 } // namespace
@@ -112,8 +122,9 @@ int main()
     // 1) Happy path: connect succeeds, min/max flow rates parse from the fake's
     //    float registers, and control + polling round-trip.
     {
-        SyringePumpService svc;
-        configure(svc, Mode::Normal);
+        backend::services::serialbus::SerialBusManager bus;
+        configure(bus, Mode::Normal);
+        SyringePumpService svc(bus);
         MIB_REQUIRE(svc.connect(PumpId::Sample, 3, 115200, 1), "connect succeeds via fake serial");
         MIB_EXPECT(svc.isConnected(PumpId::Sample), "pump reports connected");
 
@@ -136,23 +147,26 @@ int main()
 
     // 2) A device that never answers -> connect fails (read timeout path), no hang.
     {
-        SyringePumpService svc;
-        configure(svc, Mode::NoResponse);
+        backend::services::serialbus::SerialBusManager bus;
+        configure(bus, Mode::NoResponse);
+        SyringePumpService svc(bus);
         MIB_EXPECT(!svc.connect(PumpId::Sheath, 4, 115200, 1), "non-responding device fails to connect");
         MIB_EXPECT(!svc.isConnected(PumpId::Sheath), "not connected after failure");
     }
 
     // 3) Corrupted CRC on the channel-enable echo -> connect fails (frame rejected).
     {
-        SyringePumpService svc;
-        configure(svc, Mode::BadCrc);
+        backend::services::serialbus::SerialBusManager bus;
+        configure(bus, Mode::BadCrc);
+        SyringePumpService svc(bus);
         MIB_EXPECT(!svc.connect(PumpId::Sample, 5, 115200, 1), "bad-CRC response rejected -> connect fails");
     }
 
     // 4) Address mismatch: a device at addr 2 does not answer a scan/connect for addr 1.
     {
-        SyringePumpService svc;
-        configure(svc, Mode::Normal, /*addr=*/2);
+        backend::services::serialbus::SerialBusManager bus;
+        configure(bus, Mode::Normal, /*addr=*/2);
+        SyringePumpService svc(bus);
         MIB_EXPECT(!svc.connect(PumpId::Sample, 6, 115200, 1), "wrong-address device does not respond");
     }
 

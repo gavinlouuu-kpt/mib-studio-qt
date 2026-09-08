@@ -1,7 +1,9 @@
 #include "backend/processing/ProcessingService.h"
+#include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingScience.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/diagnostics/CrashStateMirror.h"
+#include "backend/diagnostics/PipelineTimingRecorder.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/app/Tools.h"
 
@@ -58,8 +60,7 @@ ProcessingService::ProcessingService()
 }
 
 ProcessingService::CoreOperationLease::CoreOperationLease(
-    ProcessingService* owner,
-    backend::processing::ProcessingCoreIdentity identity)
+    ProcessingService* owner, backend::processing::ProcessingCoreIdentity identity)
     : owner_(owner), identity_(std::move(identity)) {}
 
 ProcessingService::CoreOperationLease::~CoreOperationLease() {
@@ -69,8 +70,8 @@ ProcessingService::CoreOperationLease::~CoreOperationLease() {
 ProcessingService::CoreOperationLease::CoreOperationLease(CoreOperationLease&& other) noexcept
     : owner_(std::exchange(other.owner_, nullptr)), identity_(std::move(other.identity_)) {}
 
-ProcessingService::CoreOperationLease& ProcessingService::CoreOperationLease::operator=(
-    CoreOperationLease&& other) noexcept {
+ProcessingService::CoreOperationLease&
+ProcessingService::CoreOperationLease::operator=(CoreOperationLease&& other) noexcept {
     if (this != &other) {
         release();
         owner_ = std::exchange(other.owner_, nullptr);
@@ -201,8 +202,7 @@ bool ProcessingService::activateProcessingKernel(
     if (!requiredProcessingCoreVersion_.empty() &&
         kernel->identity().version != requiredProcessingCoreVersion_) {
         if (error) {
-            *error = "administrator pin requires processing core " +
-                     requiredProcessingCoreVersion_;
+            *error = "administrator pin requires processing core " + requiredProcessingCoreVersion_;
         }
         return false;
     }
@@ -290,7 +290,8 @@ bool ProcessingService::activateBundledProcessingKernel(std::string* error) {
     return activateProcessingKernel(backend::processing::makeBundledProcessingKernel(), error);
 }
 
-backend::processing::ProcessingCoreIdentity ProcessingService::activeProcessingCoreIdentity() const {
+backend::processing::ProcessingCoreIdentity
+ProcessingService::activeProcessingCoreIdentity() const {
     std::shared_lock lock(processingKernelMutex_);
     return processingKernel_ ? processingKernel_->identity()
                              : backend::processing::bundledProcessingCoreIdentity();
@@ -310,9 +311,9 @@ void ProcessingService::markProcessingCoreSelectionUnavailable() {
 ProcessingService::CoreOperationLease ProcessingService::acquireProcessingCoreOperation() {
     std::shared_lock coreLock(processingKernelMutex_);
     activeSynchronousCoreOperations_.fetch_add(1, std::memory_order_acq_rel);
-    return CoreOperationLease(
-        this, processingKernel_ ? processingKernel_->identity()
-                                : backend::processing::bundledProcessingCoreIdentity());
+    return CoreOperationLease(this, processingKernel_
+                                        ? processingKernel_->identity()
+                                        : backend::processing::bundledProcessingCoreIdentity());
 }
 
 void ProcessingService::releaseProcessingCoreOperation() noexcept {
@@ -421,6 +422,8 @@ void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
             rtBgGray_.reset();
         }
     }
+    // Every publication (or clear) is a new background identity (issue #369).
+    backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
     configVersion_.fetch_add(
         1, std::memory_order_release); // wake cached-config refresh in realtime loop
     refreshRealtimeBatchPipelineConfig();
@@ -465,11 +468,12 @@ void ProcessingService::startExperiment() {
         std::scoped_lock qlk(flushQueueMutex_);
         flushQueue_.reset();
     }
-    std::scoped_lock lk(framesMutex_);
-    validFrames_.clear();
-    invalidFrames_.clear();
     const size_t flushInterval = flushInterval_.load(std::memory_order_relaxed);
     const size_t maxBuffered = maxBufferedFrames_.load(std::memory_order_relaxed);
+    experimentBuffer_.setPolicy({maxBuffered, maxBufferedBytes_.load(std::memory_order_relaxed)});
+    experimentBuffer_.clear();
+    experimentBuffer_.resetTotals();
+    flushQueueBytes_.reset();
     framesSinceLastFlush_.store(0);
     invalidFrameCounter_.store(0);
     totalValidFlushed_.store(0, std::memory_order_relaxed);
@@ -478,48 +482,152 @@ void ProcessingService::startExperiment() {
     droppedInvalidFrames_.store(0, std::memory_order_relaxed);
     lastDropLogUs_.store(0, std::memory_order_relaxed);
     resetRealtimeMetrics();
+    experimentAccounting_.reset(experimentAccountingGeneration_, experimentAccountingPolicyAllowsDrops_);
+    experimentSettled_.store(false, std::memory_order_release);
+    backend::diagnostics::PipelineTimingRecorder::instance().resetLiveLatency();
     // Reset auto-capture counter when experiment starts
     consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
     experimentActive_.store(true);
-    backend::diagnostics::CrashStateMirror::instance().processing.experimentActive.store(true);
+    {
+        auto& m = backend::diagnostics::CrashStateMirror::instance().processing;
+        m.experimentActive.store(true);
+        m.droppedValidFrames.store(0, std::memory_order_relaxed);
+        m.targetGroupObjects.store(0, std::memory_order_relaxed);
+        m.unservedTargetGroupObjects.store(0, std::memory_order_relaxed);
+    }
     SPDLOG_INFO("ProcessingService: experiment started, frame buffers cleared (flush interval: {} "
-                "frames, max buffered: {}, invalid sampling: every {}th)",
-                flushInterval, maxBuffered, invalidFrameSamplingRate_.load());
+                "frames, max buffered: {} frames / {} MB, invalid sampling: every {}th)",
+                flushInterval, maxBuffered,
+                maxBufferedBytes_.load(std::memory_order_relaxed) / (1024.0 * 1024.0),
+                invalidFrameSamplingRate_.load());
 }
 
 void ProcessingService::endExperiment() {
     experimentActive_.store(false);
     backend::diagnostics::CrashStateMirror::instance().processing.experimentActive.store(false);
-    BufferedFrameCounts counts{};
-    {
-        std::scoped_lock lk(framesMutex_);
-        counts.valid = validFrames_.size();
-        counts.invalid = invalidFrames_.size();
+    // Let the realtime thread finish the frame it admitted under the run so
+    // the accounting snapshot taken by the caller is complete (bounded).
+    if (experimentAccounting_.hasAdmitted() && rtRunning_.load(std::memory_order_acquire)) {
+        const uint64_t last = experimentAccounting_.lastAdmittedIndex();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        auto batchPending = [this] {
+            std::scoped_lock lk(batchMutex_);
+            return !batchQueue_.empty() ||
+                   batchFramesInFlight_.load(std::memory_order_acquire) != 0;
+        };
+        while ((rtLastProcessed_.load(std::memory_order_acquire) < last ||
+                (rtBatchPipelineActive_.load(std::memory_order_acquire) && batchPending())) &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
     }
+    // Settle the run exactly: frames admitted but still unprocessed when the
+    // drain gave up (a slow batch pipeline, e.g. under a sanitizer) are
+    // booked as PendingAtStop under the settlement lock, and every later
+    // outcome/append for this run is dropped. The accounting always
+    // reconciles; what was not processed is declared, never invented.
+    {
+        std::unique_lock settle(experimentSettleMutex_);
+        if (!experimentSettled_.exchange(true, std::memory_order_acq_rel)) {
+            const auto s = experimentAccounting_.snapshot();
+            const uint64_t terms = s.frameTermsSum();
+            if (s.admitted > terms) {
+                const uint64_t unsettled = s.admitted - terms;
+                experimentAccounting_.count(backend::recording::FrameOutcome::PendingAtStop, unsettled);
+                SPDLOG_WARN("ProcessingService: {} admitted frame(s) still unprocessed at experiment stop "
+                            "(booked as pendingAtStop)", unsettled);
+            }
+        }
+    }
+    const BufferedFrameCounts counts = experimentBuffer_.counts();
     SPDLOG_INFO("ProcessingService: experiment ended, valid frames: {}, invalid frames: {}",
                 counts.valid, counts.invalid);
 }
 
 std::vector<ProcessedFrame> ProcessingService::getValidFrames() const {
-    std::scoped_lock lk(framesMutex_);
-    return {validFrames_.begin(), validFrames_.end()};
+    return experimentBuffer_.copyValid();
 }
 
 std::vector<ProcessedFrame> ProcessingService::getInvalidFrames() const {
-    std::scoped_lock lk(framesMutex_);
-    return {invalidFrames_.begin(), invalidFrames_.end()};
+    return experimentBuffer_.copyInvalid();
 }
 
 BufferedFrameCounts ProcessingService::getBufferedFrameCounts() const {
-    std::scoped_lock lk(framesMutex_);
-    return BufferedFrameCounts{validFrames_.size(), invalidFrames_.size()};
+    return experimentBuffer_.counts();
 }
 
 void ProcessingService::clearAccumulatedFrames() {
-    std::scoped_lock lk(framesMutex_);
-    validFrames_.clear();
-    invalidFrames_.clear();
+    experimentBuffer_.clear();
     framesSinceLastFlush_.store(0, std::memory_order_relaxed);
+}
+
+void ProcessingService::setMaxBufferedBytes(uint64_t bytes) {
+    maxBufferedBytes_.store(bytes, std::memory_order_relaxed);
+    experimentBuffer_.setPolicy({std::max<size_t>(1, maxBufferedFrames_.load(std::memory_order_relaxed)), bytes});
+    SPDLOG_INFO("Experiment buffer byte budget set to {} MB{}", bytes / (1024.0 * 1024.0),
+                bytes == 0 ? " (count-only)" : "");
+}
+
+uint64_t ProcessingService::getMaxBufferedBytes() const {
+    return maxBufferedBytes_.load(std::memory_order_relaxed);
+}
+
+ProcessingService::MemoryStats ProcessingService::memoryStats() const {
+    MemoryStats m;
+    m.experimentBuffer = experimentBuffer_.memoryStats();
+    {
+        std::scoped_lock lk(monitoringFramesMutex_);
+        backend::diagnostics::MemoryOwnerStats o;
+        o.name = "processing.monitoringRings";
+        o.knowledge = backend::diagnostics::MemoryKnowledge::Measured;
+        o.currentBytes = monitoringValidFrames_.bytes() + monitoringInvalidFrames_.bytes();
+        o.peakBytes = monitoringValidFrames_.peakBytes() + monitoringInvalidFrames_.peakBytes();
+        o.currentCount = monitoringValidFrames_.size() + monitoringInvalidFrames_.size();
+        o.peakCount = o.currentCount; // rings only grow to capacity
+        o.capacityCount = monitoringValidFrames_.capacity() + monitoringInvalidFrames_.capacity();
+        o.capacityBytes = 0; // bounded by count; bytes follow the frame geometry
+        o.evictedByBudget = monitoringValidFrames_.replaced() + monitoringInvalidFrames_.replaced();
+        o.note = monitoringActive_.load(std::memory_order_relaxed)
+                     ? "presentation rings (valid+invalid) for the Monitoring tab; oldest entries replaced"
+                     : "presentation rings inactive (no consumer): nothing retained";
+        m.monitoringRings = o;
+    }
+    {
+        uint64_t capBytes = 0;
+        size_t capCount = 0;
+        {
+            std::scoped_lock lk(batchMutex_);
+            capBytes = batchConfig_.maxQueuedBytes;
+            capCount = batchConfig_.maxQueuedFrames;
+        }
+        m.batchQueue = batchQueueBytes_.snapshot("processing.batchQueue",
+                                                 backend::diagnostics::MemoryKnowledge::Measured, capBytes,
+                                                 capCount, "async batch input frames awaiting a worker");
+        m.batchQueue.evictedByBudget = batchFramesDropped_.load(std::memory_order_relaxed);
+    }
+    m.flushQueue = flushQueueBytes_.snapshot("processing.flushQueue",
+                                             backend::diagnostics::MemoryKnowledge::Measured, 0, 3,
+                                             "experiment batches submitted to the HDF5 writer, not yet written");
+    {
+        backend::diagnostics::MemoryOwnerStats o;
+        o.name = "processing.snapshot";
+        o.knowledge = backend::diagnostics::MemoryKnowledge::Measured;
+        std::shared_ptr<const RealtimeSnapshot> snap;
+        {
+            std::scoped_lock lk(snapshotMutex_);
+            snap = latestSnapshot_;
+        }
+        if (snap && !snap->mask.empty()) {
+            o.currentBytes = static_cast<uint64_t>(snap->mask.total()) * snap->mask.elemSize();
+            o.currentCount = 1;
+        }
+        o.peakBytes = o.currentBytes;
+        o.peakCount = o.currentCount;
+        o.capacityCount = 1;
+        o.note = "latest realtime snapshot mask (pointer-swapped; older snapshots die with their last reader)";
+        m.snapshot = o;
+    }
+    return m;
 }
 
 std::vector<ProcessedFrame> ProcessingService::getMonitoringValidFrames() const {
@@ -716,43 +824,274 @@ bool ProcessingService::isFrameEmpty(const backend::playback::Frame& frame,
 }
 
 bool ProcessingService::isFrameEmptyWithActiveKernel(
-    const backend::playback::Frame& frame,
-    const ProcessingConfig& config,
-    const Roi& roi,
+    const backend::playback::Frame& frame, const ProcessingConfig& config, const Roi& roi,
     const std::shared_ptr<const cv::Mat>& background) const {
-    if (frame.width == 0 || frame.height == 0 || frame.data.empty()) return true;
+    return !classifyFrameWithActiveKernel(frame, config, roi, background).isCandidate();
+}
+
+ProcessingService::FrameClassification ProcessingService::classifyFrameWithActiveKernel(
+    const backend::playback::Frame& frame, const ProcessingConfig& config, const Roi& roi,
+    const std::shared_ptr<const cv::Mat>& background) const {
+    FrameClassification c;
+    if (frame.width == 0 || frame.height == 0 || frame.data.empty()) {
+        c.kind = FrameClassification::Kind::Malformed;
+        c.detail = "frame has zero geometry or no payload";
+        return c;
+    }
     const size_t stride = frame.linePitch == 0 ? static_cast<size_t>(frame.width) : frame.linePitch;
-    if (stride < frame.width) return true;
+    if (stride < frame.width) {
+        c.kind = FrameClassification::Kind::Malformed;
+        c.detail = "line pitch smaller than width";
+        return c;
+    }
     const uint64_t required = (frame.height - 1u) * static_cast<uint64_t>(stride) + frame.width;
-    if (required > frame.data.size()) return true;
+    if (required > frame.data.size()) {
+        c.kind = FrameClassification::Kind::Malformed;
+        c.detail = "payload shorter than geometry requires";
+        return c;
+    }
 
     cv::Mat gray(static_cast<int>(frame.height), static_cast<int>(frame.width), CV_8UC1,
                  const_cast<uint8_t*>(frame.data.data()), stride);
     const cv::Mat backgroundView = background ? *background : cv::Mat{};
     bool empty = true;
     std::string detail;
-    if (!isImageEmptyWithActiveKernel(gray, backgroundView, config, roi, false, empty, &detail)) {
-        SPDLOG_WARN("ProcessingService: active core empty-frame check failed: {}", detail);
-        return true;
+    try {
+        if (!isImageEmptyWithActiveKernel(gray, backgroundView, config, roi, false, empty, &detail)) {
+            SPDLOG_WARN("ProcessingService: active core empty-frame check failed: {}", detail);
+            c.kind = FrameClassification::Kind::ProcessingFailed;
+            c.detail = detail.empty() ? "processing core rejected the frame" : detail;
+            return c;
+        }
+    } catch (const std::exception& ex) {
+        c.kind = FrameClassification::Kind::ProcessingFailed;
+        c.detail = std::string("processing core threw: ") + ex.what();
+        return c;
+    } catch (...) {
+        c.kind = FrameClassification::Kind::ProcessingFailed;
+        c.detail = "processing core threw an unknown exception";
+        return c;
     }
-    return empty;
+    c.kind = empty ? FrameClassification::Kind::Empty : FrameClassification::Kind::Candidate;
+    return c;
 }
 
-bool ProcessingService::isImageEmptyWithActiveKernel(
-    const cv::Mat& gray,
-    const cv::Mat& background,
-    const ProcessingConfig& config,
-    const Roi& roi,
-    bool absoluteBackgroundDifference,
-    bool& empty,
-    std::string* error) const {
+void ProcessingService::setExperimentAccountingContext(uint64_t captureGeneration,
+                                                       bool policyAllowsDrops) {
+    experimentAccountingGeneration_ = captureGeneration;
+    experimentAccountingPolicyAllowsDrops_ = policyAllowsDrops;
+}
+
+backend::recording::RecordingAccountingSnapshot ProcessingService::experimentAccountingSnapshot() const {
+    auto s = experimentAccounting_.snapshot();
+    // Derive the persistence terms that only the run boundary can know:
+    // frames still buffered (never handed to the writer) and frames queued
+    // but not confirmed written. A latched writer error turns the latter into
+    // persistence failures instead of "pending".
+    const size_t buffered = experimentBuffer_.counts().total();
+    bool queueErrored = false;
+    {
+        std::scoped_lock qlk(flushQueueMutex_);
+        queueErrored = flushQueue_ && flushQueue_->hasError();
+    }
+    const uint64_t accountedFor =
+        s.persistenceCommitted + s.persistenceCancelledByPolicy + static_cast<uint64_t>(buffered);
+    const uint64_t unresolved = s.persistenceAdmitted > accountedFor ? s.persistenceAdmitted - accountedFor : 0;
+    if (queueErrored) {
+        s.persistenceFailed = unresolved;
+        s.persistencePendingAtStop = static_cast<uint64_t>(buffered);
+    } else {
+        s.persistencePendingAtStop = unresolved + static_cast<uint64_t>(buffered);
+    }
+    return backend::recording::reconcile(s);
+}
+
+void ProcessingService::noteRealtimeAdmitted(uint64_t idx) {
+    if (experimentActive_.load(std::memory_order_relaxed)) experimentAccounting_.admit(idx);
+}
+
+void ProcessingService::noteRealtimeLost(uint64_t count) {
+    if (count > 0 && experimentActive_.load(std::memory_order_relaxed)) {
+        experimentAccounting_.admitLost(count, backend::recording::FrameOutcome::StoreOverwritten);
+    }
+}
+
+void ProcessingService::noteRealtimeOutcome(uint64_t idx, backend::recording::FrameOutcome outcome,
+                                            const backend::playback::Frame* frame) {
+    if (outcome == backend::recording::FrameOutcome::ProcessingFailed) {
+        processingFailures_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Count the outcome iff the admission was counted (not "iff active"):
+    // a frame in flight across start/endExperiment is otherwise counted on
+    // one side only and a clean run reads "does not reconcile". After
+    // endExperiment() settled the run (settlement lock), late outcomes are
+    // dropped: their frames were already booked as PendingAtStop.
+    {
+        std::shared_lock settle(experimentSettleMutex_);
+        if (!experimentSettled_.load(std::memory_order_relaxed) && experimentAccounting_.wasAdmitted(idx)) {
+            experimentAccounting_.count(outcome);
+        }
+    }
+    if (bgCalActive_.load(std::memory_order_acquire)) bgCalObserve(outcome, frame);
+}
+
+// ---- Bounded background calibration (issue #369) --------------------------
+
+std::string ProcessingService::backgroundSha256() const {
+    std::shared_ptr<const cv::Mat> bg = getRealtimeBackgroundGrayShared();
+    if (!bg || bg->empty()) return {};
+    cv::Mat contiguous = bg->isContinuous() ? *bg : bg->clone();
+    return backend::processing::processingCoreBytesSha256(contiguous.data, contiguous.total() * contiguous.elemSize());
+}
+
+bool ProcessingService::startBackgroundCalibration(const BackgroundCalibrationRequest& request,
+                                                   std::string* error) {
+    if (!rtRunning_.load(std::memory_order_acquire)) {
+        if (error) *error = "realtime processing is not running";
+        return false;
+    }
+    if (request.requiredAccepted == 0 || request.maxAttempts < request.requiredAccepted) {
+        if (error) *error = "invalid calibration request (requiredAccepted must be >= 1 and <= maxAttempts)";
+        return false;
+    }
+    std::scoped_lock lk(bgCalMutex_);
+    if (bgCalStatus_.state == BackgroundCalibrationState::Running) {
+        if (error) *error = "a background calibration is already running";
+        return false;
+    }
+    bgCalRequest_ = request;
+    bgCalStatus_ = BackgroundCalibrationStatus{};
+    bgCalStatus_.state = BackgroundCalibrationState::Running;
+    bgCalStatus_.operationGeneration = ++bgCalOperationCounter_;
+    bgCalStatus_.frozenConfigVersion = configVersion_.load(std::memory_order_acquire);
+    bgCalAccumulator_.release();
+    bgCalDeadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(request.timeoutMs);
+    bgCalActive_.store(true, std::memory_order_release);
+    SPDLOG_INFO("Background calibration started: required={} maxAttempts={} timeoutMs={} configVersion={}",
+                request.requiredAccepted, request.maxAttempts, request.timeoutMs,
+                bgCalStatus_.frozenConfigVersion);
+    return true;
+}
+
+void ProcessingService::cancelBackgroundCalibration() {
+    std::scoped_lock lk(bgCalMutex_);
+    if (bgCalStatus_.state != BackgroundCalibrationState::Running) return;
+    bgCalFinishLocked(BackgroundCalibrationState::Cancelled, "cancelled by operator");
+}
+
+ProcessingService::BackgroundCalibrationStatus ProcessingService::backgroundCalibrationStatus() const {
+    std::scoped_lock lk(bgCalMutex_);
+    // Lazy timeout so a stalled frame source cannot leave the operation
+    // apparently running forever.
+    if (bgCalStatus_.state == BackgroundCalibrationState::Running &&
+        std::chrono::steady_clock::now() >= bgCalDeadline_) {
+        const_cast<ProcessingService*>(this)->bgCalFinishLocked(
+            BackgroundCalibrationState::FailedTimeout,
+            "timed out after " + std::to_string(bgCalRequest_.timeoutMs) + " ms with " +
+                std::to_string(bgCalStatus_.accepted) + "/" + std::to_string(bgCalRequest_.requiredAccepted) +
+                " accepted");
+    }
+    return bgCalStatus_;
+}
+
+void ProcessingService::bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message) {
+    bgCalStatus_.state = state;
+    bgCalStatus_.message = message;
+    bgCalActive_.store(false, std::memory_order_release);
+    bgCalAccumulator_.release();
+    SPDLOG_INFO("Background calibration finished: state={} attempted={} accepted={} rejectedNonEmpty={} "
+                "rejectedFailed={} — {}",
+                static_cast<int>(state), bgCalStatus_.attempted, bgCalStatus_.accepted,
+                bgCalStatus_.rejectedNonEmpty, bgCalStatus_.rejectedProcessingFailed, message);
+}
+
+void ProcessingService::bgCalObserve(backend::recording::FrameOutcome outcome,
+                                     const backend::playback::Frame* frame) {
+    using backend::recording::FrameOutcome;
+    std::scoped_lock lk(bgCalMutex_);
+    if (bgCalStatus_.state != BackgroundCalibrationState::Running) return;
+    if (std::chrono::steady_clock::now() >= bgCalDeadline_) {
+        bgCalFinishLocked(BackgroundCalibrationState::FailedTimeout,
+                          "timed out with " + std::to_string(bgCalStatus_.accepted) + "/" +
+                              std::to_string(bgCalRequest_.requiredAccepted) + " accepted");
+        return;
+    }
+    // The recipe is frozen: a config change mid-operation invalidates it.
+    if (configVersion_.load(std::memory_order_acquire) != bgCalStatus_.frozenConfigVersion) {
+        bgCalFinishLocked(BackgroundCalibrationState::FailedProcessing,
+                          "processing configuration changed during calibration");
+        return;
+    }
+    ++bgCalStatus_.attempted;
+    if (outcome == FrameOutcome::Empty && frame) {
+        cv::Mat gray = makeGrayCopy(*frame);
+        if (!gray.empty()) {
+            if (bgCalAccumulator_.empty() || bgCalAccumulator_.size() != gray.size()) {
+                bgCalAccumulator_ = cv::Mat::zeros(gray.size(), CV_64FC1);
+                bgCalStatus_.accepted = 0;
+            }
+            cv::accumulate(gray, bgCalAccumulator_);
+            ++bgCalStatus_.accepted;
+        } else {
+            ++bgCalStatus_.rejectedProcessingFailed;
+        }
+    } else if (outcome == FrameOutcome::ProcessingFailed) {
+        ++bgCalStatus_.rejectedProcessingFailed;
+    } else {
+        ++bgCalStatus_.rejectedNonEmpty; // contaminated frame
+    }
+
+    if (bgCalStatus_.accepted >= bgCalRequest_.requiredAccepted) {
+        cv::Mat mean;
+        bgCalAccumulator_.convertTo(mean, CV_8UC1, 1.0 / static_cast<double>(bgCalStatus_.accepted));
+        // Atomic publication: the previous background stays active until the
+        // candidate is installed here.
+        {
+            std::scoped_lock rtLk(rtMutex_);
+            rtBgGray_ = std::make_shared<cv::Mat>(std::move(mean));
+        }
+        backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        configVersion_.fetch_add(1, std::memory_order_release);
+        refreshRealtimeBatchPipelineConfig();
+        bgCalStatus_.publishedBackgroundGeneration = backgroundGeneration_.load(std::memory_order_acquire);
+        bgCalStatus_.publishedSha256 = backgroundSha256();
+        bgCalFinishLocked(BackgroundCalibrationState::Succeeded,
+                          "published background from " + std::to_string(bgCalStatus_.accepted) + " empty frames");
+        return;
+    }
+    if (bgCalStatus_.attempted >= bgCalRequest_.maxAttempts) {
+        bgCalFinishLocked(BackgroundCalibrationState::FailedInsufficient,
+                          "only " + std::to_string(bgCalStatus_.accepted) + "/" +
+                              std::to_string(bgCalRequest_.requiredAccepted) + " empty frames in " +
+                              std::to_string(bgCalStatus_.attempted) + " attempts (" +
+                              std::to_string(bgCalStatus_.rejectedNonEmpty) + " contaminated)");
+    }
+}
+
+void ProcessingService::noteRealtimeValidation(uint64_t idx, const std::vector<FilterResult>& validations) {
+    const bool anyValid = std::any_of(validations.begin(), validations.end(),
+                                      [](const FilterResult& r) { return r.isValid; });
+    const auto outcome = anyValid ? backend::recording::FrameOutcome::Processed
+                                  : backend::recording::FrameOutcome::RejectedByScientificFilter;
+    // A non-empty frame during background calibration is contamination
+    // regardless of whether an experiment is active (issue #369).
+    if (bgCalActive_.load(std::memory_order_acquire)) bgCalObserve(outcome, nullptr);
+    std::shared_lock settle(experimentSettleMutex_);
+    if (experimentSettled_.load(std::memory_order_relaxed) || !experimentAccounting_.wasAdmitted(idx)) return;
+    experimentAccounting_.count(outcome);
+    uint64_t objects = 0;
+    for (const auto& r : validations) if (r.isValid) ++objects;
+    if (objects > 0) experimentAccounting_.objectsDetected.fetch_add(objects, std::memory_order_relaxed);
+}
+
+bool ProcessingService::isImageEmptyWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
+                                                     const ProcessingConfig& config, const Roi& roi,
+                                                     bool absoluteBackgroundDifference, bool& empty,
+                                                     std::string* error) const {
     const backend::processing::KernelConfig kernelConfig{
-        config.gaussian_blur_size,
-        config.bg_subtract_threshold,
-        config.morph_kernel_size,
-        config.morph_iterations,
-        config.empty_frame_pixel_threshold,
-        absoluteBackgroundDifference};
+        config.gaussian_blur_size,          config.bg_subtract_threshold,
+        config.morph_kernel_size,           config.morph_iterations,
+        config.empty_frame_pixel_threshold, absoluteBackgroundDifference};
     const backend::processing::KernelRoi kernelRoi{roi.x, roi.y, roi.w, roi.h};
     std::shared_lock lock(processingKernelMutex_);
     if (!processingCoreSelectionAvailable_.load(std::memory_order_acquire)) {
@@ -760,10 +1099,11 @@ bool ProcessingService::isImageEmptyWithActiveKernel(
         return false;
     }
     if (!requiredProcessingCoreVersion_.empty() &&
-        (!processingKernel_ || processingKernel_->identity().version != requiredProcessingCoreVersion_)) {
+        (!processingKernel_ ||
+         processingKernel_->identity().version != requiredProcessingCoreVersion_)) {
         if (error) {
-            *error = "required processing core " + requiredProcessingCoreVersion_ +
-                     " is not active";
+            *error =
+                "required processing core " + requiredProcessingCoreVersion_ + " is not active";
         }
         return false;
     }
@@ -774,18 +1114,12 @@ bool ProcessingService::isImageEmptyWithActiveKernel(
     return true;
 }
 
-bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray,
-                                                    const cv::Mat& background,
-                                                    const ProcessingConfig& config,
-                                                    const Roi& roi,
-                                                    cv::Mat& mask,
-                                                    std::string* error) const {
+bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
+                                                    const ProcessingConfig& config, const Roi& roi,
+                                                    cv::Mat& mask, std::string* error) const {
     const backend::processing::KernelConfig kernelConfig{
-        config.gaussian_blur_size,
-        config.bg_subtract_threshold,
-        config.morph_kernel_size,
-        config.morph_iterations,
-        config.empty_frame_pixel_threshold};
+        config.gaussian_blur_size, config.bg_subtract_threshold, config.morph_kernel_size,
+        config.morph_iterations, config.empty_frame_pixel_threshold};
     const backend::processing::KernelRoi kernelRoi{roi.x, roi.y, roi.w, roi.h};
     std::shared_lock lock(processingKernelMutex_);
     if (!processingCoreSelectionAvailable_.load(std::memory_order_acquire)) {
@@ -799,8 +1133,8 @@ bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray,
     if (!requiredProcessingCoreVersion_.empty() &&
         processingKernel_->identity().version != requiredProcessingCoreVersion_) {
         if (error) {
-            *error = "required processing core " + requiredProcessingCoreVersion_ +
-                     " is not active";
+            *error =
+                "required processing core " + requiredProcessingCoreVersion_ + " is not active";
         }
         return false;
     }
@@ -861,12 +1195,11 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
     return out;
 }
 
-std::vector<ProcessedFrame> ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
-                                                            const ProcessingConfig& config,
-                                                            const cv::Mat& background,
-                                                            const Roi& roi,
-                                                            BatchProgressCallback progress,
-                                                            backend::processing::ProcessingCoreIdentity* processingCore) {
+std::vector<ProcessedFrame>
+ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
+                                const ProcessingConfig& config, const cv::Mat& background,
+                                const Roi& roi, BatchProgressCallback progress,
+                                backend::processing::ProcessingCoreIdentity* processingCore) {
 
     auto operation = acquireProcessingCoreOperation();
     if (processingCore) *processingCore = operation.identity();
@@ -939,8 +1272,11 @@ std::vector<ProcessedFrame> ProcessingService::processBatch(const std::vector<cv
                 ProcessedFrame objectFrame;
                 objectFrame.index = base.index;
                 objectFrame.timestampNs = base.timestampNs;
-                objectFrame.originalImage = base.originalImage.clone();
-                objectFrame.processedImage = base.processedImage.clone();
+                // Issue #370: objects of one frame share the immutable source
+                // + mask by refcount (frozen-Mats invariant); nothing clones
+                // merely for lifetime.
+                objectFrame.originalImage = base.originalImage;
+                objectFrame.processedImage = base.processedImage;
                 objectFrame.validation = std::move(validation);
                 if (!objectFrame.validation.isValid) {
                     results.emplace_back(std::move(objectFrame));
@@ -953,7 +1289,8 @@ std::vector<ProcessedFrame> ProcessingService::processBatch(const std::vector<cv
                 if (trackIdx >= 0) {
                     auto& track = tracks[static_cast<size_t>(trackIdx)];
                     track.lastFrame = objectFrame.index;
-                    track.lastBbox = backend::processing::science::resultBbox(objectFrame.validation);
+                    track.lastBbox =
+                        backend::processing::science::resultBbox(objectFrame.validation);
                     track.lastCentroid = cv::Point2d(objectFrame.validation.centroidX,
                                                      objectFrame.validation.centroidY);
                     ++track.observations;
@@ -1024,6 +1361,8 @@ bool ProcessingService::startBatchPipeline(BatchPipelineConfig config,
         batchBatchesProcessed_.store(0, std::memory_order_relaxed);
         batchAlgoMicrosTotal_.store(0, std::memory_order_relaxed);
         batchMaxQueueDepth_.store(0, std::memory_order_relaxed);
+        batchQueueBytes_.reset();
+        batchFramesDroppedByBytes_.store(0, std::memory_order_relaxed);
         batchWorkerCount_.store(batchConfig_.workerCount, std::memory_order_relaxed);
     }
 
@@ -1056,6 +1395,7 @@ void ProcessingService::stopBatchPipeline() {
         std::scoped_lock lk(batchMutex_);
         std::queue<QueuedBatchFrame> empty;
         batchQueue_.swap(empty);
+        batchQueueBytes_.set(0, 0);
         batchResultCallback_ = {};
         batchWorkerCount_.store(0, std::memory_order_relaxed);
     }
@@ -1068,7 +1408,7 @@ void ProcessingService::stopBatchPipeline() {
 }
 
 bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index,
-                                          uint64_t timestampNs) {
+                                          uint64_t timestampNs, uint64_t hostTimestampUs) {
     if (!batchRunning_.load(std::memory_order_acquire) || grayImage.empty()) {
         return false;
     }
@@ -1092,8 +1432,18 @@ bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t ind
             batchFramesDropped_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
+        const uint64_t frameBytes = static_cast<uint64_t>(gray.total()) * gray.elemSize();
+        if (batchConfig_.maxQueuedBytes > 0 &&
+            batchQueueBytes_.bytes() + frameBytes > batchConfig_.maxQueuedBytes) {
+            // Issue #370: the byte budget is a declared drop policy like the
+            // frame cap; the caller sees the same accepted/dropped outcome.
+            batchFramesDropped_.fetch_add(1, std::memory_order_relaxed);
+            batchFramesDroppedByBytes_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
 
-        batchQueue_.push(QueuedBatchFrame{std::move(gray), index, timestampNs});
+        batchQueue_.push(QueuedBatchFrame{std::move(gray), index, timestampNs, hostTimestampUs});
+        batchQueueBytes_.add(frameBytes, 1);
         batchFramesAccepted_.fetch_add(1, std::memory_order_relaxed);
 
         const size_t depth = batchQueue_.size();
@@ -1120,13 +1470,16 @@ bool ProcessingService::enqueueBatchFrame(const backend::playback::Frame& frame,
     if (gray.empty()) {
         return false;
     }
-    return enqueueBatchFrame(gray, index, frame.timestamp);
+    return enqueueBatchFrame(gray, index, frame.timestamp, frame.hostTimestampUs);
 }
 
 ProcessingService::BatchPipelineStats ProcessingService::getBatchPipelineStats() const {
     BatchPipelineStats stats;
     stats.framesAccepted = batchFramesAccepted_.load(std::memory_order_relaxed);
     stats.framesDropped = batchFramesDropped_.load(std::memory_order_relaxed);
+    stats.framesDroppedByByteBudget = batchFramesDroppedByBytes_.load(std::memory_order_relaxed);
+    stats.currentQueueBytes = batchQueueBytes_.bytes();
+    stats.maxQueueBytes = batchQueueBytes_.peakBytes();
     stats.framesProcessed = batchFramesProcessed_.load(std::memory_order_relaxed);
     stats.batchesProcessed = batchBatchesProcessed_.load(std::memory_order_relaxed);
     stats.maxQueueDepth = batchMaxQueueDepth_.load(std::memory_order_relaxed);
@@ -1172,10 +1525,22 @@ void ProcessingService::batchWorkerLoop() {
             for (size_t i = 0; i < desired && !batchQueue_.empty(); ++i) {
                 inputs.emplace_back(std::move(batchQueue_.front()));
                 batchQueue_.pop();
+                const auto& g = inputs.back().gray;
+                batchQueueBytes_.remove(static_cast<uint64_t>(g.total()) * g.elemSize(), 1);
             }
             config = batchConfig_;
             callback = batchResultCallback_;
+            batchFramesInFlight_.fetch_add(static_cast<uint64_t>(inputs.size()),
+                                           std::memory_order_acq_rel);
         }
+        // Everything dequeued above is settled (callback returned or the
+        // batch was dropped) before the counter goes back down;
+        // endExperiment() drains on it.
+        struct InFlightGuard {
+            std::atomic<uint64_t>& counter;
+            uint64_t n;
+            ~InFlightGuard() { counter.fetch_sub(n, std::memory_order_acq_rel); }
+        } inFlightGuard{batchFramesInFlight_, static_cast<uint64_t>(inputs.size())};
 
         const auto algoStart = std::chrono::steady_clock::now();
         std::vector<ProcessedFrame> results;
@@ -1185,6 +1550,7 @@ void ProcessingService::batchWorkerLoop() {
                 ProcessedFrame base =
                     computeProcessedFrame(item.gray, config.background, config.processing,
                                           config.roi, item.index, item.timestampNs);
+                base.hostTimestampUs = item.hostTimestampUs;
                 if (base.originalImage.empty() || base.processedImage.empty()) {
                     results.emplace_back(std::move(base));
                     continue;
@@ -1219,8 +1585,9 @@ void ProcessingService::batchWorkerLoop() {
                     ProcessedFrame objectFrame;
                     objectFrame.index = base.index;
                     objectFrame.timestampNs = base.timestampNs;
-                    objectFrame.originalImage = base.originalImage.clone();
-                    objectFrame.processedImage = base.processedImage.clone();
+                    objectFrame.hostTimestampUs = base.hostTimestampUs;
+                    objectFrame.originalImage = base.originalImage;   // shared, read-only (issue #370)
+                    objectFrame.processedImage = base.processedImage; // shared, read-only
                     objectFrame.validation = std::move(validation);
                     results.emplace_back(std::move(objectFrame));
                 }
@@ -1268,39 +1635,6 @@ void ProcessingService::setBackgroundCaptureCallback(BackgroundCaptureCallback c
     backgroundCaptureCallback_ = std::move(callback);
 }
 
-ProcessingService::DroppedFrameCounts
-ProcessingService::trimExperimentBuffersLocked(size_t maxBufferedFrames) {
-    DroppedFrameCounts dropped{};
-    if (maxBufferedFrames == 0) {
-        maxBufferedFrames = 1;
-    }
-
-    while (validFrames_.size() + invalidFrames_.size() > maxBufferedFrames &&
-           !invalidFrames_.empty()) {
-        invalidFrames_.pop_front();
-        ++dropped.invalid;
-    }
-
-    while (validFrames_.size() + invalidFrames_.size() > maxBufferedFrames &&
-           !validFrames_.empty()) {
-        validFrames_.pop_front();
-        ++dropped.valid;
-    }
-
-    if (dropped.valid > 0) {
-        droppedValidFrames_.fetch_add(static_cast<uint64_t>(dropped.valid),
-                                      std::memory_order_relaxed);
-    }
-    if (dropped.invalid > 0) {
-        droppedInvalidFrames_.fetch_add(static_cast<uint64_t>(dropped.invalid),
-                                        std::memory_order_relaxed);
-    }
-
-    framesSinceLastFlush_.store(validFrames_.size() + invalidFrames_.size(),
-                                std::memory_order_relaxed);
-    return dropped;
-}
-
 void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dropped,
                                                    size_t bufferedTotal, size_t maxBufferedFrames) {
     if (dropped.valid == 0 && dropped.invalid == 0) {
@@ -1322,55 +1656,31 @@ void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dro
 }
 
 bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isValid) {
-    DroppedFrameCounts dropped{};
-    size_t bufferedTotal = 0;
-    bool stored = false;
+    // Issue #370: the bounded buffer owns the retention policy (frame cap AND
+    // byte budget; sampled invalid evicted first, a valid frame is refused
+    // only when the backlog is entirely valid and still over the bound).
     const size_t maxBufferedFrames =
         std::max<size_t>(1, maxBufferedFrames_.load(std::memory_order_relaxed));
-
-    {
-        std::scoped_lock framesLk(framesMutex_);
-        const size_t currentTotal = validFrames_.size() + invalidFrames_.size();
-
-        if (currentTotal >= maxBufferedFrames) {
-            if (isValid && !invalidFrames_.empty()) {
-                invalidFrames_.pop_front();
-                ++dropped.invalid;
-            } else {
-                if (isValid) {
-                    ++dropped.valid;
-                    droppedValidFrames_.fetch_add(1, std::memory_order_relaxed);
-                } else {
-                    ++dropped.invalid;
-                    droppedInvalidFrames_.fetch_add(1, std::memory_order_relaxed);
-                }
-                bufferedTotal = currentTotal;
-                framesSinceLastFlush_.store(bufferedTotal, std::memory_order_relaxed);
-            }
-        }
-
-        if (bufferedTotal == 0) {
-            if (isValid) {
-                validFrames_.emplace_back(std::move(frame));
-            } else {
-                invalidFrames_.emplace_back(std::move(frame));
-            }
-            if (dropped.invalid > 0) {
-                droppedInvalidFrames_.fetch_add(static_cast<uint64_t>(dropped.invalid),
-                                                std::memory_order_relaxed);
-            }
-
-            DroppedFrameCounts extraDropped = trimExperimentBuffersLocked(maxBufferedFrames);
-            dropped.valid += extraDropped.valid;
-            dropped.invalid += extraDropped.invalid;
-            bufferedTotal = validFrames_.size() + invalidFrames_.size();
-            framesSinceLastFlush_.store(bufferedTotal, std::memory_order_relaxed);
-            stored = true;
-        }
+    const auto r = experimentBuffer_.append(std::move(frame), isValid);
+    framesSinceLastFlush_.store(r.bufferedAfter, std::memory_order_relaxed);
+    if (r.droppedValid > 0) {
+        droppedValidFrames_.fetch_add(static_cast<uint64_t>(r.droppedValid), std::memory_order_relaxed);
+    }
+    if (r.droppedInvalid > 0) {
+        droppedInvalidFrames_.fetch_add(static_cast<uint64_t>(r.droppedInvalid), std::memory_order_relaxed);
     }
 
-    logDroppedExperimentFrames(dropped, bufferedTotal, maxBufferedFrames);
-    return stored;
+    // Issue #367: every call is a persistence admission; frames evicted by
+    // the bounded-buffer policy (including this one when not stored) are
+    // CancelledByPolicy on the persistence side — never silent.
+    experimentAccounting_.persistenceAdmitted.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t evicted = static_cast<uint64_t>(r.dropped());
+    if (evicted > 0) {
+        experimentAccounting_.persistenceCancelledByPolicy.fetch_add(evicted, std::memory_order_relaxed);
+    }
+    logDroppedExperimentFrames(DroppedFrameCounts{r.droppedValid, r.droppedInvalid}, r.bufferedAfter,
+                               maxBufferedFrames);
+    return r.stored;
 }
 
 size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
@@ -1380,25 +1690,28 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
     // fresh buffer. Overflow or a write failure is fatal (stop + surface) rather
     // than a silent trim-and-drop.
     ExperimentBatch batch;
-    {
-        std::scoped_lock lk(framesMutex_);
-        if (validFrames_.empty() && invalidFrames_.empty()) return 0;
-        // Move-construct vectors from deques — cv::Mat moves are O(1) refcount transfers
-        batch.valid.assign(std::make_move_iterator(validFrames_.begin()),
-                           std::make_move_iterator(validFrames_.end()));
-        batch.invalid.assign(std::make_move_iterator(invalidFrames_.begin()),
-                             std::make_move_iterator(invalidFrames_.end()));
-        validFrames_.clear();
-        invalidFrames_.clear();
-        framesSinceLastFlush_.store(0, std::memory_order_relaxed);
-    }
+    if (experimentBuffer_.empty()) return 0;
+    // Move out — cv::Mat moves are O(1) refcount transfers.
+    experimentBuffer_.takeAll(batch.valid, batch.invalid);
+    framesSinceLastFlush_.store(0, std::memory_order_relaxed);
     const size_t n = batch.valid.size() + batch.invalid.size();
+    if (n == 0) return 0;
+    uint64_t batchBytes = 0;
+    for (const auto& f : batch.valid) batchBytes += processedFrameBytes(f);
+    for (const auto& f : batch.invalid) batchBytes += processedFrameBytes(f);
 
     std::scoped_lock qlk(flushQueueMutex_);
     if (!flushQueue_) {
         Hdf5Service* h = &hdf5;
         auto writeFn = [this, h](const ExperimentBatch& b) -> bool {
-            if (!h->appendFrames(b.valid, b.invalid)) return false;
+            const bool ok = h->appendFrames(b.valid, b.invalid);
+            uint64_t bytes = 0;
+            for (const auto& f : b.valid) bytes += processedFrameBytes(f);
+            for (const auto& f : b.invalid) bytes += processedFrameBytes(f);
+            flushQueueBytes_.remove(bytes, 1);
+            if (!ok) return false;
+            experimentAccounting_.persistenceCommitted.fetch_add(
+                static_cast<uint64_t>(b.valid.size() + b.invalid.size()), std::memory_order_relaxed);
             if (!b.valid.empty()) {
                 totalValidFlushed_.fetch_add(static_cast<uint64_t>(b.valid.size()),
                                              std::memory_order_relaxed);
@@ -1415,7 +1728,9 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
         flushQueue_ = std::make_unique<backend::recording::HdfWriteQueue<ExperimentBatch>>(
             3, writeFn, onError);
     }
+    flushQueueBytes_.add(batchBytes, 1);
     if (!flushQueue_->submit(std::move(batch))) {
+        flushQueueBytes_.remove(batchBytes, 1);
         return 0; // fatal error already surfaced via onError
     }
     return n;
@@ -1440,6 +1755,7 @@ void ProcessingService::setFlushInterval(size_t frames) {
     flushInterval_.store(frames);
     const size_t maxBuffered = defaultMaxBufferedFrames(frames);
     maxBufferedFrames_.store(maxBuffered, std::memory_order_relaxed);
+    experimentBuffer_.setPolicy({maxBuffered, maxBufferedBytes_.load(std::memory_order_relaxed)});
     SPDLOG_INFO("Flush interval set to: {} frames (max buffered backlog: {})", frames, maxBuffered);
 }
 
@@ -1507,8 +1823,8 @@ int ProcessingService::matchTrackWithActiveKernel(const std::vector<BatchTrack>&
     }
     int matchedTrack = -1;
     std::string error;
-    if (!kernel || !kernel->matchTrack(tracks, matchedThisFrame, detection, frameIndex,
-                                       frameWidth, matchedTrack, &error)) {
+    if (!kernel || !kernel->matchTrack(tracks, matchedThisFrame, detection, frameIndex, frameWidth,
+                                       matchedTrack, &error)) {
         SPDLOG_ERROR("matchTrackWithActiveKernel: kernel track matching failed: {}", error);
         return -1;
     }
@@ -1523,6 +1839,7 @@ ProcessingService::BatchPipelineConfig ProcessingService::makeRealtimeBatchPipel
         config.maxQueuedFrames = std::max(config.batchSize, rtBatchSettings_.maxQueuedFrames);
         config.workerCount = std::max<size_t>(1, rtBatchSettings_.workerCount);
         config.maxBatchDelayMs = std::max(1, rtBatchSettings_.maxBatchDelayMs);
+        config.maxQueuedBytes = rtBatchSettings_.maxQueuedBytes;
     }
     {
         std::scoped_lock cfgLk(configMutex_);
@@ -1550,6 +1867,7 @@ void ProcessingService::refreshRealtimeBatchPipelineConfig() {
     }
     batchConfig_.batchSize = fresh.batchSize;
     batchConfig_.maxQueuedFrames = fresh.maxQueuedFrames;
+    batchConfig_.maxQueuedBytes = fresh.maxQueuedBytes;
     batchConfig_.maxBatchDelayMs = fresh.maxBatchDelayMs;
     batchConfig_.processing = fresh.processing;
     batchConfig_.background = std::move(fresh.background);
@@ -1568,15 +1886,29 @@ TargetGroupEvent ProcessingService::selectTargetGroupTriggerOwner(
 }
 
 void ProcessingService::publishRealtimeValidationCallbacks(
-    const std::vector<FilterResult>& validations, uint64_t timestampNs) {
-    const auto targetOwner = selectTargetGroupTriggerOwner(validations);
+    const std::vector<FilterResult>& validations, uint64_t timestampNs,
+    const RealtimeFrameTiming& timing) {
+    // Latency-critical ordering invariant: the target-group (trigger) callback
+    // fires FIRST and no heavy lock is taken before it (see
+    // knowledge_map/task/2026-04-15-trigger-timing-bug.md). Timing capture
+    // below is lock-free and gated to a relaxed atomic load when disabled.
+    auto& timingRecorder = backend::diagnostics::PipelineTimingRecorder::instance();
+    const bool recordTiming = timing.present && timingRecorder.isEnabled();
+    uint64_t triggerDispatchUs = 0;
+
+    auto targetOwner = selectTargetGroupTriggerOwner(validations);
     if (targetOwner.isTargetGroup) {
+        targetOwner.frameIndex = timing.frameIndex;
+        targetOwner.hostTimestampUs = timing.grabUs;
         TargetGroupCallback tgCb;
         {
             std::scoped_lock cbLk(targetGroupCallbackMutex_);
             tgCb = targetGroupCallback_;
         }
         if (tgCb) tgCb(targetOwner);
+        if (recordTiming) {
+            triggerDispatchUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
+        }
     }
 
     // Hoist the callback copy out of the per-object loop: one mutex-guarded
@@ -1586,13 +1918,115 @@ void ProcessingService::publishRealtimeValidationCallbacks(
         std::scoped_lock cbLk(ringRatioCallbackMutex_);
         rrCb = ringRatioCallback_;
     }
-    if (!rrCb) return;
-
-    for (const auto& validation : validations) {
-        if (!validation.isValid || validation.ringRatio <= 0.0) {
-            continue;
+    if (rrCb) {
+        for (const auto& validation : validations) {
+            if (!validation.isValid || validation.ringRatio <= 0.0) {
+                continue;
+            }
+            rrCb(validation.ringRatio, static_cast<int64_t>(timestampNs));
         }
-        rrCb(validation.ringRatio, static_cast<int64_t>(timestampNs));
+    }
+
+    if (recordTiming) {
+        backend::diagnostics::FrameTimingRecord record;
+        record.frameIndex = timing.frameIndex;
+        record.deviceTimestamp = timestampNs;
+        record.grabUs = timing.grabUs;
+        record.algoStartUs = timing.algoStartUs;
+        record.algoEndUs = timing.algoEndUs;
+        record.triggerDispatchUs = triggerDispatchUs;
+        record.callbacksDoneUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
+        for (const auto& validation : validations) {
+            if (validation.isValid) {
+                ++record.validCount;
+            } else {
+                ++record.invalidCount;
+            }
+        }
+        record.isTargetGroup = targetOwner.isTargetGroup ? 1 : 0;
+        timingRecorder.recordFrame(record);
+    }
+}
+
+void ProcessingService::accumulateIdentificationCounters(
+    const std::vector<FilterResult>& validations, const ProcessingConfig& config,
+    double pixelToMicronFactor) {
+    namespace science = backend::processing::science;
+    static_assert(science::kInvalidReasonCount == 6,
+                  "idReasonCounts_ / IdentificationCounters.reasonCounts size must match "
+                  "science::kInvalidReasonCount");
+
+    idFramesProcessed_.fetch_add(1, std::memory_order_relaxed);
+
+    bool anyObject = false;
+    uint64_t targetGroupThisFrame = 0;
+    for (const auto& v : validations) {
+        // filterProcessedObjects emits at least one (possibly empty) result per
+        // frame; a real detection has a contour. objectCount > 0 marks frames
+        // that actually contained something to classify.
+        if (v.objectCount > 0 || v.innerContourCount > 0) {
+            anyObject = true;
+        }
+        if (v.isValid) {
+            idValidObjects_.fetch_add(1, std::memory_order_relaxed);
+            if (v.isTargetGroup) {
+                ++targetGroupThisFrame;
+            }
+        } else {
+            idInvalidObjects_.fetch_add(1, std::memory_order_relaxed);
+            for (auto reason : science::classifyInvalidReasons(v, config, pixelToMicronFactor)) {
+                idReasonCounts_[static_cast<size_t>(reason)].fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            }
+        }
+    }
+
+    if (anyObject) {
+        idFramesWithObjects_.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (targetGroupThisFrame > 0) {
+        idTargetGroupObjects_.fetch_add(targetGroupThisFrame, std::memory_order_relaxed);
+        // selectTargetGroupTriggerOwner dispatches only the first target-group
+        // object per frame; the rest are identified sort targets that never get
+        // a pulse. Count them as an identification loss.
+        idUnservedTargetGroupObjects_.fetch_add(targetGroupThisFrame - 1,
+                                                std::memory_order_relaxed);
+    }
+
+    // Mirror the headline loss values so crash reports carry live state (cheap
+    // relaxed stores; off the trigger-critical path).
+    auto& mirror = backend::diagnostics::CrashStateMirror::instance().processing;
+    mirror.targetGroupObjects.store(idTargetGroupObjects_.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+    mirror.unservedTargetGroupObjects.store(
+        idUnservedTargetGroupObjects_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    mirror.droppedValidFrames.store(droppedValidFrames_.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+}
+
+ProcessingService::IdentificationCounters ProcessingService::getIdentificationCounters() const {
+    IdentificationCounters c;
+    c.framesProcessed = idFramesProcessed_.load(std::memory_order_relaxed);
+    c.framesWithObjects = idFramesWithObjects_.load(std::memory_order_relaxed);
+    c.validObjects = idValidObjects_.load(std::memory_order_relaxed);
+    c.invalidObjects = idInvalidObjects_.load(std::memory_order_relaxed);
+    c.targetGroupObjects = idTargetGroupObjects_.load(std::memory_order_relaxed);
+    c.unservedTargetGroupObjects = idUnservedTargetGroupObjects_.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < 6; ++i) {
+        c.reasonCounts[i] = idReasonCounts_[i].load(std::memory_order_relaxed);
+    }
+    return c;
+}
+
+void ProcessingService::resetIdentificationCounters() {
+    idFramesProcessed_.store(0, std::memory_order_relaxed);
+    idFramesWithObjects_.store(0, std::memory_order_relaxed);
+    idValidObjects_.store(0, std::memory_order_relaxed);
+    idInvalidObjects_.store(0, std::memory_order_relaxed);
+    idTargetGroupObjects_.store(0, std::memory_order_relaxed);
+    idUnservedTargetGroupObjects_.store(0, std::memory_order_relaxed);
+    for (auto& r : idReasonCounts_) {
+        r.store(0, std::memory_order_relaxed);
     }
 }
 
@@ -1677,7 +2111,10 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
                                         observed, frameIndex, std::memory_order_relaxed)) {
     }
 
-    if (experimentActive_.load(std::memory_order_relaxed)) {
+    // Persist iff this frame's admission was counted under the run (not
+    // "iff active"): frames still in the batch pipeline when endExperiment()
+    // runs are drained there and reach the buffer for the remainder flush.
+    if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(frameIndex)) {
         bool shouldSave = validation.isValid;
         if (!validation.isValid) {
             const size_t counter = invalidFrameCounter_.fetch_add(1, std::memory_order_relaxed);
@@ -1703,9 +2140,40 @@ void ProcessingService::realtimeBatchLoop() {
         std::vector<FilterResult> frameValidations;
         uint64_t lastFrameIndex = 0;
         uint64_t lastFrameTimestamp = 0;
+        uint64_t lastFrameHostUs = 0;
         bool hasPendingFrame = false;
 
+        // Async-batch mode has no per-frame algo stamps (batch timing is
+        // aggregate), so the timing record carries frame identity only.
+        const auto makeTiming = [](uint64_t frameIndex, uint64_t hostUs) {
+            RealtimeFrameTiming timing;
+            timing.present = true;
+            timing.frameIndex = frameIndex;
+            timing.grabUs = hostUs;
+            return timing;
+        };
+
+        // Experiment accounting (issue #367): one outcome per admitted frame
+        // index. A frame whose images came back empty failed in the core
+        // (computeProcessedFrame) and is ProcessingFailed; every other frame
+        // terminates through its validations (Processed / Rejected).
+        const auto settleFrame = [this, &frameValidations, &lastFrameIndex] {
+            if (!frameValidations.empty()) {
+                noteRealtimeValidation(lastFrameIndex, frameValidations);
+            }
+        };
         for (auto& frame : batch) {
+            if (frame.originalImage.empty() || frame.processedImage.empty()) {
+                if (hasPendingFrame && frame.index != lastFrameIndex) {
+                    publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp,
+                                                       makeTiming(lastFrameIndex, lastFrameHostUs));
+                    settleFrame();
+                    frameValidations.clear();
+                    hasPendingFrame = false;
+                }
+                noteRealtimeOutcome(frame.index, backend::recording::FrameOutcome::ProcessingFailed);
+                continue;
+            }
             if (frame.validation.isValid) {
                 callbackValid.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -1714,12 +2182,16 @@ void ProcessingService::realtimeBatchLoop() {
             if (!hasPendingFrame) {
                 lastFrameIndex = frame.index;
                 lastFrameTimestamp = frame.timestampNs;
+                lastFrameHostUs = frame.hostTimestampUs;
                 hasPendingFrame = true;
             } else if (frame.index != lastFrameIndex || frame.timestampNs != lastFrameTimestamp) {
-                publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp);
+                publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp,
+                                                   makeTiming(lastFrameIndex, lastFrameHostUs));
+                settleFrame();
                 frameValidations.clear();
                 lastFrameIndex = frame.index;
                 lastFrameTimestamp = frame.timestampNs;
+                lastFrameHostUs = frame.hostTimestampUs;
             }
 
             frameValidations.push_back(frame.validation);
@@ -1727,7 +2199,9 @@ void ProcessingService::realtimeBatchLoop() {
         }
 
         if (hasPendingFrame && !frameValidations.empty()) {
-            publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp);
+            publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp,
+                                               makeTiming(lastFrameIndex, lastFrameHostUs));
+            settleFrame();
         }
     });
     if (!started) {
@@ -1767,7 +2241,7 @@ void ProcessingService::realtimeBatchLoop() {
 
         const uint64_t total = rtStore_->totalWritten();
         if (total == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            rtStore_->waitForFrame(0, std::chrono::milliseconds(5));
             continue;
         }
 
@@ -1786,6 +2260,9 @@ void ProcessingService::realtimeBatchLoop() {
         if (last + 1 < earliest) {
             const uint64_t skipped = earliest - (last + 1);
             skippedSinceSummary += skipped;
+            backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
+                backend::diagnostics::PipelineSkipReason::RingBehind, skipped);
+            noteRealtimeLost(skipped); // experiment accounting: StoreOverwritten
             last = earliest - 1;
             rtLastProcessed_.store(last, std::memory_order_relaxed);
             SPDLOG_DEBUG(
@@ -1794,32 +2271,57 @@ void ProcessingService::realtimeBatchLoop() {
         }
 
         if (last >= latest) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            // Event-driven wake instead of sleep-polling (issue #282); see
+            // the matching comment in realtimeInlineLoop.
+            rtStore_->waitForFrame(total, std::chrono::milliseconds(2));
         } else {
             const bool dropFrames = rtDropFrames_.load(std::memory_order_relaxed) &&
                                     !experimentActive_.load(std::memory_order_relaxed);
             const uint64_t firstIdx = dropFrames ? latest : last + 1;
-            if (dropFrames && last + 1 < firstIdx) {
-                skippedSinceSummary += firstIdx - (last + 1);
-            }
+            // Count the dropped-to-latest range only once an iteration
+            // actually advances rtLastProcessed_ past it (same rule as the
+            // inline loop): a failed slot fetch leaves `last` unchanged and
+            // retries, and counting up front would tally the range twice.
+            const uint64_t droppedToLatest =
+                (dropFrames && last + 1 < firstIdx) ? firstIdx - (last + 1) : 0;
+            bool droppedCounted = false;
+            auto countDroppedToLatest = [&] {
+                if (droppedToLatest > 0 && !droppedCounted) {
+                    droppedCounted = true;
+                    skippedSinceSummary += droppedToLatest;
+                    backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
+                        backend::diagnostics::PipelineSkipReason::DroppedToLatest, droppedToLatest);
+                }
+            };
 
             for (uint64_t idx = firstIdx;
                  idx <= latest && rtRunning_.load(std::memory_order_acquire); ++idx) {
                 const auto enqueueStart = clock::now();
                 if (!rtEnabled_.load(std::memory_order_relaxed)) {
+                    countDroppedToLatest();
                     rtLastProcessed_.store(idx, std::memory_order_relaxed);
                     continue;
                 }
 
                 backend::playback::Frame frame;
                 if (!rtStore_->getByWriteIndex(idx, frame)) {
-                    continue;
+                    continue; // not counted — retried from the same `last`
                 }
+                countDroppedToLatest();
+                // Experiment accounting (issue #367): a frame is admitted when
+                // it is handed to the batch queue; a rejected frame is a
+                // processing-side loss and terminates immediately. Outcomes
+                // for accepted frames are counted when the batch callback
+                // publishes them (same rule as the inline loop).
+                noteRealtimeAdmitted(idx);
                 const bool accepted = enqueueBatchFrame(frame, idx);
                 if (accepted) {
                     ++queuedSinceSummary;
                 } else {
                     ++skippedSinceSummary;
+                    backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
+                        backend::diagnostics::PipelineSkipReason::BatchQueueRejected);
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
                 }
                 rtLastProcessed_.store(idx, std::memory_order_relaxed);
 
@@ -1920,6 +2422,9 @@ void ProcessingService::realtimeLoop() {
 void ProcessingService::realtimeInlineLoop() {
     rtLastProcessed_.store(0);
     using clock = std::chrono::steady_clock;
+    // Per-frame latency instrumentation sink (no-op unless enabled; see
+    // knowledge_map/diagnostics/PipelineTimingRecorder.md).
+    auto& rtTimingRecorder = backend::diagnostics::PipelineTimingRecorder::instance();
     auto lastSummaryTs = clock::now();
     uint64_t framesSinceSummary = 0;
     uint64_t framesSkippedSinceSummary = 0;
@@ -1960,7 +2465,7 @@ void ProcessingService::realtimeInlineLoop() {
         }
         const uint64_t total = rtStore_->totalWritten();
         if (total == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            rtStore_->waitForFrame(0, std::chrono::milliseconds(5));
             continue;
         }
         const uint64_t earliest = rtStore_->earliestAvailableIndex();
@@ -1978,12 +2483,24 @@ void ProcessingService::realtimeInlineLoop() {
             // Skip ahead if our pointer fell behind the ring window
             uint64_t skipped = earliest - (last + 1);
             framesSkippedSinceSummary += skipped;
+            rtTimingRecorder.countSkipped(backend::diagnostics::PipelineSkipReason::RingBehind,
+                                          skipped);
+            noteRealtimeLost(skipped);
             last = earliest - 1;
+            // Publish the advance immediately: if the frame fetch below fails
+            // (slot mid-write / evicted) the loop retries with `last` already
+            // past the counted range, so the count cannot repeat.
+            rtLastProcessed_.store(last);
             SPDLOG_DEBUG("Processing fell behind, skipping {} frames (last={}, earliest={})",
                          skipped, last, earliest);
         }
         if (last >= latest) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            // Caught up: block until the producer pushes the next frame
+            // (event-driven, issue #282) instead of sleep-polling — the old
+            // fixed 2 ms poll put a uniform 0-2 ms wait in front of every
+            // frame and dominated end-to-end latency. The timeout preserves
+            // stop responsiveness (rtRunning_ is rechecked each iteration).
+            rtStore_->waitForFrame(total, std::chrono::milliseconds(2));
             continue;
         }
 
@@ -1993,13 +2510,27 @@ void ProcessingService::realtimeInlineLoop() {
         const bool dropFrames =
             rtDropFrames_.load(std::memory_order_relaxed) && !experimentActive_.load();
         if (dropFrames) {
-            const uint64_t nextIdx = latest;
-            if (last + 1 < nextIdx) {
-                framesSkippedSinceSummary += (nextIdx - (last + 1));
-            }
-            const uint64_t idx = nextIdx;
+            const uint64_t idx = latest;
+            // Frames jumped over to reach `idx`. Count them ONLY on paths
+            // that advance rtLastProcessed_ past the range: a failed frame
+            // fetch (slot mid-write — totalWritten_ increments before the
+            // slot copy — or evicted) leaves `last` unchanged and retries,
+            // so counting up front would tally the same range again next
+            // iteration (seen as skip-accounting overshoot on slow CI
+            // runners once the event-driven wake made the consumer hot).
+            const uint64_t droppedToLatest = (last + 1 < idx) ? idx - (last + 1) : 0;
+            bool droppedCounted = false;
+            auto countDroppedToLatest = [&] {
+                if (droppedToLatest > 0 && !droppedCounted) {
+                    droppedCounted = true;
+                    framesSkippedSinceSummary += droppedToLatest;
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::DroppedToLatest, droppedToLatest);
+                }
+            };
             const auto frameStart = clock::now();
             if (!rtEnabled_.load()) {
+                countDroppedToLatest();
                 rtLastProcessed_.store(idx);
                 continue;
             }
@@ -2016,11 +2547,14 @@ void ProcessingService::realtimeInlineLoop() {
             if (useROI) {
                 // Clamp ROI to reasonable bounds first
                 if (!rtStore_->getByWriteIndex(idx, f)) {
-                    continue;
+                    continue; // not counted — retried from the same `last`
                 }
                 if (f.width == 0 || f.height == 0 || f.data.empty()) {
-                    continue;
+                    continue; // not counted — retried from the same `last`
                 }
+                // Frame readable: every exit past this point advances
+                // rtLastProcessed_, so the dropped range is counted exactly once.
+                countDroppedToLatest();
                 const int frameW = static_cast<int>(f.width);
                 const int frameH = static_cast<int>(f.height);
                 roi.x = std::max(0, std::min(roi.x, frameW - 1));
@@ -2038,6 +2572,8 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat mask(roi.h, roi.w, CV_8UC1, cv::Scalar(0));
                 cv::Mat blurredCurr, blurredBg, thresh;
                 const auto algoStart = clock::now();
+                const uint64_t algoStartUsRec =
+                    rtTimingRecorder.isEnabled() ? rtTimingRecorder.nowUs() : 0;
                 auto toOdd = [](int v) -> int {
                     if (v < 1) v = 1;
                     if ((v % 2) == 0) v += 1;
@@ -2099,22 +2635,32 @@ void ProcessingService::realtimeInlineLoop() {
                 if (autoCaptureEmptyCheck) emptyConfig.gaussian_blur_size = 1;
                 bool emptyFrame = true;
                 std::string emptyError;
-                const cv::Mat emptyBackground = autoCaptureEmptyCheck
-                    ? autoCaptureBackground
-                    : (hasBackground
-                           ? (*bgShared)(cv::Rect(roi.x, roi.y, roi.w, roi.h))
-                           : cv::Mat{});
+                const cv::Mat emptyBackground =
+                    autoCaptureEmptyCheck
+                        ? autoCaptureBackground
+                        : (hasBackground ? (*bgShared)(cv::Rect(roi.x, roi.y, roi.w, roi.h))
+                                         : cv::Mat{});
+                noteRealtimeAdmitted(idx);
                 if (!isImageEmptyWithActiveKernel(
-                        autoCaptureEmptyCheck ? blurredCurr : grayROI, emptyBackground,
-                        emptyConfig, Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck,
-                        emptyFrame, &emptyError)) {
+                        autoCaptureEmptyCheck ? blurredCurr : grayROI, emptyBackground, emptyConfig,
+                        Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
                     SPDLOG_ERROR("Realtime processing core empty check failed for frame {}: {}",
                                  idx, emptyError);
+                    // A core failure is a ProcessingFailed outcome, never an empty
+                    // frame (issue #367): skip the frame explicitly.
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::KernelError);
+                    rtLastProcessed_.store(idx);
+                    continue;
                 }
                 if (emptyFrame) {
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::Empty, &f);
                     SPDLOG_TRACE("Empty frame detected (idx={}, pixel_count={}, threshold={}), "
                                  "skipping further processing",
                                  idx, pixelCount, config.empty_frame_pixel_threshold);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::EmptyFrame);
 
                     // Auto-capture logic (only when experiment is NOT running)
                     if (config.auto_background_enabled && !experimentActive_.load()) {
@@ -2192,10 +2738,12 @@ void ProcessingService::realtimeInlineLoop() {
                     hasBackground ? (*bgShared)(cv::Rect(roi.x, roi.y, roi.w, roi.h)) : cv::Mat{};
                 std::string kernelError;
                 if (!processMaskWithActiveKernel(grayROI, kernelBackground, config,
-                                                 Roi{0, 0, roi.w, roi.h}, mask,
-                                                 &kernelError)) {
+                                                 Roi{0, 0, roi.w, roi.h}, mask, &kernelError)) {
                     SPDLOG_ERROR("Realtime processing core failed for frame {}: {}", idx,
                                  kernelError);
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::KernelError);
                     rtLastProcessed_.store(idx);
                     continue;
                 }
@@ -2208,6 +2756,7 @@ void ProcessingService::realtimeInlineLoop() {
                     validations.push_back(FilterResult{});
                 }
                 const FilterResult& validation = validations.front();
+                noteRealtimeValidation(idx, validations);
 
                 // Extract contours from validation result and adjust coordinates for full-frame
                 // snapshot Contours from filterProcessedImage are in ROI coordinates, need to
@@ -2222,6 +2771,7 @@ void ProcessingService::realtimeInlineLoop() {
                     }
                 }
                 const auto algoEnd = clock::now();
+                const uint64_t algoEndUsRec = algoStartUsRec != 0 ? rtTimingRecorder.nowUs() : 0;
                 const double algoMs =
                     std::chrono::duration<double, std::milli>(algoEnd - algoStart).count();
                 algoMsSinceSummary += algoMs;
@@ -2233,7 +2783,14 @@ void ProcessingService::realtimeInlineLoop() {
                     }
                 }
 
-                publishRealtimeValidationCallbacks(validations, f.timestamp);
+                publishRealtimeValidationCallbacks(
+                    validations, f.timestamp,
+                    {true, idx, f.hostTimestampUs, algoStartUsRec, algoEndUsRec});
+
+                // Off the trigger-critical path: update the identification
+                // funnel + invalid-reason histogram from this frame's objects.
+                accumulateIdentificationCounters(
+                    validations, config, pixelToMicronFactor_.load(std::memory_order_relaxed));
 
                 // Always accumulate frames for monitoring (with size limit)
                 for (const auto& objectValidation : validations) {
@@ -2246,9 +2803,9 @@ void ProcessingService::realtimeInlineLoop() {
                     size_t vSz = 0;
                     size_t iSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     SPDLOG_TRACE("Accumulated frames (idx={}): valid={}, invalid={}, "
                                  "flush_interval={}, since_last_flush={}, mem_mb={:.1f}",
@@ -2275,8 +2832,12 @@ void ProcessingService::realtimeInlineLoop() {
                 // experiment/snapshot
                 cv::Mat grayFull;
 
-                // Also accumulate frames for experiment if active
-                if (experimentActive_.load()) {
+                // Also accumulate frames for the experiment iff this frame's
+                // admission was counted under the run. Not "iff active": the
+                // frame in flight across endExperiment() (which the drain wait
+                // there lets finish) must still reach the buffer so the
+                // remainder flush persists it (review, 2026-09-08).
+                if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);
@@ -2430,11 +2991,14 @@ void ProcessingService::realtimeInlineLoop() {
                 // No ROI specified - process full frame (fallback to original behavior)
                 backend::playback::Frame f{};
                 if (!rtStore_->getByWriteIndex(idx, f)) {
-                    continue;
+                    continue; // not counted — retried from the same `last`
                 }
                 if (f.width == 0 || f.height == 0 || f.data.empty()) {
-                    continue;
+                    continue; // not counted — retried from the same `last`
                 }
+                // Frame readable: every exit past this point advances
+                // rtLastProcessed_, so the dropped range is counted exactly once.
+                countDroppedToLatest();
                 cv::Mat gray = makeGrayCopy(f);
                 if (gray.empty()) {
                     rtLastProcessed_.store(idx);
@@ -2460,6 +3024,8 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiCurr = gray(cvRoi);
                 cv::Mat blurredCurr, blurredBg, thresh;
                 const auto algoStart = clock::now();
+                const uint64_t algoStartUsRec =
+                    rtTimingRecorder.isEnabled() ? rtTimingRecorder.nowUs() : 0;
                 auto toOdd = [](int v) -> int {
                     if (v < 1) v = 1;
                     if ((v % 2) == 0) v += 1;
@@ -2518,20 +3084,30 @@ void ProcessingService::realtimeInlineLoop() {
                 if (autoCaptureEmptyCheck) emptyConfig.gaussian_blur_size = 1;
                 bool emptyFrame = true;
                 std::string emptyError;
-                const cv::Mat emptyBackground = autoCaptureEmptyCheck
-                    ? autoCaptureBackground
-                    : (hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
+                const cv::Mat emptyBackground =
+                    autoCaptureEmptyCheck ? autoCaptureBackground
+                                          : (hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
+                noteRealtimeAdmitted(idx);
                 if (!isImageEmptyWithActiveKernel(
-                        autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground,
-                        emptyConfig, Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck,
-                        emptyFrame, &emptyError)) {
+                        autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground, emptyConfig,
+                        Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
                     SPDLOG_ERROR("Realtime processing core empty check failed for frame {}: {}",
                                  idx, emptyError);
+                    // A core failure is a ProcessingFailed outcome, never an empty
+                    // frame (issue #367): skip the frame explicitly.
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::KernelError);
+                    rtLastProcessed_.store(idx);
+                    continue;
                 }
                 if (emptyFrame) {
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::Empty, &f);
                     SPDLOG_TRACE("Empty frame detected (idx={}, pixel_count={}, threshold={}), "
                                  "skipping further processing",
                                  idx, pixelCount, config.empty_frame_pixel_threshold);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::EmptyFrame);
 
                     // Auto-capture logic (only when experiment is NOT running)
                     if (config.auto_background_enabled && !experimentActive_.load()) {
@@ -2615,11 +3191,13 @@ void ProcessingService::realtimeInlineLoop() {
                 }
 
                 std::string kernelError;
-                if (!processMaskWithActiveKernel(
-                        gray, hasBackground ? *bgShared : cv::Mat{}, config, roi, mask,
-                        &kernelError)) {
+                if (!processMaskWithActiveKernel(gray, hasBackground ? *bgShared : cv::Mat{},
+                                                 config, roi, mask, &kernelError)) {
                     SPDLOG_ERROR("Realtime processing core failed for frame {}: {}", idx,
                                  kernelError);
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::KernelError);
                     rtLastProcessed_.store(idx);
                     continue;
                 }
@@ -2629,12 +3207,14 @@ void ProcessingService::realtimeInlineLoop() {
                     validations.push_back(FilterResult{});
                 }
                 const FilterResult& validation = validations.front();
+                noteRealtimeValidation(idx, validations);
 
                 // Extract contours from validation result for snapshot
                 std::vector<std::vector<cv::Point>> contours =
                     validation.allContours ? *validation.allContours
                                            : std::vector<std::vector<cv::Point>>{};
                 const auto algoEnd = clock::now();
+                const uint64_t algoEndUsRec = algoStartUsRec != 0 ? rtTimingRecorder.nowUs() : 0;
                 const double algoMs =
                     std::chrono::duration<double, std::milli>(algoEnd - algoStart).count();
                 algoMsSinceSummary += algoMs;
@@ -2646,7 +3226,14 @@ void ProcessingService::realtimeInlineLoop() {
                     }
                 }
 
-                publishRealtimeValidationCallbacks(validations, f.timestamp);
+                publishRealtimeValidationCallbacks(
+                    validations, f.timestamp,
+                    {true, idx, f.hostTimestampUs, algoStartUsRec, algoEndUsRec});
+
+                // Off the trigger-critical path: update the identification
+                // funnel + invalid-reason histogram from this frame's objects.
+                accumulateIdentificationCounters(
+                    validations, config, pixelToMicronFactor_.load(std::memory_order_relaxed));
 
                 // Always accumulate frames for monitoring (with size limit)
                 cv::Mat roiOriginal = gray(cvRoi);
@@ -2661,9 +3248,9 @@ void ProcessingService::realtimeInlineLoop() {
                     size_t vSz = 0;
                     size_t iSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     SPDLOG_DEBUG("Accumulated frames (idx={}): valid={}, invalid={}, "
                                  "flush_interval={}, since_last_flush={}, mem_mb={:.1f}",
@@ -2686,8 +3273,12 @@ void ProcessingService::realtimeInlineLoop() {
                                  backend::Tools::getProcessMemoryMB());
                 }
 
-                // Also accumulate frames for experiment if active
-                if (experimentActive_.load()) {
+                // Also accumulate frames for the experiment iff this frame's
+                // admission was counted under the run. Not "iff active": the
+                // frame in flight across endExperiment() (which the drain wait
+                // there lets finish) must still reach the buffer so the
+                // remainder flush persists it (review, 2026-09-08).
+                if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx)) {
                     // Determine if we should save this frame
                     bool shouldSave = false;
                     if (validation.isValid) {
@@ -2773,9 +3364,9 @@ void ProcessingService::realtimeInlineLoop() {
                 // Extended summary: buffers, ROI, background, and process memory
                 size_t vSz = 0, iSz = 0, monValidSz = 0, monInvalidSz = 0;
                 {
-                    std::scoped_lock fLk(framesMutex_);
-                    vSz = validFrames_.size();
-                    iSz = invalidFrames_.size();
+                    const auto bufferedCounts = experimentBuffer_.counts();
+                    vSz = bufferedCounts.valid;
+                    iSz = bufferedCounts.invalid;
                 }
                 {
                     std::scoped_lock mLk(monitoringFramesMutex_);
@@ -2845,6 +3436,8 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiCurr = gray(cvRoi);
                 cv::Mat blurredCurr, blurredBg, thresh;
                 const auto algoStart = clock::now();
+                const uint64_t algoStartUsRec =
+                    rtTimingRecorder.isEnabled() ? rtTimingRecorder.nowUs() : 0;
                 auto toOdd = [](int v) -> int {
                     if (v < 1) v = 1;
                     if ((v % 2) == 0) v += 1;
@@ -2903,20 +3496,30 @@ void ProcessingService::realtimeInlineLoop() {
                 if (autoCaptureEmptyCheck) emptyConfig.gaussian_blur_size = 1;
                 bool emptyFrame = true;
                 std::string emptyError;
-                const cv::Mat emptyBackground = autoCaptureEmptyCheck
-                    ? autoCaptureBackground
-                    : (hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
+                const cv::Mat emptyBackground =
+                    autoCaptureEmptyCheck ? autoCaptureBackground
+                                          : (hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
+                noteRealtimeAdmitted(idx);
                 if (!isImageEmptyWithActiveKernel(
-                        autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground,
-                        emptyConfig, Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck,
-                        emptyFrame, &emptyError)) {
+                        autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground, emptyConfig,
+                        Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
                     SPDLOG_ERROR("Realtime processing core empty check failed for frame {}: {}",
                                  idx, emptyError);
+                    // A core failure is a ProcessingFailed outcome, never an empty
+                    // frame (issue #367): skip the frame explicitly.
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::KernelError);
+                    rtLastProcessed_.store(idx);
+                    continue;
                 }
                 if (emptyFrame) {
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::Empty, &f);
                     SPDLOG_TRACE("Empty frame detected (idx={}, pixel_count={}, threshold={}), "
                                  "skipping further processing",
                                  idx, pixelCount, config.empty_frame_pixel_threshold);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::EmptyFrame);
 
                     // Auto-capture logic (only when experiment is NOT running)
                     if (config.auto_background_enabled && !experimentActive_.load()) {
@@ -3019,11 +3622,13 @@ void ProcessingService::realtimeInlineLoop() {
                 }
 
                 std::string kernelError;
-                if (!processMaskWithActiveKernel(
-                        gray, hasBackground ? *bgShared : cv::Mat{}, config, roi, mask,
-                        &kernelError)) {
+                if (!processMaskWithActiveKernel(gray, hasBackground ? *bgShared : cv::Mat{},
+                                                 config, roi, mask, &kernelError)) {
                     SPDLOG_ERROR("Realtime processing core failed for frame {}: {}", idx,
                                  kernelError);
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
+                    rtTimingRecorder.countSkipped(
+                        backend::diagnostics::PipelineSkipReason::KernelError);
                     rtLastProcessed_.store(idx);
                     continue;
                 }
@@ -3040,6 +3645,7 @@ void ProcessingService::realtimeInlineLoop() {
                     validations.push_back(FilterResult{});
                 }
                 const FilterResult& validation = validations.front();
+                noteRealtimeValidation(idx, validations);
 
                 // Extract contours from validation result for snapshot
                 // Contours are in ROI-relative coordinates — adjust to full-frame for
@@ -3054,6 +3660,7 @@ void ProcessingService::realtimeInlineLoop() {
                     }
                 }
                 const auto algoEnd = clock::now();
+                const uint64_t algoEndUsRec = algoStartUsRec != 0 ? rtTimingRecorder.nowUs() : 0;
                 const double algoMs =
                     std::chrono::duration<double, std::milli>(algoEnd - algoStart).count();
                 algoMsSinceSummary += algoMs;
@@ -3065,7 +3672,14 @@ void ProcessingService::realtimeInlineLoop() {
                     }
                 }
 
-                publishRealtimeValidationCallbacks(validations, f.timestamp);
+                publishRealtimeValidationCallbacks(
+                    validations, f.timestamp,
+                    {true, idx, f.hostTimestampUs, algoStartUsRec, algoEndUsRec});
+
+                // Off the trigger-critical path: update the identification
+                // funnel + invalid-reason histogram from this frame's objects.
+                accumulateIdentificationCounters(
+                    validations, config, pixelToMicronFactor_.load(std::memory_order_relaxed));
 
                 // Always accumulate frames for monitoring (with size limit)
                 cv::Mat roiOriginal = gray(cvRoi);
@@ -3080,9 +3694,9 @@ void ProcessingService::realtimeInlineLoop() {
                     size_t vSz = 0;
                     size_t iSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     SPDLOG_TRACE("Accumulated frames (idx={}): valid={}, invalid={}, "
                                  "flush_interval={}, since_last_flush={}, mem_mb={:.1f}",
@@ -3105,8 +3719,12 @@ void ProcessingService::realtimeInlineLoop() {
                                  backend::Tools::getProcessMemoryMB());
                 }
 
-                // Also accumulate frames for experiment if active
-                if (experimentActive_.load()) {
+                // Also accumulate frames for the experiment iff this frame's
+                // admission was counted under the run. Not "iff active": the
+                // frame in flight across endExperiment() (which the drain wait
+                // there lets finish) must still reach the buffer so the
+                // remainder flush persists it (review, 2026-09-08).
+                if (!experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);
@@ -3281,9 +3899,9 @@ void ProcessingService::realtimeInlineLoop() {
                     // Extended summary: buffers, ROI, background, and process memory
                     size_t vSz = 0, iSz = 0, monValidSz = 0, monInvalidSz = 0;
                     {
-                        std::scoped_lock fLk(framesMutex_);
-                        vSz = validFrames_.size();
-                        iSz = invalidFrames_.size();
+                        const auto bufferedCounts = experimentBuffer_.counts();
+                        vSz = bufferedCounts.valid;
+                        iSz = bufferedCounts.invalid;
                     }
                     {
                         std::scoped_lock mLk(monitoringFramesMutex_);
