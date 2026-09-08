@@ -2,6 +2,10 @@
 
 #include <QMainWindow>
 
+#include "backend/app/ExperimentReadiness.h"
+
+#include <chrono>
+
 class QLabel;
 class QTimer;
 class PlaybackPanel;
@@ -14,7 +18,6 @@ class QToolButton;
 class QShowEvent;
 class QResizeEvent;
 class QCloseEvent;
-template<typename T> class QFutureWatcher;
 
 namespace backend { class AppBackend; }
 namespace backend::app { struct ExperimentReadinessSnapshot; }
@@ -94,13 +97,15 @@ private:
     // Issue #369: explain blocking readiness gates (with remediation) and
     // return false; true when the snapshot is ready.
     bool explainReadiness(const backend::app::ExperimentReadinessSnapshot& readiness);
-    void restoreRealtimeModeIfNeeded();
+    // Shared-backend lifecycle (issue #372): the coordinator owns flush,
+    // stop and finalization; this slot renders each status transition
+    // (queued to the GUI thread from the coordinator's callback).
+    void onExperimentStatus(const backend::app::ExperimentStatus& status);
     // Issue #363
     void setupStatusSurfaces();
     frontend::StatisticsData sampleStats();
     void renderStats(const frontend::StatisticsData& data);
     void refreshDiagnostics(const frontend::StatisticsData& data);
-    void finishStopExperiment(bool flushOk);
     void updateTabStates();
     void updateDeliveryModeBadge();
     void startExperimentServices();
@@ -133,10 +138,7 @@ private:
     uint64_t experimentStartTimeNs_{0};
     bool experimentActive_{false};
     bool experimentServicesActive_{false};
-    bool flushInProgress_{false};
-    bool restoreRealtimeModeAfterExperiment_{false};
-    int realtimeModeBeforeExperiment_{0};
-    QFutureWatcher<size_t>* flushWatcher_{nullptr};
+    bool flushInProgress_{false}; // mirrors ExperimentStatus::flushing
     QAction* startExperimentAct_ = nullptr;
     QAction* stopExperimentAct_ = nullptr;
     QPushButton* startExperimentBtn_ = nullptr;
@@ -147,9 +149,8 @@ private:
     frontend::AlertBanner* alertBanner_ = nullptr;
     QDialog* diagnosticsDialog_ = nullptr;
     QPlainTextEdit* diagnosticsText_ = nullptr;
-    QFutureWatcher<bool>* finalizeWatcher_ = nullptr;
     bool stopInProgress_{false};
-    bool finalizeHandled_{false};
+    std::chrono::steady_clock::time_point stopRequestedAt_{};
     uint64_t runOperationId_{0};
     QString compactStatus_;
     QLabel* roiLabel_ = nullptr;

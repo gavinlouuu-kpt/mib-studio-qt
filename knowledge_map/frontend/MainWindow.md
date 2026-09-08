@@ -37,22 +37,20 @@
   The window no longer opens the HDF5 file, initializes datasets, sets the
   accounting context or calls `startExperiment()` itself; the coordinator
   does all of that inside the transaction and `experimentStartTimeNs_`
-  comes from the frozen snapshot. Stop still flushes / writes experiment
-  info, accounting and acquisition provenance and closes the file, then
-  calls `finish()`; a flush or metadata failure is reported to the
-  coordinator as an unresolved fault so the next Start is blocked until
-  acknowledged. Start blocks with an explicit
+  comes from the frozen snapshot. Stop is `requestStop(false)` on the
+  coordinator (issue #372): the backend's worker flushes, writes experiment
+  info / accounting / acquisition provenance, closes the file and publishes
+  the terminal `ExperimentStatus`; the window only renders. A flush or
+  metadata failure is latched by the coordinator as an unresolved fault so
+  the next Start is blocked until acknowledged. Start blocks with an explicit
   acknowledgement when `CaptureService::activeDeliveryMode()` is
   `LatestFrame`: "Switch to Every Frame" (default; routes through
   `ConnectTab::setDeliveryMode`, i.e. the same setConfig + persist path as
   the combo, without restarting the running capture), "Continue with Latest
-  Frame" (explicit override), or Cancel (abort). Stop path now issues an explicit
-  `Hdf5Service::flush()` immediately before `writeExperimentInfo()` to reduce
-  risk of metadata writes invalidating already-persisted frame batches. When
-  multi-image is enabled and realtime mode is `async_batch`, start now
-  temporarily switches processing to `inline` for the experiment so series
-  frames are actually captured and reviewable; stop (and every refused
-  Start) restores the prior mode via `restoreRealtimeModeIfNeeded()`.
+  Frame" (explicit override), or Cancel (abort). When multi-image is enabled
+  and realtime mode is `async_batch`, the coordinator's Start switches
+  processing to `inline` for the run and its finalization restores it; the
+  window only shows the explanation dialog.
   The constructor records the application identity
   (`MIB_STUDIO_QT_VERSION_FULL`, OS/arch) in the coordinator so every frozen
   run snapshot carries it.
@@ -152,15 +150,21 @@ created in `setupStatusSurfaces()`:
   declared budget is exceeded) and the preview's presentation counters
   (`PlaybackPanel::displayFramesPresented/Skipped`, labelled as
   presentation-only, never acquisition/processing/persistence loss).
-- **Two-phase stop.** `onStopExperiment` sets `Stopping`, waits for an
-  in-flight round-robin flush, then `Saving` and runs the drain
-  (`finishFlush`) on `QtConcurrent` via `finalizeWatcher_`;
-  `finishStopExperiment(flushOk)` writes experiment info / accounting /
-  provenance, closes the file, raises the alerts above on failure and ends
-  with `Complete` (or the latched `Failed`). `stopInProgress_` disables
-  Start/Stop, suppresses the stats tick's flush scheduling and compact text,
-  and makes the fatal-save callback skip a second stop. `closeEvent` and the
-  destructor wait for `finalizeWatcher_`. Guards: `frontend.run_status_model`
+- **Stop is a status stream.** `onStopExperiment` calls
+  `ExperimentCoordinator::requestStop(false)` and sets `Stopping`;
+  `onExperimentStatus(status)` (queued to the GUI thread from the
+  coordinator's callback, registered in the constructor and cleared first
+  thing in the destructor) renders `Stopping` as `Saving`, and on
+  `terminal` raises `save.flush` / `save.metadata` / `run.accounting` from
+  `status.faultCode` and `status.completion`, latches the failure, sets
+  `Complete` and only then shows the deferred dialogs. A fatal save error
+  reaches the coordinator first (it finalizes the run as `Failed`); the
+  window's fatal callback marks `Saving` and shows the critical dialog. A
+  Stop issued by another client (the bridge) or by shutdown is rendered the
+  same way. `stopInProgress_` disables Start/Stop and the compact text;
+  `flushInProgress_` mirrors `status.flushing` for the camera operation
+  guard. `closeEvent` calls `experiment().shutdown()` (bounded) when a run
+  or finalization is active. Guards: `frontend.run_status_model`
   (pure), `frontend.run_status_ui` (25 ticks do not touch a raised alert,
   aggregation ×100, acknowledge ≠ resolve, latched Failed survives Complete
   and ticks, bounded width, keyboard-reachable banner buttons, Diagnostics
@@ -171,9 +175,6 @@ created in `setupStatusSurfaces()`:
 - `connectTab_`, `overviewTab_`, `experimentTabs_` (QTabWidget with child
   tabs), `playbackPanel_`, `sidebarWidget_`, `updater_`, `initManager_`,
   `runStatusModel_`/`alertModel_`/`alertBanner_`/`runStatusWidget_` (#363).
-- `QFutureWatcher<size_t> flushWatcher_` — awaits a round-robin HDF5 flush
-  without blocking the UI thread; `QFutureWatcher<bool> finalizeWatcher_`
-  awaits the stop-time drain.
 - The nested Experiment pages wire the Monitoring tune panel's
   `applyRequested` to `AppConfigWatcher::onApplyProcessingDraft` and its
   `processingDraftApplied` result back to `onApplyResult` (issue #364, one
@@ -207,19 +208,14 @@ created in `setupStatusSurfaces()`:
 
 ## Gotchas
 
-- **Stop-time remainder goes through the backend flush path.** After the
-  asynchronous flush and `endExperiment()`, frames that arrived in between
-  are still in the experiment buffer. `finishStopExperiment` hands them to
-  `ProcessingService::flushBufferedFrames()` + `finishFlush()` so the write
-  queue credits `persistenceCommitted`. Appending `getValidFrames()` copies
-  directly (the pre-2026-09-08 code) left them counted as
-  `persistencePendingAtStop` and labelled a clean run IntentionallyPartial
-  (bench: 49 of 36,592 frames). Regression evidence: mock HF-stream run on
-  2026-09-08 reconciles 284/284 with 0 pending.
-- **No modal before the HDF5 file is closed.** The "Experiment Accounting"
-  warning is built during finalization but shown only after `closeFile()`
-  and `experiment().finish()`; shown earlier it held the file open for as
-  long as the operator took to dismiss it (108 s on the bench).
+- **The window never touches `Hdf5Service` for a run.** Flush, the
+  stop-time remainder, metadata, accounting, provenance and `closeFile()`
+  live in [[../architecture/ExperimentCoordinator]] (the 2026-09-08 bench
+  defects, IntentionallyPartial labelling of clean runs and a modal holding
+  the file open for 108 s, were both caused by window-owned finalization).
+- **No modal before the terminal status.** Dialogs in `onExperimentStatus`
+  run only when `status.terminal` is true, i.e. after the coordinator closed
+  the file.
 - `closeEvent` stops experiment services, then stops the capture service
   before the window destructs. Mis-ordering causes the stale `StreamModule`
   stats seen in `docs/howto/safe-start-stop-egrabber.md`. This and the
@@ -252,8 +248,6 @@ created in `setupStatusSurfaces()`:
   the camera, so between runs the badge tracks the requested config mode
   (with the "(requested)" suffix) — the ConnectTab combo is the
   requested-mode source of truth.
-- The async experiment flush (`QtConcurrent::run` + `flushWatcher_`) captures
-  the **backend pointer, not `this`**: `QFutureWatcher`'s destructor does not
-  block on a running future, so the task can outlive the window (the backend
-  cannot — it is constructed before the window in `main()`). The destructor
-  additionally `waitForFinished()`s any in-flight flush before members die.
+- The coordinator's status callback captures `this` and posts a queued
+  lambda; the destructor clears the callback before any member dies, and
+  `AppBackend` (constructed before the window in `main()`) outlives it.

@@ -5,6 +5,29 @@
 
 ## Features shipped
 
+- **Shared backend experiment lifecycle (issue #372 G2/G3)** (2026-09-08) —
+  `ExperimentCoordinator` now owns the run after Start: a worker thread runs
+  the periodic flush and, on `requestStop()`, the whole finalization (drain,
+  stop-time remainder through the flush path, experiment info, accounting,
+  acquisition provenance, config JSON, close) and publishes a terminal
+  `ExperimentStatus` (completion from the reconciled accounting,
+  `finalizationOk`, fault code). `onFatalSaveError()` finalizes as `Failed`
+  with a readable file; `shutdown()` is bounded and idempotent and runs
+  first in `AppBackend::shutdown()`. `ExperimentRunState` carries the bridge
+  contract values (`Idle=0 … Failed=4`; `Running` renamed `Active`).
+  `BackendFacade` exposes it as `ExperimentCommand` (type 6; EvaluateReadiness /
+  Start / Stop / Status), `fetchExperimentReadiness/Status`, typed
+  start/stop outcomes and `ExperimentStatusEvent` (kind 8). `MainWindow` is a
+  client: `requestStop` + `onExperimentStatus`; the flush/finalize
+  `QFutureWatcher`s, every `Hdf5Service` call in the stop path and the
+  realtime-mode restore are gone. Spec:
+  `docs/superpowers/specs/2026-09-08-shared-backend-experiment-lifecycle-design.md`;
+  plan: `docs/superpowers/plans/2026-09-08-shared-backend-experiment-lifecycle.md`.
+  Tests: `backend.experiment_readiness` (finalize Complete with the
+  remainder committed, fatal → Failed + readable file, Busy/NotActive,
+  shutdown while Active), `backend.facade_boundary` (readiness pull → Start →
+  Starting/Active/Stopping/Idle events → Stop → terminal).
+
 - **Fix: clean runs labelled IntentionallyPartial; accounting dialog held the
   file open** (2026-09-08) — Found by the first recording soak with real
   detections (mock camera fed with the Hugging Face `gavinlouuu/512x96stream`

@@ -362,15 +362,33 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
                                tr("Data could not be saved: %1").arg(q),
                                tr("Check free space and permissions on the destination; the run is incomplete."));
             if (runStatusModel_ && experimentActive_) runStatusModel_->latchFailure(runOperationId_, q);
-            backend_.experiment().reportUnresolvedFault("save.fatal", q.toStdString());
             if (backend_.isFrameRecording()) backend_.stopFrameRecording();
-            // One finalization only: a fatal error during Stopping/Saving is
-            // reported into the in-flight stop, never a second stop.
-            if (experimentActive_ && !stopInProgress_) onStopExperiment();
+            if (experimentActive_) {
+                // The coordinator received the same error first
+                // (AppBackend funnels it) and is finalizing the run as
+                // Failed; this window only presents that finalization.
+                if (!stopInProgress_) {
+                    stopInProgress_ = true;
+                    runStatusModel_->setPhase(frontend::RunPhase::Saving, runOperationId_);
+                    updateExperimentButtonStates();
+                }
+            } else {
+                // A raw-recording save failure still blocks the next
+                // experiment until acknowledged.
+                backend_.experiment().reportUnresolvedFault("save.fatal", q.toStdString());
+            }
             statusBar()->showMessage(tr("Save error: %1").arg(q));
             QMessageBox::critical(this, tr("Save Error"),
                 tr("Data could not be saved and the operation was stopped:\n\n%1").arg(q));
         }, Qt::QueuedConnection);
+    });
+
+    // Every experiment lifecycle transition (issue #372): the coordinator
+    // publishes from its own threads; render on the GUI thread. The callback
+    // is cleared in the destructor before anything else is torn down.
+    backend_.experiment().setStatusCallback([this](const backend::app::ExperimentStatus& status) {
+        QMetaObject::invokeMethod(this, [this, status]() { onExperimentStatus(status); },
+                                  Qt::QueuedConnection);
     });
 
     // One camera command path for every presentation (issue #360). The
@@ -457,16 +475,6 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     statsTimer_ = new QTimer(this);
     statsTimer_->setInterval(500);
     connect(statsTimer_, &QTimer::timeout, this, &MainWindow::onUpdateStats);
-
-    // Setup async flush watcher
-    flushWatcher_ = new QFutureWatcher<size_t>(this);
-    connect(flushWatcher_, &QFutureWatcher<size_t>::finished, this, [this]()
-            {
-        flushInProgress_ = false;
-        size_t flushed = flushWatcher_->result();
-        if (flushed > 0) {
-            SPDLOG_INFO("Auto-flushed {} frames to HDF5", flushed);
-        } });
 
     // Setup sidebar and main layout
     setupSidebar();
@@ -661,15 +669,8 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    backend_.experiment().setStatusCallback({});
     backend_.setBackgroundCaptureCallback({});
-    // Block on any in-flight async flush before members are destroyed; the
-    // watcher's own destructor would not wait for the running task.
-    if (flushWatcher_ && flushWatcher_->isRunning()) {
-        flushWatcher_->waitForFinished();
-    }
-    if (finalizeWatcher_ && finalizeWatcher_->isRunning()) {
-        finalizeWatcher_->waitForFinished();
-    }
     // Stop all timers that access backend_ via callbacks before the UI is
     // torn down. The OverviewTab 50fps timer fires onTick() which calls
     // backend_.playback().fetchLatest() — if the timer fires after the
@@ -1330,12 +1331,10 @@ void MainWindow::onStartExperiment()
     auto& coordinator = backend_.experiment();
     auto &processing = backend_.processing();
 
-    // Multi-image series capture requires inline realtime processing; decide
-    // this before the preflight so the frozen snapshot records the mode the
-    // run actually uses.
-    restoreRealtimeModeAfterExperiment_ = false;
-    realtimeModeBeforeExperiment_ =
-        static_cast<int>(processing.getRealtimeProcessingMode());
+    // Multi-image series capture requires inline realtime processing; the
+    // coordinator switches the mode inside Start (so the frozen snapshot
+    // records it) and restores it when the run finalizes. Only the
+    // explanation is presented here.
     const auto processingConfig = processing.getProcessingConfig();
     const bool multiImageSeriesEnabled =
         processingConfig.multi_image_enabled && processingConfig.multi_image_count > 1;
@@ -1413,16 +1412,12 @@ void MainWindow::onStartExperiment()
 
     if (needsInlineForSeries)
     {
-        processing.setRealtimeProcessingMode(
-            backend::services::ProcessingService::RealtimeProcessingMode::Inline);
-        restoreRealtimeModeAfterExperiment_ = true;
         QMessageBox::information(
             this,
             tr("Start Experiment"),
             tr("Multi-image series capture requires inline realtime processing.\n"
                "This experiment will run in inline mode so series images remain reviewable.\n"
                "Your previous realtime mode will be restored when the experiment stops."));
-        SPDLOG_INFO("MainWindow: switched realtime mode async_batch -> inline for multi-image experiment");
     }
 
     // Final readiness with the destination, then the Start transaction with
@@ -1435,7 +1430,6 @@ void MainWindow::onStartExperiment()
     const auto readiness = coordinator.evaluateReadiness(request.outputPath, request.profileId);
     if (!explainReadiness(readiness))
     {
-        restoreRealtimeModeIfNeeded();
         return;
     }
     request.readinessGeneration = readiness.generation;
@@ -1445,7 +1439,6 @@ void MainWindow::onStartExperiment()
     case backend::app::ExperimentStartOutcome::Started:
         break;
     case backend::app::ExperimentStartOutcome::StaleReadiness:
-        restoreRealtimeModeIfNeeded();
         QMessageBox::warning(this, tr("Start Experiment"),
                              tr("The configuration changed while the experiment was being prepared, "
                                 "so the readiness check is no longer valid.\n\n%1\n\nPlease start again.")
@@ -1453,12 +1446,10 @@ void MainWindow::onStartExperiment()
         statusLabel_->setText(tr("Experiment start refused: readiness changed"));
         return;
     case backend::app::ExperimentStartOutcome::NotReady:
-        restoreRealtimeModeIfNeeded();
         explainReadiness(result.readiness);
         return;
     case backend::app::ExperimentStartOutcome::StorageFailed:
     case backend::app::ExperimentStartOutcome::ProvenanceFailed:
-        restoreRealtimeModeIfNeeded();
         QMessageBox::critical(this, tr("Error"),
                               tr("Failed to prepare the experiment file:\n%1\n\n%2")
                                   .arg(filePath, QString::fromStdString(result.message)));
@@ -1466,7 +1457,6 @@ void MainWindow::onStartExperiment()
         return;
     case backend::app::ExperimentStartOutcome::AlreadyActive:
     case backend::app::ExperimentStartOutcome::Busy:
-        restoreRealtimeModeIfNeeded();
         QMessageBox::information(this, tr("Experiment"), QString::fromStdString(result.message));
         return;
     }
@@ -1483,23 +1473,6 @@ void MainWindow::onStartExperiment()
     updateExperimentButtonStates(); // This will also call updateTabStates() to disable Overview and Review tabs
 }
 
-void MainWindow::restoreRealtimeModeIfNeeded()
-{
-    if (!restoreRealtimeModeAfterExperiment_)
-        return;
-    const auto restoreMode =
-        realtimeModeBeforeExperiment_ ==
-                static_cast<int>(backend::services::ProcessingService::RealtimeProcessingMode::AsyncBatch)
-            ? backend::services::ProcessingService::RealtimeProcessingMode::AsyncBatch
-            : backend::services::ProcessingService::RealtimeProcessingMode::Inline;
-    backend_.processing().setRealtimeProcessingMode(restoreMode);
-    restoreRealtimeModeAfterExperiment_ = false;
-    SPDLOG_INFO("MainWindow: restored realtime mode to {}",
-                restoreMode == backend::services::ProcessingService::RealtimeProcessingMode::AsyncBatch
-                    ? "async_batch"
-                    : "inline");
-}
-
 void MainWindow::onStopExperiment()
 {
     if (!experimentActive_)
@@ -1510,271 +1483,169 @@ void MainWindow::onStopExperiment()
     }
     if (stopInProgress_) return; // one finalization only
 
-    // Issue #363: stop is a two-phase, single-flight operation. Phase 1
-    // (here) marks Stopping, waits for the in-flight auto-flush, then drains
-    // the buffered frames on a worker (Saving) so the GUI keeps rendering the
-    // state; phase 2 (finishStopExperiment) writes metadata/provenance,
-    // closes the file and reports Complete or Failed.
-    using stop_clock = std::chrono::steady_clock;
-    auto sinceMs = [](stop_clock::time_point t0) {
-        return std::chrono::duration<double, std::milli>(stop_clock::now() - t0).count();
-    };
+    // Issue #372: Stop is a request to the backend. The coordinator's worker
+    // drains the write queue, writes metadata / accounting / provenance,
+    // closes the file and publishes the terminal status;
+    // onExperimentStatus() renders each step and shows dialogs only after
+    // the file is closed.
+    const auto outcome = backend_.experiment().requestStop(false);
+    if (outcome != backend::app::ExperimentStopOutcome::Accepted)
+    {
+        SPDLOG_WARN("MainWindow: stop refused ({})", backend::app::toString(outcome));
+        if (outcome == backend::app::ExperimentStopOutcome::NotActive)
+        {
+            // The backend already finalized (fatal save error); mirror it.
+            experimentActive_ = false;
+            updateExperimentButtonStates();
+        }
+        return;
+    }
     stopInProgress_ = true;
-    finalizeHandled_ = false;
+    stopRequestedAt_ = std::chrono::steady_clock::now();
     runStatusModel_->setPhase(frontend::RunPhase::Stopping, runOperationId_);
     updateExperimentButtonStates();
     statusLabel_->setText(tr("Stopping experiment…"));
-
-    // Wait for any ongoing flush to complete
-    {
-        const auto t0 = stop_clock::now();
-        const bool wasInProgress = flushInProgress_;
-        if (flushInProgress_ && flushWatcher_)
-        {
-            flushWatcher_->waitForFinished();
-        }
-        SPDLOG_INFO("stop-lag: waitForFinished(async flush) took {:.3f} ms (inProgress={})",
-                    sinceMs(t0), wasInProgress);
-    }
-
-    if (!backend_.hdf5().isFileOpen())
-    {
-        finishStopExperiment(true);
-        return;
-    }
-
-    runStatusModel_->setPhase(frontend::RunPhase::Saving, runOperationId_);
-    statusLabel_->setText(tr("Saving experiment data…"));
-    if (!finalizeWatcher_) {
-        finalizeWatcher_ = new QFutureWatcher<bool>(this);
-        connect(finalizeWatcher_, &QFutureWatcher<bool>::finished, this, [this]() {
-            if (finalizeHandled_) return;
-            finishStopExperiment(finalizeWatcher_->result());
-        });
-    }
-    // The worker owns only the backend pointer (outlives this window).
-    auto* backend = &backend_;
-    finalizeWatcher_->setFuture(QtConcurrent::run([backend]() {
-        auto& hdf5 = backend->hdf5();
-        auto& proc = backend->processing();
-        const size_t flushed = proc.flushBufferedFrames(hdf5);
-        if (flushed > 0) SPDLOG_INFO("Final flush: {} frames submitted to HDF5 write queue", flushed);
-        // Drain the async write queue so the writer thread has stopped before the
-        // direct appendFrames in finishStopExperiment (no two writers on the file).
-        return proc.finishFlush();
-    }));
 }
 
-void MainWindow::finishStopExperiment(bool flushOk)
+void MainWindow::onExperimentStatus(const backend::app::ExperimentStatus& status)
 {
-    if (finalizeHandled_) return;
-    finalizeHandled_ = true;
-    using stop_clock = std::chrono::steady_clock;
-    const auto tStopBegin = stop_clock::now();
-    auto sinceMs = [](stop_clock::time_point t0) {
-        return std::chrono::duration<double, std::milli>(stop_clock::now() - t0).count();
-    };
-    auto &processing = backend_.processing();
-    auto &hdf5 = backend_.hdf5();
-    if (!flushOk)
+    using State = backend::app::ExperimentRunState;
+    flushInProgress_ = status.flushing;
+    if (!experimentActive_ && !status.terminal)
     {
-        backend_.experiment().reportUnresolvedFault(
-            "experiment.flushFailed", "a save error occurred while flushing experiment data to disk");
+        // Starting/Active are presented by onStartExperiment itself.
+        return;
+    }
+    switch (status.state)
+    {
+    case State::Starting:
+    case State::Idle:
+        break;
+    case State::Active:
+        experimentStartTimeNs_ = status.startWallClockNs;
+        break;
+    case State::Stopping:
+        if (!status.terminal)
+        {
+            if (!stopInProgress_)
+            {
+                // Stop requested by another client (bridge) or by shutdown.
+                stopInProgress_ = true;
+                updateExperimentButtonStates();
+            }
+            runStatusModel_->setPhase(frontend::RunPhase::Saving, runOperationId_);
+            statusLabel_->setText(tr("Saving experiment data…"));
+        }
+        break;
+    case State::Failed:
+        if (!status.terminal)
+        {
+            stopInProgress_ = true;
+            runStatusModel_->setPhase(frontend::RunPhase::Saving, runOperationId_);
+            runStatusModel_->latchFailure(runOperationId_, QString::fromStdString(status.faultMessage));
+            statusLabel_->setText(tr("Saving experiment data after a save error…"));
+            updateExperimentButtonStates();
+        }
+        break;
+    }
+    if (!status.terminal) return;
+
+    // ---- Terminal: the file is closed; present the outcome ----------------
+    QString deferredWarning;
+    QString deferredCritical;
+    const bool fatal = status.faultCode == "experiment.saveFailed";
+    if (status.faultCode == "experiment.flushFailed")
+    {
         alertModel_->raise(QStringLiteral("save.flush"), frontend::AlertSeverity::Error,
                            tr("A save error occurred while flushing experiment data to disk."),
                            tr("The run is incomplete; check the destination and the log."));
         runStatusModel_->latchFailure(runOperationId_, tr("flush failed"));
-        QMessageBox::warning(this, tr("Save Error"),
-                             tr("A save error occurred while flushing experiment data to disk."));
+        deferredWarning = tr("A save error occurred while flushing experiment data to disk.");
     }
-
+    else if (status.faultCode == "experiment.provenanceFailed")
     {
-        const auto t0 = stop_clock::now();
-        processing.endExperiment();
-        backend_.processing().resetRealtimeMetrics();
-        SPDLOG_INFO("stop-lag: endExperiment+resetRealtimeMetrics took {:.3f} ms", sinceMs(t0));
+        alertModel_->raise(QStringLiteral("save.metadata"), frontend::AlertSeverity::Error,
+                           tr("Experiment metadata/processing-core provenance could not be saved."),
+                           tr("The file is not complete; keep the log and free space/permissions before the next run."));
+        runStatusModel_->latchFailure(runOperationId_, tr("metadata/provenance write failed"));
+        deferredCritical = tr("Experiment frame data was written, but mandatory metadata and "
+                              "processing-core provenance could not be saved.");
     }
-
-    // Frames that arrived between the asynchronous flush and endExperiment()
-    // are still in the experiment buffer. Hand them to the backend's own flush
-    // path rather than appending them directly: flushBufferedFrames() moves
-    // them out of the buffer and the write queue credits
-    // persistenceCommitted, so the run accounting below sees them as
-    // committed. A direct hdf5.appendFrames() of getValidFrames() copies left
-    // them counted as "pending at stop" and labelled a clean run
-    // IntentionallyPartial (bench finding, 2026-09-08).
-    const auto tGetFramesStart = stop_clock::now();
-    const auto remainder = processing.getBufferedFrameCounts();
-    const size_t remainderValid = remainder.valid;
-    const size_t remainderInvalid = remainder.invalid;
-    SPDLOG_INFO("stop-lag: buffered remainder after endExperiment: valid={}, invalid={} ({:.3f} ms)",
-                remainderValid, remainderInvalid, sinceMs(tGetFramesStart));
-
-    // Record experiment end time
-    uint64_t experimentEndTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                       std::chrono::system_clock::now().time_since_epoch())
-                                       .count();
-
-    // Modal dialogs are deferred until the file is closed and the run is
-    // finished: a QMessageBox here blocked finalization for as long as the
-    // operator took to dismiss it (bench: 108 s with the HDF5 still open).
-    QString deferredAccountingWarning;
-    // Save any remaining frames and write experiment info
-    if (hdf5.isFileOpen())
+    else if (fatal)
     {
-        if (remainderValid + remainderInvalid > 0)
-        {
-            const auto t0 = stop_clock::now();
-            const size_t submitted = processing.flushBufferedFrames(hdf5);
-            const bool appendOk = processing.finishFlush();
-            SPDLOG_INFO("stop-lag: final flushBufferedFrames(remaining) took {:.3f} ms "
-                        "(submitted={}, valid={}, invalid={}, ok={})",
-                        sinceMs(t0), submitted, remainderValid, remainderInvalid, appendOk);
-            if (!appendOk)
-            {
-                QMessageBox::warning(this, tr("Warning"),
-                                     tr("Failed to save remaining frames to HDF5"));
-            }
-        }
-
-        // Write experiment metadata (including background image for reproducibility if set)
-        size_t totalValid = remainderValid;
-        size_t totalInvalid = remainderInvalid;
-        // Note: We can't easily track total frames written via append, so we use current counts
-        // In a production system, you'd want to track cumulative counts
-        if (!hdf5.flush())
-        {
-            SPDLOG_WARN("stop-lag: H5Fflush before writeExperimentInfo failed");
-        }
-        auto processingConfig = processing.getProcessingConfig();
-        auto roi = processing.getRealtimeRoi();
-        cv::Mat bg = processing.getRealtimeBackgroundGray();
-        const auto processingCore = processing.activeProcessingCoreIdentity();
-        bool metadataOk = false;
-        {
-            const auto t0 = stop_clock::now();
-            metadataOk = hdf5.writeExperimentInfo(
-                experimentStartTimeNs_, experimentEndTimeNs, totalValid, totalInvalid,
-                processingConfig, roi, bg.empty() ? nullptr : &bg, &processingCore);
-            SPDLOG_INFO("stop-lag: writeExperimentInfo took {:.3f} ms", sinceMs(t0));
-        }
-        if (!metadataOk) {
-            SPDLOG_ERROR("Experiment metadata/provenance write failed");
-            backend_.experiment().reportUnresolvedFault(
-                "experiment.provenanceFailed",
-                "mandatory metadata/processing-core provenance could not be saved for the last run");
-            alertModel_->raise(QStringLiteral("save.metadata"), frontend::AlertSeverity::Error,
-                               tr("Experiment metadata/processing-core provenance could not be saved."),
-                               tr("The file is not complete; keep the log and free space/permissions before the next run."));
-            runStatusModel_->latchFailure(runOperationId_, tr("metadata/provenance write failed"));
-            QMessageBox::critical(
-                this, tr("Save Error"),
-                tr("Experiment frame data was written, but mandatory metadata and "
-                   "processing-core provenance could not be saved."));
-        }
-
-        // Persist the reconciled frame accounting (issue #367). A run whose
-        // required accounting does not reconcile is stored as failed, never
-        // complete; the completion state is surfaced to the operator below.
-        const auto accounting = processing.experimentAccountingSnapshot();
-        if (metadataOk && !hdf5.writeRunAccounting(accounting)) {
-            SPDLOG_ERROR("Experiment run accounting could not be persisted");
-        }
-        if (metadataOk && !hdf5.writeAcquisitionProvenance(backend_.capture().timestampDescriptor(),
-                                                           backend_.capture().telemetrySnapshot())) {
-            SPDLOG_ERROR("Experiment acquisition provenance could not be persisted");
-        }
-        SPDLOG_INFO("Experiment accounting: completion={} ({}); admitted={} empty={} processed={} "
-                    "rejected={} processingFailed={} storeLoss={} persisted={}/{} failed={}",
-                    backend::recording::toString(accounting.completion), accounting.completionReason,
-                    accounting.admitted, accounting.empty, accounting.processed,
-                    accounting.scientificallyRejected, accounting.processingFailed,
-                    accounting.storeOverwritten + accounting.storeNotCommitted + accounting.storeMalformed,
-                    accounting.persistenceCommitted, accounting.persistenceAdmitted,
-                    accounting.persistenceFailed);
-        if (accounting.completion != backend::recording::RunCompletionState::Complete &&
-            accounting.completion != backend::recording::RunCompletionState::IntentionallyPartial) {
-            alertModel_->raise(QStringLiteral("run.accounting"), frontend::AlertSeverity::Warning,
-                               tr("The run is recorded as '%1': %2")
-                                   .arg(QString::fromLatin1(backend::recording::toString(accounting.completion)),
-                                        QString::fromStdString(accounting.completionReason)),
-                               tr("Review the frame accounting in the Review tab before using this run."));
-            runStatusModel_->latchFailure(runOperationId_,
-                                          QString::fromLatin1(backend::recording::toString(accounting.completion)));
-            deferredAccountingWarning =
-                tr("The run is recorded as '%1': %2\n\nEmpty %3 · processed %4 · rejected %5 · "
-                   "processing failed %6 · store loss %7 · persisted %8/%9 · persistence failed %10")
-                    .arg(QString::fromLatin1(backend::recording::toString(accounting.completion)))
-                    .arg(QString::fromStdString(accounting.completionReason))
-                    .arg(static_cast<qulonglong>(accounting.empty))
-                    .arg(static_cast<qulonglong>(accounting.processed))
-                    .arg(static_cast<qulonglong>(accounting.scientificallyRejected))
-                    .arg(static_cast<qulonglong>(accounting.processingFailed))
-                    .arg(static_cast<qulonglong>(accounting.storeOverwritten + accounting.storeNotCommitted +
-                                                 accounting.storeMalformed))
-                    .arg(static_cast<qulonglong>(accounting.persistenceCommitted))
-                    .arg(static_cast<qulonglong>(accounting.persistenceAdmitted))
-                    .arg(static_cast<qulonglong>(accounting.persistenceFailed));
-        }
-
-        // Save full config.json content for backtracking
-        std::string configJson = backend_.getLastConfigJson();
-        if (metadataOk && !configJson.empty()) {
-            const auto t0 = stop_clock::now();
-            hdf5.writeConfigJson(configJson);
-            SPDLOG_INFO("stop-lag: writeConfigJson took {:.3f} ms (bytes={})",
-                        sinceMs(t0), configJson.size());
-        }
-
-        // Note: Chart snapshots are no longer saved during experiment stop.
-        // Charts are now generated on-demand from HDF5 data in the Review tab.
-
-        statusLabel_->setText(
-            metadataOk
-                ? QString("Experiment saved: %1 valid, %2 invalid frames")
-                      .arg(totalValid)
-                      .arg(totalInvalid)
-                : tr("Experiment save incomplete: metadata/provenance failed"));
-        {
-            const auto t0 = stop_clock::now();
-            hdf5.closeFile();
-            SPDLOG_INFO("stop-lag: closeFile (H5Fclose) took {:.3f} ms", sinceMs(t0));
-        }
+        // The fatal-save callback already raised the critical alert/dialog.
+        runStatusModel_->latchFailure(runOperationId_, QString::fromStdString(status.faultMessage));
     }
-    else
+
+    const auto accounting = backend_.processing().experimentAccountingSnapshot();
+    SPDLOG_INFO("Experiment accounting: completion={} ({}); admitted={} empty={} processed={} "
+                "rejected={} processingFailed={} storeLoss={} persisted={}/{} failed={}",
+                backend::recording::toString(status.completion), status.completionReason,
+                accounting.admitted, accounting.empty, accounting.processed,
+                accounting.scientificallyRejected, accounting.processingFailed,
+                accounting.storeOverwritten + accounting.storeNotCommitted + accounting.storeMalformed,
+                status.persistenceCommitted, status.persistenceAdmitted, status.persistenceFailed);
+    if (!fatal && status.completion != backend::recording::RunCompletionState::Complete &&
+        status.completion != backend::recording::RunCompletionState::IntentionallyPartial)
     {
-        statusLabel_->setText("Experiment stopped (HDF5 file not open)");
+        alertModel_->raise(QStringLiteral("run.accounting"), frontend::AlertSeverity::Warning,
+                           tr("The run is recorded as '%1': %2")
+                               .arg(QString::fromLatin1(backend::recording::toString(status.completion)),
+                                    QString::fromStdString(status.completionReason)),
+                           tr("Review the frame accounting in the Review tab before using this run."));
+        runStatusModel_->latchFailure(runOperationId_,
+                                      QString::fromLatin1(backend::recording::toString(status.completion)));
+        deferredWarning =
+            tr("The run is recorded as '%1': %2\n\nEmpty %3 · processed %4 · rejected %5 · "
+               "processing failed %6 · store loss %7 · persisted %8/%9 · persistence failed %10")
+                .arg(QString::fromLatin1(backend::recording::toString(status.completion)))
+                .arg(QString::fromStdString(status.completionReason))
+                .arg(static_cast<qulonglong>(accounting.empty))
+                .arg(static_cast<qulonglong>(accounting.processed))
+                .arg(static_cast<qulonglong>(accounting.scientificallyRejected))
+                .arg(static_cast<qulonglong>(accounting.processingFailed))
+                .arg(static_cast<qulonglong>(accounting.storeOverwritten + accounting.storeNotCommitted +
+                                             accounting.storeMalformed))
+                .arg(static_cast<qulonglong>(status.persistenceCommitted))
+                .arg(static_cast<qulonglong>(status.persistenceAdmitted))
+                .arg(static_cast<qulonglong>(status.persistenceFailed));
     }
 
-    // Release the frozen run snapshot; the coordinator returns to Idle so the
-    // next preflight evaluates a fresh state (issue #369).
-    if (auto finished = backend_.experiment().finish())
-    {
-        SPDLOG_INFO("MainWindow: experiment run {} finished (readiness gen {}, capture gen {})",
-                    finished->startGeneration, finished->readinessGeneration, finished->captureGeneration);
-    }
+    statusLabel_->setText(
+        status.finalizationOk
+            ? tr("Experiment saved: %1 frames persisted").arg(static_cast<qulonglong>(status.persistenceCommitted))
+            : tr("Experiment save incomplete: %1").arg(QString::fromStdString(status.completionReason)));
+    SPDLOG_INFO("MainWindow: experiment run {} finalized (readiness gen {}, capture gen {}, ok={})",
+                status.startGeneration, status.readinessGeneration, status.captureGeneration,
+                status.finalizationOk);
 
     experimentActive_ = false;
     stopInProgress_ = false;
+    flushInProgress_ = false;
     // Complete becomes Failed automatically when a failure was latched.
     runStatusModel_->setPhase(frontend::RunPhase::Complete, runOperationId_);
-    restoreRealtimeModeIfNeeded();
     updateExperimentButtonStates(); // This will also call updateTabStates() to enable Overview and Review tabs
 
-    if (!deferredAccountingWarning.isEmpty())
+    // Modal dialogs only now: the file is closed and the run is finished
+    // (a dialog before the close held the HDF5 open for 108 s on the bench).
+    if (!deferredCritical.isEmpty())
     {
-        QMessageBox::warning(this, tr("Experiment Accounting"), deferredAccountingWarning);
+        QMessageBox::critical(this, tr("Save Error"), deferredCritical);
     }
-
-    const auto cfgAtStop = processing.getProcessingConfig();
-    const double stopTotalMs = sinceMs(tStopBegin);
-    SPDLOG_INFO("stop-lag: finishStopExperiment total {:.3f} ms (multiImage={}/{})",
-                stopTotalMs,
-                cfgAtStop.multi_image_enabled, cfgAtStop.multi_image_count);
+    if (!deferredWarning.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Experiment Accounting"), deferredWarning);
+    }
+    const auto cfgAtStop = backend_.processing().getProcessingConfig();
     {
         std::ostringstream data;
         data << "{\"multi_image_enabled\":" << (cfgAtStop.multi_image_enabled ? 1 : 0)
-             << ",\"multi_image_count\":" << cfgAtStop.multi_image_count << "}";
+             << ",\"multi_image_count\":" << cfgAtStop.multi_image_count
+             << ",\"finalization_ok\":" << (status.finalizationOk ? 1 : 0) << "}";
+        const double stopTotalMs = stopRequestedAt_.time_since_epoch().count() == 0
+            ? 0.0
+            : std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stopRequestedAt_).count();
+        SPDLOG_INFO("stop-lag: request -> terminal status {:.3f} ms", stopTotalMs);
         backend::services::CrashReporter::capturePerformanceTransaction(
             "experiment.stop", "ui.action", stopTotalMs, data.str());
     }
@@ -1856,40 +1727,9 @@ frontend::StatisticsData MainWindow::sampleStats()
     {
         size_t totalBuffered = bufferedFrames.total();
 
-        // Check if we need to flush (round-robin buffer)
-        // Only start a new flush if one isn't already in progress
-        size_t flushNeeded = proc.getFlushInterval();
-        if (flushNeeded > 0 && totalBuffered >= flushNeeded && !flushInProgress_)
-        {
-            // Flush frames to disk asynchronously to avoid blocking UI
-            flushInProgress_ = true;
-            // Capture the backend pointer, NOT `this`: QFutureWatcher's
-            // destructor does not block on a running future, so the task can
-            // outlive this window. The backend itself outlives the window
-            // (constructed before it in main()).
-            auto* backend = &backend_;
-            QFuture<size_t> future = QtConcurrent::run([backend]()
-                                                       {
-#ifdef _WIN32
-                // Lower OS thread priority and optionally set affinity to a non-critical core
-                // Background mode (Vista+); falls back to BELOW_NORMAL if unavailable
-                if (!SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN)) {
-                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-                }
-                const unsigned int cores = std::thread::hardware_concurrency();
-                if (cores > 1) {
-                    // Prefer the last core
-                    const DWORD_PTR mask = (cores >= (sizeof(DWORD_PTR) * 8))
-                        ? (static_cast<DWORD_PTR>(1) << ((sizeof(DWORD_PTR) * 8) - 1))
-                        : (static_cast<DWORD_PTR>(1) << (cores - 1));
-                    SetThreadAffinityMask(GetCurrentThread(), mask);
-                }
-#endif
-                auto& hdf5 = backend->hdf5();
-                auto& proc = backend->processing();
-                return proc.flushBufferedFrames(hdf5); });
-            flushWatcher_->setFuture(future);
-        }
+        // The periodic flush is owned by ExperimentCoordinator's worker
+        // (issue #372); this timer only samples and logs.
+        const size_t flushNeeded = proc.getFlushInterval();
 
         // Throttled diagnostic log (~1 Hz)
         static uint64_t lastDiagLogUs = 0;
@@ -2176,11 +2016,14 @@ void MainWindow::closeEvent(QCloseEvent* event)
         }
     }
 
-    // A finalization in flight completes before the window goes away
-    // (bounded: the worker only drains the write queue).
-    if (stopInProgress_ && finalizeWatcher_) {
-        finalizeWatcher_->waitForFinished();
-        if (!finalizeHandled_) finishStopExperiment(finalizeWatcher_->result());
+    // An active run or a finalization in flight completes before the window
+    // goes away (bounded: the coordinator drains the write queue, writes the
+    // metadata and closes the file). AppBackend::shutdown() repeats this
+    // idempotently.
+    if (experimentActive_ || stopInProgress_) {
+        backend_.experiment().shutdown();
+        experimentActive_ = false;
+        stopInProgress_ = false;
     }
 
     // Ensure experiment services are stopped before closing
