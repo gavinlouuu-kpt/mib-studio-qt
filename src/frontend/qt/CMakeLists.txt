@@ -182,6 +182,7 @@ mib_link_opencv(mib_frontend_common PUBLIC)
 if(BUILD_TESTING)
     add_executable(processing_core_dialog_test
         ${PROJECT_SOURCE_DIR}/tests/frontend/processing_core_dialog_test.cpp
+        ${PROJECT_SOURCE_DIR}/resources/defaults.qrc
     )
     target_include_directories(processing_core_dialog_test PRIVATE
         ${PROJECT_SOURCE_DIR}/tests
@@ -203,9 +204,13 @@ if(BUILD_TESTING)
         TIMEOUT 120
     )
 
+    # Frontend test executables construct the real widgets (ConfigTabs seeds
+    # <exe>/../include from :/defaults on a fresh build tree), so each one compiles
+    # the .qrc itself like the app does — see the mib_frontend_common note above.
     # Issue #360: one guarded camera command path for every UI presentation.
     add_executable(camera_action_state_test
         ${PROJECT_SOURCE_DIR}/tests/frontend/camera_action_state_test.cpp
+        ${PROJECT_SOURCE_DIR}/resources/defaults.qrc
     )
     target_include_directories(camera_action_state_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(camera_action_state_test PRIVATE mib_frontend_common)
@@ -225,6 +230,7 @@ if(BUILD_TESTING)
     # screen size.
     add_executable(ui_layout_test
         ${PROJECT_SOURCE_DIR}/tests/frontend/ui_layout_test.cpp
+        ${PROJECT_SOURCE_DIR}/resources/defaults.qrc
     )
     target_include_directories(ui_layout_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(ui_layout_test PRIVATE mib_frontend_common)
@@ -240,7 +246,7 @@ if(BUILD_TESTING)
     )
 
     # Issue #361: explicit editor state + bounded, responsive config header.
-    add_executable(config_tabs_state_test ${PROJECT_SOURCE_DIR}/tests/frontend/config_tabs_state_test.cpp)
+    add_executable(config_tabs_state_test ${PROJECT_SOURCE_DIR}/tests/frontend/config_tabs_state_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(config_tabs_state_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(config_tabs_state_test PRIVATE mib_frontend_common)
     set_target_properties(config_tabs_state_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
@@ -248,7 +254,7 @@ if(BUILD_TESTING)
     set_tests_properties(frontend.config_tabs_state PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
 
     # Issue #362: Preview inspector modes, persistence and clamping.
-    add_executable(preview_layout_test ${PROJECT_SOURCE_DIR}/tests/frontend/preview_layout_test.cpp)
+    add_executable(preview_layout_test ${PROJECT_SOURCE_DIR}/tests/frontend/preview_layout_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(preview_layout_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(preview_layout_test PRIVATE mib_frontend_common)
     set_target_properties(preview_layout_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
@@ -256,7 +262,7 @@ if(BUILD_TESTING)
     set_tests_properties(frontend.preview_layout PROPERTIES LABELS "frontend;layout" TIMEOUT 240)
 
     # Issue #363: run state / alerts / metrics separation in the main window.
-    add_executable(run_status_ui_test ${PROJECT_SOURCE_DIR}/tests/frontend/run_status_ui_test.cpp)
+    add_executable(run_status_ui_test ${PROJECT_SOURCE_DIR}/tests/frontend/run_status_ui_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(run_status_ui_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(run_status_ui_test PRIVATE mib_frontend_common)
     set_target_properties(run_status_ui_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
@@ -266,7 +272,7 @@ if(BUILD_TESTING)
 
     # Issue #364: Monitoring tune panel (criteria grouping, dirty/conflict
     # state, fixed footer, compact widths) and the acknowledged apply path.
-    add_executable(monitoring_tune_panel_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_tune_panel_test.cpp)
+    add_executable(monitoring_tune_panel_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_tune_panel_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(monitoring_tune_panel_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(monitoring_tune_panel_test PRIVATE mib_frontend_common)
     set_target_properties(monitoring_tune_panel_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
@@ -274,7 +280,7 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_tune PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
 
-    add_executable(app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp)
+    add_executable(app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(app_config_apply_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(app_config_apply_test PRIVATE mib_frontend_common)
     set_target_properties(app_config_apply_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)

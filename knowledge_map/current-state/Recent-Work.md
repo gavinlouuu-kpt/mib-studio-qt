@@ -27,6 +27,23 @@
   `%LOCALAPPDATA%\MIB_Studio_Qt\symbols\<build id>\` (guard
   `backend.crash_reporter_segv`).
 
+- **Integration branch synced with develop (PR #379 merge) + Windows/CI
+  fixes** (2026-09-08, `agent-b/shared-backend-integration`) — Merge of
+  `0fbaf8c0`. Things that only showed up on Windows or a fresh build tree:
+  MSVC conformance mode (`/permissive- /Zc:__cplusplus`) is now set in
+  `cmake/MIBCompilerSettings.cmake` (Qt used to propagate it; the Qt-free
+  backend tests had lost it), the ported Agent B tests compile on MSVC
+  (`camera_script_apply`, `recording.accounting` without Qt,
+  `e2e.experiment_coordinator` re-targeted at the shared coordinator with the
+  readiness-generation handshake), the Qt-free LUT catalog accepts
+  `file://C:/...` URLs, and every frontend test executable compiles
+  `resources/defaults.qrc` itself — ConfigTabs seeds `<exe>/../include` from
+  `:/defaults` on a fresh tree and, without the resource, blocked headless
+  tests in a modal warning. CI: the bridge/desktop headless lanes build with
+  `-DMIB_ENABLE_MINDVISION=OFF` (develop enables the SDK by default), the
+  manylinux wheel container gets `json-devel` and `ProcessingConfigJson.h`
+  falls back to `nlohmann/json.hpp` when `json_fwd.hpp` is not packaged.
+
 - **Serial bus ported onto ISerialPort; backend Qt-free again**
   (2026-09-08, `agent-b/shared-backend-integration`) — The reliability
   RS485 layer (`SerialBus`, `SyringePumpService`, `PulseGeneratorService`,

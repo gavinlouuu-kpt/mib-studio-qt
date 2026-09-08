@@ -1,14 +1,17 @@
-// ExperimentCoordinator state-machine test (BE-4, issue #274, epic #246).
+// ExperimentCoordinator end-to-end test (BE-4, issue #274, epic #246; ported
+// to the shared reliability coordinator, issue #372).
 //
 // Drives the backend-owned experiment lifecycle through the BackendFacade
-// command surface with a mock camera: preconditions (Qt-parity messages),
-// start → periodic accumulation → asynchronous stop finalization, double
-// start/stop safety, cancel, the fatal-save-error funnel, and idempotent
-// shutdown during an active experiment (the HDF5 file must stay readable).
+// command surface with a mock camera: preconditions (readiness gate
+// `camera.session`), readiness-generation handshake, start → periodic
+// accumulation → asynchronous stop finalization, double start/stop safety,
+// cancel, the fatal-save-error funnel, and idempotent shutdown during an
+// active experiment (the HDF5 file must stay readable).
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/ExperimentReadiness.h"
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
@@ -32,6 +35,7 @@
 namespace
 {
     namespace bridge = backend::bridge;
+    namespace app = backend::app;
 
     std::filesystem::path makeTempDir()
     {
@@ -105,6 +109,27 @@ namespace
         }
         return false;
     }
+
+    // Start through the facade the way a client does: preflight readiness for
+    // the output path, then present that generation with the Start command.
+    bridge::BackendCommandResult startViaFacade(bridge::BackendFacade &facade,
+                                                const std::string &outputPath)
+    {
+        app::ExperimentReadinessSnapshot readiness;
+        bridge::ExperimentCommand start;
+        start.action = bridge::ExperimentCommandAction::Start;
+        start.outputPath = outputPath;
+        if (facade.fetchExperimentReadiness(readiness, outputPath))
+        {
+            start.readinessGeneration = readiness.generation;
+        }
+        return facade.dispatch(start);
+    }
+
+    bool statusIsTerminal(const app::ExperimentStatus &s, app::ExperimentRunState state)
+    {
+        return s.terminal && s.state == state;
+    }
 } // namespace
 
 int main()
@@ -134,15 +159,14 @@ int main()
             std::scoped_lock lock(eventsMutex);
             events.push_back(event);
         });
-        auto countExperimentTerminal = [&](bool failed) {
+        auto countExperimentTerminal = [&](app::ExperimentRunState state) {
             std::scoped_lock lock(eventsMutex);
             int n = 0;
             for (const auto &event : events)
             {
                 if (const auto *e = std::get_if<bridge::ExperimentStatusEvent>(&event))
                 {
-                    if ((failed && e->state == backend::ExperimentCoordinator::State::Failed) ||
-                        (!failed && e->state == backend::ExperimentCoordinator::State::Idle))
+                    if (statusIsTerminal(e->status, state))
                     {
                         ++n;
                     }
@@ -157,12 +181,10 @@ int main()
             return 2;
         }
 
-        // Precondition: no running camera → Qt-parity message.
-        bridge::ExperimentCommand start;
-        start.action = bridge::ExperimentCommandAction::Start;
-        start.outputPath = (dataDir / "exp1.h5").string();
-        auto result = facade.dispatch(start);
-        if (result.ok || result.message.find("Camera must be running") == std::string::npos)
+        // Precondition: no running camera → the camera.session gate blocks.
+        const std::string exp1 = (dataDir / "exp1.h5").string();
+        auto result = startViaFacade(facade, exp1);
+        if (result.ok || result.message.find("camera.session") == std::string::npos)
         {
             std::cerr << "missing camera-running precondition: " << result.message << "\n";
             return 3;
@@ -187,8 +209,25 @@ int main()
             return 5;
         }
 
+        // The readiness gates (camera.session, geometry, delivery mode,
+        // transport loss) settle once the mock camera delivers frames.
+        if (!waitFor([&] {
+                app::ExperimentReadinessSnapshot readiness;
+                return facade.fetchExperimentReadiness(readiness, exp1) && readiness.ready;
+            }, 10000))
+        {
+            app::ExperimentReadinessSnapshot readiness;
+            facade.fetchExperimentReadiness(readiness, exp1);
+            std::cerr << "readiness never passed with a running mock camera\n";
+            for (const auto &gate : readiness.gates)
+            {
+                std::cerr << "  " << gate.id << " " << app::toString(gate.status) << " " << gate.reason << "\n";
+            }
+            return 5;
+        }
+
         // Start the experiment.
-        result = facade.dispatch(start);
+        result = startViaFacade(facade, exp1);
         if (!result.ok || result.operationId == 0)
         {
             std::cerr << "experiment start failed: " << result.message << "\n";
@@ -196,7 +235,7 @@ int main()
         }
 
         // Double start fails without desynchronizing.
-        if (facade.dispatch(start).ok)
+        if (startViaFacade(facade, exp1).ok)
         {
             std::cerr << "duplicate experiment start should fail\n";
             return 7;
@@ -211,7 +250,7 @@ int main()
             return 8;
         }
 
-        // Stop → asynchronous finalization to Idle.
+        // Stop → asynchronous finalization to a terminal Idle.
         bridge::ExperimentCommand stop;
         stop.action = bridge::ExperimentCommandAction::Stop;
         if (!facade.dispatch(stop).ok)
@@ -220,15 +259,15 @@ int main()
             return 9;
         }
         if (!waitFor([&] {
-                backend::ExperimentCoordinator::Status s;
+                app::ExperimentStatus s;
                 return facade.fetchExperimentStatus(s) &&
-                       s.state == backend::ExperimentCoordinator::State::Idle;
+                       statusIsTerminal(s, app::ExperimentRunState::Idle);
             }, 15000))
         {
             std::cerr << "experiment did not finalize\n";
             return 10;
         }
-        if (countExperimentTerminal(false) < 1)
+        if (countExperimentTerminal(app::ExperimentRunState::Idle) < 1)
         {
             std::cerr << "no terminal Idle ExperimentStatus event\n";
             return 11;
@@ -244,7 +283,7 @@ int main()
         // The finalized file is a readable experiment file with metadata.
         {
             backend::services::Hdf5Service reader;
-            if (!reader.loadFile((dataDir / "exp1.h5").string()))
+            if (!reader.loadFile(exp1))
             {
                 std::cerr << "finalized experiment file failed to load\n";
                 return 13;
@@ -253,24 +292,24 @@ int main()
         }
 
         // Cancel path: terminal status is cancelled but the file finalizes.
-        bridge::ExperimentCommand start2 = start;
-        start2.outputPath = (dataDir / "exp2.h5").string();
-        if (!facade.dispatch(start2).ok)
+        const std::string exp2 = (dataDir / "exp2.h5").string();
+        if (!startViaFacade(facade, exp2).ok)
         {
             std::cerr << "second experiment start failed\n";
             return 14;
         }
         bridge::ExperimentCommand cancel;
-        cancel.action = bridge::ExperimentCommandAction::Cancel;
+        cancel.action = bridge::ExperimentCommandAction::Stop;
+        cancel.cancelled = true;
         if (!facade.dispatch(cancel).ok)
         {
             std::cerr << "experiment cancel failed\n";
             return 15;
         }
-        backend::ExperimentCoordinator::Status cancelled;
+        app::ExperimentStatus cancelled;
         if (!waitFor([&] {
                 return facade.fetchExperimentStatus(cancelled) &&
-                       cancelled.state == backend::ExperimentCoordinator::State::Idle &&
+                       statusIsTerminal(cancelled, app::ExperimentRunState::Idle) &&
                        cancelled.cancelled;
             }, 15000))
         {
@@ -283,9 +322,8 @@ int main()
 
         // Shutdown during an active experiment finalizes without corrupting
         // the file (idempotent close).
-        bridge::ExperimentCommand start4 = start;
-        start4.outputPath = (dataDir / "exp4.h5").string();
-        if (!facade.dispatch(start4).ok)
+        const std::string exp4 = (dataDir / "exp4.h5").string();
+        if (!startViaFacade(facade, exp4).ok)
         {
             std::cerr << "fourth experiment start failed\n";
             return 21;
@@ -293,7 +331,7 @@ int main()
         facade.shutdown();
         {
             backend::services::Hdf5Service reader;
-            if (!reader.loadFile((dataDir / "exp4.h5").string()))
+            if (!reader.loadFile(exp4))
             {
                 std::cerr << "experiment file corrupted by shutdown\n";
                 return 22;
@@ -302,7 +340,7 @@ int main()
         }
     }
 
-    // Fatal save-error funnel (unit, direct coordinator): the experiment
+    // Fatal save-error funnel (direct coordinator): the experiment
     // transitions to Failed and finalizes without corrupting the file.
     {
         backend::AppBackend backendApp;
@@ -322,31 +360,53 @@ int main()
             return 31;
         }
 
-        backend::ExperimentCoordinator coordinator(backendApp);
-        std::string error;
-        if (!coordinator.start((dataDir / "exp_fatal.h5").string(), &error))
+        app::ExperimentCoordinator &coordinator = backendApp.experiment();
+        const std::string expFatal = (dataDir / "exp_fatal.h5").string();
+        // Preflight → start handshake. The gates settle as the mock camera's
+        // first frames arrive and each change bumps the readiness generation,
+        // so re-run the preflight while the coordinator reports NotReady or
+        // StaleReadiness (bounded, like a client would).
+        app::ExperimentStartResult started;
+        for (int attempt = 0; attempt < 100; ++attempt)
         {
-            std::cerr << "fatal-path experiment start failed: " << error << "\n";
+            app::ExperimentStartRequest request;
+            request.outputPath = expFatal;
+            request.readinessGeneration = coordinator.evaluateReadiness(expFatal).generation;
+            started = coordinator.start(request);
+            if (started.started() ||
+                (started.outcome != app::ExperimentStartOutcome::NotReady &&
+                 started.outcome != app::ExperimentStartOutcome::StaleReadiness))
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (!started.started())
+        {
+            std::cerr << "fatal-path experiment start failed: " << started.message << "\n";
             return 32;
         }
         coordinator.onFatalSaveError("Injected: disk full while flushing");
         if (!waitFor([&] {
-                return coordinator.status().state ==
-                       backend::ExperimentCoordinator::State::Failed;
+                return statusIsTerminal(coordinator.status(), app::ExperimentRunState::Failed);
             }, 15000))
         {
             std::cerr << "fatal error did not drive the experiment to Failed\n";
             return 33;
         }
-        if (coordinator.status().message.find("Injected") == std::string::npos)
         {
-            std::cerr << "fatal message lost: " << coordinator.status().message << "\n";
-            return 34;
+            const auto s = coordinator.status();
+            if (s.faultMessage.find("Injected") == std::string::npos &&
+                s.message.find("Injected") == std::string::npos)
+            {
+                std::cerr << "fatal message lost: '" << s.faultMessage << "' / '" << s.message << "'\n";
+                return 34;
+            }
         }
         // The file was still finalized (data flushed, closed) and reopens.
         {
             backend::services::Hdf5Service reader;
-            if (!reader.loadFile((dataDir / "exp_fatal.h5").string()))
+            if (!reader.loadFile(expFatal))
             {
                 std::cerr << "fatal-path experiment file failed to load\n";
                 return 35;

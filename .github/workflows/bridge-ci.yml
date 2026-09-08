@@ -63,10 +63,6 @@ jobs:
           # No Qt SDK, no webkit2gtk: the bridge links the Qt-free backend and
           # runs headless (epic #246 Phase 2).
 
-      - name: Provision pinned MindVision SDK
-        shell: bash
-        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -74,7 +70,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --preset linux-backend-only
+          # Headless lane, no camera SDK: develop enables MindVision by
+          # default, so opt out explicitly (SDK-free build, MIB_HAS_MINDVISION=0).
+          cmake --preset linux-backend-only -DMIB_ENABLE_MINDVISION=OFF
           cmake --build --preset linux-backend-only-build \
             --target mib_backend mib_processing
 

@@ -1,6 +1,11 @@
 # Suppress character encoding warnings from third-party headers.
 if(MSVC)
     add_compile_options(/wd4828)
+    # Conformance mode. With Qt in the link, Qt6::Platform propagated
+    # /permissive- and /Zc:__cplusplus to every target; the Qt-free backend
+    # and its tests must compile the same way (e.g. a functional cast such as
+    # `int(i)` is a prvalue only in conformance mode).
+    add_compile_options(/permissive- /Zc:__cplusplus)
 endif()
 
 # Preserve PDBs and address-to-source mapping for Release builds so that
