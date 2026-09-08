@@ -652,27 +652,30 @@
 
 - **Fix: app locked out of the EGrabber camera at boot on beta fa6e6ba
   ("No camera found" while the Connect tab lists it)** (2026-09-08) —
-  Hardware-bench validation of `v1.0.7-beta.fa6e6ba` on the Coaxlink Quad
-  CXP-12 / EoSens 2.0MCX12 bench: the standalone hardware tests streamed
-  from the camera, but the app reported "No camera found" and then every
-  Connect / capture start / camera-script attempt failed with `GenTL error
-  -1004, GCInitLib: Requested resource is already in use`, 4 of 4 launches.
-  Root cause (isolated with a direct probe, both call orders, persistent
-  after 3 s): the MindVision SDK's `CameraEnumerateDevice()` leaves the
-  Euresys GenTL producer unopenable for the rest of the process; there is no
-  SDK teardown. Stable v1.0.7 never had the bug because MindVision was
-  compiled out; `42cd7a54` enabled it by default, and `discoverAllCameras`
-  (DeviceInitManager worker) ran MindVision enumeration 450 ms after the
-  Connect tab's EGrabber discovery. Fix: [[../services/CameraControlService]]
-  `discoverMindVisionCameras()` decides once per process — if
-  `discoverFramegrabbers()` finds an EGrabber device, MindVision enumeration
-  is skipped with an INFO line (`MIB_MINDVISION_ENUMERATE_WITH_EGRABBER=1`
-  overrides). New hardware test `hardware.discovery_reentry` replays the boot
-  sequence with switches for thread and MindVision step; it failed in all
-  four modes before the fix and passes after. Full hardware lane green after
-  the fix; app auto-connects and captures again. Files:
-  `CameraControlService.cpp`, `tests/hardware/hw_discovery_reentry_test.cpp`,
-  `tests/CMakeLists.txt`.
+  Bench validation of `v1.0.7-beta.fa6e6ba` (Coaxlink Quad CXP-12 /
+  EoSens 2.0MCX12): the standalone hardware tests streamed, but the app
+  reported "No camera found" and every later Connect / capture start /
+  camera-script apply failed with `GenTL error -1004, GCInitLib: Requested
+  resource is already in use`, 4 of 4 launches. Mechanism, isolated with
+  direct probes: only one Euresys `EGenTL` may exist per process, and the
+  MindVision SDK's CoaXPress plugin (`CXPCamera_X64.Interface`) loads
+  `coaxlink.cti` and calls GCInitLib itself during `CameraEnumerateDevice()`;
+  with the vendor SDK installed it wins the race at boot and every later
+  EGrabber open fails for the life of the process. Stable v1.0.7 was
+  unaffected because MindVision was compiled out (`42cd7a54` enabled it).
+  Fix: a process-wide shared GenTL handle (`GenTLHolder.h/.cpp`,
+  `backend::camera::egrabber::sharedGenTL()`) used by
+  [[../camera/EGrabberCamera]] and every discovery/apply path in
+  [[../services/CameraControlService]]; `discoverMindVisionCameras()`
+  reserves it before calling the MindVision SDK, so the plugin's attempt
+  fails harmlessly and both camera families work in any order (an earlier
+  interim fix on this branch skipped MindVision enumeration whenever a
+  framegrabber was present; superseded because a bench can hold either
+  camera). New hardware test `hardware.discovery_reentry` replays the boot
+  sequence with modes for thread, MindVision step, and MindVision-first
+  order; it failed before the fix and passes after. Files:
+  `GenTLHolder.h/.cpp`, `EGrabberCamera.h/.cpp`, `CameraControlService.cpp`,
+  `src/backend/CMakeLists.txt`, `tests/hardware/hw_discovery_reentry_test.cpp`.
 
 - **Fix: `-terminate` crash artifacts never produced on Windows for
   exceptions escaping a worker thread** (2026-09-07) — the beta

@@ -76,6 +76,14 @@ marks transport receipt, not exposure.
 
 ## Gotchas
 
+- **One GenTL handle per process.** `start()` takes the shared handle from
+  `backend::camera::egrabber::sharedGenTL()` (`GenTLHolder.h/.cpp`) instead
+  of constructing its own `EGenTL`; `stop()` drops its reference but the
+  holder keeps the producer open until process exit. A second `EGenTL` in the
+  same process fails with `GenTL -1004 GCInitLib: resource already in use`,
+  and the MindVision SDK's CoaXPress plugin tries to open the same producer
+  during enumeration, so the handle must be ours first. Details in
+  [[../services/CameraControlService]].
 - **StreamModule counters** must be refreshed before stopping capture or
   the final `frameRate` / `dataRate` read will be zero. See
   `fps_mbs_zero.md` task and [[../conventions/Code-Conventions]].
