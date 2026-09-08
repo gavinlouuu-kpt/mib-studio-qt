@@ -203,7 +203,12 @@ int main()
     // boundaries with high probability.
     wd.mark("experiment 3");
     svc.setFlushInterval(1000);
-    {
+    for (const auto mode : {ProcessingService::RealtimeProcessingMode::Inline,
+                            ProcessingService::RealtimeProcessingMode::AsyncBatch}) {
+        const bool asyncMode = mode == ProcessingService::RealtimeProcessingMode::AsyncBatch;
+        svc.setRealtimeProcessingMode(mode);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150)); // loop switch
+        std::fprintf(stderr, "exp3 mode=%s\n", asyncMode ? "async_batch" : "inline");
         std::atomic<bool> pushing{true};
         std::atomic<uint64_t> pushed{0};
         std::thread pusher([&] {
@@ -216,6 +221,7 @@ int main()
             }
         });
         int mismatches = 0;
+        unsigned long long admittedTotal = 0;
         constexpr int kRuns = 40;
         for (int run = 0; run < kRuns; ++run) {
             wd.mark("experiment 3 run");
@@ -224,6 +230,7 @@ int main()
             std::this_thread::sleep_for(std::chrono::milliseconds(15 + (run % 5)));
             svc.endExperiment();
             const auto a = svc.experimentAccountingSnapshot();
+            admittedTotal += a.admitted;
             const bool frameTermsOk = a.admitted == a.empty + a.processed + a.scientificallyRejected +
                                                     a.processingFailed + a.storeOverwritten +
                                                     a.storeNotCommitted + a.storeMalformed;
@@ -243,10 +250,14 @@ int main()
         }
         pushing.store(false);
         pusher.join();
-        std::fprintf(stderr, "exp3: %d runs, %d boundary mismatches, %llu frames pushed\n", kRuns, mismatches,
-                     (unsigned long long)pushed.load());
-        MIB_EXPECT(mismatches == 0, "no start/stop boundary accounting skew across " + std::to_string(kRuns) + " runs");
+        std::fprintf(stderr, "exp3: %d runs, %d boundary mismatches, %llu frames pushed, %llu admitted in total\n",
+                     kRuns, mismatches, (unsigned long long)pushed.load(), (unsigned long long)admittedTotal);
+        MIB_EXPECT(mismatches == 0, std::string("no start/stop boundary accounting skew across ") +
+                                        std::to_string(kRuns) + (asyncMode ? " async_batch" : " inline") + " runs");
+        MIB_EXPECT(admittedTotal > 0, asyncMode ? "async_batch runs admit frames into the accounting"
+                                                : "inline runs admit frames into the accounting");
     }
+    svc.setRealtimeProcessingMode(ProcessingService::RealtimeProcessingMode::Inline);
 
     svc.stopRealtime();
     svc.stop();

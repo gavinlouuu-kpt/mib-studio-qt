@@ -363,7 +363,18 @@ current/max queue depth, batch size, worker count, and running state. See
   waits (≤ 250 ms) for the realtime thread to finish the last admitted frame
   so the caller's snapshot is complete. Guard: experiment 3 of
   `processing.experiment_accounting` (40 short runs against a free-running
-  pusher; 2 mismatches per pass before the fix, 0 after).
+  pusher, in both realtime modes; 2 mismatches per pass before the fix, 0
+  after). The experiment-buffer append is gated the same way (a frame the
+  drain wait lets finish must still reach the buffer for the remainder
+  flush), and the **async-batch mode participates too** (review finding,
+  2026-09-08): the producer admits a frame when it hands it to the batch
+  queue (`noteRealtimeAdmitted`; a queue rejection terminates it as
+  `ProcessingFailed`, ring-behind skips as `StoreOverwritten`), the batch
+  callback settles one outcome per frame index (`noteRealtimeValidation`,
+  or `ProcessingFailed` for a frame the core returned empty), and
+  `endExperiment()` also waits (≤ 250 ms) for the batch queue and the
+  in-flight batch (`batchFramesInFlight_`) to settle. Before this, async
+  runs admitted nothing and were labelled Complete regardless of loss.
 
 ## Background identity + bounded calibration (issue #369)
 

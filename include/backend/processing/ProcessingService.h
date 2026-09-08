@@ -579,6 +579,9 @@ private:
     std::atomic<uint64_t> batchFramesAccepted_{0};
     std::atomic<uint64_t> batchFramesDropped_{0};
     std::atomic<uint64_t> batchFramesProcessed_{0};
+    // Frames dequeued by a batch worker whose callback has not returned yet
+    // (endExperiment() drains on it together with the queue).
+    std::atomic<uint64_t> batchFramesInFlight_{0};
     std::atomic<uint64_t> batchBatchesProcessed_{0};
     std::atomic<uint64_t> batchAlgoMicrosTotal_{0};
     std::atomic<size_t> batchMaxQueueDepth_{0};
