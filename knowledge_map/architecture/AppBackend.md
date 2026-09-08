@@ -239,6 +239,29 @@ right after `processingService_` for this), which finalizes the run as
 marshals it to the UI thread and shows a modal Save Error dialog — failed
 saves are never silent.
 
+### Experiment lifecycle over the facade (issue #372 G2/G3)
+
+`BackendFacade` (`include/backend/app/BackendFacade.h`, the Qt-free command /
+event boundary the Rust bridge wraps) exposes the shared
+[[ExperimentCoordinator]] as `ExperimentCommand` (`BackendCommandType::
+Experiment = 6`; actions `EvaluateReadiness = 0, Start = 1, Stop = 2,
+Status = 3`; fields `outputPath`, `readinessGeneration`, `profileId`,
+`acknowledgeLatestFrameDrops`, `cancelled`). `BackendCommandResult` carries
+the typed `experimentStartOutcome` / `experimentStopOutcome` so acceptance,
+rejection and completion stay distinct; a refused Start also emits a
+`BackendErrorEvent`. `fetchExperimentReadiness(out, outputPath, profileId)`
+performs a fresh evaluation (its generation is what Start must present) and
+`fetchExperimentStatus(out)` pulls the `ExperimentStatus`. `initialize()`
+subscribes to the coordinator's status callback and forwards every
+transition as `ExperimentStatusEvent` (event kind 8; delivered on the
+coordinator's worker thread for Stopping/terminal, so sinks must not block);
+`shutdown()` finalizes an active run through the coordinator before stopping
+the services. All `BackendCommandType` values are now explicit and pinned to
+`bridge-contract.json` (5 is reserved for `Operation`). Test:
+`tests/backend/backend_facade_boundary_test.cpp` (readiness pull, Start,
+AlreadyActive, Stop accepted, terminal Idle with the remainder committed,
+NotActive afterwards, Starting/Active/Stopping/Idle event sequence).
+
 ## Memory budget snapshot (issue #370)
 
 `memoryBudgetSnapshot()` assembles the [[../diagnostics/MemoryBudget]]
