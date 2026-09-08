@@ -508,7 +508,13 @@ void ProcessingService::endExperiment() {
     if (experimentAccounting_.hasAdmitted() && rtRunning_.load(std::memory_order_acquire)) {
         const uint64_t last = experimentAccounting_.lastAdmittedIndex();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
-        while (rtLastProcessed_.load(std::memory_order_acquire) < last &&
+        auto batchPending = [this] {
+            std::scoped_lock lk(batchMutex_);
+            return !batchQueue_.empty() ||
+                   batchFramesInFlight_.load(std::memory_order_acquire) != 0;
+        };
+        while ((rtLastProcessed_.load(std::memory_order_acquire) < last ||
+                (rtBatchPipelineActive_.load(std::memory_order_acquire) && batchPending())) &&
                std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::microseconds(200));
         }
@@ -1492,7 +1498,17 @@ void ProcessingService::batchWorkerLoop() {
             }
             config = batchConfig_;
             callback = batchResultCallback_;
+            batchFramesInFlight_.fetch_add(static_cast<uint64_t>(inputs.size()),
+                                           std::memory_order_acq_rel);
         }
+        // Everything dequeued above is settled (callback returned or the
+        // batch was dropped) before the counter goes back down;
+        // endExperiment() drains on it.
+        struct InFlightGuard {
+            std::atomic<uint64_t>& counter;
+            uint64_t n;
+            ~InFlightGuard() { counter.fetch_sub(n, std::memory_order_acq_rel); }
+        } inFlightGuard{batchFramesInFlight_, static_cast<uint64_t>(inputs.size())};
 
         const auto algoStart = std::chrono::steady_clock::now();
         std::vector<ProcessedFrame> results;
@@ -2057,7 +2073,10 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
                                         observed, frameIndex, std::memory_order_relaxed)) {
     }
 
-    if (experimentActive_.load(std::memory_order_relaxed)) {
+    // Persist iff this frame's admission was counted under the run (not
+    // "iff active"): frames still in the batch pipeline when endExperiment()
+    // runs are drained there and reach the buffer for the remainder flush.
+    if (experimentAccounting_.wasAdmitted(frameIndex)) {
         bool shouldSave = validation.isValid;
         if (!validation.isValid) {
             const size_t counter = invalidFrameCounter_.fetch_add(1, std::memory_order_relaxed);
@@ -2096,7 +2115,27 @@ void ProcessingService::realtimeBatchLoop() {
             return timing;
         };
 
+        // Experiment accounting (issue #367): one outcome per admitted frame
+        // index. A frame whose images came back empty failed in the core
+        // (computeProcessedFrame) and is ProcessingFailed; every other frame
+        // terminates through its validations (Processed / Rejected).
+        const auto settleFrame = [this, &frameValidations, &lastFrameIndex] {
+            if (!frameValidations.empty()) {
+                noteRealtimeValidation(lastFrameIndex, frameValidations);
+            }
+        };
         for (auto& frame : batch) {
+            if (frame.originalImage.empty() || frame.processedImage.empty()) {
+                if (hasPendingFrame && frame.index != lastFrameIndex) {
+                    publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp,
+                                                       makeTiming(lastFrameIndex, lastFrameHostUs));
+                    settleFrame();
+                    frameValidations.clear();
+                    hasPendingFrame = false;
+                }
+                noteRealtimeOutcome(frame.index, backend::recording::FrameOutcome::ProcessingFailed);
+                continue;
+            }
             if (frame.validation.isValid) {
                 callbackValid.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -2110,6 +2149,7 @@ void ProcessingService::realtimeBatchLoop() {
             } else if (frame.index != lastFrameIndex || frame.timestampNs != lastFrameTimestamp) {
                 publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp,
                                                    makeTiming(lastFrameIndex, lastFrameHostUs));
+                settleFrame();
                 frameValidations.clear();
                 lastFrameIndex = frame.index;
                 lastFrameTimestamp = frame.timestampNs;
@@ -2123,6 +2163,7 @@ void ProcessingService::realtimeBatchLoop() {
         if (hasPendingFrame && !frameValidations.empty()) {
             publishRealtimeValidationCallbacks(frameValidations, lastFrameTimestamp,
                                                makeTiming(lastFrameIndex, lastFrameHostUs));
+            settleFrame();
         }
     });
     if (!started) {
@@ -2183,6 +2224,7 @@ void ProcessingService::realtimeBatchLoop() {
             skippedSinceSummary += skipped;
             backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
                 backend::diagnostics::PipelineSkipReason::RingBehind, skipped);
+            noteRealtimeLost(skipped); // experiment accounting: StoreOverwritten
             last = earliest - 1;
             rtLastProcessed_.store(last, std::memory_order_relaxed);
             SPDLOG_DEBUG(
@@ -2228,6 +2270,12 @@ void ProcessingService::realtimeBatchLoop() {
                     continue; // not counted — retried from the same `last`
                 }
                 countDroppedToLatest();
+                // Experiment accounting (issue #367): a frame is admitted when
+                // it is handed to the batch queue; a rejected frame is a
+                // processing-side loss and terminates immediately. Outcomes
+                // for accepted frames are counted when the batch callback
+                // publishes them (same rule as the inline loop).
+                noteRealtimeAdmitted(idx);
                 const bool accepted = enqueueBatchFrame(frame, idx);
                 if (accepted) {
                     ++queuedSinceSummary;
@@ -2235,6 +2283,7 @@ void ProcessingService::realtimeBatchLoop() {
                     ++skippedSinceSummary;
                     backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
                         backend::diagnostics::PipelineSkipReason::BatchQueueRejected);
+                    noteRealtimeOutcome(idx, backend::recording::FrameOutcome::ProcessingFailed);
                 }
                 rtLastProcessed_.store(idx, std::memory_order_relaxed);
 
@@ -2745,9 +2794,12 @@ void ProcessingService::realtimeInlineLoop() {
                 // experiment/snapshot
                 cv::Mat grayFull;
 
-                // Also accumulate frames for experiment if active (and this
-                // frame's admission was counted under the run).
-                if (experimentActive_.load() && experimentAccounting_.wasAdmitted(idx)) {
+                // Also accumulate frames for the experiment iff this frame's
+                // admission was counted under the run. Not "iff active": the
+                // frame in flight across endExperiment() (which the drain wait
+                // there lets finish) must still reach the buffer so the
+                // remainder flush persists it (review, 2026-09-08).
+                if (experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);
@@ -3183,9 +3235,12 @@ void ProcessingService::realtimeInlineLoop() {
                                  backend::Tools::getProcessMemoryMB());
                 }
 
-                // Also accumulate frames for experiment if active (and this
-                // frame's admission was counted under the run).
-                if (experimentActive_.load() && experimentAccounting_.wasAdmitted(idx)) {
+                // Also accumulate frames for the experiment iff this frame's
+                // admission was counted under the run. Not "iff active": the
+                // frame in flight across endExperiment() (which the drain wait
+                // there lets finish) must still reach the buffer so the
+                // remainder flush persists it (review, 2026-09-08).
+                if (experimentAccounting_.wasAdmitted(idx)) {
                     // Determine if we should save this frame
                     bool shouldSave = false;
                     if (validation.isValid) {
@@ -3626,9 +3681,12 @@ void ProcessingService::realtimeInlineLoop() {
                                  backend::Tools::getProcessMemoryMB());
                 }
 
-                // Also accumulate frames for experiment if active (and this
-                // frame's admission was counted under the run).
-                if (experimentActive_.load() && experimentAccounting_.wasAdmitted(idx)) {
+                // Also accumulate frames for the experiment iff this frame's
+                // admission was counted under the run. Not "iff active": the
+                // frame in flight across endExperiment() (which the drain wait
+                // there lets finish) must still reach the buffer so the
+                // remainder flush persists it (review, 2026-09-08).
+                if (experimentAccounting_.wasAdmitted(idx)) {
                     const bool multiImageMode =
                         config.multi_image_enabled && config.multi_image_count > 1;
                     const TargetGroupEvent targetOwner = selectTargetGroupTriggerOwner(validations);
