@@ -416,19 +416,39 @@ namespace backend::bridge
             request.readinessGeneration = command.readinessGeneration;
             request.profileId = command.profileId;
             request.acknowledgeLatestFrameDrops = command.acknowledgeLatestFrameDrops;
+            // Track the operation before Start so a run that fails on the
+            // coordinator's worker right after Start (fatal save error) still
+            // finds its id in the status callback and gets a terminal
+            // OperationStatus (review, 2026-09-08). A refused Start closes it
+            // as Failed here.
+            const std::uint64_t opId =
+                beginOperation(BackendOperationKind::Experiment, nullptr, command.outputPath);
+            // Only claim the slot when no experiment operation is live: a
+            // duplicate Start while Active must not steal (or later clear)
+            // the running experiment's id.
+            std::uint64_t noLiveOperation = 0;
+            const bool claimed = experimentOperationId_.compare_exchange_strong(noLiveOperation, opId);
             const auto started = coordinator.start(request);
             result.experimentStartOutcome = started.outcome;
             result.ok = started.started();
             result.message = started.message;
             if (!result.ok)
             {
+                if (claimed)
+                {
+                    std::uint64_t ours = opId;
+                    experimentOperationId_.compare_exchange_strong(ours, 0);
+                }
+                finishOperation(opId, BackendOperationState::Failed, started.message);
                 emitEvent(BackendErrorEvent{BackendErrorSource::Experiment, BackendCommandType::Experiment,
                                             started.message});
                 return result;
             }
-            const std::uint64_t opId =
-                beginOperation(BackendOperationKind::Experiment, nullptr, command.outputPath);
-            experimentOperationId_.store(opId);
+            if (!claimed)
+            {
+                // Started although another id was live: adopt this one.
+                experimentOperationId_.store(opId);
+            }
             result.operationId = opId;
             return result;
         }

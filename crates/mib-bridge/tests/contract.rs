@@ -818,6 +818,13 @@ fn experiment_lifecycle_end_to_end() {
         assert_eq!(terminal.experiment_completion, 0);
         assert!(terminal.experiment_finalization_ok);
         assert_eq!(terminal.experiment_start_generation, 1);
+        // A refused duplicate Start (AlreadyActive) gets its own Failed
+        // operation and must not disturb the running experiment's id.
+        assert!(
+            events.iter().any(|e| e.kind == BridgeEventKind::OperationStatus
+                && e.u0 != start.operation_id && e.u2 == 3),
+            "refused duplicate Start should close its operation as Failed"
+        );
         // Terminal events: an ExperimentStatus(Idle) and the operation Completed.
         assert!(
             events
