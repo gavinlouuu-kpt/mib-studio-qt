@@ -250,6 +250,63 @@ struct ExperimentStatus {
     cancelled: bool,
     output_path: String,
     message: String,
+    // ABI 13: the shared coordinator's full status.
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    start_generation: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    readiness_generation: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    capture_generation: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    persistence_admitted: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    persistence_committed: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    persistence_failed: u64,
+    terminal: bool,
+    finalization_ok: bool,
+    completion: u32,
+    completion_reason: String,
+    fault_code: String,
+    fault_message: String,
+}
+
+/// One readiness gate for the webview (ABI 13).
+#[derive(Serialize, Clone, Default)]
+struct ReadinessGate {
+    id: String,
+    status: u32,
+    reason: String,
+    remediation: String,
+}
+
+/// Experiment readiness evaluation for the webview (ABI 13).
+#[derive(Serialize, Clone, Default)]
+struct ExperimentReadiness {
+    transport_version: u32,
+    valid: bool,
+    ready: bool,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    generation: u64,
+    gates: Vec<ReadinessGate>,
+}
+
+/// Evaluate experiment readiness for a destination (ABI 13).
+#[tauri::command]
+fn fetch_experiment_readiness(state: State<AppState>, output_path: String) -> Result<ExperimentReadiness, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let r = guard.pin_mut().fetch_experiment_readiness(&output_path);
+    Ok(ExperimentReadiness {
+        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+        valid: r.valid,
+        ready: r.ready,
+        generation: r.generation,
+        gates: r
+            .gates
+            .into_iter()
+            .map(|g| ReadinessGate { id: g.id, status: g.status, reason: g.reason, remediation: g.remediation })
+            .collect(),
+    })
 }
 
 /// Start an experiment (backend-owned lifecycle; schema v5).
@@ -294,6 +351,18 @@ fn fetch_experiment_status(state: State<AppState>) -> Result<ExperimentStatus, S
         cancelled: s.cancelled,
         output_path: s.output_path,
         message: s.message,
+        start_generation: s.start_generation,
+        readiness_generation: s.readiness_generation,
+        capture_generation: s.capture_generation,
+        persistence_admitted: s.persistence_admitted,
+        persistence_committed: s.persistence_committed,
+        persistence_failed: s.persistence_failed,
+        terminal: s.terminal,
+        finalization_ok: s.finalization_ok,
+        completion: s.completion,
+        completion_reason: s.completion_reason,
+        fault_code: s.fault_code,
+        fault_message: s.fault_message,
     })
 }
 
@@ -1333,6 +1402,7 @@ pub fn run() {
             experiment_stop,
             experiment_cancel,
             fetch_experiment_status,
+            fetch_experiment_readiness,
             autofocus_connect,
             autofocus_disconnect,
             autofocus_set_enabled,

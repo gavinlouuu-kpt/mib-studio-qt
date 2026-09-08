@@ -21,7 +21,8 @@
 
 namespace backend::app {
 
-enum class GateStatus { Pass, Warn, Fail, Unavailable, NotRequired };
+// Contract-pinned (bridge-contract.json readiness_gate_statuses); append only.
+enum class GateStatus { Pass = 0, Warn = 1, Fail = 2, Unavailable = 3, NotRequired = 4 };
 
 inline const char* toString(GateStatus s)
 {
@@ -120,15 +121,16 @@ struct ExperimentReadinessSnapshot {
     }
 };
 
-// Typed outcome of the Start transaction.
+// Typed outcome of the Start transaction. Contract-pinned
+// (bridge-contract.json experiment_start_outcomes); append only.
 enum class ExperimentStartOutcome {
-    Started,
-    NotReady,           // a gate blocks start (see readiness)
-    StaleReadiness,     // presented generation no longer matches current state
-    AlreadyActive,
-    StorageFailed,      // HDF5 open/init failed (rolled back)
-    ProvenanceFailed,   // run snapshot could not be persisted (rolled back)
-    Busy,               // another start/stop transaction is in progress
+    Started = 0,
+    NotReady = 1,           // a gate blocks start (see readiness)
+    StaleReadiness = 2,     // presented generation no longer matches current state
+    AlreadyActive = 3,
+    StorageFailed = 4,      // HDF5 open/init failed (rolled back)
+    ProvenanceFailed = 5,   // run snapshot could not be persisted (rolled back)
+    Busy = 6,               // another start/stop transaction is in progress
 };
 
 inline const char* toString(ExperimentStartOutcome o)

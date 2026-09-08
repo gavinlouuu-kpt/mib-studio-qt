@@ -19,7 +19,14 @@
       "experiment_end_time_ns": "0",
       "experiment_dropped_valid": "0",
       "experiment_dropped_invalid": "0",
-      "frame_byte_size": "0"
+      "frame_byte_size": "0",
+      "experiment_start_generation": "0",
+      "experiment_persistence_admitted": "0",
+      "experiment_persistence_committed": "0",
+      "experiment_persistence_failed": "0",
+      "experiment_completion": "0",
+      "experiment_terminal": false,
+      "experiment_finalization_ok": false
     },
     {
       "kind": "ExperimentStatus",
@@ -39,7 +46,14 @@
       "experiment_end_time_ns": "18446744073709551615",
       "experiment_dropped_valid": "18437736874454810615",
       "experiment_dropped_invalid": "7",
-      "frame_byte_size": "0"
+      "frame_byte_size": "0",
+      "experiment_start_generation": "9007199254740993",
+      "experiment_persistence_admitted": "18446744073709551615",
+      "experiment_persistence_committed": "9007199254740993",
+      "experiment_persistence_failed": "7",
+      "experiment_completion": "4",
+      "experiment_terminal": false,
+      "experiment_finalization_ok": false
     },
     {
       "kind": "ProcessingResult",
@@ -59,7 +73,14 @@
       "experiment_end_time_ns": "0",
       "experiment_dropped_valid": "0",
       "experiment_dropped_invalid": "0",
-      "frame_byte_size": "0"
+      "frame_byte_size": "0",
+      "experiment_start_generation": "0",
+      "experiment_persistence_admitted": "0",
+      "experiment_persistence_committed": "0",
+      "experiment_persistence_failed": "0",
+      "experiment_completion": "0",
+      "experiment_terminal": false,
+      "experiment_finalization_ok": false
     },
     {
       "kind": "FrameReady",
@@ -79,7 +100,14 @@
       "experiment_end_time_ns": "0",
       "experiment_dropped_valid": "0",
       "experiment_dropped_invalid": "0",
-      "frame_byte_size": "4"
+      "frame_byte_size": "4",
+      "experiment_start_generation": "0",
+      "experiment_persistence_admitted": "0",
+      "experiment_persistence_committed": "0",
+      "experiment_persistence_failed": "0",
+      "experiment_completion": "0",
+      "experiment_terminal": false,
+      "experiment_finalization_ok": false
     }
   ]
 }

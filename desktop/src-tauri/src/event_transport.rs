@@ -24,6 +24,14 @@ struct ExactEvent {
     experiment_dropped_valid: String,
     experiment_dropped_invalid: String,
     frame_byte_size: String,
+    // ABI 13 typed ExperimentStatus companions (exact u64 as strings).
+    experiment_start_generation: String,
+    experiment_persistence_admitted: String,
+    experiment_persistence_committed: String,
+    experiment_persistence_failed: String,
+    experiment_completion: String, // run_completion_states value, decimal string like every enum slot
+    experiment_terminal: bool,
+    experiment_finalization_ok: bool,
 }
 fn finite(n: f64) -> Option<f64> { if n.is_finite() { Some(n) } else { None } }
 
@@ -48,6 +56,13 @@ pub fn encode(events: Vec<BridgeEvent>) -> EventEnvelope {
                 experiment_dropped_valid: e.experiment_dropped_valid.to_string(),
                 experiment_dropped_invalid: e.experiment_dropped_invalid.to_string(),
                 frame_byte_size: e.frame_byte_size.to_string(),
+                experiment_start_generation: e.experiment_start_generation.to_string(),
+                experiment_persistence_admitted: e.experiment_persistence_admitted.to_string(),
+                experiment_persistence_committed: e.experiment_persistence_committed.to_string(),
+                experiment_persistence_failed: e.experiment_persistence_failed.to_string(),
+                experiment_completion: e.experiment_completion.to_string(),
+                experiment_terminal: e.experiment_terminal,
+                experiment_finalization_ok: e.experiment_finalization_ok,
             }
         }).collect(),
     }

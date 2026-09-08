@@ -86,6 +86,16 @@ pub mod ffi {
         pub experiment_dropped_valid: u64,
         pub experiment_dropped_invalid: u64,
         pub frame_byte_size: u64,
+        // ABI 13 (shared backend, #372): exact ExperimentStatus companions.
+        // Zero/false for every other kind. `experiment_completion` is a
+        // contract `run_completion_states` value (Unknown until terminal).
+        pub experiment_start_generation: u64,
+        pub experiment_persistence_admitted: u64,
+        pub experiment_persistence_committed: u64,
+        pub experiment_persistence_failed: u64,
+        pub experiment_completion: u32,
+        pub experiment_terminal: bool,
+        pub experiment_finalization_ok: bool,
     }
 
     /// Pollable snapshot of the realtime processing pipeline. `valid` is false
@@ -121,6 +131,41 @@ pub mod ffi {
         pub cancelled: bool,
         pub output_path: String,
         pub message: String,
+        // ABI 13: the shared coordinator's full status.
+        pub start_generation: u64,
+        pub readiness_generation: u64,
+        pub capture_generation: u64,
+        pub persistence_admitted: u64,
+        pub persistence_committed: u64,
+        pub persistence_failed: u64,
+        /// Finalization finished (Idle or Failed); the outcome below is final.
+        pub terminal: bool,
+        pub finalization_ok: bool,
+        /// Contract `run_completion_states` value (Unknown until terminal).
+        pub completion: u32,
+        pub completion_reason: String,
+        pub fault_code: String,
+        pub fault_message: String,
+    }
+
+    /// One readiness gate (ABI 13). `status` is a contract
+    /// `readiness_gate_statuses` value; Fail and Unavailable block Start.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeReadinessGate {
+        pub id: String,
+        pub status: u32,
+        pub reason: String,
+        pub remediation: String,
+    }
+
+    /// Experiment readiness evaluation (ABI 13): the generation is what a
+    /// Start must present; the backend refuses a stale one.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeExperimentReadiness {
+        pub valid: bool,
+        pub ready: bool,
+        pub generation: u64,
+        pub gates: Vec<BridgeReadinessGate>,
     }
 
     /// One discovered camera (schema v7, BE-2). `camera_type` is a contract
@@ -458,8 +503,15 @@ pub mod ffi {
         /// The HDF5 file is still finalized so it remains readable.
         fn experiment_cancel(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 
-        /// Pull the current experiment lifecycle snapshot (schema v5).
+        /// Pull the current experiment lifecycle snapshot (schema v5; full
+        /// shared-coordinator status since ABI 13).
         fn fetch_experiment_status(self: Pin<&mut BackendBridge>) -> BridgeExperimentStatus;
+
+        /// Evaluate experiment readiness for `output_path` (ABI 13): gate
+        /// list with statuses/reasons/remediation and the generation a
+        /// Start must present. `experiment_start` performs this itself.
+        fn fetch_experiment_readiness(self: Pin<&mut BackendBridge>, output_path: &str)
+            -> BridgeExperimentReadiness;
 
         /// Autofocus / nanopositioner commands (schema v11, BE-8). On
         /// platforms without the Coremor SDK, connect fails with a structured

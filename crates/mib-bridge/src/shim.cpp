@@ -91,6 +91,32 @@ static_assert(static_cast<std::uint32_t>(backend::app::ExperimentRunState::Start
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentRunState::Active) == 2);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentRunState::Stopping) == 3);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentRunState::Failed) == 4);
+// ABI 13 (shared backend, #372): experiment command actions / outcomes, run
+// completion states and readiness gate statuses are contract groups.
+static_assert(static_cast<std::uint32_t>(bb::ExperimentCommandAction::EvaluateReadiness) == 0);
+static_assert(static_cast<std::uint32_t>(bb::ExperimentCommandAction::Start) == 1);
+static_assert(static_cast<std::uint32_t>(bb::ExperimentCommandAction::Stop) == 2);
+static_assert(static_cast<std::uint32_t>(bb::ExperimentCommandAction::Status) == 3);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::Started) == 0);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::NotReady) == 1);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::StaleReadiness) == 2);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::AlreadyActive) == 3);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::StorageFailed) == 4);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::ProvenanceFailed) == 5);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::Busy) == 6);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::Accepted) == 0);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::NotActive) == 1);
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::Busy) == 2);
+static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
+static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IntentionallyPartial) == 1);
+static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IncompleteLoss) == 2);
+static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Failed) == 3);
+static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Unknown) == 4);
+static_assert(static_cast<std::uint32_t>(backend::app::GateStatus::Pass) == 0);
+static_assert(static_cast<std::uint32_t>(backend::app::GateStatus::Warn) == 1);
+static_assert(static_cast<std::uint32_t>(backend::app::GateStatus::Fail) == 2);
+static_assert(static_cast<std::uint32_t>(backend::app::GateStatus::Unavailable) == 3);
+static_assert(static_cast<std::uint32_t>(backend::app::GateStatus::NotRequired) == 4);
 
 static_assert(static_cast<std::uint32_t>(bb::BackendErrorSource::Lifecycle) == 0);
 static_assert(static_cast<std::uint32_t>(bb::BackendErrorSource::Playback) == 4);
@@ -282,6 +308,14 @@ BridgeEvent toBridgeEvent(const backend::bridge::BackendEvent& ev) {
                 out.b0 = s.flushing;
                 out.b1 = s.cancelled;
                 out.text = rust::String(s.message);
+                // ABI 13 typed companions (exact).
+                out.experiment_start_generation = s.startGeneration;
+                out.experiment_persistence_admitted = s.persistenceAdmitted;
+                out.experiment_persistence_committed = s.persistenceCommitted;
+                out.experiment_persistence_failed = s.persistenceFailed;
+                out.experiment_completion = static_cast<std::uint32_t>(s.completion);
+                out.experiment_terminal = s.terminal;
+                out.experiment_finalization_ok = s.finalizationOk;
             }
         },
         ev);
@@ -326,6 +360,7 @@ rust::Vec<BridgeEvent> contract_fixture_events() {
     experiment.status.persistenceAdmitted = maximum;
     experiment.status.persistenceCommitted = large;
     experiment.status.persistenceFailed = 7;
+    experiment.status.startGeneration = large;
     experiment.status.startWallClockNs = maximum - 1;
     experiment.status.endWallClockNs = maximum;
     experiment.status.flushing = true;
@@ -1393,6 +1428,39 @@ BridgeExperimentStatus BackendBridge::fetch_experiment_status() {
     out.cancelled = status.cancelled;
     out.output_path = rust::String(status.outputPath);
     out.message = rust::String(status.message);
+    out.start_generation = status.startGeneration;
+    out.readiness_generation = status.readinessGeneration;
+    out.capture_generation = status.captureGeneration;
+    out.persistence_admitted = status.persistenceAdmitted;
+    out.persistence_committed = status.persistenceCommitted;
+    out.persistence_failed = status.persistenceFailed;
+    out.terminal = status.terminal;
+    out.finalization_ok = status.finalizationOk;
+    out.completion = static_cast<std::uint32_t>(status.completion);
+    out.completion_reason = rust::String(status.completionReason);
+    out.fault_code = rust::String(status.faultCode);
+    out.fault_message = rust::String(status.faultMessage);
+    return out;
+}
+
+BridgeExperimentReadiness BackendBridge::fetch_experiment_readiness(rust::Str output_path) {
+    BridgeExperimentReadiness out{};
+    backend::app::ExperimentReadinessSnapshot readiness;
+    if (!impl_->facade.fetchExperimentReadiness(readiness, toStd(output_path))) {
+        out.valid = false;
+        return out;
+    }
+    out.valid = true;
+    out.ready = readiness.ready;
+    out.generation = readiness.generation;
+    for (const auto& g : readiness.gates) {
+        BridgeReadinessGate gate{};
+        gate.id = rust::String(g.id);
+        gate.status = static_cast<std::uint32_t>(g.status);
+        gate.reason = rust::String(g.reason);
+        gate.remediation = rust::String(g.remediation);
+        out.gates.push_back(std::move(gate));
+    }
     return out;
 }
 
@@ -1449,6 +1517,6 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // nanopositioner control, config round-trip, and freshness-explicit status
 // (BE-8). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 12; }
+std::uint32_t bridge_abi_version() { return 13; }
 
 } // namespace mib_bridge

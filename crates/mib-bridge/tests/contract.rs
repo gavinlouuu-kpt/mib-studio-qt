@@ -56,8 +56,11 @@ fn abi_version_is_stable() {
     // v7 camera discovery/selection (BE-2); v8 config round-trip, ROI/
     // background, and core status (BE-3); v9 paged HDF5 review + export jobs
     // (BE-6); v10 syringe-pump commands/status (BE-7); v11 autofocus/
-    // nanopositioner control (BE-8).
-    assert_eq!(ffi::bridge_abi_version(), 12);
+    // nanopositioner control (BE-8); v12 exact u64 companions; v13 the
+    // shared-backend experiment lifecycle (#372): command actions, start/
+    // stop outcomes, run completion states, readiness gate statuses, typed
+    // ExperimentStatus companions and fetch_experiment_readiness.
+    assert_eq!(ffi::bridge_abi_version(), 13);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
@@ -574,6 +577,29 @@ fn rust_enums_match_contract_json() {
             "event kind {name} drifted from the JSON contract"
         );
     }
+
+    // ABI 13 experiment groups: pinned in C++ by static_asserts in shim.cpp
+    // (the shared coordinator's enums); pinned here for the Rust/TS side.
+    let groups: &[(&str, &[(&str, u64)])] = &[
+        ("experiment_command_actions", &[("EvaluateReadiness", 0), ("Start", 1), ("Stop", 2), ("Status", 3)]),
+        ("experiment_start_outcomes", &[("Started", 0), ("NotReady", 1), ("StaleReadiness", 2), ("AlreadyActive", 3),
+                                        ("StorageFailed", 4), ("ProvenanceFailed", 5), ("Busy", 6)]),
+        ("experiment_stop_outcomes", &[("Accepted", 0), ("NotActive", 1), ("Busy", 2)]),
+        ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
+        ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
+    ];
+    for (group, values) in groups {
+        let obj = contract[*group].as_object().unwrap_or_else(|| panic!("missing contract group {group}"));
+        assert_eq!(obj.len(), values.len(), "{group} count drifted");
+        for (name, value) in *values {
+            assert_eq!(obj[*name].as_u64().unwrap(), *value, "{group}.{name} drifted");
+        }
+    }
+    let payload = contract["event_payloads"]["ExperimentStatus"].as_object().unwrap();
+    for field in ["startGeneration", "persistenceAdmitted", "persistenceCommitted", "persistenceFailed",
+                  "completion", "terminal", "finalizationOk"] {
+        assert!(payload.contains_key(field), "ExperimentStatus payload lacks {field}");
+    }
 }
 
 // Duplicate/late commands must fail safely without desynchronizing state
@@ -716,6 +742,14 @@ fn experiment_lifecycle_end_to_end() {
     // Precondition: the shared coordinator's readiness gate `camera.session`
     // blocks Start without a running camera (issue #369/#372); the refusal
     // names the blocking gate ids, never a free-text reason.
+    let readiness = bridge.pin_mut().fetch_experiment_readiness(&out_path.to_string_lossy());
+    assert!(readiness.valid && !readiness.ready, "readiness must block without a running camera");
+    let camera_gate = readiness
+        .gates
+        .iter()
+        .find(|g| g.id == "camera.session")
+        .expect("camera.session gate present");
+    assert!(camera_gate.status == 2 || camera_gate.status == 3, "camera.session should Fail/Unavailable");
     let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy());
     assert!(!early.ok, "experiment started without a running camera");
     assert!(
@@ -764,23 +798,43 @@ fn experiment_lifecycle_end_to_end() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(finalized, "experiment did not finalize within 10s");
+    {
+        // ABI 13: the terminal snapshot carries the reconciled outcome.
+        let s = bridge.pin_mut().fetch_experiment_status();
+        assert!(s.terminal, "terminal flag");
+        assert!(s.finalization_ok, "finalization ok: {}", s.completion_reason);
+        assert_eq!(s.completion, 0, "clean mock run should be Complete: {}", s.completion_reason);
+        assert_eq!(s.start_generation, 1);
+        assert!(s.readiness_generation > 0 && s.capture_generation > 0);
+        assert_eq!(s.persistence_committed, s.persistence_admitted, "remainder committed");
+        assert!(s.fault_code.is_empty(), "no fault: {}", s.fault_message);
+    }
+    {
+        let events = bridge.pin_mut().poll_events();
+        let terminal = events
+            .iter()
+            .find(|e| e.kind == BridgeEventKind::ExperimentStatus && e.experiment_terminal)
+            .expect("terminal ExperimentStatus event with typed companions");
+        assert_eq!(terminal.experiment_completion, 0);
+        assert!(terminal.experiment_finalization_ok);
+        assert_eq!(terminal.experiment_start_generation, 1);
+        // Terminal events: an ExperimentStatus(Idle) and the operation Completed.
+        assert!(
+            events
+                .iter()
+                .any(|e| e.kind == BridgeEventKind::ExperimentStatus && e.u0 == 0),
+            "no terminal ExperimentStatus event"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.kind == BridgeEventKind::OperationStatus
+                    && e.u0 == start.operation_id
+                    && e.u2 == 2),
+            "no Completed operation event for the experiment"
+        );
+    }
 
-    // Terminal events: an ExperimentStatus(Idle) and the operation Completed.
-    let events = bridge.pin_mut().poll_events();
-    assert!(
-        events
-            .iter()
-            .any(|e| e.kind == BridgeEventKind::ExperimentStatus && e.u0 == 0),
-        "no terminal ExperimentStatus event"
-    );
-    assert!(
-        events
-            .iter()
-            .any(|e| e.kind == BridgeEventKind::OperationStatus
-                && e.u0 == start.operation_id
-                && e.u2 == 2),
-        "no Completed operation event for the experiment"
-    );
 
     // Double stop fails safely.
     assert!(!bridge.pin_mut().experiment_stop().ok);

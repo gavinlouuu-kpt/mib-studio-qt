@@ -1,12 +1,13 @@
 import { expect, it } from "vitest";
-import { decodeEvents, decodeCommandResult, decodeExperimentStatus } from "./eventAdapter";
+import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus } from "./eventAdapter";
 import golden from "../../crates/mib-bridge/contract/fixtures/events-v1.json";
 import { JSON_TRANSPORT } from "./bridgeContract";
 const fixture=()=>structuredClone(golden);
 it("decodes the shared C++/Rust JSON golden into named fields",()=>{
   const events=decodeEvents(fixture());
   expect(events[0]).toMatchObject({kind:"OperationStatus",operationId:"9007199254740993",state:2,progress:"18446744073709551615",total:"18446744073709551615"});
-  expect(events[1]).toMatchObject({kind:"ExperimentStatus",endTimeNs:"18446744073709551615",validSaved:"9007199254740993",droppedValid:"18437736874454810615",droppedInvalid:"7"});
+  expect(events[1]).toMatchObject({kind:"ExperimentStatus",endTimeNs:"18446744073709551615",validSaved:"9007199254740993",droppedValid:"18437736874454810615",droppedInvalid:"7",
+    startGeneration:"9007199254740993",persistenceAdmitted:"18446744073709551615",persistenceCommitted:"9007199254740993",persistenceFailed:"7",completion:4,terminal:false,finalizationOk:false});
   expect(events[2]).toMatchObject({algorithmFps:{value:null,validity:"invalid",freshness:"unavailable"},validFps:{value:0,validity:"reported",freshness:"unavailable"},invalidFps:{value:null,validity:"invalid"}});
   expect(events[3]).toMatchObject({kind:"FrameReady",source:2,byteSize:"4"});
   for(const e of events) expect(e).not.toHaveProperty("u0");
@@ -36,9 +37,24 @@ it("distinguishes command acceptance from a terminal operation notification",()=
   expect(()=>decodeCommandResult({...accepted,transport_version:1,operation_id:9007199254740992})).toThrow();
 });
 it("keeps experiment snapshot counts exact and refuses partial snapshots",()=>{
-  const snapshot={transport_version:1,valid:true,state:2,start_time_ns:"18446744073709551614",end_time_ns:"18446744073709551615",valid_buffered:"9007199254740993",invalid_buffered:"5",valid_saved:"18446744073709551615",invalid_saved:"7",dropped_valid:"9007199254740993",dropped_invalid:"18446744073709551615",flushing:true,cancelled:false,output_path:"test.h5",message:"saving"};
+  const snapshot={transport_version:1,valid:true,state:2,start_time_ns:"18446744073709551614",end_time_ns:"18446744073709551615",valid_buffered:"9007199254740993",invalid_buffered:"5",valid_saved:"18446744073709551615",invalid_saved:"7",dropped_valid:"9007199254740993",dropped_invalid:"18446744073709551615",flushing:true,cancelled:false,output_path:"test.h5",message:"saving",
+    start_generation:"9007199254740993",readiness_generation:"3",capture_generation:"18446744073709551615",persistence_admitted:"18446744073709551615",persistence_committed:"9007199254740993",persistence_failed:"7",terminal:true,finalization_ok:true,completion:0,completion_reason:"all admitted frames reconciled",fault_code:"",fault_message:""};
   expect(decodeExperimentStatus(snapshot).valid_saved).toBe("18446744073709551615");
+  expect(decodeExperimentStatus(snapshot).persistence_admitted).toBe("18446744073709551615");
+  expect(decodeExperimentStatus(snapshot).completion).toBe(0);
   expect(()=>decodeExperimentStatus({...snapshot,dropped_invalid:undefined})).toThrow();
+  expect(()=>decodeExperimentStatus({...snapshot,completion:9})).toThrow("TRANSPORT_UNKNOWN_REQUIRED_ENUM");
+  expect(()=>decodeExperimentStatus({...snapshot,start_generation:undefined})).toThrow();
+});
+it("decodes readiness gates exactly and refuses unknown gate statuses",()=>{
+  const readiness={transport_version:1,valid:true,ready:false,generation:"9007199254740993",gates:[
+    {id:"camera.session",status:2,reason:"capture not running",remediation:"Start Live View"},
+    {id:"processing.background",status:1,reason:"no background",remediation:""}]};
+  const decoded=decodeExperimentReadiness(readiness);
+  expect(decoded.generation).toBe("9007199254740993");
+  expect(decoded.gates[0]).toEqual({id:"camera.session",status:2,reason:"capture not running",remediation:"Start Live View"});
+  expect(()=>decodeExperimentReadiness({...readiness,gates:[{id:"x",status:7,reason:"",remediation:""}]})).toThrow("TRANSPORT_UNKNOWN_REQUIRED_ENUM");
+  expect(()=>decodeExperimentReadiness({...readiness,generation:5})).toThrow();
 });
 
 import {decodeProcessingStats,formatMetric} from "./eventAdapter";
