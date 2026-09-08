@@ -191,6 +191,18 @@ fn main() {
         println!("cargo:rustc-link-lib=static=mib_backend");
         println!("cargo:rustc-link-lib=static=mib_processing");
 
+        // sentry-native (CrashReporter): the backend-only preset builds it as a
+        // static archive under _deps when MIB_USE_SENTRY is ON (inproc backend,
+        // curl transport). Only binaries that pull CrashReporter.o need it — the
+        // Tauri app does — so link it whenever the archive is there.
+        let sentry_dir = build_dir.join("_deps/sentry-build");
+        if sentry_dir.join("libsentry.a").exists() {
+            println!("cargo:rerun-if-changed={}/libsentry.a", sentry_dir.display());
+            println!("cargo:rustc-link-search=native={}", sentry_dir.display());
+            println!("cargo:rustc-link-lib=static=sentry");
+            println!("cargo:rustc-link-lib=dylib=curl");
+        }
+
         // System shared dependencies pulled in by the backend.
         let hdf5_dir = "/usr/lib/x86_64-linux-gnu/hdf5/serial";
         println!("cargo:rustc-link-search=native={hdf5_dir}");
