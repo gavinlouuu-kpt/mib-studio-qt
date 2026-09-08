@@ -10,12 +10,16 @@
 //   4. discoverAllCameras()             (worker thread)
 //
 // Regression guard for the GenTL -1004 "GCInitLib: resource already in use"
-// lockout seen on v1.0.7-beta.fa6e6ba: step 4 failed and every later EGenTL
-// construction in the process failed the same way.
+// lockout seen on v1.0.7-beta.fa6e6ba: the MindVision SDK's CoaXPress plugin
+// opened coaxlink.cti during step 3, so step 4 and every later EGrabber open
+// in the process failed. Fixed by the shared GenTL handle (GenTLHolder.h),
+// which MindVision enumeration reserves first.
 //
 // Set MIB_TEST_CAMERA=1 to enable (skips otherwise). Optional switches:
 //   MIB_TEST_DISCOVERY_SKIP_MINDVISION=1   omit step 3
 //   MIB_TEST_DISCOVERY_SAME_THREAD=1       run step 4 on the main thread
+//   MIB_TEST_DISCOVERY_MINDVISION_FIRST=1  run a MindVision enumeration before
+//                                          any EGrabber call (worst-case order)
 
 #include "backend/services/CameraControlService.h"
 
@@ -54,8 +58,14 @@ int main()
     mib::test::requireDeviceEnv("MIB_TEST_CAMERA");
     const bool skipMindVision = flag("MIB_TEST_DISCOVERY_SKIP_MINDVISION");
     const bool sameThread = flag("MIB_TEST_DISCOVERY_SAME_THREAD");
+    const bool mindVisionFirst = flag("MIB_TEST_DISCOVERY_MINDVISION_FIRST");
 
     CameraControlService cc;
+
+    if (mindVisionFirst) {
+        (void)cc.discoverMindVisionCameras();
+        std::printf("step 0: MindVision enumeration before any EGrabber call\n");
+    }
 
     const auto grabbers = cc.discoverFramegrabbers();
     MIB_REQUIRE(!grabbers.empty(), "step 1: at least one framegrabber discovered");

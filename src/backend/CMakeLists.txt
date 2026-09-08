@@ -206,6 +206,7 @@ target_link_libraries(mib_backend PUBLIC mib_processing)
 if(MIB_HAS_EGRABBER)
     target_sources(mib_backend PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
     )
 else()
     target_sources(mib_backend PRIVATE
