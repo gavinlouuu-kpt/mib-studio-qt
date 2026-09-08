@@ -5,6 +5,17 @@
 
 ## Features shipped
 
+- **Missing MindVision build support made visible** (2026-08-03, issue
+  #338) — official CI builds compile out both vendor SDKs, so "can't find
+  the camera" was usually a build-content problem masquerading as a hardware
+  fault. [[../services/CameraControlService]] now exposes
+  `eGrabberSupported()`/`mindVisionSupported()`;
+  `AppBackend::setMindVisionCameraSelection` fails with an actionable error
+  instead of silently substituting the mock camera; ConnectTab,
+  DeviceInitManager, and BackendFacade surface that error, and the
+  discovery UI names the SDKs compiled out of the running binary. New test
+  `backend.camera_control_support`. Task note
+  [[../task/2026-08-03-mindvision-unavailable-visibility]].
 - **Beta channel unblocked: 1.0.7 version sync + deterministic
   delivery-mode tests** (2026-08-03) — merged the automated fallback-sync
   PR #291 (stale since the v1.0.7 tag-first release: `DEFAULT_VERSION`

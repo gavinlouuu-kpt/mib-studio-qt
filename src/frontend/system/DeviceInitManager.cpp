@@ -3,6 +3,7 @@
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
+#include <QStringList>
 
 #include <algorithm>
 
@@ -116,7 +117,23 @@ void DeviceInitManager::onCameraDiscoveryFinished() {
         if (connectTab_) {
             connectTab_->reportNoCameras();
         }
-        emit cameraInitFinished(false, tr("No cameras found."));
+        // Distinguish "no hardware" from "support compiled out": official CI
+        // builds ship without the vendor SDKs, so discovery finding nothing
+        // is expected there and must not read as a hardware fault (#338).
+        QString message = tr("No cameras found.");
+        QStringList missing;
+        if (!backend::services::CameraControlService::eGrabberSupported()) {
+            missing << QStringLiteral("EGrabber");
+        }
+        if (!backend::services::CameraControlService::mindVisionSupported()) {
+            missing << QStringLiteral("MindVision");
+        }
+        if (!missing.isEmpty()) {
+            message += QLatin1Char(' ') +
+                       tr("Note: this build does not include %1 support; such cameras cannot be detected.")
+                           .arg(missing.join(QStringLiteral(" or ")));
+        }
+        emit cameraInitFinished(false, message);
         scheduleNanopositionerStep();
         return;
     }
@@ -124,7 +141,12 @@ void DeviceInitManager::onCameraDiscoveryFinished() {
     if (cameras.size() == 1) {
         const auto& cam = cameras[0];
         if (cam.cameraType == backend::services::CameraType::MindVision) {
-            backend_.setMindVisionCameraSelection(cam.cameraIndex, cam.label);
+            std::string error;
+            if (!backend_.setMindVisionCameraSelection(cam.cameraIndex, cam.label, &error)) {
+                emit cameraInitFinished(false, QString::fromStdString(error));
+                scheduleNanopositionerStep();
+                return;
+            }
             if (connectTab_) {
                 connectTab_->applyMindVisionSelection(cam.cameraIndex, QString::fromStdString(cam.label));
             }

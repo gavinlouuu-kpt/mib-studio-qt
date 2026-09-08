@@ -72,8 +72,12 @@ namespace backend
         // Select a specific hardware device (does not start capture)
         void setHardwareCameraSelection(int interfaceIndex, int deviceIndex, const std::string &label);
 
-        // Select a MindVision camera by enumeration index (does not start capture)
-        void setMindVisionCameraSelection(int cameraIndex, const std::string &label);
+        // Select a MindVision camera by enumeration index (does not start capture).
+        // Fails (returning false with an actionable errorOut) when this build was
+        // compiled without MindVision support instead of silently falling back to
+        // the mock camera (issue #338).
+        bool setMindVisionCameraSelection(int cameraIndex, const std::string &label,
+                                          std::string *errorOut = nullptr);
 
         // Apply a JS camera script to currently selected hardware device.
         // If capture is running, it will be stopped first. Capture remains stopped.

@@ -45,6 +45,16 @@ using namespace Euresys;
 
 namespace backend::services
 {
+    bool CameraControlService::eGrabberSupported()
+    {
+        return MIB_HAS_EGRABBER != 0;
+    }
+
+    bool CameraControlService::mindVisionSupported()
+    {
+        return MIB_HAS_MINDVISION != 0;
+    }
+
     namespace
     {
         bool reportUnsupported(const char *operation, std::string *errorOut, const char *message)

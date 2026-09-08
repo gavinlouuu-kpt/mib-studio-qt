@@ -46,6 +46,13 @@ public:
     CameraControlService() = default;
     ~CameraControlService() = default;
 
+    // Compile-time SDK availability. UIs use these to distinguish "no
+    // hardware found" from "support not included in this build" — official
+    // CI builds ship with both vendor SDKs disabled (issue #338), so an
+    // empty discovery result alone is ambiguous.
+    static bool eGrabberSupported();
+    static bool mindVisionSupported();
+
     std::vector<DiscoveredCamera> discoverCameras();
     std::vector<DiscoveredCamera> discoverMindVisionCameras();
     std::vector<DiscoveredCamera> discoverAllCameras();

@@ -593,7 +593,10 @@ namespace backend
                     : std::string("MindVision camera ") + std::to_string(cameraIndex) + " (" + configPath + ")";
                 lastMindVisionConfigPath_ = configPath;
 #else
-                SPDLOG_WARN("AppBackend: MindVision mode requested but MindVision SDK is unavailable; falling back to mock camera");
+                SPDLOG_ERROR("AppBackend: profile requests a MindVision camera but this build "
+                             "does not include MindVision support (compiled with "
+                             "MIB_ENABLE_MINDVISION=OFF); falling back to mock camera. Install "
+                             "a build with the MindVision SDK enabled to use this profile.");
                 cameraMode = "mock";
                 configureMock();
 #endif
@@ -745,30 +748,39 @@ namespace backend
                     label, interfaceIndex, deviceIndex);
     }
 
-    void AppBackend::setMindVisionCameraSelection(int cameraIndex, const std::string &label)
+    bool AppBackend::setMindVisionCameraSelection(int cameraIndex, const std::string &label,
+                                                  std::string *errorOut)
     {
         if (!captureService_)
-            return;
+        {
+            if (errorOut)
+                *errorOut = "Capture service is not available";
+            return false;
+        }
 
+#if !MIB_HAS_MINDVISION
+        // Never silently fall back to the mock camera here: the user asked for
+        // hardware and would otherwise record mock frames without noticing
+        // (issue #338). Selection state stays untouched.
+        (void)cameraIndex;
+        const std::string message =
+            "This build does not include MindVision support (compiled with "
+            "MIB_ENABLE_MINDVISION=OFF); the camera \"" + label +
+            "\" cannot be used. Install a build with the MindVision SDK enabled.";
+        SPDLOG_ERROR("AppBackend: {}", message);
+        if (errorOut)
+            *errorOut = message;
+        return false;
+#else
         selectedMvCameraIndex_ = cameraIndex;
         selectedIfIndex_ = -1;
         selectedDevIndex_ = -1;
         selectedLabel_ = label;
         mockCameraConfigured_ = false;
 
-#if MIB_HAS_MINDVISION
         const std::string configPath = lastMindVisionConfigPath_;
         captureService_->setCameraFactory([cameraIndex, configPath]()
                                           { return std::make_unique<camera::common::MindVisionCamera>(cameraIndex, configPath); });
-#else
-        SPDLOG_WARN("MindVision camera selection requested but MindVision SDK is unavailable; falling back to mock camera");
-        camera::mock::MockCameraOptions options;
-        options.folder = std::filesystem::path("data") / "mock_frames";
-        captureService_->setCameraFactory([options]() mutable
-                                          { return std::make_unique<camera::mock::MockCamera>(options); });
-        lastMindVisionConfigPath_.clear();
-        mockCameraConfigured_ = false;
-#endif
 
         auto &mirror = backend::diagnostics::CrashStateMirror::instance();
         mirror.app.selectedInterface.store(-1);
@@ -777,6 +789,8 @@ namespace backend
         mirror.setCameraLabel(selectedLabel_);
 
         SPDLOG_INFO("MindVision camera selected: {} (index={})", label, cameraIndex);
+        return true;
+#endif
     }
 
     bool AppBackend::applyCameraScriptFromFile(const std::string &path, std::string *errorOut)

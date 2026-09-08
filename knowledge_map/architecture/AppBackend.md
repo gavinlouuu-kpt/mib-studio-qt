@@ -119,8 +119,9 @@ the realtime thread live).
 ## Camera selection
 
 - `setHardwareCameraSelection(ifIdx, devIdx, label)` — choose device (no start)
-- `setMindVisionCameraSelection(cameraIndex, label)` — choose a MindVision
-  device (no start)
+- `setMindVisionCameraSelection(cameraIndex, label, errorOut) -> bool` —
+  choose a MindVision device (no start); fails with an actionable error in
+  builds compiled without MindVision support (issue #338)
 - `configureMockCamera(options)` — choose mock folder instead
 - `applyCameraScriptFromFile(path)` — push a GenICam JS config to the selected
   device (stops capture first, does not restart)
@@ -144,8 +145,13 @@ the realtime thread live).
 - `setHardwareCameraSelection()` becomes a guarded fallback on non-Windows:
   it logs a warning, switches the capture factory to `MockCamera`, clears
   selected hardware indices, and keeps `mockCameraConfigured_ = true`.
-- `setMindVisionCameraSelection()` preserves the selected camera state even
-  when the SDK is unavailable so the UI/backend selection remains explicit.
+- `setMindVisionCameraSelection()` **fails** (returns `false` + errorOut) when
+  the build lacks MindVision support instead of silently swapping in the mock
+  camera — the user asked for hardware and must not unknowingly record mock
+  frames (issue #338). Selection state stays untouched on failure. The
+  startup-profile path (`camera_mode: mindvision`) still falls back to mock so
+  the app remains usable, but logs an ERROR naming
+  `MIB_ENABLE_MINDVISION=OFF` as the cause.
 
 ## Frame recording mode
 

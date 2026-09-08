@@ -3,6 +3,7 @@
 
 #include <QMessageBox>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QVariant>
 
 #include <spdlog/spdlog.h>
@@ -137,8 +138,15 @@ void ConnectTab::tryAutoConnect()
         else
         {
             const auto &cam = mindVisionCameras[0];
-            backend_.setMindVisionCameraSelection(cam.cameraIndex, cam.label);
-            applyMindVisionSelection(cam.cameraIndex, QString::fromStdString(cam.label));
+            std::string error;
+            if (backend_.setMindVisionCameraSelection(cam.cameraIndex, cam.label, &error))
+            {
+                applyMindVisionSelection(cam.cameraIndex, QString::fromStdString(cam.label));
+            }
+            else
+            {
+                ui->statusLabel->setText(QString::fromStdString(error));
+            }
         }
         return;
     }
@@ -181,9 +189,34 @@ void ConnectTab::applyMindVisionSelection(int cameraIndex, const QString& label)
     emit connected();
 }
 
+// Names the vendor SDKs compiled out of this binary, or an empty string when
+// all are present. Official CI builds ship without either SDK (issue #338),
+// so "no cameras found" alone would misread as a hardware/cabling problem.
+static QString missingSupportNote()
+{
+    using backend::services::CameraControlService;
+    QStringList missing;
+    if (!CameraControlService::eGrabberSupported()) {
+        missing << QStringLiteral("EGrabber");
+    }
+    if (!CameraControlService::mindVisionSupported()) {
+        missing << QStringLiteral("MindVision");
+    }
+    if (missing.isEmpty()) {
+        return {};
+    }
+    return QObject::tr("Note: this build does not include %1 support; such cameras cannot be detected.")
+        .arg(missing.join(QStringLiteral(" or ")));
+}
+
 void ConnectTab::reportNoCameras()
 {
-    ui->statusLabel->setText(tr("No cameras found."));
+    QString message = tr("No cameras found.");
+    const QString note = missingSupportNote();
+    if (!note.isEmpty()) {
+        message += QLatin1Char(' ') + note;
+    }
+    ui->statusLabel->setText(message);
     emit noCamerasFound();
 }
 
@@ -233,14 +266,25 @@ void ConnectTab::populateDevices() {
 
     if (ui->mindVisionList->count() > 0) {
         ui->mindVisionList->setCurrentRow(0);
+    } else if (!backend::services::CameraControlService::mindVisionSupported()) {
+        // Non-selectable placeholder so an empty list explains itself instead
+        // of looking like missing hardware (issue #338).
+        auto* note = new QListWidgetItem(tr("MindVision support is not included in this build"));
+        note->setFlags(Qt::NoItemFlags);
+        ui->mindVisionList->addItem(note);
     }
 
-    ui->statusLabel->setText(QString("Found %1 framegrabber(s), %2 eGrabber camera(s), %3 MindVision camera(s)")
-                         .arg(ui->framegrabberList->count())
-                         .arg(ui->cameraList->count())
-                         .arg(ui->mindVisionList->count()));
+    QString status = QString("Found %1 framegrabber(s), %2 eGrabber camera(s), %3 MindVision camera(s)")
+                         .arg(framegrabbers.size())
+                         .arg(cameras.size())
+                         .arg(mindVisionCameras.size());
+    const QString note = missingSupportNote();
+    if (!note.isEmpty()) {
+        status += QLatin1Char(' ') + note;
+    }
+    ui->statusLabel->setText(status);
     SPDLOG_INFO("ConnectTab: refreshed, {} framegrabber(s), {} eGrabber camera(s), {} MindVision camera(s) listed",
-                ui->framegrabberList->count(), ui->cameraList->count(), ui->mindVisionList->count());
+                framegrabbers.size(), cameras.size(), mindVisionCameras.size());
 }
 
 void ConnectTab::onConnect() {
@@ -287,7 +331,12 @@ void ConnectTab::onConnect() {
     if (idx.type == backend::services::CameraType::MindVision) {
         SPDLOG_INFO("ConnectTab: selecting MindVision camera {} ({})",
                     label.toStdString(), idx.cameraIndex);
-        backend_.setMindVisionCameraSelection(idx.cameraIndex, label.toStdString());
+        std::string error;
+        if (!backend_.setMindVisionCameraSelection(idx.cameraIndex, label.toStdString(), &error)) {
+            QMessageBox::warning(this, tr("Connect Device"), QString::fromStdString(error));
+            ui->statusLabel->setText(QString::fromStdString(error));
+            return;
+        }
     } else {
         SPDLOG_INFO("ConnectTab: selecting hardware device {} ({}:{})",
                     label.toStdString(), idx.ifIndex, idx.devIndex);

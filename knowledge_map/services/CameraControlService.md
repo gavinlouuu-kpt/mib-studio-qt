@@ -26,6 +26,10 @@
   GenICam JS file to a specific device.
 - `deviceReset(ifIdx, devIdx, errorOut)` — issue SFNC `DeviceReset`;
   best-effort stops acquisition first.
+- `static eGrabberSupported()` / `static mindVisionSupported()` — compile-time
+  SDK availability, so UIs can distinguish "no hardware found" from "support
+  not included in this build". Official CI builds ship with both SDKs
+  disabled, making empty discovery ambiguous without these (issue #338).
 
 ## Threading
 

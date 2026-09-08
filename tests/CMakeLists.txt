@@ -75,6 +75,10 @@ mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mindvision_config_test>)
 set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera" TIMEOUT 30)
 
+mib_add_backend_test_executable(camera_control_support_test backend/camera_control_support_test.cpp)
+add_test(NAME backend.camera_control_support COMMAND $<TARGET_FILE:camera_control_support_test>)
+set_tests_properties(backend.camera_control_support PROPERTIES LABELS "backend;camera" TIMEOUT 30)
+
 mib_add_backend_test_executable(camera_script_apply_test backend/camera_script_apply_test.cpp)
 add_test(NAME backend.camera_script_apply COMMAND $<TARGET_FILE:camera_script_apply_test>)
 set_tests_properties(backend.camera_script_apply PROPERTIES LABELS "backend;camera" TIMEOUT 30)

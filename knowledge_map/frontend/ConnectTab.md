@@ -22,7 +22,13 @@
 - Surface health indicators (model name, firmware, interface/device labels).
 - Hand the chosen selection to `AppBackend::setHardwareCameraSelection`
   `AppBackend::setMindVisionCameraSelection`, or
-  `AppBackend::configureMockCamera`.
+  `AppBackend::configureMockCamera`. MindVision selection can fail in builds
+  without MindVision support; the tab shows the backend's error in a warning
+  dialog + status label instead of pretending to connect (issue #338).
+- Explain empty discovery: `reportNoCameras()`, the refresh status line, and a
+  non-selectable placeholder in the MindVision list all name the vendor SDKs
+  compiled out of the running binary (official CI builds ship with none), so
+  "no cameras found" is not misread as a hardware fault.
 - Own the **Delivery mode** combo (`deliveryModeCombo`, index 0 = Every Frame,
   1 = Latest Frame). A change applies a
   `CaptureService::Config` (buffer sizing left at service defaults, only
