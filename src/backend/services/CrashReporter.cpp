@@ -745,9 +745,12 @@ std::vector<PendingDump> collectPendingDumps(const std::filesystem::path& dir) {
                            entry.last_write_time(ec)});
         ec.clear();
     }
-    // Oldest first: the backlog drains in crash order across launches.
-    std::sort(pending.begin(), pending.end(),
-              [](const PendingDump& a, const PendingDump& b) { return a.modified < b.modified; });
+    // Oldest first: the backlog drains in crash order across launches. The
+    // file name starts with the crash timestamp, so it breaks mtime ties.
+    std::sort(pending.begin(), pending.end(), [](const PendingDump& a, const PendingDump& b) {
+        if (a.modified != b.modified) return a.modified < b.modified;
+        return a.dmp.filename() < b.dmp.filename();
+    });
     return pending;
 }
 

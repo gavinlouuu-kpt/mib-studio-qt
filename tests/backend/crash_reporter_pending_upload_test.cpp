@@ -317,7 +317,12 @@ static void testDelivered() {
     createFile(dir / "20260301T080000-pid100-sigsegv.json", R"({"capture":"running","frames":42})");
     createFile(dir / "20260302T090000-pid200-terminate.dmp", "MDMP second dump");
     createFile(dir / "20260302T090000-pid200-terminate.txt", "what(): disk full");
-    // Second dump has no sidecar — verifies isolation.
+    // Second dump has no sidecar — verifies isolation. Backdate the first so
+    // the oldest-first order does not depend on the filesystem's mtime
+    // resolution.
+    std::error_code ec;
+    fs::last_write_time(dir / "20260301T080000-pid100-sigsegv.dmp",
+                        fs::file_time_type::clock::now() - std::chrono::hours(24), ec);
 
     CrashReporter::init(baseConfig(dir, server.dsn()));
     CHECK(waitForDelivered(dir, 2));
