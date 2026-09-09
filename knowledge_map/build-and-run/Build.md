@@ -36,6 +36,11 @@ From `CMakePresets.json`:
   compiles with `/Z7` (debug info in the object, cacheable) — the PDB is
   still produced at link by `/DEBUG`. Works with Ninja/Makefiles; the VS
   generator ignores compiler launchers.
+- `windows-ninja-ci` — the `windows-ninja` layout in `build/` (toolchain
+  `build/conan_toolchain.cmake`); this is what `build-windows.yml` uses
+  since 2026-09-09 (CI profile `ci` carries
+  `tools.cmake.cmaketoolchain:generator=Ninja`, `ilammy/msvc-dev-cmd`
+  provides cl.exe, `mozilla-actions/sccache-action` the cache).
 - Build presets: `windows-default-build` (Debug),
   `windows-default-build-release` (Release), `windows-ninja-build`,
   `linux-backend-only-build`
