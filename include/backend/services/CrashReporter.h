@@ -27,10 +27,18 @@ public:
         bool installSignalHandlers{true};
         bool installTerminateHandler{true};
         size_t maxRetainedDumps{50};        // per-class retention bound
-                                            // (pending .dmp, .queued, orphan
+                                            // (pending .dmp, delivered
+                                            // .dmp.sent/.dmp.rejected, orphan
                                             // .json sidecars)
-        int queuedRetryAfterDays{7};        // a .dmp.queued older than this
-                                            // is re-submitted once (0 = off)
+        // Pending-dump upload (MinidumpUploader): at most this many dumps
+        // per launch, oldest first, on a background thread; a dump is
+        // renamed .dmp.sent only on an HTTP 2xx, .dmp.rejected on a
+        // permanent 4xx, and stays .dmp (retried next launch) otherwise.
+        size_t maxUploadsPerStart{10};
+        int uploadTimeoutMs{60000};         // per dump
+        // sentry-native flush budget at shutdown() for live events (the
+        // library default of 2 s left queued envelopes behind on close).
+        int shutdownTimeoutMs{5000};
     };
 
     // Returns true if at least the local minidump path is armed. Returns

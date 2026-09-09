@@ -5,6 +5,22 @@
 
 ## Features shipped
 
+- **Crash dumps reach Sentry: MinidumpUploader** (2026-09-09) — 99 dumps
+  on the bench PC had been renamed `.queued`/`.queued2` ("submitted") and
+  none ever reached the server: sentry-native's transport gives no
+  delivery signal, flushes 2 s at close, re-sends an old run once, and
+  short bench sessions plus exit-time crashes lost everything (network and
+  server verified fine; `docs/evidence/2026-09-08-crash-dump-review.md`
+  §2). `CrashReporter` now posts pending `.dmp` files itself to Sentry's
+  minidump endpoint ([[../services/MinidumpUploader]]: WinHTTP / libcurl,
+  multipart with the state sidecar attached), oldest first, ≤
+  `maxUploadsPerStart` per launch on a background thread, and advances
+  the disk queue only on the HTTP status (2xx → `.sent`, permanent 4xx →
+  `.rejected`, else retry next launch); the legacy states are recovered
+  to `.dmp`. Live events keep sentry-native's queue with a 5 s shutdown
+  flush. Guard: `backend.crash_reporter_pending_upload` against a local
+  fake endpoint.
+
 - **Crash dump review + fixes from the code review** (2026-09-08) — 62 crash
   reports in `%LOCALAPPDATA%\MIB_Studio_Qt\crashes` (never uploaded) and
   five WER dumps reviewed with WinDbg; findings in
