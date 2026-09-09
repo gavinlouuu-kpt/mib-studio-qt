@@ -5,9 +5,12 @@
 
 ## Features shipped
 
-- **One backend test runner instead of 81 executables** (2026-09-09) —
-  `tests/CMakeLists.txt` compiles every `mib_add_backend_test_executable`
-  source into `mib_backend_tests` (per-source `main=mib_test_main__<target>`
+- **Test runners instead of ~90 executables** (2026-09-09) —
+  `cmake/MIBTestRunner.cmake` (`mib_test_runner_add/link/finalize`)
+  compiles every `mib_add_backend_test_executable` source into
+  `mib_backend_tests` and the eight Qt widget tests into
+  `mib_frontend_tests` (with `defaults.qrc`); 106 → 31 executables in the
+  tree. The backend runner (per-source `main=mib_test_main__<target>`
   compile definition, generated dispatcher on the first argument; MSVC
   mangles `char* argv[]` and `char** argv` differently, so the dispatcher
   declares each entry in the test's own spelling). CTest entries run
