@@ -60,8 +60,8 @@ From `CMakePresets.json`:
 | `mib_studio_qt` | executable (`WIN32` on Windows) | Production app (mock camera reachable via ConnectTab "Configure Mock…" or `MIB_CAMERA_MODE=mock`) |
 | `screenshot_tour` | executable | Headless UI tour that regenerates the user-manual screenshots (`docs/manual/images`); builds on Linux too (`linux-system-release`); see [[../frontend/Screenshot-Tour]] |
 | `processing_core_dialog_test` | executable test | Offscreen Qt regression proving the local active-core identity remains visible when registry loading fails; generated only by full frontend builds (`ctest -R frontend.processing_core_dialog`) |
-| `mib_backend_smoke_test` | executable test | Backend-only HDF5/open/flush smoke test (`ctest -L backend`) |
-| `emodulus_lut_catalog_test` | executable test | Backend-only LUT manifest/cache smoke test (`ctest -L backend`) |
+| `mib_backend_tests` | executable test runner | **Every backend test in one binary** (2026-09-09): each `mib_add_backend_test_executable` source is compiled with `main=mib_test_main__<target>` and dispatched on the first argument, so CTest runs `mib_backend_tests <target> [args]` (one process per test). Run one directly: `build/Release/mib_backend_tests.exe emodulus_lut_catalog_test`; `--list` prints the names. Ten tests stay standalone executables (`MIB_STANDALONE_BACKEND_TESTS` in `tests/CMakeLists.txt`, each with its reason). Linking ~100 test executables was 18 s of every header-touch rebuild. |
+| `mib_backend_smoke_test` | executable test | Backend-only HDF5/open/flush smoke test (`ctest -L backend`); standalone because `tools/gen_bridge_link_manifest.py` reads its `.vcxproj` |
 
 `mib_backend` is linked by every executable. Source is in
 `src/backend/`, `src/camera/`, and `src/backend/playback/`.
