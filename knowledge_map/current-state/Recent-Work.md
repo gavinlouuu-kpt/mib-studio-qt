@@ -5,6 +5,22 @@
 
 ## Features shipped
 
+- **One backend test runner instead of 81 executables** (2026-09-09) —
+  `tests/CMakeLists.txt` compiles every `mib_add_backend_test_executable`
+  source into `mib_backend_tests` (per-source `main=mib_test_main__<target>`
+  compile definition, generated dispatcher on the first argument; MSVC
+  mangles `char* argv[]` and `char** argv` differently, so the dispatcher
+  declares each entry in the test's own spelling). CTest entries run
+  `mib_backend_tests <target> [args]`, one process per test as before.
+  Ten tests stay standalone (`MIB_STANDALONE_BACKEND_TESTS`, each with the
+  reason: self-spawning crash tests, exit-teardown, argv[0] users, plugin
+  fixture dependencies, the bridge link-manifest reference project, the
+  exporter-soak lane's direct binary). Linking the 98 test executables was
+  18 s of every header-touch rebuild on the bench PC. Also: the Hugging
+  Face dataset test carries the `network` label and the release lane runs
+  `ctest -LE "soak|performance|network"` — its 2 s vs 46 s run time was
+  the datasets-server, not the build.
+
 - **Build/test turnaround: Ninja + sccache preset, soak out of the fast
   lane, path-gated sanitizers** (2026-09-09) — Measured on the bench PC
   (32 cores): the VS-generator tree needs 56 s for a no-op build and 107 s
