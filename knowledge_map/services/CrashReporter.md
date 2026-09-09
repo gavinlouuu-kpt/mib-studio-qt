@@ -40,29 +40,32 @@
   [[../diagnostics/CrashStateMirror]] snapshot under
   `%LOCALAPPDATA%/MIB_Studio_Qt/crashes/`.
 - On startup (when `uploadPendingOnStart` is true):
-  1. **Legacy recovery:** scans for `.dmp.uploaded` files (the old
-     suffix from before issue #345) and renames them back to `.dmp`
-     (plus matching `.json.uploaded` → `.json`) for re-submission.
-  2. **Pending upload:** only when Sentry actually initialized
-     (`isSentryActive()`), scans for `.dmp` files and submits each via
-     `sentry_capture_minidump(path)`, which attaches the actual minidump
-     binary to the Sentry event. Each dump's JSON sidecar is loaded and
-     attached as a `state_snapshot` extra, then cleaned up after
-     submission to prevent state leakage between dumps. Submitted dumps
-     are renamed to `.dmp.queued` (not `.uploaded`). When Sentry is
-     inactive (no DSN / init failure / built without Sentry), pending
-     dumps are left untouched so a later launch can submit them.
-     A `.dmp.queued` still on disk after `queuedRetryAfterDays` (default
-     7; 0 disables) is re-submitted exactly once — tagged
-     `crash_recovery: queued_retry` — and renamed to the terminal
-     `.dmp.queued2`. This covers the transport's send-failure loss
-     window (see Gotchas).
-  3. **Bounded retention:** removes the oldest files beyond
-     `maxRetainedDumps` (default 50) per class: queued dumps
-     (`.dmp.queued` + `.dmp.queued2` together), never-submitted pending
-     `.dmp` files (local-only installs), and orphan `.json` sidecars
-     (terminate / on_crash / diagnostic files with no matching dump) —
-     sidecars of dumps still on disk are never touched.
+  1. **Legacy recovery:** every earlier "assumed delivered" state —
+     `.dmp.uploaded` (pre-#345), `.dmp.queued` and `.dmp.queued2` (the
+     optimistic `sentry_capture_minidump` hand-off, 2026-08/09) — goes
+     back to `.dmp` (sidecar likewise) and re-enters the queue. None of
+     them ever carried delivery evidence; the bench PC held 99 such dumps
+     that never reached the server
+     (`docs/evidence/2026-09-08-crash-dump-review.md` §2).
+  2. **Bounded retention:** removes the oldest files beyond
+     `maxRetainedDumps` (default 50) per class: delivered dumps
+     (`.dmp.sent` + `.dmp.rejected` together), pending `.dmp` files, and
+     orphan `.json` sidecars / `.txt` notes with no matching dump —
+     sidecars of pending dumps are never touched. Runs before the upload
+     so the newest dumps are the ones that get uploaded.
+  3. **Pending upload (2026-09-09, [[MinidumpUploader]]):** when a DSN is
+     configured (parseable; Sentry does not even have to initialize), a
+     background thread posts pending `.dmp` files **oldest first**, at
+     most `maxUploadsPerStart` (10) per launch, straight to Sentry's
+     `/api/<project>/minidump/` endpoint (WinHTTP on Windows, libcurl
+     elsewhere) with the state sidecar as an attachment and the terminate
+     `.txt` as `crash_message`. The disk queue is advanced only on the
+     HTTP status: 2xx → `.dmp.sent`, permanent 4xx (not 408/429) →
+     `.dmp.rejected`, anything else (offline, timeout, 5xx, 429) → the
+     dump stays `.dmp` for the next launch. `shutdown()` stops the thread
+     before `sentry_close()`; the dump in flight finishes (bounded by
+     `uploadTimeoutMs`) and the first dump of a launch is always
+     attempted, so even a seconds-long session drains one.
 
 ## Key APIs
 
@@ -73,7 +76,7 @@ struct Config { dsn; release; environment; crashDir; databaseDir;
                 tracesSampleRate; installSignalHandlers;
                 installQtMessageHandler; installTerminateHandler;
                 uploadPendingOnStart; maxRetainedDumps;
-                queuedRetryAfterDays; };
+                maxUploadsPerStart; uploadTimeoutMs; shutdownTimeoutMs; };
 
 static bool init(const Config& cfg);
 static void shutdown();
@@ -177,21 +180,23 @@ Operator setup (org slug, auth token, self-hosted URL) is documented in
   20260522T143015-pid12345-sigsegv.json   ← (signal-handler path, no dmp on non-Win)
   20260522T143015-pid12345-terminate.json ← std::terminate path (+ .dmp + .txt)
   20260522T143015-pid12345-exception.json ← non-fatal captureException()
-  *.dmp.queued                            ← submitted to Sentry transport queue
-  *.dmp.queued2                           ← re-submitted once after going stale (terminal)
-  *.dmp.uploaded                          ← legacy suffix (recovered to .dmp on next launch)
+  *.dmp.sent / *.json.sent / *.txt.sent   ← delivered (HTTP 2xx from the minidump endpoint)
+  *.dmp.rejected (+ .json/.txt)           ← server refused permanently (4xx), never retried
+  *.dmp.uploaded / .queued / .queued2     ← legacy suffixes (recovered to .dmp on next launch)
 ```
 
 ### File lifecycle
 
 ```
 [crash] → .dmp + .json (+ .txt on the terminate path)
-[next launch, Sentry active] → sentry_capture_minidump() → .dmp.queued + .json.queued
-[next launch, Sentry inactive] → .dmp + .json stay as-is (submitted later)
-[stale .queued > queuedRetryAfterDays] → re-submitted once → .dmp.queued2 (terminal)
-[legacy recovery] → .dmp.uploaded → .dmp → (re-submitted as above)
+[next launch, DSN set] → MinidumpUploader POST (oldest first, ≤ maxUploadsPerStart)
+                          2xx → .dmp.sent (+ .json.sent, .txt.sent)
+                          4xx (not 408/429) → .dmp.rejected
+                          offline / timeout / 5xx / 429 → stays .dmp, retried next launch
+[next launch, no DSN] → .dmp + .json stay as-is (uploaded later)
+[legacy recovery] → .dmp.uploaded / .queued / .queued2 → .dmp → (uploaded as above)
 [retention cleanup] → oldest removed beyond maxRetainedDumps, per class:
-                      queued (.queued/.queued2), pending .dmp, orphan .json
+                      delivered (.sent/.rejected), pending .dmp, orphan .json/.txt
 ```
 
 ### What a dump and its sidecar carry (2026-09-08)
@@ -252,24 +257,22 @@ sentry-cli releases finalize "mib_studio_qt@$version"
   minidump capture. The `init()` code gates SEH + SIGSEGV/SIGFPE/SIGILL
   installation behind `!isSentryActive()`; only the SIGABRT fallback
   (which Crashpad cannot see) stays installed in both modes.
-- **Pending dumps are only renamed `.queued` after a real submission.**
-  `uploadPendingCrashes` is gated on `isSentryActive()` — with Sentry
-  inactive, `sentry_capture_minidump` would be a no-op and renaming
-  would mark never-sent dumps as queued, letting retention destroy
-  them. Note 0.7.20's `sentry_capture_minidump` returns `void`, so
-  per-capture success cannot be verified beyond the active check.
-- **The transport is only partially durable** (verified against the
-  pinned sentry-native 0.7.20 source): envelopes still *waiting* in the
-  bgworker queue at shutdown are dumped to the database `.run` folder
-  (`sentry__transport_dump_queue`) and re-sent on a later launch
-  (`sentry__process_old_runs`); an envelope whose send attempt *fails*
-  (e.g. offline) is freed without any retry. The stale-`.queued`
-  one-shot retry exists to cover exactly that loss window; `.queued2`
-  is terminal so retries can never loop.
-- **State snapshot isolation.** Each pending dump's extras
-  (`state_snapshot`, `original_dump_file`) are set before
-  `sentry_capture_minidump` and removed immediately after, so one dump's
-  state never leaks into the next event.
+- **Never advance the crash queue without delivery evidence.** Dumps are
+  renamed only on an HTTP status from [[MinidumpUploader]]. The previous
+  scheme handed dumps to `sentry_capture_minidump` and renamed them
+  `.queued` on the assumption of delivery; sentry-native's transport
+  gives no per-envelope signal, drops a failed send silently, keeps the
+  queue only in memory, and on a clean close flushes for 2 s before
+  dumping the rest into the `.run` dir for a *single* re-send on the
+  next launch (`sentry__process_old_runs` deletes the files before
+  sending). On the bench (16 MB backlog, ~0.85 MB/s uplink, 20-second
+  sessions, exit-time crashes) that lost every report for a month.
+- **sentry-native's own queue is still used for live events** (messages,
+  sessions, performance transactions); `shutdownTimeoutMs` (5 s, was the
+  2 s library default) bounds its flush at `shutdown()`.
+- **Do not block the UI on uploads.** The uploader is a background thread
+  started at the end of `init()`; `shutdown()` joins it (the dump in
+  flight finishes, the rest wait for the next launch).
 - The signal handler intentionally re-raises the signal with `SIG_DFL`
   so debuggers and Windows Error Reporting still see the fault.
 - `registerStateMirror` MUST point to a function that does not allocate

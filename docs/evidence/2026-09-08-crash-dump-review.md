@@ -84,8 +84,25 @@ fault context and the sidecar names module+offset and the build id whose
 PDB is kept in `%LOCALAPPDATA%\MIB_Studio_Qt\symbols\<build id>\`
 (`cdbX64 -z <dmp> -y <that folder> -c "!analyze -v; ~*k"`).
 
-Also open: the queued reports were never uploaded (`.queued2`); Sentry
-upload is not reaching the server from this PC.
+**Why none of the 99 queued reports reached Sentry (2026-09-09).** Not the
+network: from this PC a real 300 KB envelope posted with curl returned
+HTTP 200, and a probe linking the same sentry-native 0.7.20 re-sent the
+whole stuck queue through the same WinHTTP transport, 28/28 HTTP 200, no
+rate limiting. The loss was lifecycle: the app only sends while it runs,
+`sentry_close()` flushes for the library default of 2 s and dumps the
+rest into the database `.run` dir, the backlog was 27 envelopes / 16.4 MB
+and needed 19 s on this uplink, every bench session on 09-08 lasted
+19–77 s, one ended in the exit-time segfault (the queue is lost outright
+on a crash), the re-send of an old run is one-shot (files deleted before
+sending), and the app's own `.queued` → `.queued2` policy declared 45
+dumps terminal after one such attempt. Fixed the same day: pending dumps
+are now posted directly to the minidump endpoint by `MinidumpUploader`
+with a per-dump HTTP status, oldest first, ≤ 10 per launch, and the disk
+queue advances only on a 2xx (`.sent`) or a permanent 4xx (`.rejected`);
+legacy `.queued`/`.queued2` dumps re-enter the queue. Guard:
+`backend.crash_reporter_pending_upload` (local fake endpoint: 200 / 400 /
+503 / unreachable / per-launch cap). The probe already delivered the 27
+stuck envelopes.
 
 ## 3. Installed app 1.0.7 — OpenCV ROI assertion (2026-08-18 ×2, 09-01 ×4, 09-07 ×1)
 

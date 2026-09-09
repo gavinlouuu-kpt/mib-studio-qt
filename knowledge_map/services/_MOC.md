@@ -31,6 +31,7 @@
   (`processBatch` inputs/outputs)
 
 ## Diagnostics
+- [[MinidumpUploader]] — posts pending crash dumps to Sentry with a per-dump HTTP status (the crash queue advances only on 2xx)
 - [[CrashReporter]] — process-level crash handler + Sentry forwarder;
   pairs with [[../diagnostics/CrashStateMirror]]
 

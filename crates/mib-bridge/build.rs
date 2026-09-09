@@ -200,8 +200,10 @@ fn main() {
             println!("cargo:rerun-if-changed={}/libsentry.a", sentry_dir.display());
             println!("cargo:rustc-link-search=native={}", sentry_dir.display());
             println!("cargo:rustc-link-lib=static=sentry");
-            println!("cargo:rustc-link-lib=dylib=curl");
         }
+        // libcurl: sentry-native's transport and the backend's own
+        // MinidumpUploader (CMake links CURL::libcurl when found).
+        println!("cargo:rustc-link-lib=dylib=curl");
 
         // System shared dependencies pulled in by the backend.
         let hdf5_dir = "/usr/lib/x86_64-linux-gnu/hdf5/serial";

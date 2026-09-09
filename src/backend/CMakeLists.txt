@@ -191,6 +191,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLutCatalog.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/Logger.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CrashReporter.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/MinidumpUploader.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/database/SqliteService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CameraControlService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
@@ -307,7 +308,18 @@ endif()
 # CrashReporter requires dbghelp on Windows for MiniDumpWriteDump; the serial
 # port enumeration (SerialPortWin32.cpp) uses SetupAPI.
 if(WIN32)
-    target_link_libraries(mib_backend PUBLIC dbghelp setupapi)
+    # winhttp: MinidumpUploader posts pending crash dumps to Sentry itself.
+    target_link_libraries(mib_backend PUBLIC dbghelp setupapi winhttp)
+else()
+    # Elsewhere the uploader uses libcurl when the build has it (the Linux
+    # backend-only preset does: sentry-native's curl transport needs it too).
+    find_package(CURL QUIET)
+    if(TARGET CURL::libcurl)
+        target_link_libraries(mib_backend PUBLIC CURL::libcurl)
+        target_compile_definitions(mib_backend PRIVATE MIB_HAVE_CURL=1)
+    else()
+        target_compile_definitions(mib_backend PRIVATE MIB_HAVE_CURL=0)
+    endif()
 endif()
 
 # Wire optional sentry-native. When MIB_USE_SENTRY=OFF (or the fetch failed)
