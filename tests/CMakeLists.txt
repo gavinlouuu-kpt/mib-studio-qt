@@ -21,6 +21,7 @@ set(MIB_STANDALONE_BACKEND_TESTS
     processing_core_loader_test         # add_dependencies on the plugin fixtures
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
+    processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
 )
 
 function(mib_add_backend_test_executable target source)
