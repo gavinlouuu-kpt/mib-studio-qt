@@ -104,6 +104,16 @@
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build-ninja/conan_toolchain.cmake",
         "MIB_ENABLE_MINDVISION": "ON"
       }
+    },
+    {
+      "name": "windows-ninja-ci",
+      "displayName": "Windows Ninja x64 Release in build/ (CI)",
+      "description": "windows-ninja with the CI layout: binary dir build/, toolchain from `conan install . -of build ... -c tools.cmake.cmaketoolchain:generator=Ninja`. Executables land in build/Release like the VS tree.",
+      "inherits": "windows-ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan_toolchain.cmake"
+      }
     }
   ],
   "buildPresets": [
@@ -142,6 +152,10 @@
     {
       "name": "windows-ninja-build",
       "configurePreset": "windows-ninja"
+    },
+    {
+      "name": "windows-ninja-ci-build",
+      "configurePreset": "windows-ninja-ci"
     }
   ],
   "testPresets": [

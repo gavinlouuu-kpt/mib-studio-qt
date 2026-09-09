@@ -45,6 +45,11 @@ concurrency:
 jobs:
   build:
     runs-on: windows-2022
+    env:
+      # sccache (mozilla-actions/sccache-action) backed by the Actions cache:
+      # cmake/MIBCompilerSettings.cmake picks it up from PATH as the C/C++
+      # compiler launcher. Release compiles with /Z7 so objects are cacheable.
+      SCCACHE_GHA_ENABLED: "true"
     permissions:
       contents: write
       # Release mode opens the fallback-version sync PR into develop.
@@ -139,6 +144,8 @@ jobs:
           compiler.cppstd=17
           compiler.runtime=dynamic
           build_type=Release
+          [conf]
+          tools.cmake.cmaketoolchain:generator=Ninja
           "@ | Out-File -FilePath "$env:USERPROFILE\.conan2\profiles\ci" -Encoding UTF8
           Write-Host "CI Conan profile created:"
           conan profile show -pr ci
@@ -239,6 +246,16 @@ jobs:
             ~/.conan2/dl
           key: conan-${{ runner.os }}-msvc194-${{ hashFiles('conanfile.txt') }}
 
+      # Ninja is single-config and needs cl.exe on PATH: enter the VS 2022 x64
+      # developer environment for every CMake/ctest step from here on.
+      - name: MSVC developer environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: CMake configure
         env:
           MIB_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
@@ -254,7 +271,7 @@ jobs:
           # explicit so a stale CMake cache can never produce a release stub.
           $args = @(
             '--preset',
-            'windows-default',
+            'windows-ninja-ci',
             '-DMIB_ENABLE_MINDVISION=ON',
             "-DMIB_MINDVISION_SDK_ROOT=$env:MIB_MINDVISION_SDK_ROOT",
             "-DMIB_MINDVISION_RUNTIME_DIR=$env:MIB_MINDVISION_RUNTIME_DIR",
@@ -290,6 +307,10 @@ jobs:
         # CTest registers independent executables; build the default/all target
         # so every registered test binary exists before the test gate.
         run: cmake --build build --config Release
+
+      - name: sccache statistics
+        if: always()
+        run: sccache --show-stats
 
       - name: Verify crash-reporting artifacts
         run: |
