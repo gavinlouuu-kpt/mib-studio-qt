@@ -319,8 +319,12 @@ jobs:
           }
         shell: pwsh
 
+      # Correctness suite only. Soak and performance tests (exporter soak,
+      # HDF export soak, memory-budget bench, timing budgets) are not a
+      # release gate: they are timing-sensitive on shared runners and run
+      # repeatedly in soak.yml instead.
       - name: Run tests
-        run: ctest --test-dir build --build-config Release --output-on-failure --timeout 30
+        run: ctest --test-dir build --build-config Release --output-on-failure --timeout 30 -LE "soak|performance"
 
       # ── Sentry symbol upload ──────────────────────────────────
       # Upload mib_studio_qt.pdb (and the sentry-native runtime PDBs if

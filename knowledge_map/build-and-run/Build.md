@@ -17,10 +17,32 @@ From `CMakePresets.json`:
   gracefully to local-only crash reporting. The wheel workflow's plugin
   builds pass `-DMIB_USE_SENTRY=OFF` explicitly — processing-core wheels
   don't ship crash reporting.
+- `windows-ninja` — **the fast local iteration preset** (2026-09-09):
+  single-config Release in `build-ninja/` (executables in
+  `build-ninja/Release/`, the same layout as the VS tree: every target
+  sets `RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/$<CONFIG>`, which
+  ConfigTabs' dev config dir `<exe>/../include` and the packaging paths
+  rely on), Ninja generator, needs a
+  VS 2022 x64 developer shell (`vcvars64.bat`) and its own Conan toolchain:
+  `conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja`
+  (add `-r conancenter` if the team remote prompts for credentials). On the
+  bench PC: cold full build 67 s, no-op 0.1 s, header touch 16 s, clean
+  rebuild 26 s with sccache warm — versus 56 s no-op / 107 s header touch
+  / ~10 min full under the VS generator. Set `MIB_MINDVISION_SDK_ROOT` in
+  the environment before the first configure of a new build dir.
+- **sccache**: `cmake/MIBCompilerSettings.cmake` uses `sccache` as the
+  C/C++ compiler launcher whenever it is on PATH (`winget install
+  Mozilla.sccache`; override with `-DMIB_COMPILER_LAUNCHER=`). Release
+  compiles with `/Z7` (debug info in the object, cacheable) — the PDB is
+  still produced at link by `/DEBUG`. Works with Ninja/Makefiles; the VS
+  generator ignores compiler launchers.
 - Build presets: `windows-default-build` (Debug),
-  `windows-default-build-release` (Release),
+  `windows-default-build-release` (Release), `windows-ninja-build`,
   `linux-backend-only-build`
-- Test presets: `windows-test`, `linux-backend-only-test`
+- Test presets: `windows-test`, `windows-ninja-test` (fast lane: excludes
+  `integration|hardware|soak` — `scripts.exporter_soak` alone is ~10 min
+  and belongs to `soak.yml`), `windows-ninja-integration-test`,
+  `windows-ninja-hardware-test`, `linux-backend-only-test`
 
 ## Targets
 
@@ -220,6 +242,12 @@ cmake --build build --config Debug
 
 # Build Release
 cmake --build build --preset windows-default-build-release
+
+# Fast local loop (VS 2022 x64 developer shell; see the windows-ninja preset above)
+conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja
+cmake --preset windows-ninja
+cmake --build --preset windows-ninja-build
+ctest --preset windows-ninja-test -j8
 
 # Backend-only (Linux)
 cmake --preset linux-backend-only

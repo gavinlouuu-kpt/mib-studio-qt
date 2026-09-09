@@ -20,8 +20,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Path gate: the sanitizer lanes cost ~17 min (ASan+UBSan) and ~8 min
+  # (TSan) per PR, and they only exercise the C++ backend. Docs, vault,
+  # desktop/bridge, tools and wheel-only changes skip them. A skipped job
+  # still satisfies the required status check on develop/main. Nightly and
+  # manual runs always execute.
+  changes:
+    name: Detect C++ changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      cpp: ${{ steps.filter.outputs.cpp }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            cpp:
+              - 'src/**'
+              - 'include/**'
+              - 'tests/**'
+              - 'cmake/**'
+              - 'CMakeLists.txt'
+              - 'CMakePresets.json'
+              - 'conanfile.*'
+              - 'conan/**'
+              - 'scripts/provision-mindvision-sdk.sh'
+              - '.github/workflows/sanitizers.yml'
+
   sanitize:
     name: ${{ matrix.sanitizer }}
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:

@@ -15,8 +15,29 @@ endif()
 # minidumps from end-user crashes can be symbolicated. /Zi generates the
 # .pdb; /DEBUG instructs the linker to emit and keep it; /OPT:REF /OPT:ICF
 # restore Release optimizations that /DEBUG would otherwise disable.
+# Compiler cache: when sccache is on PATH (or MIB_COMPILER_LAUNCHER names one)
+# every C/C++ compile goes through it. A no-op or header-touch rebuild of
+# this tree relinks 126 targets but recompiles only what changed; the cache
+# makes the recompiles free across worktrees, branches and CI runs.
+if(NOT CMAKE_CXX_COMPILER_LAUNCHER AND NOT CMAKE_C_COMPILER_LAUNCHER)
+    set(MIB_COMPILER_LAUNCHER "" CACHE STRING "Compiler launcher (sccache/ccache); empty = auto-detect sccache")
+    if(MIB_COMPILER_LAUNCHER)
+        set(_mib_launcher "${MIB_COMPILER_LAUNCHER}")
+    else()
+        find_program(_mib_launcher sccache)
+    endif()
+    if(_mib_launcher)
+        set(CMAKE_C_COMPILER_LAUNCHER "${_mib_launcher}" CACHE STRING "" FORCE)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${_mib_launcher}" CACHE STRING "" FORCE)
+        message(STATUS "Compiler launcher: ${_mib_launcher}")
+    endif()
+endif()
+
 if(MSVC)
-    add_compile_options($<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:C,CXX>>:/Zi>)
+    # /Z7 (debug info in the object) instead of /Zi: identical PDB output at
+    # link time (/DEBUG below), but cacheable — sccache cannot cache /Zi,
+    # which writes a shared vcNNN.pdb during compilation.
+    add_compile_options($<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:C,CXX>>:/Z7>)
     add_link_options(
         $<$<CONFIG:Release>:/DEBUG>
         $<$<CONFIG:Release>:/OPT:REF>
