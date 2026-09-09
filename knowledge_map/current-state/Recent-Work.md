@@ -5,6 +5,59 @@
 
 ## Features shipped
 
+- **ProcessingService::stop() lost-wakeup hang** (2026-09-09) — The ASan
+  lane once timed out (600 s) on `backend.mindvision_selection_state`,
+  a trivial state test, *after* it had printed "passed": the hang was in
+  `AppBackend::~AppBackend` → `ProcessingService::stop()` → `join()` of a
+  worker still blocked in `workerLoop`'s `cv_.wait`. `stop()` stored
+  `running_ = false` and called `notify_all()` without `mutex_`; a worker
+  that had just evaluated the wait predicate (under the mutex) but not yet
+  blocked missed the notification and waited forever. Reproduced in WSL
+  under ASan with 8 parallel loops of the test (30 sequential runs never
+  hit it) and a gdb stack of the hung process; the flag is now flipped
+  under `mutex_` before the notify. Same check done on the batch pipeline:
+  it uses `wait_for`, so it cannot hang this way.
+
+- **Test runners instead of ~90 executables** (2026-09-09) —
+  `cmake/MIBTestRunner.cmake` (`mib_test_runner_add/link/finalize`)
+  compiles every `mib_add_backend_test_executable` source into
+  `mib_backend_tests` and the eight Qt widget tests into
+  `mib_frontend_tests` (with `defaults.qrc`); 106 → 31 executables in the
+  tree. The backend runner (per-source `main=mib_test_main__<target>`
+  compile definition, generated dispatcher on the first argument; MSVC
+  mangles `char* argv[]` and `char** argv` differently, so the dispatcher
+  declares each entry in the test's own spelling). CTest entries run
+  `mib_backend_tests <target> [args]`, one process per test as before.
+  Ten tests stay standalone (`MIB_STANDALONE_BACKEND_TESTS`, each with the
+  reason: self-spawning crash tests, exit-teardown, argv[0] users, plugin
+  fixture dependencies, the bridge link-manifest reference project, the
+  exporter-soak lane's direct binary). Linking the 98 test executables was
+  18 s of every header-touch rebuild on the bench PC. Also: the Hugging
+  Face dataset test carries the `network` label and the release lane runs
+  `ctest -LE "soak|performance|network"` — its 2 s vs 46 s run time was
+  the datasets-server, not the build.
+
+- **Build/test turnaround: Ninja + sccache preset, soak out of the fast
+  lane, path-gated sanitizers** (2026-09-09) — Measured on the bench PC
+  (32 cores): the VS-generator tree needs 56 s for a no-op build and 107 s
+  after touching `AppBackend.h` (48 compiles, 126 links); the new
+  `windows-ninja` preset (single-config Release in `build-ninja/`, Conan
+  toolchain generated with `-c tools.cmake.cmaketoolchain:generator=Ninja`,
+  run from a VS 2022 x64 developer shell) does a cold full build in 67 s,
+  a no-op in 0.1 s, the header touch in 16 s, and a clean rebuild in 26 s
+  with sccache warm. `cmake/MIBCompilerSettings.cmake` auto-detects
+  `sccache` on PATH as the compiler launcher (override with
+  `MIB_COMPILER_LAUNCHER`) and compiles Release with `/Z7` instead of
+  `/Zi` so objects are cacheable (the PDB is still produced at link).
+  `scripts.exporter_soak` (631 s of a 725 s lane) now carries the `soak`
+  label exclusion in every fast test preset; `soak.yml` keeps running it
+  nightly. `sanitizers.yml` gates its two jobs (17 + 8 min per PR) on
+  C++-relevant paths via `dorny/paths-filter`; a skipped job still
+  satisfies the required check. CI's `build-windows.yml` stays on the VS
+  generator for now: the installer/packaging steps hard-code
+  `build/Release` (`cmake/MIBWindowsPackaging.cmake`, deployment), which a
+  single-config tree does not produce — porting that is the next step.
+
 - **Crash dumps reach Sentry: MinidumpUploader** (2026-09-09) — 99 dumps
   on the bench PC had been renamed `.queued`/`.queued2` ("submitted") and
   none ever reached the server: sentry-native's transport gives no

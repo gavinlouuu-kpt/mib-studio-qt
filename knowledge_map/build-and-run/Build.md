@@ -17,10 +17,37 @@ From `CMakePresets.json`:
   gracefully to local-only crash reporting. The wheel workflow's plugin
   builds pass `-DMIB_USE_SENTRY=OFF` explicitly — processing-core wheels
   don't ship crash reporting.
+- `windows-ninja` — **the fast local iteration preset** (2026-09-09):
+  single-config Release in `build-ninja/` (executables in
+  `build-ninja/Release/`, the same layout as the VS tree: every target
+  sets `RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/$<CONFIG>`, which
+  ConfigTabs' dev config dir `<exe>/../include` and the packaging paths
+  rely on), Ninja generator, needs a
+  VS 2022 x64 developer shell (`vcvars64.bat`) and its own Conan toolchain:
+  `conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja`
+  (add `-r conancenter` if the team remote prompts for credentials). On the
+  bench PC: cold full build 67 s, no-op 0.1 s, header touch 16 s, clean
+  rebuild 26 s with sccache warm — versus 56 s no-op / 107 s header touch
+  / ~10 min full under the VS generator. Set `MIB_MINDVISION_SDK_ROOT` in
+  the environment before the first configure of a new build dir.
+- **sccache**: `cmake/MIBCompilerSettings.cmake` uses `sccache` as the
+  C/C++ compiler launcher whenever it is on PATH (`winget install
+  Mozilla.sccache`; override with `-DMIB_COMPILER_LAUNCHER=`). Release
+  compiles with `/Z7` (debug info in the object, cacheable) — the PDB is
+  still produced at link by `/DEBUG`. Works with Ninja/Makefiles; the VS
+  generator ignores compiler launchers.
+- `windows-ninja-ci` — the `windows-ninja` layout in `build/` (toolchain
+  `build/conan_toolchain.cmake`); this is what `build-windows.yml` uses
+  since 2026-09-09 (CI profile `ci` carries
+  `tools.cmake.cmaketoolchain:generator=Ninja`, `ilammy/msvc-dev-cmd`
+  provides cl.exe, `mozilla-actions/sccache-action` the cache).
 - Build presets: `windows-default-build` (Debug),
-  `windows-default-build-release` (Release),
+  `windows-default-build-release` (Release), `windows-ninja-build`,
   `linux-backend-only-build`
-- Test presets: `windows-test`, `linux-backend-only-test`
+- Test presets: `windows-test`, `windows-ninja-test` (fast lane: excludes
+  `integration|hardware|soak` — `scripts.exporter_soak` alone is ~10 min
+  and belongs to `soak.yml`), `windows-ninja-integration-test`,
+  `windows-ninja-hardware-test`, `linux-backend-only-test`
 
 ## Targets
 
@@ -33,8 +60,8 @@ From `CMakePresets.json`:
 | `mib_studio_qt` | executable (`WIN32` on Windows) | Production app (mock camera reachable via ConnectTab "Configure Mock…" or `MIB_CAMERA_MODE=mock`) |
 | `screenshot_tour` | executable | Headless UI tour that regenerates the user-manual screenshots (`docs/manual/images`); builds on Linux too (`linux-system-release`); see [[../frontend/Screenshot-Tour]] |
 | `processing_core_dialog_test` | executable test | Offscreen Qt regression proving the local active-core identity remains visible when registry loading fails; generated only by full frontend builds (`ctest -R frontend.processing_core_dialog`) |
-| `mib_backend_smoke_test` | executable test | Backend-only HDF5/open/flush smoke test (`ctest -L backend`) |
-| `emodulus_lut_catalog_test` | executable test | Backend-only LUT manifest/cache smoke test (`ctest -L backend`) |
+| `mib_backend_tests`, `mib_frontend_tests` | executable test runners | **One binary per test group** (2026-09-09, `cmake/MIBTestRunner.cmake`): each registered test source is compiled with `main=mib_test_main__<target>` and dispatched on the first argument, so CTest runs `<runner> <target> [args]` (one process per test). Run one directly: `build/Release/mib_backend_tests.exe emodulus_lut_catalog_test`; `--list` prints the names. `mib_backend_tests` holds the 72 backend tests (eleven stay standalone: `MIB_STANDALONE_BACKEND_TESTS` in `tests/CMakeLists.txt`, each with its reason); `mib_frontend_tests` holds the eight widget tests and compiles `resources/defaults.qrc` itself. The per-test executables summed 345 s of link time on the bench PC; the two runners link in a few seconds. |
+| `mib_backend_smoke_test` | executable test | Backend-only HDF5/open/flush smoke test (`ctest -L backend`); standalone because `tools/gen_bridge_link_manifest.py` reads its `.vcxproj` |
 
 `mib_backend` is linked by every executable. Source is in
 `src/backend/`, `src/camera/`, and `src/backend/playback/`.
@@ -220,6 +247,12 @@ cmake --build build --config Debug
 
 # Build Release
 cmake --build build --preset windows-default-build-release
+
+# Fast local loop (VS 2022 x64 developer shell; see the windows-ninja preset above)
+conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja
+cmake --preset windows-ninja
+cmake --build --preset windows-ninja-build
+ctest --preset windows-ninja-test -j8
 
 # Backend-only (Linux)
 cmake --preset linux-backend-only

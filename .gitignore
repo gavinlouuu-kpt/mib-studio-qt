@@ -42,3 +42,4 @@ mcu/
 
 # MkDocs user-guide site build output (docs-site.yml / mkdocs build)
 site/
+/build-*/
