@@ -1,5 +1,6 @@
 #include "backend/services/TriggerService.h"
 #include "backend/camera/common/ICamera.h"
+#include "backend/diagnostics/CrashStateMirror.h"
 #include "backend/diagnostics/PipelineTimingRecorder.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
@@ -49,17 +50,67 @@ void raiseTriggerThreadPriority() {
 TriggerService::TriggerService() = default;
 
 TriggerService::~TriggerService() {
+    stopPeriodicTest();
     stop();
 }
 
+void TriggerService::startPeriodicTest(int intervalMs) {
+    if (intervalMs < 1) intervalMs = 1;
+    periodicIntervalMs_.store(intervalMs, std::memory_order_relaxed);
+    if (periodicRunning_.load()) return; // interval updated above; thread picks it up
+    periodicRunning_.store(true);
+    periodicThread_ = std::thread(&TriggerService::periodicLoop, this);
+    SPDLOG_INFO("TriggerService periodic test started ({} ms)", intervalMs);
+}
+
+void TriggerService::stopPeriodicTest() {
+    if (!periodicRunning_.load()) return;
+    // Same lost-notify guard as stop(): flip the flag under the wait mutex.
+    {
+        std::lock_guard<std::mutex> lk(periodicMutex_);
+        periodicRunning_.store(false);
+    }
+    periodicCv_.notify_all();
+    if (periodicThread_.joinable()) periodicThread_.join();
+    SPDLOG_INFO("TriggerService periodic test stopped");
+}
+
+void TriggerService::periodicLoop() {
+    while (periodicRunning_.load()) {
+        {
+            std::unique_lock<std::mutex> lk(periodicMutex_);
+            periodicCv_.wait_for(
+                lk,
+                std::chrono::milliseconds(periodicIntervalMs_.load(std::memory_order_relaxed)),
+                [this] { return !periodicRunning_.load(); });
+        }
+        if (!periodicRunning_.load()) break;
+        manualPulse();
+    }
+}
+
 void TriggerService::start() {
+    // start() runs on the capture thread (camera-ready callback) while stop()
+    // may run on the GUI thread: thread_ itself needs a lock (issue #365).
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     if (running_.load()) return;
+    if (thread_.joinable()) {
+        // A previous loop that exited is reaped before a new one is assigned.
+        thread_.join();
+    }
     running_.store(true);
+    backend::diagnostics::CrashStateMirror::instance().trigger.running.store(true);
     thread_ = std::thread(&TriggerService::triggerLoop, this);
     SPDLOG_INFO("TriggerService started");
 }
 
 void TriggerService::stop() {
+    // The periodic test generator feeds this service; stop it first so no
+    // synthetic pulses arrive during (or after) teardown.
+    stopPeriodicTest();
+    // The trigger loop never takes lifecycleMutex_, so joining under it is
+    // deadlock-free; it serializes stop() against a concurrent start().
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     if (!running_.load()) return;
     // Clear running_ while holding triggerMutex_ (the mutex the trigger thread
     // holds when evaluating its wait predicate) before notifying. Storing it
@@ -75,11 +126,33 @@ void TriggerService::stop() {
     }
     triggerCV_.notify_all();
     if (thread_.joinable()) thread_.join();
+    backend::diagnostics::CrashStateMirror::instance().trigger.running.store(false);
     SPDLOG_INFO("TriggerService stopped");
 }
 
-void TriggerService::setCamera(camera::common::ICamera* camera) {
-    camera_.store(camera, std::memory_order_release);
+void TriggerService::setCamera(camera::common::ICamera* camera, uint64_t generation) {
+    // Wait for any in-flight pulse: after this returns the trigger thread
+    // holds no reference to the previous camera (issue #365).
+    std::lock_guard<std::mutex> pulseLock(pulseMutex_);
+    const uint64_t newGeneration =
+        camera ? (generation != 0 ? generation
+                                  : autoGeneration_.fetch_add(1, std::memory_order_relaxed) + 1)
+               : 0;
+    size_t cleared = 0;
+    {
+        std::lock_guard<std::mutex> lk(triggerMutex_);
+        // Requests made under the previous session must not fire on the new
+        // one (or on nothing): clear and count them.
+        cleared = pendingRequests_.size();
+        pendingRequests_.clear();
+        camera_.store(camera, std::memory_order_release);
+        boundGeneration_.store(newGeneration, std::memory_order_release);
+    }
+    if (cleared > 0) {
+        droppedStaleRequests_.fetch_add(cleared, std::memory_order_relaxed);
+        SPDLOG_INFO("TriggerService: cleared {} pending request(s) from previous camera session",
+                    cleared);
+    }
     if (camera) {
         camera->configureTriggerOutput("TTLIO12");
     }
@@ -120,7 +193,8 @@ void TriggerService::onTargetGroupResult(const TargetGroupSignal& signal) {
             }
         }
         pendingRequests_.push_back(
-            PendingRequest{signal.frameIndex, signal.hostTimestampUs, requestUs});
+            PendingRequest{signal.frameIndex, signal.hostTimestampUs, requestUs,
+                           boundGeneration_.load(std::memory_order_acquire)});
     }
     triggerCV_.notify_one();
 }
@@ -138,8 +212,35 @@ void TriggerService::triggerLoop() {
             pendingRequests_.pop_front();
         }
 
+        // Own the camera for the whole pulse: setCamera() blocks on this
+        // mutex, so the pointer loaded below stays valid until we release it.
+        std::lock_guard<std::mutex> pulseLock(pulseMutex_);
         auto* cam = camera_.load(std::memory_order_acquire);
-        if (!cam) continue;
+        if (cam && pending.generation != boundGeneration_.load(std::memory_order_acquire)) {
+            // Request from an earlier camera session: never execute it
+            // against the currently bound camera.
+            const uint64_t stale =
+                droppedStaleRequests_.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (stale == 1 || (stale % 100) == 0) {
+                SPDLOG_WARN("TriggerService: dropped stale request from session {} "
+                            "(bound session {}, total stale drops: {})",
+                            pending.generation, boundGeneration_.load(), stale);
+            }
+            continue;
+        }
+        if (!cam) {
+            // The request was dequeued but there is no camera to drive the
+            // pulse: a selected target is lost. Count it instead of dropping
+            // silently (previously a bare `continue`).
+            const uint64_t lost =
+                droppedPulsesNoCamera_.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (lost == 1 || (lost % 100) == 0) {
+                SPDLOG_WARN("TriggerService: no camera bound, dropped pulse for frame {} "
+                            "(total no-camera drops: {})",
+                            pending.frameIndex, lost);
+            }
+            continue;
+        }
 
         const bool recordTiming = timingRecorder.isEnabled();
         const uint64_t wakeUs =
@@ -148,7 +249,19 @@ void TriggerService::triggerLoop() {
         // Fire trigger pulse: High -> busy-wait ~1us -> Low
         // Mirrors processTrigger() in MIB-Studio/src/mib_grabber/mib_grabber.cpp
         auto start = std::chrono::high_resolution_clock::now();
-        if (!cam->setTriggerOutput(true)) continue;
+        if (!cam->setTriggerOutput(true)) {
+            // The hardware refused the rising edge: the selected target is not
+            // sorted. Count it instead of dropping silently (previously a bare
+            // `continue`).
+            const uint64_t lost =
+                droppedPulsesSetFailed_.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (lost == 1 || (lost % 100) == 0) {
+                SPDLOG_WARN("TriggerService: setTriggerOutput(true) failed for frame {} "
+                            "(total set-failed drops: {})",
+                            pending.frameIndex, lost);
+            }
+            continue;
+        }
         auto onset = std::chrono::high_resolution_clock::now();
         const uint64_t fireUs =
             recordTiming ? backend::diagnostics::PipelineTimingRecorder::nowUs() : 0;
@@ -165,6 +278,30 @@ void TriggerService::triggerLoop() {
         auto onsetUs = std::chrono::duration<double, std::micro>(onset - start).count();
         lastOnsetUs_.store(onsetUs, std::memory_order_relaxed);
         triggerCount_.fetch_add(1, std::memory_order_relaxed);
+
+        // Always-on live end-to-end target latency: acquisition (host grab
+        // stamp of the source frame) -> pulse onset. Independent of the
+        // detailed timing recorder so it is visible without MIB_PIPELINE_TIMING.
+        if (pending.hostTimestampUs != 0) {
+            const uint64_t nowUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
+            if (nowUs >= pending.hostTimestampUs) {
+                timingRecorder.noteTargetLatency(nowUs - pending.hostTimestampUs);
+            }
+        }
+
+        // Mirror trigger/sort state so crash reports carry live values.
+        {
+            auto& m = backend::diagnostics::CrashStateMirror::instance().trigger;
+            m.triggerCount.store(triggerCount_.load(std::memory_order_relaxed),
+                                 std::memory_order_relaxed);
+            m.lastOnsetUs.store(static_cast<uint64_t>(onsetUs), std::memory_order_relaxed);
+            m.droppedRequests.store(droppedRequests_.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+            m.droppedPulses.store(getDroppedPulseCount(), std::memory_order_relaxed);
+            m.targetLatencyUs.store(
+                static_cast<uint64_t>(timingRecorder.avgTargetLatencyUs()),
+                std::memory_order_relaxed);
+        }
 
         if (recordTiming) {
             backend::diagnostics::TriggerTimingRecord record;

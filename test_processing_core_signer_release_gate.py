@@ -144,14 +144,19 @@ class ProcessingCoreSignerReleaseWiringTest(unittest.TestCase):
         self.assertIn("nested release asset", content)
         self.assertNotIn("Get-ChildItem build -Recurse -File -Filter \"$stem.dll\"", content)
 
-    def test_linux_release_wheels_are_manylinux_and_imported_in_biowork_base(self) -> None:
+    def test_linux_release_wheels_cover_supported_manylinux_architectures(self) -> None:
         content = self.read(".github/workflows/python-wheel.yml")
         self.assertIn("pypa/cibuildwheel@v2.22.0", content)
-        self.assertIn("CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28", content)
+        for architecture in ("X86_64", "AARCH64"):
+            self.assertIn(
+                f"CIBW_MANYLINUX_{architecture}_IMAGE:",
+                content,
+            )
         self.assertIn("MIB_BUILD_PROCESSING_ONLY", self.read("bindings/python/pyproject.toml"))
         self.assertIn("python:3.12-slim", content)
         self.assertIn("Verify portable wheel in Biowork production base", content)
-        self.assertIn("manylinux_2_28_x86_64\\.whl", content)
+        self.assertIn("manylinux_2_28_(x86_64|aarch64)\\.whl", content)
+        self.assertIn("len(wheels) != 8", content)
         self.assertNotIn("NOT an auditwheel/manylinux-portable wheel", content)
 
     def test_native_release_uses_independent_fixtures_and_audited_private_dependencies(self) -> None:

@@ -11,6 +11,12 @@ From `CMakePresets.json`:
 - `windows-default` — VS2022 x64, uses `build/conan_toolchain.cmake`
 - `linux-backend-only` — Linux backend-only configure (`mib_backend` + tests;
   skips frontend executables)
+- Every preset builds with `MIB_USE_SENTRY=ON` (the option's default) so
+  CrashReporter's sentry-native paths are compiled and tested everywhere;
+  on Linux this needs `libcurl4-openssl-dev`, and an offline fetch degrades
+  gracefully to local-only crash reporting. The wheel workflow's plugin
+  builds pass `-DMIB_USE_SENTRY=OFF` explicitly — processing-core wheels
+  don't ship crash reporting.
 - Build presets: `windows-default-build` (Debug),
   `windows-default-build-release` (Release),
   `linux-backend-only-build`
@@ -73,20 +79,28 @@ has `POSITION_INDEPENDENT_CODE ON` (needed to link a static library into a
 shared `.so` extension module); this has no effect on the desktop static/
 executable link.
 
-CI produces repaired `manylinux_2_28_x86_64` wheels for CPython 3.10–3.13 and
-imports CPython 3.12 in a slim production base with Biowork's `libgl1` and
-`libglib2.0-0` prerequisites (manylinux-allowlisted OS libraries). The pinned AlmaLinux 8
-builder enables EPEL to obtain HDF5 and spdlog development packages before
-`auditwheel` repairs their runtime libraries into the wheel. See
-`bindings/python/README.md`. `.github/workflows/python-wheel.yml` builds + tests on every relevant PR
-then runs the full-parity conformance harness before publishing wheels as
-GitHub Release assets on `mib-processing-v*` tags
+CI produces repaired `manylinux_2_28` wheels for CPython 3.10–3.13 on
+`x86_64` and `aarch64`. cibuildwheel installs/imports every
+wheel in its matching container (QEMU-backed for ARM64 on the GitHub x86_64
+runner); the x86_64 jobs retain the full pytest/conformance suite and import
+CPython 3.12 in a slim production base with Biowork's `libgl1` and
+`libglib2.0-0` prerequisites. AlmaLinux/EPEL supplies the build dependencies
+before `auditwheel` repair. Linux i686 is intentionally unsupported because
+NumPy no longer publishes those wheels and the workload is not a practical fit
+for a 32-bit address space. See `bindings/python/README.md`.
+ARMv7 is excluded because cibuildwheel 2.22 marks it experimental and lacks a
+CPython 3.12 manylinux ARMv7 target.
+
+`.github/workflows/python-wheel.yml` builds + tests on every relevant PR then
+runs the full-parity conformance harness before publishing wheels as GitHub
+Release assets on `mib-processing-v*` tags
 (a separate tag namespace from the app's own `v*.*.*` releases,
 `.github/workflows/release.yml`).
 
 The same workflow is the processing-core release gate. Its wheel matrix covers
-CPython 3.10–3.13, a Windows x64 job builds the native core artifact, and a tag
-release attaches all assets before `publish-processing-core.py --from-release`
+all 8 CPython/architecture pairs, a Windows x64 job builds the native core
+artifact, and a tag release rejects any incomplete wheel set before
+`publish-processing-core.py --from-release`
 updates the R2 registry. Publication order is immutable
 `processing-core/versions/<version>.json`, merged `index.json`, generated PEP
 503 page, then the backward-compatible full `latest.json` pointer. A tag build
@@ -232,11 +246,11 @@ different Conan package IDs after reinstalls).
   - `ON` on Windows
   - `OFF` on non-Windows
 - `cmake/MIBOptions.cmake` adds `MIB_ENABLE_MINDVISION`:
-  - `OFF` by default
-  - `ON` enables MindVision SDK discovery on Windows
+  - `ON` by default on Windows, Linux, and macOS
+  - callers may explicitly use `OFF` only for a deliberate SDK-free stub build
 - `cmake/MIBDependencies.cmake` sets `MIB_HAS_MINDVISION`:
-  - `ON` when `WIN32 AND MIB_ENABLE_MINDVISION`
-  - `OFF` otherwise
+  - `ON` when `MIB_ENABLE_MINDVISION=ON` for desktop/backend builds
+  - `OFF` for processing-only builds, which do not compile camera services
 - When `MIB_HAS_EGRABBER=OFF`, build wiring skips:
   - EGrabber include path (`C:/Program Files/Euresys/eGrabber/include`)
   - Coremor include path (`include/Coremor`)
@@ -245,10 +259,19 @@ different Conan package IDs after reinstalls).
 - Non-Windows uses `src/backend/services/AutofocusService.stub.cpp` so Linux
   cloud builds can compile and run mock/non-hardware workflows.
 - When `MIB_HAS_MINDVISION=ON`, CMake requires:
-  - `MindVision/CameraApiLoad.h` (or `CameraApiLoad.h`)
-  - `MVCAMSDK.dll` or `MVCAMSDK_X64.dll`
+  - Windows: `CameraApiLoad.h` plus `MVCAMSDK.dll` / `MVCAMSDK_X64.dll`
+  - Linux/macOS: `CameraApi.h` plus `libMVSDK.so` / `libmvsdk.dylib`
   - SDK root overrides via `MIB_MINDVISION_SDK_ROOT` or the
-    `MIB_MINDVISION_SDK_DIR` environment variable
+    `MIB_MINDVISION_SDK_DIR` environment variable; a separate runtime path may
+    be supplied with `MIB_MINDVISION_RUNTIME_DIR`
+- Official beta/stable workflows and `release.ps1` run
+  `scripts/provision-mindvision-sdk.ps1`, which checksum-verifies the pinned
+  R2 vendor installer, extracts the build headers/runtime without installing
+  drivers on CI, and fails the release if `MVCAMSDK_X64.dll` is absent from
+  the deployed payload.
+- Linux backend, sanitizer, soak, and native-core CI run
+  `scripts/provision-mindvision-sdk.sh`; the same command provisions local
+  Linux/macOS build trees from the platform/architecture-specific R2 archive.
 - When MindVision is disabled, the backend still compiles a stub camera
   implementation and the connect UI keeps mock/EGrabber workflows intact.
 

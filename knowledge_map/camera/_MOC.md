@@ -1,6 +1,7 @@
 # Camera — MOC
 
-> All camera code lives under `src/camera/` and `include/camera/`.
+> All camera code lives under `src/backend/camera/` and
+> `include/backend/camera/`.
 > [[../services/CaptureService]] owns the acquisition thread; the camera
 > abstraction just delivers frames.
 

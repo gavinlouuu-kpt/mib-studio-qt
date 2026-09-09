@@ -39,9 +39,13 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake git libgl1-mesa-dev libhdf5-dev libopencv-dev \
+            build-essential cmake curl git libgl1-mesa-dev libhdf5-dev libopencv-dev \
             libspdlog-dev libsqlite3-dev libxkbcommon-dev nlohmann-json3-dev \
             pkg-config python3-numpy python3-pip qt6-base-dev qt6-serialport-dev
+
+      - name: Provision pinned MindVision SDK
+        shell: bash
+        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
 
       - name: Configure (backend-only + sanitizer)
         shell: bash

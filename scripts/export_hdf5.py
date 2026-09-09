@@ -68,17 +68,16 @@ def source_base_name(input_path: Path) -> str:
 
 
 def unique_path(parent_dir: Path, first_name: str, numbered_pattern: str) -> Path:
-    """Return a deterministic non-existing path under parent_dir."""
-    candidate = parent_dir / first_name
-    if not candidate.exists():
-        return candidate
+    """Return a deterministic non-existing path under parent_dir.
 
-    for suffix in range(2, 1_000_000):
-        candidate = parent_dir / numbered_pattern.format(suffix=suffix)
-        if not candidate.exists():
-            return candidate
+    Issue #344: the candidate is chosen from one directory listing
+    (``max existing suffix + 1``) instead of probing ``_2``, ``_3``, ... with
+    ``exists()`` per candidate, so the cost does not grow with the number of
+    prior exports in ``parent_dir``.
+    """
+    from hdf_export_engine import next_available_name  # local import: engine depends on this module
 
-    return candidate
+    return next_available_name(parent_dir, first_name, numbered_pattern)
 
 
 def validate_output_root(output_root: Path) -> Tuple[bool, str]:
@@ -229,6 +228,11 @@ def read_hdf5_images(h5_file: h5py.File, dataset_path: str) -> Optional[np.ndarr
         
     Returns:
         Numpy array of images with shape (num_frames, height, width, channels), or None if dataset doesn't exist
+
+    NOTE (issue #344): this materializes the complete dataset. The CLI and GUI
+    exporters no longer use it (they stream one frame at a time through
+    ``hdf_export_engine``); it remains for small offline tools such as
+    ``reanalyse_hdf5.py``.
     """
     if dataset_path not in h5_file:
         return None
@@ -562,171 +566,59 @@ def export_hdf5(
     pixel_to_micron: float = 0.4886
 ) -> int:
     """
-    Export HDF5 data to CSV and/or images.
-    
-    This function can be called programmatically (e.g., from GUI) or via CLI.
-    
+    Export HDF5 data to CSV and/or images (CLI adapter over hdf_export_engine).
+
+    Issue #344: images are streamed one frame at a time, the output is
+    published transactionally (a failed/cancelled run never leaves a
+    normal-looking partial export), and generated names cost one listing.
+
     Args:
         input_path: Path to input HDF5 file
         output_dir: Output directory
         format_type: "csv", "json", "images", or "all"
         frame_type: "valid", "invalid", or "both"
         pixel_to_micron: Pixel to micron conversion factor
-        
+
     Returns:
         0 on success, 1 on error
     """
-    # Validate input file
-    if not input_path.exists():
-        print(f"ERROR: Input file does not exist: {input_path}", file=sys.stderr)
-        return 1
-    
-    if not input_path.is_file():
-        print(f"ERROR: Input path is not a file: {input_path}", file=sys.stderr)
-        return 1
-    
-    ok, error = ensure_output_root(output_dir)
+    from hdf_export_engine import ExportJob, ExportState, print_progress, run_export_job
+
+    # Fail fast on an output root that is a file/CSV path before touching deps.
+    ok, error = validate_output_root(Path(output_dir))
     if not ok:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    if not HAS_HDF5_DEPS:
-        print("ERROR: Required dependencies not installed.", file=sys.stderr)
-        print("Install with: pip install h5py numpy", file=sys.stderr)
-        print(f"Details: {HDF5_IMPORT_ERROR}", file=sys.stderr)
-        return 1
-
-    csv_path, data_output_dir = resolve_export_targets(input_path, output_dir, format_type)
-
-    # Check if cv2 is needed
-    if format_type in ("images", "all") and not HAS_CV2:
-        print("ERROR: opencv-python (cv2) is required for image export.", file=sys.stderr)
-        print("Install with: pip install opencv-python", file=sys.stderr)
-        return 1
-
-    if format_type in ("images", "all"):
-        try:
-            data_output_dir.mkdir(parents=True, exist_ok=False)
-        except OSError as e:
-            print(f"ERROR: Failed to create export directory {data_output_dir}: {e}", file=sys.stderr)
-            return 1
-    
-    # Open HDF5 file
     try:
-        with h5py.File(input_path, 'r') as h5_file:
-            # Read metadata
-            metadata_valid = None
-            metadata_invalid = None
-            
-            if frame_type in ("valid", "both"):
-                metadata_valid = read_hdf5_metadata(h5_file, "/valid_frames/metadata")
-                if metadata_valid is None:
-                    print("WARNING: /valid_frames/metadata dataset not found", file=sys.stderr)
-            
-            if frame_type in ("invalid", "both"):
-                metadata_invalid = read_hdf5_metadata(h5_file, "/invalid_frames/metadata")
-                if metadata_invalid is None:
-                    print("WARNING: /invalid_frames/metadata dataset not found", file=sys.stderr)
-            
-            # Check if we have any data
-            if metadata_valid is None and metadata_invalid is None:
-                print("ERROR: No metadata found in HDF5 file", file=sys.stderr)
-                return 1
-            
-            # Export CSV if requested
-            if format_type in ("csv", "all"):
-                if csv_path is None:
-                    print("ERROR: CSV output path was not resolved", file=sys.stderr)
-                    return 1
-                valid_count, invalid_count = export_metrics_to_csv(
-                    metadata_valid,
-                    metadata_invalid,
-                    csv_path,
-                    pixel_to_micron,
-                    frame_type
-                )
-                total_count = valid_count + invalid_count
-                print(f"Exported {total_count} frames to CSV (Valid: {valid_count}, Invalid: {invalid_count})")
-                print(f"CSV file: {csv_path}")
-
-            # Export gold-standard JSON if requested
-            if format_type == "json":
-                if csv_path is None:
-                    print("ERROR: JSON output path was not resolved", file=sys.stderr)
-                    return 1
-                valid_count, invalid_count = export_metrics_to_json(
-                    metadata_valid,
-                    metadata_invalid,
-                    csv_path,
-                    pixel_to_micron,
-                    frame_type,
-                    source_base_name(input_path),
-                )
-                total_count = valid_count + invalid_count
-                print(f"Exported {total_count} frames to JSON (Valid: {valid_count}, Invalid: {invalid_count})")
-                print(f"JSON file: {csv_path}")
-
-            # Export images if requested
-            if format_type in ("images", "all"):
-                total_exported = 0
-                
-                # Export valid frames
-                if frame_type in ("valid", "both") and metadata_valid is not None:
-                    images_valid = read_hdf5_images(h5_file, "/valid_frames/images")
-                    if images_valid is not None:
-                        exported = export_images_to_tiff(
-                            images_valid,
-                            metadata_valid,
-                            data_output_dir,
-                            "valid"
-                        )
-                        total_exported += exported
-                        print(f"Exported {exported} valid frame images")
-                    else:
-                        print("WARNING: /valid_frames/images dataset not found", file=sys.stderr)
-
-                    # Export multi-image series if present
-                    series_exported = export_series_images_to_tiff(
-                        h5_file, metadata_valid, data_output_dir
-                    )
-                    if series_exported > 0:
-                        total_exported += series_exported
-                        print(f"Exported {series_exported} series images")
-                
-                # Export invalid frames
-                if frame_type in ("invalid", "both") and metadata_invalid is not None:
-                    images_invalid = read_hdf5_images(h5_file, "/invalid_frames/images")
-                    if images_invalid is not None:
-                        exported = export_images_to_tiff(
-                            images_invalid,
-                            metadata_invalid,
-                            data_output_dir,
-                            "invalid"
-                        )
-                        total_exported += exported
-                        print(f"Exported {exported} invalid frame images")
-                    else:
-                        print("WARNING: /invalid_frames/images dataset not found", file=sys.stderr)
-                
-                print(f"Total images exported: {total_exported}")
-            
-            # Read and display experiment info if available
-            exp_info = read_experiment_info(h5_file)
-            if exp_info:
-                print("\nExperiment Info:")
-                for key, value in sorted(exp_info.items()):
-                    print(f"  {key}: {value}")
-    
-    except IOError as e:
-        print(f"ERROR: Failed to open HDF5 file: {e}", file=sys.stderr)
+        job = ExportJob(
+            input_path=Path(input_path),
+            output_root=Path(output_dir),
+            format=format_type,
+            frame_selection=frame_type,
+            pixel_to_micron=pixel_to_micron,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    except Exception as e:
-        print(f"ERROR: Unexpected error: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
+
+    result = run_export_job(job, on_progress=print_progress)
+    if result.state != ExportState.COMPLETED:
+        print(f"ERROR: {result.error}", file=sys.stderr)
+        if result.partial_path is not None:
+            print(f"Partial output retained at: {result.partial_path}", file=sys.stderr)
         return 1
-    
-    final_output = data_output_dir if format_type in ("images", "all") else output_dir
+
+    if result.experiment_info:
+        print("\nExperiment Info:")
+        for key, value in sorted(result.experiment_info.items()):
+            print(f"  {key}: {value}")
+    if job.format.value in ("csv", "all"):
+        target = result.final_path if job.format.value == "csv" else (result.final_path / "metrics.csv")
+        print(f"CSV file: {target}")
+    elif job.format.value == "json":
+        print(f"JSON file: {result.final_path}")
+    final_output = result.final_path if job.format.value in ("images", "all") else output_dir
     print(f"\nExport complete. Output directory: {final_output}")
     return 0
 

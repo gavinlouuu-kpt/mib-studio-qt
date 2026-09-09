@@ -26,6 +26,7 @@ using namespace Euresys;
 #include <stdio.h>
 #endif
 
+#ifdef _WIN32
 #if __has_include(<MindVision/CameraApiLoad.h>)
 #include <MindVision/CameraApiLoad.h>
 #elif __has_include(<CameraApiLoad.h>)
@@ -33,13 +34,25 @@ using namespace Euresys;
 #else
 #error "MindVision CameraApiLoad.h not found"
 #endif
+#else
+#if __has_include(<MindVision/CameraApi.h>)
+#include <MindVision/CameraApi.h>
+#elif __has_include(<CameraApi.h>)
+#include <CameraApi.h>
+#else
+#error "MindVision CameraApi.h not found"
+#endif
+#endif
 
+#include "backend/camera/mindvision/MindVisionApply.h"
+#if MIB_HAS_EGRABBER
+#include "backend/camera/egrabber/GenTLHolder.h"
+#endif
 #include "backend/camera/mindvision/MindVisionConfig.h"
 
-#include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QString>
+#include <fstream>
+#include <iterator>
+#include <cstdlib>
 #endif
 
 namespace backend::services
@@ -98,15 +111,15 @@ namespace backend::services
                 }
             };
 
-            QFile file(QString::fromStdString(jsonPath));
-            if (!file.open(QIODevice::ReadOnly))
+            std::ifstream file(jsonPath, std::ios::binary);
+            if (!file)
             {
                 setErr("Failed to open MindVision config file: " + jsonPath);
                 return false;
             }
 
-            const QByteArray bytes = file.readAll();
-            file.close();
+            const std::string bytes((std::istreambuf_iterator<char>(file)),
+                                    std::istreambuf_iterator<char>());
 
             const auto parsed = backend::camera::mindvision::parseConfig(bytes);
             if (!parsed.ok)
@@ -119,47 +132,14 @@ namespace backend::services
                 SPDLOG_WARN("{}", warning);
             }
 
-            const auto& cfg = parsed.config;
-            const int width = cfg.width;
-            const int height = cfg.height;
-            const int offsetX = cfg.offsetX;
-            const int offsetY = cfg.offsetY;
-            const double exposureUs = cfg.exposureUs;
-            const int triggerMode = cfg.triggerMode;
-            const int analogGain = cfg.analogGain;
-
-            tSdkImageResolution res{};
-            res.iIndex = 0xFF;
-            res.iHOffsetFOV = offsetX;
-            res.iVOffsetFOV = offsetY;
-            res.iWidthFOV = width;
-            res.iHeightFOV = height;
-            res.iWidth = width;
-            res.iHeight = height;
-
-            CameraSdkStatus status = CameraSetImageResolution(hCamera, &res);
-            if (status != CAMERA_STATUS_SUCCESS)
+            // Shared with MindVisionCamera::applyJsonConfig so the two apply
+            // paths stay in lockstep (this path historically applied only 7
+            // of the config's fields — no strobe, no trigger extras).
+            std::string applyError;
+            backend::camera::mindvision::applyConfigToHandle(hCamera, parsed.config, &applyError);
+            if (!applyError.empty())
             {
-                SPDLOG_WARN("MindVision config: CameraSetImageResolution returned {}", status);
-                setErr("CameraSetImageResolution failed (status=" + std::to_string(status) + ")");
-            }
-
-            status = CameraSetExposureTime(hCamera, exposureUs);
-            if (status != CAMERA_STATUS_SUCCESS)
-            {
-                SPDLOG_WARN("MindVision config: CameraSetExposureTime returned {}", status);
-            }
-
-            status = CameraSetTriggerMode(hCamera, triggerMode);
-            if (status != CAMERA_STATUS_SUCCESS)
-            {
-                SPDLOG_WARN("MindVision config: CameraSetTriggerMode returned {}", status);
-            }
-
-            status = CameraSetAnalogGain(hCamera, analogGain);
-            if (status != CAMERA_STATUS_SUCCESS)
-            {
-                SPDLOG_WARN("MindVision config: CameraSetAnalogGain returned {}", status);
+                setErr(applyError);
             }
 
             return true;
@@ -174,7 +154,8 @@ namespace backend::services
         std::vector<DiscoveredCamera> results;
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabberDiscovery discovery(genTL);
             discovery.discover();
 
@@ -258,7 +239,8 @@ namespace backend::services
         std::vector<DiscoveredFramegrabber> results;
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabberDiscovery discovery(genTL);
             discovery.discover();
 
@@ -326,7 +308,8 @@ namespace backend::services
     {
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabber<CallbackOnDemand> g(genTL, interfaceIndex, deviceIndex);
 
             SPDLOG_INFO("Applying script to camera [{}:{}]: {}", interfaceIndex, deviceIndex, scriptPath);
@@ -360,7 +343,8 @@ namespace backend::services
     {
         try
         {
-            EGenTL genTL;
+            auto genTLHandle = backend::camera::egrabber::sharedGenTL();
+            EGenTL &genTL = *genTLHandle;
             EGrabber<CallbackOnDemand> g(genTL, interfaceIndex, deviceIndex);
 
             try
@@ -429,13 +413,28 @@ namespace backend::services
     std::vector<DiscoveredCamera> CameraControlService::discoverMindVisionCameras()
     {
         std::vector<DiscoveredCamera> results;
+#if MIB_HAS_EGRABBER
+        // The MindVision SDK's CoaXPress plugin (CXPCamera_X64.Interface) loads
+        // coaxlink.cti and calls GCInitLib during CameraEnumerateDevice(). Only
+        // one GenTL open is allowed per process, so if the plugin gets there
+        // first every later EGrabber open fails with GenTL -1004 for the life
+        // of the process. Reserve our shared handle first: the plugin's attempt
+        // then fails harmlessly and both SDKs keep working, in any order.
+        // Regression guard: tests/hardware/hw_discovery_reentry_test.cpp.
+        if (!backend::camera::egrabber::ensureSharedGenTL())
+        {
+            SPDLOG_DEBUG("CameraControlService: no Euresys producer to reserve before MindVision enumeration");
+        }
+#endif
         try
         {
+#ifdef _WIN32
             if (LoadSdkApi() != CAMERA_STATUS_SUCCESS)
             {
                 SPDLOG_WARN("CameraControlService::discoverMindVisionCameras: SDK DLL not available");
                 return results;
             }
+#endif
 
             CameraSdkStatus status = CameraSdkInit(0);
             if (status != CAMERA_STATUS_SUCCESS)
@@ -490,11 +489,13 @@ namespace backend::services
 
         try
         {
+#ifdef _WIN32
             if (LoadSdkApi() != CAMERA_STATUS_SUCCESS)
             {
                 setErr("MindVision SDK DLL not available");
                 return false;
             }
+#endif
 
             CameraSdkStatus status = CameraSdkInit(0);
             if (status != CAMERA_STATUS_SUCCESS)

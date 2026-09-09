@@ -21,6 +21,10 @@ namespace frontend
         bool cameraRunning = false;
         double cameraFps = 0.0;
         double cameraDataRateMBps = 0.0;
+        // Truthful renderings (issue #368): empty = fall back to the numeric
+        // fields; otherwise shown verbatim ("n/a", "unsupported", "12 (stale 4.0 s)").
+        QString cameraFpsText;
+        QString cameraDataRateText;
         double meanRingRatio = 0.0;
         bool experimentActive = false;
         size_t validBuffered = 0;

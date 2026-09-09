@@ -3,7 +3,6 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/camera/mock/MockCamera.h"
 
-#include <QCoreApplication>
 
 #include <algorithm>
 #include <atomic>
@@ -294,7 +293,6 @@ bool writeProofJson(const std::filesystem::path& outputPath,
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication app(argc, argv);
 
     try {
         std::filesystem::path frameDir;

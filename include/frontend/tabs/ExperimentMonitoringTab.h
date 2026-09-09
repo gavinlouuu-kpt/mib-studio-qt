@@ -1,9 +1,12 @@
 #pragma once
 
+#include "frontend/models/ProcessingConfigDraft.h"
+
 #include <QWidget>
 #include <QImage>
-#include <vector>
 #include <cstdint>
+#include <functional>
+#include <vector>
 
 namespace cv { class Mat; }
 namespace backend { class AppBackend; }
@@ -33,6 +36,7 @@ class QHideEvent;
 class QSpinBox;
 class QDoubleSpinBox;
 class QGroupBox;
+class QFormLayout;
 
 namespace Ui { class ExperimentMonitoringTab; }
 
@@ -80,14 +84,36 @@ public slots:
     bool exportHistogramAsTiff(const QString& filePath) const;
     bool exportScatterPlotAsTiff(const QString& filePath) const;
 
+public:
+    // Issue #364: tune panel surfaces for tests and the main window.
+    static constexpr int kTunePanelMinWidth = 220;
+    static constexpr int kTunePanelMaxWidth = 280;
+    ProcessingConfigDraft& tuneDraft() { return draft_; }
+    const ProcessingConfigDraft& tuneDraft() const { return draft_; }
+    QWidget* tunePanel() const;
+    QScrollArea* tuneScrollArea() const { return tuneScrollArea_; }
+    QWidget* tuneFooter() const { return tuneFooter_; }
+    QPushButton* tuneApplyButton() const { return tuneApplyBtn_; }
+    QPushButton* tuneRevertButton() const { return tuneRevertBtn_; }
+    QString tuneStateText() const;
+    QWidget* tuneFieldWidget(TuneField field) const;
+    // Simulate an operator edit through the bound control (signals live).
+    bool setTuneFieldForTests(TuneField field, const QVariant& value);
+
 signals:
-    void processingConfigApplied();
+    // Issue #364: the panel never mutates the backend or the file itself; it
+    // asks the config coordinator (AppConfigWatcher) and waits for the
+    // result delivered to onApplyResult().
+    void applyRequested(const frontend::ApplyProcessingDraftRequest& request);
+    // Dirty / conflict / applying / error state changed (for status surfaces).
+    void tuneStateChanged();
 
 private slots:
     void onUpdate();
     void onToggleOverlay(bool enabled);
     void onClearBuffer();
     void onApplyParams();
+    void onRevertParams();
     void onSortTrigger();
     void onPeriodicTriggerToggled(bool checked);
 
@@ -96,7 +122,14 @@ protected:
     void hideEvent(QHideEvent* event) override;
 
 public slots:
+    // Reload the authoritative config (runtime ProcessingService) into the
+    // draft baseline. Local edits are retained; an exposed field that differs
+    // puts the panel in Conflict instead of silently overwriting.
     void loadCurrentConfig();
+    // Same, recording the document fingerprint the baseline corresponds to
+    // (sent with the next apply request so a stale document is refused).
+    void loadCurrentConfig(const QByteArray& documentFingerprint);
+    void onApplyResult(const frontend::ConfigApplyResult& result);
 
 private:
     void setupCharts();
@@ -178,36 +211,33 @@ private:
     static constexpr int MAX_RECENT_FRAMES = 1000; // Keep more frames for scatterplot/histogram
     static constexpr int UPDATE_INTERVAL_MS = 500;
 
-    // Tune params panel
+    // Tune params panel (issue #364): every exposed field is bound once;
+    // the draft model owns baseline/changed/dirty/conflict state.
+    struct TuneBinding {
+        TuneField field;
+        QWidget* widget{nullptr};
+        QWidget* rowLabel{nullptr};
+        std::function<QVariant()> read;
+        std::function<void(const QVariant&)> write;
+    };
+    void bindTuneField(TuneField field, QWidget* widget, QWidget* rowLabel,
+                       std::function<QVariant()> read, std::function<void(const QVariant&)> write);
+    void onTuneFieldEdited(TuneField field, const QVariant& value);
+    void populateTuneWidgetsFromDraft();
+    void refreshTuneFooter();
+    void refreshTuneChangeMarkers();
+
     QWidget* tunePanelContent_ = nullptr;
-
-    // Filter thresholds
-    QSpinBox* areaMinSpin_ = nullptr;
-    QSpinBox* areaMaxSpin_ = nullptr;
-    QDoubleSpinBox* deformMinSpin_ = nullptr;
-    QDoubleSpinBox* deformMaxSpin_ = nullptr;
-    QDoubleSpinBox* areaRatioMaxSpin_ = nullptr;
-    QDoubleSpinBox* ringMinSpin_ = nullptr;
-    QDoubleSpinBox* ringMaxSpin_ = nullptr;
-
-    // Filter enables
-    QCheckBox* borderCheckBox_ = nullptr;
-    QCheckBox* areaRangeCheckBox_ = nullptr;
-    QCheckBox* deformRangeCheckBox_ = nullptr;
-    QCheckBox* areaRatioCheckBox_ = nullptr;
-    QCheckBox* ringRatioCheckBox_ = nullptr;
-    QCheckBox* singleInnerCheckBox_ = nullptr;
-
-    // Target group
-    QCheckBox* targetGroupEnableBox_ = nullptr;
-    QSpinBox* targetAreaMinSpin_ = nullptr;
-    QSpinBox* targetAreaMaxSpin_ = nullptr;
-    QDoubleSpinBox* targetDeformMinSpin_ = nullptr;
-    QDoubleSpinBox* targetDeformMaxSpin_ = nullptr;
-
-    // Multi-image acquisition
-    QCheckBox* multiImageEnableBox_ = nullptr;
-    QSpinBox* multiImageCountSpin_ = nullptr;
+    QScrollArea* tuneScrollArea_ = nullptr;
+    QWidget* tuneFooter_ = nullptr;
+    QLabel* tuneStateLabel_ = nullptr;
+    QLabel* tuneValidationLabel_ = nullptr;
+    QPushButton* tuneApplyBtn_ = nullptr;
+    QPushButton* tuneRevertBtn_ = nullptr;
+    std::vector<TuneBinding> tuneBindings_;
+    ProcessingConfigDraft draft_;
+    QByteArray documentFingerprint_;
+    bool tuneLoading_ = false;
 };
 
 } // namespace frontend

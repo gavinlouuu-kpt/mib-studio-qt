@@ -1,0 +1,1082 @@
+/* Operator shell layout (UI parity with the Qt app on main — issue #266).
+   Regions: menu row / telemetry sidebar / tabbed main area / status bar. */
+
+:root {
+  --bg: #f0f0f0;
+  --panel: #fafafa;
+  --border: #c8c8c8;
+  --text: #1a1a1a;
+  --muted: #777;
+  --accent: #2b6cb0;
+  --ok: #1a7f37;
+  --err: #b42318;
+  --warn: #b7791f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---- Menu row ---- */
+
+.menubar {
+  display: flex;
+  gap: 2px;
+  padding: 2px 6px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 30;
+}
+
+.menubar-item {
+  position: relative;
+}
+
+.menubar-item > button {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menubar-item > button:hover,
+.menubar-item > button[aria-expanded="true"] {
+  background: #dcdcdc;
+}
+
+.menu-popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 230px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  z-index: 40;
+}
+
+.menu-popup button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu-popup button:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.menu-popup button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+/* ---- Body: sidebar + main ---- */
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar {
+  width: 250px;
+  min-width: 250px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebar.collapsed {
+  display: none;
+}
+
+.sidebar-toggle {
+  width: 14px;
+  min-width: 14px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: #e4e4e4;
+  cursor: pointer;
+  font-size: 9px;
+  color: var(--muted);
+  padding: 0;
+}
+
+.sidebar-toggle:hover {
+  background: #d4d4d4;
+}
+
+.side-section {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px 8px;
+}
+
+.side-section h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.side-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.side-row .k {
+  color: #333;
+}
+
+.side-row .v {
+  font-weight: 600;
+  text-align: right;
+}
+
+.side-row .v.dim {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.side-row .v.ok {
+  color: var(--ok);
+}
+
+.bg-preview {
+  height: 70px;
+  border: 1px solid var(--border);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+/* ---- Main tabbed area ---- */
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 8px 0;
+}
+
+.tabs-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.tabbar {
+  display: flex;
+  gap: 1px;
+}
+
+.tabbar button {
+  border: 1px solid var(--border);
+  border-bottom: none;
+  background: #e2e2e2;
+  padding: 5px 14px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+}
+
+.tabbar button.active {
+  background: var(--panel);
+  font-weight: 600;
+}
+
+.tabbar button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+/* ---- UX-1 guided-workflow stage tabs (issue #305) ---- */
+.stage-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.stage-tab-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.stage-tab-name {
+  font-weight: 600;
+}
+
+.stage-tab-status {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Status is conveyed by text (.stage-tab-status) AND this dot — never colour
+   alone (UX-1 accessibility criterion). */
+.stage-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--border);
+}
+.stage-dot.not-started {
+  background: transparent;
+}
+.stage-dot.needs-attention {
+  background: var(--warn);
+}
+.stage-dot.ready {
+  background: var(--accent);
+}
+.stage-dot.running {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.25);
+}
+.stage-dot.complete {
+  background: var(--ok);
+}
+
+.tabs-header .spacer {
+  flex: 1;
+}
+
+/* Recommended next action for the whole workflow. */
+.workflow-next {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #eef3f9;
+}
+
+.workflow-next-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.workflow-next-action {
+  font: inherit;
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workflow-next-action:hover:not(:disabled) {
+  filter: brightness(1.07);
+}
+
+.workflow-next-action:disabled {
+  border-color: var(--border);
+  background: #d8d8d8;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+/* ---- UX-3 hardware preflight checklist (issue #307) ---- */
+.preflight-panel {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.preflight-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.preflight-head h4 {
+  margin: 0;
+}
+
+.preflight-summary {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preflight-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.preflight-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #eee;
+}
+.preflight-check:last-child {
+  border-bottom: none;
+}
+
+/* Status shown by text (.check-status) AND the dot — never colour alone. */
+.check-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--border);
+}
+.check-dot.passed {
+  background: var(--ok);
+}
+.check-dot.warning {
+  background: var(--warn);
+}
+.check-dot.failed {
+  background: var(--err);
+}
+.check-dot.not-required {
+  background: transparent;
+}
+
+.check-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.check-label {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.req-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.check-detail {
+  font-size: 12px;
+}
+
+.check-identity {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.check-status {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 84px;
+  text-align: right;
+}
+.preflight-check.passed .check-status {
+  color: var(--ok);
+}
+.preflight-check.warning .check-status {
+  color: var(--warn);
+}
+.preflight-check.failed .check-status {
+  color: var(--err);
+}
+.preflight-check.not-required .check-status {
+  color: var(--muted);
+}
+
+.check-recovery {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.btn.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.preflight-foot {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+.preflight-foot.ok {
+  color: var(--ok);
+}
+.preflight-foot.warn {
+  color: var(--warn);
+}
+
+/* ---- UX-4 image quality gates (issue #308) ---- */
+.quality-panel {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.quality-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quality-head h4 {
+  margin: 0;
+}
+
+.quality-summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quality-gates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.quality-gate {
+  flex: 1 1 120px;
+  min-width: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.gate-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Status shown by text (.gate-status) AND the dot — never colour alone. */
+.gate-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--border);
+}
+.gate-dot.pass {
+  background: var(--ok);
+}
+.gate-dot.warn {
+  background: var(--warn);
+}
+.gate-dot.fail {
+  background: var(--err);
+}
+.gate-dot.unknown {
+  background: transparent;
+}
+
+.gate-label {
+  font-weight: 600;
+}
+
+.gate-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gate-status {
+  font-size: 11px;
+  font-weight: 600;
+}
+.quality-gate.pass .gate-status {
+  color: var(--ok);
+}
+.quality-gate.warn .gate-status {
+  color: var(--warn);
+}
+.quality-gate.fail .gate-status {
+  color: var(--err);
+}
+.quality-gate.unknown .gate-status {
+  color: var(--muted);
+}
+
+/* ---- UX-8 persistent active-context bar (issue #312) ---- */
+.context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--border);
+  border-top: 1px solid var(--border);
+}
+
+.context-seg {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border: none;
+  background: var(--panel);
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+}
+
+.context-seg.clickable {
+  cursor: pointer;
+}
+.context-seg.clickable:hover {
+  background: #eef3f9;
+}
+.context-seg:disabled {
+  cursor: default;
+}
+
+/* Status shown by the dot AND the label/value text — never colour alone. */
+.seg-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--border);
+}
+.seg-dot.ok {
+  background: var(--ok);
+}
+.seg-dot.warn {
+  background: var(--warn);
+}
+.seg-dot.blocked {
+  background: var(--err);
+}
+.seg-dot.pending {
+  background: transparent;
+}
+.seg-dot.neutral {
+  background: var(--muted);
+}
+
+.seg-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  min-width: 0;
+}
+
+.seg-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.seg-value {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.context-seg.warn .seg-value {
+  color: var(--warn);
+}
+.context-seg.blocked .seg-value {
+  color: var(--err);
+}
+.context-seg.pending .seg-value {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* ---- UX-9 Operator / Service-Commissioning mode (issue #313) ---- */
+.menubar-spacer {
+  flex: 1;
+}
+
+.mode-toggle {
+  font: inherit;
+  padding: 2px 10px;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.mode-toggle.service {
+  border-color: var(--warn);
+  background: #fff3e0;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.service-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 12px;
+  background: #fff3e0;
+  border-bottom: 1px solid var(--warn);
+  color: #7a4a12;
+}
+.service-banner span {
+  flex: 1;
+}
+.service-banner button {
+  font: inherit;
+  padding: 3px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 3px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.arm-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--warn);
+  border-radius: 3px;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.commissioning-hint {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.camera-actions {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 3px;
+}
+
+.tab-body {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 8px;
+}
+
+/* ---- Shared widgets ---- */
+
+button.btn,
+.toolbar button,
+.camera-actions button {
+  border: 1px solid #aaa;
+  background: #f6f6f6;
+  padding: 4px 10px;
+  font: inherit;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+button.btn:hover:not(:disabled),
+.toolbar button:hover:not(:disabled),
+.camera-actions button:hover:not(:disabled) {
+  background: #e8e8e8;
+}
+
+button.btn:disabled,
+.toolbar button:disabled,
+.camera-actions button:disabled {
+  color: var(--muted);
+  background: #f0f0f0;
+  cursor: not-allowed;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.toolbar .right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar input[type="number"],
+.toolbar input[type="text"] {
+  width: 72px;
+  padding: 3px 5px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.toolbar input:disabled {
+  background: #eee;
+  color: var(--muted);
+}
+
+.subtabs {
+  display: flex;
+  gap: 1px;
+  margin-bottom: 0;
+}
+
+.subtabs button {
+  border: 1px solid var(--border);
+  border-bottom: none;
+  background: #e8e8e8;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+}
+
+.subtabs button.active {
+  background: #fff;
+  font-weight: 600;
+}
+
+.subtabs button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.subtab-body {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+/* ---- Canvas / live view ---- */
+
+.canvas-wrap {
+  flex: 1;
+  min-height: 160px;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  position: relative;
+}
+
+.canvas-wrap canvas {
+  image-rendering: pixelated;
+  background: #111;
+}
+
+.canvas-wrap canvas.fit {
+  width: 100%;
+  height: auto;
+}
+
+.canvas-hint {
+  position: absolute;
+  color: #888;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* ---- Misc regions ---- */
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.legend .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend .swatch {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+  border: 1px solid #0003;
+}
+
+.pending-note {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  background: #fcfcfc;
+  margin-top: 6px;
+}
+
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.metrics-table th,
+.metrics-table td {
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.metrics-table th {
+  background: #ececec;
+  font-weight: 600;
+}
+
+.review-split {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.review-split .frames {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.review-split .table-panel {
+  flex: 2;
+  min-width: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.config-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.config-group {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px;
+  min-width: 240px;
+  flex: 1;
+}
+
+.config-group h5 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.config-group .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.script-editor {
+  width: 100%;
+  min-height: 90px;
+  font-family: monospace;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  resize: vertical;
+}
+
+.script-editor:disabled {
+  background: #f5f5f5;
+  color: var(--muted);
+}
+
+.scrub {
+  width: 100%;
+}
+
+.mono {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.path-label {
+  color: #444;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Status bar ---- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.statusbar .metrics {
+  margin-left: auto;
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar .log-toggle {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.log-drawer {
+  max-height: 110px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: #fff;
+  padding: 4px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ---- Modal (Configure Mock / About) ---- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 14px 16px;
+  min-width: 380px;
+  max-width: 560px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.modal h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.modal .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.modal .row input[type="text"],
+.modal .row input[type="number"] {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.devices-list {
+  flex: 1;
+  min-height: 140px;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px;
+  color: var(--muted);
+}

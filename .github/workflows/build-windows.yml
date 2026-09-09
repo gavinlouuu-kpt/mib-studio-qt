@@ -197,6 +197,15 @@ jobs:
           curl.exe --fail --location --retry 3 --output resources\installers\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
         shell: pwsh
 
+      - name: Provision pinned MindVision SDK
+        shell: pwsh
+        run: |
+          $sdk = .\scripts\provision-mindvision-sdk.ps1 `
+            -Destination build\vendor\mindvision-sdk `
+            -PassThru
+          "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
+          "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
+
       # ── Build ──────────────────────────────────────────────────
       - name: Conan install
         shell: pwsh
@@ -241,12 +250,14 @@ jobs:
           # public identifier on the Sentry side, but we still treat it as a
           # secret because anyone who knows it can submit events that count
           # against quota.
-          # Hosted GitHub runners do not have the proprietary MindVision SDK.
-          # Keep this explicit so CI continues to exercise the portable stub.
+          # The pinned R2 artifact is provisioned above. Keep MindVision
+          # explicit so a stale CMake cache can never produce a release stub.
           $args = @(
             '--preset',
             'windows-default',
-            '-DMIB_ENABLE_MINDVISION=OFF',
+            '-DMIB_ENABLE_MINDVISION=ON',
+            "-DMIB_MINDVISION_SDK_ROOT=$env:MIB_MINDVISION_SDK_ROOT",
+            "-DMIB_MINDVISION_RUNTIME_DIR=$env:MIB_MINDVISION_RUNTIME_DIR",
             '-DMIB_REQUIRE_PROCESSING_CORE_SIGNER_SPKI=ON',
             "-DMIB_PROCESSING_CORE_SIGNER_SPKI_SHA256=$env:PROCESSING_CORE_SIGNER_SPKI_SHA256",
             '-DMIB_RELEASE_VERSION_OVERRIDE=${{ steps.version.outputs.artifact_version }}',
@@ -284,7 +295,8 @@ jobs:
         run: |
           $required = @(
             'build\Release\mib_studio_qt.exe',
-            'build\Release\mib_studio_qt.pdb'
+            'build\Release\mib_studio_qt.pdb',
+            'build\Release\MVCAMSDK_X64.dll'
           )
           $missing = @()
           foreach ($p in $required) {
@@ -357,6 +369,11 @@ jobs:
           # EXE it finds. --include-sources embeds the original source paths
           # into the symbol map for nicer stack frames.
           sentry-cli debug-files upload --include-sources build\Release
+
+          # Verify that the uploaded symbols contain valid debug IDs so
+          # minidumps submitted via sentry_capture_minidump can be
+          # symbolicated. Fails the step if no debug info is found.
+          sentry-cli debug-files check build\Release\mib_studio_qt.pdb
 
           # Tie this build to a Sentry release so events arriving with
           # release="mib_studio_qt@$version" group cleanly in the UI.
@@ -553,6 +570,12 @@ jobs:
           } catch {
             Write-Host "::warning::Fallback sync PR failed ($_); the $env:RELEASE_TAG release is unaffected. Sync cmake/MIBVersion.cmake DEFAULT_VERSION to $env:RELEASE_VERSION manually via a PR to develop."
           }
+          # This step is best-effort by contract (see the comment above the
+          # step): a caught failure must not fail the job, or the release /
+          # R2 publish steps below never run (v1.0.7: gh pr create was
+          # denied by repo policy and the leftover $LASTEXITCODE=1 killed
+          # the job before "Create GitHub Release").
+          exit 0
 
       # ── GitHub Release ─────────────────────────────────────────
       - name: Create GitHub Release

@@ -10,13 +10,19 @@
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
+- [[HdfExportService]] — Qt-free bounded/cancellable CSV+TIFF export job (issue #344)
 - [[SqliteService]] — small metadata DB
 
 ## Hardware I/O
 - [[CameraControlService]] — GenICam script apply, device reset, discovery
 - [[AutofocusService]] — nanopositioner voltage via serial (Coremor XMT)
 - [[TriggerService]] — camera digital-output pulse on target-group detection
+- [[SerialBus]] — shared RS485/Modbus bus sessions (one `QSerialPort` owner
+  per adapter, strict response correlation); transport for the two below
 - [[SyringePumpService]] — dual-pump Modbus RTU over serial
+- [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
+- [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
+  source) via Modbus RTU over serial; addressed device on a shared bus
 
 ## Optional / specialised
 - [[YoloService]] — ONNX Runtime session (segmentation; placeholder-ish)
@@ -25,6 +31,7 @@
   (`processBatch` inputs/outputs)
 
 ## Diagnostics
+- [[MinidumpUploader]] — posts pending crash dumps to Sentry with a per-dump HTTP status (the crash queue advances only on 2xx)
 - [[CrashReporter]] — process-level crash handler + Sentry forwarder;
   pairs with [[../diagnostics/CrashStateMirror]]
 

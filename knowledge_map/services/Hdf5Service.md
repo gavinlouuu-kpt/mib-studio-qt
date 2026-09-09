@@ -112,6 +112,42 @@ that predates provenance. The writer records the bundled identity when no
 explicit identity is supplied, preserving deterministic metadata for older
 call sites.
 
+## Run accounting (issue #367)
+
+`writeRunAccounting(RecordingAccountingSnapshot)` / `readRunAccounting(...)`
+persist and read the versioned `accounting_*` attributes described in
+[[../data-model/HDF5-Storage]] on whichever info group exists. Producers:
+`AppBackend` raw recording (after `writeRecordingInfo`) and
+`MainWindow::onStopExperiment` (after `writeExperimentInfo`, from
+`ProcessingService::experimentAccountingSnapshot()`). Consumer:
+[[../frontend/HdfReviewTab]] status text. Types live in
+`include/backend/recording/RecordingAccounting.h` (Qt-free, header-only).
+
+## Open-object diagnostics (issue #344)
+
+`globalOpenObjectCountForDiagnostics()` (static) and
+`openObjectCountForDiagnostics()` wrap `H5Fget_obj_count` so tests and
+debug logging can prove HDF5 handles return to baseline after repeated
+jobs ([[HdfExportService]] stress test). HDF5 ids never leave this class.
+
+## Run configuration snapshot (issue #369)
+
+`writeRunSnapshotJson(runJson, readinessJson)` / `readRunSnapshotJson(...)`
+store the frozen `RunConfigurationSnapshot` and the readiness evaluation it
+was started from as variable-length UTF-8 string attributes
+(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` = 1)
+on the `/run_provenance` group. [[../architecture/ExperimentCoordinator]]
+writes them immediately after `initializeDatasets()` and before the run may
+enter Running; a failure rolls the Start back and removes the file.
+
+## Acquisition provenance (issue #368)
+
+`writeAcquisitionProvenance(descriptor, telemetry)` /
+`readAcquisitionProvenance(...)` persist the session `TimestampDescriptor` and
+the per-metric telemetry with validity (see [[../data-model/HDF5-Storage]]).
+Written by `AppBackend` raw recording and `MainWindow::onStopExperiment` after
+the run info; legacy files return `false` with an Unsupported descriptor.
+
 ## Gotchas
 
 - `openFile(path)` creates the destination's parent directory tree
@@ -153,3 +189,19 @@ call sites.
   before `stopFrameRecording()` returned. With interval flushing, a kill
   between flushes can leave up to `MIB_HDF5_FLUSH_INTERVAL_MS` of frames
   unflushed.
+
+## Process exit and the HDF5 atexit teardown (2026-09-08)
+
+The constructor calls `H5dont_atexit()` once (before any other HDF5 call),
+so the library never tears itself down in the CRT exit chain. The installed
+1.0.7 app crashed exactly there on 2026-09-07 (WER bucket
+`INVALID_POINTER_READ_c0000005_hdf5.dll`: `H5_term_library` →
+`H5D_close` → `H5FL_blk_free` on a chunk cache already released) because
+the process exited with an experiment file still open under a live writer.
+Files are closed by their owners (recording stop, experiment finalization,
+this destructor); whatever is still open at exit is leaked, never closed by
+the library under a running thread. Guard: `recording.hdf5_exit_teardown`
+(exits with a file open and a detached writer; must exit 0 — it guards the
+property, it did not reproduce the crash). Evidence:
+`docs/evidence/2026-09-08-crash-dump-review.md`.
+

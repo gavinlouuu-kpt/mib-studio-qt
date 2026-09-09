@@ -10,9 +10,17 @@
 
 ## Responsibility
 
-- Hold a non-owning `ICamera*` (handed to it by
-  [[CaptureService]]::CameraReadyCallback via
-  [[../architecture/AppBackend]]).
+- Hold a non-owning `ICamera*` **bound to one acquisition session
+  generation** (handed to it by [[CaptureService]]::CameraReadyCallback via
+  [[../architecture/AppBackend]]). `setCamera(camera, generation)` is the
+  session boundary (issue #365): it waits for any in-flight pulse
+  (`pulseMutex_`), clears every pending request (counted in
+  `getDroppedStaleRequestCount()`), then swaps the pointer + generation.
+  After it returns the trigger thread can never touch the previous camera.
+  Requests are stamped with the generation bound at enqueue time and are
+  refused at fire time if a different session is bound, so a request from
+  session N cannot execute against session N+1 after reconnect/restart.
+  Regression guard: `tests/backend/trigger_session_test.cpp`.
 - On `onTargetGroupResult(signal)`, signal the trigger thread to raise the
   configured output line, sleep `pulseDurationUs_`, then lower it.
 - `TargetGroupSignal` carries source identity (`objectId`, `trackId`) plus
@@ -20,6 +28,16 @@
   `hostTimestampUs` — the host monotonic acquisition stamp) and is used
   for metadata at trigger fire time.
 - Expose metrics: `getTriggerCount`, `getLastOnsetUs`, `resetMetrics`.
+- Count **lost pulses** that were previously dropped silently: after a
+  request is dequeued the loop may still fail to drive the TTL edge because
+  no camera is bound (`getDroppedPulsesNoCameraCount`) or
+  `setTriggerOutput(true)` returns false (`getDroppedPulsesSetFailedCount`);
+  both are a selected sort target that never fired (`getDroppedPulseCount` =
+  sum, throttled WARN). Each pulse also feeds the always-on live
+  acquisition→pulse latency gauge via
+  `PipelineTimingRecorder::noteTargetLatency`, and mirrors trigger count /
+  onset / dropped requests / dropped pulses / target latency into
+  [[../diagnostics/CrashStateMirror]] (`trigger` slot).
 - Requests are queued per-request (issue #283): a bounded
   `pendingRequests_` deque (capacity `kMaxPendingRequests` = 8, under
   `triggerMutex_`) replaces the old single-bool flag, so every
@@ -45,20 +63,33 @@ OS scheduling in a 500 fps mock run).
 
 ## Manual & periodic test paths
 
-- Manual single pulse: `sortTriggerBtn` in
-  [[../frontend/ExperimentMonitoringTab]] calls
-  `onTargetGroupResult(services::TargetGroupSignal{.isTargetGroup=true})` once.
-- Periodic test pulses: `periodicTriggerBtn` + `periodicTriggerIntervalSpin`
-  in the same tab arm a `QTimer` that calls
-  `onTargetGroupResult(services::TargetGroupSignal{.isTargetGroup=true})`
-  every N ms. Useful for bring-up / oscilloscope checks without needing
-  a running pipeline that classifies real "target group" frames.
+- Manual single pulse: `manualPulse()` fires one synthetic target-group
+  signal (`onTargetGroupResult({.isTargetGroup=true})`). The Qt
+  `sortTriggerBtn` in [[../frontend/ExperimentMonitoringTab]] and the bridge
+  `trigger_manual_pulse` command (BE-5, #275) both route here.
+- Periodic test pulses: since BE-5 the generator is **service-owned** —
+  `startPeriodicTest(intervalMs)` / `stopPeriodicTest()` run a dedicated
+  thread that calls `manualPulse()` every N ms (idempotent; `stop()` also
+  stops it). The Qt tab's `QTimer` predates this; the bridge commands
+  `trigger_periodic_start/stop` use the service path. Useful for bring-up /
+  oscilloscope checks without a pipeline classifying real target frames.
+- Status: `hasCamera()`, `isPeriodicTestActive()`,
+  `getPeriodicTestIntervalMs()` back the bridge `fetch_trigger_status` pull.
+- Headless testing: `MockCamera` emulates the trigger output line
+  (`setTriggerOutput` latches + counts and returns true), so pulses count
+  without hardware.
 
 ## Gotchas
 
 - Camera pointer is non-owning and read via `std::atomic`. If the camera
-  disappears (stop), `setCamera(nullptr)` and `stop()` must be called.
-  `AppBackend` wires this via `CameraReadyCallback`.
+  disappears (stop), `setCamera(nullptr)` and `stop()` must be called
+  **before the camera object is destroyed** — `CaptureService::stop()` and
+  the capture thread's `releaseCamera()` both do this through the ready
+  callback, and `AppBackend::shutdown()` no longer clears that callback
+  before stopping capture. The trigger loop holds `pulseMutex_` for the
+  whole pulse (load pointer → rising edge → busy-wait → falling edge); lock
+  order is `pulseMutex_` before `triggerMutex_` and the loop never holds
+  both.
 - Not all cameras support `setTriggerOutput`. `ICamera::setTriggerOutput`
   returns `false` by default (see [[../camera/ICamera]]).
 - Requires `ProcessingService::enable_target_group` + thresholds to be set.

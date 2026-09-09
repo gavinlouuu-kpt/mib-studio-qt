@@ -57,7 +57,12 @@ jobs:
         shell: pwsh
         run: |
           # Parse scripts without executing to catch syntax errors
-          $scripts = @("release.ps1", "bump-version.ps1", "publish-update.ps1")
+          $scripts = @(
+            "release.ps1",
+            "bump-version.ps1",
+            "publish-update.ps1",
+            "scripts/provision-mindvision-sdk.ps1"
+          )
           foreach ($script in $scripts) {
             if (Test-Path $script) {
               $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content $script -Raw), [ref]$null)

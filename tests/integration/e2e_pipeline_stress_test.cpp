@@ -24,7 +24,6 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include <QCoreApplication>
 
 #include <atomic>
 #include <chrono>
@@ -121,7 +120,6 @@ bool generateSyntheticFrames(const fs::path& dir, int count)
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication app(argc, argv);
 
     fs::path frameDir;
     // Light default so CI finishes well under the ctest timeout even on a slow

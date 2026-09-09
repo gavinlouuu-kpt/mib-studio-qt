@@ -36,6 +36,12 @@ public:
 
     bool grabFrame(Frame& out) override;
     bool pollStats(CameraStats& out) const override;
+    // Frame::timestamp = Coaxlink BUFFER_INFO_TIMESTAMP / per-part custom
+    // timestamps: microseconds since host boot (QPC domain on Windows).
+    TimestampDescriptor timestampDescriptor() const override;
+    FrameDeliveryCapabilities deliveryCapabilities() const override;
+    FrameDeliveryMode activeDeliveryMode() const override;
+    bool pollAcquisitionQueueStats(AcquisitionQueueStats& out) const override;
     bool checkDeviceHealth() const;
 
     void configureTriggerOutput(const std::string& lineSelector) override;
@@ -47,7 +53,9 @@ private:
     CameraConfig config_{};
 #if MIB_HAS_EGRABBER
     mutable std::unique_ptr<Euresys::EGrabber<Euresys::CallbackOnDemand>> grabber_;
-    std::unique_ptr<Euresys::EGenTL> genTL_;
+    // Shared process-wide producer handle (see GenTLHolder.h); released
+    // by stop(), but the holder keeps the producer open for the process.
+    std::shared_ptr<Euresys::EGenTL> genTL_;
 #endif
 
     uint64_t width_ = 0;
@@ -60,6 +68,12 @@ private:
 
     mutable CameraStats lastStats_{};
     std::deque<Frame> pendingFrames_;
+    // Mode confirmed at the most recent successful start(); before any start
+    // activeDeliveryMode() falls back to config_.deliveryMode.
+    std::optional<FrameDeliveryMode> confirmedDeliveryMode_;
+    // Stale completed buffers dropped by the LatestFrame drain. Atomic: read
+    // by pollAcquisitionQueueStats() while the capture thread increments it.
+    std::atomic<uint64_t> intentionallyDiscardedFrames_{0};
     // Atomic: read lock-free by the trigger thread (setTriggerOutput) and by
     // isRunning() while the capture thread writes it under stateMutex_.
     std::atomic<bool> running_{false};

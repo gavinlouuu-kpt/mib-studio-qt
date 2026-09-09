@@ -43,6 +43,7 @@ a = Analysis(
         "PySide6.QtWidgets",
         "export_hdf5",
         "export_worker",
+        "hdf_export_engine",
     ],
     hookspath=[],
     hooksconfig={},

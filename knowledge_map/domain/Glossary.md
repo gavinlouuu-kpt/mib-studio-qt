@@ -73,8 +73,31 @@
 - **StreamModule** — EGrabber statistics module
   (`StatisticsFrameRate`, `StatisticsDataRate`). Must refresh before
   stopping capture.
+- **Acquisition trigger** — the signal that starts a camera exposure.
+  `trigger_mode` in the MindVision JSON config: 0 free-run, 1 software
+  (`softTrigger()` / `CameraSoftTrigger`), 2 external (TTL edge on the camera
+  trigger input). See [[../camera/MindVisionCamera]]. Distinct from the sort
+  trigger below — opposite signal direction.
+- **Sort trigger (sort-output pulse)** — TTL pulse the camera's GPIO emits
+  toward the sorter when a target group is detected, driven by
+  [[../services/TriggerService]] via `setTriggerOutput`. NOT an acquisition
+  trigger.
+- **Strobe** — camera output synchronized to exposure, used to fire
+  illumination. MindVision modes: 0 auto-sync with exposure, 1 manual
+  (delay + pulse width), 2 always high, 3 always low.
+- **Pulse generator** — Zhongsheng RS485 module producing the external
+  acquisition-trigger pulse train (400 Hz–40 kHz, duty-gated on/off); driven
+  by [[../services/PulseGeneratorService]]. Identified by (bus, serial
+  settings, Modbus slave address); the output channel is a setting below
+  that identity.
+- **RS485 bus session** — one shared `QSerialPort` owner per physical
+  USB/RS485 adapter ([[../services/SerialBus]]); RS485 is multi-drop, so
+  several Modbus devices at different slave addresses share one adapter and
+  all requests on it are serialized with strict response correlation.
 - **Modbus RTU** — serial protocol used by
-  [[../services/SyringePumpService]] (Sample + Sheath pumps).
+  [[../services/SyringePumpService]] (Sample + Sheath pumps) and
+  [[../services/PulseGeneratorService]], framed by `ModbusRtu.h` over
+  [[../services/SerialBus]].
 - **Coremor XMT** — serial protocol for the piezo nanopositioner used by
   [[../services/AutofocusService]]. DLL under `include/Coremor/`.
 - **ONNX Runtime** — ML runtime for [[../services/YoloService]].
@@ -89,3 +112,11 @@
   themselves never decrease.
 - **FrameStore filter mode** — frame filter that returns `true` to SKIP
   (used by recording mode to drop empty frames).
+- **Frame delivery mode** — user-facing SDK-queue policy in
+  [[../camera/ICamera]]: **Every Frame** (ordered, never intentionally
+  skipped; backlog grows under overload) vs **Latest Frame** (stale
+  completed SDK buffers are drained before the copy; every deliberate
+  discard is counted). Applied at the earliest controllable SDK queue,
+  not in [[../data-model/FrameStore]]. Intentional discards, transport
+  loss/underrun, and downstream processing drops are separate counters
+  by contract.
