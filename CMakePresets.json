@@ -1,6 +1,10 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "linux-release",
@@ -82,6 +86,24 @@
         "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
         "MIB_ENABLE_MINDVISION": "ON"
       }
+    },
+    {
+      "name": "windows-ninja",
+      "displayName": "Windows Ninja x64 Release (Conan, MSVC dev shell)",
+      "description": "Single-config Ninja build. Run from a VS 2022 x64 developer shell (vcvars64) after: conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build-ninja/conan_toolchain.cmake",
+        "MIB_ENABLE_MINDVISION": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -116,6 +138,10 @@
       "displayName": "Build (Release)",
       "configurePreset": "windows-default",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-ninja-build",
+      "configurePreset": "windows-ninja"
     }
   ],
   "testPresets": [
@@ -159,7 +185,7 @@
       "configuration": "Debug",
       "filter": {
         "exclude": {
-          "label": "integration|hardware"
+          "label": "integration|hardware|soak"
         }
       },
       "output": {
@@ -193,7 +219,7 @@
       "configuration": "Release",
       "filter": {
         "exclude": {
-          "label": "integration|hardware"
+          "label": "integration|hardware|soak"
         }
       },
       "output": {
@@ -219,6 +245,51 @@
       "execution": {
         "timeout": 120
       }
+    },
+    {
+      "filter": {
+        "exclude": {
+          "label": "integration|hardware|soak"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 30
+      },
+      "name": "windows-ninja-test",
+      "configurePreset": "windows-ninja"
+    },
+    {
+      "filter": {
+        "include": {
+          "label": "integration"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 180
+      },
+      "name": "windows-ninja-integration-test",
+      "configurePreset": "windows-ninja"
+    },
+    {
+      "filter": {
+        "include": {
+          "label": "hardware"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 120
+      },
+      "name": "windows-ninja-hardware-test",
+      "configurePreset": "windows-ninja"
     }
   ]
 }

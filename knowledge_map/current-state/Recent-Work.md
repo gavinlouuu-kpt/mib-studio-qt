@@ -5,6 +5,27 @@
 
 ## Features shipped
 
+- **Build/test turnaround: Ninja + sccache preset, soak out of the fast
+  lane, path-gated sanitizers** (2026-09-09) — Measured on the bench PC
+  (32 cores): the VS-generator tree needs 56 s for a no-op build and 107 s
+  after touching `AppBackend.h` (48 compiles, 126 links); the new
+  `windows-ninja` preset (single-config Release in `build-ninja/`, Conan
+  toolchain generated with `-c tools.cmake.cmaketoolchain:generator=Ninja`,
+  run from a VS 2022 x64 developer shell) does a cold full build in 67 s,
+  a no-op in 0.1 s, the header touch in 16 s, and a clean rebuild in 26 s
+  with sccache warm. `cmake/MIBCompilerSettings.cmake` auto-detects
+  `sccache` on PATH as the compiler launcher (override with
+  `MIB_COMPILER_LAUNCHER`) and compiles Release with `/Z7` instead of
+  `/Zi` so objects are cacheable (the PDB is still produced at link).
+  `scripts.exporter_soak` (631 s of a 725 s lane) now carries the `soak`
+  label exclusion in every fast test preset; `soak.yml` keeps running it
+  nightly. `sanitizers.yml` gates its two jobs (17 + 8 min per PR) on
+  C++-relevant paths via `dorny/paths-filter`; a skipped job still
+  satisfies the required check. CI's `build-windows.yml` stays on the VS
+  generator for now: the installer/packaging steps hard-code
+  `build/Release` (`cmake/MIBWindowsPackaging.cmake`, deployment), which a
+  single-config tree does not produce — porting that is the next step.
+
 - **Crash dumps reach Sentry: MinidumpUploader** (2026-09-09) — 99 dumps
   on the bench PC had been renamed `.queued`/`.queued2` ("submitted") and
   none ever reached the server: sentry-native's transport gives no

@@ -189,7 +189,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(processing_core_dialog_test PRIVATE mib_frontend_common)
     set_target_properties(processing_core_dialog_test PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
         AUTOUIC OFF
     )
     add_test(NAME frontend.processing_core_dialog
@@ -215,7 +215,7 @@ if(BUILD_TESTING)
     target_include_directories(camera_action_state_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(camera_action_state_test PRIVATE mib_frontend_common)
     set_target_properties(camera_action_state_test PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
         AUTOUIC OFF
     )
     add_test(NAME frontend.camera_action_state COMMAND $<TARGET_FILE:camera_action_state_test>)
@@ -235,7 +235,7 @@ if(BUILD_TESTING)
     target_include_directories(ui_layout_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(ui_layout_test PRIVATE mib_frontend_common)
     set_target_properties(ui_layout_test PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
         AUTOUIC OFF
     )
     add_test(NAME frontend.ui_layout COMMAND $<TARGET_FILE:ui_layout_test>
@@ -249,7 +249,7 @@ if(BUILD_TESTING)
     add_executable(config_tabs_state_test ${PROJECT_SOURCE_DIR}/tests/frontend/config_tabs_state_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(config_tabs_state_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(config_tabs_state_test PRIVATE mib_frontend_common)
-    set_target_properties(config_tabs_state_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
+    set_target_properties(config_tabs_state_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>" AUTOUIC OFF)
     add_test(NAME frontend.config_tabs_state COMMAND $<TARGET_FILE:config_tabs_state_test>)
     set_tests_properties(frontend.config_tabs_state PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
 
@@ -257,7 +257,7 @@ if(BUILD_TESTING)
     add_executable(preview_layout_test ${PROJECT_SOURCE_DIR}/tests/frontend/preview_layout_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(preview_layout_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(preview_layout_test PRIVATE mib_frontend_common)
-    set_target_properties(preview_layout_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
+    set_target_properties(preview_layout_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>" AUTOUIC OFF)
     add_test(NAME frontend.preview_layout COMMAND $<TARGET_FILE:preview_layout_test>)
     set_tests_properties(frontend.preview_layout PROPERTIES LABELS "frontend;layout" TIMEOUT 240)
 
@@ -265,7 +265,7 @@ if(BUILD_TESTING)
     add_executable(run_status_ui_test ${PROJECT_SOURCE_DIR}/tests/frontend/run_status_ui_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(run_status_ui_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(run_status_ui_test PRIVATE mib_frontend_common)
-    set_target_properties(run_status_ui_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
+    set_target_properties(run_status_ui_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>" AUTOUIC OFF)
     add_test(NAME frontend.run_status_ui COMMAND $<TARGET_FILE:run_status_ui_test>
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.run_status_ui PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
@@ -275,7 +275,7 @@ if(BUILD_TESTING)
     add_executable(monitoring_tune_panel_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_tune_panel_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(monitoring_tune_panel_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(monitoring_tune_panel_test PRIVATE mib_frontend_common)
-    set_target_properties(monitoring_tune_panel_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
+    set_target_properties(monitoring_tune_panel_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>" AUTOUIC OFF)
     add_test(NAME frontend.monitoring_tune COMMAND $<TARGET_FILE:monitoring_tune_panel_test>
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_tune PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
@@ -283,7 +283,7 @@ if(BUILD_TESTING)
     add_executable(app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(app_config_apply_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(app_config_apply_test PRIVATE mib_frontend_common)
-    set_target_properties(app_config_apply_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOUIC OFF)
+    set_target_properties(app_config_apply_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>" AUTOUIC OFF)
     add_test(NAME frontend.config_apply COMMAND $<TARGET_FILE:app_config_apply_test>
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.config_apply PROPERTIES LABELS "frontend;safety" TIMEOUT 240)
@@ -309,7 +309,7 @@ endif()
 # once by mib_frontend_common, and CMake would otherwise emit duplicate
 # generation rules for the same headers on every target in this directory.
 set_target_properties(mib_studio_qt PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
     AUTOUIC OFF
 )
 
@@ -326,7 +326,7 @@ add_executable(screenshot_tour
 )
 
 set_target_properties(screenshot_tour PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
     AUTOUIC OFF
 )
 

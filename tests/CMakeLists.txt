@@ -8,7 +8,7 @@ function(mib_add_backend_test_executable target source)
     # Allow tests to include the shared support headers as "support/<x>.h".
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     set_target_properties(${target} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
     )
 endfunction()
 
@@ -214,7 +214,7 @@ set_target_properties(processing_core_abi_c_test PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED YES
     C_EXTENSIONS NO
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME processing.core_abi_c COMMAND $<TARGET_FILE:processing_core_abi_c_test>)
 set_tests_properties(processing.core_abi_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -501,7 +501,7 @@ target_compile_definitions(json_flatten_roundtrip_test PRIVATE
 )
 target_link_libraries(json_flatten_roundtrip_test PRIVATE Qt6::Core)
 set_target_properties(json_flatten_roundtrip_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.json_flatten_roundtrip COMMAND $<TARGET_FILE:json_flatten_roundtrip_test>)
 set_tests_properties(frontend.json_flatten_roundtrip PROPERTIES LABELS "frontend;utility")
@@ -516,7 +516,7 @@ target_include_directories(json_config_merge_test PRIVATE
 )
 target_link_libraries(json_config_merge_test PRIVATE Qt6::Core)
 set_target_properties(json_config_merge_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.json_config_merge COMMAND $<TARGET_FILE:json_config_merge_test>)
 set_tests_properties(frontend.json_config_merge PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
@@ -531,7 +531,7 @@ target_include_directories(processing_core_catalog_test PRIVATE
 )
 target_link_libraries(processing_core_catalog_test PRIVATE Qt6::Core)
 set_target_properties(processing_core_catalog_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.processing_core_catalog COMMAND $<TARGET_FILE:processing_core_catalog_test>)
 set_tests_properties(frontend.processing_core_catalog PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
@@ -546,7 +546,7 @@ target_include_directories(application_settings_test PRIVATE
 )
 target_link_libraries(application_settings_test PRIVATE Qt6::Core)
 set_target_properties(application_settings_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.application_settings COMMAND $<TARGET_FILE:application_settings_test>)
 set_tests_properties(frontend.application_settings PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
@@ -561,7 +561,7 @@ target_include_directories(processing_core_settings_test PRIVATE
 )
 target_link_libraries(processing_core_settings_test PRIVATE Qt6::Core)
 set_target_properties(processing_core_settings_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.processing_core_settings COMMAND $<TARGET_FILE:processing_core_settings_test>)
 set_tests_properties(frontend.processing_core_settings PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
@@ -577,7 +577,7 @@ target_include_directories(hdf_review_export_paths_test PRIVATE
 )
 target_link_libraries(hdf_review_export_paths_test PRIVATE Qt6::Core)
 set_target_properties(hdf_review_export_paths_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.hdf_review_export_paths COMMAND $<TARGET_FILE:hdf_review_export_paths_test>)
 set_tests_properties(frontend.hdf_review_export_paths PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
@@ -593,7 +593,7 @@ target_include_directories(window_geometry_policy_test PRIVATE
 )
 target_link_libraries(window_geometry_policy_test PRIVATE Qt6::Core)
 set_target_properties(window_geometry_policy_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.window_geometry_policy COMMAND $<TARGET_FILE:window_geometry_policy_test>)
 set_tests_properties(frontend.window_geometry_policy PROPERTIES LABELS "frontend;utility;layout" TIMEOUT 30)
@@ -608,7 +608,7 @@ target_include_directories(config_document_state_test PRIVATE
     ${PROJECT_SOURCE_DIR}/tests
 )
 target_link_libraries(config_document_state_test PRIVATE Qt6::Core)
-set_target_properties(config_document_state_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+set_target_properties(config_document_state_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
 add_test(NAME frontend.config_document_state COMMAND $<TARGET_FILE:config_document_state_test>)
 set_tests_properties(frontend.config_document_state PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
 
@@ -625,7 +625,7 @@ target_include_directories(processing_config_draft_test PRIVATE
     ${OpenCV_INCLUDE_DIRS}
 )
 target_link_libraries(processing_config_draft_test PRIVATE Qt6::Core mib_processing)
-set_target_properties(processing_config_draft_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+set_target_properties(processing_config_draft_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
 add_test(NAME frontend.config_draft COMMAND $<TARGET_FILE:processing_config_draft_test>)
 set_tests_properties(frontend.config_draft PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
 
@@ -640,7 +640,7 @@ target_include_directories(run_status_model_test PRIVATE
     ${PROJECT_SOURCE_DIR}/tests
 )
 target_link_libraries(run_status_model_test PRIVATE Qt6::Core)
-set_target_properties(run_status_model_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" AUTOMOC ON)
+set_target_properties(run_status_model_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>" AUTOMOC ON)
 add_test(NAME frontend.run_status_model COMMAND $<TARGET_FILE:run_status_model_test>)
 set_tests_properties(frontend.run_status_model PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
 
@@ -657,7 +657,7 @@ target_compile_definitions(update_catalog_test PRIVATE
 )
 target_link_libraries(update_catalog_test PRIVATE Qt6::Core)
 set_target_properties(update_catalog_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
 add_test(NAME frontend.update_catalog COMMAND $<TARGET_FILE:update_catalog_test>)
 set_tests_properties(frontend.update_catalog PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
