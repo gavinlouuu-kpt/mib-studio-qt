@@ -5,6 +5,19 @@
 
 ## Features shipped
 
+- **ProcessingService::stop() lost-wakeup hang** (2026-09-09) — The ASan
+  lane once timed out (600 s) on `backend.mindvision_selection_state`,
+  a trivial state test, *after* it had printed "passed": the hang was in
+  `AppBackend::~AppBackend` → `ProcessingService::stop()` → `join()` of a
+  worker still blocked in `workerLoop`'s `cv_.wait`. `stop()` stored
+  `running_ = false` and called `notify_all()` without `mutex_`; a worker
+  that had just evaluated the wait predicate (under the mutex) but not yet
+  blocked missed the notification and waited forever. Reproduced in WSL
+  under ASan with 8 parallel loops of the test (30 sequential runs never
+  hit it) and a gdb stack of the hung process; the flag is now flipped
+  under `mutex_` before the notify. Same check done on the batch pipeline:
+  it uses `wait_for`, so it cannot hang this way.
+
 - **Test runners instead of ~90 executables** (2026-09-09) —
   `cmake/MIBTestRunner.cmake` (`mib_test_runner_add/link/finalize`)
   compiles every `mib_add_backend_test_executable` source into
