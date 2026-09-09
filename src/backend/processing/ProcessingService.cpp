@@ -112,7 +112,15 @@ void ProcessingService::start(size_t workerCount) {
 
 void ProcessingService::stop() {
     if (!running_.load()) return;
-    running_.store(false);
+    {
+        // Flip the flag under the worker mutex: workerLoop evaluates its
+        // wait predicate with mutex_ held and only then blocks. A store +
+        // notify without the lock can land in that window and be lost, and
+        // join() below then waits forever (reproduced under ASan on a
+        // loaded box: backend.mindvision_selection_state 600 s timeout).
+        std::scoped_lock lk(mutex_);
+        running_.store(false);
+    }
     cv_.notify_all();
     for (auto& t : workers_) {
         if (t.joinable()) t.join();

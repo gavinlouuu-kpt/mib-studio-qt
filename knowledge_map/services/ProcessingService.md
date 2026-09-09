@@ -81,6 +81,15 @@ The destructor is self-sufficient: it calls `stopRealtime()` +
 `stopBatchPipeline()` + `stop()`, so destroying the service with any thread
 still live is safe (previously a joinable `realtimeThread_` at destruction
 `std::terminate`d unless GUI teardown had called `stopRealtime()` first).
+
+`stop()` flips `running_` **under `mutex_`** before `cv_.notify_all()`
+(2026-09-09). Without the lock a worker that had just evaluated the wait
+predicate but not yet blocked missed the notification and `join()` hung
+forever — seen once as a 600 s ASan timeout of the trivial
+`backend.mindvision_selection_state` after it had printed "passed", and
+reproduced in WSL only under load (8 parallel loops). Any new
+flag-plus-condition-variable pair must follow the same rule or use a timed
+wait.
 `isRealtimeRunning()` exposes the realtime thread state.
 
 All three thread families contain exceptions instead of letting them escape
