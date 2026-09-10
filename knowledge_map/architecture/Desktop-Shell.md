@@ -226,3 +226,15 @@ completion / gate-status values; `bridge.ts` exposes
 `fetchExperimentReadiness`. Guards: `eventAdapter.test.ts` (golden decode
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
+
+## Analysis-only development context (#399, bridge ABI 14)
+
+Launch with `--analysis-only` or Cargo feature `analysis-only`; native startup
+uses the new bridge `initialize_analysis` entrypoint. The webview cannot change
+the mode. Review is the starting workspace and instrument navigation/service
+mode controls are unavailable. Unqualified standalone exports stay disabled.
+Raw-frame browsing uses HDF5 dataset offsets, independent of the live ring.
+Persisted completion/accounting is displayed; absent raw scientific metrics are
+shown as unavailable. This is not yet the one-installer product: bundled toolkit,
+helper lifecycle and Windows/Linux/NAS qualification remain open in the
+[execution plan](../../docs/exec-plans/active/2026-09-10-local-analysis.md).

@@ -163,15 +163,17 @@ namespace backend::bridge
         backend_.setBackgroundCaptureCallback({});
     }
 
-    bool BackendFacade::initialize(const std::string &dataDir)
-    {
+    bool BackendFacade::initialize(const std::string& dataDir) {
+        return initialize(dataDir, ApplicationMode::Instrument);
+    }
+
+    bool BackendFacade::initialize(const std::string& dataDir, ApplicationMode mode) {
         if (initialized_)
         {
-            return true;
+            return mode == backend_.applicationMode();
         }
 
-        if (!backend_.initialize(dataDir))
-        {
+        if (!backend_.initialize(dataDir, mode)) {
             emitEvent(BackendErrorEvent{
                 BackendErrorSource::Lifecycle,
                 BackendCommandType::Camera,
@@ -313,6 +315,15 @@ namespace backend::bridge
             return lifecycleError(commandType(command), "Backend facade is not initialized");
         }
 
+        // Fail closed at the authoritative command boundary. Future command
+        // variants require an explicit analysis-only grant.
+        if (backend_.applicationMode() == ApplicationMode::AnalysisOnly &&
+            !std::holds_alternative<RecordingLoadCommand>(command) &&
+            !std::holds_alternative<OperationCommand>(command)) {
+            return lifecycleError(commandType(command),
+                                  "Command unavailable in analysis-only mode");
+        }
+
         return std::visit([this](const auto &typedCommand) {
             using Command = std::decay_t<decltype(typedCommand)>;
             if constexpr (std::is_same_v<Command, CameraCommand>)
@@ -370,8 +381,7 @@ namespace backend::bridge
                                                  const std::string &outputPath,
                                                  const std::string &profileId) const
     {
-        if (!initialized_)
-        {
+        if (!initialized_ || backend_.applicationMode() == ApplicationMode::AnalysisOnly) {
             return false;
         }
         out = backend_.experiment().evaluateReadiness(outputPath, profileId);
@@ -841,6 +851,22 @@ namespace backend::bridge
         const std::uint64_t operationId =
             beginOperation(BackendOperationKind::RecordingLoad, nullptr, command.filePath);
 
+        {
+            std::scoped_lock lock(reviewMutex_);
+            loadedRecordingPath_.clear();
+        }
+        std::error_code sourceError;
+        const auto sourceSize = std::filesystem::file_size(command.filePath, sourceError);
+        if (sourceError) {
+            finishOperation(operationId, BackendOperationState::Failed, "Source unavailable");
+            return {false, BackendCommandType::RecordingLoad, "Source unavailable", operationId};
+        }
+        const auto sourceModified = std::filesystem::last_write_time(command.filePath, sourceError);
+        if (sourceError) {
+            finishOperation(operationId, BackendOperationState::Failed, "Source unavailable");
+            return {false, BackendCommandType::RecordingLoad, "Source unavailable", operationId};
+        }
+
         auto &hdf5 = backend_.hdf5();
         // Loading replaces the currently reviewed file (Qt parity: selecting
         // a new HDF file closes the previous one).
@@ -866,6 +892,30 @@ namespace backend::bridge
             return {false, BackendCommandType::RecordingLoad, "Recording load failed", operationId};
         }
 
+        if (backend_.applicationMode() == ApplicationMode::AnalysisOnly) {
+            recording::RecordingAccountingSnapshot accounting;
+            if (!hdf5.readRunAccounting(accounting) ||
+                accounting.schemaVersion != recording::RecordingAccountingSnapshot::kSchemaVersion ||
+                accounting.completion == recording::RunCompletionState::Unknown) {
+                hdf5.closeFile();
+                const std::string message =
+                    "Finalization is unverified: open a recording with terminal run accounting";
+                finishOperation(operationId, BackendOperationState::Failed, message);
+                return {false, BackendCommandType::RecordingLoad, message, operationId};
+            }
+        }
+        const auto sizeAfter = std::filesystem::file_size(command.filePath, sourceError);
+        const auto modifiedAfter =
+            sourceError ? std::filesystem::file_time_type{}
+                        : std::filesystem::last_write_time(command.filePath, sourceError);
+        if (sourceError || sizeAfter != sourceSize || modifiedAfter != sourceModified) {
+            hdf5.closeFile();
+            finishOperation(operationId, BackendOperationState::Failed,
+                            "Source changed during open");
+            return {false, BackendCommandType::RecordingLoad, "Source changed during open",
+                    operationId};
+        }
+
         RecordingStatusEvent event;
         event.state = RecordingState::Loaded;
         event.filePath = command.filePath;
@@ -886,35 +936,27 @@ namespace backend::bridge
                 }
 
                 std::vector<services::ProcessedFrame> frames;
-                if (hdf5.readRecordingMetadata(frames))
-                {
-                    event.loadedValidFrames = frames.size();
-                }
+                hdf5.readMetadataPage(services::Hdf5Service::MetadataDataset::Recorded, 0, 0,
+                                      frames, event.loadedValidFrames);
             }
             else
             {
                 std::vector<services::ProcessedFrame> validFrames;
                 std::vector<services::ProcessedFrame> invalidFrames;
-                if (hdf5.readValidMetadata(validFrames))
-                {
-                    event.loadedValidFrames = validFrames.size();
-                }
-                if (hdf5.readInvalidMetadata(invalidFrames))
-                {
-                    event.loadedInvalidFrames = invalidFrames.size();
-                }
+                hdf5.readMetadataPage(services::Hdf5Service::MetadataDataset::Valid, 0, 0,
+                                      validFrames, event.loadedValidFrames);
+                hdf5.readMetadataPage(services::Hdf5Service::MetadataDataset::Invalid, 0, 0,
+                                      invalidFrames, event.loadedInvalidFrames);
             }
         }
 
         emitEvent(event);
         {
-            // Remember the loaded path for review jobs and invalidate the
-            // paged-metrics cache (BE-6).
+            // Pin the observed source revision for subsequent bounded reads.
             std::scoped_lock lock(reviewMutex_);
-            loadedRecordingPath_ = command.filePath;
-            reviewMetricsLoaded_ = false;
-            reviewValidMeta_.clear();
-            reviewInvalidMeta_.clear();
+            loadedRecordingPath_ = std::filesystem::absolute(command.filePath).string();
+            loadedSourceSize_ = sourceSize;
+            loadedSourceModified_ = sourceModified;
         }
         finishOperation(operationId, BackendOperationState::Completed, command.filePath);
         return {true, BackendCommandType::RecordingLoad, "Recording loaded", operationId};
@@ -1224,8 +1266,20 @@ namespace backend::bridge
         }
     } // namespace
 
+    bool BackendFacade::reviewSourceCurrent() const {
+        std::scoped_lock lock(reviewMutex_);
+        if (loadedRecordingPath_.empty()) return false;
+        std::error_code error;
+        const auto size = std::filesystem::file_size(loadedRecordingPath_, error);
+        if (error || size != loadedSourceSize_) return false;
+        const auto modified = std::filesystem::last_write_time(loadedRecordingPath_, error);
+        return !error && modified == loadedSourceModified_;
+    }
+
     bool BackendFacade::fetchReviewMetadata(BackendReviewMetadata &out) const
     {
+
+        out = BackendReviewMetadata{};
         if (!initialized_)
         {
             return false;
@@ -1241,6 +1295,7 @@ namespace backend::bridge
             std::scoped_lock lock(reviewMutex_);
             out.filePath = loadedRecordingPath_;
         }
+        if (!reviewSourceCurrent()) return false;
         out.recordingFile = hdf5.isRecordingFile();
 
         if (out.recordingFile)
@@ -1259,6 +1314,12 @@ namespace backend::bridge
             out.totalInvalid = totalInvalid;
         }
 
+        recording::RecordingAccountingSnapshot accounting;
+        out.accountingAvailable = hdf5.readRunAccounting(accounting) &&
+                                  accounting.schemaVersion == recording::RecordingAccountingSnapshot::kSchemaVersion;
+        out.completionState = static_cast<uint32_t>(accounting.completion);
+        out.completionReason = accounting.completionReason;
+        out.accountingReconciled = accounting.reconciled;
         backend::processing::ProcessingCoreIdentity identity;
         if (hdf5.readProcessingCoreIdentity(identity))
         {
@@ -1268,8 +1329,11 @@ namespace backend::bridge
             out.coreReleaseTag = identity.releaseTag;
         }
         {
-            cv::Mat bg;
-            out.hasBackground = hdf5.readBackgroundImage(bg) && !bg.empty();
+            std::size_t count = 0;
+            int height = 0, width = 0, channels = 0;
+            out.hasBackground = hdf5.getDatasetInfo("/experiment_info/background", count, height,
+                                                    width, channels) &&
+                                count > 0;
         }
 
         auto fillInfo = [&hdf5](const char *path, BackendReviewDatasetInfo &info) {
@@ -1282,6 +1346,10 @@ namespace backend::bridge
         fillInfo("/valid_frames/masks", out.validMasks);
         fillInfo("/invalid_frames/masks", out.invalidMasks);
         fillInfo("/recorded_frames/images", out.recordedImages);
+        if (!reviewSourceCurrent()) {
+            out = BackendReviewMetadata{};
+            return false;
+        }
         return true;
     }
 
@@ -1291,43 +1359,33 @@ namespace backend::bridge
                                                std::vector<MonitoringObjectRow> &rows,
                                                std::uint64_t &totalOut) const
     {
-        if (!initialized_ || !backend_.hdf5().isFileOpen())
-        {
+
+        rows.clear();
+        totalOut = 0;
+        if (!reviewSourceCurrent() || !initialized_ || !backend_.hdf5().isFileOpen()) {
             return false;
         }
 
-        std::scoped_lock lock(reviewMutex_);
-        if (!reviewMetricsLoaded_)
-        {
-            // One metadata-only read per loaded file (no image payloads) —
-            // pages are then served from the cache with bounded IPC size.
-            auto &hdf5 = backend_.hdf5();
-            reviewValidMeta_.clear();
-            reviewInvalidMeta_.clear();
-            if (hdf5.isRecordingFile())
-            {
-                hdf5.readRecordingMetadata(reviewValidMeta_);
-            }
-            else
-            {
-                hdf5.readValidMetadata(reviewValidMeta_);
-                hdf5.readInvalidMetadata(reviewInvalidMeta_);
-            }
-            reviewMetricsLoaded_ = true;
-        }
-
-        const auto &source = valid ? reviewValidMeta_ : reviewInvalidMeta_;
-        totalOut = source.size();
+        std::unique_lock lock(reviewMutex_);
         rows.clear();
-        if (offset >= source.size())
-        {
-            return true;
-        }
-        const std::uint64_t end = std::min<std::uint64_t>(source.size(), offset + count);
-        rows.reserve(end - offset);
-        for (std::uint64_t i = offset; i < end; ++i)
-        {
-            rows.push_back(metricsRowFromFrame(source[i]));
+        totalOut = 0;
+        auto& hdf5 = backend_.hdf5();
+        using Dataset = services::Hdf5Service::MetadataDataset;
+        if (hdf5.isRecordingFile() && !valid) return true;
+        std::vector<services::ProcessedFrame> page;
+        if (!hdf5.readMetadataPage(hdf5.isRecordingFile()
+                                       ? Dataset::Recorded
+                                       : (valid ? Dataset::Valid : Dataset::Invalid),
+                                   offset, count, page, totalOut))
+            return false;
+        rows.reserve(page.size());
+        for (const auto& frame : page)
+            rows.push_back(metricsRowFromFrame(frame));
+        lock.unlock();
+        if (!reviewSourceCurrent()) {
+            rows.clear();
+            totalOut = 0;
+            return false;
         }
         return true;
     }
@@ -1336,8 +1394,9 @@ namespace backend::bridge
                                          std::uint64_t index,
                                          BackendFrame &out) const
     {
-        if (!initialized_ || !backend_.hdf5().isFileOpen())
-        {
+
+        out = BackendFrame{};
+        if (!reviewSourceCurrent() || !initialized_ || !backend_.hdf5().isFileOpen()) {
             return false;
         }
         const char *path = reviewDatasetPath(dataset);
@@ -1345,6 +1404,13 @@ namespace backend::bridge
         {
             return false;
         }
+        // Enforce the desktop pixel budget before HDF5/OpenCV allocation.
+        std::size_t imageCount = 0;
+        int height = 0, width = 0, channels = 0;
+        if (!backend_.hdf5().getDatasetInfo(path, imageCount, height, width, channels) ||
+            index >= imageCount || height <= 0 || width <= 0 || channels <= 0 ||
+            static_cast<uint64_t>(width) > (32ull * 1024 * 1024) / height / channels)
+            return false;
         cv::Mat image;
         if (!backend_.hdf5().readImageByIndex(path, index, image) || image.empty())
         {
@@ -1378,11 +1444,18 @@ namespace backend::bridge
                             gray.ptr(row), static_cast<std::size_t>(gray.cols));
             }
         }
+        if (!reviewSourceCurrent()) {
+            out = BackendFrame{};
+            return false;
+        }
         return true;
     }
 
     BackendCommandResult BackendFacade::handleReviewCommand(const ReviewCommand &command)
     {
+        if (!reviewSourceCurrent())
+            return {false, BackendCommandType::Review,
+                    "Source unavailable or changed; reopen recording"};
         switch (command.action)
         {
         case ReviewCommandAction::ExportMetricsCsv:
@@ -1731,8 +1804,7 @@ namespace backend::bridge
 
     bool BackendFacade::fetchAutofocusStatus(BackendAutofocusStatus &out) const
     {
-        if (!initialized_)
-        {
+        if (!initialized_ || backend_.applicationMode() == ApplicationMode::AnalysisOnly) {
             return false;
         }
         auto &autofocus = backend_.autofocus();
@@ -1752,8 +1824,7 @@ namespace backend::bridge
 
     bool BackendFacade::fetchAutofocusConfig(services::AutofocusService::Config &out) const
     {
-        if (!initialized_)
-        {
+        if (!initialized_ || backend_.applicationMode() == ApplicationMode::AnalysisOnly) {
             return false;
         }
         out = backend_.autofocus().getConfig();
@@ -1797,8 +1868,7 @@ namespace backend::bridge
                                                            const std::uint8_t *data,
                                                            std::size_t byteLen)
     {
-        if (!initialized_)
-        {
+        if (!initialized_ || backend_.applicationMode() == ApplicationMode::AnalysisOnly) {
             return lifecycleError(BackendCommandType::ProcessingSettings,
                                   "Backend facade is not initialized");
         }
@@ -1817,8 +1887,7 @@ namespace backend::bridge
 
     BackendCommandResult BackendFacade::clearBackgroundImage()
     {
-        if (!initialized_)
-        {
+        if (!initialized_ || backend_.applicationMode() == ApplicationMode::AnalysisOnly) {
             return lifecycleError(BackendCommandType::ProcessingSettings,
                                   "Backend facade is not initialized");
         }
@@ -1828,8 +1897,7 @@ namespace backend::bridge
 
     bool BackendFacade::fetchCameraDiscovery(BackendCameraDiscovery &out) const
     {
-        if (!initialized_)
-        {
+        if (!initialized_ || backend_.applicationMode() == ApplicationMode::AnalysisOnly) {
             return false;
         }
         out = BackendCameraDiscovery{};

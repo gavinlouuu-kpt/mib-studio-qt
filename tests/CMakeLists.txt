@@ -6,6 +6,8 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 # stay their own executable are listed here with the reason.
 include(MIBTestRunner)
 set(MIB_STANDALONE_BACKEND_TESTS
+    review_metadata_budget_test        # standalone regression proof against baseline libraries
+    analysis_workspace_test             # focused standalone analysis qualification
     mib_backend_smoke_test              # tools/gen_bridge_link_manifest.py uses its .vcxproj as reference project
     hdf_export_service_test             # exporter-soak.yml builds and runs it directly
     crash_reporter_segv_test            # re-executes argv[0] --crash-child
@@ -193,6 +195,14 @@ mib_add_backend_test_executable(memory_budget_bench performance/memory_budget_be
 mib_backend_test_link(memory_budget_bench PRIVATE Threads::Threads)
 add_test(NAME performance.memory_budget COMMAND $<TARGET_FILE:mib_backend_tests> memory_budget_bench)
 set_tests_properties(performance.memory_budget PROPERTIES LABELS "performance;memory" TIMEOUT 600)
+
+mib_add_backend_test_executable(review_metadata_budget_test backend/review_metadata_budget_test.cpp)
+add_test(NAME backend.review_metadata_budget COMMAND review_metadata_budget_test)
+set_tests_properties(backend.review_metadata_budget PROPERTIES TIMEOUT 60 LABELS "invariant")
+
+mib_add_backend_test_executable(analysis_workspace_test backend/analysis_workspace_test.cpp)
+add_test(NAME backend.analysis_workspace COMMAND analysis_workspace_test)
+set_tests_properties(backend.analysis_workspace PROPERTIES TIMEOUT 60 LABELS "roundtrip;faultinjection;invariant")
 
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:mib_backend_tests> backend_facade_boundary_test)

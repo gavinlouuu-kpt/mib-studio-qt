@@ -44,6 +44,7 @@ public:
     BackendBridge& operator=(const BackendBridge&) = delete;
 
     bool initialize(rust::Str data_dir);
+    bool initialize_analysis(rust::Str data_dir);
     void shutdown();
     bool is_initialized() const;
 

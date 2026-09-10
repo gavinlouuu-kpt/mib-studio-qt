@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -21,6 +22,7 @@
 namespace backend
 {
     class AppBackend;
+    enum class ApplicationMode;
 }
 
 namespace backend::bridge
@@ -580,6 +582,10 @@ namespace backend::bridge
 
     struct BackendReviewMetadata
     {
+        bool accountingAvailable{false};
+        uint32_t completionState{4}; // RunCompletionState::Unknown
+        std::string completionReason;
+        bool accountingReconciled{false};
         bool fileOpen{false};
         bool recordingFile{false};
         std::uint64_t startTimeNs{0};
@@ -685,6 +691,7 @@ namespace backend::bridge
         BackendFacade &operator=(const BackendFacade &) = delete;
 
         bool initialize(const std::string &dataDir);
+        bool initialize(const std::string& dataDir, ApplicationMode mode);
         void shutdown();
         bool isInitialized() const;
 
@@ -712,10 +719,9 @@ namespace backend::bridge
         // monotonic config_version for external-change detection.
         bool fetchProcessingConfigJson(std::string &out) const;
         bool fetchProcessingCoreStatus(BackendProcessingCoreStatus &out) const;
-        // HDF5 review pulls (BE-6). Metrics pages are served from a lazily
-        // cached metadata read (metrics only, no image payloads) that is
-        // invalidated on every RecordingLoad; images/masks are pulled one at
-        // a time via hyperslab reads (bounded memory).
+        // HDF5 review pulls: direct bounded metadata/image hyperslabs. Source
+        // size/mtime must match the observed revision before and after a read.
+        // The application client serializes these calls (HDF5 handle ownership).
         bool fetchReviewMetadata(BackendReviewMetadata &out) const;
         bool fetchReviewMetricsPage(bool valid,
                                     std::uint64_t offset,
@@ -805,12 +811,12 @@ namespace backend::bridge
         std::atomic<std::uint64_t> experimentOperationId_{0};
 
         // Review state (BE-6): the loaded file path (jobs open their own
-        // read-only reader on it) and the lazily cached metrics metadata.
+        // read-only reader on it). Each page is read directly from HDF5.
         mutable std::mutex reviewMutex_;
         std::string loadedRecordingPath_;
-        mutable bool reviewMetricsLoaded_{false};
-        mutable std::vector<services::ProcessedFrame> reviewValidMeta_;
-        mutable std::vector<services::ProcessedFrame> reviewInvalidMeta_;
+        std::uintmax_t loadedSourceSize_{0};
+        std::filesystem::file_time_type loadedSourceModified_{};
+        bool reviewSourceCurrent() const;
         // Export jobs run detached; joined at shutdown.
         std::vector<std::thread> reviewJobThreads_;
         std::mutex reviewJobsMutex_;

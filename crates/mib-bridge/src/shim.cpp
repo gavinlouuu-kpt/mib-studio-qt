@@ -432,6 +432,18 @@ bool BackendBridge::initialize(rust::Str data_dir) {
     }
 }
 
+bool BackendBridge::initialize_analysis(rust::Str data_dir) {
+    try {
+        if (!impl_->facade.initialize(toStd(data_dir), backend::ApplicationMode::AnalysisOnly)) {
+            return false;
+        }
+        impl_->installSink();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void BackendBridge::shutdown() {
     try {
         impl_->facade.shutdown();
@@ -996,6 +1008,10 @@ BridgeReviewMetadata BackendBridge::fetch_review_metadata() {
         return out;
     }
     out.valid = true;
+    out.accounting_available = meta.accountingAvailable;
+    out.completion_state = meta.completionState;
+    out.completion_reason = rust::String(meta.completionReason);
+    out.accounting_reconciled = meta.accountingReconciled;
     out.file_open = meta.fileOpen;
     out.recording_file = meta.recordingFile;
     out.start_time_ns = meta.startTimeNs;
@@ -1517,6 +1533,8 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // nanopositioner control, config round-trip, and freshness-explicit status
 // (BE-8). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 13; }
+std::uint32_t bridge_abi_version() {
+    return 14;
+}
 
 } // namespace mib_bridge

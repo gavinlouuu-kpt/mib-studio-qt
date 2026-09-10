@@ -49,13 +49,16 @@ namespace backend::app { class ExperimentCoordinator; }
 namespace backend
 {
 
+    enum class ApplicationMode { Instrument, AnalysisOnly };
+
     class AppBackend
     {
     public:
         AppBackend();
         ~AppBackend();
 
-        bool initialize(const std::string &dataDir);
+        bool initialize(const std::string &dataDir, ApplicationMode mode = ApplicationMode::Instrument);
+        ApplicationMode applicationMode() const { return applicationMode_; }
 
         // Inject the HTTP GET used to fetch the E-modulus LUT manifest/blob
         // (ADR 0002); the shell supplies it so the backend links no Qt
@@ -199,6 +202,7 @@ namespace backend
                                 std::string* errorOut = nullptr);
 
     private:
+        ApplicationMode applicationMode_{ApplicationMode::Instrument};
         void reportFatalSaveError(const std::string& msg);
         // Best-effort auto-dump used at capture stop/shutdown; logs on failure.
         void dumpPipelineTimingIfEnabled();

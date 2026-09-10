@@ -294,6 +294,10 @@ pub mod ffi {
     /// Review metadata for the loaded HDF5 file (schema v9, BE-6).
     #[derive(Debug, Clone, Default)]
     pub struct BridgeReviewMetadata {
+        pub accounting_available: bool,
+        pub completion_state: u32,
+        pub completion_reason: String,
+        pub accounting_reconciled: bool,
         pub valid: bool,
         pub file_open: bool,
         pub recording_file: bool,
@@ -319,7 +323,7 @@ pub mod ffi {
     }
 
     /// One page of review frame/object metrics (schema v9, BE-6): bounded
-    /// rows served from a metadata-only cache — never image payloads.
+    /// rows read from bounded metadata hyperslabs — never image payloads.
     #[derive(Debug, Clone, Default)]
     pub struct BridgeReviewMetricsPage {
         pub valid: bool,
@@ -445,6 +449,7 @@ pub mod ffi {
         fn bridge_abi_version() -> u32;
 
         fn initialize(self: Pin<&mut BackendBridge>, data_dir: &str) -> bool;
+        fn initialize_analysis(self: Pin<&mut BackendBridge>, data_dir: &str) -> bool;
         fn shutdown(self: Pin<&mut BackendBridge>);
         fn is_initialized(&self) -> bool;
 

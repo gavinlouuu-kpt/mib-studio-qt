@@ -133,6 +133,7 @@ export default function App() {
   const [lastMeta, setLastMeta] = useState<FrameMeta | null>(null);
 
   // Shell state.
+  const [analysisOnly, setAnalysisOnly] = useState(false);
   const [tab, setTab] = useState<MainTab>("connect");
   // UX-1 guided workflow: explicit operator confirmations, stored as the
   // device/core signature they were confirmed against so they auto-invalidate
@@ -198,6 +199,8 @@ export default function App() {
   const [roiFields, setRoiFields] = useState({ x: "0", y: "0", w: "0", h: "0" });
 
   // Review.
+  const reviewGeneration = useRef(0);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewPath, setReviewPath] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [reviewTab, setReviewTab] = useState<"raw" | "valid" | "invalid" | "charts">("raw");
@@ -254,6 +257,9 @@ export default function App() {
       .catch((e) => append(`abi error: ${e}`));
     (async () => {
       try {
+        const mode = await bridge.applicationMode();
+        setAnalysisOnly(mode === "analysis-only");
+        if (mode === "analysis-only") setTab("review");
         const already = await bridge.isInitialized();
         const ok = already || (await bridge.init(""));
         setReady(ok);
@@ -332,7 +338,15 @@ export default function App() {
   useEffect(() => {
     const scheduler = framePulls.current;
     const live = scheduler.mount("live", p => draw(p, activeLiveCanvas()), e => append(`frame error: ${e}`));
-    const review = scheduler.mount("review", p => draw(p, reviewCanvasRef.current), e => append(`review frame error: ${e}`));
+    const review = scheduler.mount("review", p => {
+      draw(p, reviewCanvasRef.current);
+      setReviewError(null);
+    }, e => {
+      const canvas = reviewCanvasRef.current;
+      if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+      setReviewError("Frame unavailable. Reopen the recording if its source changed or disconnected.");
+      append(`review frame error: ${e}`);
+    });
     return () => { live(); review(); };
   }, [draw, activeLiveCanvas, append]);
 
@@ -644,25 +658,29 @@ export default function App() {
 
   // ---- Review ----
 
+  const reviewRange = {
+    count: reviewMeta?.recorded_images.count ?? 0,
+    latest: Math.max(0, (reviewMeta?.recorded_images.count ?? 0) - 1),
+  };
+
   const onScrub = useCallback((input: number | string) => {
     const idx = decimalU64(input);
     setReviewIndex(idx);
-    framePulls.current.request("review", async () => {
-      const result = await bridge.seekIndex(idx);
-      if (!result.ok) throw new Error(result.message);
-      return bridge.fetchFrameByIndex(idx);
-    });
+    framePulls.current.request("review", () => bridge.fetchReviewImage(2, idx));
   }, []);
 
   const loadMetricsPage = useCallback(
     async (valid: boolean, offset: number) => {
+      const generation = reviewGeneration.current;
       try {
         const page = await bridge.fetchReviewMetricsPage(valid, offset, METRICS_PAGE_SIZE);
-        if (page.valid) {
-          setMetricsPage(page);
-          setMetricsOffset(offset);
-        }
+        if (generation !== reviewGeneration.current) return;
+        if (!page.valid) throw new Error("Source unavailable or changed; reopen the recording");
+        setMetricsPage(page);
+        setMetricsOffset(offset);
       } catch (e) {
+        if (generation !== reviewGeneration.current) return;
+        setMetricsPage(null);
         append(`metrics page error: ${e}`);
       }
     },
@@ -676,22 +694,34 @@ export default function App() {
   const onSelectHdf = useCallback(async () => {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
+    const generation = ++reviewGeneration.current;
     stopLoop();
     setRunning(false);
     setReviewPath(picked);
+    setReviewing(false);
+    setReviewError(null);
+    setReviewMeta(null);
+    setMetricsPage(null);
+    framePulls.current.invalidate();
+    const canvas = reviewCanvasRef.current;
+    if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
     try {
       const res = await bridge.loadRecording(picked);
+      if (generation !== reviewGeneration.current) return;
       if (!res.ok) return append(`load failed: ${res.message}`);
       setReviewing(true);
       append(`loaded ${picked}`);
       applyEvents(await bridge.pollEvents());
       const meta = await bridge.fetchReviewMetadata();
+      if (generation !== reviewGeneration.current) return;
+      if (!meta.valid || !meta.file_open) throw new Error("Source unavailable or changed; reopen the recording");
       setReviewMeta(meta);
       setReviewTab(meta.recording_file ? "raw" : "valid");
       setReviewImgIndex(0);
       await loadMetricsPage(true, 0);
+      if (generation !== reviewGeneration.current) return;
       if (meta.recording_file) {
-        await onScrub(range.earliest);
+        await onScrub(0);
       } else if (meta.valid_images.present && meta.valid_images.count > 0) {
         await drawReviewImage(0, 0);
       }
@@ -915,7 +945,7 @@ export default function App() {
   // recoverable experiment demands the Experiment stage. Runs once, after the
   // first camera snapshot arrives so the landing reflects real backend state.
   useEffect(() => {
-    if (didInitStage.current || !ready || camSelection === null) return;
+    if (analysisOnly || didInitStage.current || !ready || camSelection === null) return;
     didInitStage.current = true;
     if (expActive || expState === EXPERIMENT_STATES.Failed) {
       setTab("experiment");
@@ -974,6 +1004,7 @@ export default function App() {
         <button
           type="button"
           className={`mode-toggle ${operatingMode}`}
+          disabled={analysisOnly}
           onClick={() => enterMode(operatingMode === "service" ? "operator" : "service")}
           title="Switch between routine Operator mode and Service / Commissioning mode"
           aria-label={`Operating mode: ${operatingMode === "service" ? "Service / Commissioning" : "Operator"}. Click to switch.`}
@@ -1082,9 +1113,10 @@ export default function App() {
 
         {/* ---- Main tabbed area ---- */}
         <main className="main">
+          {analysisOnly && <p role="status">Local Analysis — open a recording to review frames and measurements. Instrument control is unavailable.</p>}
           <div className="tabs-header">
             <div className="tabbar" role="tablist" aria-label="Workflow stages">
-              {(["connect", "overview", "experiment", "review"] as StageTab[]).map((t) => {
+              {((analysisOnly ? ["review"] : ["connect", "overview", "experiment", "review"]) as StageTab[]).map((t) => {
                 const stage = stageByTab[t];
                 return (
                   <button
@@ -1106,7 +1138,7 @@ export default function App() {
               })}
             </div>
             <div className="spacer" />
-            <div className="camera-actions">
+            <div className="camera-actions" style={{ display: analysisOnly ? "none" : undefined }}>
               <button onClick={onStartCamera} disabled={!!startCameraReason} title={startCameraReason}>
                 Start Camera
               </button>
@@ -1126,7 +1158,7 @@ export default function App() {
             </div>
           </div>
 
-          {ready && (
+          {ready && !analysisOnly && (
             <div className="workflow-next" role="status" aria-live="polite">
               {workflow.recommended ? (
                 <>
@@ -1724,14 +1756,14 @@ export default function App() {
                           {(monSnapshot?.rows ?? []).slice(-15).map((r) => (
                             <tr key={`${r.frame_index}:${r.object_id}`}>
                               <td>{r.frame_index}</td>
-                              <td>{r.object_id}</td>
-                              <td>{r.track_id}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.object_id}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.track_id}</td>
                               <td>{r.valid ? "yes" : "no"}</td>
                               <td>{r.target_group ? "yes" : "no"}</td>
-                              <td>{r.area.toFixed(1)}</td>
-                              <td>{r.deformability.toFixed(3)}</td>
-                              <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.area.toFixed(1)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.deformability.toFixed(3)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.ring_ratio.toFixed(3)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.youngs_modulus.toFixed(2)}</td>
                             </tr>
                           ))}
                           {(monSnapshot?.rows?.length ?? 0) === 0 && (
@@ -1760,8 +1792,8 @@ export default function App() {
                   <button disabled title="Loading a new file replaces the current one">Close File</button>
                   <button
                     onClick={onExportCsv}
-                    disabled={!reviewMeta?.file_open}
-                    title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
+                    disabled={analysisOnly || !reviewMeta?.file_open}
+                    title={analysisOnly ? "Derivative creation is not yet qualified for standalone analysis" : reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
                   >
                     Export Metrics to CSV…
                   </button>
@@ -1811,28 +1843,35 @@ export default function App() {
                   </button>
                   <button disabled title="Chart rendering lands with UI-4 (#269)">Charts</button>
                 </div>
+                {reviewMeta?.file_open && <p role="status">
+                  Completion: {reviewMeta.accounting_available
+                    ? ["Complete", "Intentionally partial", "Incomplete with loss", "Failed", "Unknown"][reviewMeta.completion_state] ?? "Unknown"
+                    : "Unverified"}. {reviewMeta.completion_reason}
+                  {reviewMeta.accounting_available && ` Accounting ${reviewMeta.accounting_reconciled ? "reconciled" : "did not reconcile"}.`}
+                </p>}
                 <div className="subtab-body">
                   <div className="review-split">
                     <div className="frames">
                       <div className="canvas-wrap">
-                        {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
+                        {reviewError && <span className="canvas-hint" role="alert">{reviewError}</span>}
+                        {!reviewing && !reviewError && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
                         <canvas ref={reviewCanvasRef} className={fitWindow ? "fit" : ""} />
                       </div>
-                      {reviewing && reviewTab === "raw" && BigInt(range.count) > 0n && (
+                      {reviewing && reviewTab === "raw" && reviewRange.count > 0 && (
                         <>
                           <input
                             type="range"
                             className="scrub"
-                            min={range.earliest}
-                            max={range.latest}
+                            min={0}
+                            max={reviewRange.latest}
                             value={reviewIndex}
                             onChange={(e) => onScrub(e.target.value)}
-                            disabled={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
-                            title={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
+                            disabled={BigInt(reviewRange.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
+                            title={BigInt(reviewRange.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
                             aria-label="Frame scrubber"
                           />
                           <span className="mono">
-                            frame {reviewIndex} of [{range.earliest}…{range.latest}] ({range.count} available)
+                            frame {reviewIndex} of [{0}…{reviewRange.latest}] ({reviewRange.count} available)
                           </span>
                         </>
                       )}
@@ -1882,12 +1921,12 @@ export default function App() {
                           {(metricsPage?.rows ?? []).map((r) => (
                             <tr key={`${r.frame_index}:${r.object_id}`}>
                               <td>{r.frame_index}</td>
-                              <td>{r.object_id}</td>
-                              <td>{r.track_id}</td>
-                              <td>{r.area.toFixed(1)}</td>
-                              <td>{r.deformability.toFixed(3)}</td>
-                              <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.object_id}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.track_id}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.area.toFixed(1)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.deformability.toFixed(3)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.ring_ratio.toFixed(3)}</td>
+                              <td>{reviewMeta?.recording_file ? "Unavailable" : r.youngs_modulus.toFixed(2)}</td>
                             </tr>
                           ))}
                           {(metricsPage?.rows?.length ?? 0) === 0 && (
@@ -1934,7 +1973,7 @@ export default function App() {
       <div className="context-bar" role="region" aria-label="Active context">
         {contextBar.segments.map((s) => {
           const label = `${s.label}: ${s.value} (${SEG_STATUS_LABEL[s.status]})`;
-          const clickable = !!s.tab;
+          const clickable = !analysisOnly && !!s.tab;
           return (
             <button
               key={s.id}

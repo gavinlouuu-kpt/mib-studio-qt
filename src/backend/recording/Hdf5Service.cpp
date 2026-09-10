@@ -19,6 +19,7 @@
 #include <sstream>
 #include <filesystem>
 #include <algorithm>
+#include <limits>
 
 namespace backend::services
 {
@@ -1764,8 +1765,11 @@ namespace backend::services
     }
 
     static bool readMetadataDataset(hid_t fileId, const std::string& datasetPath,
-                                    std::vector<ProcessedFrame>& frames)
-    {
+                                    std::vector<ProcessedFrame>& frames, uint64_t offset = 0,
+                                    uint64_t count = std::numeric_limits<uint64_t>::max(),
+                                    uint64_t* total = nullptr, bool recording = false) {
+        frames.clear();
+        if (total) *total = 0;
         // Check if dataset exists
         htri_t exists = H5Lexists(fileId, datasetPath.c_str(), H5P_DEFAULT);
         if (exists <= 0)
@@ -1784,26 +1788,44 @@ namespace backend::services
 
         // Get compound type
         hid_t fileTypeId = H5Dget_type(datasetId);
-        if (fileTypeId < 0)
-        {
+        if (fileTypeId < 0 || H5Tget_class(fileTypeId) != H5T_COMPOUND) {
+            if (fileTypeId >= 0) H5Tclose(fileTypeId);
             H5Dclose(datasetId);
             SPDLOG_ERROR("Failed to get compound type from dataset {}", datasetPath);
             return false;
         }
 
-        // Get dataspace and dimensions
-        hid_t dataspaceId = H5Dget_space(datasetId);
-        hsize_t dims[1];
-        H5Sget_simple_extent_dims(dataspaceId, dims, nullptr);
-        H5Sclose(dataspaceId);
-
-        hsize_t numFrames = dims[0];
+        // Keep both spaces alive for every projected compound read. Shape is
+        // validated before writing dimensions or allocating caller-sized data.
+        struct Space {
+            hid_t id;
+            ~Space() {
+                if (id >= 0) H5Sclose(id);
+            }
+        } fileSpace{H5Dget_space(datasetId)}, memorySpace{H5I_INVALID_HID};
+        hsize_t dims[1] = {0};
+        if (fileSpace.id < 0 || H5Sget_simple_extent_ndims(fileSpace.id) != 1 ||
+            H5Sget_simple_extent_dims(fileSpace.id, dims, nullptr) < 0) {
+            H5Tclose(fileTypeId);
+            H5Dclose(datasetId);
+            return false;
+        }
+        if (total) *total = dims[0];
+        const hsize_t numFrames =
+            offset >= dims[0] ? 0 : std::min<uint64_t>(count, dims[0] - offset);
         if (numFrames == 0)
         {
             H5Tclose(fileTypeId);
             H5Dclose(datasetId);
-            frames.clear();
             return true;
+        }
+        const hsize_t start[] = {offset}, extent[] = {numFrames};
+        memorySpace.id = H5Screate_simple(1, extent, nullptr);
+        if (memorySpace.id < 0 || H5Sselect_hyperslab(fileSpace.id, H5S_SELECT_SET, start, nullptr,
+                                                      extent, nullptr) < 0) {
+            H5Tclose(fileTypeId);
+            H5Dclose(datasetId);
+            return false;
         }
 
         // Read metadata
@@ -1824,8 +1846,17 @@ namespace backend::services
             md.centroidY = 0.0;
         }
 
-        hid_t baseMemTypeId = createProcessedFrameMetadataType(true, false, false);
-        herr_t status = H5Dread(datasetId, baseMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+        hid_t baseMemTypeId = recording
+                                  ? H5Tcreate(H5T_COMPOUND, sizeof(ProcessedFrameMetadataRecord))
+                                  : createProcessedFrameMetadataType(true, false, false);
+        if (recording) {
+            H5Tinsert(baseMemTypeId, "index", HOFFSET(ProcessedFrameMetadataRecord, index),
+                      H5T_NATIVE_UINT64);
+            H5Tinsert(baseMemTypeId, "timestampNs",
+                      HOFFSET(ProcessedFrameMetadataRecord, timestampNs), H5T_NATIVE_UINT64);
+        }
+        herr_t status = H5Dread(datasetId, baseMemTypeId, memorySpace.id, fileSpace.id, H5P_DEFAULT,
+                                metadata.data());
         H5Tclose(baseMemTypeId);
         if (status < 0)
         {
@@ -1840,7 +1871,8 @@ namespace backend::services
         if (hasObjectId || hasObjectCount)
         {
             hid_t objectMemTypeId = createProcessedFrameMetadataType(false, true, false);
-            status = H5Dread(datasetId, objectMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+            status = H5Dread(datasetId, objectMemTypeId, memorySpace.id, fileSpace.id, H5P_DEFAULT,
+                             metadata.data());
             H5Tclose(objectMemTypeId);
             if (status < 0)
             {
@@ -1858,7 +1890,8 @@ namespace backend::services
         if (hasTrackId || hasTrackFirstFrame || hasTrackLastFrame || hasTrackObservationCount)
         {
             hid_t trackingMemTypeId = createProcessedFrameMetadataType(false, false, true);
-            status = H5Dread(datasetId, trackingMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+            status = H5Dread(datasetId, trackingMemTypeId, memorySpace.id, fileSpace.id,
+                             H5P_DEFAULT, metadata.data());
             H5Tclose(trackingMemTypeId);
             if (status < 0)
             {
@@ -2332,8 +2365,7 @@ namespace backend::services {
 
         int ndims = H5Sget_simple_extent_ndims(dataspaceId);
         hsize_t dims[4] = {0, 0, 0, 0};
-        if (H5Sget_simple_extent_dims(dataspaceId, dims, nullptr) < 0)
-        {
+        if (ndims < 3 || ndims > 4 || H5Sget_simple_extent_dims(dataspaceId, dims, nullptr) < 0) {
             H5Sclose(dataspaceId);
             H5Dclose(datasetId);
             SPDLOG_ERROR("getDatasetInfo: failed to get extent for {}", datasetPath);
@@ -2343,8 +2375,10 @@ namespace backend::services {
         H5Sclose(dataspaceId);
         H5Dclose(datasetId);
 
-        if (ndims < 3 || ndims > 4)
-        {
+        if (dims[0] > std::numeric_limits<size_t>::max() || dims[1] == 0 ||
+            dims[1] > std::numeric_limits<int>::max() || dims[2] == 0 ||
+            dims[2] > std::numeric_limits<int>::max() ||
+            (ndims == 4 && (dims[3] == 0 || dims[3] > CV_CN_MAX))) {
             SPDLOG_ERROR("getDatasetInfo: unsupported ndims={} for {}", ndims, datasetPath);
             return false;
         }
@@ -2538,6 +2572,29 @@ namespace backend::services {
         }
         SPDLOG_DEBUG("readImagesRange: loaded {} images from {}", outImages.size(), datasetPath);
         return true;
+    }
+
+    bool Hdf5Service::readMetadataPage(MetadataDataset dataset, uint64_t offset, uint64_t count,
+                                       std::vector<ProcessedFrame>& frames, uint64_t& total) {
+        frames.clear();
+        total = 0;
+        if (!isFileOpen() || count > MaxMetadataPageRows) return false;
+        const char* path = nullptr;
+        switch (dataset) {
+        case MetadataDataset::Valid:
+            path = "/valid_frames/metadata";
+            break;
+        case MetadataDataset::Invalid:
+            path = "/invalid_frames/metadata";
+            break;
+        case MetadataDataset::Recorded:
+            path = "/recorded_frames/metadata";
+            break;
+        default:
+            return false;
+        }
+        return readMetadataDataset(impl_->fileId_, path, frames, offset, count, &total,
+                                   dataset == MetadataDataset::Recorded);
     }
 
     bool Hdf5Service::readValidMetadata(std::vector<ProcessedFrame>& frames)

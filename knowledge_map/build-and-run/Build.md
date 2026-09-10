@@ -350,3 +350,11 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+## Analysis development tests (#399)
+
+`analysis_workspace_test` and `review_metadata_budget_test` are standalone native
+CTest targets for bounded Review, source faults and instrument command denial.
+Desktop Cargo feature `analysis-only` selects standalone permissions; build native
+archives with MindVision and hardware SDKs disabled. This feature does not yet
+produce a qualified bundled-toolkit installer.

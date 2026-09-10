@@ -106,6 +106,13 @@ public:
                          std::vector<cv::Mat>& outImages) const;
 
     // Metadata-only reads (do not load image/mask payloads)
+    enum class MetadataDataset { Valid, Invalid, Recorded };
+    static constexpr uint64_t MaxMetadataPageRows = 4096;
+    // Bounded metadata-only hyperslab; zero count queries shape only. Missing,
+    // malformed or unreadable datasets fail with empty output. No image reads.
+    bool readMetadataPage(MetadataDataset dataset, uint64_t offset, uint64_t count,
+                          std::vector<ProcessedFrame>& frames, uint64_t& total);
+
     bool readValidMetadata(std::vector<ProcessedFrame>& frames);
     bool readInvalidMetadata(std::vector<ProcessedFrame>& frames);
 

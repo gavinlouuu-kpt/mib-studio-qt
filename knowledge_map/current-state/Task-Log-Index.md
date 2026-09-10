@@ -6,6 +6,9 @@
 
 ## By theme
 
+### Local analysis
+- [[../task/2026-09-10-local-analysis]] — #399 native analysis context and bounded Review; packaging gates remain open.
+
 ### Reliability release (epic #371)
 - `task/2026-09-07-reliability-release-371.md` — phase order, commits,
   evidence pointers, open hardware items

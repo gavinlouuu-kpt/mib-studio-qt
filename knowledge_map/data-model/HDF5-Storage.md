@@ -138,3 +138,12 @@
   `knowledge_map/task/review_2gb_scalability.md`.
 - 3D `(N,H,W)` and 4D `(N,H,W,C)` datasets both supported by
   `readImageByIndex` — channels auto-detected.
+
+## Desktop analysis reads (#399)
+
+Review opening queries metadata shape instead of materializing rows. Measurement
+pages are direct HDF5 hyperslabs, without a whole-recording cache. Analysis-only
+mode requires stored terminal accounting and reports its actual completion state;
+instrument Review retains legacy access. Finalized source files stay read-only.
+Observed size/mtime changes and unavailable paths invalidate Review reads; this
+is not a content hash or a verified training/reanalysis snapshot.

@@ -1966,3 +1966,8 @@ checks, frontend and Xvfb smoke). The next transport slice adds exact event
 integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
+
+- **2026-09-10 — #399 native analysis foundation:** immutable analysis context,
+  hardware command denial, bounded metadata/sparse frame Review, observed-source
+  invalidation and persisted completion; bridge ABI 14. Toolkit packaging and
+  clean-machine/NAS qualification remain open. See [[../task/2026-09-10-local-analysis]].

@@ -35,3 +35,7 @@ mib-bridge = { path = "../../crates/mib-bridge" }
 [lib]
 name = "mib_studio_desktop_lib"
 crate-type = ["rlib"]
+
+[features]
+# Standalone distribution: cannot be enabled by a webview command.
+analysis-only = []
