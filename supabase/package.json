@@ -1,0 +1,7 @@
+{
+  "name": "mib-profile-registry-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {"test": "node test-registry.mjs"},
+  "devDependencies": {"@electric-sql/pglite": "0.3.14"}
+}

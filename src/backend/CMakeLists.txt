@@ -182,6 +182,10 @@ elseif(UNIX AND NOT APPLE)
 endif()
 
 add_library(mib_backend STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileCache.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp

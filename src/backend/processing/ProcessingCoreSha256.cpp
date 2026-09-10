@@ -1,4 +1,4 @@
-#include "backend/processing/ProcessingCoreLoader.h"
+#include "backend/processing/ProcessingCoreSha256.h"
 
 #include <array>
 #include <cstdint>

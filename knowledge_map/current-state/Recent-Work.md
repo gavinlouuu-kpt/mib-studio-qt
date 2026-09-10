@@ -1966,3 +1966,9 @@ checks, frontend and Xvfb smoke). The next transport slice adds exact event
 integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
+
+## 2026-09-10 — Central registry foundation (#398)
+
+Provider contract, Supabase RPC/schema/RLS, immutable SQLite cache and registry-layer
+offline/integrity tests added. No desktop or Start integration yet. See
+[[../services/ProfileRegistryService]] and the active central-profile-registry plan.
