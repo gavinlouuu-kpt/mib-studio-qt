@@ -181,3 +181,15 @@ separately for syntax validation. This is not a full GUI interaction test.
 
 Phase 2 remains open for structured loader/trust/artifact diagnostics and
 future capability negotiation. No loader checks or contract support changed.
+
+## Loader diagnostic follow-up (2026-09-10)
+
+Added typed failures at each loader rejection gate and assertions covering
+metadata, ABI, contract, runtime, identity, digest and trust rejection. Preserved
+the existing error string and checks. This change does not introduce ABI v2.
+
+Workspace maintenance removed the original checkout and native dependencies.
+Recovered the branch from GitHub. Documentation and diff checks pass; native
+compilation/tests for this follow-up are pending dependency restoration or CI.
+`apt-get update` still fails on setgroups/seteuid permissions. Earlier Linux
+test results apply to earlier commits only. Windows remains deferred.

@@ -22,9 +22,16 @@ struct ProcessingCoreLoadRequirements {
     std::function<bool(const std::filesystem::path&, std::string&)> trustVerifier;
 };
 
+enum class ProcessingCoreLoadFailure {
+    None, InvalidMetadata, UnsupportedAbi, UnsupportedContract, RuntimeConstraint,
+    ArtifactFailure, SignatureFailure, ModuleLoadFailure, InvalidApi,
+    IdentityMismatch, SelfTestFailure, ContextCreationFailure
+};
+
 struct ProcessingCoreLoadResult {
     std::shared_ptr<IProcessingKernel> kernel;
     std::string error;
+    ProcessingCoreLoadFailure failure{ProcessingCoreLoadFailure::None};
 
     explicit operator bool() const noexcept { return kernel != nullptr; }
 };

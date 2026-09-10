@@ -533,3 +533,12 @@ in the local SDK-free Linux build; this is not yet ABI-v2 qualification. Ownersh
 Empty classification runs before morphology: an isolated candidate can be
 non-empty yet yield a zero final mask. Preserve this distinction when unifying
 the difference policy.
+
+## Typed native-loader failures (#394)
+
+`ProcessingCoreLoadResult::failure` identifies metadata, ABI, contract, runtime,
+artifact, signature, module-load, API-table, descriptor identity, self-test and
+context-creation failures. The existing error string remains available. ABI and
+contract rejection diagnostics include required and supported versions. Success
+retains `None`; every normal loader rejection sets a reason at the failing gate.
+The C plugin ABI and trust/identity acceptance rules are unchanged.

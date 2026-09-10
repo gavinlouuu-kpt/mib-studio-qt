@@ -396,32 +396,47 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
     const std::filesystem::path& absolutePluginPath,
     const ProcessingCoreLoadRequirements& requirements) {
     ProcessingCoreLoadResult result;
+    using Failure = ProcessingCoreLoadFailure;
     const auto hostIdentity = bundledProcessingCoreIdentity();
-    if (requirements.expectedEngineAbiVersion != MIB_PROCESSING_ENGINE_ABI_VERSION ||
-        requirements.expectedContractVersion != MIB_PROCESSING_CONTRACT_VERSION) {
-        result.error = "processing core metadata is incompatible with the host ABI/contract";
+    if (requirements.expectedEngineAbiVersion != MIB_PROCESSING_ENGINE_ABI_VERSION) {
+        result.failure = Failure::UnsupportedAbi;
+        result.error = "processing core metadata requires ABI " +
+            std::to_string(requirements.expectedEngineAbiVersion) + "; host supports " +
+            std::to_string(MIB_PROCESSING_ENGINE_ABI_VERSION);
+        return result;
+    }
+    if (requirements.expectedContractVersion != MIB_PROCESSING_CONTRACT_VERSION) {
+        result.failure = Failure::UnsupportedContract;
+        result.error = "processing core metadata requires contract " +
+            std::to_string(requirements.expectedContractVersion) + "; host supports " +
+            std::to_string(MIB_PROCESSING_CONTRACT_VERSION);
         return result;
     }
     if (requirements.expectedRuntimeFingerprint.empty() ||
         requirements.expectedRuntimeFingerprint != hostIdentity.runtimeFingerprint) {
+        result.failure = Failure::RuntimeConstraint;
         result.error = "processing core metadata is incompatible with the host runtime";
         return result;
     }
     if (requirements.expectedVersion.empty()) {
+        result.failure = Failure::InvalidMetadata;
         result.error = "processing core expected version is required";
         return result;
     }
     if (!sha256Hex(requirements.artifactSha256) ||
         !sha256Hex(requirements.manifestSha256)) {
+        result.failure = Failure::InvalidMetadata;
         result.error = "processing core artifact and manifest SHA-256 are required";
         return result;
     }
     std::error_code ec;
     if (!absolutePluginPath.is_absolute()) {
+        result.failure = Failure::ArtifactFailure;
         result.error = "processing core path must be absolute";
         return result;
     }
     if (!std::filesystem::is_regular_file(absolutePluginPath, ec) || ec) {
+        result.failure = Failure::ArtifactFailure;
         result.error = "processing core path is not a readable regular file";
         return result;
     }
@@ -431,25 +446,32 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
     std::transform(expected.begin(), expected.end(), expected.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (actual.empty() || actual != expected) {
+        result.failure = Failure::ArtifactFailure;
         result.error = actual.empty() ? "processing core SHA-256 failed: " + hashError
                                       : "processing core SHA-256 mismatch";
         return result;
     }
     if (!requirements.trustVerifier) {
+        result.failure = Failure::SignatureFailure;
         result.error = "processing core trust verifier is required";
         return result;
     }
     std::string trustError;
     if (!requirements.trustVerifier(absolutePluginPath, trustError)) {
+        result.failure = Failure::SignatureFailure;
         result.error = "processing core trust verification failed: " + trustError;
         return result;
     }
 
     auto module = openModule(absolutePluginPath, result.error);
-    if (!module) return result;
+    if (!module) {
+        result.failure = Failure::ModuleLoadFailure;
+        return result;
+    }
     const auto getApi = reinterpret_cast<mib_processing_get_api_fn>(
         module->symbol(MIB_PROCESSING_GET_API_SYMBOL));
     if (!getApi) {
+        result.failure = Failure::UnsupportedAbi;
         result.error = "processing core does not export " MIB_PROCESSING_GET_API_SYMBOL;
         return result;
     }
@@ -460,6 +482,7 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
                                detail.data(), detail.size());
     detail.back() = '\0';
     if (status != MIB_PROCESSING_STATUS_OK) {
+        result.failure = Failure::UnsupportedAbi;
         result.error = std::string("processing core ABI negotiation failed: ") + detail.data();
         return result;
     }
@@ -467,6 +490,7 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
         api.engine_abi_version != requirements.expectedEngineAbiVersion || !api.descriptor ||
         !api.create_context || !api.destroy_context || !api.reset_context || !api.process_mask ||
         !api.is_empty || !api.self_test) {
+        result.failure = Failure::InvalidApi;
         result.error = "processing core returned an incomplete API table";
         return result;
     }
@@ -476,12 +500,14 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
         descriptor->contract_version != requirements.expectedContractVersion ||
         !equalsExpected(requirements.expectedVersion, descriptor->core_version) ||
         !equalsExpected(requirements.expectedRuntimeFingerprint, descriptor->runtime_fingerprint)) {
+        result.failure = Failure::IdentityMismatch;
         result.error = "processing core descriptor does not satisfy the requested identity";
         return result;
     }
     detail.fill(0);
     if (api.self_test(detail.data(), detail.size()) != MIB_PROCESSING_STATUS_OK) {
         detail.back() = '\0';
+        result.failure = Failure::SelfTestFailure;
         result.error = std::string("processing core self-test failed: ") + detail.data();
         return result;
     }
@@ -491,6 +517,7 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
     if (api.create_context(&context, detail.data(), detail.size()) != MIB_PROCESSING_STATUS_OK ||
         !context) {
         detail.back() = '\0';
+        result.failure = Failure::ContextCreationFailure;
         result.error = std::string("processing core context creation failed: ") + detail.data();
         return result;
     }

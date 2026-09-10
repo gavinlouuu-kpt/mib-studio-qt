@@ -164,5 +164,23 @@ int main(int argc, char** argv) {
 
     MIB_EXPECT(!backend::processing::loadProcessingCorePlugin(pluginPath.filename(), requirements),
                "relative plugin paths are rejected");
+    using Failure = backend::processing::ProcessingCoreLoadFailure;
+    MIB_EXPECT(loaded.failure == Failure::None, "successful load has no failure reason");
+    const auto expectReason = [&](const auto& candidate, Failure reason) {
+        const auto result = backend::processing::loadProcessingCorePlugin(pluginPath, candidate);
+        MIB_EXPECT(!result && result.failure == reason && !result.error.empty(),
+                   "failed load retains a typed reason and readable diagnostic");
+    };
+    expectReason(incompatibleAbi, Failure::UnsupportedAbi);
+    expectReason(incompatibleContract, Failure::UnsupportedContract);
+    expectReason(incompatibleRuntime, Failure::RuntimeConstraint);
+    expectReason(mismatch, Failure::IdentityMismatch);
+    expectReason(tamperedDigest, Failure::ArtifactFailure);
+    expectReason(missingArtifactDigest, Failure::InvalidMetadata);
+    expectReason(missingManifestDigest, Failure::InvalidMetadata);
+    expectReason(rejected, Failure::SignatureFailure);
+    auto missingVerifier = requirements;
+    missingVerifier.trustVerifier = {};
+    expectReason(missingVerifier, Failure::SignatureFailure);
     return mib::test::exitCode();
 }
