@@ -350,3 +350,11 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+## Native-core CI test target (2026-09-10)
+
+`processing_core_authenticode_test` must remain a standalone executable in
+`tests/CMakeLists.txt`: the Windows native-core job in `python-wheel.yml`
+builds it by target name and passes its `.exe` to the signing-verification
+script. Moving it into `mib_backend_tests` breaks that external build/run
+contract (`MSB1009`), even when Linux backend tests pass.
