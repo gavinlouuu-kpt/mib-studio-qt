@@ -233,3 +233,10 @@ Qt libraries (handoff gap G7, backend part). Guards:
 `experiment_lifecycle_end_to_end` (readiness gate `camera.session` blocks,
 Start → Active → Stop → terminal Complete with the remainder committed, typed
 terminal event, file reloads), `rust_enums_match_contract_json`.
+
+## ABI 14: local analysis (#399)
+
+Adds `initialize_analysis` without changing the instrument initialization call.
+Review metadata carries accounting availability, completion state/reason and
+reconciliation from the native file reader. Measurement pages now use bounded
+hyperslabs. A native allowlist denies instrument commands in the analysis context.

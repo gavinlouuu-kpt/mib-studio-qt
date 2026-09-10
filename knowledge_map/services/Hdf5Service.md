@@ -205,3 +205,12 @@ the library under a running thread. Guard: `recording.hdf5_exit_teardown`
 property, it did not reproduce the crash). Evidence:
 `docs/evidence/2026-09-08-crash-dump-review.md`.
 
+
+## Bounded metadata pages (#399)
+
+`readMetadataPage(Valid|Invalid|Recorded, offset, count, rows, total)` reads a
+compound hyperslab, at most 4,096 rows; count zero returns shape only. Malformed
+ranks/types and missing datasets fail with cleared output. Offset clamping avoids
+unsigned addition overflow. Legacy full-read methods retain their contracts.
+Dataset geometry is validated before writing fixed-size dimensions or narrowing
+to OpenCV dimensions. No HDF5 schema or scientific algorithm changes.

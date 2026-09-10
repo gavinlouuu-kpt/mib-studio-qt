@@ -95,3 +95,10 @@ The frontend scheduler bounds aggregate pending pulls and discards retired view
 responses. Details and limitations: `docs/architecture/frame-packet-v1.md`.
 The accepted readiness/configuration/finalization/recovery handoff is still open
 under #372; this slice does not establish native experiment acceptance.
+# Local analysis helper transport (#399)
+
+The independent [[Analysis-Helper]] Rust crate uses async private-pipe IO and a
+single-operation gate. A watch channel carries cancellation/generation changes
+independently of helper computation; no native backend thread or acquisition
+path has changed. Dropped/unconfirmed cleanup blocks further launches. The crate
+is not wired to the desktop yet. Its process/cancellation tests pass under TSan.

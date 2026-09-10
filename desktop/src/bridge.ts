@@ -68,6 +68,10 @@ export interface ReviewDatasetInfo {
 
 /** Review metadata of the loaded HDF5 file (schema v9, BE-6). */
 export interface ReviewMetadata {
+  accounting_available: boolean;
+  completion_state: number;
+  completion_reason: string;
+  accounting_reconciled: boolean;
   valid: boolean;
   file_open: boolean;
   recording_file: boolean;
@@ -231,6 +235,7 @@ async function pullFrame(command: string, kind: number, args?: Record<string, un
 }
 
 export const bridge = {
+  applicationMode: () => invoke<"instrument" | "analysis-only">("application_mode"),
   abiVersion: () => invoke<number>("abi_version"),
   isInitialized: () => invoke<boolean>("is_initialized"),
   init: (dataDir: string) => invoke<boolean>("init", { dataDir }),

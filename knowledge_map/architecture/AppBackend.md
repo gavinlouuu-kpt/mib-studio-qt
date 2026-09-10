@@ -289,3 +289,12 @@ memory benchmark evidence.
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
+
+## Analysis-only startup (#399)
+
+`initialize(dataDir, ApplicationMode::AnalysisOnly)` selects an immutable native
+context. It does not select a camera, construct autofocus, or bootstrap capture,
+playback, processing workers, YOLO or trigger wiring. BackendFacade denies every
+command except recording open and cancellation; discovery/autofocus and direct
+background mutation are unavailable. The mode cannot escalate on reinitialize.
+Instrument remains the default. See the [execution plan](../../docs/exec-plans/active/2026-09-10-local-analysis.md).

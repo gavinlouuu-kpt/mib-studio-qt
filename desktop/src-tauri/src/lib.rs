@@ -19,8 +19,15 @@ mod platform;
 pub mod updater;
 
 struct AppState {
+    analysis_only: bool,
     bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
 
+}
+
+/// Immutable desktop context selected by the executable, never by the webview.
+#[tauri::command]
+fn application_mode(state: State<AppState>) -> &'static str {
+    if state.analysis_only { "analysis-only" } else { "instrument" }
 }
 
 /// Flattened command result handed to JS.
@@ -106,7 +113,11 @@ fn init(
         data_dir
     };
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().initialize(&dir))
+    Ok(if state.analysis_only {
+        guard.pin_mut().initialize_analysis(&dir)
+    } else {
+        guard.pin_mut().initialize(&dir)
+    })
 }
 
 #[tauri::command]
@@ -636,6 +647,10 @@ struct ReviewDatasetInfo {
 /// Review metadata of the loaded HDF5 file (schema v9, BE-6).
 #[derive(Serialize, Clone, Default)]
 struct ReviewMetadata {
+    accounting_available: bool,
+    completion_state: u32,
+    completion_reason: String,
+    accounting_reconciled: bool,
     valid: bool,
     file_open: bool,
     recording_file: bool,
@@ -685,6 +700,10 @@ fn fetch_review_metadata(state: State<AppState>) -> Result<ReviewMetadata, Strin
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let m = guard.pin_mut().fetch_review_metadata();
     Ok(ReviewMetadata {
+        accounting_available: m.accounting_available,
+        completion_state: m.completion_state,
+        completion_reason: m.completion_reason,
+        accounting_reconciled: m.accounting_reconciled,
         valid: m.valid,
         file_open: m.file_open,
         recording_file: m.recording_file,
@@ -1367,9 +1386,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
+            analysis_only: cfg!(feature = "analysis-only") || std::env::args().any(|a| a == "--analysis-only"),
             bridge: Mutex::new(ffi::new_backend_bridge()),
         })
         .invoke_handler(tauri::generate_handler![
+            application_mode,
             abi_version,
             is_initialized,
             init,

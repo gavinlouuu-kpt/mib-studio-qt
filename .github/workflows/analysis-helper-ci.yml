@@ -1,0 +1,46 @@
+name: Analysis helper supervisor
+
+on:
+  pull_request:
+    paths:
+      - 'crates/mib-analysis/**'
+      - 'desktop/analysis/**'
+      - '.github/workflows/analysis-helper-ci.yml'
+  push:
+    branches: [develop]
+    paths:
+      - 'crates/mib-analysis/**'
+      - 'desktop/analysis/**'
+      - '.github/workflows/analysis-helper-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supervisor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [normal, tsan]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Process and bundle contract tests
+        if: matrix.lane == 'normal'
+        run: |
+          rustup toolchain install stable --profile minimal
+          export MIB_ANALYSIS_TEST_PYTHON="$(command -v python)"
+          cargo +stable test --locked --manifest-path crates/mib-analysis/Cargo.toml --tests
+      - name: ThreadSanitizer process and cancellation stress
+        if: matrix.lane == 'tsan'
+        run: |
+          rustup toolchain install nightly-2026-09-10 --profile minimal --component rust-src
+          export MIB_ANALYSIS_TEST_PYTHON="$(command -v python)"
+          export RUSTFLAGS='-Zsanitizer=thread'
+          cargo +nightly-2026-09-10 test --locked --manifest-path crates/mib-analysis/Cargo.toml \
+            -Zbuild-std --target x86_64-unknown-linux-gnu --tests

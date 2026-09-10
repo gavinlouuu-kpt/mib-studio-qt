@@ -60,7 +60,7 @@ fn abi_version_is_stable() {
     // shared-backend experiment lifecycle (#372): command actions, start/
     // stop outcomes, run completion states, readiness gate statuses, typed
     // ExperimentStatus companions and fetch_experiment_readiness.
-    assert_eq!(ffi::bridge_abi_version(), 13);
+    assert_eq!(ffi::bridge_abi_version(), 14);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
@@ -1054,4 +1054,32 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_dir_all(&frame_dir);
     let _ = std::fs::remove_dir_all(&data_dir);
     let _ = std::fs::remove_file(&rec_path);
+}
+
+#[test]
+#[serial]
+fn analysis_only_context_cannot_acquire_instrument_authority() {
+    let (_done, waiter) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if matches!(waiter.recv_timeout(Duration::from_secs(20)), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+            eprintln!("WATCHDOG: analysis-only bridge lifecycle timed out");
+            std::process::exit(99);
+        }
+    });
+    let data = std::env::temp_dir().join(format!("mib_analysis_contract_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize_analysis(&data.to_string_lossy()));
+    assert!(!bridge.pin_mut().initialize(&data.to_string_lossy()));
+    assert!(!bridge.pin_mut().start_capture().ok);
+    assert!(!bridge.pin_mut().configure_mock_camera("missing", 1, true).ok);
+    assert!(!bridge.pin_mut().start_frame_recording("forbidden.h5").ok);
+    assert!(!bridge.pin_mut().review_export_csv("forbidden.csv").ok);
+    assert!(!bridge.pin_mut().fetch_camera_discovery().valid);
+    assert!(!bridge.pin_mut().fetch_autofocus_status().valid);
+    let metadata = bridge.pin_mut().fetch_review_metadata();
+    assert!(metadata.valid && !metadata.file_open);
+    assert!(!metadata.accounting_available);
+    assert_eq!(metadata.completion_state, 4);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data);
 }

@@ -40,6 +40,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <stdexcept>
 #include <spdlog/spdlog.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -191,8 +192,10 @@ namespace backend
         dumpPipelineTimingIfEnabled();
     }
 
-    bool AppBackend::initialize(const std::string &dataDir)
-    {
+    bool AppBackend::initialize(const std::string& dataDir, ApplicationMode mode) {
+        if (hdf5Service_ && mode != applicationMode_) return false;
+        applicationMode_ = mode;
+        const bool instrument = mode == ApplicationMode::Instrument;
         std::filesystem::create_directories(dataDir);
 
         // Use user-writable location for logs if dataDir is in Program Files
@@ -233,7 +236,7 @@ namespace backend
         });
         playbackService_ = std::make_unique<services::PlaybackService>();
         cameraControlService_ = std::make_unique<services::CameraControlService>();
-        autofocusService_ = std::make_unique<services::AutofocusService>();
+        if (instrument) autofocusService_ = std::make_unique<services::AutofocusService>();
         triggerService_ = std::make_unique<services::TriggerService>();
         yoloService_ = std::make_unique<services::YoloService>();
         serialBusManager_ = std::make_unique<services::serialbus::SerialBusManager>();
@@ -243,12 +246,12 @@ namespace backend
 
         bool bootSqlite = true;
         bool bootHdf5 = true;
-        bool bootProcessing = true;
-        bool bootYolo = true;
-        bool bootAutofocus = true;
-        bool bootTrigger = true;
-        bool bootCapture = true;
-        bool bootPlayback = true;
+        bool bootProcessing = instrument;
+        bool bootYolo = instrument;
+        bool bootAutofocus = instrument;
+        bool bootTrigger = instrument;
+        bool bootCapture = instrument;
+        bool bootPlayback = instrument;
         if (const char *rawDisabledServices = std::getenv("MIB_DISABLED_SERVICES"))
         {
             std::string disabled(rawDisabledServices);
@@ -340,7 +343,7 @@ namespace backend
         }
         else
         {
-            SPDLOG_WARN("AppBackend: sqlite bootstrap disabled by MIB_DISABLED_SERVICES");
+            SPDLOG_WARN("AppBackend: sqlite bootstrap disabled by startup policy");
         }
 
         if (bootHdf5)
@@ -349,7 +352,7 @@ namespace backend
         }
         else
         {
-            SPDLOG_WARN("AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES");
+            SPDLOG_WARN("AppBackend: hdf5 bootstrap disabled by startup policy");
         }
 
         // Initialize YOLO service - resolve model path relative to data directory
@@ -366,7 +369,7 @@ namespace backend
         }
         else
         {
-            SPDLOG_WARN("AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES");
+            SPDLOG_WARN("AppBackend: yolo bootstrap disabled by startup policy");
         }
 
         // Load Young's modulus LUT for emodulus gating
@@ -428,7 +431,7 @@ namespace backend
         }
         else
         {
-            SPDLOG_WARN("AppBackend: processing bootstrap disabled by MIB_DISABLED_SERVICES");
+            SPDLOG_WARN("AppBackend: processing bootstrap disabled by startup policy");
         }
         // Note: startRealtime() is now called when Experiment tab becomes active, not during initialization
 
@@ -446,7 +449,7 @@ namespace backend
             processingService_->setRingRatioCallback({});
             if (!bootAutofocus)
             {
-                SPDLOG_WARN("AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES");
+                SPDLOG_WARN("AppBackend: autofocus ring-ratio callback disabled by startup policy");
             }
         }
 
@@ -470,7 +473,7 @@ namespace backend
             processingService_->setTargetGroupCallback({});
             if (!bootTrigger)
             {
-                SPDLOG_WARN("AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES");
+                SPDLOG_WARN("AppBackend: trigger callback wiring disabled by startup policy");
             }
         }
 
@@ -687,7 +690,7 @@ namespace backend
         }
         else
         {
-            SPDLOG_WARN("AppBackend: capture bootstrap disabled by MIB_DISABLED_SERVICES");
+            SPDLOG_WARN("AppBackend: capture bootstrap disabled by startup policy");
             cameraMode = "disabled";
             selectedIfIndex_ = -1;
             selectedDevIndex_ = -1;
@@ -703,7 +706,7 @@ namespace backend
         }
         else
         {
-            SPDLOG_WARN("AppBackend: playback bootstrap disabled by MIB_DISABLED_SERVICES");
+            SPDLOG_WARN("AppBackend: playback bootstrap disabled by startup policy");
         }
 
         // Wire up the crash-state mirror so post-crash dumps include the
@@ -733,7 +736,11 @@ namespace backend
     services::ProcessingService &AppBackend::processing() { return *processingService_; }
     services::PlaybackService &AppBackend::playback() { return *playbackService_; }
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
-    services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
+    services::AutofocusService& AppBackend::autofocus() {
+        if (!autofocusService_)
+            throw std::logic_error("Autofocus unavailable in analysis-only mode");
+        return *autofocusService_;
+    }
     services::TriggerService &AppBackend::trigger() { return *triggerService_; }
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }

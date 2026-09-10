@@ -1966,3 +1966,22 @@ checks, frontend and Xvfb smoke). The next transport slice adds exact event
 integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
+
+- **2026-09-10 — #399 native analysis foundation:** immutable analysis context,
+  hardware command denial, bounded metadata/sparse frame Review, observed-source
+  invalidation and persisted completion; bridge ABI 14. Toolkit packaging and
+  clean-machine/NAS qualification remain open. See [[../task/2026-09-10-local-analysis]].
+# 2026-09-10 — Local analysis helper development endpoint (#399)
+
+Private-pipe protocol 0.1 now exercises Toolkit histogram/KDE page calculations
+with strict budgets and request/generation identity. Tests run the real child
+against an installed development wheel. Tauri launch and production bundle trust
+remain pending; no capability is advertised. Registry directory-route repair is
+Toolkit PR #2. See [[../task/2026-09-10-local-analysis]].
+# 2026-09-10 — Analysis helper process supervisor (#399)
+
+Added the independently tested [[../architecture/Analysis-Helper]] Rust component:
+bundle digest/inventory checks, single-flight private pipes, deadline/cancellation,
+stale/crash rejection and Linux parent-death ownership. Ten tests pass normally
+and under TSan, including an installed Toolkit round trip. Native-ledger/Tauri
+wiring, Windows ownership and production runtime packaging remain open.
