@@ -30,13 +30,19 @@ struct ProcessingCoreIdentity {
     bool operator!=(const ProcessingCoreIdentity& other) const { return !(*this == other); }
 };
 
+enum class BackgroundDifferenceMode {
+    DirectionalSubtract,
+    AbsoluteDifference,
+};
+
 struct KernelConfig {
     int gaussianBlurSize{3};
     int backgroundSubtractThreshold{8};
     int morphologyKernelSize{3};
     int morphologyIterations{1};
     int emptyFramePixelThreshold{100};
-    bool absoluteBackgroundDifference{false};
+    BackgroundDifferenceMode backgroundDifferenceMode{
+        BackgroundDifferenceMode::DirectionalSubtract};
 };
 
 struct KernelRoi {

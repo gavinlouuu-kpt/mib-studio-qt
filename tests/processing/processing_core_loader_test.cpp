@@ -60,15 +60,56 @@ int main(int argc, char** argv) {
     MIB_REQUIRE(bundled->isEmpty(input, {}, config, roi, bundledEmpty, &error), error);
     MIB_EXPECT(dynamicEmpty == bundledEmpty, "dynamic and bundled empty checks agree");
 
+    // Isolate difference policy from Contract-1 ROI-edge morphology.
+    config.gaussianBlurSize = 1;
+    config.morphologyKernelSize = 1;
     cv::Mat darker = cv::Mat::zeros(input.size(), CV_8UC1);
     cv::Mat brighter(input.size(), CV_8UC1, cv::Scalar(255));
-    config.absoluteBackgroundDifference = true;
+    config.backgroundDifferenceMode =
+        backend::processing::BackgroundDifferenceMode::AbsoluteDifference;
     MIB_REQUIRE(loaded.kernel->isEmpty(darker, brighter, config, roi, dynamicEmpty, &error),
                 error);
     MIB_REQUIRE(bundled->isEmpty(darker, brighter, config, roi, bundledEmpty, &error), error);
     MIB_EXPECT(!dynamicEmpty && dynamicEmpty == bundledEmpty,
                "dynamic core owns absolute-difference auto-background empty checks");
-    config.absoluteBackgroundDifference = false;
+    // Regression #394: dark foreground must be segmented under the same
+    // absolute-difference policy used by empty classification. Both paths
+    // must match an independent expected mask, not only each other.
+    cv::Mat expectedAbsolute = cv::Mat::zeros(input.size(), CV_8UC1);
+    expectedAbsolute(cv::Rect(roi.x, roi.y, roi.width, roi.height)).setTo(255);
+    MIB_REQUIRE(loaded.kernel->processMask(darker, brighter, config, roi, dynamicMask, &error),
+                error);
+    MIB_REQUIRE(bundled->processMask(darker, brighter, config, roi, bundledMask, &error), error);
+    MIB_EXPECT(cv::countNonZero(dynamicMask != expectedAbsolute) == 0,
+               "native absolute-difference mask detects dark foreground");
+    MIB_EXPECT(cv::countNonZero(bundledMask != expectedAbsolute) == 0,
+               "bundled absolute-difference mask detects dark foreground");
+    config.backgroundDifferenceMode =
+        backend::processing::BackgroundDifferenceMode::DirectionalSubtract;
+
+    // Reversing polarity is equivalent only in absolute mode; returning to
+    // directional mode still preserves the historical suppression of dark data.
+    for (const auto& kernel : {bundled, loaded.kernel}) {
+        for (const bool absolute : {false, true}) {
+            config.backgroundDifferenceMode =
+                absolute ? backend::processing::BackgroundDifferenceMode::AbsoluteDifference
+                         : backend::processing::BackgroundDifferenceMode::DirectionalSubtract;
+            cv::Mat mask;
+            bool empty = true;
+            MIB_REQUIRE(kernel->processMask(brighter, darker, config, roi, mask, &error), error);
+            MIB_EXPECT(cv::countNonZero(mask != expectedAbsolute) == 0,
+                       "bright foreground is retained in both modes");
+            MIB_REQUIRE(kernel->isEmpty(brighter, darker, config, roi, empty, &error), error);
+            MIB_EXPECT(!empty, "bright foreground is non-empty in both modes");
+            MIB_REQUIRE(kernel->processMask(darker, brighter, config, roi, mask, &error), error);
+            MIB_EXPECT(cv::countNonZero(mask) == (absolute ? roi.width * roi.height : 0),
+                       "dark foreground follows explicit difference mode");
+            MIB_REQUIRE(kernel->isEmpty(darker, brighter, config, roi, empty, &error), error);
+            MIB_EXPECT(empty == !absolute, "empty classification follows the same policy");
+        }
+    }
+    config.backgroundDifferenceMode =
+        backend::processing::BackgroundDifferenceMode::DirectionalSubtract;
 
     cv::Mat invalidBackground(input.rows, input.cols, CV_16UC1, cv::Scalar(1000));
     MIB_REQUIRE(loaded.kernel->processMask(input, invalidBackground, config, roi,
@@ -123,5 +164,23 @@ int main(int argc, char** argv) {
 
     MIB_EXPECT(!backend::processing::loadProcessingCorePlugin(pluginPath.filename(), requirements),
                "relative plugin paths are rejected");
+    using Failure = backend::processing::ProcessingCoreLoadFailure;
+    MIB_EXPECT(loaded.failure == Failure::None, "successful load has no failure reason");
+    const auto expectReason = [&](const auto& candidate, Failure reason) {
+        const auto result = backend::processing::loadProcessingCorePlugin(pluginPath, candidate);
+        MIB_EXPECT(!result && result.failure == reason && !result.error.empty(),
+                   "failed load retains a typed reason and readable diagnostic");
+    };
+    expectReason(incompatibleAbi, Failure::UnsupportedAbi);
+    expectReason(incompatibleContract, Failure::UnsupportedContract);
+    expectReason(incompatibleRuntime, Failure::RuntimeConstraint);
+    expectReason(mismatch, Failure::IdentityMismatch);
+    expectReason(tamperedDigest, Failure::ArtifactFailure);
+    expectReason(missingArtifactDigest, Failure::InvalidMetadata);
+    expectReason(missingManifestDigest, Failure::InvalidMetadata);
+    expectReason(rejected, Failure::SignatureFailure);
+    auto missingVerifier = requirements;
+    missingVerifier.trustVerifier = {};
+    expectReason(missingVerifier, Failure::SignatureFailure);
     return mib::test::exitCode();
 }

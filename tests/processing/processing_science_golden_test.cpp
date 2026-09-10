@@ -86,7 +86,8 @@ void maskGoldens() {
     config.morphologyKernelSize = 1;
     config.morphologyIterations = 1;
     config.emptyFramePixelThreshold = 1;
-    config.absoluteBackgroundDifference = false;
+    config.backgroundDifferenceMode =
+        backend::processing::BackgroundDifferenceMode::DirectionalSubtract;
     const backend::processing::KernelRoi full{0, 0, 19, 17};
     const cv::Mat background(17, 19, CV_8UC1, cv::Scalar(100));
     const cv::Mat zero(17, 19, CV_8UC1, cv::Scalar(0));

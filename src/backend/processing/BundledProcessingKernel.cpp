@@ -49,6 +49,27 @@ bool validateGray(const cv::Mat& gray, std::string* error) {
     return true;
 }
 
+// Both mask and pre-morphology empty classification consume this same image.
+// Contract 1 retains blur-before-difference and ignores unusable backgrounds.
+cv::Mat buildDifferenceImage(const cv::Mat& gray, const cv::Mat& background,
+                             const KernelConfig& config, const cv::Rect& region) {
+    const int blur = oddAtLeastOne(config.gaussianBlurSize);
+    cv::Mat current;
+    cv::GaussianBlur(gray(region), current, cv::Size(blur, blur), 0);
+    if (background.empty() || background.type() != CV_8UC1 || background.size() != gray.size()) {
+        return current;
+    }
+    cv::Mat blurredBackground;
+    cv::GaussianBlur(background(region), blurredBackground, cv::Size(blur, blur), 0);
+    cv::Mat difference;
+    if (config.backgroundDifferenceMode == BackgroundDifferenceMode::AbsoluteDifference) {
+        cv::absdiff(current, blurredBackground, difference);
+    } else {
+        cv::subtract(current, blurredBackground, difference);
+    }
+    return difference;
+}
+
 std::string runtimeFingerprint() {
 #if defined(_MSC_VER)
     return "windows-x86_64-msvc" + std::to_string(_MSC_VER) + "-md-cxx17";
@@ -90,23 +111,7 @@ public:
             const cv::Rect region = normalizedRoi(gray, roi);
             outputMask = cv::Mat::zeros(gray.rows, gray.cols, CV_8UC1);
 
-            cv::Mat blurredCurrent;
-            cv::Mat processingInput;
-            cv::GaussianBlur(gray(region), blurredCurrent,
-                             cv::Size(oddAtLeastOne(config.gaussianBlurSize),
-                                      oddAtLeastOne(config.gaussianBlurSize)),
-                             0);
-            if (!background.empty() && background.type() == CV_8UC1 &&
-                background.size() == gray.size()) {
-                cv::Mat blurredBackground;
-                cv::GaussianBlur(background(region), blurredBackground,
-                                 cv::Size(oddAtLeastOne(config.gaussianBlurSize),
-                                          oddAtLeastOne(config.gaussianBlurSize)),
-                                 0);
-                cv::subtract(blurredCurrent, blurredBackground, processingInput);
-            } else {
-                processingInput = blurredCurrent;
-            }
+            const cv::Mat processingInput = buildDifferenceImage(gray, background, config, region);
 
             cv::Mat thresholded;
             cv::threshold(processingInput, thresholded,
@@ -144,22 +149,7 @@ public:
                 return false;
             }
             const cv::Rect region = normalizedRoi(gray, roi);
-            cv::Mat blurredCurrent;
-            cv::Mat difference;
-            const int blur = oddAtLeastOne(config.gaussianBlurSize);
-            cv::GaussianBlur(gray(region), blurredCurrent, cv::Size(blur, blur), 0);
-            if (!background.empty() && background.type() == CV_8UC1 &&
-                background.size() == gray.size()) {
-                cv::Mat blurredBackground;
-                cv::GaussianBlur(background(region), blurredBackground, cv::Size(blur, blur), 0);
-                if (config.absoluteBackgroundDifference) {
-                    cv::absdiff(blurredCurrent, blurredBackground, difference);
-                } else {
-                    cv::subtract(blurredCurrent, blurredBackground, difference);
-                }
-            } else {
-                difference = blurredCurrent;
-            }
+            const cv::Mat difference = buildDifferenceImage(gray, background, config, region);
             cv::Mat thresholded;
             cv::threshold(difference, thresholded,
                           std::max(0, config.backgroundSubtractThreshold), 255,

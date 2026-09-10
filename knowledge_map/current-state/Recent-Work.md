@@ -5,6 +5,14 @@
 
 ## In progress
 
+- **Issue #394 shared difference policy** (2026-09-10) — explicit internal
+  directional/absolute enum and shared mask/empty difference helper; ABI 1
+  adapters preserve the existing flag. Processing version 0.2.2 corrects
+  absolute-mode dark-foreground masks. Independent regression fails under
+  directional-only mask behavior and passes with the fix; ten Linux science,
+  core and realtime throughput tests pass. Windows qualification is deferred
+  per user direction while local implementation continues.
+
 - **Issue #394 processing-core ABI v2 baseline** (2026-09-10) — expanded
   `processing.science_golden` with exact mask fixtures and ring-gate outcomes;
   documented current ownership and remaining delivery gates in

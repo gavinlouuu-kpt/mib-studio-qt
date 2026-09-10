@@ -120,3 +120,18 @@ Release paths now require and validate the repository SPKI and compare it with
 the DLL's actual Authenticode signer, but provisioning the real certificate,
 pin, R2 publication, and an on-hardware Windows exercise remain live-environment
 gates tracked under A12.
+
+## Compatibility diagnostics (#394)
+
+Catalog metadata eligibility is evaluated once by `evaluateCompatibility` for
+both list presentation and activation. `CompatibilityResult` contains a typed
+reason, diagnostic, required value and actual value. Failure precedence is OS,
+architecture, ABI, processing contract, valid application bounds, minimum,
+maximum, runtime fingerprint and administrator pin. Rejected items expose the
+diagnostic in their label and tooltip and the reason in `Qt::UserRole`.
+
+This preserves exact ABI/contract/runtime matching and inclusive app bounds.
+Metadata compatibility is not artifact trust: download integrity, signature
+verification, descriptor validation and loader self-test still run unchanged.
+Future capability negotiation and structured loader failures remain separate
+work; this catalog model describes only the current host's eligibility checks.
