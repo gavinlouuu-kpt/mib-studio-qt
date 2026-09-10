@@ -121,11 +121,15 @@ QString platformArch() {
     return architecture;
 }
 
-bool isHostCompatible(const processingcorecatalog::NativePluginEntry& plugin) {
+processingcorecatalog::CompatibilityResult compatibilityFor(
+    const processingcorecatalog::VersionEntry& version) {
     const auto host = backend::processing::bundledProcessingCoreIdentity();
-    return plugin.engineAbiVersion == static_cast<int>(MIB_PROCESSING_ENGINE_ABI_VERSION) &&
-           plugin.contractVersion == static_cast<int>(MIB_PROCESSING_CONTRACT_VERSION) &&
-           plugin.runtimeFingerprint == QString::fromStdString(host.runtimeFingerprint);
+    return processingcorecatalog::evaluateCompatibility(version, {
+        platformOs(), platformArch(), QCoreApplication::applicationVersion(),
+        static_cast<int>(MIB_PROCESSING_ENGINE_ABI_VERSION),
+        static_cast<int>(MIB_PROCESSING_CONTRACT_VERSION),
+        QString::fromStdString(host.runtimeFingerprint),
+        qEnvironmentVariable("MIB_STUDIO_PROCESSING_CORE_VERSION").trimmed()});
 }
 
 std::function<bool(const std::filesystem::path&, std::string&)> trustVerifier(
@@ -467,14 +471,12 @@ void ProcessingCoreDialog::populate() {
         QString label = entry.version;
         if (entry.version == catalog_.activeVersion) label += tr("  — channel active");
         if (entry.version.toStdString() == current.version) label += tr("  — selected");
-        const auto* plugin = processingcorecatalog::findNativePlugin(
-            entry, platformOs(), platformArch());
-        const bool appCompatible = plugin && processingcorecatalog::isAppCompatible(
-            *plugin, QCoreApplication::applicationVersion()) && isHostCompatible(*plugin);
-        if (!plugin) label += tr("  — incompatible on this platform");
-        else if (!appCompatible) label += tr("  — incompatible with this app/runtime");
+        const auto compatibility = compatibilityFor(entry);
+        if (!compatibility.compatible()) label += QStringLiteral("  — ") + compatibility.diagnostic;
         auto* item = new QListWidgetItem(label, versions_);
-        if (!appCompatible || (!hardPin.isEmpty() && hardPin != entry.version)) {
+        item->setToolTip(compatibility.diagnostic);
+        item->setData(Qt::UserRole, static_cast<int>(compatibility.reason));
+        if (!compatibility.compatible()) {
             item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
         }
     }
@@ -502,9 +504,9 @@ void ProcessingCoreDialog::prepareAndActivateSelected() {
         return;
     }
     const auto plugin = *selectedPlugin;
-    if (!processingcorecatalog::isAppCompatible(
-            plugin, QCoreApplication::applicationVersion()) || !isHostCompatible(plugin)) {
-        setBusy(false, tr("Selected core is incompatible with this application/runtime."));
+    const auto compatibility = compatibilityFor(version);
+    if (!compatibility.compatible()) {
+        setBusy(false, compatibility.diagnostic);
         return;
     }
     if (version.version.toStdString() != backend_.processing().activeProcessingCoreIdentity().version) {

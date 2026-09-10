@@ -6,6 +6,32 @@
 
 namespace frontend::processingcorecatalog {
 
+enum class CompatibilityReason {
+    Compatible, WrongPlatform, WrongArchitecture, UnsupportedAbi,
+    UnsupportedContract, AppVersionTooOld, AppVersionTooNew,
+    RuntimeConstraint, InvalidVersion, AdministratorPin
+};
+
+// Metadata eligibility only. Artifact integrity and signature checks still run
+// during activation; Compatible does not mean the artifact has been trusted.
+struct CompatibilityResult {
+    CompatibilityReason reason{CompatibilityReason::Compatible};
+    QString diagnostic;
+    QString required;
+    QString actual;
+    bool compatible() const { return reason == CompatibilityReason::Compatible; }
+};
+
+struct CompatibilityHost {
+    QString os;
+    QString arch;
+    QString appVersion;
+    int engineAbiVersion;
+    int contractVersion;
+    QString runtimeFingerprint;
+    QString pinnedVersion;
+};
+
 struct NativePluginEntry {
     QString filename;
     QString os;
@@ -63,6 +89,9 @@ struct ActivePointerResult {
     QString warning;
     QString version;
 };
+
+CompatibilityResult evaluateCompatibility(const VersionEntry& version,
+                                          const CompatibilityHost& host);
 
 ParseResult parseIndex(const QByteArray& bytes);
 ManifestResult parseVersionManifest(const QByteArray& bytes);

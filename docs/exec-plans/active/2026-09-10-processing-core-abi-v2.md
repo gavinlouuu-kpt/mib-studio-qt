@@ -168,3 +168,16 @@ throughput pass, including activation stress, trust, cache and ABI fixtures.
 Qt development dependencies have also been provisioned for the next UI phase.
 Per user direction, continue implementation and testing locally; Windows
 qualification will happen later and does not block the remaining phases.
+
+## Phase 2 progress: catalog diagnostics (2026-09-10)
+
+Replaced generic app/runtime list and activation messages with one structured
+catalog evaluation: reason, diagnostic, required and actual values. Covers OS,
+architecture, ABI, contract, application bounds, runtime and administrator pin.
+Deterministic tests cover each rejection, invalid version bounds, inclusive
+maximum and multiple-failure precedence. Qt 6.4.2 catalog executable passes
+in the local Linux prefix; the changed dialog translation unit is compiled
+separately for syntax validation. This is not a full GUI interaction test.
+
+Phase 2 remains open for structured loader/trust/artifact diagnostics and
+future capability negotiation. No loader checks or contract support changed.

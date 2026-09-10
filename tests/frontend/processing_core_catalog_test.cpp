@@ -208,5 +208,39 @@ int main() {
         ed25519Template.arg(truncatedFields).toUtf8());
     MIB_EXPECT(!truncatedSignature.ok,
                "an ed25519 entry with a non-canonical signature length is rejected");
+    using namespace frontend::processingcorecatalog;
+    const CompatibilityHost host{"linux", "x86_64", "1.1.1", 1, 1,
+                                 "linux-x86_64-gcc13-cxx17", {}};
+    const auto eligible = parsedLinux.versions.front();
+    MIB_EXPECT(evaluateCompatibility(eligible, host).compatible(), "matching metadata eligible");
+    struct Case { CompatibilityHost host; CompatibilityReason reason; };
+    const Case cases[] = {
+        {{"windows", host.arch, host.appVersion, 1, 1, host.runtimeFingerprint, {}}, CompatibilityReason::WrongPlatform},
+        {{host.os, "aarch64", host.appVersion, 1, 1, host.runtimeFingerprint, {}}, CompatibilityReason::WrongArchitecture},
+        {{host.os, host.arch, host.appVersion, 2, 1, host.runtimeFingerprint, {}}, CompatibilityReason::UnsupportedAbi},
+        {{host.os, host.arch, host.appVersion, 1, 2, host.runtimeFingerprint, {}}, CompatibilityReason::UnsupportedContract},
+        {{host.os, host.arch, "0.9.0", 1, 1, host.runtimeFingerprint, {}}, CompatibilityReason::AppVersionTooOld},
+        {{host.os, host.arch, "invalid", 1, 1, host.runtimeFingerprint, {}}, CompatibilityReason::InvalidVersion},
+        {{host.os, host.arch, host.appVersion, 1, 1, "other-runtime", {}}, CompatibilityReason::RuntimeConstraint},
+        {{host.os, host.arch, host.appVersion, 1, 1, host.runtimeFingerprint, "other-version"}, CompatibilityReason::AdministratorPin}
+    };
+    for (const auto& c : cases) {
+        const auto result = evaluateCompatibility(eligible, c.host);
+        MIB_EXPECT(!result.compatible() && result.reason == c.reason, "specific rejection reason");
+        MIB_EXPECT(!result.diagnostic.isEmpty(), "actionable rejection diagnostic");
+    }
+    auto bounded = eligible;
+    bounded.nativePlugins.front().appMaxVersion = "1.0.9";
+    MIB_EXPECT(evaluateCompatibility(bounded, host).reason == CompatibilityReason::AppVersionTooNew,
+               "upper app bound has its own reason");
+    bounded.nativePlugins.front().appMaxVersion = "invalid";
+    MIB_EXPECT(evaluateCompatibility(bounded, host).reason == CompatibilityReason::InvalidVersion,
+               "invalid maximum fails closed");
+    bounded.nativePlugins.front().appMaxVersion = host.appVersion;
+    MIB_EXPECT(evaluateCompatibility(bounded, host).compatible(), "inclusive maximum remains supported");
+    bounded.nativePlugins.front().engineAbiVersion = 99;
+    bounded.nativePlugins.front().contractVersion = 99;
+    MIB_EXPECT(evaluateCompatibility(bounded, host).reason == CompatibilityReason::UnsupportedAbi,
+               "multiple failures have deterministic ABI-first precedence");
     return mib::test::exitCode();
 }

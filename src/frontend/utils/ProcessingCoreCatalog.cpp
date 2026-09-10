@@ -330,6 +330,54 @@ const NativePluginEntry* findNativePlugin(const VersionEntry& version,
     return nullptr;
 }
 
+CompatibilityResult evaluateCompatibility(const VersionEntry& version,
+                                          const CompatibilityHost& host) {
+    using R = CompatibilityReason;
+    const auto reject = [](R reason, const QString& description,
+                           const QString& required, const QString& actual) {
+        return CompatibilityResult{reason,
+            QStringLiteral("%1 (required: %2; current: %3)").arg(description, required, actual),
+            required, actual};
+    };
+    const auto* plugin = findNativePlugin(version, host.os, host.arch);
+    if (!plugin) {
+        const bool hasOs = std::any_of(version.nativePlugins.begin(), version.nativePlugins.end(),
+            [&](const NativePluginEntry& entry) {
+                return entry.os.compare(host.os.trimmed(), Qt::CaseInsensitive) == 0;
+            });
+        return reject(hasOs ? R::WrongArchitecture : R::WrongPlatform,
+                      hasOs ? QStringLiteral("No artifact for this architecture")
+                            : QStringLiteral("No artifact for this operating system"),
+                      QStringLiteral("matching native artifact"), hasOs ? host.arch : host.os);
+    }
+    if (plugin->engineAbiVersion != host.engineAbiVersion)
+        return reject(R::UnsupportedAbi, QStringLiteral("Unsupported engine ABI"),
+                      QString::number(plugin->engineAbiVersion), QString::number(host.engineAbiVersion));
+    if (plugin->contractVersion != host.contractVersion)
+        return reject(R::UnsupportedContract, QStringLiteral("Unsupported processing contract"),
+                      QString::number(plugin->contractVersion), QString::number(host.contractVersion));
+    const auto current = QVersionNumber::fromString(host.appVersion);
+    const auto minimum = QVersionNumber::fromString(plugin->appMinVersion);
+    const auto maximum = QVersionNumber::fromString(plugin->appMaxVersion);
+    if (current.isNull() || minimum.isNull() ||
+        (!plugin->appMaxVersion.isEmpty() && maximum.isNull()))
+        return reject(R::InvalidVersion, QStringLiteral("Cannot evaluate application version bounds"),
+                      plugin->appMinVersion + QStringLiteral("..") + plugin->appMaxVersion, host.appVersion);
+    if (current < minimum)
+        return reject(R::AppVersionTooOld, QStringLiteral("Application is too old"),
+                      plugin->appMinVersion, host.appVersion);
+    if (!plugin->appMaxVersion.isEmpty() && current > maximum)
+        return reject(R::AppVersionTooNew, QStringLiteral("Application is too new"),
+                      plugin->appMaxVersion, host.appVersion);
+    if (plugin->runtimeFingerprint != host.runtimeFingerprint)
+        return reject(R::RuntimeConstraint, QStringLiteral("Runtime fingerprint mismatch"),
+                      plugin->runtimeFingerprint, host.runtimeFingerprint);
+    if (!host.pinnedVersion.isEmpty() && host.pinnedVersion != version.version)
+        return reject(R::AdministratorPin, QStringLiteral("Administrator pin prevents activation"),
+                      host.pinnedVersion, version.version);
+    return {};
+}
+
 bool isAppCompatible(const NativePluginEntry& plugin, const QString& appVersion) {
     const auto current = QVersionNumber::fromString(appVersion);
     const auto minimum = QVersionNumber::fromString(plugin.appMinVersion);
