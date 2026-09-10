@@ -3,6 +3,14 @@
 > Snapshot of recently merged features and fixes, as of 2025-11 / 2025-12.
 > Refresh from `git log --oneline -20` when outdated.
 
+## In progress
+
+- **Issue #394 processing-core ABI v2 baseline** (2026-09-10) — expanded
+  `processing.science_golden` with exact mask fixtures and ring-gate outcomes;
+  documented current ownership and remaining delivery gates in
+  `docs/exec-plans/active/2026-09-10-processing-core-abi-v2.md`. Production
+  science is unchanged; local C++ validation is blocked by missing packages.
+
 ## Features shipped
 
 - **ProcessingService::stop() lost-wakeup hang** (2026-09-09) — The ASan

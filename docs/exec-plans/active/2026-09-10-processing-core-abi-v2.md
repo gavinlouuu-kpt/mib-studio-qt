@@ -1,0 +1,112 @@
+# Processing-core ABI v2 execution
+
+Status: active — phase 0 baseline expansion; C++ execution blocked locally
+
+Source of truth: [#301](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/301).
+Execution plan: [#394](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/394).
+Inventory reference: develop `e51c72a` (2026-09-10).
+
+## Goal
+
+Switch between legacy subtract/nested-ring and absdiff/Laplacian science on
+Windows and Linux, between operations, with exact profile and run provenance.
+Deliver the issue's small PR sequence; keep Contract 1 frozen while adding v2.
+
+## Ownership inventory
+
+| Concern | Current entry points / owner | Migration constraint |
+|---|---|---|
+| Mask | `ProcessingService::processMaskWithActiveKernel` -> `IProcessingKernel::processMask`; bundled implementation in `BundledProcessingKernel.cpp`, native adapter in `ProcessingCoreLoader.cpp` | ABI 1 transports only mask and empty decisions |
+| Empty classification | `classifyFrameWithActiveKernel` -> `isImageEmptyWithActiveKernel`; realtime empty/auto-background branches also call the helper | Historical directional mode differs from the explicit absolute flag used by realtime comparison |
+| Offline/batch frame | `computeProcessedFrame`, `processBatch`, async batch workers in `ProcessingService.cpp` | Keep leases, queues, record accumulation and tracking lifecycle host-owned |
+| Realtime branches | `realtimeLoop` calls mask, empty and `filterProcessedObjects` in inline, async/multi-image and ROI processing paths | Every branch must eventually consume one coherent v2 transaction |
+| Contours and metrics | `filterProcessedImage` -> `filterProcessedObjects` -> selected kernel `analyzeObjects`; default invokes `ProcessingScience.cpp` | ABI 1 plugins inherit host science; plugin mask equivalence is not full scientific rollback |
+| Ring science | `findContours`, `evaluateInnerContourObject`, `calculateRingRatio`, `classifyInvalidReasons` in `ProcessingScience.cpp` | Freeze tree retrieval, noise cutoff, hull area and sqrt(outer area - inner area), including strict ring bounds |
+| Target decisions | Inner/outer object evaluators set `isTargetGroup`; realtime emits first target in deterministic order | Science belongs to core; callback scheduling and trigger device belong to host |
+| Tracking | `matchTrackWithActiveKernel` -> kernel `matchTrack` -> `science::findMatchingTrack` | Matching decision is science; BatchTrack lifetime/deduplication is host-owned |
+| HDF5 | `Hdf5Service.cpp` compound `ProcessedFrameMetadataRecord`, append/read paths, core identity attributes | Historical `ringRatio` and contract/ABI metadata must remain readable |
+| Export/reanalysis | `HdfExportService.cpp`, `ReviewExport.cpp`, Python binding converters and `scripts/export_hdf5.py`, `reanalyse_hdf5.py`, `run_processing_conformance.py` | Add schema dispatch and optional metric presence; no historical relabeling |
+| Profiles | `ProfileManager::listProfiles`, `ProcessingCoreCatalog::isProcessingContractCompatible`, `ProcessingConfigJson.cpp`, `AppConfigWatcher.cpp` | Current app bounds + exact contract check; do not silently rewrite existing configs |
+| Selection | `ProcessingCoreDialog`, `ProcessingCoreSettings`, `ProcessingService::activateProcessingKernel` | Preserve trust, hard pin, pre-commit persistence callback and operation leases |
+
+All source names above resolve under `src/backend/processing` unless an owner
+or directory is specified. Frontend selection/profile owners are under
+`src/frontend/dialogs`, `src/frontend/utils`, and `src/frontend/system`.
+
+## Contract/ABI assumptions and identity
+
+`ProcessingCoreAbi.h` fixes engine ABI and processing contract to 1. Bundled
+release identity is 0.2.1, sourced from `bindings/python/pyproject.toml` by
+`src/backend/CMakeLists.txt`; build ID is `mib-processing-0.2.1` and source is
+`bundled`. Runtime fingerprint includes compiler/platform information.
+
+`ProcessingCoreLoader.cpp` rejects requirements outside host ABI/contract,
+checks exact version/fingerprint and descriptor/table, verifies hash and trust,
+then calls self-test. Windows uses restricted `LoadLibraryExW`; Linux uses
+`dlopen(RTLD_NOW | RTLD_LOCAL)`. Modules remain resident. None of these checks
+may be relaxed merely to make an item selectable. `ProcessingCoreCatalog.cpp`
+parses manifest schema 2: that schema number is not processing Contract 2.
+
+## Ring-specific integration surfaces
+
+- Config: `ProcessingTypes.h` ring limits/check, single-inner-contour policy;
+  `ProcessingConfigJson.cpp`, profile managed paths and Python `config_convert.h`.
+- Qt: `ProcessingSettingsDialog`, `ProcessingConfigDraft`, `ConfigTabs`,
+  `FrameViewerDialog`, `ExperimentMonitoringTab`, `HdfReviewTab`, `HdfMetricsModel`.
+- Feedback: `ProcessingService` ring callback, `AutofocusService`,
+  `NanopositionerTab`, `AppBackend` wiring.
+- React/bridge: `BackendFacade`, `desktop/src/bridge.ts`, `desktop/src/App.tsx`,
+  `desktop/src-tauri/src/lib.rs`.
+- Persistence/export: HDF5 compound member `ringRatio`, review/CSV exporters,
+  Python `filter_result_convert.h`, gold-standard JSON dataset/schema/comparator.
+- Diagnostics: `CrashStateMirror` carries ring metrics.
+
+Contract 2 needs capability-aware controls and absent metrics throughout these
+surfaces. A ring value of zero cannot stand in for unavailable Laplacian data.
+
+## Phase 0 fixture coverage
+
+The existing `processing.science_golden` test remains the frozen numeric oracle;
+new cases extend it without changing production code or any old expected value.
+
+| Fixture | Frozen evidence |
+|---|---|
+| Empty, bright, darker-than-background | Complete mask bytes + empty classification + borrowed image immutability |
+| Difference exactly at threshold | Strict threshold boundary produces zero mask |
+| No background | Direct intensity threshold path |
+| ROI edge/clipping | Complete clipped mask, zero exterior; existing science border validity case |
+| Morphology-sensitive speck | Non-empty pre-morph candidate, zero final mask |
+| Multiple ring objects | Existing ordered geometry, brightness, area, deformability, ring metrics |
+| Ring valid/invalid | Explicit 30–35 ring window; invalid object cannot trigger, metric retained |
+| Tracking sequence | Existing three-frame drift/stationary track goldens |
+| Target/non-target | Existing calibrated target window plus ring validity interaction |
+
+Inputs are deterministic source-defined fixtures; pixel goldens use explicit
+expected rectangles/zeros, not calls to the algorithm under test. The existing
+numeric oracle tolerance remains absolute 1e-9. Do not regenerate expected
+values from a candidate core. New pixel fixtures are source-reviewed but not
+yet executed against the C++ reference in this environment.
+
+## Acceptance and remaining delivery
+
+- [x] Inventory current seam, assumptions, identity and ring surfaces.
+- [x] Expand Contract-1 regression cases without changing production science.
+- [ ] Execute expanded goldens against unchanged reference on Linux/Windows.
+- [ ] Complete reusable machine-readable fixture/result harness for bundled/native cores.
+- [ ] Phase 1: coherent internal difference policy and proven failing/passing regression.
+- [ ] Phase 2: structured compatibility reasons and UI tests.
+- [ ] Phase 3: freeze Contract-2 config/result/Laplacian semantics with #297–299.
+- [ ] Phases 4–6: v2 POD ABI, negotiation, buffers and bundled host adapter.
+- [ ] Phases 7–8: self-contained legacy and absdiff/Laplacian implementations.
+- [ ] Phases 9–11: atomic activation, capabilities, profiles, UI and HDF5 provenance.
+- [ ] Phases 12–15: signed Windows/Linux artifacts, conformance and lifecycle qualification.
+
+## Decision log
+
+- 2026-09-10: Reuse the existing science golden test; do not create a competing
+  oracle or change its pinned numeric values. Add a watchdog for service teardown.
+- 2026-09-10: Empty classification is pre-morphology. Equal difference policies
+  do not imply that every non-empty candidate yields a nonzero final mask.
+- 2026-09-10: Local environment has no CMake/OpenCV development packages.
+  `apt-get update` fails on setgroups/seteuid permissions. Leave C++ validation
+  explicitly pending and do not progress to science/ABI changes behind this gate.

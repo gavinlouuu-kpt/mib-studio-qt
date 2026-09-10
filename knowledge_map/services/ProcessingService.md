@@ -509,3 +509,16 @@ current/max queue depth, batch size, worker count, and running state. See
   not the whole ROI). It also uses row pointers instead of `cv::Mat::at<>`
   and skips the `clone()` for already-single-channel input. These were
   per-object allocator/CPU costs that scaled with objects-per-frame.
+
+## ABI-v2 baseline work (2026-09-10, issue #394)
+
+The existing `processing.science_golden` oracle now also specifies exact legacy
+mask pixels for empty/bright/dark/threshold/ROI/morphology cases and enables the
+ring gate explicitly for valid/invalid target decisions. Production code is
+unchanged. C++ execution of the expanded suite is pending; this is not yet
+ABI-v2 qualification. Ownership inventory and remaining gates are in
+`docs/exec-plans/active/2026-09-10-processing-core-abi-v2.md`.
+
+Empty classification runs before morphology: an isolated candidate can be
+non-empty yet yield a zero final mask. Preserve this distinction when unifying
+the difference policy.
