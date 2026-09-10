@@ -68,3 +68,35 @@ does not claim full-recording analysis, cancellation during computation, signed
 bundle validation, crash recovery, or a clean-machine installer. Those production
 milestones remain open; absence of a registry wheel is not a reason to halt their
 source-based development.
+# Rust supervisor continuation
+
+Added `crates/mib-analysis` with a complete-file bundle digest gate and independently
+testable process supervisor. The caller supplies the trusted manifest hash; the
+installer must protect the runtime from mutation after checking. Paths cannot
+escape the bundle, symlinks/unlisted imports are rejected, and development bundles
+are refused by production callers. No production runtime has been packaged.
+
+One fresh child per native operation uses bounded private pipes and correlated
+handshake/results. Cancellation and generation changes kill the child without
+waiting for it to read a control message; deadlines include IO and exit, with a
+separate two-second reap bound. Unknown cleanup and dropped futures disable that
+supervisor. Linux forced parent exit kills the helper. Windows production remains
+explicitly unavailable pending Job Objects. stderr is discarded pending bounded
+diagnostic retention. No native/cxx/Tauri integration is claimed.
+
+Executed on Linux: all 10 Rust tests (including the installed Toolkit smoke test)
+pass normally and under nightly 1.100.0 ThreadSanitizer with rebuilt std; no race
+reports. Tests include 20 cancellation/generation stress iterations, Busy/stale
+cancel behavior, stalled IO, malformed/oversized/mismatched replies, crash after a
+reply, stderr flood, dropped future reaping, parent-death pidfd confirmation,
+bundle tampering, external digest mismatch, inventory/symlink/traversal rejection.
+The parent probe is one harness entry; public CI explicitly ignores the installed
+Toolkit smoke test because it has no private-repository credential. The selected
+test interpreter here had a locally built Toolkit wheel installed. Small test
+bundle fixtures use an external interpreter; they do not qualify redistribution.
+
+The 8 Python helper tests, Rust Clippy with warnings denied, formatting and docs
+checks also pass. Added public normal/TSan CI lanes for the stdlib-only process
+fixtures. The earlier all-target TSan attempt reached a rustdoc linkage failure;
+the required `--tests` lane succeeds. None of these checks replaces native-ledger,
+Windows, installer or actual NAS acceptance.

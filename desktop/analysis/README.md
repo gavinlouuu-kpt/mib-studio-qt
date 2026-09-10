@@ -5,6 +5,14 @@ stdin/stdout pipes by `test_helper.py`. It is not launched by Tauri yet and is
 not a production runtime. It opens no network listener, dataset, output file,
 camera, or trigger. Native Review remains responsible for bounded recording reads.
 
+`crates/mib-analysis` now provides independently tested Rust process supervision:
+digest-verified bundle inventory, deadlines, cancellation and Linux parent-death
+ownership. When the supervisor passes `--bundle-manifest`, the handshake also
+requires `bundle_sha256` and echoes the manifest/wheel identity. `production_ready`
+reflects the trusted manifest's distribution mode; unbundled development launch
+still reports false. The supervisor validates the bundle before executing it;
+a handshake claim alone is not trust. See `crates/mib-analysis/README.md`.
+
 The source dependency is `gavinlouuu-kpt/Biowork-toolkit` at
 `388924e5c9d95e0691b969be6238f3e94db817d4` (package `0.1.0`). Use a checkout at
 that revision, or a locally built wheel from it, for development. The registry
@@ -44,14 +52,13 @@ overflow scientific calculation/serialization fail closed. No arrays or datasets
 remain resident between requests.
 
 The endpoint is deliberately serial. Cancellation during calculation requires
-the future native supervisor to terminate/reap the child independently of this
+the Rust supervisor to terminate/reap the child independently of this
 channel; sending a cancel method behind a calculation is not supported. There is
 no pending-request queue or asynchronous publication in this endpoint.
 
-Before enabling the desktop capability, implement verified bundle-relative
-launch (no PATH/system Python fallback), signed runtime/wheel/helper digests,
-native operation-ledger integration, independent cancellation/deadlines, stale
-result rejection at the parent, bounded logging, Linux parent-death/Windows Job
-Object ownership, and restart classification. Clean-machine installers and NAS
+Before enabling the desktop capability, wire the supervisor to the native ledger,
+supply an installer-protected runtime with a trusted build pin, add bounded
+diagnostic retention, Windows Job Objects and durable restart classification.
+Clean-machine installers and NAS
 qualification remain required by issue #399. Protocol 1.0 is not frozen by this
 development endpoint.

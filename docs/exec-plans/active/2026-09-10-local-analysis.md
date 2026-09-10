@@ -1,7 +1,7 @@
 # Desktop local analysis — issue #399
 
-Status: active (native Review foundation and development helper endpoint implemented;
-production runtime publication and desktop supervision remain open)
+Status: active (native Review, development helper and independently tested Rust
+supervisor implemented; native-ledger integration and production packaging open)
 
 ## Goal and release boundary
 
@@ -69,16 +69,21 @@ Run the desktop with `MIB_BRIDGE_NO_CMAKE=1 cargo run --manifest-path desktop/sr
 not a qualified standalone installer. Build the native backend with both
 `MIB_ENABLE_HARDWARE_SDKS=OFF` and `MIB_ENABLE_MINDVISION=OFF`.
 
-## Frozen helper protocol proposal (M2; not implemented)
+## Production helper protocol proposal (M2; partially implemented)
 
-The production proposal below remains unimplemented. An experimental protocol
+The production integration below remains incomplete. An experimental protocol
 0.1 endpoint now lives in `desktop/analysis/helper.py`; its private-pipe tests
 exercise bounded Toolkit histogram/KDE pages, handshake, identity echo, generation
 advance/rejection, malformed input, budget limits and process exit. See
 `desktop/analysis/README.md` for the exact envelope and development command.
-It reports `production_ready: false` and is not connected to the desktop. It
-does not implement the production digest handshake, operation supervisor,
-independent cancellation, parent-death ownership or whole-dataset analysis.
+Unbundled launch reports `production_ready: false` and is not connected to the
+desktop. `crates/mib-analysis` now verifies a complete digest-pinned bundle,
+checks the manifest/wheel handshake and supervises a fresh child per operation.
+It implements bounded deadlines, cancellation, stale reply rejection and Linux
+parent death; no native operation IDs or durable ledger are duplicated in Rust.
+Unknown cleanup blocks further launches. Windows production is rejected until
+Job Object ownership is implemented. The native/cxx ledger adapter, actual signed
+runtime distribution, diagnostic retention and whole-dataset analysis remain open.
 
 Use one app-owned child process, launched from a verified bundle-relative path.
 No executable supplied by a webview and no PATH/system-Python fallback.
@@ -118,6 +123,10 @@ classify interrupted/unknown jobs on restart before enabling resume.
   UNC and mounted NAS. No hardware SDK requirement in installer qualification.
 - [ ] M2 implement the owned helper and packaging; crash/cancel/stale-generation/
   parent-exit/restart tests. A clean machine must not need system Python.
+- [x] M2 transport component: digest/inventory validation, single-flight private
+  pipes, deadlines/cancellation, crash/stale rejection and Linux parent-death tests.
+- [ ] M2 wire transport into the native operation ledger and Tauri; qualify Windows
+  Job Objects, durable restart classification and protected standalone runtime.
 - [ ] M3 shared histogram/KDE/scatter/review contracts and bounded UI retention.
 - [ ] M4 pinned authoritative reanalysis, separate result revisions, verified
   source/config/core provenance and native/packaged conformance.

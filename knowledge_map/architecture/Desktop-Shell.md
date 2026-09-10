@@ -246,3 +246,9 @@ It is not launched by Tauri and reports production readiness false. Version-only
 handshake is development validation, not bundle trust. Native operation ownership,
 cancellation, signed distribution identity and parent-exit handling must land before
 the desktop advertises helper-backed analysis.
+
+The standalone [[Analysis-Helper]] crate now implements bundle verification,
+private-pipe supervision, deadlines/cancellation and Linux parent death. It is
+not yet a Tauri dependency; the cxx/native operation adapter remains the gate for
+exposing helper jobs. Production runtime packaging and Windows ownership remain
+unqualified.

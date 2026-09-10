@@ -1,11 +1,12 @@
 """Development-only private-pipe endpoint for Toolkit-owned calculations.
 
-No network listener, file operations, or hardware methods. Production launch
-must wait for the verified bundle and native operation supervisor (issue #399).
+Reads only the optional bundle manifest; no dataset, output, network listener or
+hardware methods. Production launch awaits native ledger integration (issue #399).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import struct
@@ -90,9 +91,10 @@ def values(column):
 
 
 class Session:
-    def __init__(self):
+    def __init__(self, bundle=None):
         self.generation = None
         self.last_request = 0
+        self.bundle = bundle
 
     def dispatch(self, request):
         if set(request) != {
@@ -135,14 +137,17 @@ class Session:
 
     def calculate(self, method, params, generation):
         if self.generation is None:
-            if method != "handshake" or params != {"toolkit_version": TOOLKIT_VERSION}:
+            expected = {"toolkit_version": TOOLKIT_VERSION}
+            if self.bundle:
+                expected["bundle_sha256"] = self.bundle["bundle_sha256"]
+            if method != "handshake" or params != expected:
                 raise ProtocolError("Matching handshake required")
             import biowork_toolkit
 
             if biowork_toolkit.__version__ != TOOLKIT_VERSION:
                 raise ProtocolError("Toolkit version mismatch")
             self.generation = generation
-            return {
+            hello = {
                 "toolkit_version": TOOLKIT_VERSION,
                 "distribution": "development-only",
                 "production_ready": False,
@@ -150,6 +155,9 @@ class Session:
                 "max_rows": MAX_ROWS,
                 "max_message_bytes": MAX_MESSAGE,
             }
+            if self.bundle:
+                hello.update(self.bundle)
+            return hello
         if method == "select_generation":
             if params or generation <= self.generation:
                 raise ProtocolError("Generation must advance")
@@ -206,8 +214,33 @@ def main():
 
         msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
-    session = Session()
     try:
+        bundle = None
+        if len(sys.argv) != 1:
+            if len(sys.argv) != 3 or sys.argv[1] != "--bundle-manifest":
+                raise ProtocolError("Invalid launch arguments")
+            # The native supervisor verifies every bundle file against its
+            # externally pinned manifest before launch. Echo that identity;
+            # this is not a replacement for the supervisor's trust check.
+            with open(sys.argv[2], "rb") as stream:
+                raw = stream.read(MAX_MESSAGE + 1)
+            if len(raw) > MAX_MESSAGE:
+                raise ProtocolError("Oversized bundle manifest")
+            manifest = json.loads(raw, object_pairs_hook=unique_object)
+            if (
+                manifest["schema"] != 1
+                or manifest["toolkit_version"] != TOOLKIT_VERSION
+            ):
+                raise ProtocolError("Bundle version mismatch")
+            if manifest["distribution"] not in ("development", "production"):
+                raise ProtocolError("Unknown distribution")
+            bundle = {
+                "bundle_sha256": hashlib.sha256(raw).hexdigest(),
+                "wheel_sha256": manifest["files"][manifest["toolkit_wheel"]]["sha256"],
+                "distribution": manifest["distribution"],
+                "production_ready": manifest["distribution"] == "production",
+            }
+        session = Session(bundle)
         while (request := read_message(sys.stdin.buffer)) is not None:
             write_message(sys.stdout.buffer, session.dispatch(request))
     except (
@@ -218,6 +251,8 @@ def main():
         RecursionError,
         ImportError,
         BrokenPipeError,
+        OSError,
+        KeyError,
     ):
         # Fail closed without emitting an uncorrelated result or traceback/data.
         return 2

@@ -1978,3 +1978,10 @@ with strict budgets and request/generation identity. Tests run the real child
 against an installed development wheel. Tauri launch and production bundle trust
 remain pending; no capability is advertised. Registry directory-route repair is
 Toolkit PR #2. See [[../task/2026-09-10-local-analysis]].
+# 2026-09-10 — Analysis helper process supervisor (#399)
+
+Added the independently tested [[../architecture/Analysis-Helper]] Rust component:
+bundle digest/inventory checks, single-flight private pipes, deadline/cancellation,
+stale/crash rejection and Linux parent-death ownership. Ten tests pass normally
+and under TSan, including an installed Toolkit round trip. Native-ledger/Tauri
+wiring, Windows ownership and production runtime packaging remain open.
