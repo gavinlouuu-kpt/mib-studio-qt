@@ -1,0 +1,47 @@
+name: Profile registry CI
+on:
+  pull_request:
+    branches: [main, develop, dev/react-tauri]
+    paths:
+      - 'include/backend/profiles/**'
+      - 'src/backend/profiles/**'
+      - 'include/backend/processing/ProcessingCoreSha256.h'
+      - 'src/backend/processing/ProcessingCoreSha256.cpp'
+      - 'tests/profiles/**'
+      - 'supabase/**'
+      - '.github/workflows/profile-registry-ci.yml'
+  push:
+    branches: [develop]
+    paths:
+      - 'include/backend/profiles/**'
+      - 'src/backend/profiles/**'
+      - 'tests/profiles/**'
+      - 'supabase/**'
+permissions:
+  contents: read
+jobs:
+  registry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: supabase/package-lock.json
+      - name: PostgreSQL grants, RLS and lifecycle
+        run: |
+          npm ci --prefix supabase --ignore-scripts
+          npm test --prefix supabase
+      - name: Install standalone C++ dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev nlohmann-json3-dev
+      - name: Registry cache roundtrip and offline faults
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Iinclude \
+            src/backend/profiles/*.cpp \
+            src/backend/processing/ProcessingCoreSha256.cpp \
+            tests/profiles/profile_registry_test.cpp -lsqlite3 -o /tmp/profile-registry-test
+          timeout 30 /tmp/profile-registry-test

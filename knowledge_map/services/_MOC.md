@@ -38,3 +38,5 @@
 **Up**: [[../README|Vault home]] · **See also**:
 [[../architecture/Data-Flow]], [[../architecture/Threading-Model]],
 [[../diagnostics/_MOC|Diagnostics MOC]]
+
+- [[ProfileRegistryService]] — central registry/cache foundation (#398).

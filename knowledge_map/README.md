@@ -86,3 +86,5 @@ verifies wikilink integrity (enforced in CI).
 - `docs/` — user-facing how-tos (`docs/howto/*.md`) and integration notes
 - `docs/golden-principles.md` — mechanical rules for this repo
 - `knowledge_map/task/` — dated task records (historical design/debug notes)
+
+- [[services/ProfileRegistryService]] — central registry/cache foundation (#398); desktop integration pending.

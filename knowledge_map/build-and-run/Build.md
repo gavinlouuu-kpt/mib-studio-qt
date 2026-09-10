@@ -350,3 +350,10 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+## Profile registry foundation (#398)
+
+Registry sources are part of `mib_backend`; `profiles.registry` is in backend CTest.
+They use existing nlohmann JSON, SQLite and shared SHA-256 without Qt. Optional
+PostgreSQL policy tests run with `npm ci --prefix supabase && npm test --prefix supabase`
+(pinned PGlite development dependency). No new desktop run mode is enabled.

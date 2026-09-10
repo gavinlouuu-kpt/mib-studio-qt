@@ -69,3 +69,10 @@ the network.
 - `docs/howto/troubleshoot-crashes.md`
 - `docs/howto/safe-start-stop-egrabber.md`
 - `knowledge_map/task/qt_qpa_platform_plugin_missing_windows.md`
+
+## Profile registry foundation (#398)
+
+Registry sources are part of `mib_backend`; `profiles.registry` is in backend CTest.
+They use existing nlohmann JSON, SQLite and shared SHA-256 without Qt. Optional
+PostgreSQL policy tests run with `npm ci --prefix supabase && npm test --prefix supabase`
+(pinned PGlite development dependency). No new desktop run mode is enabled.

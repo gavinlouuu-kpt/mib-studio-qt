@@ -87,3 +87,5 @@ grep -r '\[\[' knowledge_map/ | <verify each target exists>
 
 If your PR has code changes but no vault changes, expect reviewers to push
 back.
+
+Central method registry/cache (#398): [[services/ProfileRegistryService]].
