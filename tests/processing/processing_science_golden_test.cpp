@@ -94,8 +94,8 @@ void maskGoldens() {
     rectangle(cv::Rect(6, 5, 5, 5)).setTo(255);
 
     const auto check = [&](const char* name, const cv::Mat& input, const cv::Mat& bg,
-                           const backend::processing::KernelRoi& roi,
-                           const cv::Mat& expected, bool expectedEmpty) {
+                           const backend::processing::KernelRoi& roi, const cv::Mat& expected,
+                           bool expectedEmpty) {
         const cv::Mat inputBefore = input.clone();
         const cv::Mat bgBefore = bg.clone();
         cv::Mat mask;
@@ -122,18 +122,17 @@ void maskGoldens() {
     check("bright foreground", bright, background, full, rectangle, false);
     cv::Mat dark = background.clone();
     dark(cv::Rect(6, 5, 5, 5)).setTo(0);
-    check("dark foreground is suppressed by legacy subtraction", dark, background,
-          full, zero, true);
+    check("dark foreground is suppressed by legacy subtraction", dark, background, full, zero,
+          true);
     cv::Mat atThreshold = background.clone();
     atThreshold(cv::Rect(6, 5, 5, 5)).setTo(120);
-    check("difference equal to threshold is excluded", atThreshold, background,
-          full, zero, true);
+    check("difference equal to threshold is excluded", atThreshold, background, full, zero, true);
     check("no background", rectangle, {}, full, rectangle, false);
 
     cv::Mat cropped = zero.clone();
     cropped(cv::Rect(8, 5, 3, 5)).setTo(255);
-    check("ROI clips foreground and zeros exterior", bright, background,
-          {8, 4, 6, 8}, cropped, false);
+    check("ROI clips foreground and zeros exterior", bright, background, {8, 4, 6, 8}, cropped,
+          false);
 
     // Empty classification deliberately precedes morphology. A rejected speck
     // is a non-empty candidate with an empty final mask; this is distinct from

@@ -9,7 +9,9 @@
   `processing.science_golden` with exact mask fixtures and ring-gate outcomes;
   documented current ownership and remaining delivery gates in
   `docs/exec-plans/active/2026-09-10-processing-core-abi-v2.md`. Production
-  science is unchanged; local C++ validation is blocked by missing packages.
+  science is unchanged; local GCC/OpenCV build now passes all nine targeted
+  science/core tests. Restored the standalone Authenticode test target required
+  by Windows native-core CI after observing MSB1009 on PR #396.
 
 ## Features shipped
 

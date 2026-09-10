@@ -1,6 +1,6 @@
 # Processing-core ABI v2 execution
 
-Status: active — phase 0 baseline expansion; C++ execution blocked locally
+Status: active — phase 0 baseline passes locally on Linux; Windows CI repair pending
 
 Source of truth: [#301](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/301).
 Execution plan: [#394](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/394).
@@ -84,14 +84,14 @@ new cases extend it without changing production code or any old expected value.
 Inputs are deterministic source-defined fixtures; pixel goldens use explicit
 expected rectangles/zeros, not calls to the algorithm under test. The existing
 numeric oracle tolerance remains absolute 1e-9. Do not regenerate expected
-values from a candidate core. New pixel fixtures are source-reviewed but not
-yet executed against the C++ reference in this environment.
+values from a candidate core. New pixel fixtures pass against the unchanged C++ reference on Linux.
 
 ## Acceptance and remaining delivery
 
 - [x] Inventory current seam, assumptions, identity and ring surfaces.
 - [x] Expand Contract-1 regression cases without changing production science.
-- [ ] Execute expanded goldens against unchanged reference on Linux/Windows.
+- [x] Execute expanded goldens against unchanged reference on Linux.
+- [ ] Execute expanded goldens on Windows; native CI target repair awaiting rerun.
 - [ ] Complete reusable machine-readable fixture/result harness for bundled/native cores.
 - [ ] Phase 1: coherent internal difference policy and proven failing/passing regression.
 - [ ] Phase 2: structured compatibility reasons and UI tests.
@@ -110,3 +110,38 @@ yet executed against the C++ reference in this environment.
 - 2026-09-10: Local environment has no CMake/OpenCV development packages.
   `apt-get update` fails on setgroups/seteuid permissions. Leave C++ validation
   explicitly pending and do not progress to science/ABI changes behind this gate.
+
+## Local build unblocked (2026-09-10)
+
+Downloaded CMake 4.4.3, Ninja 1.13.2 and clang-format 23.1.0. Extracted
+Ubuntu Noble development packages and runtime dependencies to a local prefix;
+verified Ubuntu's InRelease signature, package-index SHA-256 and each archive's
+SHA-256. No system package installation or UID-changing workaround was needed.
+Toolchain: GCC 13.3.0, OpenCV 4.6.0, HDF5 1.10.10, spdlog 1.12.0.
+
+Configured `build/issue-394` with Ninja, Release, `BUILD_TESTING=ON`,
+`MIB_BUILD_BACKEND_ONLY=ON`, `MIB_ENABLE_MINDVISION=OFF`,
+`MIB_ENABLE_HARDWARE_SDKS=OFF`, `MIB_USE_SENTRY=OFF`, and
+`CMAKE_DISABLE_FIND_PACKAGE_CURL=ON`. This is an intentional SDK-free
+processing/core validation build; no camera hardware or GUI qualification.
+
+Built `mib_backend_tests`, `processing_core_loader_test`,
+`processing_core_fixture_matrix_test`, `processing_core_cache_test`,
+`processing_core_ed25519_test` and `processing_core_abi_c_test` (including the
+native SO and fixture modules).
+
+`ctest --test-dir build/issue-394 -R 'processing\.(science_|core_)'
+--output-on-failure -j 2` passes **9/9**: science seam/golden, ABI C, loader,
+fixture matrix, Ed25519, cache, activation and activation stress. Formatted
+the new C++ ranges with clang-format.
+
+### Windows CI unblock
+
+PR #396's initial Linux backend and sanitizer workflows passed. The Windows
+native job failed with `MSB1009: processing_core_authenticode_test.vcxproj`
+missing: test-runner consolidation had removed the target still built by
+`.github/workflows/python-wheel.yml` and invoked by its signing verifier.
+Restored that test to `MIB_STANDALONE_BACKEND_TESTS`. A CMake configure
+regression using the actual registration function fails against the old list
+and passes against the repaired list. Native Windows build/signing verification
+still needs CI; local Linux testing does not substitute for Authenticode.

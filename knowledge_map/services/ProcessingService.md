@@ -515,8 +515,8 @@ current/max queue depth, batch size, worker count, and running state. See
 The existing `processing.science_golden` oracle now also specifies exact legacy
 mask pixels for empty/bright/dark/threshold/ROI/morphology cases and enables the
 ring gate explicitly for valid/invalid target decisions. Production code is
-unchanged. C++ execution of the expanded suite is pending; this is not yet
-ABI-v2 qualification. Ownership inventory and remaining gates are in
+unchanged. The expanded golden test and eight related core/seam tests pass
+in the local SDK-free Linux build; this is not yet ABI-v2 qualification. Ownership inventory and remaining gates are in
 `docs/exec-plans/active/2026-09-10-processing-core-abi-v2.md`.
 
 Empty classification runs before morphology: an isolated candidate can be
