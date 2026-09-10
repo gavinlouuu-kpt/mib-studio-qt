@@ -865,7 +865,10 @@ ProcessingService::FrameClassification ProcessingService::classifyFrameWithActiv
     bool empty = true;
     std::string detail;
     try {
-        if (!isImageEmptyWithActiveKernel(gray, backgroundView, config, roi, false, empty, &detail)) {
+        if (!isImageEmptyWithActiveKernel(
+                gray, backgroundView, config, roi,
+                backend::processing::BackgroundDifferenceMode::DirectionalSubtract, empty,
+                &detail)) {
             SPDLOG_WARN("ProcessingService: active core empty-frame check failed: {}", detail);
             c.kind = FrameClassification::Kind::ProcessingFailed;
             c.detail = detail.empty() ? "processing core rejected the frame" : detail;
@@ -1092,14 +1095,13 @@ void ProcessingService::noteRealtimeValidation(uint64_t idx, const std::vector<F
     if (objects > 0) experimentAccounting_.objectsDetected.fetch_add(objects, std::memory_order_relaxed);
 }
 
-bool ProcessingService::isImageEmptyWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
-                                                     const ProcessingConfig& config, const Roi& roi,
-                                                     bool absoluteBackgroundDifference, bool& empty,
-                                                     std::string* error) const {
+bool ProcessingService::isImageEmptyWithActiveKernel(
+    const cv::Mat& gray, const cv::Mat& background, const ProcessingConfig& config, const Roi& roi,
+    backend::processing::BackgroundDifferenceMode differenceMode, bool& empty,
+    std::string* error) const {
     const backend::processing::KernelConfig kernelConfig{
-        config.gaussian_blur_size,          config.bg_subtract_threshold,
-        config.morph_kernel_size,           config.morph_iterations,
-        config.empty_frame_pixel_threshold, absoluteBackgroundDifference};
+        config.gaussian_blur_size, config.bg_subtract_threshold,       config.morph_kernel_size,
+        config.morph_iterations,   config.empty_frame_pixel_threshold, differenceMode};
     const backend::processing::KernelRoi kernelRoi{roi.x, roi.y, roi.w, roi.h};
     std::shared_lock lock(processingKernelMutex_);
     if (!processingCoreSelectionAvailable_.load(std::memory_order_acquire)) {
@@ -2651,7 +2653,11 @@ void ProcessingService::realtimeInlineLoop() {
                 noteRealtimeAdmitted(idx);
                 if (!isImageEmptyWithActiveKernel(
                         autoCaptureEmptyCheck ? blurredCurr : grayROI, emptyBackground, emptyConfig,
-                        Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
+                        Roi{0, 0, roi.w, roi.h},
+                        autoCaptureEmptyCheck
+                            ? backend::processing::BackgroundDifferenceMode::AbsoluteDifference
+                            : backend::processing::BackgroundDifferenceMode::DirectionalSubtract,
+                        emptyFrame, &emptyError)) {
                     SPDLOG_ERROR("Realtime processing core empty check failed for frame {}: {}",
                                  idx, emptyError);
                     // A core failure is a ProcessingFailed outcome, never an empty
@@ -3098,7 +3104,11 @@ void ProcessingService::realtimeInlineLoop() {
                 noteRealtimeAdmitted(idx);
                 if (!isImageEmptyWithActiveKernel(
                         autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground, emptyConfig,
-                        Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
+                        Roi{0, 0, roi.w, roi.h},
+                        autoCaptureEmptyCheck
+                            ? backend::processing::BackgroundDifferenceMode::AbsoluteDifference
+                            : backend::processing::BackgroundDifferenceMode::DirectionalSubtract,
+                        emptyFrame, &emptyError)) {
                     SPDLOG_ERROR("Realtime processing core empty check failed for frame {}: {}",
                                  idx, emptyError);
                     // A core failure is a ProcessingFailed outcome, never an empty
@@ -3510,7 +3520,11 @@ void ProcessingService::realtimeInlineLoop() {
                 noteRealtimeAdmitted(idx);
                 if (!isImageEmptyWithActiveKernel(
                         autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground, emptyConfig,
-                        Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
+                        Roi{0, 0, roi.w, roi.h},
+                        autoCaptureEmptyCheck
+                            ? backend::processing::BackgroundDifferenceMode::AbsoluteDifference
+                            : backend::processing::BackgroundDifferenceMode::DirectionalSubtract,
+                        emptyFrame, &emptyError)) {
                     SPDLOG_ERROR("Realtime processing core empty check failed for frame {}: {}",
                                  idx, emptyError);
                     // A core failure is a ProcessingFailed outcome, never an empty

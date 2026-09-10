@@ -542,13 +542,10 @@ private:
                                      const Roi& roi,
                                      cv::Mat& mask,
                                      std::string* error = nullptr) const;
-    bool isImageEmptyWithActiveKernel(const cv::Mat& gray,
-                                      const cv::Mat& background,
-                                      const ProcessingConfig& config,
-                                      const Roi& roi,
-                                      bool absoluteBackgroundDifference,
-                                      bool& empty,
-                                      std::string* error = nullptr) const;
+    bool isImageEmptyWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
+                                      const ProcessingConfig& config, const Roi& roi,
+                                      backend::processing::BackgroundDifferenceMode differenceMode,
+                                      bool& empty, std::string* error = nullptr) const;
     void releaseProcessingCoreOperation() noexcept;
 
     std::vector<std::thread> workers_;

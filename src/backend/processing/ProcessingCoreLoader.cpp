@@ -93,9 +93,9 @@ mib_processing_kernel_config abiConfig(const KernelConfig& config) {
     result.morphology_kernel_size = config.morphologyKernelSize;
     result.morphology_iterations = config.morphologyIterations;
     result.empty_frame_pixel_threshold = config.emptyFramePixelThreshold;
-    result.flags = config.absoluteBackgroundDifference
-        ? MIB_PROCESSING_KERNEL_FLAG_ABSOLUTE_BACKGROUND_DIFFERENCE
-        : 0u;
+    result.flags = config.backgroundDifferenceMode == BackgroundDifferenceMode::AbsoluteDifference
+                       ? MIB_PROCESSING_KERNEL_FLAG_ABSOLUTE_BACKGROUND_DIFFERENCE
+                       : 0u;
     return result;
 }
 

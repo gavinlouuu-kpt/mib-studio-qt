@@ -60,7 +60,9 @@ backend::processing::KernelConfig toConfig(const mib_processing_kernel_config& v
             value.morphology_kernel_size,
             value.morphology_iterations,
             value.empty_frame_pixel_threshold,
-            (value.flags & MIB_PROCESSING_KERNEL_FLAG_ABSOLUTE_BACKGROUND_DIFFERENCE) != 0};
+            (value.flags & MIB_PROCESSING_KERNEL_FLAG_ABSOLUTE_BACKGROUND_DIFFERENCE) != 0
+                ? backend::processing::BackgroundDifferenceMode::AbsoluteDifference
+                : backend::processing::BackgroundDifferenceMode::DirectionalSubtract};
 }
 
 backend::processing::KernelRoi toRoi(const mib_processing_roi& value) {

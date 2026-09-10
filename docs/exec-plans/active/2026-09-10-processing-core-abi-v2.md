@@ -1,6 +1,6 @@
 # Processing-core ABI v2 execution
 
-Status: active — phase 0 baseline passes locally on Linux; Windows CI repair pending
+Status: active — phases 0–1 validated on Linux; Windows qualification deferred
 
 Source of truth: [#301](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/301).
 Execution plan: [#394](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/394).
@@ -93,7 +93,7 @@ values from a candidate core. New pixel fixtures pass against the unchanged C++ 
 - [x] Execute expanded goldens against unchanged reference on Linux.
 - [ ] Execute expanded goldens on Windows; native CI target repair awaiting rerun.
 - [ ] Complete reusable machine-readable fixture/result harness for bundled/native cores.
-- [ ] Phase 1: coherent internal difference policy and proven failing/passing regression.
+- [x] Phase 1: coherent internal difference policy and proven failing/passing regression.
 - [ ] Phase 2: structured compatibility reasons and UI tests.
 - [ ] Phase 3: freeze Contract-2 config/result/Laplacian semantics with #297–299.
 - [ ] Phases 4–6: v2 POD ABI, negotiation, buffers and bundled host adapter.
@@ -145,3 +145,26 @@ Restored that test to `MIB_STANDALONE_BACKEND_TESTS`. A CMake configure
 regression using the actual registration function fails against the old list
 and passes against the repaired list. Native Windows build/signing verification
 still needs CI; local Linux testing does not substitute for Authenticode.
+
+## Phase 1: shared difference policy (2026-09-10)
+
+`KernelConfig` now names directional subtraction and absolute difference with
+`BackgroundDifferenceMode`. Both mask and pre-morphology empty classification
+consume the same blur/difference helper. ABI 1 retains its existing flag and
+layout; adapters translate it explicitly. Directional subtraction remains the
+default, including legacy science processing. Realtime auto-background retains
+its explicit absolute comparison. No persisted configuration is migrated.
+
+The loader regression checks independent expected masks for both foreground
+polarities and both policies through bundled and native implementations. Blur
+and morphology are identity operations in this test to isolate the policy from
+legacy ROI-edge morphology. Restoring directional-only mask behavior produces
+four failed assertions; restoring the fix passes. Existing numeric and pixel
+Contract-1 goldens are unchanged. Processing package version is bumped to 0.2.2
+for the corrected absolute-mask behavior; signed release publication is separate.
+
+Linux Release validation: all ten selected science/core tests and realtime
+throughput pass, including activation stress, trust, cache and ABI fixtures.
+Qt development dependencies have also been provisioned for the next UI phase.
+Per user direction, continue implementation and testing locally; Windows
+qualification will happen later and does not block the remaining phases.

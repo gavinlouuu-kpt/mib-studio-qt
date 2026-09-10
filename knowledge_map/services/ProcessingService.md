@@ -29,6 +29,17 @@ host supplies borrowed Gray8 image views and owns the output buffer. The
 bundled implementation and plugin adapter share `IProcessingKernel`, so the
 same mask/empty-frame algorithm is used on both sides of the boundary.
 
+## Difference policy
+
+`KernelConfig::backgroundDifferenceMode` explicitly selects directional
+subtraction (the Contract-1 default) or absolute difference. Mask generation
+and pre-morphology empty classification share the same blur/difference helper.
+ABI 1 preserves its layout and translates its existing absolute-difference flag.
+Realtime auto-background comparison keeps absolute mode; ordinary legacy
+science keeps directional mode. Version 0.2.2 fixes dark-foreground mask
+generation when absolute mode is explicitly requested. Frozen Contract-1
+goldens remain unchanged; no profile migration or Contract-2 activation occurs.
+
 ## Processing-core selection
 
 - `activateProcessingKernel(kernel)` swaps the selected kernel only at a safe
