@@ -1,6 +1,7 @@
 # Desktop local analysis — issue #399
 
-Status: active (native Review foundation implemented; bundled-runtime release blocked)
+Status: active (native Review foundation and development helper endpoint implemented;
+production runtime publication and desktop supervision remain open)
 
 ## Goal and release boundary
 
@@ -70,6 +71,15 @@ not a qualified standalone installer. Build the native backend with both
 
 ## Frozen helper protocol proposal (M2; not implemented)
 
+The production proposal below remains unimplemented. An experimental protocol
+0.1 endpoint now lives in `desktop/analysis/helper.py`; its private-pipe tests
+exercise bounded Toolkit histogram/KDE pages, handshake, identity echo, generation
+advance/rejection, malformed input, budget limits and process exit. See
+`desktop/analysis/README.md` for the exact envelope and development command.
+It reports `production_ready: false` and is not connected to the desktop. It
+does not implement the production digest handshake, operation supervisor,
+independent cancellation, parent-death ownership or whole-dataset analysis.
+
 Use one app-owned child process, launched from a verified bundle-relative path.
 No executable supplied by a webview and no PATH/system-Python fallback.
 A length-prefixed UTF-8 JSON control channel over inherited private pipes carries
@@ -133,6 +143,12 @@ Record executed gates and environment limits in the task note, not as checked
 clean-machine milestones above.
 
 ## Decision log
+
+- 2026-09-10 continuation: registry investigation found no toolkit tags, releases
+  or release workflow runs. The publisher also omitted exact trailing-slash pip
+  keys on R2; Toolkit PR #2 fixes this with fail-before/pass-after coverage.
+  Published wheels block production packaging, not development at the pinned
+  source revision. Continue M2 development without claiming release readiness.
 
 - 2026-09-10: keep native Review native; a Python helper is only for toolkit-owned
   features. Preserve one authoritative scientific implementation.

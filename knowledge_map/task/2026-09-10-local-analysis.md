@@ -40,3 +40,31 @@ qualification. Observed size/mtime identity is not content-verified identity.
 The documented 0.1.0 toolkit release manifest, latest manifest and PEP 503
 package index all returned 404; production artifact
 pinning remains blocked until an actual released wheel/digest is available.
+# Registry and helper continuation
+
+Investigated the registry 404: Toolkit has no tags/releases/release workflow runs;
+MiB's manifest on the same domain returns 200. Toolkit's R2 publisher also omitted
+the exact pip directory keys. Fixed in
+https://github.com/gavinlouuu-kpt/Biowork-toolkit/pull/2 with regression failure on
+the original source, 57 passing tests, clean Ruff and successful wheel/sdist build.
+No release or credential changes performed.
+
+Added `desktop/analysis/helper.py` and its executable private-pipe harness. Source
+pin remains Toolkit `388924e5c9d95e0691b969be6238f3e94db817d4`, version 0.1.0;
+the registry patch has no scientific package changes. Validation uses an installed
+locally built wheel, with isolated Python (`-I`), not an import mock. Protocol 0.1
+has bounded framing, monotonic request IDs, operation/generation identity, strict
+handshake, generation invalidation and Toolkit histogram/KDE page parity. Tests
+cover bad envelopes/frames, budgets, replay, nonfinite/overflow inputs, maximum
+pages, repeated exits and parent-forced termination/reaping. There are no new
+application threads or shared-state changes.
+
+Executed continuation gates: 8 subprocess integration tests passed on Linux
+Python 3.12 (including 10 repeated maximum-page runs); Ruff and `check_docs.py`
+passed. Windows and production supervisor behavior were not exercised.
+
+The helper is development-only and does not enable any desktop capability. It
+does not claim full-recording analysis, cancellation during computation, signed
+bundle validation, crash recovery, or a clean-machine installer. Those production
+milestones remain open; absence of a registry wheel is not a reason to halt their
+source-based development.

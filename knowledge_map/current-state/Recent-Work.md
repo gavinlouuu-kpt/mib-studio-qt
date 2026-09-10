@@ -1971,3 +1971,10 @@ Full native experiment acceptance remains open.
   hardware command denial, bounded metadata/sparse frame Review, observed-source
   invalidation and persisted completion; bridge ABI 14. Toolkit packaging and
   clean-machine/NAS qualification remain open. See [[../task/2026-09-10-local-analysis]].
+# 2026-09-10 — Local analysis helper development endpoint (#399)
+
+Private-pipe protocol 0.1 now exercises Toolkit histogram/KDE page calculations
+with strict budgets and request/generation identity. Tests run the real child
+against an installed development wheel. Tauri launch and production bundle trust
+remain pending; no capability is advertised. Registry directory-route repair is
+Toolkit PR #2. See [[../task/2026-09-10-local-analysis]].

@@ -238,3 +238,11 @@ Persisted completion/accounting is displayed; absent raw scientific metrics are
 shown as unavailable. This is not yet the one-installer product: bundled toolkit,
 helper lifecycle and Windows/Linux/NAS qualification remain open in the
 [execution plan](../../docs/exec-plans/active/2026-09-10-local-analysis.md).
+
+The experimental `desktop/analysis/helper.py` endpoint is tested separately over
+private framed pipes; `desktop/analysis/README.md` specifies protocol 0.1 and its
+bounded histogram/KDE **page** methods. It uses Toolkit, not rewritten science.
+It is not launched by Tauri and reports production readiness false. Version-only
+handshake is development validation, not bundle trust. Native operation ownership,
+cancellation, signed distribution identity and parent-exit handling must land before
+the desktop advertises helper-backed analysis.
