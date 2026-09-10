@@ -29,10 +29,14 @@ for the inventory, helper protocol proposal, dependency pin and milestone gates.
 - Frontend: strict TypeScript/Vite build and 117/117 Vitest tests passed.
 - ThreadSanitizer build of `backend.analysis_workspace`: passed, no reported races.
 - Documentation, screenshot-index and generated bridge-contract checks passed.
+- `cargo check --manifest-path desktop/src-tauri/Cargo.toml --features analysis-only`
+  passed with provisioned Linux GTK/WebKit dependencies. This is compilation,
+  not a real-window or clean-installer acceptance test.
 
 Windows clean-machine/mapped-drive/UNC, real NAS failures, standalone installer,
 owned helper, toolkit parity, reanalysis, derivatives and optional sync are not
 claimed. POSIX open-handle rename is a local source-loss simulation, not NAS
 qualification. Observed size/mtime identity is not content-verified identity.
-The documented 0.1.0 toolkit release manifest returned 404; production artifact
+The documented 0.1.0 toolkit release manifest, latest manifest and PEP 503
+package index all returned 404; production artifact
 pinning remains blocked until an actual released wheel/digest is available.
