@@ -31,7 +31,8 @@
   (`InvalidationKey`: capture generation + readiness, effective camera source
   + fallback flag, active delivery mode, processing config version, raw
   `config.json` sha, core version/sha/pin, background generation, ROI,
-  pixel-to-micron factor, output path, profile id, unresolved fault). A stable
+  pixel-to-micron factor, frame geometry/format, buffer byte budget, flush
+  interval, output path, profile id, unresolved fault). A stable
   state keeps its generation, so a preflight stays usable until something
   actually changes.
 - `start(ExperimentStartRequest{outputPath, readinessGeneration, profileId,
@@ -114,9 +115,8 @@ append only, never renumber.
    `experiment.saveFailed` is latched and the state is `Failed`.
 
 The worker also runs the periodic flush while Active: every 250 ms it
-submits `flushBufferedFrames(hdf5)` when the buffered count reaches
-`ProcessingService::getFlushInterval()` (`status().flushing` is true during
-the submission).
+submits any partial batch, and wakes earlier on count/byte pressure
+(`status().flushing` is true during the submission).
 - `reportUnresolvedFault(code, message)` / `clearUnresolvedFault()`: a save
   or provenance failure from the last run blocks the next Start
   (`lifecycle.fault` gate) until the operator acknowledges it.
@@ -196,6 +196,7 @@ finalization. Overflow is surfaced through the existing fatal-save-error path.
 Readiness now checks full-frame original + mask + configured series bytes. An
 impossible payload blocks Start; a count threshold exceeding byte capacity warns
 that byte-pressure flushing takes precedence (the recording no longer starves).
-Buffer byte budget and flush interval changes invalidate readiness. A small
+Frame geometry/format, buffer byte budget and flush interval changes invalidate
+readiness, including geometry changes without a capture lifecycle transition. A small
 destination HDF5 roundtrip is cached by readiness generation for up to 30 seconds;
 it verifies format/access only and explicitly does not certify sustained speed.

@@ -281,6 +281,8 @@ bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o
            backgroundGeneration == o.backgroundGeneration && roiX == o.roiX && roiY == o.roiY &&
            roiW == o.roiW && roiH == o.roiH && pixelToMicron == o.pixelToMicron &&
            outputPath == o.outputPath && profileId == o.profileId && faulted == o.faulted &&
+           frameWidth == o.frameWidth && frameHeight == o.frameHeight &&
+           pixelFormat == o.pixelFormat && frameGeometryKnown == o.frameGeometryKnown &&
            bufferBytes == o.bufferBytes && flushInterval == o.flushInterval;
 }
 
@@ -410,6 +412,10 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     k.outputPath = outputPath;
     k.profileId = profileId;
     k.faulted = faultActive_;
+    k.frameWidth = c.frameWidth;
+    k.frameHeight = c.frameHeight;
+    k.pixelFormat = c.pixelFormat;
+    k.frameGeometryKnown = c.frameGeometryKnown;
     k.bufferBytes = backend_.processing().getMaxBufferedBytes();
     k.flushInterval = backend_.processing().getFlushInterval();
     return k;

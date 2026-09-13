@@ -249,6 +249,23 @@ int main()
         stopCapture(backend);
         const auto stopped = coord.evaluateReadiness(out1);
         MIB_EXPECT(!stopped.ready && stopped.generation != before.generation, "stop invalidates");
+        // Geometry can change independently of the capture lifecycle (SDK ROI /
+        // format renegotiation). Its payload gate must invalidate prior preflight.
+        const auto budget = proc.getMaxBufferedBytes();
+        proc.setMaxBufferedBytes(2 * 96 * 96);
+        auto store = backend.getFrameStore();
+        pushMat(*store, cv::Mat(96, 96, CV_8UC1, cv::Scalar(0)), 9000);
+        const auto small = coord.evaluateReadiness(out1);
+        pushMat(*store, cv::Mat(192, 96, CV_8UC1, cv::Scalar(0)), 9001);
+        const auto large = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(small, "storage.buffer") != GateStatus::Fail &&
+                       statusOf(large, "storage.buffer") == GateStatus::Fail,
+                   "changed geometry changes payload feasibility");
+        MIB_EXPECT(large.generation != small.generation,
+                   "frame geometry invalidates readiness without a lifecycle change");
+        MIB_EXPECT(coord.evaluateReadiness(out1).generation == large.generation,
+                   "unchanged frame geometry keeps readiness stable");
+        proc.setMaxBufferedBytes(budget);
         MIB_REQUIRE(startCapture(backend), "restart capture");
         const auto restarted = coord.evaluateReadiness(out1);
         MIB_EXPECT(restarted.ready && restarted.generation != before.generation && restarted.generation != stopped.generation,

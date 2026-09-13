@@ -1987,3 +1987,10 @@ Issue 403 implementation: explicit Stop-series handoff, byte/count pressure
 wakeups, fatal overflow reporting, buffer feasibility + destination roundtrip
 readiness, post-stop queue rejection and calibration sample-preserving preview
 policy. See the reproduction task for regression evidence and validation limits.
+
+## 2026-09-13 — Issue 403 readiness continuation
+
+- Include frame dimensions, pixel format and geometry availability in preflight
+  invalidation. A changed payload can no longer retain its previous readiness
+  generation. Regression changes geometry within one capture lifecycle and
+  checks both payload feasibility and stable/changed generations.

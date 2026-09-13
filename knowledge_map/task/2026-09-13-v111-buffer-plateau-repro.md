@@ -228,3 +228,19 @@ Together with the prior six-test run this covers seven distinct focused tests.
 Adjacent Release checks also pass (4/4): recording.experiment_roundtrip,
 integration.e2e_live_view_latency, integration.e2e_realtime_throughput and
 processing.realtime_drop_frames_default.
+
+### Follow-up: invalidate readiness on delivered geometry changes
+
+Review of PR #404 found that the payload gate uses delivered frame dimensions,
+but the invalidation key omitted dimensions, format and geometry availability.
+A regression with capture stopped (stable lifecycle generation) injects 96x96
+then 96x192 frames into the store under a two-96x96-image byte budget. Before the
+fix, the payload gate changed to Fail but readiness retained the same generation;
+the explicit generation assertion failed. The key now includes those frame
+properties. Unchanged geometry is also asserted to keep a stable generation.
+
+Validation: Release readiness plus all four issue-403 recording regressions
+passed (5/5); updated readiness passed under TSan (1/1), using the same existing
+suppressions and process-local ASLR workaround noted above. Docs and screenshot
+checks passed. This does not qualify the original Windows/illumination incident
+or sustained destination throughput/capacity for a planned duration.

@@ -114,6 +114,8 @@ private:
         std::string outputPath;
         std::string profileId;
         bool faulted{false};
+        uint64_t frameWidth{0}, frameHeight{0}, pixelFormat{0};
+        bool frameGeometryKnown{false};
         uint64_t bufferBytes{0};
         size_t flushInterval{0};
         bool operator==(const InvalidationKey& o) const;
