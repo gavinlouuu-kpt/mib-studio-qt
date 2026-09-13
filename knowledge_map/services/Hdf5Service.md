@@ -224,3 +224,7 @@ are contained: the original fatal error remains latched and Stop returns false.
 and 25 rounds of four simultaneous Stop callers with a watchdog and exact
 accepted/written accounting. These are queue API regressions, not proof of the
 original Windows incident's cause.
+
+Experiment finalization persists coordinator fatal-save flags/reasons alongside
+the counters, even when the final data drain succeeds. The accounting schema is
+unchanged; a successful HDF5 append does not erase the run's fatal outcome.

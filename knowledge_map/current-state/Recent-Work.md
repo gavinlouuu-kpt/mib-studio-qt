@@ -2001,3 +2001,11 @@ policy. See the reproduction task for regression evidence and validation limits.
   hang from simultaneous writer joins. Contain notification exceptions and
   serialize concurrent Stop calls; add asserted fault/concurrency coverage.
   See [[../task/2026-09-13-recording-queue-crash-hunt]].
+
+## 2026-09-13 — Application-level finalization fault hunt
+
+- Reproduced a Stop-worker abort caused by a throwing status observer, and a
+  fatal-save outcome missing from reopened HDF5 accounting. Coordinator now
+  contains observer exceptions and persists the fatal flag/original reason.
+  Extended readiness lifecycle/reopen regression covers both.
+  See [[../task/2026-09-13-recording-queue-crash-hunt]].

@@ -65,3 +65,33 @@ but `python-wheel.yml` still builds it and passes its exact `.exe` path to the
 signing probe. Restore the test to `MIB_STANDALONE_BACKEND_TESTS`; this preserves
 the existing workflow/command contract. Windows execution awaits CI; Linux
 cannot validate Authenticode. This is separate from the two queue defects.
+
+## Continued application-level fault hunt
+
+Base: PR #404 commit 1b5c649. No hardware changes or user recording mutations.
+
+1. Extended `backend.experiment_readiness`'s existing fatal-save test to reopen
+   the finalized file and inspect `readRunAccounting`. Both new assertions failed:
+   fatal flag/Failed completion absent, and fatal reason differed from terminal
+   status. The fatal-save callback changes coordinator state, but finalization
+   previously copied the fatal reason into accounting only when drain failed.
+   Fix: include an already-fatal run even if drain succeeds, preserving the
+   original reason rather than replacing it with a generic drain error.
+2. Injected a standard exception into the status observer at Stopping. The actual
+   coordinator worker terminated the backend test process (exit 134, stderr
+   `injected status observer failure`) before completion. Fix: contain standard
+   and unknown observer exceptions, log them, and reacquire the lifecycle lock.
+   Test now throws at Starting and Stopping, plus an unknown exception at terminal
+   notification; still requires clean finalization, HDF5 reopen/accounting,
+   subsequent fatal run and shutdown run. This extends the existing watchdog and
+   concurrency/lifecycle coverage; no new test-only production hook is needed.
+
+These are real coordinator paths exercised with synthetic callbacks/mock capture.
+Whether the production observer throws in the filmed Windows run remains unknown.
+The fatal-save injection tests propagation, not an actual disk-full condition.
+
+Application-fault validation: 10/10 focused tests passed in Release and the same
+10/10 under TSan (readiness with throwing observers/fatal-file reopen, recording
+accounting and roundtrip, pipeline stress, four issue-403 scenarios, two queue
+tests). Existing suppressions/process-local ASLR workaround only; no new
+suppression. Docs/screenshot-manifest and whitespace checks pass.

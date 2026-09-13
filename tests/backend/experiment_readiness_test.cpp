@@ -37,6 +37,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -444,8 +445,14 @@ int main()
             std::lock_guard<std::mutex> lk(tMutex);
             seen.push_back(s.state);
             if (s.terminal) terminal = s;
+            // A UI/bridge observer is not allowed to abort the run's worker.
+            if (s.state == backend::app::ExperimentRunState::Starting ||
+                s.state == backend::app::ExperimentRunState::Stopping)
+                throw std::runtime_error("injected status observer failure");
+            if (s.terminal) throw 42;
         });
-        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::NotActive, "NotActive when idle");
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::NotActive,
+                   "NotActive when idle");
         const auto out = (td.path() / "finalize_run.h5").string();
         auto r = coordinator.evaluateReadiness(out);
         MIB_REQUIRE(r.ready, "ready for finalize test");
@@ -529,6 +536,15 @@ int main()
         MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "Idle once the fault is cleared");
         backend::services::Hdf5Service reader;
         MIB_EXPECT(reader.loadFile(out), "failed run's file is readable");
+        backend::recording::RecordingAccountingSnapshot failedAccounting;
+        MIB_REQUIRE(reader.readRunAccounting(failedAccounting), "failed accounting reloads");
+        MIB_EXPECT(failedAccounting.fatalError &&
+                       failedAccounting.completion ==
+                           backend::recording::RunCompletionState::Failed,
+                   "reopened file retains fatal completion, never successful accounting");
+        MIB_EXPECT(failedAccounting.fatalMessage == s.completionReason,
+                   "persisted fatal reason matches terminal status");
+
         reader.closeFile();
     }
     {

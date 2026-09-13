@@ -845,12 +845,19 @@ void ExperimentCoordinator::publishLocked(std::unique_lock<std::mutex>& lk, cons
         cb = statusCallback_;
     }
     lk.unlock();
-    if (cb) cb(s);
+    try {
+        if (cb) cb(s);
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("ExperimentCoordinator: status observer failed: {}", e.what());
+    } catch (...) {
+        SPDLOG_ERROR("ExperimentCoordinator: status observer threw an unknown exception");
+    }
+    // Observers are best effort: always reacquire the lifecycle lock and
+    // continue the transaction, especially the Stop drain/file closure.
     lk.lock();
 }
 
-std::optional<RunConfigurationSnapshot> ExperimentCoordinator::finish()
-{
+std::optional<RunConfigurationSnapshot> ExperimentCoordinator::finish() {
     std::lock_guard<std::mutex> lk(mutex_);
     return activeRun_ ? activeRun_ : lastRun_;
 }
@@ -972,9 +979,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     const uint64_t endNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     auto accounting = proc.experimentAccountingSnapshot();
-    if (!flushOk) {
+    if (failed || !flushOk) {
         accounting.fatalError = true;
-        accounting.fatalMessage = "experiment drain or persistence failed";
+        accounting.fatalMessage = failed ? failMessage : "experiment drain or persistence failed";
         accounting = recording::reconcile(accounting);
     }
     // 5-6. Metadata, accounting, provenance, config JSON; close.

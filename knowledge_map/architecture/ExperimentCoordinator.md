@@ -200,3 +200,17 @@ Frame geometry/format, buffer byte budget and flush interval changes invalidate
 readiness, including geometry changes without a capture lifecycle transition. A small
 destination HDF5 roundtrip is cached by readiness generation for up to 30 seconds;
 it verifies format/access only and explicitly does not certify sustained speed.
+
+## Fault containment at finalization (2026-09-13)
+
+Status observers run outside the lifecycle mutex. Standard and unknown observer
+exceptions are logged and contained, and the lifecycle mutex is always
+reacquired: UI/bridge notification failure cannot unwind Start or terminate the
+Stop worker before file closure. Observers still must not block.
+
+A fatal-save request is copied into the accounting snapshot before writing it to
+HDF5, retaining the original fatal reason even if all queued writes happen to
+drain successfully. Previously the terminal status could say Failed while the
+reopened file lacked the fatal flag/reason. The readiness regression injects both
+observer exceptions and a fatal-save request, and checks closure, subsequent runs,
+and independently reloaded accounting.
