@@ -213,3 +213,14 @@ write/close/reopen pixel comparison in the destination's existing directory or
 nearest existing ancestor. Cache validity follows readiness generation and a
 30-second TTL. Probe success is format/access validation, NOT sustained bandwidth
 or power-loss durability. Cleanup removes only the generated probe paths.
+
+## Write-queue fault containment
+
+`HdfWriteQueue` serializes concurrent `flushAndStop()` callers around the writer
+join (without holding the queue mutex). Error callbacks execute on the failing
+submitter/writer and must not stop or destroy their own queue. Callback exceptions
+are contained: the original fatal error remains latched and Stop returns false.
+`backend.hdf_write_queue_fault` injects writer/notification exceptions, overflow,
+and 25 rounds of four simultaneous Stop callers with a watchdog and exact
+accepted/written accounting. These are queue API regressions, not proof of the
+original Windows incident's cause.

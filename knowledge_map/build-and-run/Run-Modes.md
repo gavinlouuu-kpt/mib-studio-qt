@@ -69,3 +69,7 @@ the network.
 - `docs/howto/troubleshoot-crashes.md`
 - `docs/howto/safe-start-stop-egrabber.md`
 - `knowledge_map/task/qt_qpa_platform_plugin_missing_windows.md`
+
+The `hdf_write_queue_fault_test` backend test requires no camera or application
+UI. Optional arguments `throw`, `overflow`, and `stop` isolate fault scenarios;
+no argument runs all scenarios with a bounded watchdog.

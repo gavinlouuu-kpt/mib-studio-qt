@@ -118,3 +118,7 @@ container WebKitGTK workarounds (`WEBKIT_DISABLE_DMABUF_RENDERER=1`,
 
 - [[Build]] for presets and commands.
 - `docs/howto/runtime-deploy.md` for runtime deployment details.
+
+The write-queue fault regression uses only C++17/Threads and the existing test
+support headers; it adds no dependency. It can also be built standalone with
+`c++ -std=c++17 -pthread -Iinclude -Itests tests/backend/hdf_write_queue_fault_test.cpp`.

@@ -7,6 +7,7 @@
 ## By theme
 
 ### Recording investigations
+- [[../task/2026-09-13-recording-queue-crash-hunt]] — throwing-callback abort and concurrent-Stop hang reproductions/fixes.
 - `task/2026-09-13-v111-buffer-plateau-repro.md` — byte-cap / flush-threshold plateau reproduced on v1.1.1; production fix pending.
 
 ### Reliability release (epic #371)

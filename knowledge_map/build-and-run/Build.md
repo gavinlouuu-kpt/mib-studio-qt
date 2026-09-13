@@ -350,3 +350,8 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+Queue crash regressions: `ctest --test-dir build/repro -R hdf_write_queue
+--output-on-failure` runs the normal queue contract and the throwing-callback /
+concurrent-Stop fault test. The latter is labeled backend, recording and stress
+for sanitizer coverage.

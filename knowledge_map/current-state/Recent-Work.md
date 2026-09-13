@@ -1994,3 +1994,10 @@ policy. See the reproduction task for regression evidence and validation limits.
   invalidation. A changed payload can no longer retain its previous readiness
   generation. Regression changes geometry within one capture lifecycle and
   checks both payload feasibility and stable/changed generations.
+
+## 2026-09-13 — Recording queue crash hunt
+
+- Reproduced an abort from a throwing error callback and a watchdog-confirmed
+  hang from simultaneous writer joins. Contain notification exceptions and
+  serialize concurrent Stop calls; add asserted fault/concurrency coverage.
+  See [[../task/2026-09-13-recording-queue-crash-hunt]].

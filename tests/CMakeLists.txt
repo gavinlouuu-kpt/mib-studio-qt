@@ -103,6 +103,12 @@ mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
 add_test(NAME backend.hdf_write_queue COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_test)
 set_tests_properties(backend.hdf_write_queue PROPERTIES LABELS "backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(hdf_write_queue_fault_test backend/hdf_write_queue_fault_test.cpp)
+mib_backend_test_link(hdf_write_queue_fault_test PRIVATE Threads::Threads)
+add_test(NAME backend.hdf_write_queue_fault COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_fault_test)
+set_tests_properties(backend.hdf_write_queue_fault PROPERTIES LABELS "backend;recording;stress" TIMEOUT 60)
+
+
 mib_add_backend_test_executable(frame_store_reserve_test backend/frame_store_reserve_test.cpp)
 add_test(NAME backend.frame_store_reserve COMMAND $<TARGET_FILE:mib_backend_tests> frame_store_reserve_test)
 set_tests_properties(backend.frame_store_reserve PROPERTIES LABELS "backend" TIMEOUT 30)
