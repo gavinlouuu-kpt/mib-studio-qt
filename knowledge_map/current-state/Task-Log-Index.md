@@ -6,6 +6,9 @@
 
 ## By theme
 
+### Recording investigations
+- `task/2026-09-13-v111-buffer-plateau-repro.md` — byte-cap / flush-threshold plateau reproduced on v1.1.1; production fix pending.
+
 ### Reliability release (epic #371)
 - `task/2026-09-07-reliability-release-371.md` — phase order, commits,
   evidence pointers, open hardware items

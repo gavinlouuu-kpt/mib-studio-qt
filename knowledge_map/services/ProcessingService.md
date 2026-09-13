@@ -509,3 +509,18 @@ current/max queue depth, batch size, worker count, and running state. See
   not the whole ROI). It also uses row pointers instead of `cv::Mat::at<>`
   and skips the `clone()` for already-single-channel input. These were
   per-object allocator/CPU costs that scaled with objects-per-frame.
+
+## Issue 403 recording safety
+
+- `endExperiment()` now returns whether realtime acknowledged its pending-series
+  handoff (bounded two-second wait). It requests the handoff even without another
+  camera frame; the coordinator treats timeout as failed finalization.
+- Inline series state is drained at iteration boundaries and realtime exit.
+  Experiment-buffer admission shares the settlement lock, rejecting late admissions
+  after the final accounting boundary.
+- A callback installed before realtime starts wakes the experiment coordinator on
+  count threshold or half byte budget. Actual overflow still has bounded retention
+  and explicit accounting, but now also triggers the fatal-save-error funnel.
+- Background calibration temporarily disables preview latest-frame skipping so a
+  burst of accepted calibration samples is not discarded by presentation policy.
+- Regression coverage: e2e.recording_403_* and backend.experiment_readiness.

@@ -231,6 +231,9 @@ namespace backend
             if (experimentCoordinator_) experimentCoordinator_->onFatalSaveError(msg);
             reportFatalSaveError(msg);
         });
+        processingService_->setFlushRequestCallback([this] {
+            if (experimentCoordinator_) experimentCoordinator_->requestFlush();
+        });
         playbackService_ = std::make_unique<services::PlaybackService>();
         cameraControlService_ = std::make_unique<services::CameraControlService>();
         autofocusService_ = std::make_unique<services::AutofocusService>();

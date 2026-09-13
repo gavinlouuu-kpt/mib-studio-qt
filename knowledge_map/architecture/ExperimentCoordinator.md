@@ -176,3 +176,26 @@ across the HDF5 open + provenance write, which is why a second caller gets
 - A `requestStop()` right after `start()` returned is accepted; the worker
   wakes immediately (condition variable), so the run may finalize with zero
   admitted frames and still be `Complete`.
+
+- v1.1.1 known issue: periodic flush checks frame count only. A byte-limited
+  accumulation buffer can fill below that threshold and refuse new frames
+  indefinitely until Stop. See [[../task/2026-09-13-v111-buffer-plateau-repro]].
+
+- Further v1.1.1 reproduction: unfinished multi-image series can be appended by
+  realtime processing after finalization has closed the file and sealed accounting.
+  The current endExperiment/remainder-drain sequence does not synchronize that
+  pending-series handoff. See the buffer-plateau reproduction task for evidence.
+
+## Issue 403 implementation
+
+The historical v1.1.1 failures above are addressed by count/byte-pressure wakeups
+and a 250 ms maximum partial-batch polling interval, plus an explicit realtime
+series handoff before final accounting/file closure. Stop handoff timeout fails
+finalization. Overflow is surfaced through the existing fatal-save-error path.
+
+Readiness now checks full-frame original + mask + configured series bytes. An
+impossible payload blocks Start; a count threshold exceeding byte capacity warns
+that byte-pressure flushing takes precedence (the recording no longer starves).
+Buffer byte budget and flush interval changes invalidate readiness. A small
+destination HDF5 roundtrip is cached by readiness generation for up to 30 seconds;
+it verifies format/access only and explicitly does not certify sustained speed.

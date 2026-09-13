@@ -205,3 +205,11 @@ the library under a running thread. Guard: `recording.hdf5_exit_teardown`
 property, it did not reproduce the crash). Evidence:
 `docs/evidence/2026-09-08-crash-dump-review.md`.
 
+
+## Issue 403 readiness probe
+
+ExperimentCoordinator performs a bounded-payload disposable Hdf5Service
+write/close/reopen pixel comparison in the destination's existing directory or
+nearest existing ancestor. Cache validity follows readiness generation and a
+30-second TTL. Probe success is format/access validation, NOT sustained bandwidth
+or power-loss durability. Cleanup removes only the generated probe paths.

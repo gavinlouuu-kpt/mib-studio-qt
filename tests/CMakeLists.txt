@@ -872,3 +872,23 @@ set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;came
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+
+# Issue 403: persistent regressions backed by the mock-camera lifecycle harness.
+foreach(scenario IN ITEMS byte_pressure partial_series partial_series_no_frames partial_series_restart)
+    add_test(NAME e2e.recording_403_${scenario}
+        COMMAND $<TARGET_FILE:mib_backend_tests> experiment_coordinator_test)
+    set_tests_properties(e2e.recording_403_${scenario} PROPERTIES
+        LABELS "backend;e2e;recording;regression" TIMEOUT 40
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MIB_REPRO_ASSERT_SAFE=1;MIB_REPRO_INTERVAL_MS=100")
+endforeach()
+set_property(TEST e2e.recording_403_byte_pressure APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_BUFFER_CAP=393216;MIB_REPRO_FLUSH=100")
+foreach(scenario IN ITEMS partial_series partial_series_no_frames partial_series_restart)
+    set_property(TEST e2e.recording_403_${scenario} APPEND PROPERTY ENVIRONMENT
+        "MIB_REPRO_BUFFER_CAP=10485760;MIB_REPRO_SERIES=100")
+endforeach()
+set_property(TEST e2e.recording_403_partial_series_no_frames APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_NO_MORE_FRAMES=1")
+
+set_property(TEST e2e.recording_403_partial_series_restart APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_RESTART=1")

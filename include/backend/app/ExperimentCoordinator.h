@@ -65,6 +65,7 @@ public:
 
     // Fatal save-error funnel (writer thread): marks the run Failed and
     // finalizes it so the file is closed and readable.
+    void requestFlush();
     void onFatalSaveError(const std::string& message);
 
     // Bounded, idempotent: finalizes an active run and joins the worker.
@@ -113,6 +114,8 @@ private:
         std::string outputPath;
         std::string profileId;
         bool faulted{false};
+        uint64_t bufferBytes{0};
+        size_t flushInterval{0};
         bool operator==(const InvalidationKey& o) const;
         bool operator!=(const InvalidationKey& o) const { return !(*this == o); }
     };
@@ -136,6 +139,11 @@ private:
     std::atomic<uint64_t> readinessGeneration_{0};
     InvalidationKey lastKey_;
     bool haveLastKey_{false};
+    uint64_t storageProbeGeneration_{0};
+    uint64_t storageProbeTimeUs_{0};
+    bool storageProbeOk_{false};
+    std::string storageProbeReason_;
+
     ExperimentRunState state_{ExperimentRunState::Idle};
     uint64_t startCounter_{0};
     std::optional<RunConfigurationSnapshot> activeRun_;
@@ -153,6 +161,7 @@ private:
     std::thread worker_;
     std::condition_variable workerCv_;
     bool workerExit_{false};
+    bool flushRequested_{false};
     bool stopRequested_{false};
     bool cancelRequested_{false};
     bool fatalRequested_{false};

@@ -166,11 +166,31 @@ int main()
         MIB_EXPECT(statusOf(r, "processing.core") == GateStatus::Pass, "core pass (no pin)");
         MIB_EXPECT(statusOf(r, "processing.background") == GateStatus::Warn, "no background -> warn only");
         MIB_EXPECT(statusOf(r, "storage.output") == GateStatus::Pass, "writable output");
+        MIB_EXPECT(statusOf(r, "storage.roundtrip") == GateStatus::Pass,
+                   "destination HDF5 roundtrip verified");
         MIB_EXPECT(r.candidate.camera.simulated && !r.candidate.camera.fallback, "candidate records explicit mock");
         MIB_EXPECT(r.candidate.frameWidth == 96 && r.candidate.frameHeight == 96, "candidate geometry from frames");
         MIB_EXPECT(r.candidate.captureGeneration == backend.capture().lifecycleSnapshot().generation,
                    "candidate carries capture generation");
-        genReady = r.generation;
+        const auto originalBudget = proc.getMaxBufferedBytes();
+        proc.setMaxBufferedBytes(1);
+        const auto impossible = coord.evaluateReadiness(out1);
+        MIB_EXPECT(!impossible.ready && statusOf(impossible, "storage.buffer") == GateStatus::Fail,
+                   "oversized payload blocks readiness");
+        MIB_EXPECT(impossible.generation != r.generation, "buffer budget invalidates readiness");
+        const auto beforeSeries = proc.getProcessingConfig();
+        auto series = beforeSeries;
+        series.multi_image_enabled = true;
+        series.multi_image_count = 10;
+        proc.setProcessingConfig(series);
+        proc.setMaxBufferedBytes(4 * 96 * 96);
+        const auto oversizedSeries = coord.evaluateReadiness(out1);
+        MIB_EXPECT(!oversizedSeries.ready &&
+                       statusOf(oversizedSeries, "storage.buffer") == GateStatus::Fail,
+                   "oversized series blocks readiness");
+        proc.setProcessingConfig(beforeSeries);
+        proc.setMaxBufferedBytes(originalBudget);
+        genReady = coord.evaluateReadiness(out1).generation;
         MIB_EXPECT(coord.evaluateReadiness(out1).generation == genReady, "generation stable while nothing changes");
 
         // ROI edit after preflight -> stale.
@@ -419,8 +439,8 @@ int main()
         MIB_REQUIRE(started.started(), "start: " + started.message);
         // Let frames accumulate so a remainder exists at stop.
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
-        MIB_EXPECT(coordinator.status().validBuffered + coordinator.status().invalidBuffered > 0,
-                   "status reports buffered frames while active");
+        MIB_EXPECT(proc.experimentAccountingSnapshot().persistenceAdmitted > 0,
+                   "active run admits frames whether already flushed or still buffered");
         MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");
         {
             const auto second = coordinator.requestStop(false);
@@ -541,7 +561,8 @@ int main()
         MIB_REQUIRE(proc.startBackgroundCalibration(req, &err), "start calibration: " + err);
         MIB_EXPECT(!proc.startBackgroundCalibration(req, &err), "second concurrent calibration rejected");
         MIB_EXPECT(proc.backgroundCalibrationStatus().state == BgState::Running, "running");
-        for (int i = 0; i < 5; ++i) pushEmpty();
+        for (int i = 0; i < 5; ++i)
+            pushMat(*store, emptyFrame, ++ts);
         MIB_REQUIRE(waitFinished(), "calibration finishes");
         const auto st = proc.backgroundCalibrationStatus();
         std::fprintf(stderr, "bg success: state=%d attempted=%u accepted=%u nonEmpty=%u failed=%u msg=%s\n",

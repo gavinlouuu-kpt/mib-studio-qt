@@ -42,7 +42,7 @@ public:
         std::string fireMsg;
         {
             std::unique_lock<std::mutex> lk(mu_);
-            if (error_) return false;
+            if (error_ || stopRequested_) return false;
             if (queue_.size() >= slots_) {
                 fireMsg = latchErrorLocked("write queue overflow (disk too slow)");
             } else {
