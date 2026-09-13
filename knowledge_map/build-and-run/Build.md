@@ -355,3 +355,8 @@ Queue crash regressions: `ctest --test-dir build/repro -R hdf_write_queue
 --output-on-failure` runs the normal queue contract and the throwing-callback /
 concurrent-Stop fault test. The latter is labeled backend, recording and stress
 for sanitizer coverage.
+
+`processing_core_authenticode_test` must remain in the standalone backend-test
+list: the Windows native-core workflow builds that target and passes its `.exe`
+to `test-processing-core-authenticode.ps1`. Consolidating it into the shared
+runner removes the `.vcxproj` and breaks the native-core job (MSB1009).

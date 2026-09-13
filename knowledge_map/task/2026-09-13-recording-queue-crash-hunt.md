@@ -55,3 +55,13 @@ recording lifecycle/roundtrip, pipeline stress, four issue-403 scenarios) with
 existing suppressions and process-local `setarch x86_64 -R`. The standalone
 fault regression also passed `-fsanitize=address,undefined` with leak detection
 and halt-on-error. Docs, screenshot-manifest and whitespace checks passed.
+
+## Adjacent CI repair
+
+The previous PR revision's Windows native-core job 103740572546 failed with
+MSB1009: `processing_core_authenticode_test.vcxproj` does not exist. Source
+inspection confirms test-runner consolidation removed that standalone target,
+but `python-wheel.yml` still builds it and passes its exact `.exe` path to the
+signing probe. Restore the test to `MIB_STANDALONE_BACKEND_TESTS`; this preserves
+the existing workflow/command contract. Windows execution awaits CI; Linux
+cannot validate Authenticode. This is separate from the two queue defects.
