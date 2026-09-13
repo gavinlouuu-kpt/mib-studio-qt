@@ -168,8 +168,8 @@ public:
 
     // Experiment lifecycle
     void startExperiment();
-    void endExperiment();
-    
+    bool endExperiment(); // false if the realtime series handoff times out
+
     // Frame accumulation access
     std::vector<ProcessedFrame> getValidFrames() const;
     std::vector<ProcessedFrame> getInvalidFrames() const;
@@ -200,6 +200,7 @@ public:
 
     // Fatal flush-error sink: invoked (on the writer thread) when an experiment
     // flush write fails or the queue overflows. The experiment should stop.
+    void setFlushRequestCallback(std::function<void()> cb);
     void setFlushErrorCallback(std::function<void(const std::string&)> cb);
 
     // Configuration for round-robin buffer
@@ -599,6 +600,7 @@ private:
     // Realtime processing state
     std::thread realtimeThread_;
     std::atomic<bool> rtRunning_{false};
+    std::atomic<bool> experimentDrainRequested_{false};
     std::atomic<bool> rtEnabled_{true};
     // Default ON so live view processes only the newest frame and the processed
     // overlay (mask/contours/target-group) cannot accumulate a backlog behind
@@ -633,6 +635,7 @@ private:
     // Bytes of batches submitted to the writer and not yet written (issue #370).
     backend::diagnostics::ByteAccountant flushQueueBytes_;
     std::function<void(const std::string&)> flushErrorCb_;
+    std::function<void()> flushRequestCb_;
     std::atomic<bool> experimentActive_{false};
     // Issue #367: per-experiment frame accounting + lifetime processing
     // failure counter. Written by the realtime thread, the flush writer, and

@@ -1966,3 +1966,46 @@ checks, frontend and Xvfb smoke). The next transport slice adds exact event
 integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
+
+## 2026-09-13 — v1.1.1 recording buffer plateau reproduced
+
+Opt-in mock lifecycle diagnostic reproduces byte-cap starvation of the frame-count
+flush trigger; normal-cap control writes successfully. Production code unchanged;
+see [[../task/2026-09-13-v111-buffer-plateau-repro]].
+
+Expanded recording diagnostics confirm polling-window drops, oversized-series
+rejection, benign partial-batch buffering, and a distinct late multi-image Stop
+handoff after file closure. Queue probe also verifies fatal overflow behavior and
+an isolated post-stop-submit contract defect. No production fix yet.
+
+Preflight tests: all three known-unsafe buffer/series configurations incorrectly
+pass current readiness; invalid destination structures correctly fail. Bounded
+3 MiB Hdf5Service write/close/reopen byte comparison passes locally (not a
+sustained-disk benchmark). See the same reproduction task.
+
+Issue 403 implementation: explicit Stop-series handoff, byte/count pressure
+wakeups, fatal overflow reporting, buffer feasibility + destination roundtrip
+readiness, post-stop queue rejection and calibration sample-preserving preview
+policy. See the reproduction task for regression evidence and validation limits.
+
+## 2026-09-13 — Issue 403 readiness continuation
+
+- Include frame dimensions, pixel format and geometry availability in preflight
+  invalidation. A changed payload can no longer retain its previous readiness
+  generation. Regression changes geometry within one capture lifecycle and
+  checks both payload feasibility and stable/changed generations.
+
+## 2026-09-13 — Recording queue crash hunt
+
+- Reproduced an abort from a throwing error callback and a watchdog-confirmed
+  hang from simultaneous writer joins. Contain notification exceptions and
+  serialize concurrent Stop calls; add asserted fault/concurrency coverage.
+  See [[../task/2026-09-13-recording-queue-crash-hunt]].
+
+## 2026-09-13 — Application-level finalization fault hunt
+
+- Reproduced a Stop-worker abort caused by a throwing status observer, and a
+  fatal-save outcome missing from reopened HDF5 accounting. Coordinator now
+  contains observer exceptions and persists the fatal flag/original reason.
+  Extended readiness lifecycle/reopen regression covers both.
+  See [[../task/2026-09-13-recording-queue-crash-hunt]].

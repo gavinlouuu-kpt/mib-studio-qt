@@ -289,3 +289,10 @@ memory benchmark evidence.
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
+
+## Issue 403 recording wiring
+
+Install the flush-request callback before realtime starts; it notifies the
+experiment worker on byte/count pressure. Accumulation overflow uses the existing
+fatal-save-error funnel. HdfWriteQueue now rejects submit after clean Stop; its
+producer/Stop stress test asserts accepted work equals written work.

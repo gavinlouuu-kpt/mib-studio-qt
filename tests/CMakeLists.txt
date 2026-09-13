@@ -16,6 +16,7 @@ set(MIB_STANDALONE_BACKEND_TESTS
     processing_core_loader_test         # add_dependencies on the plugin fixtures
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
+    processing_core_authenticode_test   # Windows signing workflow builds and invokes this executable directly
     processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
 )
 
@@ -102,6 +103,12 @@ mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_tes
 mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
 add_test(NAME backend.hdf_write_queue COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_test)
 set_tests_properties(backend.hdf_write_queue PROPERTIES LABELS "backend" TIMEOUT 60)
+
+mib_add_backend_test_executable(hdf_write_queue_fault_test backend/hdf_write_queue_fault_test.cpp)
+mib_backend_test_link(hdf_write_queue_fault_test PRIVATE Threads::Threads)
+add_test(NAME backend.hdf_write_queue_fault COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_fault_test)
+set_tests_properties(backend.hdf_write_queue_fault PROPERTIES LABELS "backend;recording;stress" TIMEOUT 60)
+
 
 mib_add_backend_test_executable(frame_store_reserve_test backend/frame_store_reserve_test.cpp)
 add_test(NAME backend.frame_store_reserve COMMAND $<TARGET_FILE:mib_backend_tests> frame_store_reserve_test)
@@ -872,3 +879,23 @@ set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;came
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+
+# Issue 403: persistent regressions backed by the mock-camera lifecycle harness.
+foreach(scenario IN ITEMS byte_pressure partial_series partial_series_no_frames partial_series_restart)
+    add_test(NAME e2e.recording_403_${scenario}
+        COMMAND $<TARGET_FILE:mib_backend_tests> experiment_coordinator_test)
+    set_tests_properties(e2e.recording_403_${scenario} PROPERTIES
+        LABELS "backend;e2e;recording;regression" TIMEOUT 40
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MIB_REPRO_ASSERT_SAFE=1;MIB_REPRO_INTERVAL_MS=100")
+endforeach()
+set_property(TEST e2e.recording_403_byte_pressure APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_BUFFER_CAP=393216;MIB_REPRO_FLUSH=100")
+foreach(scenario IN ITEMS partial_series partial_series_no_frames partial_series_restart)
+    set_property(TEST e2e.recording_403_${scenario} APPEND PROPERTY ENVIRONMENT
+        "MIB_REPRO_BUFFER_CAP=10485760;MIB_REPRO_SERIES=100")
+endforeach()
+set_property(TEST e2e.recording_403_partial_series_no_frames APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_NO_MORE_FRAMES=1")
+
+set_property(TEST e2e.recording_403_partial_series_restart APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_RESTART=1")

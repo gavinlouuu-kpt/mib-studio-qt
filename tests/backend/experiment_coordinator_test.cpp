@@ -17,6 +17,7 @@
 #include "backend/services/CaptureService.h"
 
 #include <functional>
+#include "support/frames.h"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -139,7 +140,13 @@ int main()
     const auto dataDir = makeTempDir();
     const auto mockDir = dataDir / "mock_frames";
     std::filesystem::create_directories(mockDir);
-    const cv::Mat frame(96, 512, CV_8UC1, cv::Scalar(180));
+    const bool repro = std::getenv("MIB_REPRO_BUFFER_CAP") != nullptr;
+    auto reproInt = [](const char* key, int fallback) {
+        const char* v = std::getenv(key);
+        return v ? std::atoi(v) : fallback;
+    };
+    const cv::Mat frame =
+        repro ? mib::test::ringFrame(512, 96, 0) : cv::Mat(96, 512, CV_8UC1, cv::Scalar(180));
     if (!cv::imwrite((mockDir / "frame_000.tiff").string(), frame))
     {
         std::cerr << "failed to write mock frame fixture\n";
@@ -190,11 +197,32 @@ int main()
             return 3;
         }
 
+        if (repro) {
+            auto& proc = backendApp.processing();
+            auto cfg = proc.getProcessingConfig();
+            cfg.empty_frame_pixel_threshold = 1;
+            cfg.bg_subtract_threshold = 100;
+            cfg.enable_border_check = false;
+            cfg.enable_area_range_check = false;
+            cfg.enable_deformability_range_check = false;
+            cfg.enable_ring_ratio_check = false;
+            cfg.enable_area_ratio_check = false;
+            cfg.require_single_inner_contour = false;
+            cfg.auto_background_enabled = false;
+            cfg.multi_image_count = reproInt("MIB_REPRO_SERIES", 1);
+            cfg.multi_image_enabled = cfg.multi_image_count > 1;
+            proc.setProcessingConfig(cfg);
+            proc.setRealtimeRoi({0, 0, 512, 96});
+            proc.setInvalidFrameSamplingRate(1);
+            proc.setFlushInterval(reproInt("MIB_REPRO_FLUSH", 100));
+            proc.setMaxBufferedBytes(
+                std::strtoull(std::getenv("MIB_REPRO_BUFFER_CAP"), nullptr, 10));
+        }
         // Configure + start the mock camera.
         bridge::CameraCommand configure;
         configure.action = bridge::CameraCommandAction::ConfigureMockCamera;
         configure.mockFrameDirectory = mockDir.string();
-        configure.mockFrameIntervalMs = 1;
+        configure.mockFrameIntervalMs = repro ? reproInt("MIB_REPRO_INTERVAL_MS", 1) : 1;
         configure.mockLoopFiles = true;
         if (!facade.dispatch(configure).ok)
         {
@@ -226,6 +254,66 @@ int main()
             return 5;
         }
 
+        if (repro) {
+            backendApp.processing().setRealtimeProcessingMode(
+                backend::services::ProcessingService::RealtimeProcessingMode::Inline);
+            backendApp.processing().startRealtime(backendApp.getFrameStore());
+        }
+        if (repro) {
+            app::ExperimentReadinessSnapshot readiness;
+            facade.fetchExperimentReadiness(readiness, exp1);
+            std::cerr << "PREFLIGHT ready=" << readiness.ready
+                      << " generation=" << readiness.generation << "\n";
+            for (const auto& gate : readiness.gates)
+                std::cerr << "PREFLIGHT gate=" << gate.id
+                          << " status=" << app::toString(gate.status) << "\n";
+            if (std::getenv("MIB_REPRO_PREFLIGHT_ONLY")) {
+                for (const auto& path :
+                     {dataDir.string(), (mockDir / "frame_000.tiff" / "bad.h5").string()}) {
+                    app::ExperimentReadinessSnapshot bad;
+                    facade.fetchExperimentReadiness(bad, path);
+                    const auto* g = bad.gate("storage.output");
+                    std::cerr << "PREFLIGHT invalid-destination ready=" << bad.ready
+                              << " storage=" << (g ? app::toString(g->status) : "missing") << "\n";
+                }
+                if (std::getenv("MIB_REPRO_STORAGE_PROBE")) {
+                    backend::services::Hdf5Service probe;
+                    std::vector<backend::services::ProcessedFrame> frames(32);
+                    for (auto& f : frames) {
+                        f.originalImage = cv::Mat(96, 512, CV_8UC1);
+                        cv::randu(f.originalImage, 0, 256);
+                        f.processedImage = f.originalImage.clone();
+                    }
+                    const auto path = (dataDir / "storage-probe.h5").string();
+                    auto t = std::chrono::steady_clock::now();
+                    bool ok =
+                        probe.openFile(path) && probe.appendFrames(frames, {}) && probe.flush();
+                    probe.closeFile();
+                    const double seconds =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
+                    ok = ok && probe.loadFile(path);
+                    std::vector<backend::services::ProcessedFrame> readback;
+                    ok = ok && probe.readValidFrames(readback) && readback.size() == frames.size();
+                    if (ok)
+                        for (size_t i = 0; i < frames.size(); ++i)
+                            ok = ok &&
+                                 cv::norm(frames[i].originalImage, readback[i].originalImage,
+                                          cv::NORM_INF) == 0 &&
+                                 cv::norm(frames[i].processedImage, readback[i].processedImage,
+                                          cv::NORM_INF) == 0;
+                    probe.closeFile();
+                    std::cerr << "PREFLIGHT storage-probe verified=" << ok
+                              << " frames=32 payloadBytes=3145728 writeCloseSeconds=" << seconds
+                              << "\n";
+                    if (!ok) {
+                        facade.shutdown();
+                        return 83;
+                    }
+                }
+                facade.shutdown();
+                return 0;
+            }
+        }
         // Start the experiment.
         result = startViaFacade(facade, exp1);
         if (!result.ok || result.operationId == 0)
@@ -234,6 +322,91 @@ int main()
             return 6;
         }
 
+        if (repro) {
+            auto& proc = backendApp.processing();
+            for (int i = 0; i < 5; ++i) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                if (i == 2 && std::getenv("MIB_REPRO_CHANGE_FLUSH"))
+                    proc.setFlushInterval(reproInt("MIB_REPRO_CHANGE_FLUSH", 100));
+                const auto b = proc.getBufferedFrameCounts();
+                const auto a = proc.experimentAccountingSnapshot();
+                std::cerr << "REPRO second=" << i + 1 << " valid=" << b.valid
+                          << " invalid=" << b.invalid << " admitted=" << a.admitted
+                          << " persistenceAdmitted=" << a.persistenceAdmitted
+                          << " committed=" << a.persistenceCommitted
+                          << " dropped=" << a.persistenceCancelledByPolicy << "\n";
+            }
+            if (std::getenv("MIB_REPRO_NO_MORE_FRAMES")) backendApp.capture().stop();
+            bridge::ExperimentCommand stop;
+            stop.action = bridge::ExperimentCommandAction::Stop;
+            if (!facade.dispatch(stop).ok) return 81;
+            if (!waitFor(
+                    [&] {
+                        app::ExperimentStatus st;
+                        return facade.fetchExperimentStatus(st) && st.terminal;
+                    },
+                    15000))
+                return 82;
+            const auto a = proc.experimentAccountingSnapshot();
+            std::cerr << "REPRO stopped committed=" << a.persistenceCommitted
+                      << " dropped=" << a.persistenceCancelledByPolicy
+                      << " pending=" << a.persistencePendingAtStop << " reconciled=" << a.reconciled
+                      << " file=" << exp1 << "\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            const auto later = proc.experimentAccountingSnapshot();
+            const auto leftover = proc.getBufferedFrameCounts();
+            backend::services::Hdf5Service saved;
+            backend::recording::RecordingAccountingSnapshot persisted;
+            const bool readOk = saved.loadFile(exp1) && saved.readRunAccounting(persisted);
+            std::cerr << "REPRO after-terminal buffered=" << leftover.total()
+                      << " liveAdmissions=" << later.persistenceAdmitted
+                      << " livePending=" << later.persistencePendingAtStop << " diskRead=" << readOk
+                      << " diskAdmissions=" << persisted.persistenceAdmitted
+                      << " diskPending=" << persisted.persistencePendingAtStop << "\n";
+            saved.closeFile();
+            if (std::getenv("MIB_REPRO_RESTART")) {
+                const auto nextPath = (dataDir / "restart.h5").string();
+                if (!startViaFacade(facade, nextPath).ok) {
+                    facade.shutdown();
+                    return 85;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                if (!facade.dispatch(stop).ok || !waitFor(
+                                                     [&] {
+                                                         app::ExperimentStatus st;
+                                                         return facade.fetchExperimentStatus(st) &&
+                                                                st.terminal;
+                                                     },
+                                                     15000)) {
+                    facade.shutdown();
+                    return 86;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                const auto restarted = proc.experimentAccountingSnapshot();
+                backend::recording::RecordingAccountingSnapshot disk;
+                const bool reopened = saved.loadFile(nextPath) && saved.readRunAccounting(disk);
+                saved.closeFile();
+                if (!reopened || restarted.persistenceCommitted == 0 ||
+                    restarted.persistencePendingAtStop != 0 ||
+                    proc.getBufferedFrameCounts().total() != 0 ||
+                    disk.persistenceAdmitted != restarted.persistenceAdmitted ||
+                    disk.persistenceCommitted != restarted.persistenceCommitted) {
+                    facade.shutdown();
+                    return 87;
+                }
+            }
+            if (std::getenv("MIB_REPRO_ASSERT_SAFE") &&
+                (!readOk || leftover.total() != 0 || later.persistencePendingAtStop != 0 ||
+                 later.persistenceAdmitted != persisted.persistenceAdmitted ||
+                 later.persistenceCommitted == 0 || later.persistenceCancelledByPolicy != 0)) {
+                std::cerr << "REGRESSION FAILED: persistence must drain without late admissions or "
+                             "drops\n";
+                facade.shutdown();
+                return 84;
+            }
+            facade.shutdown();
+            return 0;
+        }
         // Double start fails without desynchronizing.
         if (startViaFacade(facade, exp1).ok)
         {

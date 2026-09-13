@@ -510,7 +510,8 @@ void ProcessingService::startExperiment() {
                 invalidFrameSamplingRate_.load());
 }
 
-void ProcessingService::endExperiment() {
+bool ProcessingService::endExperiment() {
+    bool drained = true;
     experimentActive_.store(false);
     backend::diagnostics::CrashStateMirror::instance().processing.experimentActive.store(false);
     // Let the realtime thread finish the frame it admitted under the run so
@@ -528,6 +529,17 @@ void ProcessingService::endExperiment() {
                std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::microseconds(200));
         }
+    }
+    // The inline loop owns its partial series. Request a handoff even when
+    // no new camera frame arrives, before sealing accounting or closing HDF5.
+    if (rtRunning_.load(std::memory_order_acquire)) {
+        experimentDrainRequested_.store(true, std::memory_order_release);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (experimentDrainRequested_.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        drained = !experimentDrainRequested_.load(std::memory_order_acquire);
+        if (!drained) SPDLOG_ERROR("Experiment partial-series handoff timed out");
     }
     // Settle the run exactly: frames admitted but still unprocessed when the
     // drain gave up (a slow batch pipeline, e.g. under a sanitizer) are
@@ -550,6 +562,7 @@ void ProcessingService::endExperiment() {
     const BufferedFrameCounts counts = experimentBuffer_.counts();
     SPDLOG_INFO("ProcessingService: experiment ended, valid frames: {}, invalid frames: {}",
                 counts.valid, counts.invalid);
+    return drained;
 }
 
 std::vector<ProcessedFrame> ProcessingService::getValidFrames() const {
@@ -1664,6 +1677,9 @@ void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dro
 }
 
 bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isValid) {
+    std::shared_lock settle(experimentSettleMutex_);
+    if (experimentSettled_.load(std::memory_order_acquire)) return false;
+
     // Issue #370: the bounded buffer owns the retention policy (frame cap AND
     // byte budget; sampled invalid evicted first, a valid frame is refused
     // only when the backlog is entirely valid and still over the bound).
@@ -1688,6 +1704,14 @@ bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isVal
     }
     logDroppedExperimentFrames(DroppedFrameCounts{r.droppedValid, r.droppedInvalid}, r.bufferedAfter,
                                maxBufferedFrames);
+    // Notify before the cap, leaving room for arrivals while the writer wakes.
+    const uint64_t byteCap = maxBufferedBytes_.load(std::memory_order_relaxed);
+    const bool pressure = (byteCap && r.bytesAfter >= byteCap / 2) ||
+                          r.bufferedAfter >= std::max<size_t>(1, getFlushInterval());
+    settle.unlock();
+    if (pressure && flushRequestCb_) flushRequestCb_();
+    if (r.dropped() && flushErrorCb_)
+        flushErrorCb_("Experiment buffer capacity exceeded: recording data was dropped");
     return r.stored;
 }
 
@@ -1752,6 +1776,10 @@ bool ProcessingService::finishFlush() {
     }
     if (!q) return true;
     return q->flushAndStop(); // drains remaining batches, then joins
+}
+
+void ProcessingService::setFlushRequestCallback(std::function<void()> cb) {
+    flushRequestCb_ = std::move(cb); // installed before realtime processing starts
 }
 
 void ProcessingService::setFlushErrorCallback(std::function<void(const std::string&)> cb) {
@@ -2242,6 +2270,7 @@ void ProcessingService::realtimeBatchLoop() {
 
     while (rtRunning_.load(std::memory_order_acquire) &&
            getRealtimeProcessingMode() == RealtimeProcessingMode::AsyncBatch) {
+        experimentDrainRequested_.store(false, std::memory_order_release);
         if (!rtStore_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
@@ -2284,7 +2313,8 @@ void ProcessingService::realtimeBatchLoop() {
             rtStore_->waitForFrame(total, std::chrono::milliseconds(2));
         } else {
             const bool dropFrames = rtDropFrames_.load(std::memory_order_relaxed) &&
-                                    !experimentActive_.load(std::memory_order_relaxed);
+                                    !experimentActive_.load(std::memory_order_relaxed) &&
+                                    !bgCalActive_.load(std::memory_order_acquire);
             const uint64_t firstIdx = dropFrames ? latest : last + 1;
             // Count the dropped-to-latest range only once an iteration
             // actually advances rtLastProcessed_ past it (same rule as the
@@ -2446,6 +2476,17 @@ void ProcessingService::realtimeInlineLoop() {
     size_t multiImageRemaining = 0; // frames still needed to complete current series
     bool multiImagePending = false;
 
+    auto drainExperimentSeries = [&] {
+        if (!experimentDrainRequested_.load(std::memory_order_acquire)) return;
+        if (multiImagePending) {
+            appendExperimentFrame(std::move(pendingMultiImageFrame), true);
+            pendingMultiImageFrame = ProcessedFrame{};
+            multiImagePending = false;
+            multiImageRemaining = 0;
+        }
+        experimentDrainRequested_.store(false, std::memory_order_release);
+    };
+
     // Hoisted config/roi/bg: refresh only when configVersion_ changes (P7)
     uint64_t lastRtConfigVer = std::numeric_limits<uint64_t>::max();
     Roi rtCachedRoi{};
@@ -2453,6 +2494,7 @@ void ProcessingService::realtimeInlineLoop() {
     ProcessingConfig rtCachedConfig;
 
     while (rtRunning_.load()) {
+        drainExperimentSeries();
         // Refresh config/roi/background only when something changed
         const uint64_t curRtConfigVer = configVersion_.load(std::memory_order_acquire);
         if (curRtConfigVer != lastRtConfigVer) {
@@ -2515,8 +2557,9 @@ void ProcessingService::realtimeInlineLoop() {
         // If enabled, prefer processing only the most recent frame to minimize latency (drop
         // intermediate frames). We intentionally ignore this mode during experiments to avoid
         // dropping frames that might be saved.
-        const bool dropFrames =
-            rtDropFrames_.load(std::memory_order_relaxed) && !experimentActive_.load();
+        const bool dropFrames = rtDropFrames_.load(std::memory_order_relaxed) &&
+                                !experimentActive_.load() &&
+                                !bgCalActive_.load(std::memory_order_acquire);
         if (dropFrames) {
             const uint64_t idx = latest;
             // Frames jumped over to reach `idx`. Count them ONLY on paths
@@ -3401,6 +3444,7 @@ void ProcessingService::realtimeInlineLoop() {
             }
         } else {
             for (uint64_t idx = last + 1; idx <= latest && rtRunning_.load(); ++idx) {
+                drainExperimentSeries();
                 const auto frameStart = clock::now();
                 if (!rtEnabled_.load()) {
                     rtLastProcessed_.store(idx);
@@ -3937,6 +3981,9 @@ void ProcessingService::realtimeInlineLoop() {
             }
         }
     }
+    // Stopping realtime or switching modes must not destroy an owned series.
+    if (multiImagePending) appendExperimentFrame(std::move(pendingMultiImageFrame), true);
+    experimentDrainRequested_.store(false, std::memory_order_release);
 }
 
 } // namespace backend::services

@@ -31,7 +31,8 @@
   (`InvalidationKey`: capture generation + readiness, effective camera source
   + fallback flag, active delivery mode, processing config version, raw
   `config.json` sha, core version/sha/pin, background generation, ROI,
-  pixel-to-micron factor, output path, profile id, unresolved fault). A stable
+  pixel-to-micron factor, frame geometry/format, buffer byte budget, flush
+  interval, output path, profile id, unresolved fault). A stable
   state keeps its generation, so a preflight stays usable until something
   actually changes.
 - `start(ExperimentStartRequest{outputPath, readinessGeneration, profileId,
@@ -114,9 +115,8 @@ append only, never renumber.
    `experiment.saveFailed` is latched and the state is `Failed`.
 
 The worker also runs the periodic flush while Active: every 250 ms it
-submits `flushBufferedFrames(hdf5)` when the buffered count reaches
-`ProcessingService::getFlushInterval()` (`status().flushing` is true during
-the submission).
+submits any partial batch, and wakes earlier on count/byte pressure
+(`status().flushing` is true during the submission).
 - `reportUnresolvedFault(code, message)` / `clearUnresolvedFault()`: a save
   or provenance failure from the last run blocks the next Start
   (`lifecycle.fault` gate) until the operator acknowledges it.
@@ -176,3 +176,41 @@ across the HDF5 open + provenance write, which is why a second caller gets
 - A `requestStop()` right after `start()` returned is accepted; the worker
   wakes immediately (condition variable), so the run may finalize with zero
   admitted frames and still be `Complete`.
+
+- v1.1.1 known issue: periodic flush checks frame count only. A byte-limited
+  accumulation buffer can fill below that threshold and refuse new frames
+  indefinitely until Stop. See [[../task/2026-09-13-v111-buffer-plateau-repro]].
+
+- Further v1.1.1 reproduction: unfinished multi-image series can be appended by
+  realtime processing after finalization has closed the file and sealed accounting.
+  The current endExperiment/remainder-drain sequence does not synchronize that
+  pending-series handoff. See the buffer-plateau reproduction task for evidence.
+
+## Issue 403 implementation
+
+The historical v1.1.1 failures above are addressed by count/byte-pressure wakeups
+and a 250 ms maximum partial-batch polling interval, plus an explicit realtime
+series handoff before final accounting/file closure. Stop handoff timeout fails
+finalization. Overflow is surfaced through the existing fatal-save-error path.
+
+Readiness now checks full-frame original + mask + configured series bytes. An
+impossible payload blocks Start; a count threshold exceeding byte capacity warns
+that byte-pressure flushing takes precedence (the recording no longer starves).
+Frame geometry/format, buffer byte budget and flush interval changes invalidate
+readiness, including geometry changes without a capture lifecycle transition. A small
+destination HDF5 roundtrip is cached by readiness generation for up to 30 seconds;
+it verifies format/access only and explicitly does not certify sustained speed.
+
+## Fault containment at finalization (2026-09-13)
+
+Status observers run outside the lifecycle mutex. Standard and unknown observer
+exceptions are logged and contained, and the lifecycle mutex is always
+reacquired: UI/bridge notification failure cannot unwind Start or terminate the
+Stop worker before file closure. Observers still must not block.
+
+A fatal-save request is copied into the accounting snapshot before writing it to
+HDF5, retaining the original fatal reason even if all queued writes happen to
+drain successfully. Previously the terminal status could say Failed while the
+reopened file lacked the fatal flag/reason. The readiness regression injects both
+observer exceptions and a fatal-save request, and checks closure, subsequent runs,
+and independently reloaded accounting.
