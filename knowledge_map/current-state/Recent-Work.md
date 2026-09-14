@@ -1981,3 +1981,5 @@ Full native experiment acceptance remains open.
   profile, capture-owned generator/strobe lifecycle, failed-start/stop handling,
   simplified Hardware Setup and fake-SDK/serial regression coverage. See
   [operator guide](../../docs/howto/illuminated-live-view.md).
+
+  Task record: [[../task/2026-09-14-one-click-illuminated-live]].
