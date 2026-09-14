@@ -1966,3 +1966,11 @@ checks, frontend and Xvfb smoke). The next transport slice adds exact event
 integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
+
+## 2026-09-14 — Shutdown status callback lifetime (#405)
+
+- Guard NanopositionerTab callback admission through destruction and queue
+  widget updates onto its GUI thread. Synchronize service callback snapshots.
+- Add hardware-free real-tab regression and concurrent replacement stress;
+  the original callback crashes after tab destruction. The unidentified and
+  invalid-minidump diagnostic work in #405 remains open.

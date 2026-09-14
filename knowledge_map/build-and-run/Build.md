@@ -350,3 +350,16 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+### Hardware-free shutdown callback regression
+
+In a full Qt build with `MIB_ENABLE_HARDWARE_SDKS=OFF`, build
+`nanopositioner_callback_test` and run CTest
+`-R '^frontend.nanopositioner_callback$'`. It uses the real tab with the
+unsupported-platform autofocus stub (no physical connection); CTest sets
+`QT_QPA_PLATFORM=offscreen`. Use `MIB_SANITIZER=thread` or
+`MIB_SANITIZER=address+undefined` in separate build directories for sanitizer
+validation. Backend-only builds omit this Qt-specific test.
+
+`backend.autofocus_callback` is also available in hardware-disabled builds
+(including backend-only). It isolates service synchronization from Qt startup.

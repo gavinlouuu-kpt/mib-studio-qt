@@ -95,3 +95,11 @@ The frontend scheduler bounds aggregate pending pulls and discards retired view
 responses. Details and limitations: `docs/architecture/frame-packet-v1.md`.
 The accepted readiness/configuration/finalization/recovery handoff is still open
 under #372; this slice does not establish native experiment acceptance.
+
+### Autofocus status delivery (#405)
+
+[[../services/AutofocusService]] snapshots status callbacks under its callback
+mutex, releasing it before user code. [[../frontend/NanopositionerTab]] uses a
+shared admission mutex to serialize queue admission against UI destruction;
+accepted messages run via context-bound Qt queued invocation, never on the
+autofocus worker. Receiver destruction removes queued messages.

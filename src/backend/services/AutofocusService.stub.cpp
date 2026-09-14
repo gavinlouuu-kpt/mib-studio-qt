@@ -21,10 +21,7 @@ bool AutofocusService::connect(int comPort, int baudRate, unsigned char deviceAd
     (void)baudRate;
     (void)deviceAddress;
     SPDLOG_WARN("{}", kUnsupportedMsg);
-    if (statusCallback_)
-    {
-        statusCallback_(kUnsupportedMsg);
-    }
+    notifyStatus(kUnsupportedMsg);
     connected_.store(false);
     return false;
 }
