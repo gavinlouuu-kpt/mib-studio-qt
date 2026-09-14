@@ -1,6 +1,6 @@
 # Downloads and extracts the pinned MindVision SDK used by Windows builds.
-# The full vendor installer is not added to the MIB Studio installer; only the
-# runtime DLL copied by CMake is shipped with the application.
+# The release workflow copies the downloaded installer into resources/installers/
+# so it is bundled into the full setup package as an optional component.
 
 param(
     [string]$InstallerUrl = "https://updates.yofo.bio/mindvision-sdk/MindVision-Camera-Platform-Setup2.1.10.195_202604021438.exe",
