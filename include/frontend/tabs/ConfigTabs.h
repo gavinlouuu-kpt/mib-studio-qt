@@ -246,6 +246,7 @@ private:
     QComboBox* mvTriggerModeCombo_ = nullptr;
     QComboBox* mvSignalTypeCombo_ = nullptr;
     QDoubleSpinBox* mvExposureSpin_ = nullptr;
+    QDoubleSpinBox* mvFpsSpin_ = nullptr;
     QSpinBox* mvTrigDelaySpin_ = nullptr;
     QSpinBox* mvJitterSpin_ = nullptr;
     QSpinBox* mvTrigCountSpin_ = nullptr;

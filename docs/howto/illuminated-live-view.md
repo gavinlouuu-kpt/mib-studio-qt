@@ -130,3 +130,21 @@ visibility, saved preset/adapter persistence, unrelated-key preservation and
 reopening without Apply. Existing lifecycle, conversion and live-view latency
 checks remain applicable. A real-rig acceptance run is still required for the
 changed desktop build before labeling that build hardware-validated.
+
+
+### Everyday FPS adjustment
+
+Requested FPS is visible beside Exposure for a saved illuminated rig. Stop capture,
+change FPS, Save, and Play to apply it through the coordinated generator startup.
+It edits `live_view.frequency_hz`, not the camera's free-running speed selector.
+The generator supports 400–40000 Hz; this is not a camera throughput guarantee.
+The bench-tested point is 5000 FPS at 512×96. Observe actual acquisition rate and
+use Rigol for physical timing acceptance when commissioning another rate.
+
+Changing FPS preserves the trigger's active duration by scaling saved duty with
+frequency: the preset's 5000 Hz / 10% becomes 2500 Hz / 5%, retaining a requested
+20 µs trigger pulse. Exposure and strobe width/delay are not silently changed.
+Existing backend validation rejects exposure or strobe timing that exceeds the
+new period, and invalid generator duty. Legacy/manual profiles leave FPS disabled.
+The real-widget regression covers visibility, persistence, duty compensation,
+unchanged exposure/strobe, and restoration after reopening.

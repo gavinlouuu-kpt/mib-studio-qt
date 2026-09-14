@@ -255,14 +255,30 @@ int main(int argc, char* argv[])
                    "preset preserves unrelated config");
         MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
                    "Save stages next capture without Apply");
+        auto* fps = rigTabs.findChild<QDoubleSpinBox*>("mvFps");
+        auto* save = rigTabs.findChild<QPushButton*>("mvSaveSetup");
+        MIB_REQUIRE(fps && save && fps->isEnabled(), "saved rig enables everyday FPS");
+        fps->setValue(2500);
+        save->click();
+        settle();
+        const auto adjusted = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(adjusted["live_view"].toObject()["frequency_hz"].toDouble() == 2500 &&
+                       adjusted["live_view"].toObject()["duty_percent"].toDouble() == 5,
+                   "FPS change preserves 20 us trigger pulse via adjusted duty");
+        MIB_EXPECT(adjusted["exposure_time_us"].toDouble() == 100 &&
+                       adjusted["strobe_pulse_width_us"].toInt() == 100,
+                   "FPS change does not silently change exposure or strobe");
         advanced->setChecked(false);
         settle();
+        MIB_EXPECT(fps->isVisible(), "FPS visible with advanced collapsed");
         rigTabs.grab().save("/tmp/mib-one-click-config.png");
     }
     {
         frontend::ConfigTabs restored(backend);
         auto* exposure = restored.findChild<QDoubleSpinBox*>("mvExposure");
         MIB_EXPECT(exposure && exposure->value() == 100, "reopening restores saved exposure");
+        auto* fps = restored.findChild<QDoubleSpinBox*>("mvFps");
+        MIB_EXPECT(fps && fps->value() == 2500, "reopening restores saved FPS");
         MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
                    "reopening stages saved profile");
     }

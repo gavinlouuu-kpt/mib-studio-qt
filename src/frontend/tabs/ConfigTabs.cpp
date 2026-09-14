@@ -411,6 +411,15 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvExposureSpin_->setDecimals(1);
         mvExposureSpin_->setValue(1.0);
         exposureRow->addWidget(mvExposureSpin_);
+        exposureRow->addWidget(new QLabel(tr("Requested FPS"), page));
+        mvFpsSpin_ = new QDoubleSpinBox(page);
+        mvFpsSpin_->setObjectName(QStringLiteral("mvFps"));
+        mvFpsSpin_->setRange(400.0, 40000.0);
+        mvFpsSpin_->setDecimals(1);
+        mvFpsSpin_->setValue(5000.0);
+        mvFpsSpin_->setToolTip(tr("Illuminated rig trigger rate. Save while stopped, then Play. "
+                                 "Actual FPS depends on camera and ROI; 5000 FPS was tested at 512×96."));
+        exposureRow->addWidget(mvFpsSpin_);
         exposureRow->addStretch();
         auto* advanced = new QCheckBox(tr("Advanced — Hardware Setup"), page);
         advanced->setObjectName(QStringLiteral("mvAdvancedSetup"));
@@ -649,6 +658,8 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
             connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
                     this, &ConfigTabs::onMvFormChanged);
         }
+        connect(mvFpsSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &ConfigTabs::onMvFormChanged);
         connect(mvExposureSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                 this, &ConfigTabs::onMvFormChanged);
         connect(pgConnectBtn_, &QPushButton::clicked, this, &ConfigTabs::onPulseGenConnectToggle);
@@ -1283,6 +1294,9 @@ void ConfigTabs::syncMvFormFromJson() {
                                    : tr("Manual camera profile. To link illumination to Play / "
                                         "Stop, choose the rig preset in Hardware Setup."));
     mvSyncGuard_ = true;
+    const auto live = obj["live_view"].toObject();
+    mvFpsSpin_->setEnabled(live["enabled"].toBool());
+    mvFpsSpin_->setValue(live.value("frequency_hz").toDouble(5000.0));
     selectComboData(mvTriggerModeCombo_, obj.value("trigger_mode").toInt(0));
     selectComboData(mvSignalTypeCombo_, obj.value("ext_trig_signal_type").toInt(0));
     mvExposureSpin_->setValue(obj.value("exposure_time_us").toDouble(3000.0));
@@ -1304,6 +1318,17 @@ void ConfigTabs::syncMvJsonFromForm() {
     // doesn't cover (ROI, gain, mirrors, ...). Invalid text starts fresh.
     QJsonObject obj = (doc.isObject()) ? doc.object() : QJsonObject{};
 
+    auto live = obj["live_view"].toObject();
+    if (live["enabled"].toBool()) {
+        const double oldHz = live.value("frequency_hz").toDouble(5000.0);
+        // Preserve the active trigger duration, not its duty fraction, across FPS edits.
+        if (oldHz > 0 && oldHz != mvFpsSpin_->value()) {
+            live["duty_percent"] = live.value("duty_percent").toDouble(10.0) *
+                                   mvFpsSpin_->value() / oldHz;
+            live["frequency_hz"] = mvFpsSpin_->value();
+            obj["live_view"] = live;
+        }
+    }
     obj["trigger_mode"] = mvTriggerModeCombo_->currentData().toInt();
     obj["ext_trig_signal_type"] = mvSignalTypeCombo_->currentData().toInt();
     obj["exposure_time_us"] = mvExposureSpin_->value();
