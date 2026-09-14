@@ -190,6 +190,12 @@ public:
     // returns immediately with no clones. Wire to tab show/hide in the UI.
     void setMonitoringActive(bool active);
     
+    // Issue #407: true when buffered frames should be flushed to disk. Checks
+    // both the frame-count interval AND a byte-budget watermark (50% of
+    // maxBytes) so a flush fires even when the byte budget saturates before
+    // the count threshold is reached.
+    bool needsFlush() const;
+
     // Round-robin buffer flush (for crash resilience)
     // Returns number of frames flushed (submitted to the write queue)
     size_t flushBufferedFrames(class Hdf5Service& hdf5);

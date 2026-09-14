@@ -114,9 +114,13 @@ append only, never renumber.
    `experiment.saveFailed` is latched and the state is `Failed`.
 
 The worker also runs the periodic flush while Active: every 250 ms it
-submits `flushBufferedFrames(hdf5)` when the buffered count reaches
-`ProcessingService::getFlushInterval()` (`status().flushing` is true during
-the submission).
+submits `flushBufferedFrames(hdf5)` when
+`ProcessingService::needsFlush()` returns true (`status().flushing` is
+true during the submission). `needsFlush()` fires on the frame-count
+interval **or** a 50 % byte-budget watermark (issue #407 — the count-only
+gate never opened when the byte budget saturated first). A 2-second
+time-based backstop also flushes any non-empty buffer regardless of
+thresholds, so a slow trickle of large frames never sits unwritten.
 - `reportUnresolvedFault(code, message)` / `clearUnresolvedFault()`: a save
   or provenance failure from the last run blocks the next Start
   (`lifecycle.fault` gate) until the operator acknowledges it.

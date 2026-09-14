@@ -1,6 +1,16 @@
 # Recent Work
 
 > Snapshot of recently merged features and fixes, as of 2025-11 / 2025-12.
+
+## 2026-09-14 — Periodic flush byte-watermark fix (#407)
+
+The coordinator's periodic flush gate checked frame count only, but
+`ExperimentFrameBuffer` refused admission on either frame count or byte budget.
+With 1216×256 mono frames the 512 MB byte budget saturated at 862 frames — below
+the 1000-frame flush interval — so no frames reached disk until experiment stop.
+Fix: `ProcessingService::needsFlush()` fires on count **or** a 50 % byte-budget
+watermark; the coordinator also adds a 2-second time-based backstop. Test:
+`processing.flush_byte_watermark`.
 > Refresh from `git log --oneline -20` when outdated.
 
 ## Features shipped
