@@ -88,6 +88,10 @@ jobs:
       - name: Install Conan
         run: |
           pip install conan boto3 numpy
+          # Export the Python that has numpy so CMake's find_package(Python3)
+          # picks it up via the hint variable and CTest scripts can import numpy.
+          $pyExe = (Get-Command python).Source
+          "Python3_ROOT_DIR=$(Split-Path $pyExe)" >> $env:GITHUB_ENV
           conan profile detect --force
 
           # Create CI profile pinned to msvc 194 to match prebuilt binaries
