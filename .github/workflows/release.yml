@@ -164,6 +164,9 @@ jobs:
             -PassThru
           "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
           "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force resources\installers | Out-Null
+          Copy-Item build\vendor\mindvision-sdk\mindvision-sdk-installer.exe `
+            resources\installers\MindVision-Camera-Platform-Setup2.1.10.195_202604021438.exe
 
       - name: Install dependencies
         shell: pwsh

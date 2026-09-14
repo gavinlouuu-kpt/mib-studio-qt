@@ -1,5 +1,6 @@
 ; InnoSetup installer script for MIB Studio Qt
-; This script packages the application with all dependencies and optionally installs egrabber
+; This script packages the application with all dependencies and optionally
+; installs eGrabber SDK, MindVision Camera SDK, and VC++ Redistributable
 
 #define AppName "MIB Studio Qt"
 ; AppVersion can be overridden from the command line:
@@ -23,8 +24,10 @@
 #define SourceDir "..\..\"
 #define EgrabberInstaller "egrabber-win-x86_64-25.10.0.57.exe"
 #define VCRedistInstaller "vc_redist.x64.exe"
+#define MindVisionInstaller "MindVision-Camera-Platform-Setup2.1.10.195_202604021438.exe"
 #define EgrabberPath AddBackslash(SourceDir) + "resources\\installers\\" + EgrabberInstaller
 #define VCRedistPath AddBackslash(SourceDir) + "resources\\installers\\" + VCRedistInstaller
+#define MindVisionPath AddBackslash(SourceDir) + "resources\\installers\\" + MindVisionInstaller
 
 [Setup]
 ; App identification
@@ -60,6 +63,9 @@ Name: "installvcredist"; Description: "Install Visual C++ Redistributable (requi
 #endif
 #if FileExists(EgrabberPath)
 Name: "installegrabber"; Description: "Install eGrabber SDK (required for camera functionality)"; GroupDescription: "Additional components"
+#endif
+#if FileExists(MindVisionPath)
+Name: "installmindvision"; Description: "Install MindVision Camera SDK (required for MindVision cameras)"; GroupDescription: "Additional components"
 #endif
 
 [Files]
@@ -104,6 +110,11 @@ Source: "{#VCRedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: i
 Source: "{#EgrabberPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installegrabber
 #endif
 
+; MindVision Camera SDK installer (bundled but only run if user selects the task)
+#if FileExists(MindVisionPath)
+Source: "{#MindVisionPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installmindvision
+#endif
+
 [Dirs]
 ; Ensure data directory structure exists even if source data directory is empty
 ; This is critical for the application to write logs
@@ -139,6 +150,11 @@ Filename: "{tmp}\{#VCRedistInstaller}"; Parameters: "/install /quiet /norestart"
 ; Run eGrabber installer if selected (silent mode)
 #if FileExists(EgrabberPath)
 Filename: "{tmp}\{#EgrabberInstaller}"; Parameters: "/S"; StatusMsg: "Installing eGrabber SDK..."; Tasks: installegrabber; Flags: runhidden waituntilterminated
+#endif
+
+; Run MindVision Camera SDK installer if selected (silent mode)
+#if FileExists(MindVisionPath)
+Filename: "{tmp}\{#MindVisionInstaller}"; Parameters: "/S"; StatusMsg: "Installing MindVision Camera SDK..."; Tasks: installmindvision; Flags: runhidden waituntilterminated
 #endif
 
 [Code]
