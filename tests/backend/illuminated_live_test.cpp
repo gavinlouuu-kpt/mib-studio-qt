@@ -219,6 +219,19 @@ int main() {
     PulseGeneratorService gen(bus);
     PulseGeneratorService::Config cfg;
     cfg.portName = "COM1";
+    backend::services::serialbus::PortInfo adapter;
+    adapter.systemName = "COM1";
+    adapter.vendorId = 0x1234;
+    adapter.productId = 1;
+    std::string discoveryError;
+    MIB_EXPECT(!gen.discoverLiveView(cfg, {}, &discoveryError), "missing adapter rejected");
+    MIB_EXPECT(gen.discoverLiveView(cfg, {adapter}, &discoveryError) && cfg.portName == "COM1",
+               "unique compatible generator automatically resolved");
+    MIB_EXPECT((wire.regs == std::array<uint16_t, 12>{}), "discovery never changes outputs");
+    auto secondAdapter = adapter;
+    secondAdapter.systemName = "COM2";
+    MIB_EXPECT(!gen.discoverLiveView(cfg, {adapter, secondAdapter}, &discoveryError),
+               "ambiguous generators never guessed");
     for (int i = 0; i < 20; ++i) {
         watchdog.mark("generator ownership stress");
         MIB_REQUIRE(gen.beginLiveView(cfg, 0, 5000, 10), "prepare session");

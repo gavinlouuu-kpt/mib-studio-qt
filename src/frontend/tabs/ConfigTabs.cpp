@@ -1166,6 +1166,24 @@ void ConfigTabs::onReloadMv() {
         if (!nonInteractive_) QMessageBox::warning(this, tr("Reset mindvisionConfig.json"), tr("Failed to load: %1").arg(err));
         return;
     }
+    // Upgrade only an untouched historical bundled preset; never rewrite a custom profile.
+    if (path == defaultMvJsonPath()) {
+        QFile bundled(":/defaults/mindvisionConfig.json");
+        if (bundled.open(QIODevice::ReadOnly)) {
+            const auto current = QJsonDocument::fromJson(bundled.readAll()).object();
+            auto historical = current;
+            historical.remove("live_view");
+            historical["exposure_time_us"] = 1.0;
+            historical["ext_trig_signal_type"] = 0;
+            historical["strobe_pulse_width_us"] = 35;
+            historical["strobe_delay_us"] = 10;
+            if (QJsonDocument::fromJson(mvEdit_->toPlainText().toUtf8()).object() == historical) {
+                mvEdit_->setPlainText(QString::fromUtf8(QJsonDocument(current).toJson()));
+                if (!saveEditorToFile(mvEdit_, path, &err))
+                    SPDLOG_WARN("Cannot save automatic rig preset: {}", err.toStdString());
+            }
+        }
+    }
     mvPathLabel_->setText(path);
     if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(false);
     syncMvFormFromJson();

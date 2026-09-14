@@ -96,7 +96,15 @@ namespace backend
                 session = std::make_shared<services::IlluminationSession>();
                 const auto owner = std::make_shared<char>();
                 session->prepare = [&generator, cfg, channel, hz, duty, owner] {
-                    return generator.beginLiveView(cfg, channel, hz, duty, owner.get());
+                    auto resolved = cfg;
+                    if (resolved.portName == "auto") {
+                        std::string error;
+                        if (!generator.discoverLiveView(resolved, services::serialbus::availablePorts(), &error)) {
+                            SPDLOG_ERROR("Illuminated Live View: {}", error);
+                            throw std::runtime_error(error);
+                        }
+                    }
+                    return generator.beginLiveView(resolved, channel, hz, duty, owner.get());
                 };
                 session->enable = [&generator, owner] {
                     return generator.enableLiveView(owner.get());

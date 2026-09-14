@@ -4,8 +4,10 @@ Implemented for [issue #413](https://github.com/gavinlouuu-kpt/mib-studio-qt/iss
 
 ## Everyday operation
 
-After the rig has been configured once, open MIB Studio Qt, select the saved
-MindVision camera if it is not auto-selected, and press **Preview → Play**.
+For the default XGC + R5D rig, open MIB Studio Qt and press **Start Live View**.
+A single discovered camera is selected automatically. Generator discovery and
+the bundled preset require no manual setup. If multiple cameras are present,
+select the intended MindVision camera first.
 The application connects the generator, applies the saved camera setup,
 arms OUT1 strobe, then enables the trigger train. **Stop** shuts down the
 trigger train and OUT1 before releasing capture. No separate Apply to Camera,
@@ -17,7 +19,7 @@ To change it, stop Live View, edit exposure and Save, then press Play again.
 The low-level timing and serial controls are collapsed under
 **Advanced — Hardware Setup**. Unsaved edits are not applied by Play.
 
-## One-time hardware setup
+## Custom or ambiguous hardware setup (optional)
 
 1. Select the MindVision camera in Connect.
 2. In the MindVision configuration tab, expand **Advanced — Hardware Setup**.
@@ -30,8 +32,10 @@ The low-level timing and serial controls are collapsed under
 Saved values live in the active `mindvisionConfig.json` shown in the tab, not
 in a second hidden timing preset. Reopening the app loads that file for the
 next capture. Switching to mock or another camera does not operate the rig.
-Changing the adapter/device node requires updating Hardware Setup. The app
-never scans and writes into an arbitrary generator automatically.
+With `port: "auto"`, the adapter is rediscovered at each start. Explicit ports
+require updating Hardware Setup if the device node changes. Automatic discovery
+uses read-only probes and requires exactly one compatible generator before
+enabling the configured channel; it never selects among multiple matches.
 
 The preset uses 512×96 ROI, manual 100 µs exposure, external high-level trigger
 (mode 2, signal type 2), one frame per trigger, zero acquisition delay/jitter,
@@ -39,12 +43,13 @@ manual active-high strobe (mode 1), width 100 µs and delay 0. Generator channel
 is the selected channel (normally channel 1), 5000 Hz and 10% duty. Serial
 connection settings come from the selected controls, not hard-coded host paths.
 
-The JSON adds this section (port is an example, replace with the chosen port):
+The default JSON includes this section (`auto` discovers the generator; custom
+rigs may use an explicit port):
 
 ```json
 "live_view": {
   "enabled": true,
-  "port": "COM3",
+  "port": "auto",
   "baud": 9600,
   "data_bits": 8,
   "parity": "N",
@@ -157,3 +162,26 @@ Setup shows the setting form without also showing JSON; an explicit “Edit raw
 configuration (JSON)” toggle reveals the editor. Closing Hardware Setup closes
 that editor too, without discarding edits. Saved illuminated rigs describe Save
 as staging the next Play, not requiring a separate Apply to Camera operation.
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 5000 Hz / 10%, exposure 100 µs, high-level
+external trigger and active-high manual strobe 100 µs / zero delay. The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.

@@ -170,3 +170,26 @@ Setup shows the setting form without also showing JSON; an explicit “Edit raw
 configuration (JSON)” toggle reveals the editor. Closing Hardware Setup closes
 that editor too, without discarding edits. Saved illuminated rigs describe Save
 as staging the next Play, not requiring a separate Apply to Camera operation.
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 5000 Hz / 10%, exposure 100 µs, high-level
+external trigger and active-high manual strobe 100 µs / zero delay. The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.

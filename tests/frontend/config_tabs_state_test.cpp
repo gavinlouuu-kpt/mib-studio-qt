@@ -112,6 +112,15 @@ int main(int argc, char* argv[])
     tabs.show();
     settle(10);
 
+    auto* defaultEditor = tabs.findChild<QPlainTextEdit*>("mvRawConfig");
+    MIB_REQUIRE(defaultEditor, "default camera profile editor exists");
+    const auto defaultRig = QJsonDocument::fromJson(defaultEditor->toPlainText().toUtf8()).object();
+    MIB_EXPECT(defaultRig["live_view"].toObject()["port"].toString() == "auto" &&
+                   defaultRig["live_view"].toObject()["enabled"].toBool(),
+               "default rig requires no manual setup");
+    MIB_EXPECT(defaultRig["exposure_time_us"].toDouble() == 100,
+               "automatic default uses tested exposure setting");
+
     // ---- explicit state ----------------------------------------------------
     wd.mark("state");
     const auto& doc = tabs.appConfigDocument();

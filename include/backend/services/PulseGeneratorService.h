@@ -113,6 +113,11 @@ public:
                                  uint8_t from, uint8_t to, const std::atomic<bool>& cancel,
                                  int perAddressTimeoutMs = 250, LinkError* error = nullptr);
 
+    // Read-only first-run discovery at the configured address/settings. Requires
+    // exactly one matching USB bus; never guesses between multiple matches.
+    bool discoverLiveView(Config& config, const std::vector<serialbus::PortInfo>& ports,
+                          std::string* error = nullptr);
+
     // Control. Channel is 0-based [0, CHANNEL_COUNT). Values are clamped to
     // the module's range before writing. setDutyCycle stores the configured
     // duty and writes it only while the channel is enabled; setOutputEnabled

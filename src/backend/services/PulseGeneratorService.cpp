@@ -403,6 +403,32 @@ bool PulseGeneratorService::setOutputEnabled(int channel, bool on) {
     return true;
 }
 
+bool PulseGeneratorService::discoverLiveView(
+    Config& config, const std::vector<serialbus::PortInfo>& ports, std::string* error) {
+    std::vector<std::string> matches;
+    std::atomic<bool> cancel{false};
+    for (const auto& port : ports) {
+        // Avoid opening native serial ports belonging to unrelated instruments.
+        if (port.vendorId == 0 || port.productId == 0) continue;
+        const auto name = port.systemLocation.empty() ? port.systemName : port.systemLocation;
+        const auto hits = scanBus(name, config.serial, config.modbusAddress,
+                                  config.modbusAddress, cancel, 250);
+        for (const auto& hit : hits)
+            if (hit.kind == ScanHit::Kind::PulseGenerator &&
+                std::find(matches.begin(), matches.end(), name) == matches.end())
+                matches.push_back(name);
+    }
+    if (matches.size() != 1) {
+        if (error) *error = matches.empty()
+            ? "No pulse generator found. Connect its USB adapter and power, then retry. "
+              "Non-default address/serial settings can be set in Hardware Setup."
+            : "Multiple pulse generators found. Select the intended adapter in Hardware Setup.";
+        return false;
+    }
+    config.portName = matches.front();
+    return true;
+}
+
 bool PulseGeneratorService::beginLiveView(const Config& cfg, int channel, double hz, double duty,
                                           const void* owner) {
     std::scoped_lock lock(mutex_);

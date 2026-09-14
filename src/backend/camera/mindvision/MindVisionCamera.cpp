@@ -189,7 +189,15 @@ bool MindVisionCamera::start()
             return false;
         }
         rigActive_ = true; // partial preparation also needs cleanup
-        if (!illumination_->prepare()) {
+        bool prepared = false;
+        try {
+            prepared = illumination_->prepare();
+        } catch (const std::exception& error) {
+            recordFailure("mindvision.rig_discovery", error.what());
+            stopIlluminationLocked();
+            return false;
+        }
+        if (!prepared) {
             recordFailure("mindvision.rig_prepare",
                           "Cannot prepare pulse generator. Check the saved port/address and "
                           "connection in Hardware Setup");
