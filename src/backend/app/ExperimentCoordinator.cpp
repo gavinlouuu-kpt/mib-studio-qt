@@ -792,6 +792,13 @@ void ExperimentCoordinator::onFatalSaveError(const std::string& message)
 
 void ExperimentCoordinator::worker()
 {
+    using clock = std::chrono::steady_clock;
+    // Issue #407 time-based backstop: flush any non-empty buffer after this
+    // wall-clock interval regardless of count/byte thresholds, so a slow
+    // trickle of large frames never sits unwritten.
+    static constexpr auto kTimeFlushInterval = std::chrono::seconds(2);
+    auto lastFlushTime = clock::now();
+
     std::unique_lock<std::mutex> lk(mutex_);
     while (true) {
         workerCv_.wait_for(lk, std::chrono::milliseconds(250),
@@ -802,21 +809,32 @@ void ExperimentCoordinator::worker()
             const bool cancelled = cancelRequested_;
             stopRequested_ = cancelRequested_ = fatalRequested_ = false;
             finalizeLocked(lk, cancelled, failed, msg);
+            lastFlushTime = clock::now(); // finalize drained everything
             continue;
         }
         stopRequested_ = false;
         if (workerExit_) break;
         if (state_ == ExperimentRunState::Active && activeRun_) {
             auto& proc = backend_.processing();
-            const size_t interval = proc.getFlushInterval();
-            if (interval > 0 && proc.getBufferedFrameCounts().total() >= interval &&
-                backend_.hdf5().isFileOpen()) {
+            // Issue #407: needsFlush() checks both the frame-count interval
+            // AND a byte-budget watermark so a flush fires even when the byte
+            // budget saturates before the count threshold is reached.
+            const bool thresholdReady = proc.needsFlush();
+            const auto now = clock::now();
+            const bool timeBackstop =
+                proc.getBufferedFrameCounts().total() > 0 &&
+                (now - lastFlushTime) >= kTimeFlushInterval;
+            if ((thresholdReady || timeBackstop) && backend_.hdf5().isFileOpen()) {
                 status_.flushing = true;
                 lk.unlock();
                 const size_t n = proc.flushBufferedFrames(backend_.hdf5());
-                if (n > 0) SPDLOG_DEBUG("ExperimentCoordinator: periodic flush submitted {} frames", n);
+                if (n > 0) {
+                    SPDLOG_DEBUG("ExperimentCoordinator: periodic flush submitted {} frames{}",
+                                 n, timeBackstop && !thresholdReady ? " (time backstop)" : "");
+                }
                 lk.lock();
                 status_.flushing = false;
+                lastFlushTime = clock::now();
             }
         }
     }
