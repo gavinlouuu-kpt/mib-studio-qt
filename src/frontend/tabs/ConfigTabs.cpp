@@ -343,6 +343,7 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         auto* page = new QWidget(this);
         auto* v = new QVBoxLayout(page);
         mvEdit_ = new QPlainTextEdit(page);
+        mvEdit_->setObjectName(QStringLiteral("mvRawConfig"));
         mvEdit_->setWordWrapMode(QTextOption::NoWrap);
         auto* row = new QHBoxLayout();
         mvReloadBtn_ = new QPushButton(tr("Reset"), page);
@@ -619,12 +620,19 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvLiveStatus_->setWordWrap(true);
         v->addWidget(mvLiveStatus_);
         v->addStretch(1);
-        const QList<QWidget*> advancedWidgets{mvForm,       mvEdit_,      pgGroup,
+        auto* rawConfig = new QCheckBox(tr("Edit raw configuration (JSON)"), page);
+        rawConfig->setObjectName(QStringLiteral("mvRawConfigToggle"));
+        v->insertWidget(v->count() - 1, rawConfig);
+        mvEdit_->hide();
+        connect(rawConfig, &QCheckBox::toggled, mvEdit_, &QWidget::setVisible);
+        const QList<QWidget*> advancedWidgets{mvForm,       rawConfig,      pgGroup,
+                                              mvPathLabel_,
                                               mvApplyBtn_,  mvReloadBtn_, mvSoftTriggerBtn_,
                                               mvBrowseBtn_, mvClearBtn_};
         for (auto* widget : advancedWidgets)
             widget->hide();
-        connect(advanced, &QCheckBox::toggled, this, [advancedWidgets](bool shown) {
+        connect(advanced, &QCheckBox::toggled, this, [advancedWidgets, rawConfig](bool shown) {
+            if (!shown) rawConfig->setChecked(false);
             for (auto* widget : advancedWidgets)
                 widget->setVisible(shown);
         });
@@ -1287,6 +1295,10 @@ void ConfigTabs::syncMvFormFromJson() {
     }
     const QJsonObject obj = doc.object();
 
+    if (mvUnsavedLabel_)
+        mvUnsavedLabel_->setText(obj["live_view"].toObject()["enabled"].toBool()
+                                    ? tr("Unsaved changes — stop capture and Save before the next Play.")
+                                    : tr("Unsaved changes — Save, then Apply to Camera."));
     if (mvLiveStatus_)
         mvLiveStatus_->setText(obj["live_view"].toObject()["enabled"].toBool()
                                    ? tr("Illuminated rig profile: Save changes, then Preview Play "

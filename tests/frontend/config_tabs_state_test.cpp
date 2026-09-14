@@ -1,3 +1,4 @@
+#include <QPlainTextEdit>
 // config_tabs_state_test (issue #361)
 //
 // ConfigTabs with explicit editor state and a bounded header (offscreen,
@@ -242,6 +243,13 @@ int main(int argc, char* argv[])
                    "advanced hidden, exposure visible");
         advanced->setChecked(true);
         settle();
+        auto* rawToggle = rigTabs.findChild<QCheckBox*>("mvRawConfigToggle");
+        auto* rawEditor = rigTabs.findChild<QPlainTextEdit*>("mvRawConfig");
+        MIB_REQUIRE(rawToggle && rawEditor, "raw configuration has separate disclosure");
+        MIB_EXPECT(rawToggle->isVisible() && !rawEditor->isVisible(),
+                   "hardware setup does not also expose raw editor");
+        rawToggle->setChecked(true);
+        MIB_EXPECT(rawEditor->isVisible(), "raw configuration explicitly accessible");
         port->addItem("Test adapter", "COM1");
         port->setCurrentIndex(port->count() - 1);
         preset->click();
@@ -271,6 +279,8 @@ int main(int argc, char* argv[])
         advanced->setChecked(false);
         settle();
         MIB_EXPECT(fps->isVisible(), "FPS visible with advanced collapsed");
+        MIB_EXPECT(!rawEditor->isVisible() && !rawToggle->isChecked(),
+                   "closing hardware setup also closes raw configuration");
         rigTabs.grab().save("/tmp/mib-one-click-config.png");
     }
     {

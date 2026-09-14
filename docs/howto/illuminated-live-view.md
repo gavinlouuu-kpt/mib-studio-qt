@@ -148,3 +148,12 @@ Existing backend validation rejects exposure or strobe timing that exceeds the
 new period, and invalid generator duty. Legacy/manual profiles leave FPS disabled.
 The real-widget regression covers visibility, persistence, duty compensation,
 unchanged exposure/strobe, and restoration after reopening.
+
+
+### Separate setup from raw configuration
+
+Normal MindVision use hides the config file path and raw editor. Opening Hardware
+Setup shows the setting form without also showing JSON; an explicit “Edit raw
+configuration (JSON)” toggle reveals the editor. Closing Hardware Setup closes
+that editor too, without discarding edits. Saved illuminated rigs describe Save
+as staging the next Play, not requiring a separate Apply to Camera operation.
