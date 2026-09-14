@@ -285,6 +285,24 @@ int main(int argc, char* argv[])
         MIB_EXPECT(adjusted["exposure_time_us"].toDouble() == 100 &&
                        adjusted["strobe_pulse_width_us"].toInt() == 100,
                    "FPS change does not silently change exposure or strobe");
+        // 40000 FPS is a 25 us period: the 100 us exposure and strobe cannot
+        // fit, so Save must refuse and leave the file and staged profile alone.
+        fps->setValue(40000);
+        save->click();
+        settle();
+        const auto refused = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(refused["live_view"].toObject()["frequency_hz"].toDouble() == 2500 &&
+                       refused["live_view"].toObject()["duty_percent"].toDouble() == 5,
+                   "FPS that cannot fit exposure/strobe is refused; file unchanged");
+        MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
+                   "refused save leaves the staged profile in place");
+        fps->setValue(2500);
+        save->click();
+        settle();
+        const auto restoredFps = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(restoredFps["live_view"].toObject()["frequency_hz"].toDouble() == 2500 &&
+                       restoredFps["live_view"].toObject()["duty_percent"].toDouble() == 5,
+                   "returning to a valid FPS restores the 20 us trigger duty exactly");
         advanced->setChecked(false);
         settle();
         MIB_EXPECT(fps->isVisible(), "FPS visible with advanced collapsed");
@@ -300,6 +318,45 @@ int main(int argc, char* argv[])
         MIB_EXPECT(fps && fps->value() == 2500, "reopening restores saved FPS");
         MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
                    "reopening stages saved profile");
+    }
+
+    // Default-profile migration rule: exactly the historical bundled profile
+    // (as found on the rig PC on 2026-09-14) is upgraded; anything edited is not.
+    wd.mark("historical default migration");
+    {
+        QFile res(":/defaults/mindvisionConfig.json");
+        MIB_REQUIRE(res.open(QIODevice::ReadOnly), "bundled preset resource");
+        const QByteArray bundled = res.readAll();
+        const QByteArray historical = QByteArrayLiteral(
+            "{\n  \"width\": 512,\n  \"height\": 96,\n  \"offset_x\": 0,\n  \"offset_y\": 0,\n"
+            "  \"exposure_time_us\": 1.0,\n  \"analog_gain\": 1,\n"
+            "  \"auto_exposure_enabled\": false,\n  \"ae_target_brightness\": 100,\n"
+            "  \"gamma\": 100,\n  \"contrast\": 100,\n  \"sharpness\": 0,\n  \"frame_speed\": 2,\n"
+            "  \"flip_horizontal\": false,\n  \"flip_vertical\": false,\n\n  \"trigger_mode\": 2,\n"
+            "  \"ext_trig_signal_type\": 0,\n  \"ext_trig_jitter_us\": 0,\n"
+            "  \"acq_trigger_delay_us\": 0,\n  \"trigger_count\": 1,\n\n  \"strobe_mode\": 1,\n"
+            "  \"strobe_pulse_width_us\": 35,\n  \"strobe_delay_us\": 10,\n"
+            "  \"strobe_polarity\": 1\n}\n");
+        const QByteArray upgraded = frontend::ConfigTabs::upgradedMindVisionDefault(historical, bundled);
+        MIB_EXPECT(upgraded == bundled, "untouched historical default is upgraded");
+        const auto preset = QJsonDocument::fromJson(upgraded).object();
+        MIB_EXPECT(preset["live_view"].toObject()["port"].toString() == "auto" &&
+                       preset["exposure_time_us"].toDouble() == 100,
+                   "upgrade target is the automatic rig preset");
+        auto edited = QJsonDocument::fromJson(historical).object();
+        edited["exposure_time_us"] = 50.0;
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault(
+                       QJsonDocument(edited).toJson(), bundled).isEmpty(),
+                   "edited exposure is a user profile: preserved");
+        auto extended = QJsonDocument::fromJson(historical).object();
+        extended["custom_key"] = 1;
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault(
+                       QJsonDocument(extended).toJson(), bundled).isEmpty(),
+                   "extra keys mark a user profile: preserved");
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault(bundled, bundled).isEmpty(),
+                   "already-upgraded profile is left alone");
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault("not json", bundled).isEmpty(),
+                   "unparseable profile is never overwritten");
     }
     backend.shutdown();
     return mib::test::exitCode();

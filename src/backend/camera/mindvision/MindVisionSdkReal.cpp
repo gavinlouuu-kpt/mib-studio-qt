@@ -11,6 +11,7 @@
 #endif
 
 #include <spdlog/spdlog.h>
+#include <algorithm>
 #include <cmath>
 
 #if MIB_HAS_MINDVISION
@@ -121,27 +122,67 @@ std::shared_ptr<const SdkOps> buildRealOps()
     };
     ops->armIllumination = [](int h, const Config& c) -> bool {
         // Physical OUT1 = SDK index 0. OUT2 remains the sorting output.
-        if (CameraSetInPutIOMode(h, 0, IOMODE_TRIG_INPUT) != 0 ||
-            CameraSetOutPutIOMode(h, 0, IOMODE_STROBE_OUTPUT) != 0 ||
-            CameraSetExtTrigShutterType(h, 0) != 0)
+        // Every mismatch is logged with the read-back value: on the rig this
+        // log line is the only way to tell which setting the camera refused.
+        auto fail = [](const char* what, long long expected, long long actual) {
+            SPDLOG_ERROR("MindVision rig arm: {} readback {} != expected {}", what, actual,
+                         expected);
+            return false;
+        };
+        auto call = [](const char* what, CameraSdkStatus st) {
+            if (st != CAMERA_STATUS_SUCCESS)
+                SPDLOG_ERROR("MindVision rig arm: {} returned {}", what, st);
+            return st == CAMERA_STATUS_SUCCESS;
+        };
+        if (!call("CameraSetInPutIOMode", CameraSetInPutIOMode(h, 0, IOMODE_TRIG_INPUT)) ||
+            !call("CameraSetOutPutIOMode", CameraSetOutPutIOMode(h, 0, IOMODE_STROBE_OUTPUT)) ||
+            !call("CameraSetExtTrigShutterType", CameraSetExtTrigShutterType(h, 0)))
             return false;
         INT trig = -1, signal = -1, mode = -1, polarity = -1, output = -1;
         UINT width = 0, delay = 0, triggerDelay = 0;
         double exposure = 0;
         BOOL ae = TRUE;
-        return CameraGetTriggerMode(h, &trig) == 0 && trig == c.triggerMode &&
-               CameraGetExtTrigSignalType(h, &signal) == 0 && signal == c.extTrigSignalType &&
-               CameraGetStrobeMode(h, &mode) == 0 && mode == c.strobeMode &&
-               CameraGetStrobePolarity(h, &polarity) == 0 && polarity == c.strobePolarity &&
-               CameraGetOutPutIOMode(h, 0, &output) == 0 && output == IOMODE_STROBE_OUTPUT &&
-               CameraGetStrobePulseWidth(h, &width) == 0 &&
-               width == static_cast<UINT>(c.strobePulseUs) &&
-               CameraGetStrobeDelayTime(h, &delay) == 0 &&
-               delay == static_cast<UINT>(c.strobeDelayUs) &&
-               CameraGetTriggerDelayTime(h, &triggerDelay) == 0 &&
-               triggerDelay == static_cast<UINT>(c.acqTriggerDelayUs) &&
-               CameraGetAeState(h, &ae) == 0 && !ae && CameraGetExposureTime(h, &exposure) == 0 &&
-               std::abs(exposure - c.exposureUs) <= 1.0;
+        if (!call("CameraGetTriggerMode", CameraGetTriggerMode(h, &trig)) ||
+            !call("CameraGetExtTrigSignalType", CameraGetExtTrigSignalType(h, &signal)) ||
+            !call("CameraGetStrobeMode", CameraGetStrobeMode(h, &mode)) ||
+            !call("CameraGetStrobePolarity", CameraGetStrobePolarity(h, &polarity)) ||
+            !call("CameraGetOutPutIOMode", CameraGetOutPutIOMode(h, 0, &output)) ||
+            !call("CameraGetStrobePulseWidth", CameraGetStrobePulseWidth(h, &width)) ||
+            !call("CameraGetStrobeDelayTime", CameraGetStrobeDelayTime(h, &delay)) ||
+            !call("CameraGetTriggerDelayTime", CameraGetTriggerDelayTime(h, &triggerDelay)) ||
+            !call("CameraGetAeState", CameraGetAeState(h, &ae)) ||
+            !call("CameraGetExposureTime", CameraGetExposureTime(h, &exposure)))
+            return false;
+        if (trig != c.triggerMode) return fail("trigger mode", c.triggerMode, trig);
+        if (signal != c.extTrigSignalType)
+            return fail("ext trigger signal type", c.extTrigSignalType, signal);
+        if (mode != c.strobeMode) return fail("strobe mode", c.strobeMode, mode);
+        if (polarity != c.strobePolarity) return fail("strobe polarity", c.strobePolarity, polarity);
+        if (output != IOMODE_STROBE_OUTPUT) return fail("OUT1 io mode", IOMODE_STROBE_OUTPUT, output);
+        if (width != static_cast<UINT>(c.strobePulseUs))
+            return fail("strobe pulse width us", c.strobePulseUs, width);
+        if (delay != static_cast<UINT>(c.strobeDelayUs))
+            return fail("strobe delay us", c.strobeDelayUs, delay);
+        if (triggerDelay != static_cast<UINT>(c.acqTriggerDelayUs))
+            return fail("trigger delay us", c.acqTriggerDelayUs, triggerDelay);
+        if (ae) return fail("auto exposure", 0, 1);
+        // The sensor quantizes exposure to its line time, so an exact match is
+        // not a valid requirement. Accept the SDK's nearest setting within 5 %
+        // (never less than 1 us) and log the actual value; anything further off
+        // is a wrong setting, not quantization.
+        const double tolerance = std::max(1.0, 0.05 * c.exposureUs);
+        if (std::abs(exposure - c.exposureUs) > tolerance) {
+            SPDLOG_ERROR("MindVision rig arm: exposure readback {:.2f} us != expected {:.2f} us "
+                         "(tolerance {:.2f} us)", exposure, c.exposureUs, tolerance);
+            return false;
+        }
+        if (std::abs(exposure - c.exposureUs) > 0.5)
+            SPDLOG_WARN("MindVision rig arm: exposure quantized to {:.2f} us (requested {:.2f} us)",
+                        exposure, c.exposureUs);
+        SPDLOG_INFO("MindVision rig armed: trigger mode {} signal {} strobe mode {} polarity {} "
+                    "width {} us delay {} us exposure {:.2f} us",
+                    trig, signal, mode, polarity, width, delay, exposure);
+        return true;
     };
     ops->applyConfig = [](int handle, const Config& cfg) -> bool {
         return applyConfigToHandle(handle, cfg, nullptr);

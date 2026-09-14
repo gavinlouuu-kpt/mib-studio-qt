@@ -31,6 +31,8 @@
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/processing/EModulusLutCatalog.h"
 
+#include "backend/camera/mindvision/MindVisionConfig.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -60,39 +62,33 @@ namespace backend
 {
     namespace
     {
+    // Builds the capture-owned MindVision camera for `path`. When the saved
+    // profile enables illuminated Live View, the same validated parse the
+    // camera uses at start (parseConfig: connection, range and timing rules)
+    // decides here whether a generator session is attached, so a profile that
+    // would fail at Play is rejected when it is staged. Throws std::runtime_error
+    // with the operator-facing reason; no hardware is touched.
     std::unique_ptr<::camera::common::ICamera>
     makeLiveCamera(int index, const std::string& path, services::PulseGeneratorService& generator) {
         std::shared_ptr<services::IlluminationSession> session;
         if (!path.empty()) {
-            std::ifstream input(path);
+            std::ifstream input(path, std::ios::binary);
             if (!input) throw std::runtime_error("Cannot read saved MindVision setup: " + path);
-            const auto doc = nlohmann::json::parse(input);
-            const auto live = doc.value("live_view", nlohmann::json::object());
-            if (live.value("enabled", false)) {
+            const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+            const auto parsed = backend::camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) throw std::runtime_error(parsed.error);
+            if (parsed.config.illuminatedLive) {
+                const auto& lv = parsed.config.liveView;
                 services::PulseGeneratorService::Config cfg;
-                cfg.portName = live.at("port").get<std::string>();
-                const int address = live.value("address", 1);
-                if (address < 1 || address > 247)
-                    throw std::runtime_error("Invalid saved generator address");
-                cfg.modbusAddress = static_cast<uint8_t>(address);
-                cfg.serial.baudRate = live.value("baud", 9600);
-                cfg.serial.dataBits = live.value("data_bits", 8);
-                const auto parity = live.value("parity", std::string("N"));
-                if (parity.size() != 1) throw std::runtime_error("Invalid generator parity");
-                cfg.serial.parity = parity[0];
-                cfg.serial.stopBits = live.value("stop_bits", 1);
-                const int channel = live.value("channel", 1) - 1;
-                const double hz = live.value("frequency_hz", 5000.0);
-                const double duty = live.value("duty_percent", 10.0);
-                const double period = 1e6 / hz;
-                if (!std::isfinite(hz) || hz < 400 || hz > 40000 || !std::isfinite(duty) ||
-                    duty <= 0 || duty >= 100 || channel < 0 || channel >= 4 ||
-                    cfg.portName.empty() ||
-                    doc.value("strobe_delay_us", 0.0) + doc.value("strobe_pulse_width_us", 100.0) >=
-                        period ||
-                    doc.value("exposure_time_us", 100.0) > period)
-                    throw std::runtime_error(
-                        "Invalid illuminated rig timing or connection. Check Hardware Setup");
+                cfg.portName = lv.port;
+                cfg.modbusAddress = static_cast<uint8_t>(lv.address);
+                cfg.serial.baudRate = lv.baud;
+                cfg.serial.dataBits = lv.dataBits;
+                cfg.serial.parity = lv.parity;
+                cfg.serial.stopBits = lv.stopBits;
+                const int channel = lv.channel - 1; // service channels are 0-based
+                const double hz = lv.frequencyHz;
+                const double duty = lv.dutyPercent;
                 session = std::make_shared<services::IlluminationSession>();
                 const auto owner = std::make_shared<char>();
                 session->prepare = [&generator, cfg, channel, hz, duty, owner] {
@@ -103,6 +99,8 @@ namespace backend
                             SPDLOG_ERROR("Illuminated Live View: {}", error);
                             throw std::runtime_error(error);
                         }
+                        SPDLOG_INFO("Illuminated Live View: pulse generator discovered on {} (addr {})",
+                                    resolved.portName, resolved.modbusAddress);
                     }
                     return generator.beginLiveView(resolved, channel, hz, duty, owner.get());
                 };

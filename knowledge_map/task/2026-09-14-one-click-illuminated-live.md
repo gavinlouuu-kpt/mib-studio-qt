@@ -46,3 +46,24 @@ Existing backend validation rejects exposure or strobe timing that exceeds the
 new period, and invalid generator duty. Legacy/manual profiles leave FPS disabled.
 The real-widget regression covers visibility, persistence, duty compensation,
 unchanged exposure/strobe, and restoration after reopening.
+
+
+## Second pass on the rig PC (September 14, evening)
+
+Review fixes: strict generator identity for automatic discovery (a zeroed
+Modbus slave on the rig PC's COM4 was a false match), discovery errors that
+name busy and non-generator ports, `live_view` parsing/timing validation moved
+into `parseConfig` and applied at Save, extra cancellation checkpoints before
+handle open and CameraPlay, sticky shutdown-failure record, arm-readback
+diagnostics with exposure quantization tolerance, verbatim historical-default
+migration rule with unit test, FPS spin commit-on-enter and duty rounding.
+Regression tests: `backend.illuminated_live` (foreign/busy/unplugged adapters,
+cancellation, timing rules) and `frontend.config_tabs_state` (refused FPS,
+migration rule).
+
+Rig PC state: installed app running and holding COM6 (generator, 5000 Hz per
+saved settings); COM4 answers address 1 with zeros; camera not attached; no
+CMake/MSVC/Conan/Qt/Python on the PC, so this build was not compiled or run
+there. CI is the compile/test oracle for this pass. Hardware acceptance
+(Rigol CH2 trigger, CH1 LED current at 5000 and an adjusted FPS, Start/Stop/
+restart) remains outstanding and requires a deployed build.

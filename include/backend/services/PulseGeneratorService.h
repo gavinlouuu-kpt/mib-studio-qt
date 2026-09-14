@@ -83,6 +83,10 @@ public:
             ModbusDevice,   // valid Modbus response, but not a pulse generator
             Error           // corrupt/inconsistent response — possible collision
         } kind{Kind::Error};
+        // PulseGenerator only: every channel reports a non-zero in-range
+        // frequency (identityLooksLikeConfiguredGenerator). Automatic
+        // discovery requires this; the lenient manual scan does not.
+        bool allChannelsConfigured{false};
     };
 
     explicit PulseGeneratorService(serialbus::SerialBusManager& busManager);
@@ -113,8 +117,14 @@ public:
                                  uint8_t from, uint8_t to, const std::atomic<bool>& cancel,
                                  int perAddressTimeoutMs = 250, LinkError* error = nullptr);
 
-    // Read-only first-run discovery at the configured address/settings. Requires
-    // exactly one matching USB bus; never guesses between multiple matches.
+    // Read-only discovery for `port: "auto"` profiles: probes every USB serial
+    // adapter in `ports` at the configured address/settings and resolves
+    // config.portName. A port counts only when the reply passes the strict
+    // identity test (all four channels hold a non-zero in-range frequency), so
+    // an unrelated Modbus device that serves zeroed registers at the same
+    // address (a syringe pump does) is never adopted. Exactly one such port is
+    // required; none or several fail with an operator-facing message that names
+    // ports held by another program. Never writes to any device.
     bool discoverLiveView(Config& config, const std::vector<serialbus::PortInfo>& ports,
                           std::string* error = nullptr);
 
@@ -152,6 +162,10 @@ public:
     // (and later writing into) an unrelated Modbus device that merely serves
     // 12 holding registers at address 0.
     static bool identityLooksLikeGenerator(const std::vector<uint8_t>& identityData);
+    // Stricter form for automatic adoption: identityLooksLikeGenerator AND no
+    // channel reads 0 Hz. The module cannot hold a 0 Hz setting (400 Hz
+    // minimum), whereas foreign devices commonly serve zeroed registers.
+    static bool identityLooksLikeConfiguredGenerator(const std::vector<uint8_t>& identityData);
 
 private:
     bool writeFrame(const std::vector<uint8_t>& request);

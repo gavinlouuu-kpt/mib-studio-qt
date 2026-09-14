@@ -193,3 +193,15 @@ work unchanged. Discovery exceptions are recorded as camera startup failures
 and pass through illumination cleanup. The earlier mandatory one-time manual
 setup instructions apply only to custom or ambiguous rigs, not the default rig.
 Hardware acceptance of this changed build remains outstanding.
+
+
+### Save validation and migration rule (September 14, second pass)
+
+`onSaveMv` runs `backend::camera::mindvision::parseConfig` on the editor text
+before writing; a profile whose FPS cannot fit exposure/strobe, or whose
+`live_view` link is malformed, is refused with the parser's message and the
+file and staged profile stay unchanged. The default-profile upgrade is the
+pure static `upgradedMindVisionDefault(current, bundled)`: only a JSON-equal
+copy of the verbatim pre-#413 bundled profile is replaced by the bundled
+preset. The Requested FPS spin box has keyboard tracking off and the
+compensated duty is rounded to 0.01 %.

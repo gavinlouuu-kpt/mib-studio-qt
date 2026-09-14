@@ -320,3 +320,16 @@ work unchanged. Discovery exceptions are recorded as camera startup failures
 and pass through illumination cleanup. The earlier mandatory one-time manual
 setup instructions apply only to custom or ambiguous rigs, not the default rig.
 Hardware acceptance of this changed build remains outstanding.
+
+
+### Cancellation and shutdown record (September 14, second pass)
+
+`start()` checks `stopRequested_` after generator preparation (before
+`CameraSdkInit`) and before `CameraPlay`, in addition to the post-arm check, so a
+Stop queued behind a long discovery never opens or streams the camera.
+`stopIlluminationLocked()` returns whether both OFFs were confirmed and names
+the failed one; `stop()` re-records `mindvision.rig_shutdown_unconfirmed` if
+handle teardown replaced it with a drain-timeout fault. The real
+`armIllumination` logs each mismatched readback and tolerates exposure
+quantization (5 %, minimum 1 µs). `live_view` settings come from
+`Config::liveView`, parsed and range/timing-validated by `parseConfig`.

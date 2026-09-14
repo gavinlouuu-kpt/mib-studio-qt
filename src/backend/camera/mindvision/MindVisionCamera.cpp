@@ -204,6 +204,13 @@ bool MindVisionCamera::start()
             stopIlluminationLocked();
             return false;
         }
+        // A stop() issued while discovery/preparation ran is queued on
+        // stateMutex_; honour it before opening the camera at all.
+        if (stopRequested_.load(std::memory_order_acquire)) {
+            recordFailure("mindvision.rig_cancelled", "Live View start cancelled");
+            stopIlluminationLocked();
+            return false;
+        }
     }
 
     mv::SdkStatus status = sdk_->sdkInit();
@@ -327,6 +334,12 @@ bool MindVisionCamera::start()
     outBufferBytes_ = validation.geometry.requiredBytes;
     sessionGeometry_ = validation.geometry;
 
+    if (rigActive_ && stopRequested_.load(std::memory_order_acquire)) {
+        // Cancelled during configuration: never start streaming a session
+        // whose owner already asked it to end.
+        return failClosed("mindvision.rig_cancelled", "Live View start cancelled");
+    }
+
     status = sdk_->play(hCamera_);
     if (status != mv::kSdkSuccess)
     {
@@ -410,8 +423,13 @@ void MindVisionCamera::closeHandleLocked(std::unique_lock<std::mutex> &lock)
     hCamera_ = -1;
 }
 
-void MindVisionCamera::stopIlluminationLocked() {
-    if (!rigActive_) return;
+namespace
+{
+    constexpr const char *kRigShutdownCode = "mindvision.rig_shutdown_unconfirmed";
+}
+
+bool MindVisionCamera::stopIlluminationLocked() {
+    if (!rigActive_) return true;
     bool generatorOff = false;
     try {
         generatorOff = illumination_->disable();
@@ -420,22 +438,30 @@ void MindVisionCamera::stopIlluminationLocked() {
     }
     bool ledOff = true;
     if (hCamera_ >= 0) {
+        // IOMODE_GP_OUTPUT (3) then drive low: OUT1 high energizes the R5D.
         ledOff = sdk_->setOutputIoMode(hCamera_, 0, 3) == mv::kSdkSuccess;
         ledOff = (sdk_->setIoStateEx(hCamera_, 0, 0) == mv::kSdkSuccess) && ledOff;
     }
     rigActive_ = false;
     if (!generatorOff || !ledOff) {
-        recordFailure("mindvision.rig_shutdown_unconfirmed",
-                      "Capture stopped, but generator/LED OFF was not confirmed. Check connections "
-                      "and stop the generator in Hardware Setup");
+        recordFailure(kRigShutdownCode,
+                      std::string("Capture stopped, but ") +
+                          (!generatorOff && !ledOff ? "generator and LED OFF were"
+                           : !generatorOff          ? "generator OFF was"
+                                                    : "LED OFF was") +
+                          " not confirmed. Check connections and stop the generator in "
+                          "Hardware Setup");
+        return false;
     }
+    return true;
 }
 
 void MindVisionCamera::stop()
 {
     stopRequested_.store(true, std::memory_order_release);
     std::unique_lock<std::mutex> lock(stateMutex_);
-    stopIlluminationLocked();
+    const bool illuminationOff = stopIlluminationLocked();
+    const CameraFailure rigFailure = illuminationOff ? CameraFailure{} : lastFailure_;
     if (!running_.load(std::memory_order_acquire) && hCamera_ < 0)
     {
         return;
@@ -443,6 +469,13 @@ void MindVisionCamera::stop()
     running_.store(false, std::memory_order_release);
     closeHandleLocked(lock);
     sessionGeometry_ = {};
+    if (!illuminationOff && lastFailure_.code != kRigShutdownCode)
+    {
+        // Handle teardown recorded its own fault (in-flight drain timeout);
+        // the unconfirmed generator/LED OFF is the message the operator must
+        // still see, so it stays the reported failure with the drain detail.
+        recordFailure(kRigShutdownCode, rigFailure.message + " (" + lastFailure_.message + ")");
+    }
     SPDLOG_INFO("MindVisionCamera: stopped");
 }
 

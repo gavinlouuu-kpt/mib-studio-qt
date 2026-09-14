@@ -309,9 +309,11 @@ std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
             const bool plausible =
                 modbus::extractReadData(result.response, IDENTITY_REG_COUNT, data) &&
                 identityLooksLikeGenerator(data);
-            hits.push_back({static_cast<uint8_t>(addr),
-                            plausible ? ScanHit::Kind::PulseGenerator
-                                      : ScanHit::Kind::ModbusDevice});
+            ScanHit hit;
+            hit.address = static_cast<uint8_t>(addr);
+            hit.kind = plausible ? ScanHit::Kind::PulseGenerator : ScanHit::Kind::ModbusDevice;
+            hit.allChannelsConfigured = plausible && identityLooksLikeConfiguredGenerator(data);
+            hits.push_back(hit);
             break;
         }
         case serialbus::BusError::ModbusException:
@@ -403,30 +405,88 @@ bool PulseGeneratorService::setOutputEnabled(int channel, bool on) {
     return true;
 }
 
+bool PulseGeneratorService::identityLooksLikeConfiguredGenerator(
+    const std::vector<uint8_t>& identityData) {
+    if (!identityLooksLikeGenerator(identityData)) {
+        return false;
+    }
+    const auto* regs = reinterpret_cast<const uint8_t*>(identityData.data());
+    for (int ch = 0; ch < CHANNEL_COUNT; ++ch) {
+        const int off = ch * 6;
+        const uint32_t freqRaw = (static_cast<uint32_t>(regs[off]) << 24) |
+                                 (static_cast<uint32_t>(regs[off + 1]) << 16) |
+                                 (static_cast<uint32_t>(regs[off + 2]) << 8) |
+                                 static_cast<uint32_t>(regs[off + 3]);
+        if (freqRaw == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool PulseGeneratorService::discoverLiveView(
     Config& config, const std::vector<serialbus::PortInfo>& ports, std::string* error) {
-    std::vector<std::string> matches;
+    std::vector<std::string> matches;   // strict identity passed
+    std::vector<std::string> lookalikes; // answered at the address, not a generator
+    std::vector<std::string> busy;       // adapter held by another program/settings
     std::atomic<bool> cancel{false};
+    auto listed = [](const std::vector<std::string>& names) {
+        std::string out;
+        for (const auto& n : names) out += (out.empty() ? "" : ", ") + n;
+        return out;
+    };
     for (const auto& port : ports) {
         // Avoid opening native serial ports belonging to unrelated instruments.
         if (port.vendorId == 0 || port.productId == 0) continue;
-        const auto name = port.systemLocation.empty() ? port.systemName : port.systemLocation;
+        // The system name ("COM6", "ttyUSB0") is what Hardware Setup saves and
+        // what the platform port opens; the location form is only a display hint.
+        const auto name = port.systemName.empty() ? port.systemLocation : port.systemName;
+        if (name.empty() || std::find(matches.begin(), matches.end(), name) != matches.end() ||
+            std::find(lookalikes.begin(), lookalikes.end(), name) != lookalikes.end() ||
+            std::find(busy.begin(), busy.end(), name) != busy.end())
+            continue;
+        LinkError linkError = LinkError::None;
         const auto hits = scanBus(name, config.serial, config.modbusAddress,
-                                  config.modbusAddress, cancel, 250);
-        for (const auto& hit : hits)
-            if (hit.kind == ScanHit::Kind::PulseGenerator &&
-                std::find(matches.begin(), matches.end(), name) == matches.end())
+                                  config.modbusAddress, cancel, 250, &linkError);
+        if (linkError == LinkError::PortBusy) {
+            busy.push_back(name);
+            continue;
+        }
+        for (const auto& hit : hits) {
+            if (hit.kind == ScanHit::Kind::PulseGenerator && hit.allChannelsConfigured) {
                 matches.push_back(name);
+            } else {
+                // Lenient generator shape, foreign Modbus device or garbled reply:
+                // something answered here, and it must not be written to.
+                lookalikes.push_back(name);
+                SPDLOG_WARN("PulseGeneratorService: {} answered addr {} but is not a configured "
+                            "pulse generator (kind={}); excluded from automatic discovery",
+                            name, config.modbusAddress, static_cast<int>(hit.kind));
+            }
+        }
     }
-    if (matches.size() != 1) {
-        if (error) *error = matches.empty()
-            ? "No pulse generator found. Connect its USB adapter and power, then retry. "
-              "Non-default address/serial settings can be set in Hardware Setup."
-            : "Multiple pulse generators found. Select the intended adapter in Hardware Setup.";
-        return false;
+    if (matches.size() == 1) {
+        config.portName = matches.front();
+        return true;
     }
-    config.portName = matches.front();
-    return true;
+    if (!error) return false;
+    if (matches.empty()) {
+        std::string message = "No pulse generator found at Modbus address " +
+                              std::to_string(config.modbusAddress) + ".";
+        if (!busy.empty())
+            message += " " + listed(busy) + (busy.size() == 1 ? " is" : " are") +
+                       " in use by another program; close it or disconnect the generator there.";
+        if (!lookalikes.empty())
+            message += " " + listed(lookalikes) + " answered but " +
+                       (lookalikes.size() == 1 ? "is" : "are") + " not a pulse generator.";
+        message += " Connect the generator's USB adapter and power, then retry. Non-default "
+                   "address/serial settings or an explicit port can be set in Hardware Setup.";
+        *error = message;
+    } else {
+        *error = "Multiple pulse generators found (" + listed(matches) +
+                 "). Select the intended adapter in Hardware Setup.";
+    }
+    return false;
 }
 
 bool PulseGeneratorService::beginLiveView(const Config& cfg, int channel, double hz, double duty,

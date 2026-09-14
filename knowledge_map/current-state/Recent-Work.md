@@ -13,6 +13,19 @@ watermark; the coordinator also adds a 2-second time-based backstop. Test:
 `processing.flush_byte_watermark`.
 > Refresh from `git log --oneline -20` when outdated.
 
+## 2026-09-14 — Illuminated Live View review pass on the rig PC (#413, PR #414)
+
+Read-only probes on the rig PC found a foreign Modbus slave on COM4 answering
+address 1 with zeroed registers, which the lenient generator identity accepted.
+Automatic discovery now requires every channel to hold a non-zero in-range
+frequency and names busy/non-generator ports in its error; `live_view` parsing
+and period/exposure/strobe rules live in `parseConfig` and gate Save as well as
+Play; Stop is honoured before handle open and CameraPlay; an unconfirmed
+generator/LED OFF survives handle-teardown faults; the default-profile upgrade
+matches a verbatim historical copy. Tests: `backend.illuminated_live`,
+`frontend.config_tabs_state`. Not compiled on the rig PC (no toolchain); no
+hardware acceptance yet.
+
 ## Features shipped
 
 - **ProcessingService::stop() lost-wakeup hang** (2026-09-09) — The ASan

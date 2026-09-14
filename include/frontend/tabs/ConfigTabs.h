@@ -71,6 +71,13 @@ public:
     // Geometry-only reflow of the grouped JSON tables: moves the existing
     // group widgets into 1/2/3 columns; never reloads or rewrites data.
     void relayoutJsonSections(int availableWidth, bool force = false);
+    // Default-profile migration rule (issue #413): returns the bundled preset
+    // bytes when `current` is exactly the historical bundled MindVision
+    // profile (the one shipped before the automatic XGC/R5D rig preset), and
+    // an empty array for anything else — an edited or external profile is
+    // never rewritten. Pure; the caller decides whether to save.
+    static QByteArray upgradedMindVisionDefault(const QByteArray& current,
+                                                const QByteArray& bundled);
     // Test hooks: no modal dialogs; editor access.
     void setNonInteractiveForTests(bool on) { nonInteractive_ = on; }
     QString appConfigEditorText() const;

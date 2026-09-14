@@ -185,3 +185,59 @@ work unchanged. Discovery exceptions are recorded as camera startup failures
 and pass through illumination cleanup. The earlier mandatory one-time manual
 setup instructions apply only to custom or ambiguous rigs, not the default rig.
 Hardware acceptance of this changed build remains outstanding.
+
+
+### Review follow-up on the rig PC (September 14, second pass)
+
+A read-only Modbus identity probe (FC03, address 1, 9600 8N1) of the rig PC's
+five USB serial ports found two things the first implementation would have
+mishandled. COM4 answered with twelve zeroed registers: a foreign Modbus device
+that the lenient "plausible generator" rule accepted, so automatic discovery
+would have been ambiguous, or would have adopted COM4 and written frequency and
+duty into it while the real generator was unavailable. COM6, the generator's
+adapter, was held open by the running installed application, which reports as
+"port busy" rather than "no device".
+
+Changes made in response:
+
+- **Strict automatic adoption.** `port: "auto"` discovery counts a port only
+  when every channel of the identity read holds a non-zero frequency inside the
+  module's 400–40000 Hz range (`identityLooksLikeConfiguredGenerator`). The
+  module cannot store 0 Hz, whereas foreign devices commonly serve zeros. The
+  manual Scan in Hardware Setup keeps the lenient rule because the operator
+  chooses the port there. Discovery still never writes.
+- **Actionable discovery errors.** No match now names adapters held by another
+  program and adapters that answered but are not a generator; several matches
+  name them all. The port recorded is the system name (`COM6`, `ttyUSB0`), the
+  same form Hardware Setup saves.
+- **One timing rule set.** The `live_view` block is parsed and validated by
+  `parseConfig` (port, address 1–247, channel 1–4, 400–40000 Hz, duty in
+  (0, 100), serial framing) together with the period rules: exposure must not
+  exceed the trigger period, strobe delay + width must be shorter than it, and
+  the trigger pulse must be at least 1 µs. Messages state the period, for
+  example "Requested FPS 40000 gives a 25 us trigger period; exposure 100 us
+  must not exceed it". The capture factory and **Save** use the same parse, so
+  an FPS that cannot fit the saved exposure and strobe is refused at Save with
+  the file untouched instead of failing at Play. With the preset's 100 µs
+  exposure and strobe the maximum is just under 10000 FPS; the camera's readout
+  time decides the achievable rate below that.
+- **Cancellation.** A Stop issued while discovery or generator preparation is
+  running is honoured before the SDK handle is opened, and again before
+  CameraPlay, not only after arming.
+- **Shutdown record.** An unconfirmed generator or LED OFF now survives a later
+  handle-drain fault in the same Stop and says which OFF failed.
+- **Arm readback diagnostics.** Each mismatched camera setting is logged with
+  its read-back value. Exposure readback tolerates the sensor's line-time
+  quantization (5 %, at least 1 µs) and logs the actual value; other settings
+  must match exactly.
+- **Default migration.** The upgrade compares the file against a verbatim copy
+  of the pre-#413 bundled profile (`ConfigTabs::upgradedMindVisionDefault`),
+  which is unit-tested. The rig PC's current default profile is byte-equivalent
+  to that historical profile, so it will be upgraded on first start of this
+  build; an edited profile at the same path is preserved.
+- **FPS control.** The Requested FPS box commits on Enter or focus-out, and the
+  compensated duty is rounded to the generator's 0.01 % resolution.
+
+The camera was not attached to the rig PC during this pass and the PC has no
+C++ toolchain, so this build has not run on the rig. The probe above is
+discovery evidence only; it is not a timing measurement.

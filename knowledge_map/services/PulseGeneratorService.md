@@ -121,3 +121,15 @@ work unchanged. Discovery exceptions are recorded as camera startup failures
 and pass through illumination cleanup. The earlier mandatory one-time manual
 setup instructions apply only to custom or ambiguous rigs, not the default rig.
 Hardware acceptance of this changed build remains outstanding.
+
+
+### Strict automatic adoption (September 14, second pass)
+
+`discoverLiveView` adopts a port only when `ScanHit::allChannelsConfigured`
+is set, i.e. `identityLooksLikeConfiguredGenerator`: the lenient shape check
+plus a non-zero frequency on all four channels. A foreign Modbus slave serving
+zeroed registers at the configured address (observed on the rig PC's COM4) is
+therefore excluded instead of being counted as a generator. Ports the bus
+cannot open because another program holds them (`LinkError::PortBusy`) and
+ports that answered without passing the strict rule are named in the error.
+Manual `scanBus` classification is unchanged. Discovery never writes.

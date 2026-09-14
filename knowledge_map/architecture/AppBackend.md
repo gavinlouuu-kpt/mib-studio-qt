@@ -321,3 +321,12 @@ work unchanged. Discovery exceptions are recorded as camera startup failures
 and pass through illumination cleanup. The earlier mandatory one-time manual
 setup instructions apply only to custom or ambiguous rigs, not the default rig.
 Hardware acceptance of this changed build remains outstanding.
+
+
+### Single parse for the rig profile (September 14, second pass)
+
+`makeLiveCamera` builds the generator session from `parseConfig(...).config.liveView`
+instead of a second ad-hoc JSON read, so staging, the capture factory, the
+camera and the settings UI share one validation (connection fields, generator
+range, exposure/strobe versus trigger period). Errors carry the parser's
+operator-facing message.

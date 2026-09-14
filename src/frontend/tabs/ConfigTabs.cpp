@@ -56,6 +56,7 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/camera/mindvision/MindVisionConfig.h"
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/SerialBus.h"
@@ -63,6 +64,8 @@
 #include "frontend/system/ProfileManager.h"
 #include "frontend/models/JsonTableModel.h"
 #include "frontend/utils/JsonFlatten.h"
+
+#include <cmath>
 
 namespace frontend {
 
@@ -418,8 +421,14 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvFpsSpin_->setRange(400.0, 40000.0);
         mvFpsSpin_->setDecimals(1);
         mvFpsSpin_->setValue(5000.0);
+        // Commit on Enter/focus-out only: the duty compensation in
+        // syncMvJsonFromForm is relative to the previous value, so per-keystroke
+        // intermediates would compound rounding into the saved duty.
+        mvFpsSpin_->setKeyboardTracking(false);
         mvFpsSpin_->setToolTip(tr("Illuminated rig trigger rate. Save while stopped, then Play. "
-                                 "Actual FPS depends on camera and ROI; 5000 FPS was tested at 512×96."));
+                                 "Exposure and strobe delay + width must fit in one trigger period "
+                                 "(Save reports the limit). Actual FPS depends on camera and ROI; "
+                                 "5000 FPS was tested at 512×96."));
         exposureRow->addWidget(mvFpsSpin_);
         exposureRow->addStretch();
         auto* advanced = new QCheckBox(tr("Advanced — Hardware Setup"), page);
@@ -1152,6 +1161,51 @@ QString ConfigTabs::currentMvJsonPath() const {
     return defaultMvJsonPath();
 }
 
+namespace {
+// resources/defaults/mindvisionConfig.json as shipped through v1.1.2, before
+// issue #413 added the automatic XGC/R5D rig preset. Kept verbatim (not
+// derived from the current bundle) so a later change to the bundled preset
+// cannot silently widen or break the "untouched historical default" match.
+constexpr const char* kHistoricalDefaultMindVisionConfig = R"json({
+  "width": 512,
+  "height": 96,
+  "offset_x": 0,
+  "offset_y": 0,
+  "exposure_time_us": 1.0,
+  "analog_gain": 1,
+  "auto_exposure_enabled": false,
+  "ae_target_brightness": 100,
+  "gamma": 100,
+  "contrast": 100,
+  "sharpness": 0,
+  "frame_speed": 2,
+  "flip_horizontal": false,
+  "flip_vertical": false,
+  "trigger_mode": 2,
+  "ext_trig_signal_type": 0,
+  "ext_trig_jitter_us": 0,
+  "acq_trigger_delay_us": 0,
+  "trigger_count": 1,
+  "strobe_mode": 1,
+  "strobe_pulse_width_us": 35,
+  "strobe_delay_us": 10,
+  "strobe_polarity": 1
+})json";
+} // namespace
+
+QByteArray ConfigTabs::upgradedMindVisionDefault(const QByteArray& current,
+                                                 const QByteArray& bundled) {
+    QJsonParseError currentError{};
+    const auto currentDoc = QJsonDocument::fromJson(current, &currentError);
+    if (currentError.error != QJsonParseError::NoError || !currentDoc.isObject()) return {};
+    const auto historical = QJsonDocument::fromJson(kHistoricalDefaultMindVisionConfig).object();
+    if (currentDoc.object() != historical) return {};
+    const auto bundledDoc = QJsonDocument::fromJson(bundled);
+    if (!bundledDoc.isObject() || !bundledDoc.object()["live_view"].toObject()["enabled"].toBool())
+        return {};
+    return bundled;
+}
+
 void ConfigTabs::onReloadMv() {
     const QString path = currentMvJsonPath();
     if (path == defaultMvJsonPath()) {
@@ -1170,16 +1224,14 @@ void ConfigTabs::onReloadMv() {
     if (path == defaultMvJsonPath()) {
         QFile bundled(":/defaults/mindvisionConfig.json");
         if (bundled.open(QIODevice::ReadOnly)) {
-            const auto current = QJsonDocument::fromJson(bundled.readAll()).object();
-            auto historical = current;
-            historical.remove("live_view");
-            historical["exposure_time_us"] = 1.0;
-            historical["ext_trig_signal_type"] = 0;
-            historical["strobe_pulse_width_us"] = 35;
-            historical["strobe_delay_us"] = 10;
-            if (QJsonDocument::fromJson(mvEdit_->toPlainText().toUtf8()).object() == historical) {
-                mvEdit_->setPlainText(QString::fromUtf8(QJsonDocument(current).toJson()));
-                if (!saveEditorToFile(mvEdit_, path, &err))
+            const QByteArray upgraded =
+                upgradedMindVisionDefault(mvEdit_->toPlainText().toUtf8(), bundled.readAll());
+            if (!upgraded.isEmpty()) {
+                mvEdit_->setPlainText(QString::fromUtf8(upgraded));
+                if (saveEditorToFile(mvEdit_, path, &err))
+                    SPDLOG_INFO("MindVision default profile upgraded to the automatic XGC/R5D "
+                                "rig preset: {}", path.toStdString());
+                else
                     SPDLOG_WARN("Cannot save automatic rig preset: {}", err.toStdString());
             }
         }
@@ -1200,6 +1252,19 @@ void ConfigTabs::onSaveMv() {
         return;
     }
     const QString path = currentMvJsonPath();
+    // Validate before writing: the same parse the camera runs at Play. An
+    // illuminated profile whose FPS cannot fit its exposure/strobe, or whose
+    // generator link is malformed, is reported here instead of failing Play
+    // later with the file already overwritten.
+    const auto parsed = backend::camera::mindvision::parseConfig(
+        mvEdit_->toPlainText().toStdString());
+    if (!parsed.ok) {
+        SPDLOG_WARN("MindVision setup not saved: {}", parsed.error);
+        if (!nonInteractive_)
+            QMessageBox::warning(this, tr("Save setup"),
+                                 tr("Not saved: %1").arg(QString::fromStdString(parsed.error)));
+        return;
+    }
     QString err;
     if (!saveEditorToFile(mvEdit_, path, &err)) {
         if (!nonInteractive_) QMessageBox::warning(this, tr("Save mindvisionConfig.json"), tr("Failed to save: %1").arg(err));
@@ -1352,9 +1417,12 @@ void ConfigTabs::syncMvJsonFromForm() {
     if (live["enabled"].toBool()) {
         const double oldHz = live.value("frequency_hz").toDouble(5000.0);
         // Preserve the active trigger duration, not its duty fraction, across FPS edits.
+        // Rounded to the module's 0.01 % duty resolution so the saved value is
+        // what the generator can actually hold.
         if (oldHz > 0 && oldHz != mvFpsSpin_->value()) {
-            live["duty_percent"] = live.value("duty_percent").toDouble(10.0) *
-                                   mvFpsSpin_->value() / oldHz;
+            const double duty = live.value("duty_percent").toDouble(10.0) *
+                                mvFpsSpin_->value() / oldHz;
+            live["duty_percent"] = std::round(duty * 100.0) / 100.0;
             live["frequency_hz"] = mvFpsSpin_->value();
             obj["live_view"] = live;
         }

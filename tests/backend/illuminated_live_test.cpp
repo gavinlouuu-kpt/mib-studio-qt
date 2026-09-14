@@ -6,10 +6,14 @@
 #include "support/fake_mindvision_sdk.h"
 #include "support/assert.h"
 #include "support/watchdog.h"
+#include <atomic>
+#include <cerrno>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <thread>
-#include <atomic>
 
 using backend::services::IlluminationSession;
 using backend::services::PulseGeneratorService;
@@ -18,29 +22,59 @@ namespace mv = backend::camera::mindvision;
 namespace modbus = backend::services::modbus;
 
 namespace {
+// One fake Modbus slave at address 1 behind a named serial port.
 struct Wire {
     std::atomic<bool> failWrites{false};
     std::atomic<bool> corruptRead{false};
-    std::atomic<int> writes{0};
+    std::atomic<int> writes{0};        // every request frame
+    std::atomic<int> writeCommands{0}; // FC06/FC16 only: must stay 0 for discovery
     std::array<uint16_t, 12> regs{}; // exclusively accessed by the serial worker
 };
+// Port-name -> slave registry shared by every fake port the bus creates;
+// names not present open like an unplugged adapter, `busy` names like an
+// adapter held by another program (the platform's EACCES/ACCESS_DENIED path).
+struct Bench {
+    std::map<std::string, Wire*> wires;
+    std::set<std::string> busy;
+};
 class Port final : public backend::services::ISerialPort {
-    Wire& wire;
+    const Bench& bench;
+    Wire* wire = nullptr;
     bool opened = false;
+    int systemError = 0;
     std::vector<uint8_t> rx;
 
 public:
-    explicit Port(Wire& w) : wire(w) {}
-    bool open(int, int) override {
+    explicit Port(const Bench& b) : bench(b) {}
+    bool open(int n, int) override {
+        return openNamed("COM" + std::to_string(n), {});
+    }
+    bool openNamed(const std::string& name, const backend::services::SerialSettings&) override {
+        if (bench.busy.count(name)) {
+#ifdef _WIN32
+            systemError = 5; // ERROR_ACCESS_DENIED
+#else
+            systemError = EACCES;
+#endif
+            return false;
+        }
+        const auto it = bench.wires.find(name);
+        if (it == bench.wires.end()) {
+            systemError = 2; // no such device
+            return false;
+        }
+        wire = it->second;
         opened = true;
         return true;
     }
+    int lastSystemError() const override { return systemError; }
     bool isOpen() const override { return opened; }
     void close() override { opened = false; }
     int write(const std::vector<uint8_t>& q) override {
-        ++wire.writes;
+        ++wire->writes;
+        if (q[1] != 3) ++wire->writeCommands;
         const int start = (q[2] << 8) | q[3], count = (q[4] << 8) | q[5];
-        if (q[1] != 3 && wire.failWrites) {
+        if (q[1] != 3 && wire->failWrites) {
             rx = {q[0], static_cast<uint8_t>(q[1] | 0x80), 4};
             modbus::appendCrc(rx);
             return static_cast<int>(q.size());
@@ -48,18 +82,18 @@ public:
         if (q[1] == 3) {
             rx = {q[0], 3, static_cast<uint8_t>(count * 2)};
             for (int i = 0; i < count; ++i) {
-                const auto n = wire.regs.at(start + i);
+                const auto n = wire->regs.at(start + i);
                 rx.push_back(n >> 8);
                 rx.push_back(n & 255);
             }
-            if (wire.corruptRead) rx[3] ^= 1;
+            if (wire->corruptRead) rx[3] ^= 1;
             modbus::appendCrc(rx);
         } else if (q[1] == 6) {
-            wire.regs.at(start) = count;
+            wire->regs.at(start) = count;
             rx = q;
         } else {
             for (int i = 0; i < count; ++i)
-                wire.regs.at(start + i) = (q[7 + i * 2] << 8) | q[8 + i * 2];
+                wire->regs.at(start + i) = (q[7 + i * 2] << 8) | q[8 + i * 2];
             rx = {q[0], q[1], q[2], q[3], q[4], q[5]};
             modbus::appendCrc(rx);
         }
@@ -211,27 +245,156 @@ int main() {
         MIB_EXPECT(delivered == 5 && fake.releaseCalls == 6,
                    "five frames delivered, one explicit reject; all buffers released");
     }
+    // Stop issued while the generator is still being prepared (discovery can
+    // take over a second): the camera must never be opened or played and the
+    // generator must be released exactly once. Probabilistic only in the
+    // 100 ms margin between the stopper's flag and its stop() call.
+    {
+        watchdog.mark("stop during preparation cancels before camera open");
+        mib::test::FakeMindVisionSdk fake;
+        auto sdk = std::make_shared<mv::SdkOps>(*fake.ops());
+        sdk->armIllumination = [](int, const mv::Config&) { return true; };
+        auto session = std::make_shared<IlluminationSession>();
+        std::atomic<bool> preparing{false}, stopIssued{false};
+        std::atomic<int> enabled{0}, disabled{0};
+        session->prepare = [&] {
+            preparing = true;
+            while (!stopIssued) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            return true;
+        };
+        session->enable = [&] {
+            ++enabled;
+            return true;
+        };
+        session->disable = [&] {
+            ++disabled;
+            return true;
+        };
+        MindVisionCamera camera(0, path, sdk, session);
+        std::thread stopper([&] {
+            while (!preparing) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            stopIssued = true;
+            camera.stop();
+        });
+        const bool started = camera.start();
+        stopper.join();
+        MIB_EXPECT(!started && camera.lastFailure().code == "mindvision.rig_cancelled",
+                   "cancelled start reports cancellation, not readiness");
+        MIB_EXPECT(fake.playCalls == 0 && fake.unInitCalls == 0 && enabled == 0,
+                   "cancelled start never plays the camera or enables the generator");
+        MIB_EXPECT(disabled == 1, "prepared generator released exactly once");
+    }
+    // Shared timing/connection rules: the same parse gates Save and Play.
+    {
+        watchdog.mark("live_view timing validation");
+        auto profileWith = [](const std::string& extra, double hz, const std::string& liveExtra) {
+            return "{\"width\":512,\"height\":96,\"exposure_time_us\":100,\"trigger_mode\":2,"
+                   "\"ext_trig_signal_type\":2,\"strobe_mode\":1,\"strobe_pulse_width_us\":100,"
+                   "\"strobe_polarity\":1" +
+                   extra + ",\"live_view\":{\"enabled\":true,\"port\":\"auto\",\"frequency_hz\":" +
+                   std::to_string(hz) + liveExtra + "}}";
+        };
+        auto ok = mv::parseConfig(profileWith("", 5000, ""));
+        MIB_EXPECT(ok.ok && ok.config.liveView.port == "auto" &&
+                       ok.config.liveView.channel == 1 && ok.config.liveView.address == 1 &&
+                       ok.config.liveView.dutyPercent == 10.0 &&
+                       ok.config.liveView.parity == 'N' && ok.config.liveView.baud == 9600,
+                   "preset defaults fill missing live_view keys");
+        MIB_EXPECT(std::fabs(ok.config.liveView.triggerPulseUs() - 20.0) < 1e-9,
+                   "preset trigger pulse is 20 us");
+        auto exposure = mv::parseConfig(profileWith("", 40000, ""));
+        MIB_EXPECT(!exposure.ok && exposure.error.find("exposure") != std::string::npos &&
+                       exposure.error.find("25 us") != std::string::npos,
+                   "FPS whose period is shorter than exposure is refused with the period");
+        auto strobe = mv::parseConfig(profileWith("", 10000, ""));
+        MIB_EXPECT(!strobe.ok && strobe.error.find("strobe") != std::string::npos,
+                   "strobe delay + width must be shorter than the period");
+        MIB_EXPECT(mv::parseConfig(profileWith("", 9000, "")).ok,
+                   "9000 FPS fits 100 us exposure and strobe");
+        MIB_EXPECT(!mv::parseConfig(profileWith("", 5000, ",\"duty_percent\":100")).ok,
+                   "continuous duty refused");
+        MIB_EXPECT(!mv::parseConfig(profileWith("", 5000, ",\"channel\":5")).ok,
+                   "channel beyond the module refused");
+        MIB_EXPECT(!mv::parseConfig(profileWith("", 5000, ",\"address\":\"1\"")).ok,
+                   "wrong JSON type is an error, not a silent default");
+        MIB_EXPECT(!mv::parseConfig(profileWith("", 5000, ",\"port\":\"\"")).ok,
+                   "empty port refused");
+        MIB_EXPECT(!mv::parseConfig(profileWith("", 5000, ",\"parity\":\"X\"")).ok,
+                   "unknown parity refused");
+        MIB_EXPECT(mv::parseConfig(profileWith("", 300, "")).error.find("400") !=
+                       std::string::npos,
+                   "FPS below the generator range names the range");
+    }
     // Real service through fake Modbus transport: ownership, wire round-trip,
     // failures and repeated cross-thread stop. No hardware is touched.
-    Wire wire;
+    Wire wire;    // the generator: every channel holds a real setting (1 kHz / 50 %)
+    Wire foreign; // an unrelated Modbus slave at the same address serving zeros —
+                  // what the rig PC's COM4 answered on 2026-09-14
+    for (int ch = 0; ch < 4; ++ch) {
+        wire.regs[ch * 3] = 0x0001;
+        wire.regs[ch * 3 + 1] = 0x86A0; // 100000 = 1000.00 Hz
+        wire.regs[ch * 3 + 2] = 5000;   // 50.00 %
+    }
+    const auto generatorRegs = wire.regs;
+    Bench bench;
+    bench.wires = {{"COM1", &wire}, {"COM2", &wire}, {"COM4", &foreign}};
+    bench.busy = {"COM6"};
     backend::services::serialbus::SerialBusManager bus;
-    bus.setSerialPortFactory([&] { return std::make_unique<Port>(wire); });
+    bus.setSerialPortFactory([&] { return std::make_unique<Port>(bench); });
     PulseGeneratorService gen(bus);
     PulseGeneratorService::Config cfg;
     cfg.portName = "COM1";
-    backend::services::serialbus::PortInfo adapter;
-    adapter.systemName = "COM1";
-    adapter.vendorId = 0x1234;
-    adapter.productId = 1;
+    auto usbAdapter = [](const std::string& name) {
+        backend::services::serialbus::PortInfo info;
+        info.systemName = name;
+        info.systemLocation = "\\\\.\\" + name;
+        info.vendorId = 0x1a86; // CH344
+        info.productId = 0x55d5;
+        return info;
+    };
+    const auto adapter = usbAdapter("COM1");
+    const auto secondAdapter = usbAdapter("COM2");
+    const auto foreignAdapter = usbAdapter("COM4");
+    const auto busyAdapter = usbAdapter("COM6");
+    const auto unpluggedAdapter = usbAdapter("COM9");
     std::string discoveryError;
     MIB_EXPECT(!gen.discoverLiveView(cfg, {}, &discoveryError), "missing adapter rejected");
     MIB_EXPECT(gen.discoverLiveView(cfg, {adapter}, &discoveryError) && cfg.portName == "COM1",
                "unique compatible generator automatically resolved");
-    MIB_EXPECT((wire.regs == std::array<uint16_t, 12>{}), "discovery never changes outputs");
-    auto secondAdapter = adapter;
-    secondAdapter.systemName = "COM2";
+    MIB_EXPECT(wire.regs == generatorRegs && wire.writeCommands == 0,
+               "discovery never changes outputs");
     MIB_EXPECT(!gen.discoverLiveView(cfg, {adapter, secondAdapter}, &discoveryError),
                "ambiguous generators never guessed");
+    MIB_EXPECT(discoveryError.find("COM1") != std::string::npos &&
+                   discoveryError.find("COM2") != std::string::npos,
+               "ambiguity names both adapters");
+    // Regression (rig PC 2026-09-14): a foreign slave answering zeros at the
+    // configured address was a lenient "generator", making discovery ambiguous
+    // or, with the real generator unavailable, adopting the wrong instrument.
+    cfg.portName = "auto";
+    MIB_EXPECT(gen.discoverLiveView(cfg, {foreignAdapter, adapter, unpluggedAdapter},
+                                    &discoveryError) &&
+                   cfg.portName == "COM1",
+               "zero-register device does not make discovery ambiguous");
+    MIB_EXPECT(foreign.writeCommands == 0 && foreign.writes > 0,
+               "foreign device was only read, never written");
+    cfg.portName = "auto";
+    MIB_EXPECT(!gen.discoverLiveView(cfg, {foreignAdapter, busyAdapter}, &discoveryError) &&
+                   cfg.portName == "auto",
+               "foreign device alone is never adopted");
+    MIB_EXPECT(discoveryError.find("COM6") != std::string::npos &&
+                   discoveryError.find("in use by another program") != std::string::npos,
+               "busy adapter is named as the likely cause");
+    MIB_EXPECT(discoveryError.find("COM4") != std::string::npos &&
+                   discoveryError.find("not a pulse generator") != std::string::npos,
+               "answering non-generator is named");
+    MIB_EXPECT(foreign.writeCommands == 0, "foreign device still never written");
+    std::vector<uint8_t> zeros(24, 0);
+    MIB_EXPECT(PulseGeneratorService::identityLooksLikeGenerator(zeros) &&
+                   !PulseGeneratorService::identityLooksLikeConfiguredGenerator(zeros),
+               "manual scan stays lenient; automatic adoption requires configured channels");
+    cfg.portName = "COM1";
     for (int i = 0; i < 20; ++i) {
         watchdog.mark("generator ownership stress");
         MIB_REQUIRE(gen.beginLiveView(cfg, 0, 5000, 10), "prepare session");

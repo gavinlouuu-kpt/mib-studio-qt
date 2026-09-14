@@ -78,7 +78,10 @@ public:
 
 private:
     bool applyJsonConfig(int hCamera);
-    void stopIlluminationLocked();
+    // Gates the generator off and forces OUT1 low (must hold stateMutex_).
+    // Returns false when either OFF was not confirmed; the failure record is
+    // set and must survive any later handle-teardown record (see stop()).
+    bool stopIlluminationLocked();
     std::shared_ptr<backend::services::IlluminationSession> illumination_;
     backend::camera::mindvision::Config rigConfig_{};
     std::atomic<bool> stopRequested_{false};
