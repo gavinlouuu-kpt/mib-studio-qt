@@ -187,6 +187,9 @@ All gates in one struct. Notable fields:
   interval) **and bytes** (`setMaxBufferedBytes`, default 512 MiB, config
   key `experiment_buffer_max_mb`; 0 = count-only). Every eviction is returned
   to `appendExperimentFrame` and accounted as `persistenceCancelledByPolicy`.
+  `needsFlush()` (issue #407) returns true when `counts.total() >= flushInterval`
+  **or** `bytes >= maxBytes / 2` (50 % watermark), so the periodic flush fires even
+  when the byte budget saturates before the count threshold is reached.
   `flushBufferedFrames(Hdf5Service&)`
   moves frames out with `takeAll()` (O(1) per Mat, refcount transfer),
   tracks the bytes in flight (`flushQueueBytes_`) and submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`

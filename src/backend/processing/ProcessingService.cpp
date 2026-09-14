@@ -1691,6 +1691,24 @@ bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isVal
     return r.stored;
 }
 
+bool ProcessingService::needsFlush() const {
+    // Issue #407: the flush gate must respect BOTH bounds that
+    // ExperimentFrameBuffer enforces on admission. When the byte budget
+    // saturates before the frame-count interval is reached, a count-only
+    // gate never fires and frames are evicted instead of persisted.
+    const size_t interval = flushInterval_.load(std::memory_order_relaxed);
+    if (interval == 0) return false;
+    const auto counts = experimentBuffer_.counts();
+    if (counts.total() >= interval) return true; // original count gate
+
+    // Byte watermark: flush at 50 % of maxBytes so the buffer drains well
+    // before saturation, leaving headroom for in-flight frames.
+    const uint64_t maxBytes = maxBufferedBytes_.load(std::memory_order_relaxed);
+    if (maxBytes > 0 && experimentBuffer_.bytes() >= maxBytes / 2) return true;
+
+    return false;
+}
+
 size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
     // Move the accumulated frames out (brief lock) so capture/processing never
     // blocks on the HDF5 write, then hand them to the write queue. The queue's
