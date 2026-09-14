@@ -282,6 +282,12 @@ namespace frontend
         backend_.processing().resetRealtimeMetrics();
         r.outcome = CameraCommandResult::Outcome::Accepted;
         r.message = tr("Camera stopped.");
+        const auto stopped = cap.lifecycleSnapshot();
+        if (stopped.lastFailure == backend::services::CaptureFailureKind::ShutdownFailed) {
+            r.outcome = CameraCommandResult::Outcome::Failed;
+            r.message = QString::fromStdString(stopped.lastFailureMessage);
+            emit commandFailed(r.message);
+        }
         refreshState();
         return r;
     }

@@ -37,3 +37,6 @@ This folder hosts living documentation as we build functionality. Keep content c
 - Agent map — see [../AGENTS.md](../AGENTS.md)
 
 Run `python3 scripts/check_docs.py` after editing any markdown; CI enforces it.
+
+- [One-click illuminated Live View](howto/illuminated-live-view.md) — saved
+  MindVision XGC/R5D rig setup, coordinated Play/Stop and commissioning evidence.

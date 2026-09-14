@@ -1976,3 +1976,8 @@ checks, frontend and Xvfb smoke). The next transport slice adds exact event
 integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
+
+- **One-click illuminated Live View** (2026-09-14, issue #413): saved XGC/R5D
+  profile, capture-owned generator/strobe lifecycle, failed-start/stop handling,
+  simplified Hardware Setup and fake-SDK/serial regression coverage. See
+  [operator guide](../../docs/howto/illuminated-live-view.md).

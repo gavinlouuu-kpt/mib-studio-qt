@@ -102,6 +102,9 @@ namespace backend
 
         // Apply a JSON config file to the currently selected MindVision camera.
         // If capture is running, it will be stopped first. Capture remains stopped.
+        // Save/select the next-start profile without opening the camera.
+        bool stageMindVisionConfigFromFile(const std::string& path,
+                                           std::string* errorOut = nullptr);
         bool applyMindVisionConfigFromFile(const std::string &path, std::string *errorOut = nullptr);
 
         // Returns true if a MindVision camera is currently selected.
@@ -231,6 +234,7 @@ namespace backend
         std::string selectedLabel_;
         int selectedMvCameraIndex_{-1};
         std::string lastMindVisionConfigPath_;
+        std::string savedMindVisionConfigPath_;
         bool mockCameraConfigured_{false};
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.

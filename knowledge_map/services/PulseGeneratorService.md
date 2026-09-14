@@ -86,3 +86,15 @@ constructed against the backend-owned `SerialBusManager`), driven from the
 MindVision section of [[../frontend/ConfigTabs]] (port dropdown + refresh,
 bus settings, address, scan, connect, frequency/duty, start/stop). Compiles on
 every platform — it has no MindVision SDK dependency.
+
+## Coordinated illuminated capture (#413)
+
+`beginLiveView`, `enableLiveView`, `endLiveView` own the selected channel for a
+capture generation, with identity-scoped tokens and serialized manual access.
+Preparation gates output off before frequency changes; enable/off use register
+readback. Manual writes/disconnect are refused while owned. Failed off leaves
+cached output unchanged and releases manual control for recovery. A recursive
+service mutex permits composition of the existing connection/write methods;
+serial I/O still belongs to the shared bus worker. `IlluminationSession.h` is
+the injected prepare/enable/disable callback contract, not another transport.
+See [operator workflow](../../docs/howto/illuminated-live-view.md).

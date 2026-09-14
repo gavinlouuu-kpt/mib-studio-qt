@@ -11,6 +11,7 @@
 #endif
 
 #include <spdlog/spdlog.h>
+#include <cmath>
 
 #if MIB_HAS_MINDVISION
 
@@ -117,6 +118,30 @@ std::shared_ptr<const SdkOps> buildRealOps()
         const CameraSdkStatus st = CameraGetCapability(handle, &c);
         if (st == CAMERA_STATUS_SUCCESS) cap.monoSensor = c.sIspCapacity.bMonoSensor != 0;
         return st;
+    };
+    ops->armIllumination = [](int h, const Config& c) -> bool {
+        // Physical OUT1 = SDK index 0. OUT2 remains the sorting output.
+        if (CameraSetInPutIOMode(h, 0, IOMODE_TRIG_INPUT) != 0 ||
+            CameraSetOutPutIOMode(h, 0, IOMODE_STROBE_OUTPUT) != 0 ||
+            CameraSetExtTrigShutterType(h, 0) != 0)
+            return false;
+        INT trig = -1, signal = -1, mode = -1, polarity = -1, output = -1;
+        UINT width = 0, delay = 0, triggerDelay = 0;
+        double exposure = 0;
+        BOOL ae = TRUE;
+        return CameraGetTriggerMode(h, &trig) == 0 && trig == c.triggerMode &&
+               CameraGetExtTrigSignalType(h, &signal) == 0 && signal == c.extTrigSignalType &&
+               CameraGetStrobeMode(h, &mode) == 0 && mode == c.strobeMode &&
+               CameraGetStrobePolarity(h, &polarity) == 0 && polarity == c.strobePolarity &&
+               CameraGetOutPutIOMode(h, 0, &output) == 0 && output == IOMODE_STROBE_OUTPUT &&
+               CameraGetStrobePulseWidth(h, &width) == 0 &&
+               width == static_cast<UINT>(c.strobePulseUs) &&
+               CameraGetStrobeDelayTime(h, &delay) == 0 &&
+               delay == static_cast<UINT>(c.strobeDelayUs) &&
+               CameraGetTriggerDelayTime(h, &triggerDelay) == 0 &&
+               triggerDelay == static_cast<UINT>(c.acqTriggerDelayUs) &&
+               CameraGetAeState(h, &ae) == 0 && !ae && CameraGetExposureTime(h, &exposure) == 0 &&
+               std::abs(exposure - c.exposureUs) <= 1.0;
     };
     ops->applyConfig = [](int handle, const Config& cfg) -> bool {
         return applyConfigToHandle(handle, cfg, nullptr);

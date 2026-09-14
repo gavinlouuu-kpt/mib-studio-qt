@@ -132,3 +132,14 @@
 - Bundled defaults now include top-level `config_schema_version`. Remote
   profile support should treat missing schema as legacy local config rather
   than rejecting existing user profiles at startup.
+
+## Illuminated Live View setup (#413)
+
+MindVision exposure and Save remain visible; trigger/strobe/JSON and manual
+generator controls are collapsed under Advanced — Hardware Setup.
+Use XGC + R5D preset for Live View persists the selected serial identity/channel
+and tested 5 kHz/100 µs exposure/100 µs strobe settings in the active camera
+JSON. Save/reload stages the file through AppBackend without opening hardware.
+Apply on a coordinated profile also stages only; capture owns SDK application.
+Generator controls cannot change an active owned session. Settings edits require
+capture stopped. See [workflow](../../docs/howto/illuminated-live-view.md).

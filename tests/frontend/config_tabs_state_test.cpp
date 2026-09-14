@@ -23,6 +23,13 @@
 #include "support/watchdog.h"
 
 #include <QAction>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QPushButton>
+#include <QDoubleSpinBox>
+#include <QTabWidget>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -209,6 +216,56 @@ int main(int argc, char* argv[])
     MIB_EXPECT(fileBytes(cfgPath) == beforeReflow && tabs.appConfigEditorText() == editorBefore && !doc.dirty,
                "reflow wrote nothing and changed no document");
 
+    wd.mark("one-click rig setup persistence");
+    const QString rigPath = QString::fromStdString((td.path() / "camera.json").string());
+    writeFile(rigPath, QByteArrayLiteral("{\"custom_key\":42}"));
+    {
+        QSettings settings;
+        settings.setValue("Config/ExternalMindVisionConfigPath", rigPath);
+    }
+    {
+        frontend::ConfigTabs rigTabs(backend);
+        rigTabs.setNonInteractiveForTests(true);
+        rigTabs.resize(1000, 650);
+        rigTabs.show();
+        auto* pages = rigTabs.findChild<QTabWidget*>();
+        MIB_REQUIRE(pages, "config pages");
+        for (int i = 0; i < pages->count(); ++i)
+            if (pages->tabText(i).contains("MindVision")) pages->setCurrentIndex(i);
+        settle();
+        auto* advanced = rigTabs.findChild<QCheckBox*>("mvAdvancedSetup");
+        auto* exposure = rigTabs.findChild<QDoubleSpinBox*>("mvExposure");
+        auto* preset = rigTabs.findChild<QPushButton*>("mvSaveLiveRig");
+        auto* port = rigTabs.findChild<QComboBox*>("mvGeneratorPort");
+        MIB_REQUIRE(advanced && exposure && preset && port, "rig setup controls exist");
+        MIB_EXPECT(!advanced->isChecked() && !preset->isVisible() && exposure->isVisible(),
+                   "advanced hidden, exposure visible");
+        advanced->setChecked(true);
+        settle();
+        port->addItem("Test adapter", "COM1");
+        port->setCurrentIndex(port->count() - 1);
+        preset->click();
+        settle();
+        const auto saved = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(saved["live_view"].toObject()["enabled"].toBool(),
+                   "preset persists coordinated ownership");
+        MIB_EXPECT(saved["live_view"].toObject()["port"].toString() == "COM1",
+                   "chosen adapter persisted");
+        MIB_EXPECT(saved["exposure_time_us"].toDouble() == 100 && saved["custom_key"].toInt() == 42,
+                   "preset preserves unrelated config");
+        MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
+                   "Save stages next capture without Apply");
+        advanced->setChecked(false);
+        settle();
+        rigTabs.grab().save("/tmp/mib-one-click-config.png");
+    }
+    {
+        frontend::ConfigTabs restored(backend);
+        auto* exposure = restored.findChild<QDoubleSpinBox*>("mvExposure");
+        MIB_EXPECT(exposure && exposure->value() == 100, "reopening restores saved exposure");
+        MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
+                   "reopening stages saved profile");
+    }
     backend.shutdown();
     return mib::test::exitCode();
 }

@@ -15,6 +15,7 @@ namespace backend::camera::mindvision {
 // All fields default to the same values the inline parsers used, so a missing
 // key behaves exactly as before. Values are bounds-checked in parseConfig.
 struct Config {
+    bool illuminatedLive{false};
     int width{512};
     int height{96};
     int offsetX{0};
@@ -151,6 +152,21 @@ inline ParseResult parseConfig(const std::string& jsonBytes)
     c.acqTriggerDelayUs = detail::clampInt(getInt("acq_trigger_delay_us", c.acqTriggerDelayUs), 0, 1000000, "acq_trigger_delay_us", w);
     c.triggerCount = detail::clampInt(getInt("trigger_count", c.triggerCount), 1, 1000, "trigger_count", w);
 
+    if (doc.contains("live_view")) {
+        const auto& live = doc["live_view"];
+        if (!live.is_object() || !live.contains("enabled") || !live["enabled"].is_boolean()) {
+            r.error = "live_view must contain a boolean enabled";
+            return r;
+        }
+        c.illuminatedLive = live["enabled"].get<bool>();
+    }
+    if (c.illuminatedLive && (c.triggerMode != 2 || c.extTrigSignalType != 2 || c.strobeMode != 1 ||
+                              c.strobePolarity != 1 || c.aeEnabled || c.triggerCount != 1 ||
+                              c.strobePulseUs <= 0 || !w.empty())) {
+        r.error = "Illuminated Live View requires external high-level trigger, manual exposure, "
+                  "one frame per trigger and active-high manual strobe. Check Hardware Setup.";
+        return r;
+    }
     r.config = c;
     r.ok = true;
     return r;

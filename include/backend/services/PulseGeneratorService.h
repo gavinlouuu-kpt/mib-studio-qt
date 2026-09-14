@@ -121,6 +121,14 @@ public:
     bool setDutyCycle(int channel, double percent);
     bool setOutputEnabled(int channel, bool on);
 
+    // Exclusive coordinated capture ownership; manual writes/disconnect are
+    // rejected until endLiveView. Values validated, never silently clamped.
+    bool beginLiveView(const Config& config, int channel, double hz, double duty,
+                       const void* owner = nullptr);
+    bool enableLiveView(const void* owner = nullptr);
+    bool endLiveView(const void* owner = nullptr);
+    bool liveViewOwned() const;
+
     Status getStatus() const;
     Config getConfig() const;
 
@@ -149,7 +157,11 @@ private:
     std::shared_ptr<serialbus::ModbusBusSession> bus_;
     Config config_;
     Status status_;
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
+    bool verifyLiveView(double duty);
+    const void* liveViewOwner_{nullptr};
+    bool liveViewOwned_{false};
+    int liveViewChannel_{0};
 };
 
 } // namespace backend::services

@@ -283,3 +283,17 @@ destructor frees it once `inFlightOps_` is zero (the wedged call returned),
 otherwise it stays leaked for good. LeakSanitizer flagged the unconditional
 leak in `backend.mindvision_conversion_fault` ("wedged driver").
 
+
+## One-click illuminated profile (#413)
+
+A validated `live_view.enabled` profile requires an injected
+`IlluminationSession`; it cannot silently start as camera-only. Preparation
+holds the generator off; strict SDK configuration and post-Play strobe/trigger
+readback precede enable. Stop gates generator before forcing OUT1 GPIO low
+and releasing the handle. Read errors/three seconds without frames fault
+illuminated capture. Sorting stays on OUT2. Legacy profiles are unchanged.
+
+The September 10 100 µs exposure/100 µs strobe preset demonstrated illumination
+overlap and scope-measured 64.6 µs current pulses at 5 kHz, not exact exposure
+edges. The former 47 µs start estimate is not established timing.
+See [workflow and evidence](../../docs/howto/illuminated-live-view.md).

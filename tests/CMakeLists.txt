@@ -141,6 +141,10 @@ set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera
 
 # Issue #366: MindVision Mono8/geometry fail-closed conversion, driven through
 # the injectable SDK seam (no hardware, no vendor headers).
+mib_add_backend_test_executable(illuminated_live_test backend/illuminated_live_test.cpp)
+add_test(NAME backend.illuminated_live COMMAND $<TARGET_FILE:mib_backend_tests> illuminated_live_test)
+set_tests_properties(backend.illuminated_live PROPERTIES LABELS "backend;camera;concurrency;safety" TIMEOUT 70)
+
 mib_add_backend_test_executable(mindvision_conversion_fault_test backend/mindvision_conversion_fault_test.cpp)
 mib_backend_test_link(mindvision_conversion_fault_test PRIVATE Threads::Threads)
 add_test(NAME backend.mindvision_conversion_fault COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_conversion_fault_test)

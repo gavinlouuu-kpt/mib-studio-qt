@@ -141,6 +141,7 @@ PulseGeneratorService::PulseGeneratorService(serialbus::SerialBusManager& busMan
     : busManager_(busManager) {}
 
 PulseGeneratorService::~PulseGeneratorService() {
+    if (!endLiveView(liveViewOwner_)) SPDLOG_ERROR("Pulse generator OFF unconfirmed during shutdown");
     disconnect();
 }
 
@@ -154,6 +155,7 @@ bool PulseGeneratorService::connect(const std::string& portName, const SerialSet
                                     uint8_t modbusAddress) {
     std::scoped_lock lock(mutex_);
 
+    if (liveViewOwned_) return false;
     bus_.reset();
     status_ = Status{};
 
@@ -232,6 +234,7 @@ bool PulseGeneratorService::connect(const std::string& portName, const SerialSet
 
 void PulseGeneratorService::disconnect() {
     std::scoped_lock lock(mutex_);
+    if (liveViewOwned_) return;
     if (!bus_) {
         return;
     }
@@ -337,7 +340,7 @@ bool PulseGeneratorService::setFrequency(int channel, double hz) {
         return false;
     }
     std::scoped_lock lock(mutex_);
-    if (!status_.connected) {
+    if (liveViewOwned_ || !status_.connected) {
         return false;
     }
     const double clamped = clampFrequency(hz);
@@ -359,7 +362,7 @@ bool PulseGeneratorService::setDutyCycle(int channel, double percent) {
         return false;
     }
     std::scoped_lock lock(mutex_);
-    if (!status_.connected) {
+    if (liveViewOwned_ || !status_.connected) {
         return false;
     }
     const double clamped = clampDuty(percent);
@@ -386,7 +389,7 @@ bool PulseGeneratorService::setOutputEnabled(int channel, bool on) {
         return false;
     }
     std::scoped_lock lock(mutex_);
-    if (!status_.connected) {
+    if (liveViewOwned_ || !status_.connected) {
         return false;
     }
     auto& state = status_.channels[static_cast<size_t>(channel)];
@@ -398,6 +401,68 @@ bool PulseGeneratorService::setOutputEnabled(int channel, bool on) {
     SPDLOG_INFO("PulseGeneratorService: addr{} ch{} output {} (duty {} %)",
                 config_.modbusAddress, channel + 1, on ? "enabled" : "disabled", dutyToWrite);
     return true;
+}
+
+bool PulseGeneratorService::beginLiveView(const Config& cfg, int channel, double hz, double duty,
+                                          const void* owner) {
+    std::scoped_lock lock(mutex_);
+    if (liveViewOwned_ || !validChannel(channel) || !std::isfinite(hz) || !std::isfinite(duty) ||
+        hz < MIN_FREQUENCY_HZ || hz > MAX_FREQUENCY_HZ || duty <= 0 || duty >= 100 ||
+        cfg.portName.empty() || cfg.modbusAddress < 1 || cfg.modbusAddress > 247)
+        return false;
+    if (!connect(cfg.portName, cfg.serial, cfg.modbusAddress)) return false;
+    // Take ownership even on partial failure: the caller must run endLiveView.
+    liveViewChannel_ = channel;
+    liveViewOwner_ = owner;
+    const bool ok = setOutputEnabled(channel, false) && setFrequency(channel, hz) &&
+                    setDutyCycle(channel, duty) && verifyLiveView(0);
+    liveViewOwned_ = true;
+    return ok;
+}
+
+bool PulseGeneratorService::enableLiveView(const void* owner) {
+    std::scoped_lock lock(mutex_);
+    if (!liveViewOwned_ || owner != liveViewOwner_ || !status_.connected) return false;
+    auto& state = status_.channels[static_cast<size_t>(liveViewChannel_)];
+    if (!writeFrame(buildDutyFrame(config_.modbusAddress, liveViewChannel_, state.dutyPercent)))
+        return false;
+    state.outputEnabled = true;
+    return verifyLiveView(state.dutyPercent);
+}
+
+bool PulseGeneratorService::endLiveView(const void* owner) {
+    std::scoped_lock lock(mutex_);
+    if (!liveViewOwned_ || owner != liveViewOwner_) return true;
+    const bool ok = status_.connected &&
+                    writeFrame(buildDutyFrame(config_.modbusAddress, liveViewChannel_, 0)) &&
+                    verifyLiveView(0);
+    if (ok) status_.channels[static_cast<size_t>(liveViewChannel_)].outputEnabled = false;
+    // Release manual control so an operator can reconnect/retry Stop if the
+    // link failed. Never change the cached output state to OFF on failure.
+    liveViewOwned_ = false;
+    return ok;
+}
+
+bool PulseGeneratorService::verifyLiveView(double duty) {
+    if (!bus_) return false;
+    const auto response =
+        bus_->transact(modbus::buildReadRequest(config_.modbusAddress, liveViewChannel_ * 3, 3),
+                       SERIAL_TIMEOUT_MS);
+    std::vector<uint8_t> data;
+    if (response.error != serialbus::BusError::None ||
+        !modbus::extractReadData(response.response, 3, data))
+        return false;
+    const uint32_t frequency =
+        (uint32_t(data[0]) << 24) | (uint32_t(data[1]) << 16) | (uint32_t(data[2]) << 8) | data[3];
+    const uint16_t actualDuty = (uint16_t(data[4]) << 8) | data[5];
+    return frequency == frequencyToRegisterValue(
+                            status_.channels[static_cast<size_t>(liveViewChannel_)].frequencyHz) &&
+           actualDuty == dutyToRegisterValue(duty);
+}
+
+bool PulseGeneratorService::liveViewOwned() const {
+    std::scoped_lock lock(mutex_);
+    return liveViewOwned_;
 }
 
 PulseGeneratorService::Status PulseGeneratorService::getStatus() const {

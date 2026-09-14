@@ -38,10 +38,11 @@ enum class CaptureFailureKind {
     NoCameraFactory,
     CameraFactoryReturnedNull,
     UnsupportedDeliveryMode,
-    CameraStartFailed,       // ICamera::start() returned false
-    DeviceHealthLost,        // periodic checkDeviceHealth() failed
-    StreamEnded,             // camera stopped streaming without a stop request
-    Exception,               // std::exception / unknown thrown in the worker
+    CameraStartFailed, // ICamera::start() returned false
+    DeviceHealthLost,  // periodic checkDeviceHealth() failed
+    ShutdownFailed,    // requested output/device teardown was not confirmed
+    StreamEnded,       // camera stopped streaming without a stop request
+    Exception,         // std::exception / unknown thrown in the worker
 };
 
 inline const char* toString(CaptureLifecycleState s)
@@ -66,6 +67,8 @@ inline const char* toString(CaptureFailureKind k)
     case CaptureFailureKind::CameraStartFailed: return "cameraStartFailed";
     case CaptureFailureKind::DeviceHealthLost: return "deviceHealthLost";
     case CaptureFailureKind::StreamEnded: return "streamEnded";
+    case CaptureFailureKind::ShutdownFailed:
+        return "shutdownFailed";
     case CaptureFailureKind::Exception: return "exception";
     }
     return "unknown";

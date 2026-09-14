@@ -69,6 +69,7 @@ struct SdkOps {
     std::function<SdkStatus(int handle, std::uint32_t& format)> getIspOutFormat;
     std::function<std::uint8_t*(std::size_t bytes, int align)> alignMalloc;
     std::function<void(std::uint8_t*)> alignFree;
+    std::function<bool(int handle, const Config&)> armIllumination;
     std::function<SdkStatus(int handle)> play;
     std::function<SdkStatus(int handle)> stop;
     std::function<SdkStatus(int handle)> unInit;

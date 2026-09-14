@@ -289,3 +289,12 @@ memory benchmark evidence.
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
+
+## Saved illuminated Live View (#413)
+
+`stageMindVisionConfigFromFile` selects a next-start camera profile without
+hardware I/O. A single factory helper constructs all MindVision sessions and
+binds an optional generator session from `live_view` JSON to the existing
+PulseGeneratorService. Camera selection is separate from profile persistence;
+switching camera modes must not lose the remembered MindVision setup.
+See [lifecycle](../../docs/howto/illuminated-live-view.md).

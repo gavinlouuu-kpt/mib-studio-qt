@@ -241,6 +241,7 @@ private:
     QPushButton* mvClearBtn_ = nullptr;
     frontend::ElidingLabel* mvPathLabel_ = nullptr;
     QLabel* mvUnsavedLabel_ = nullptr;
+    QLabel* mvLiveStatus_ = nullptr;
     // Trigger & strobe parameter form (two-way synced with the JSON editor)
     QComboBox* mvTriggerModeCombo_ = nullptr;
     QComboBox* mvSignalTypeCombo_ = nullptr;
