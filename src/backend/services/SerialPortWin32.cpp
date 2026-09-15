@@ -9,6 +9,7 @@
 #include <setupapi.h>
 
 #include <chrono>
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -110,18 +111,34 @@ public:
         return static_cast<int>(written);
     }
 
-    bool waitForBytesWritten(int /*timeoutMs*/) override
-    {
+    bool waitForBytesWritten(int timeoutMs) override {
         if (handle_ == INVALID_HANDLE_VALUE) return false;
-        return ::FlushFileBuffers(handle_) != 0;
+        // FlushFileBuffers ignores COM write timeouts and can hold a hardware
+        // worker (and its shutdown join) forever. Poll the transmit queue.
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(0, timeoutMs));
+        for (;;) {
+            COMSTAT stat{};
+            DWORD errors = 0;
+            if (!::ClearCommError(handle_, &errors, &stat)) {
+                setLastError("ClearCommError while waiting for serial output");
+                return false;
+            }
+            if (stat.cbOutQue == 0) return true;
+            if (std::chrono::steady_clock::now() >= deadline) {
+                systemError_ = ERROR_TIMEOUT;
+                error_ = "Serial output timed out";
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
 
-    bool waitForReadyRead(int timeoutMs) override
-    {
+    bool waitForReadyRead(int timeoutMs) override {
         if (handle_ == INVALID_HANDLE_VALUE) return false;
         // Poll the input queue up to the timeout.
-        const auto deadline = std::chrono::steady_clock::now() +
-                              std::chrono::milliseconds(timeoutMs);
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
         for (;;) {
             if (queuedBytes() > 0) return true;
             if (std::chrono::steady_clock::now() >= deadline) return false;
@@ -129,8 +146,7 @@ public:
         }
     }
 
-    std::vector<uint8_t> readAll() override
-    {
+    std::vector<uint8_t> readAll() override {
         std::vector<uint8_t> out;
         if (handle_ == INVALID_HANDLE_VALUE) return out;
         const DWORD avail = queuedBytes();

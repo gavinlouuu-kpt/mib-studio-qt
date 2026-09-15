@@ -1,5 +1,11 @@
 # Threading Model
 
+Desktop exit drains `DeviceInitManager` workers before backend shutdown;
+nanopositioner probes check an atomic cancellation token between devices.
+Queued discovery completion callbacks cannot reopen hardware after stop.
+Windows serial transmit drain polls to the supplied timeout, avoiding the
+unbounded `FlushFileBuffers` wait. See [[../task/2026-09-15-hardware-shutdown]].
+
 > Who runs on which thread. Getting this wrong causes deadlocks, missed
 > frames, or UI freezes.
 

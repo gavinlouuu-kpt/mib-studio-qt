@@ -71,6 +71,7 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/ConfigPathManager.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/ConfigPathManager.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/ApplicationSettings.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/DesktopInstance.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/ApplicationSettings.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/OverlayRenderer.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/OverlayRenderer.h
@@ -250,6 +251,19 @@ if(BUILD_TESTING)
     # the resource the constructor blocked headless tests in a modal warning).
     include(MIBTestRunner)
     mib_test_runner_finalize(mib_frontend_tests ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
+    # Standalone: this test runs the application's event loop through quit.
+    add_executable(mainwindow_shutdown_test ${PROJECT_SOURCE_DIR}/tests/frontend/mainwindow_shutdown_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
+    target_include_directories(mainwindow_shutdown_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(mainwindow_shutdown_test PRIVATE mib_frontend_common)
+    set_target_properties(mainwindow_shutdown_test PROPERTIES AUTOUIC OFF RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
+    add_test(NAME frontend.mainwindow_shutdown COMMAND mainwindow_shutdown_test)
+    set_tests_properties(frontend.mainwindow_shutdown PROPERTIES LABELS "frontend;lifecycle" TIMEOUT 60)
+    add_executable(desktop_instance_test ${PROJECT_SOURCE_DIR}/tests/frontend/desktop_instance_test.cpp ${PROJECT_SOURCE_DIR}/src/frontend/system/DesktopInstance.cpp)
+    target_include_directories(desktop_instance_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(desktop_instance_test PRIVATE Qt6::Core)
+    set_target_properties(desktop_instance_test PROPERTIES AUTOUIC OFF RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
+    add_test(NAME frontend.desktop_instance COMMAND desktop_instance_test)
+    set_tests_properties(frontend.desktop_instance PROPERTIES LABELS "frontend;lifecycle;concurrency" TIMEOUT 30)
     target_link_libraries(mib_frontend_tests PRIVATE mib_frontend_common)
     set_target_properties(mib_frontend_tests PROPERTIES AUTOUIC OFF)
 endif()

@@ -6,6 +6,7 @@ is done. Remove entries in the same PR that resolves them.
 
 | ID | Area | Debt | Exit criterion |
 |----|------|------|----------------|
+| TD-10 | hardware shutdown | POSIX serial `tcdrain` has no timeout; third-party camera/CoreMOR discovery calls cannot currently be interrupted once entered. Windows transmit drain is now bounded, but an arbitrary hung vendor call can still delay shutdown. | Add a stalled-output POSIX regression and bounded drain; define vendor cancellation or process isolation, and prove close during a stalled probe releases ownership without unsafe thread detachment. |
 | TD-1 | tooling | `.clang-format` exists but the existing codebase has never been bulk-formatted; CI does not gate on format | Decide: bulk-format in one commit + add CI gate, or keep format-on-touch policy |
 | TD-2 | docs | `docs/superpowers/plans/` predates `docs/exec-plans/`; the two 2026-04-16 plans were never marked completed | Verify both plans shipped, annotate status, and stop adding plans to `superpowers/` |
 | TD-3 | docs | Vendor material (`docs/Longer Pump dLSP501 Modbus RTU Series/`, `docs/mib_grabber.cpp`) sits loose in `docs/` | Move under `docs/integration/` or a `docs/vendor/` folder and link from the index |

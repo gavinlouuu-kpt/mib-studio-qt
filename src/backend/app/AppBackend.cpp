@@ -203,6 +203,7 @@ namespace backend
     }
 
     void AppBackend::shutdown() {
+        SPDLOG_INFO("AppBackend: shutdown begin");
         // Stop threads before member destruction begins. Members are destroyed
         // in reverse declaration order, so triggerService_/autofocusService_
         // die before processingService_ — a still-running realtime loop would
@@ -229,6 +230,7 @@ namespace backend
         // left TriggerService holding a camera pointer across the camera's
         // destruction on the capture thread.
         if (captureService_) {
+            SPDLOG_INFO("AppBackend: shutdown stopping capture and releasing camera");
             captureService_->stop();
         }
         if (triggerService_) {
@@ -240,13 +242,31 @@ namespace backend
         }
         stopFrameRecording();
         if (processingService_) {
+            SPDLOG_INFO("AppBackend: shutdown stopping processing");
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
         }
+        // Release hardware during explicit shutdown, while the service graph
+        // is still alive. Capture has ended its owned generator session and
+        // processing can no longer submit autofocus or trigger requests.
+        if (autofocusService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting nanopositioner");
+            autofocusService_->disconnect();
+        }
+        if (syringePumpService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting syringe pumps");
+            syringePumpService_->disconnect(services::SyringePumpService::PumpId::Sample);
+            syringePumpService_->disconnect(services::SyringePumpService::PumpId::Sheath);
+        }
+        if (pulseGeneratorService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting pulse generator");
+            pulseGeneratorService_->disconnect();
+        }
         // All pipeline threads are stopped now, so the dump is an exact
         // snapshot of the recorded latency data.
         dumpPipelineTimingIfEnabled();
+        SPDLOG_INFO("AppBackend: shutdown complete");
     }
 
     bool AppBackend::initialize(const std::string &dataDir)

@@ -1,5 +1,14 @@
 # AppBackend
 
+## Explicit hardware shutdown (2026-09-15)
+
+`shutdown()` now disconnects autofocus, both syringe pumps, and the pulse
+generator after stopping capture/triggers and processing. Callers need not
+destroy the backend to release serial adapters. The final shared-bus client
+releases the port. Each phase is logged to locate future shutdown stalls.
+`backend.hardware_shutdown` checks ten reconnect/shutdown cycles with three
+clients on one fake port. See [[../task/2026-09-15-hardware-shutdown]].
+
 > Composition root. Owns every backend service and the shared `FrameStore`.
 > Frontend code holds a single `backend::AppBackend&` and calls getters.
 

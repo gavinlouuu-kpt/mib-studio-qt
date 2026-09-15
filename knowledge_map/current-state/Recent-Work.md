@@ -1,5 +1,16 @@
 # Recent Work
 
+## 2026-09-15 — Desktop hardware ownership and shutdown
+
+Added per-user duplicate-launch protection before hardware initialization,
+explicit serial-device release in backend shutdown, cancellation/draining of
+startup discovery, and main-window close that exits despite utility windows.
+Windows serial output waits now honor their timeout. Three regressions were
+reproduced before fixing them; four new guards and the 116-test Windows
+non-hardware suite pass. The hidden incident process was in its normal Qt event
+loop, so a shutdown deadlock is not claimed. See
+[[../task/2026-09-15-hardware-shutdown]] and [[../frontend/DesktopInstance]].
+
 ## 2026-09-15 — Desktop startup acceptance gaps (#413)
 
 Actual app checks found implicit mock fallback blocking MindVision discovery
