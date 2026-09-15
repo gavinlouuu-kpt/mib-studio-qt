@@ -23,6 +23,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/Tools.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/services/NanopositionerDiscovery.h"
 
 using json = nlohmann::json;
 
@@ -115,7 +116,20 @@ namespace frontend
 		// Connect signals
 		connect(ui->connectBtn, &QPushButton::clicked, this, &NanopositionerTab::onConnectNanopositioner);
 		connect(ui->disconnectBtn, &QPushButton::clicked, this, &NanopositionerTab::onDisconnectNanopositioner);
-		connect(ui->refreshComPortBtn, &QPushButton::clicked, this, &NanopositionerTab::populateComPortList);
+		connect(ui->refreshComPortBtn, &QPushButton::clicked, this, [this]() {
+            populateComPortList();
+            emit discoveryRequested();
+        });
+
+        QStringList vendorLines;
+        for (const auto& vendor : backend::services::nanopositioner::vendors) {
+            vendorLines << QString::fromUtf8(vendor.name) +
+                (vendor.protocolAvailable ? tr(": automatic identification") : tr(": protocol support pending"));
+        }
+        auto* vendorLabel = new QLabel(vendorLines.join("\n"), this);
+        vendorLabel->setObjectName("nanopositionerVendorsLabel");
+        vendorLabel->setWordWrap(true);
+        ui->groupVerticalLayout->insertWidget(0, vendorLabel);
 		connect(ui->autofocusEnabledCheck, &QCheckBox::stateChanged, this, &NanopositionerTab::onAutofocusEnabledChanged);
 		connect(ui->increaseVoltageBtn, &QPushButton::clicked, this, &NanopositionerTab::onIncreaseVoltage);
 		connect(ui->decreaseVoltageBtn, &QPushButton::clicked, this, &NanopositionerTab::onDecreaseVoltage);
@@ -149,6 +163,11 @@ namespace frontend
 	NanopositionerTab::~NanopositionerTab() {
 		delete ui;
 	}
+
+    void NanopositionerTab::setDiscoveryRunning(bool running) {
+        discoveryRunning_ = running;
+        updateNanopositionerUI();
+    }
 
 	void NanopositionerTab::populateComPortList()
 	{
@@ -230,12 +249,12 @@ namespace frontend
 		bool connected = autofocus.isConnected();
 		bool enabled = autofocus.isEnabled();
 
-		ui->connectBtn->setEnabled(!connected && ui->comPortCombo->count() > 0);
+		ui->connectBtn->setEnabled(!connected && !discoveryRunning_ && ui->comPortCombo->count() > 0);
 		ui->disconnectBtn->setEnabled(connected);
-		ui->comPortCombo->setEnabled(!connected);
-		ui->refreshComPortBtn->setEnabled(!connected);
-		ui->baudRateCombo->setEnabled(!connected);
-		ui->deviceAddressSpinBox->setEnabled(!connected);
+		ui->comPortCombo->setEnabled(!connected && !discoveryRunning_);
+		ui->refreshComPortBtn->setEnabled(!connected && !discoveryRunning_);
+		ui->baudRateCombo->setEnabled(!connected && !discoveryRunning_);
+		ui->deviceAddressSpinBox->setEnabled(!connected && !discoveryRunning_);
 		ui->autofocusEnabledCheck->setEnabled(connected);
 		ui->autofocusEnabledCheck->setCheckState(enabled ? Qt::Checked : Qt::Unchecked);
 		ui->increaseVoltageBtn->setEnabled(connected);
@@ -255,7 +274,7 @@ namespace frontend
 
 	void NanopositionerTab::onConnectNanopositioner()
 	{
-		if (ui->comPortCombo->count() == 0)
+		if (discoveryRunning_ || ui->comPortCombo->count() == 0)
 		{
 			return;
 		}

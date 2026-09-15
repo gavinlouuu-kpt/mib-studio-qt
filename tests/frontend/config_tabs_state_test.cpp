@@ -15,7 +15,9 @@
 //  - secondary actions live in a keyboard-accessible More menu.
 
 #include "backend/app/AppBackend.h"
+#include "backend/services/AutofocusService.h"
 #include "frontend/tabs/ConfigTabs.h"
+#include "frontend/tabs/NanopositionerTab.h"
 #include "frontend/utils/ApplicationSettings.h"
 #include "frontend/utils/ElidingLabel.h"
 
@@ -105,6 +107,28 @@ int main(int argc, char* argv[])
 
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((td.path() / "data").string()), "backend init");
+    frontend::NanopositionerTab nanopositioner(backend);
+    auto* vendors = nanopositioner.findChild<QLabel*>("nanopositionerVendorsLabel");
+    MIB_REQUIRE(vendors, "nanopositioner vendor inventory exists");
+    MIB_EXPECT(vendors->text().contains("OEABT") && vendors->text().contains("pending"),
+               "OEABT inventory accurately reports pending protocol");
+    auto* refresh = nanopositioner.findChild<QPushButton*>("refreshComPortBtn");
+    auto* connectStage = nanopositioner.findChild<QPushButton*>("connectBtn");
+    MIB_REQUIRE(refresh && connectStage, "discovery controls exist");
+    int discoveryRequests = 0;
+    QObject::connect(&nanopositioner, &frontend::NanopositionerTab::discoveryRequested,
+                     [&]() { ++discoveryRequests; });
+    refresh->click();
+    MIB_EXPECT(discoveryRequests == 1, "Refresh requests protocol discovery");
+    nanopositioner.setDiscoveryRunning(true);
+    MIB_EXPECT(!refresh->isEnabled() && !connectStage->isEnabled(), "probe excludes competing connection");
+    refresh->click();
+    MIB_EXPECT(discoveryRequests == 1, "running scan prevents duplicate request");
+    nanopositioner.setDiscoveryRunning(false);
+    MIB_EXPECT(refresh->isEnabled(), "scan completion restores refresh");
+    // This standalone fixture outlives its tab; detach the tab's status sink
+    // before backend teardown can emit a final status.
+    backend.autofocus().setStatusCallback({});
 
     frontend::ConfigTabs tabs(backend);
     tabs.setNonInteractiveForTests(true);

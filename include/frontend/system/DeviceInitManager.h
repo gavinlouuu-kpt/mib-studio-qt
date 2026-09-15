@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include "backend/services/NanopositionerDiscovery.h"
 
 #include <vector>
 #include <memory>
@@ -27,7 +28,7 @@ public:
     ~DeviceInitManager();
 
     void setConnectTab(ConnectTab* connectTab) { connectTab_ = connectTab; }
-    void setNanopositionerTab(NanopositionerTab* nanopositionerTab) { nanopositionerTab_ = nanopositionerTab; }
+    void setNanopositionerTab(NanopositionerTab* nanopositionerTab);
 
     /** Start initialisation: schedule camera step (400 ms), then nanopositioner after camera completes. */
     void start();
@@ -57,7 +58,7 @@ private:
     QTimer* cameraStepTimer_ = nullptr;
     QTimer* nanopositionerStepTimer_ = nullptr;
     std::unique_ptr<QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>> cameraWatcher_;
-    std::unique_ptr<QFutureWatcher<std::vector<int>>> nanopositionerWatcher_;
+    std::unique_ptr<QFutureWatcher<std::vector<backend::services::nanopositioner::Candidate>>> nanopositionerWatcher_;
 
     bool cameraStepScheduled_ = false;
     bool cameraStepRunning_ = false;

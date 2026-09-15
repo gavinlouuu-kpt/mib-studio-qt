@@ -204,3 +204,19 @@ Windows build coupling that selected the autofocus stub whenever EGrabber was
 disabled. Configure regression failed before the fix; desktop build and all
 102 Windows tests passed afterward. Docs and screenshot checks passed. No
 OEABT auto-connect or hardware motion has been claimed or verified.
+
+## Discovery foundation while OEABT protocol is supplied separately
+
+The operator requested proceeding with discovery now and will push the protocol
+and related work later. Added a vendor registry, retained serial candidate metadata,
+read-only probe injection, unique-match selection and explicit OEABT pending status.
+DeviceInitManager uses the registry on its existing worker; saved ports no longer
+bypass the all-port ambiguity check. Refresh requests discovery, with connection
+and serial settings disabled during the scan. No OEABT protocol commands, motion,
+or successful OEABT connection are claimed.
+
+Verification: desktop build passes. Full Windows run passed 102 of 103 tests;
+the new UI fixture initially constructed its tab before backend initialization.
+After correcting fixture order, both discovery/concurrency and UI checks pass.
+Thus all 103 checks pass across that run and the focused rerun. Documentation
+and screenshot checks pass. Current-head CI/TSan and deployment remain pending.

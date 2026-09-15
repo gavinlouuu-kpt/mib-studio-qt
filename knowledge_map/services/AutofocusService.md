@@ -131,3 +131,20 @@ The MindVision-only Windows build previously compiled the autofocus stub because
 Coremor selection was coupled to `MIB_HAS_EGRABBER`. A configure-time regression
 in `tests/CMakeLists.txt` now requires the real service and SDK link whenever
 Coremor is enabled. No serial protocol or control-loop behavior changed.
+
+
+## Vendor-aware discovery foundation
+
+`include/backend/services/NanopositionerDiscovery.h` contains the vendor registry,
+serial inventory snapshots and an injected read-only probe interface. Each candidate
+retains adapter metadata and zero or more protocol-confirmed vendor identities.
+Unidentified adapters stay in the inventory. Duplicate ports are probed once;
+multiple devices or conflicting identities prevent automatic connection. The
+registry includes CoreMorrow/XMT and OEABT, with OEABT protocol availability false
+until the separately supplied protocol work is integrated.
+
+DeviceInitManager uses this discovery path on its existing worker. A saved COM
+port changes scan order only; every available port is checked before a unique
+match can auto-connect. Coremor remains the only concrete driver. Tests cover
+unknown adapters, pending protocols, unique/ambiguous matches, duplicate ports,
+and independent concurrent snapshots (`backend.nanopositioner_discovery`).

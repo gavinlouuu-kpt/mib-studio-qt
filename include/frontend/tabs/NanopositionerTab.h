@@ -22,6 +22,10 @@ public:
 	void setNanopositionerStatus(const QString& message);
 	/** Called by DeviceInitManager on main thread after successful connect. Updates combo, saves config, refreshes UI. */
 	void applyAutoConnectResult(int port);
+    void setDiscoveryRunning(bool running);
+
+signals:
+    void discoveryRequested();
 
 private slots:
 	void onConnectNanopositioner();
@@ -43,6 +47,7 @@ private:
 	backend::AppBackend& backend_;
 	QTimer* statusUpdateTimer_ = nullptr;
 	int configuredComPort_ = -1;
+    bool discoveryRunning_ = false;
 };
 
 } // namespace frontend

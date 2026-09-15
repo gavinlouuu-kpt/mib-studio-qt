@@ -108,6 +108,9 @@ add_test(NAME backend.serial_port_enumeration COMMAND $<TARGET_FILE:mib_backend_
 set_tests_properties(backend.serial_port_enumeration PROPERTIES LABELS "backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(autofocus_math_test backend/autofocus_math_test.cpp)
+mib_add_backend_test_executable(nanopositioner_discovery_test backend/nanopositioner_discovery_test.cpp)
+add_test(NAME backend.nanopositioner_discovery COMMAND $<TARGET_FILE:mib_backend_tests> nanopositioner_discovery_test)
+set_tests_properties(backend.nanopositioner_discovery PROPERTIES LABELS "backend;concurrency;stress" TIMEOUT 30)
 add_test(NAME backend.autofocus_math COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_math_test)
 set_tests_properties(backend.autofocus_math PROPERTIES LABELS "backend" TIMEOUT 30)
 

@@ -2027,3 +2027,13 @@ regression failed before the wiring fix and passes afterward. The operator
 identified the attached vendor as OEABT; no OEABT driver exists yet. Controller
 model/protocol identification remains necessary for actual auto-connect.
 See [[../services/AutofocusService]] for the explicit support inventory.
+
+
+### 2026-09-15 ? Vendor-aware nanopositioner discovery foundation
+
+Added an injectable vendor registry and serial inventory to startup discovery;
+CoreMorrow identifies through its existing read-only probe, while OEABT remains
+explicitly pending its separately supplied protocol. Refresh now requests a scan;
+scan controls prevent competing connects. Unique-match selection covers all ports
+including the saved port. See [[../services/AutofocusService]] and
+[[../frontend/NanopositionerTab]].
