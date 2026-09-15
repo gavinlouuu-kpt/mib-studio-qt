@@ -153,7 +153,9 @@ int main() {
     }
     // Each failure stage, followed by successful restart. Ordered events,
     // including teardown, not just matching configuration values.
-    for (int failure = 0; failure < 6; ++failure) {
+    for (int scenario = 0; scenario < 12; ++scenario) {
+        const int failure = scenario % 6;
+        const bool overview = scenario >= 6;
         watchdog.mark("ordered lifecycle/fault injection");
         mib::test::FakeMindVisionSdk fake;
         auto sdk = std::make_shared<mv::SdkOps>(*fake.ops());
@@ -171,7 +173,13 @@ int main() {
             events.push_back("generator off");
             return failure != 5;
         };
-        sdk->applyConfig = [&](int, const mv::Config&) {
+        sdk->getCapability = [](int, mv::SdkCapability& cap) {
+            cap = {true, 816, 624, 16, 4};
+            return mv::kSdkSuccess;
+        };
+        sdk->applyConfig = [&](int, const mv::Config& cfg) {
+            fake.width = cfg.width;
+            fake.height = cfg.height;
             events.push_back("configure");
             return failure != 2;
         };
@@ -197,7 +205,7 @@ int main() {
             if (io == 0 && value == 0) events.push_back("led off");
             return 0;
         };
-        MindVisionCamera camera(0, path, sdk, session);
+        MindVisionCamera camera(0, path, sdk, session, overview);
         const bool started = camera.start();
         MIB_EXPECT(started == (failure == 0 || failure == 5),
                    "failed setup prevents capture readiness");

@@ -11,7 +11,7 @@
 [[../services/ProcessingService]] (ROI propagation, realtime snapshot),
 [[../architecture/AppBackend]] (recording ROI)
 
-## Display tick (`onTick`, ~20 Hz)
+## Display tick (`onTick`, up to 50 Hz)
 
 A `QTimer` fires `onTick` at the configured display rate. Each tick:
 
@@ -54,3 +54,19 @@ position. ROI drag events emit `roiPositionChanged(QPointF)`, which
 - The destructor explicitly stops `timer_` before `delete ui` — if the
   50fps timer fires during widget destruction, `onTick()` accesses
   `backend_.playback()` on a potentially-freed backend (use-after-free).
+
+## MindVision mode and ROI
+
+`refreshCameraMode()` loads the selected MindVision JSON experiment ROI and
+hides the eGrabber script editor, leaving the full view available for selection.
+The editable ROI defaults to 512x96. Drag positions stay in sensor coordinates;
+SimpleImageCanvas transforms the rectangle and drag direction for ISP mirroring.
+Sensor bounds come from the capture capability snapshot, not 1920x1080 constants.
+Save errors restore the previous ROI and remain visible until a successful edit.
+MainWindow synchronizes the four ROI fields into ConfigTabs without discarding
+unrelated JSON edits. Hardware-cropped experiment frames use local processing
+coordinates, so the camera offset is not applied twice.
+
+The display timer is capped at 50 fps; the status identifies the 400 Hz trigger
+separately from measured capture FPS. Hidden tabs do not fetch/copy frames.
+The raw script editor and eGrabber alignment rules remain provider-specific.

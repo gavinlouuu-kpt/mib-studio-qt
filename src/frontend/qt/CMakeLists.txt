@@ -250,6 +250,9 @@ if(BUILD_TESTING)
     # seeds <exe>/../include from :/defaults on a fresh build tree — without
     # the resource the constructor blocked headless tests in a modal warning).
     include(MIBTestRunner)
+    mib_test_runner_add(mib_frontend_tests mindvision_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/mindvision_overview_test.cpp)
+    add_test(NAME frontend.mindvision_overview COMMAND $<TARGET_FILE:mib_frontend_tests> mindvision_overview_test)
+    set_tests_properties(frontend.mindvision_overview PROPERTIES LABELS "frontend;camera;safety" TIMEOUT 120)
     mib_test_runner_finalize(mib_frontend_tests ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     # Standalone: this test runs the application's event loop through quit.
     add_executable(mainwindow_shutdown_test ${PROJECT_SOURCE_DIR}/tests/frontend/mainwindow_shutdown_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)

@@ -183,6 +183,11 @@ mib_backend_test_link(serial_bus_pty_test PRIVATE Threads::Threads)
 add_test(NAME backend.serial_bus_pty COMMAND $<TARGET_FILE:mib_backend_tests> serial_bus_pty_test)
 set_tests_properties(backend.serial_bus_pty PROPERTIES LABELS "backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(mindvision_overview_mode_test backend/mindvision_overview_mode_test.cpp)
+mib_backend_test_link(mindvision_overview_mode_test PRIVATE Threads::Threads)
+add_test(NAME backend.mindvision_overview_mode COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_overview_mode_test)
+set_tests_properties(backend.mindvision_overview_mode PROPERTIES LABELS "backend;camera;safety;stress;invariant" TIMEOUT 100)
+
 mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config_test.cpp)
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_config_test)
 set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera" TIMEOUT 30)

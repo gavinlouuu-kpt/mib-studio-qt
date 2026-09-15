@@ -2069,3 +2069,9 @@ auto-connected the identified OEABT controller on COM7; illuminated Live View
 ran at 999 fps using generator COM6 and 100 us strobe. App-close released both
 devices and webcam showed dark. No voltage/mode writes. Windows tests105/105
 passed. See [[../task/2026-09-14-one-click-illuminated-live]].
+
+- **2026-09-15 - MindVision overview/ROI:** full native sensor preview, 400 Hz
+  illuminated trigger (50 fps display cap), editable 512x96 default experiment
+  ROI saved to MindVision JSON, bounded preview memory, and transactional mode
+  switching. Rig acceptance measured 816x624 at about 400 fps and restored
+  512x96 at (64,48) at about 998 fps, with generator OFF readback after each stop.

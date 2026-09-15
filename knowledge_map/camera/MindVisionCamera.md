@@ -336,3 +336,23 @@ handle teardown replaced it with a drain-timeout fault. The real
 `armIllumination` logs each mismatched readback and tolerates exposure
 quantization (5 %, minimum 1 µs). `live_view` settings come from
 `Config::liveView`, parsed and range/timing-validated by `parseConfig`.
+
+## Overview and experiment acquisition (2026-09-15)
+
+The camera accepts an immutable session config and an Overview flag. AppBackend
+copies the experiment profile, derives a 400 Hz illuminated overview while
+preserving trigger pulse duration (0.01% duty quantization), and passes the same
+timing to the generator session and camera. The SDK capability seam exposes
+native sensor width/height and minimum ROI dimensions. Overview selects the
+full sensor at zero offsets; experiment startup restores the saved ROI and rate.
+The full-sensor dimensions are device-specific (816x624 on the acceptance rig).
+
+Mode sessions require exact ROI readback, including FOV and offsets in the real
+SDK adapter. A rejected or quantized ROI fails before generator enable; the
+camera error reports requested and actual dimensions when these differ. MVSDK
+reports min/max but no universal ROI increment: offsets use pixel coordinates,
+and unsupported dimensions must be corrected rather than silently changing
+the experiment region. Non-illuminated overview uses the slow frame-speed preset.
+Tests: `backend.mindvision_overview_mode`, extended `backend.illuminated_live`,
+and `frontend.mindvision_overview`; optional hardware mode switching is enabled
+by `MIB_TEST_OVERVIEW_MODES=1` in `hw_illuminated_live_test`.

@@ -1371,6 +1371,19 @@ void selectComboData(QComboBox* combo, int value) {
 }
 } // namespace
 
+void ConfigTabs::syncMindVisionRoi(int x, int y, int width, int height) {
+    if (!mvEdit_) return;
+    const auto document = QJsonDocument::fromJson(mvEdit_->toPlainText().toUtf8());
+    if (!document.isObject()) return; // do not discard an unfinished JSON edit
+    auto obj = document.object();
+    obj["offset_x"] = x;
+    obj["offset_y"] = y;
+    obj["width"] = width;
+    obj["height"] = height;
+    mvEdit_->setPlainText(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Indented)));
+    syncMvFormFromJson();
+}
+
 void ConfigTabs::syncMvFormFromJson() {
     QJsonParseError parseErr{};
     const QJsonDocument doc =

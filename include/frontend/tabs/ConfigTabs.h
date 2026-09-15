@@ -87,6 +87,7 @@ public:
     QString noticesText() const;
 
 public slots:
+    void syncMindVisionRoi(int x, int y, int width, int height);
     // Called when config file changes externally (e.g., when ROI is saved)
     void onExternalConfigFileChanged(const QString& path);
 

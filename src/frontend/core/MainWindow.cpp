@@ -532,9 +532,13 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         // On connection, switch to Overview and enable ROI overlay by default.
         if (overviewTab_) {
             overviewTab_->setRoiOverlayVisible(true);
+            overviewTab_->refreshCameraMode();
         }
         if (ui->tabs) {
-            ui->tabs->setCurrentIndex(1); // Overview tab
+            if (ui->tabs->currentIndex() == 1)
+                onTabChanged(1);
+            else
+                ui->tabs->setCurrentIndex(1); // Overview tab
         } });
 
     // Config conflicts are actionable alerts (issue #363/#361).
@@ -615,12 +619,19 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         if (roiLabel_)
             roiLabel_->setText(tr("ROI: %1 x %2 @ (%3, %4)").arg(width).arg(height).arg(offsetX).arg(offsetY));
         backend::services::ProcessingService::Roi roi{};
-        roi.x = offsetX;
-        roi.y = offsetY;
+        roi.x = backend_.isMindVisionCameraSelected() ? 0 : offsetX;
+        roi.y = backend_.isMindVisionCameraSelected() ? 0 : offsetY;
         roi.w = width;
         roi.h = height;
         backend_.processing().setRealtimeRoi(roi);
     });
+    if (auto* config = previewPage->getConfigTabs()) {
+        connect(overviewTab_, &frontend::OverviewTab::roiChanged, config,
+                [this, config](int x, int y, int w, int h) {
+                    if (backend_.isMindVisionCameraSelected())
+                        config->syncMindVisionRoi(x, y, w, h);
+                });
+    }
     // Initialize displays and processing ROI with current values
     {
         int ox = static_cast<int>(overviewTab_->roiPosition().x());
@@ -631,8 +642,8 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         if (roiLabel_)
             roiLabel_->setText(tr("ROI: %1 x %2 @ (%3, %4)").arg(w).arg(h).arg(ox).arg(oy));
         backend::services::ProcessingService::Roi initialRoi{};
-        initialRoi.x = ox;
-        initialRoi.y = oy;
+        initialRoi.x = backend_.isMindVisionCameraSelected() ? 0 : ox;
+        initialRoi.y = backend_.isMindVisionCameraSelected() ? 0 : oy;
         initialRoi.w = w;
         initialRoi.h = h;
         backend_.processing().setRealtimeRoi(initialRoi);
@@ -1874,6 +1885,25 @@ void MainWindow::onTabChanged(int index)
         // Switch back to previous tab (or Experiment tab)
         if (ui->tabs) {
             ui->tabs->setCurrentIndex(2); // Switch to Experiment tab
+        }
+        return;
+    }
+
+    if (backend_.isMindVisionCameraSelected() && (index == 1 || index == 2)) {
+        const bool wasRunning = backend_.capture().isRunning();
+        std::string error;
+        if (!backend_.setMindVisionOverview(index == 1, &error)) {
+            statusLabel_->setText(
+                tr("Camera mode change failed: %1").arg(QString::fromStdString(error)));
+            return;
+        }
+        stopExperimentServices();
+        overviewTab_->refreshCameraMode();
+        backend_.processing().setRealtimeEnabled(index == 2);
+        startExperimentServices();
+        if (wasRunning && !backend_.capture().isRunning()) {
+            const auto result = cameraController_->requestStart();
+            if (!result.accepted()) statusLabel_->setText(result.message);
         }
         return;
     }

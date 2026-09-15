@@ -175,7 +175,7 @@ as staging the next Play, not requiring a separate Apply to Camera operation.
 ### Automatic default rig setup (September 14 follow-up)
 
 The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
-9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 2 µs,
 rising-edge external trigger and manual strobe 100 µs / zero delay with
 polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
 measurements). The existing
@@ -207,3 +207,19 @@ pure static `upgradedMindVisionDefault(current, bundled)`: only a JSON-equal
 copy of the verbatim pre-#413 bundled profile is replaced by the bundled
 preset. The Requested FPS spin box has keyboard tracking off and the
 compensated duty is rounded to 0.01 %.
+
+### Exposure default after rig sweep (September 15)
+
+The bundled and rig-local exposure is 2 microseconds; the LED strobe remains 100 microseconds.
+Two hardware runs at 2 microseconds sampled mean grey levels 163.6 and 167.3 out of 255
+at approximately 1000 fps with zero reported transport loss. Longer exposures
+reached saturation (10-100 microseconds). Exposure is directly editable in the visible
+MindVision Exposure (µs) field: Stop, edit, Save, then Start Live View.
+Custom saved profiles retain their values. Runtime sweep: `data/exposure-sweep/results.csv`.
+
+## MindVision ROI synchronization
+
+`syncMindVisionRoi` updates only the four ROI fields in valid editor JSON after
+Overview saves a selection. Other unsaved settings are retained. An unfinished,
+invalid JSON edit is preserved rather than replaced; it must be corrected before
+saving. The Overview settings are runtime overrides, not a second saved profile.

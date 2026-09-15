@@ -377,6 +377,12 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     r.generation = readinessGeneration_.load();
     r.candidate.readinessGeneration = r.generation;
 
+    if (backend_.isMindVisionCameraSelected() && backend_.isMindVisionOverview()) {
+        r.gates.push_back(gate("camera.mode", GateStatus::Fail,
+                               "MindVision is showing the full sensor overview",
+                               "Switch to Experiment to apply the selected camera ROI"));
+    }
+
     // --- camera session / hardware-vs-mock --------------------------------
     const auto lifecycle = backend_.capture().lifecycleSnapshot();
     if (c.cameraReady) {

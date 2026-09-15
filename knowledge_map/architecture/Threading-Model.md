@@ -109,3 +109,11 @@ existing serialized MindVision teardown, whether requested by the UI or a
 worker fault. Generator service ownership rejects manual writes/disconnect
 while a rig owns it. No new worker, frame-path serial polling or host-timer
 strobe scheduling is added. SDK stop uses its existing in-flight drain.
+
+## MindVision overview transitions
+
+Mode changes run on the existing lifecycle owner: capture is joined and realtime
+processing stopped before replacing their FrameStore references. No additional
+worker is introduced. Camera factories load an atomic mode flag once and pass an
+immutable effective configuration to startup. Capability publication uses a
+mutex-protected snapshot; the display reads that snapshot without SDK calls.
