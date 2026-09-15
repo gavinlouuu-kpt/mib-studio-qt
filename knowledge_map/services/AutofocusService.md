@@ -11,7 +11,7 @@
 **Tests:** `tests/backend/autofocus_math_test.cpp`,
 `tests/backend/oeabt_protocol_test.cpp`,
 `tests/backend/autofocus_backend_safety_test.cpp`,
-`tests/backend/oeabt_qt_serial_pty_test.cpp`
+`tests/backend/oeabt_serial_pty_test.cpp`
 **Related:** [[ProcessingService]], [[../frontend/NanopositionerTab]],
 [[../domain/Glossary]] (ring ratio)
 
@@ -91,8 +91,8 @@ are rejected rather than silently clamped at the transport boundary.
 - A read-only session disconnects without writing. After the first successful
   manual/autofocus write, intentional disconnect applies the validated
   `safeShutdownVoltage`.
-- QSerialPort is created and used on the dedicated NanopositionerIo thread;
-  callers are serialized through the backend proxy.
+- Native serial operations run on the calling thread; a mutex-backed proxy
+  serializes complete operations, including multi-command voltage writes.
 - **Resting stage reads slightly negative.** A CoreMorrow controller at 0 V
   returns about -1 mV (-0.0004 .. -0.002 V on the bench). The probe window
   (backend read validation) is therefore -0.05 V, not 0: with a floor of exactly
@@ -123,8 +123,8 @@ evidence and hardware acceptance gate.
 
 ## Platform behavior
 
-- **Linux**: full autofocus service plus OEABT QSerialPort backend; Linux's
+- **Linux**: full autofocus service plus OEABT native serial backend; Linux's
   standard `ch341` driver handles the USB bridge.
-- **Windows**: OEABT is always available through Qt SerialPort. CoreMOR is
+- **Windows**: OEABT uses the existing native serial interface. CoreMOR is
   additionally available when `MIB_HAS_COREMOR=1`.
 - `MIB_HAS_COREMOR` and `MIB_HAS_EGRABBER` are independent compile guards.

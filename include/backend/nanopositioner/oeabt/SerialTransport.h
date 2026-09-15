@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 
-class QSerialPort;
+namespace backend::services {
+class ISerialPort;
+}
 
 namespace backend::nanopositioner::oeabt {
 
@@ -22,13 +24,13 @@ struct SerialEndpoint {
     bool knownOeabtCandidate{false};
 };
 
-class QtSerialTransport final : public IByteTransport {
+class SerialTransport final : public IByteTransport {
 public:
-    explicit QtSerialTransport(std::string systemPath);
-    ~QtSerialTransport() override;
+    explicit SerialTransport(std::string systemPath);
+    ~SerialTransport() override;
 
-    QtSerialTransport(const QtSerialTransport&) = delete;
-    QtSerialTransport& operator=(const QtSerialTransport&) = delete;
+    SerialTransport(const SerialTransport&) = delete;
+    SerialTransport& operator=(const SerialTransport&) = delete;
 
     Result<void> open();
     void close();
@@ -43,10 +45,11 @@ public:
     static std::optional<SerialEndpoint> resolveEndpoint(std::string_view persistentId);
 
 private:
-    static Error serialError(const QSerialPort& port, std::string_view operation);
+    static Error serialError(const backend::services::ISerialPort& port,
+                             std::string_view operation);
 
     std::string systemPath_;
-    std::unique_ptr<QSerialPort> port_;
+    std::unique_ptr<backend::services::ISerialPort> port_;
 };
 
 } // namespace backend::nanopositioner::oeabt

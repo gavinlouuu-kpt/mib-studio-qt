@@ -16,7 +16,7 @@ watermark; the coordinator also adds a 2-second time-based backstop. Test:
 ## Features shipped
 
 - **Cross-platform OEABT nanopositioner backend** (2026-08-31) — Added a
-  Qt-free C++17 protocol core, QSerialPort adapter, guarded `oeabtctl`
+  Qt-free C++17 protocol core, native ISerialPort adapter, guarded `oeabtctl`
   diagnostic/acceptance CLI, and Linux/Windows MIB Studio backend selection
   while retaining CoreMOR on Windows. Serial discovery uses persistent
   endpoint IDs and protocol identity rather than trusting the generic CH341

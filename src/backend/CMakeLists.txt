@@ -105,7 +105,7 @@ if(MIB_BUILD_PROCESSING_ONLY)
 endif()
 
 # Clean-room OEABT compatibility layer. The protocol target is standard
-# C++17; Qt is confined to endpoint enumeration and serial I/O.
+# C++17; native ISerialPort is shared with the existing serial services.
 add_library(oeabt_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/OeabtProtocol.cpp
 )
@@ -117,16 +117,19 @@ set_target_properties(oeabt_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-add_library(oeabt_qt_serial STATIC
-    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/QtSerialTransport.cpp
+add_library(oeabt_serial STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
 )
-target_include_directories(oeabt_qt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(oeabt_qt_serial PUBLIC oeabt_core Qt6::Core Qt6::SerialPort)
-set_target_properties(oeabt_qt_serial PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
+if(WIN32)
+    target_link_libraries(oeabt_serial PUBLIC setupapi)
+endif()
+set_target_properties(oeabt_serial PROPERTIES POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 
 if(MIB_BUILD_OEABT_TOOLS)
     add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)
-    target_link_libraries(oeabtctl PRIVATE oeabt_qt_serial)
+    target_link_libraries(oeabtctl PRIVATE oeabt_serial)
     set_target_properties(oeabtctl PROPERTIES
         AUTOMOC OFF
         AUTOUIC OFF
@@ -241,7 +244,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
-target_link_libraries(mib_backend PUBLIC mib_processing oeabt_qt_serial)
+target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
 
 if(MIB_HAS_EGRABBER)
     target_sources(mib_backend PRIVATE ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp)
@@ -260,11 +263,11 @@ endif()
 # Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the
 # backend links no Qt SerialPort (epic #246).
 if(WIN32)
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortWin32.cpp
     )
 else()
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortPosix.cpp
     )
 endif()

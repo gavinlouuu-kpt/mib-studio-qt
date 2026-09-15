@@ -1,11 +1,9 @@
 #include "backend/nanopositioner/INanopositionerBackend.h"
 #include "backend/nanopositioner/oeabt/OeabtProtocol.h"
-#include "backend/nanopositioner/oeabt/QtSerialTransport.h"
+#include "backend/nanopositioner/oeabt/SerialTransport.h"
 
 #include "support/assert.h"
 #include "support/watchdog.h"
-
-#include <QCoreApplication>
 
 #include <atomic>
 #include <cerrno>
@@ -42,7 +40,7 @@ std::string responseFor(const std::string& command) {
 } // namespace
 
 int main(int argc, char** argv) {
-    QCoreApplication application(argc, argv);
+
     mib::test::Watchdog watchdog(10);
     const int master = ::posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
     MIB_REQUIRE(master >= 0, "create PTY master");
@@ -85,20 +83,20 @@ int main(int argc, char** argv) {
         }
     });
 
-    QtSerialTransport transport(slaveName);
+    SerialTransport transport(slaveName);
     const auto opened = transport.open();
-    MIB_REQUIRE(static_cast<bool>(opened), "open QSerialPort on PTY");
+    MIB_REQUIRE(static_cast<bool>(opened), "open native serial port on PTY");
     ControllerSession session(transport);
 
     MIB_REQUIRE(static_cast<bool>(session.identify()),
-                "identity works over real Qt serial transport");
+                "identity works over real native serial transport");
     const auto capabilities = session.readCapabilities();
     MIB_REQUIRE(static_cast<bool>(capabilities), "capabilities work over fragmented serial reads");
     MIB_EXPECT(capabilities.value().maxVoltage == VoltageMv{100000},
-               "Qt transport preserves framed maximum voltage");
+               "native transport preserves framed maximum voltage");
     const auto voltage = session.readVoltage();
-    MIB_REQUIRE(static_cast<bool>(voltage), "voltage works over Qt serial transport");
-    MIB_EXPECT(voltage.value() == VoltageMv{25000}, "Qt transport returns expected voltage");
+    MIB_REQUIRE(static_cast<bool>(voltage), "voltage works over native serial transport");
+    MIB_EXPECT(voltage.value() == VoltageMv{25000}, "native transport returns expected voltage");
     MIB_EXPECT(static_cast<bool>(session.setVoltage(VoltageMv{30000})),
                "mode debug output does not obscure voltage acknowledgement");
     watchdog.mark("serial transactions complete");
@@ -114,14 +112,29 @@ int main(int argc, char** argv) {
         backend::nanopositioner::BackendKind::Oeabt);
     std::string backendError;
     MIB_REQUIRE(backend && backend->connect(endpoint, backendError),
-                "threaded OEABT backend connects over PTY: " + backendError);
+                "serialized OEABT backend connects over PTY: " + backendError);
     double backendVoltage = 0.0;
     MIB_REQUIRE(backend->readVoltage(backendVoltage, backendError),
-                "threaded OEABT backend reads voltage: " + backendError);
-    MIB_EXPECT(backendVoltage == 25.0, "threaded backend preserves millivolt conversion");
+                "serialized OEABT backend reads voltage: " + backendError);
+    MIB_EXPECT(backendVoltage == 25.0, "serialized backend preserves millivolt conversion");
+    std::atomic<bool> concurrentReadsOk{true};
+    std::vector<std::thread> readers;
+    for (int i = 0; i < 4; ++i) {
+        readers.emplace_back([&] {
+            for (int n = 0; n < 20; ++n) {
+                double value = 0;
+                std::string error;
+                if (!backend->readVoltage(value, error) || value != 25.0)
+                    concurrentReadsOk.store(false);
+            }
+        });
+    }
+    for (auto& reader : readers)
+        reader.join();
+    MIB_EXPECT(concurrentReadsOk.load(), "concurrent callers preserve whole serial transactions");
     backend->disconnect();
     backend.reset();
-    watchdog.mark("threaded backend disconnected");
+    watchdog.mark("serialized backend disconnected");
 
     running.store(false);
     emulator.join();

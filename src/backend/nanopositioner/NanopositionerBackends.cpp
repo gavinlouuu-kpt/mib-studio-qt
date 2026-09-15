@@ -1,11 +1,7 @@
 #include "backend/nanopositioner/INanopositionerBackend.h"
 
 #include "backend/nanopositioner/oeabt/OeabtProtocol.h"
-#include "backend/nanopositioner/oeabt/QtSerialTransport.h"
-
-#include <QMetaObject>
-#include <QObject>
-#include <QThread>
+#include "backend/nanopositioner/oeabt/SerialTransport.h"
 
 #include <algorithm>
 #include <chrono>
@@ -50,7 +46,7 @@ public:
         std::string path = endpoint.systemPath;
         if (!endpoint.persistentId.empty()) {
             if (const auto resolved =
-                    oeabt::QtSerialTransport::resolveEndpoint(endpoint.persistentId)) {
+                    oeabt::SerialTransport::resolveEndpoint(endpoint.persistentId)) {
                 path = resolved->systemPath;
             }
         }
@@ -59,7 +55,7 @@ public:
             return false;
         }
 
-        transport_ = std::make_unique<oeabt::QtSerialTransport>(path);
+        transport_ = std::make_unique<oeabt::SerialTransport>(path);
         auto opened = transport_->open();
         if (!opened) {
             error = opened.error().message;
@@ -150,7 +146,7 @@ public:
     std::string connectedEndpoint() const override { return connectedPath_; }
 
 private:
-    std::unique_ptr<oeabt::QtSerialTransport> transport_;
+    std::unique_ptr<oeabt::SerialTransport> transport_;
     std::unique_ptr<oeabt::ControllerSession> session_;
     std::optional<double> maximumVoltage_;
     std::string connectedPath_;
@@ -285,139 +281,46 @@ private:
     bool connected_{false};
 };
 
-struct PendingInvocation {
-    std::function<void()> function;
-    std::mutex completionMutex;
-    std::condition_variable completionCv;
-    std::exception_ptr exception;
-    bool completed{false};
-};
-
-class BackendWorker final : public QObject {
-    Q_OBJECT
-
+// Native serial handles have no Qt thread affinity. Serialize whole backend
+// operations, not individual reads/writes, so concurrent callers cannot mix frames.
+class SerializedBackendProxy final : public INanopositionerBackend {
 public:
-    explicit BackendWorker(std::unique_ptr<INanopositionerBackend> backend)
-        : backend(std::move(backend)) {}
-
-    void enqueue(std::shared_ptr<PendingInvocation> invocation) {
-        std::scoped_lock lock(queueMutex_);
-        pending_.push_back(std::move(invocation));
-    }
-
-    std::unique_ptr<INanopositionerBackend> backend;
-
-public slots:
-    void runPending() {
-        std::deque<std::shared_ptr<PendingInvocation>> pending;
-        {
-            std::scoped_lock lock(queueMutex_);
-            pending.swap(pending_);
-        }
-
-        for (const auto& invocation : pending) {
-            try {
-                invocation->function();
-            } catch (...) {
-                invocation->exception = std::current_exception();
-            }
-            {
-                std::scoped_lock lock(invocation->completionMutex);
-                invocation->completed = true;
-            }
-            invocation->completionCv.notify_one();
-        }
-    }
-
-private:
-    std::mutex queueMutex_;
-    std::deque<std::shared_ptr<PendingInvocation>> pending_;
-};
-
-class ThreadedBackendProxy final : public INanopositionerBackend {
-public:
-    explicit ThreadedBackendProxy(std::unique_ptr<INanopositionerBackend> backend)
-        : kind_(backend->kind()), worker_(new BackendWorker(std::move(backend))) {
-        thread_.setObjectName("NanopositionerIo");
-        worker_->moveToThread(&thread_);
-        QObject::connect(&thread_, SIGNAL(finished()), worker_, SLOT(deleteLater()));
-        thread_.start();
-    }
-
-    ~ThreadedBackendProxy() override {
-        disconnect();
-        worker_ = nullptr;
-        thread_.quit();
-        if (!thread_.wait(2000)) {
-            SPDLOG_CRITICAL("Nanopositioner I/O thread did not stop within 2 seconds");
-            thread_.requestInterruption();
-            thread_.quit();
-            thread_.wait();
-        }
-    }
-
+    explicit SerializedBackendProxy(std::unique_ptr<INanopositionerBackend> backend)
+        : backend_(std::move(backend)), kind_(backend_->kind()) {}
     BackendKind kind() const override { return kind_; }
-
     bool connect(const Endpoint& endpoint, std::string& error) override {
-        bool result = false;
-        invoke([&] { result = worker_->backend->connect(endpoint, error); });
-        return result;
+        std::scoped_lock lock(mutex_);
+        return backend_->connect(endpoint, error);
     }
-
     void disconnect() override {
-        if (!worker_) return;
-        invoke([&] { worker_->backend->disconnect(); });
+        std::scoped_lock lock(mutex_);
+        backend_->disconnect();
     }
-
     bool isConnected() const override {
-        bool result = false;
-        invoke([&] { result = worker_->backend->isConnected(); });
-        return result;
+        std::scoped_lock lock(mutex_);
+        return backend_->isConnected();
     }
-
     bool readVoltage(double& volts, std::string& error) override {
-        bool result = false;
-        invoke([&] { result = worker_->backend->readVoltage(volts, error); });
-        return result;
+        std::scoped_lock lock(mutex_);
+        return backend_->readVoltage(volts, error);
     }
-
     bool setVoltage(double volts, std::string& error) override {
-        bool result = false;
-        invoke([&] { result = worker_->backend->setVoltage(volts, error); });
-        return result;
+        std::scoped_lock lock(mutex_);
+        return backend_->setVoltage(volts, error);
     }
-
     std::optional<double> maximumVoltage() const override {
-        std::optional<double> result;
-        invoke([&] { result = worker_->backend->maximumVoltage(); });
-        return result;
+        std::scoped_lock lock(mutex_);
+        return backend_->maximumVoltage();
     }
-
     std::string connectedEndpoint() const override {
-        std::string result;
-        invoke([&] { result = worker_->backend->connectedEndpoint(); });
-        return result;
+        std::scoped_lock lock(mutex_);
+        return backend_->connectedEndpoint();
     }
 
 private:
-    template <typename Function> void invoke(Function&& function) const {
-        auto invocation = std::make_shared<PendingInvocation>();
-        invocation->function = std::forward<Function>(function);
-        worker_->enqueue(invocation);
-        if (!QMetaObject::invokeMethod(worker_, "runPending", Qt::QueuedConnection)) {
-            throw std::runtime_error("Could not queue nanopositioner I/O operation");
-        }
-
-        std::unique_lock lock(invocation->completionMutex);
-        invocation->completionCv.wait(lock, [&] { return invocation->completed; });
-        if (invocation->exception) {
-            std::rethrow_exception(invocation->exception);
-        }
-    }
-
+    std::unique_ptr<INanopositionerBackend> backend_;
     BackendKind kind_;
-    mutable QThread thread_;
-    BackendWorker* worker_{nullptr};
+    mutable std::mutex mutex_;
 };
 
 std::unique_ptr<INanopositionerBackend> createUnthreadedBackend(BackendKind kind) {
@@ -478,7 +381,7 @@ PersistedSelection resolvePersistedSelection(const std::optional<std::string>& b
 
 std::vector<Endpoint> availableOeabtEndpoints() {
     std::vector<Endpoint> endpoints;
-    for (const auto& serial : oeabt::QtSerialTransport::enumerateEndpoints()) {
+    for (const auto& serial : oeabt::SerialTransport::enumerateEndpoints()) {
         Endpoint endpoint;
         endpoint.backend = BackendKind::Oeabt;
         endpoint.persistentId = serial.persistentId;
@@ -494,7 +397,7 @@ std::vector<Endpoint> availableOeabtEndpoints() {
 
 std::unique_ptr<INanopositionerBackend> createNanopositionerBackend(BackendKind kind) {
     auto backend = createUnthreadedBackend(kind);
-    return backend ? std::make_unique<ThreadedBackendProxy>(std::move(backend)) : nullptr;
+    return backend ? std::make_unique<SerializedBackendProxy>(std::move(backend)) : nullptr;
 }
 
 bool probeNanopositionerEndpoint(const Endpoint& endpoint, std::string& error) {
@@ -516,5 +419,3 @@ bool probeNanopositionerEndpoint(const Endpoint& endpoint, std::string& error) {
 }
 
 } // namespace backend::nanopositioner
-
-#include "NanopositionerBackends.moc"

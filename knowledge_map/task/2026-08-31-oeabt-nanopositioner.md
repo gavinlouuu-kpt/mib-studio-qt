@@ -2,7 +2,7 @@
 
 ## Outcome
 
-Added a clean-room OEABT protocol core, Qt serial adapter, `oeabtctl`, and a
+Added a clean-room OEABT protocol core, native serial adapter, `oeabtctl`, and a
 backend-neutral autofocus integration for Linux and Windows. CoreMOR remains a
 separate Windows backend. Discovery and connection are read-only; voltage
 writes require explicit control and normal disconnect applies safe voltage
@@ -47,7 +47,7 @@ only after an active session.
 ## Key implementation choices
 
 - `oeabt_core` is Qt-free C++17 and depends on an injected byte transport.
-- `oeabt_qt_serial` owns endpoint enumeration and QSerialPort transactions.
+- `oeabt_serial` owns native endpoint enumeration and ISerialPort transactions.
 - Stable Linux selection prefers `/dev/serial/by-path` because generic CH341
   serial identifiers collide on this host.
 - Legacy `autofocus_com_port` configuration migrates to an explicit CoreMOR
@@ -64,3 +64,9 @@ reference-position limitations. Regression tests first reproduced four-field
 capability rejection and debug-line interference, then verified scalar/four-axis
 compatibility and fragmented framed responses with diagnostic text. Voltage
 accuracy and independently measured displacement remain open acceptance items.
+
+Integration with current develop reuses its POSIX/Win32 ISerialPort and native
+port enumeration. No Qt dependency or event-loop thread is reintroduced into
+the backend. The PTY test stresses concurrent callers through the serialized
+backend proxy; the tests use develop's consolidated test runner. CoreMOR
+readback retains the -0.05 V noise tolerance while writes remain nonnegative.

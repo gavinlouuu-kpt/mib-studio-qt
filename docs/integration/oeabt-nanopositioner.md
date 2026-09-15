@@ -140,8 +140,7 @@ Microsoft Update Catalog made the adapter enumerate as `USB-SERIAL CH340
 (COM3)`. A host USB capture then proved that the vendor application configured
 the adapter and transmitted `/1&\r` at 115200-8-N-1. No response payload was
 returned, and the application's compatible-device list remained blank. The
-Windows test sent no mode or voltage command. This rules out the Linux serial
-driver and the clean-room client as the cause of the identity timeout.
+Windows test sent no mode or voltage command. This reproduced the silent response independently of the Linux client.
 
 After receiving the O'motion command manual, the Linux client also sent its
 documented `/1&R\r` firmware query to the connected controller at 115200-8-N-1.
@@ -151,20 +150,11 @@ loss. A full controller/DC power cycle is therefore required before concluding
 that its firmware or internal serial path is incompatible; reconnecting USB
 alone may not reset a runtime baud-rate change.
 
-Before normal OEABT control is released:
-
-1. Resolve controller power, USB-to-controller cabling, or firmware
-   compatibility with OEABT; try both the vendor application's `/1&` identity
-   form and the command manual's `/1&R` form after a controller power cycle.
-2. Once identity succeeds, capture read-only exchanges and two operator-selected
-   panel voltages, and resolve whether the response header uses `1F` or ASCII
-   slash `2F`.
-3. Run `oeabtctl verify-write` with an operator-supplied safe target and verify
-   target readback plus restoration within 0.02 V.
-
-If the Windows application is also silent, resolve controller power, cable,
-or firmware compatibility with the vendor before enabling writes. Do not
-baud-sweep or fuzz commands against the attached actuator.
+The historical handshake failure below was resolved on September 10–11; see
+connected-controller evidence. Normal precision-control acceptance still requires
+`oeabtctl verify-write` with an operator-selected safe target and target/restore
+readbacks within the unchanged 0.02 V tolerance. The observed low-voltage
+mismatch does not pass that gate.
 
 ## Connected-controller evidence (2026-09-10 and 2026-09-11)
 
@@ -194,3 +184,11 @@ The silent-handshake blocker is resolved. Full voltage-accuracy/release acceptan
 remains open. No new physical motion is needed to run the software regression
 suite. Device numbering changed between sessions: enumerate and verify identity;
 do not assume a remembered ttyUSB number still identifies this controller.
+
+## Native backend integration
+
+The implementation uses the existing POSIX/Win32 `ISerialPort` and native port
+enumeration on current develop, with no Qt dependency in `mib_backend` or
+`oeabtctl`. `SerialTransport` extracts complete frames despite fragmented debug
+output. A mutex-backed backend proxy serializes complete multi-command operations
+for concurrent callers; no dedicated Qt event-loop thread is needed.

@@ -13,7 +13,7 @@ connection.
 
 - [x] Pure C++17 protocol core encodes the recovered commands and validates
       framed responses through an injected byte transport.
-- [x] Qt SerialPort adapter and `oeabtctl` support safe discovery/status plus
+- [x] Native ISerialPort adapter and `oeabtctl` support safe discovery/status plus
       explicitly gated voltage write/restore validation.
 - [x] Linux MIB Studio uses the OEABT backend; Windows can select OEABT or the
       existing CoreMOR backend independently of EGrabber availability.
@@ -42,7 +42,7 @@ connection.
 - [x] Inspect installer, payload, serial settings, command construction, and
       current MIB Studio integration.
 - [x] Implement and test protocol core.
-- [x] Implement Qt transport and CLI.
+- [x] Implement native transport and CLI (ported from the original Qt adapter).
 - [x] Refactor service/backend selection and configuration/UI integration.
 - [x] Complete documentation and software verification. Full backend test
       preset passes 77/77; the TSan lane passes 45/45, including the threaded
@@ -54,3 +54,18 @@ all commands, but zero and low-voltage readbacks differ from their targets.
 The integration guide retains the exact observations; physical displacement and
 voltage-accuracy release acceptance remain open. September 15 regression fixes
 cover four-axis capability fields and unframed firmware diagnostic output.
+
+- 2026-09-15: Preserve develop's Qt-free backend by reusing native ISerialPort;
+  serialize complete controller operations with a mutex instead of Qt affinity.
+
+## September 15 verification after develop integration
+
+- Linux backend build and preset: 97 passed, six opt-in tests skipped (103 total).
+- Full Linux GUI application built successfully. Local builds deliberately
+  disabled Sentry and MindVision to test SDK-independent OEABT integration.
+- Docs and screenshot consistency checks passed.
+- ThreadSanitizer lane: 69 passed, three skipped (72 total), with the workflow
+  suppression file and LUT-manifest environment. Initial ASLR mappings prevented
+  runtime startup; `setarch x86_64 -R` on the test process resolved that without
+  modifying host configuration. Concurrent serial callers passed under TSan.
+- No hardware movement was performed during this integration/merge task.

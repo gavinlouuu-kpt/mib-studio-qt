@@ -1,7 +1,5 @@
 #include "backend/nanopositioner/oeabt/OeabtProtocol.h"
-#include "backend/nanopositioner/oeabt/QtSerialTransport.h"
-
-#include <QCoreApplication>
+#include "backend/nanopositioner/oeabt/SerialTransport.h"
 
 #include <atomic>
 #include <chrono>
@@ -19,7 +17,7 @@
 
 using backend::nanopositioner::oeabt::Capabilities;
 using backend::nanopositioner::oeabt::ControllerSession;
-using backend::nanopositioner::oeabt::QtSerialTransport;
+using backend::nanopositioner::oeabt::SerialTransport;
 using backend::nanopositioner::oeabt::VoltageMv;
 
 namespace {
@@ -124,7 +122,7 @@ struct ConnectedController {
     explicit ConnectedController(std::string path)
         : transport(std::move(path)), session(transport) {}
 
-    QtSerialTransport transport;
+    SerialTransport transport;
     ControllerSession session;
 };
 
@@ -141,7 +139,7 @@ int openAndIdentify(ConnectedController& controller) {
 }
 
 int listEndpoints(bool json) {
-    const auto endpoints = QtSerialTransport::enumerateEndpoints();
+    const auto endpoints = SerialTransport::enumerateEndpoints();
     if (json) {
         std::cout << '[';
         for (std::size_t i = 0; i < endpoints.size(); ++i) {
@@ -283,7 +281,7 @@ int commandWithPort(int argc, char** argv, std::string_view command) {
 } // namespace
 
 int main(int argc, char** argv) {
-    QCoreApplication application(argc, argv);
+
     if (argc < 2) {
         usage();
         return 2;

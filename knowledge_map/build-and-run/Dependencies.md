@@ -27,7 +27,7 @@
   shared library.
 - **Coremor XMT DLL** — `include/Coremor/` (`.h`, `.lib`, `.dll`). Used by
   the optional Windows backend of [[../services/AutofocusService]]. OEABT uses
-  Qt SerialPort and the operating system's standard serial driver instead of a
+  the existing ISerialPort adapter and the operating system's standard serial driver instead of a
   vendored library.
 
 ## How they're wired

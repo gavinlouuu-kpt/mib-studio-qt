@@ -11,8 +11,6 @@
 #include "support/assert.h"
 #include "support/hardware.h"
 
-#include <QCoreApplication>
-
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -20,7 +18,7 @@
 using backend::services::AutofocusService;
 
 int main(int argc, char** argv) {
-    QCoreApplication application(argc, argv);
+
     const std::string port = mib::test::requireDeviceEnv("MIB_TEST_NANOPOSITIONER_PORT");
     const int baud = mib::test::envInt("MIB_TEST_NANOPOSITIONER_BAUD", 115200);
     const int addr = mib::test::envInt("MIB_TEST_NANOPOSITIONER_ADDR", 1);
