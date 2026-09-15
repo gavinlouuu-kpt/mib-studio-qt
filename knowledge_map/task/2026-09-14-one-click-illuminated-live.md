@@ -67,3 +67,16 @@ CMake/MSVC/Conan/Qt/Python on the PC, so this build was not compiled or run
 there. CI is the compile/test oracle for this pass. Hardware acceptance
 (Rigol CH2 trigger, CH1 LED current at 5000 and an adjusted FPS, Start/Stop/
 restart) remains outstanding and requires a deployed build.
+
+## September 15: rig PC build and corrected discovery rule
+
+Toolchain installed on the rig PC; `windows-ninja` build and the fast lane
+(102 tests) pass, including the Qt frontend tests. A second read-only probe
+with the installed app closed showed the real generator on COM6 keeps 0 Hz on
+channels 2–4 (channel 1 = 5000 Hz / 50 %) and that COM4 is a second,
+never-configured module answering all zeros and behaving identically on every
+other register. The "all four channels configured" rule from the first cut
+would therefore have rejected the real generator; adoption is now keyed on the
+requested channel being set, plus a read-only syringe-volume register check
+that excludes a dLSP pump left channel-enabled. `backend.illuminated_live`
+carries the rig register images as regressions.

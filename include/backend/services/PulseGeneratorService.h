@@ -83,10 +83,11 @@ public:
             ModbusDevice,   // valid Modbus response, but not a pulse generator
             Error           // corrupt/inconsistent response — possible collision
         } kind{Kind::Error};
-        // PulseGenerator only: every channel reports a non-zero in-range
-        // frequency (identityLooksLikeConfiguredGenerator). Automatic
-        // discovery requires this; the lenient manual scan does not.
-        bool allChannelsConfigured{false};
+        // PulseGenerator only: raw frequency register (Hz×100) per channel
+        // from the identity read. The module stores 0 for a channel that has
+        // never been set (observed on the rig: ch1 5000 Hz, ch2–4 0 Hz), so
+        // automatic discovery keys on the requested channel, not on all four.
+        std::array<uint32_t, CHANNEL_COUNT> channelFrequencyRaw{};
     };
 
     explicit PulseGeneratorService(serialbus::SerialBusManager& busManager);
@@ -119,13 +120,17 @@ public:
 
     // Read-only discovery for `port: "auto"` profiles: probes every USB serial
     // adapter in `ports` at the configured address/settings and resolves
-    // config.portName. A port counts only when the reply passes the strict
-    // identity test (all four channels hold a non-zero in-range frequency), so
-    // an unrelated Modbus device that serves zeroed registers at the same
-    // address (a syringe pump does) is never adopted. Exactly one such port is
+    // config.portName. A port counts only when the reply has the generator
+    // shape AND the requested 0-based `channel` holds a non-zero in-range
+    // frequency (identityChannelConfigured) AND a read of the syringe pump's
+    // syringe-volume register answers zero (a dLSP pump left channel-enabled
+    // at the same address would otherwise pass the shape test). A generator
+    // whose requested channel was never set, or an unrelated device serving
+    // zeroed registers, is reported, never adopted. Exactly one such port is
     // required; none or several fail with an operator-facing message that names
-    // ports held by another program. Never writes to any device.
-    bool discoverLiveView(Config& config, const std::vector<serialbus::PortInfo>& ports,
+    // busy, unconfigured and non-generator ports. Never writes to any device.
+    bool discoverLiveView(Config& config, int channel,
+                          const std::vector<serialbus::PortInfo>& ports,
                           std::string* error = nullptr);
 
     // Control. Channel is 0-based [0, CHANNEL_COUNT). Values are clamped to
@@ -162,13 +167,24 @@ public:
     // (and later writing into) an unrelated Modbus device that merely serves
     // 12 holding registers at address 0.
     static bool identityLooksLikeGenerator(const std::vector<uint8_t>& identityData);
-    // Stricter form for automatic adoption: identityLooksLikeGenerator AND no
-    // channel reads 0 Hz. The module cannot hold a 0 Hz setting (400 Hz
-    // minimum), whereas foreign devices commonly serve zeroed registers.
-    static bool identityLooksLikeConfiguredGenerator(const std::vector<uint8_t>& identityData);
+    // Automatic-adoption form: identityLooksLikeGenerator AND the 0-based
+    // `channel` reads a non-zero (hence in-range) frequency. The module keeps
+    // 0 Hz for channels never set, so a fresh module or a foreign device
+    // serving zeros is excluded while a rig whose channel was set once passes.
+    static bool identityChannelConfigured(const std::vector<uint8_t>& identityData, int channel);
+    // Raw frequency register (Hz×100) of `channel` from an identity read.
+    static uint32_t identityFrequencyRaw(const std::vector<uint8_t>& identityData, int channel);
+    // Holding register the dLSP syringe pump uses for syringe volume (1–9999).
+    // The generator answers 0 for any register outside its map (observed).
+    static constexpr uint16_t SYRINGE_PUMP_VOLUME_REGISTER = 0x0061;
 
 private:
     bool writeFrame(const std::vector<uint8_t>& request);
+    // One FC03 read on an arbitrary port (read-only, shares an open session).
+    // Returns false when the port cannot be opened or the device does not
+    // answer with data; `value` receives the register on success.
+    bool readRegisterOnPort(const std::string& portName, const SerialSettings& settings,
+                            uint8_t address, uint16_t reg, uint16_t& value);
     static bool validChannel(int channel);
     static LinkError mapBusError(serialbus::BusError error);
 

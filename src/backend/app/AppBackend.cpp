@@ -95,7 +95,7 @@ namespace backend
                     auto resolved = cfg;
                     if (resolved.portName == "auto") {
                         std::string error;
-                        if (!generator.discoverLiveView(resolved, services::serialbus::availablePorts(), &error)) {
+                        if (!generator.discoverLiveView(resolved, channel, services::serialbus::availablePorts(), &error)) {
                             SPDLOG_ERROR("Illuminated Live View: {}", error);
                             throw std::runtime_error(error);
                         }

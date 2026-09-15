@@ -1,0 +1,141 @@
+﻿-- Found git tag version: 1.1.2 (full: 1.1.2-beta.b06a5e7, from tag: v1.1.2-beta.b06a5e7)
+-- Using version from git tag: 1.1.2 (full: 1.1.2-beta.b06a5e7)
+-- Using Conan toolchain: C:/Users/gavinlou/Developer/mib-studio-qt/build-ninja/conan_toolchain.cmake
+-- Conan toolchain: Setting CMAKE_MSVC_RUNTIME_LIBRARY=$<$<CONFIG:Release>:MultiThreadedDLL>
+-- Conan toolchain: C++ Standard 17 with extensions OFF
+-- The C compiler identification is MSVC 19.44.35228.0
+-- The CXX compiler identification is MSVC 19.44.35228.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Compiler launcher: C:/Users/gavinlou/AppData/Local/Microsoft/WinGet/Packages/Mozilla.sccache_Microsoft.Winget.Source_8wekyb3d8bbwe/sccache-v0.17.0-x86_64-pc-windows-msvc/sccache.exe
+-- sentry-native: disabled by MIB_USE_SENTRY=OFF
+-- Conan: Component target declared 'Qt6::Platform'
+-- Conan: Component target declared 'qt::QODBCDriverPlugin'
+-- Conan: Component target declared 'Qt6::EntryPointImplementation'
+-- Conan: Component target declared 'Qt6::Core'
+-- Conan: Component target declared 'Qt6::EntryPointPrivate'
+-- Conan: Component target declared 'Qt6::Gui'
+-- Conan: Component target declared 'Qt6::QSQLiteDriverPlugin'
+-- Conan: Component target declared 'Qt6::QPSQLDriverPlugin'
+-- Conan: Component target declared 'Qt6::QODBCDriverPlugin'
+-- Conan: Component target declared 'Qt6::Network'
+-- Conan: Component target declared 'Qt6::Sql'
+-- Conan: Component target declared 'Qt6::Test'
+-- Conan: Component target declared 'Qt6::Concurrent'
+-- Conan: Component target declared 'Qt6::Xml'
+-- Conan: Component target declared 'Qt6::SerialPort'
+-- Conan: Component target declared 'Qt6::QWindowsIntegrationPlugin'
+-- Conan: Component target declared 'Qt6::QModernWindowsStylePlugin'
+-- Conan: Component target declared 'Qt6::QGifPlugin'
+-- Conan: Component target declared 'Qt6::QIcoPlugin'
+-- Conan: Component target declared 'Qt6::Widgets'
+-- Conan: Component target declared 'Qt6::OpenGL'
+-- Conan: Component target declared 'Qt6::PrintSupport'
+-- Conan: Component target declared 'Qt6::OpenGLWidgets'
+-- Conan: Component target declared 'Qt6::Charts'
+-- Conan: Target declared 'qt::qt'
+-- Conan: Component target declared 'SQLite::SQLite3'
+-- Conan: Component target declared 'OpenSSL::Crypto'
+-- Conan: Component target declared 'OpenSSL::SSL'
+-- Conan: Target declared 'openssl::openssl'
+-- Conan: Target declared 'ZLIB::ZLIB'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/opens205d53a21c66a/p/lib/cmake/conan-official-openssl-variables.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/conan_qt_platform_target_setup.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Core/conan_qt_executables_variables.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Core/conan_qt_qt6_coreprivate.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Core/conan_qt_entry_point.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/Qt6ConfigExtras.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicAppleHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicCMakeHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicCMakeVersionHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicDependencyHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicExternalProjectHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicFinalizerHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicFindPackageHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicPluginHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicTargetHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicTestHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicToolHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicWalkLibsHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6/QtPublicWasmToolchainHelpers.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Core/Qt6CoreMacros.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Core/Qt6CoreConfigExtras.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Gui/conan_qt_qt6_guiprivate.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Widgets/conan_qt_qt6_widgetsprivate.cmake'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/qt834c4c80b45ea/p/lib/cmake/Qt6Widgets/Qt6WidgetsMacros.cmake'
+-- Conan: Component target declared 'spdlog::spdlog'
+-- Conan: Component target declared 'fmt::fmt'
+-- Conan: Component target declared 'opencv_core'
+-- Conan: Component target declared 'opencv::opencv_core_alias'
+-- Conan: Component target declared 'opencv_flann'
+-- Conan: Component target declared 'opencv_imgproc'
+-- Conan: Component target declared 'opencv_ml'
+-- Conan: Component target declared 'opencv_features2d'
+-- Conan: Component target declared 'opencv::opencv_flann_alias'
+-- Conan: Component target declared 'opencv_imgcodecs'
+-- Conan: Component target declared 'opencv::opencv_imgproc_alias'
+-- Conan: Component target declared 'opencv::opencv_ml_alias'
+-- Conan: Component target declared 'opencv_photo'
+-- Conan: Component target declared 'opencv_calib3d'
+-- Conan: Component target declared 'opencv::opencv_features2d_alias'
+-- Conan: Component target declared 'opencv::opencv_imgcodecs_alias'
+-- Conan: Component target declared 'opencv::opencv_photo_alias'
+-- Conan: Component target declared 'opencv_videoio'
+-- Conan: Component target declared 'opencv::opencv_calib3d_alias'
+-- Conan: Component target declared 'opencv_highgui'
+-- Conan: Component target declared 'opencv_objdetect'
+-- Conan: Component target declared 'opencv_stitching'
+-- Conan: Component target declared 'opencv_video'
+-- Conan: Component target declared 'opencv::opencv_videoio_alias'
+-- Conan: Component target declared 'opencv_gapi'
+-- Conan: Component target declared 'opencv::opencv_highgui_alias'
+-- Conan: Component target declared 'opencv::opencv_objdetect_alias'
+-- Conan: Component target declared 'opencv::opencv_stitching_alias'
+-- Conan: Component target declared 'opencv::opencv_video_alias'
+-- Conan: Component target declared 'opencv::opencv_gapi_alias'
+-- Conan: Target declared 'opencv::opencv'
+-- Conan: Including build module from 'C:/Users/gavinlou/.conan2/p/b/openc7cb995b920d86/p/lib/cmake/conan-official-opencv-variables.cmake'
+-- Hardware SDK integrations: OFF
+-- MindVision SDK integration: ON
+-- MindVision SDK include dir: C:/Program Files (x86)/MindVision/Demo/VC++/Include
+-- MindVision SDK runtime: C:/Program Files (x86)/MindVision/SDK/X64/MVCAMSDK_X64.dll
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Failed
+-- Looking for pthread_create in pthreads
+-- Looking for pthread_create in pthreads - not found
+-- Looking for pthread_create in pthread
+-- Looking for pthread_create in pthread - not found
+-- Found Threads: TRUE
+-- mib_backend_tests: 74 tests in one runner
+-- mib_frontend_tests: 8 tests in one runner
+CMake Warning at cmake/MIBWindowsDeployment.cmake:238 (message):
+  Qt Debug DLLs not found (Debug package location not determined)
+Call Stack (most recent call first):
+  src/frontend/qt/CMakeLists.txt:283 (mib_configure_windows_deployment)
+
+
+CMake Warning at cmake/MIBWindowsDeployment.cmake:240 (message):
+    Debug builds may fail. Install Debug packages:
+Call Stack (most recent call first):
+  src/frontend/qt/CMakeLists.txt:283 (mib_configure_windows_deployment)
+
+
+CMake Warning at cmake/MIBWindowsDeployment.cmake:241 (message):
+    conan install . --output-folder=build --build=missing -s build_type=Debug
+Call Stack (most recent call first):
+  src/frontend/qt/CMakeLists.txt:283 (mib_configure_windows_deployment)
+
+
+-- InnoSetup not found - installer target will not be available
+-- Install InnoSetup from https://jrsoftware.org/isdl.php to enable installer generation
+-- Configuring done (6.7s)
+-- Generating done (0.7s)
+-- Build files have been written to: C:/Users/gavinlou/Developer/mib-studio-qt/build-ninja

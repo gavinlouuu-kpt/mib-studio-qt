@@ -29,6 +29,18 @@ struct Wire {
     std::atomic<int> writes{0};        // every request frame
     std::atomic<int> writeCommands{0}; // FC06/FC16 only: must stay 0 for discovery
     std::array<uint16_t, 12> regs{}; // exclusively accessed by the serial worker
+    // Registers outside the 12-register generator map. The real module answers
+    // 0 for any such register (observed on the rig); a pump serves real values.
+    std::map<uint16_t, uint16_t> extra;
+    uint16_t read(int index) const {
+        if (index >= 0 && index < 12) return regs.at(static_cast<size_t>(index));
+        const auto it = extra.find(static_cast<uint16_t>(index));
+        return it == extra.end() ? 0 : it->second;
+    }
+    uint16_t& reg(int index) {
+        if (index >= 0 && index < 12) return regs.at(static_cast<size_t>(index));
+        return extra[static_cast<uint16_t>(index)];
+    }
 };
 // Port-name -> slave registry shared by every fake port the bus creates;
 // names not present open like an unplugged adapter, `busy` names like an
@@ -82,18 +94,18 @@ public:
         if (q[1] == 3) {
             rx = {q[0], 3, static_cast<uint8_t>(count * 2)};
             for (int i = 0; i < count; ++i) {
-                const auto n = wire->regs.at(start + i);
+                const auto n = wire->read(start + i);
                 rx.push_back(n >> 8);
                 rx.push_back(n & 255);
             }
             if (wire->corruptRead) rx[3] ^= 1;
             modbus::appendCrc(rx);
         } else if (q[1] == 6) {
-            wire->regs.at(start) = count;
+            wire->reg(start) = count;
             rx = q;
         } else {
             for (int i = 0; i < count; ++i)
-                wire->regs.at(start + i) = (q[7 + i * 2] << 8) | q[8 + i * 2];
+                wire->reg(start + i) = (q[7 + i * 2] << 8) | q[8 + i * 2];
             rx = {q[0], q[1], q[2], q[3], q[4], q[5]};
             modbus::appendCrc(rx);
         }
@@ -328,17 +340,19 @@ int main() {
     }
     // Real service through fake Modbus transport: ownership, wire round-trip,
     // failures and repeated cross-thread stop. No hardware is touched.
-    Wire wire;    // the generator: every channel holds a real setting (1 kHz / 50 %)
-    Wire foreign; // an unrelated Modbus slave at the same address serving zeros —
-                  // what the rig PC's COM4 answered on 2026-09-14
-    for (int ch = 0; ch < 4; ++ch) {
-        wire.regs[ch * 3] = 0x0001;
-        wire.regs[ch * 3 + 1] = 0x86A0; // 100000 = 1000.00 Hz
-        wire.regs[ch * 3 + 2] = 5000;   // 50.00 %
-    }
+    // Register images are what the rig PC's ports answered on 2026-09-14/15.
+    Wire wire;     // the generator: channel 1 set once (5000 Hz / 50 %), channels 2–4 0 Hz
+    Wire foreign;  // a second, never-configured module: identical shape, all zeros
+    Wire pumpLike; // a dLSP pump left channel-enabled at address 1: reg0 = 1,
+                   // syringe volume 10 at 0x0061 (generator shape on channel 1)
+    wire.regs[0] = 0x0007;
+    wire.regs[1] = 0xA120; // 500000 = 5000.00 Hz
+    wire.regs[2] = 5000;   // 50.00 %
+    pumpLike.regs[0] = 1;
+    pumpLike.extra[PulseGeneratorService::SYRINGE_PUMP_VOLUME_REGISTER] = 10;
     const auto generatorRegs = wire.regs;
     Bench bench;
-    bench.wires = {{"COM1", &wire}, {"COM2", &wire}, {"COM4", &foreign}};
+    bench.wires = {{"COM1", &wire}, {"COM2", &wire}, {"COM4", &foreign}, {"COM8", &pumpLike}};
     bench.busy = {"COM6"};
     backend::services::serialbus::SerialBusManager bus;
     bus.setSerialPortFactory([&] { return std::make_unique<Port>(bench); });
@@ -357,43 +371,63 @@ int main() {
     const auto secondAdapter = usbAdapter("COM2");
     const auto foreignAdapter = usbAdapter("COM4");
     const auto busyAdapter = usbAdapter("COM6");
+    const auto pumpAdapter = usbAdapter("COM8");
     const auto unpluggedAdapter = usbAdapter("COM9");
     std::string discoveryError;
-    MIB_EXPECT(!gen.discoverLiveView(cfg, {}, &discoveryError), "missing adapter rejected");
-    MIB_EXPECT(gen.discoverLiveView(cfg, {adapter}, &discoveryError) && cfg.portName == "COM1",
+    MIB_EXPECT(!gen.discoverLiveView(cfg, 0, {}, &discoveryError), "missing adapter rejected");
+    MIB_EXPECT(gen.discoverLiveView(cfg, 0, {adapter}, &discoveryError) && cfg.portName == "COM1",
                "unique compatible generator automatically resolved");
-    MIB_EXPECT(wire.regs == generatorRegs && wire.writeCommands == 0,
+    MIB_EXPECT(wire.regs == generatorRegs && wire.writeCommands == 0 && wire.extra.empty(),
                "discovery never changes outputs");
-    MIB_EXPECT(!gen.discoverLiveView(cfg, {adapter, secondAdapter}, &discoveryError),
+    MIB_EXPECT(!gen.discoverLiveView(cfg, 0, {adapter, secondAdapter}, &discoveryError),
                "ambiguous generators never guessed");
     MIB_EXPECT(discoveryError.find("COM1") != std::string::npos &&
                    discoveryError.find("COM2") != std::string::npos,
                "ambiguity names both adapters");
-    // Regression (rig PC 2026-09-14): a foreign slave answering zeros at the
+    // Regression (rig PC 2026-09-14): a zero-register module answering at the
     // configured address was a lenient "generator", making discovery ambiguous
-    // or, with the real generator unavailable, adopting the wrong instrument.
+    // or, with the real generator unavailable, adopting the wrong device.
+    // Regression (rig PC 2026-09-15): the real generator keeps 0 Hz on channels
+    // it has never set, so "all channels configured" rejected the real rig.
     cfg.portName = "auto";
-    MIB_EXPECT(gen.discoverLiveView(cfg, {foreignAdapter, adapter, unpluggedAdapter},
+    MIB_EXPECT(gen.discoverLiveView(cfg, 0, {foreignAdapter, adapter, unpluggedAdapter, pumpAdapter},
                                     &discoveryError) &&
                    cfg.portName == "COM1",
-               "zero-register device does not make discovery ambiguous");
-    MIB_EXPECT(foreign.writeCommands == 0 && foreign.writes > 0,
-               "foreign device was only read, never written");
+               "unconfigured module and pump-like device do not make discovery ambiguous");
+    MIB_EXPECT(foreign.writeCommands == 0 && foreign.writes > 0 && pumpLike.writeCommands == 0 &&
+                   pumpLike.writes > 0,
+               "other devices were only read, never written");
     cfg.portName = "auto";
-    MIB_EXPECT(!gen.discoverLiveView(cfg, {foreignAdapter, busyAdapter}, &discoveryError) &&
+    MIB_EXPECT(!gen.discoverLiveView(cfg, 0, {foreignAdapter, busyAdapter, pumpAdapter},
+                                     &discoveryError) &&
                    cfg.portName == "auto",
-               "foreign device alone is never adopted");
+               "unconfigured module and pump alone are never adopted");
     MIB_EXPECT(discoveryError.find("COM6") != std::string::npos &&
                    discoveryError.find("in use by another program") != std::string::npos,
                "busy adapter is named as the likely cause");
     MIB_EXPECT(discoveryError.find("COM4") != std::string::npos &&
+                   discoveryError.find("channel 1 has never been set") != std::string::npos,
+               "never-configured module is named with the remedy");
+    MIB_EXPECT(discoveryError.find("COM8") != std::string::npos &&
                    discoveryError.find("not a pulse generator") != std::string::npos,
-               "answering non-generator is named");
-    MIB_EXPECT(foreign.writeCommands == 0, "foreign device still never written");
+               "pump-like device is named as not a generator");
+    MIB_EXPECT(foreign.writeCommands == 0 && pumpLike.writeCommands == 0,
+               "other devices still never written");
+    // Channel matters: the same generator is unconfigured for channel 2.
+    cfg.portName = "auto";
+    MIB_EXPECT(!gen.discoverLiveView(cfg, 1, {adapter}, &discoveryError) &&
+                   discoveryError.find("channel 2 has never been set") != std::string::npos,
+               "requested channel must itself be configured");
     std::vector<uint8_t> zeros(24, 0);
+    std::vector<uint8_t> rigImage = {0x00, 0x07, 0xA1, 0x20, 0x13, 0x88};
+    rigImage.resize(24, 0);
     MIB_EXPECT(PulseGeneratorService::identityLooksLikeGenerator(zeros) &&
-                   !PulseGeneratorService::identityLooksLikeConfiguredGenerator(zeros),
-               "manual scan stays lenient; automatic adoption requires configured channels");
+                   !PulseGeneratorService::identityChannelConfigured(zeros, 0),
+               "manual scan stays lenient; automatic adoption requires a configured channel");
+    MIB_EXPECT(PulseGeneratorService::identityChannelConfigured(rigImage, 0) &&
+                   !PulseGeneratorService::identityChannelConfigured(rigImage, 1) &&
+                   PulseGeneratorService::identityFrequencyRaw(rigImage, 0) == 500000,
+               "rig image: channel 1 configured at 5000 Hz, channel 2 not");
     cfg.portName = "COM1";
     for (int i = 0; i < 20; ++i) {
         watchdog.mark("generator ownership stress");

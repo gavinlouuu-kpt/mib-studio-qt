@@ -15,16 +15,19 @@ watermark; the coordinator also adds a 2-second time-based backstop. Test:
 
 ## 2026-09-14 — Illuminated Live View review pass on the rig PC (#413, PR #414)
 
-Read-only probes on the rig PC found a foreign Modbus slave on COM4 answering
-address 1 with zeroed registers, which the lenient generator identity accepted.
-Automatic discovery now requires every channel to hold a non-zero in-range
-frequency and names busy/non-generator ports in its error; `live_view` parsing
+Read-only probes on the rig PC found a second, never-configured generator
+module on COM4 answering address 1 with zeroed registers, which the lenient
+generator identity accepted; the real generator on COM6 keeps 0 Hz on channels
+it never set. Automatic discovery now requires the requested channel to hold a
+non-zero in-range frequency, excludes a pump-like responder via a read-only
+syringe-volume register check, and names busy/unset/non-generator ports in its
+error; `live_view` parsing
 and period/exposure/strobe rules live in `parseConfig` and gate Save as well as
 Play; Stop is honoured before handle open and CameraPlay; an unconfirmed
 generator/LED OFF survives handle-teardown faults; the default-profile upgrade
 matches a verbatim historical copy. Tests: `backend.illuminated_live`,
-`frontend.config_tabs_state`. Not compiled on the rig PC (no toolchain); no
-hardware acceptance yet.
+`frontend.config_tabs_state`. Built and tested on the rig PC on 2026-09-15
+(Windows fast lane 102/102); no hardware acceptance yet.
 
 ## Features shipped
 

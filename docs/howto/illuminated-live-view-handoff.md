@@ -71,10 +71,11 @@ copy host-specific `/tmp` virtualenv or SDK paths to a different system.
 ## Rig PC findings (September 14, second pass)
 
 Host: Windows 11, MindVision SDK 2.1.10 runtime installed, installed MIB Studio
-Qt (pre-#413 build) running. No CMake, MSVC, Conan, Qt or Python: this branch
-cannot be compiled or run on the rig PC as it stands; CI is the compile and
-test oracle, and `build-windows.yml` only runs on `develop` pushes or a manual
-dispatch that cuts a beta/release. Findings:
+Qt (pre-#413 build) was running during the first probe. The PC had no CMake,
+MSVC, Conan, Qt or Python on September 14; they were installed on September 15
+(see below), so the branch now builds and tests locally. `build-windows.yml`
+still only runs on `develop` pushes or a manual dispatch that cuts a
+beta/release. Findings:
 
 - SDK enumeration (read-only, no CameraInit) lists exactly one camera:
   `MV-XG51GM`, GigE at 169.254.34.249, S/N 056082722114 — single-camera
@@ -82,9 +83,18 @@ dispatch that cuts a beta/release. Findings:
 - Five USB serial ports: a CH344 four-port adapter (COM3–COM6) and a CH340
   (COM7). The installed app's saved generator port is COM6 (CH344 port A).
 - Read-only FC03 identity probe at address 1, 9600 8N1: COM4 answered with
-  twelve zero registers (a foreign Modbus slave that the lenient rule accepted
-  — fixed by strict adoption); COM6 was busy (held by the running app); the
-  rest were silent.
+  twelve zero registers and behaves identically to the generator on every
+  other probe (a second, never-configured module) — the lenient rule accepted
+  it; adoption is now keyed on the requested channel being set. COM6 (the
+  generator) reads ch1 5000 Hz / 50 %, ch2–4 0 Hz once the installed app is
+  closed; the rest were silent.
+- September 15: toolchain installed on the rig PC (VS 2022 Build Tools 17.14,
+  CMake 4.4, Ninja, Conan 2.32 with profile `ci` plus
+  `[replace_requires] cpuinfo/*: cpuinfo/cci.20231129` — ConanCenter drift
+  that a cold CI cache will also hit); `windows-ninja` preset configured with
+  `MIB_MINDVISION_SDK_ROOT=C:\Program Files (x86)\MindVision\Demo\VC++`,
+  `MIB_ENABLE_HARDWARE_SDKS=OFF`, `MIB_USE_SENTRY=OFF`. Full build and the
+  fast lane (102 tests) pass, including the Qt frontend tests.
 - The default profile on this PC (`%LOCALAPPDATA%\MIB_Studio_Qt\include\
   mindvisionConfig.json`) is byte-equivalent to the historical bundled profile
   and will be upgraded to the automatic preset by this build.

@@ -191,8 +191,10 @@ Hardware acceptance of this changed build remains outstanding.
 
 A read-only Modbus identity probe (FC03, address 1, 9600 8N1) of the rig PC's
 five USB serial ports found two things the first implementation would have
-mishandled. COM4 answered with twelve zeroed registers: a foreign Modbus device
-that the lenient "plausible generator" rule accepted, so automatic discovery
+mishandled. COM4 answered with twelve zeroed registers and, on every further
+probe (registers past the map, pump registers), behaved exactly like the
+generator on COM6 — it is a second, never-configured pulse generator module.
+The lenient "plausible generator" rule accepted it, so automatic discovery
 would have been ambiguous, or would have adopted COM4 and written frequency and
 duty into it while the real generator was unavailable. COM6, the generator's
 adapter, was held open by the running installed application, which reports as
@@ -200,16 +202,25 @@ adapter, was held open by the running installed application, which reports as
 
 Changes made in response:
 
-- **Strict automatic adoption.** `port: "auto"` discovery counts a port only
-  when every channel of the identity read holds a non-zero frequency inside the
-  module's 400–40000 Hz range (`identityLooksLikeConfiguredGenerator`). The
-  module cannot store 0 Hz, whereas foreign devices commonly serve zeros. The
-  manual Scan in Hardware Setup keeps the lenient rule because the operator
-  chooses the port there. Discovery still never writes.
+- **Adoption keyed on the requested channel.** `port: "auto"` discovery
+  counts a port only when the identity read has the generator shape, the
+  requested channel (channel 1 for the preset) holds a non-zero frequency
+  inside the module's 400–40000 Hz range (`identityChannelConfigured`), and a
+  read of the dLSP syringe pump's syringe-volume register (0x0061) answers
+  zero. The module keeps 0 Hz for channels it has never set: on the rig the
+  generator reads channel 1 = 5000 Hz, channels 2–4 = 0 Hz, so a rule that
+  demanded all four channels would have rejected the real device (it did,
+  in the first cut of this pass, before the probe caught it). A module whose
+  requested channel was never set is reported with the remedy ("set it once
+  in Hardware Setup"); a pump left channel-enabled at address 1 has the
+  generator shape on channel 1 (raw 65536 = 655.36 Hz) and is excluded by the
+  syringe-volume read, because the generator answers 0 for any register
+  outside its map. The manual Scan in Hardware Setup keeps the lenient rule
+  because the operator chooses the port there. Discovery still never writes.
 - **Actionable discovery errors.** No match now names adapters held by another
-  program and adapters that answered but are not a generator; several matches
-  name them all. The port recorded is the system name (`COM6`, `ttyUSB0`), the
-  same form Hardware Setup saves.
+  program, modules whose requested channel is unset, and devices that answered
+  but are not a generator; several matches name them all. The port recorded is
+  the system name (`COM6`, `ttyUSB0`), the same form Hardware Setup saves.
 - **One timing rule set.** The `live_view` block is parsed and validated by
   `parseConfig` (port, address 1–247, channel 1–4, 400–40000 Hz, duty in
   (0, 100), serial framing) together with the period rules: exposure must not
@@ -241,3 +252,11 @@ Changes made in response:
 The camera was not attached to the rig PC during this pass and the PC has no
 C++ toolchain, so this build has not run on the rig. The probe above is
 discovery evidence only; it is not a timing measurement.
+
+Update, September 15: a toolchain was installed on the rig PC (MSVC 2022
+Build Tools, CMake, Ninja, Conan; dependencies built from source) and this
+branch builds there with the installed MindVision 2.1.10.195 platform. The
+Windows fast test lane passes (102 tests), including `frontend.config_tabs_state`
+and `backend.illuminated_live`, which no PR lane compiles. With the installed
+app closed, the generator on COM6 reads channel 1 = 5000 Hz / 50 % and
+channels 2–4 = 0 Hz; the SDK enumerates one MV-XG51GM (GigE).

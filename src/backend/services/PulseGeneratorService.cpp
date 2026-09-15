@@ -312,7 +312,9 @@ std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
             ScanHit hit;
             hit.address = static_cast<uint8_t>(addr);
             hit.kind = plausible ? ScanHit::Kind::PulseGenerator : ScanHit::Kind::ModbusDevice;
-            hit.allChannelsConfigured = plausible && identityLooksLikeConfiguredGenerator(data);
+            if (plausible)
+                for (int ch = 0; ch < CHANNEL_COUNT; ++ch)
+                    hit.channelFrequencyRaw[static_cast<size_t>(ch)] = identityFrequencyRaw(data, ch);
             hits.push_back(hit);
             break;
         }
@@ -405,35 +407,66 @@ bool PulseGeneratorService::setOutputEnabled(int channel, bool on) {
     return true;
 }
 
-bool PulseGeneratorService::identityLooksLikeConfiguredGenerator(
-    const std::vector<uint8_t>& identityData) {
-    if (!identityLooksLikeGenerator(identityData)) {
-        return false;
+uint32_t PulseGeneratorService::identityFrequencyRaw(const std::vector<uint8_t>& identityData,
+                                                     int channel) {
+    if (!validChannel(channel) || identityData.size() != CHANNEL_COUNT * 6) {
+        return 0;
     }
     const auto* regs = reinterpret_cast<const uint8_t*>(identityData.data());
-    for (int ch = 0; ch < CHANNEL_COUNT; ++ch) {
-        const int off = ch * 6;
-        const uint32_t freqRaw = (static_cast<uint32_t>(regs[off]) << 24) |
-                                 (static_cast<uint32_t>(regs[off + 1]) << 16) |
-                                 (static_cast<uint32_t>(regs[off + 2]) << 8) |
-                                 static_cast<uint32_t>(regs[off + 3]);
-        if (freqRaw == 0) {
-            return false;
-        }
+    const int off = channel * 6;
+    return (static_cast<uint32_t>(regs[off]) << 24) | (static_cast<uint32_t>(regs[off + 1]) << 16) |
+           (static_cast<uint32_t>(regs[off + 2]) << 8) | static_cast<uint32_t>(regs[off + 3]);
+}
+
+bool PulseGeneratorService::identityChannelConfigured(const std::vector<uint8_t>& identityData,
+                                                      int channel) {
+    return identityLooksLikeGenerator(identityData) &&
+           identityFrequencyRaw(identityData, channel) != 0;
+}
+
+bool PulseGeneratorService::readRegisterOnPort(const std::string& portName,
+                                               const SerialSettings& settings, uint8_t address,
+                                               uint16_t reg, uint16_t& value) {
+    std::shared_ptr<serialbus::ModbusBusSession> bus;
+    {
+        std::scoped_lock lock(mutex_);
+        bus = bus_;
     }
+    if (!bus || bus->portName() != portName || bus->settings() != settings) {
+        serialbus::BusError busError = serialbus::BusError::None;
+        bus = busManager_.acquire(portName, settings, &busError, nullptr);
+        if (!bus) return false;
+    }
+    const auto result = bus->transact(modbus::buildReadRequest(address, reg, 1), 250);
+    std::vector<uint8_t> data;
+    if (result.error != serialbus::BusError::None ||
+        !modbus::extractReadData(result.response, 1, data) || data.size() != 2)
+        return false;
+    value = static_cast<uint16_t>((static_cast<uint16_t>(data[0]) << 8) | data[1]);
     return true;
 }
 
 bool PulseGeneratorService::discoverLiveView(
-    Config& config, const std::vector<serialbus::PortInfo>& ports, std::string* error) {
-    std::vector<std::string> matches;   // strict identity passed
-    std::vector<std::string> lookalikes; // answered at the address, not a generator
-    std::vector<std::string> busy;       // adapter held by another program/settings
+    Config& config, int channel, const std::vector<serialbus::PortInfo>& ports,
+    std::string* error) {
+    std::vector<std::string> matches;      // generator, requested channel configured
+    std::vector<std::string> unconfigured; // generator shape, requested channel 0 Hz
+    std::vector<std::string> lookalikes;   // answered at the address, not a generator
+    std::vector<std::string> busy;         // adapter held by another program/settings
     std::atomic<bool> cancel{false};
+    if (!validChannel(channel)) {
+        if (error) *error = "Invalid generator channel";
+        return false;
+    }
     auto listed = [](const std::vector<std::string>& names) {
         std::string out;
         for (const auto& n : names) out += (out.empty() ? "" : ", ") + n;
         return out;
+    };
+    auto seen = [&](const std::string& name) {
+        for (const auto* list : {&matches, &unconfigured, &lookalikes, &busy})
+            if (std::find(list->begin(), list->end(), name) != list->end()) return true;
+        return false;
     };
     for (const auto& port : ports) {
         // Avoid opening native serial ports belonging to unrelated instruments.
@@ -441,10 +474,7 @@ bool PulseGeneratorService::discoverLiveView(
         // The system name ("COM6", "ttyUSB0") is what Hardware Setup saves and
         // what the platform port opens; the location form is only a display hint.
         const auto name = port.systemName.empty() ? port.systemLocation : port.systemName;
-        if (name.empty() || std::find(matches.begin(), matches.end(), name) != matches.end() ||
-            std::find(lookalikes.begin(), lookalikes.end(), name) != lookalikes.end() ||
-            std::find(busy.begin(), busy.end(), name) != busy.end())
-            continue;
+        if (name.empty() || seen(name)) continue;
         LinkError linkError = LinkError::None;
         const auto hits = scanBus(name, config.serial, config.modbusAddress,
                                   config.modbusAddress, cancel, 250, &linkError);
@@ -453,16 +483,37 @@ bool PulseGeneratorService::discoverLiveView(
             continue;
         }
         for (const auto& hit : hits) {
-            if (hit.kind == ScanHit::Kind::PulseGenerator && hit.allChannelsConfigured) {
-                matches.push_back(name);
-            } else {
-                // Lenient generator shape, foreign Modbus device or garbled reply:
-                // something answered here, and it must not be written to.
+            if (hit.kind != ScanHit::Kind::PulseGenerator) {
+                // Foreign Modbus device or garbled reply: something answered
+                // here, and it must not be written to.
                 lookalikes.push_back(name);
-                SPDLOG_WARN("PulseGeneratorService: {} answered addr {} but is not a configured "
-                            "pulse generator (kind={}); excluded from automatic discovery",
+                SPDLOG_WARN("PulseGeneratorService: {} answered addr {} but is not a pulse "
+                            "generator (kind={}); excluded from automatic discovery",
                             name, config.modbusAddress, static_cast<int>(hit.kind));
+                continue;
             }
+            if (hit.channelFrequencyRaw[static_cast<size_t>(channel)] == 0) {
+                unconfigured.push_back(name);
+                SPDLOG_WARN("PulseGeneratorService: {} answers like a pulse generator but channel "
+                            "{} reads 0 Hz (never set); excluded from automatic discovery",
+                            name, channel + 1);
+                continue;
+            }
+            // A dLSP syringe pump whose channel-enable register was left at 1
+            // has the generator shape too (raw 65536 = 655.36 Hz on channel 1).
+            // Its syringe-volume register is 1–9999; a generator answers 0
+            // for any register outside its map.
+            uint16_t syringeVolume = 0;
+            if (readRegisterOnPort(name, config.serial, config.modbusAddress,
+                                   SYRINGE_PUMP_VOLUME_REGISTER, syringeVolume) &&
+                syringeVolume != 0) {
+                lookalikes.push_back(name);
+                SPDLOG_WARN("PulseGeneratorService: {} answers like a syringe pump (register "
+                            "0x{:04X} = {}); excluded from automatic discovery",
+                            name, SYRINGE_PUMP_VOLUME_REGISTER, syringeVolume);
+                continue;
+            }
+            matches.push_back(name);
         }
     }
     if (matches.size() == 1) {
@@ -476,6 +527,11 @@ bool PulseGeneratorService::discoverLiveView(
         if (!busy.empty())
             message += " " + listed(busy) + (busy.size() == 1 ? " is" : " are") +
                        " in use by another program; close it or disconnect the generator there.";
+        if (!unconfigured.empty())
+            message += " " + listed(unconfigured) +
+                       (unconfigured.size() == 1 ? " answers" : " answer") +
+                       " like a pulse generator but channel " + std::to_string(channel + 1) +
+                       " has never been set (0 Hz); set it once in Hardware Setup.";
         if (!lookalikes.empty())
             message += " " + listed(lookalikes) + " answered but " +
                        (lookalikes.size() == 1 ? "is" : "are") + " not a pulse generator.";

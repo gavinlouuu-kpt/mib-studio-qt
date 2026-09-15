@@ -123,13 +123,17 @@ setup instructions apply only to custom or ambiguous rigs, not the default rig.
 Hardware acceptance of this changed build remains outstanding.
 
 
-### Strict automatic adoption (September 14, second pass)
+### Automatic adoption keyed on the requested channel (September 14–15, second pass)
 
-`discoverLiveView` adopts a port only when `ScanHit::allChannelsConfigured`
-is set, i.e. `identityLooksLikeConfiguredGenerator`: the lenient shape check
-plus a non-zero frequency on all four channels. A foreign Modbus slave serving
-zeroed registers at the configured address (observed on the rig PC's COM4) is
-therefore excluded instead of being counted as a generator. Ports the bus
-cannot open because another program holds them (`LinkError::PortBusy`) and
-ports that answered without passing the strict rule are named in the error.
-Manual `scanBus` classification is unchanged. Discovery never writes.
+`discoverLiveView(config, channel, ports)` adopts a port only when the
+identity read has the generator shape, `ScanHit::channelFrequencyRaw[channel]`
+is non-zero (`identityChannelConfigured`), and a read-only FC03 of the dLSP
+syringe pump's syringe-volume register `0x0061` answers 0 (`readRegisterOnPort`).
+Rig facts behind the rule: the module stores 0 Hz for channels never set
+(COM6 reads ch1 5000 Hz, ch2–4 0 Hz) and answers 0 for any register outside
+its map; a second never-configured module on COM4 answers all zeros; a pump
+left channel-enabled has raw 65536 (655.36 Hz) on channel 1 but a non-zero
+syringe volume. Ports the bus cannot open because another program holds them
+(`LinkError::PortBusy`), modules whose requested channel is unset, and
+non-generator responders are each named in the error. Manual `scanBus`
+classification is unchanged. Discovery never writes.
