@@ -111,6 +111,7 @@ add_library(oeabt_core STATIC
 )
 target_include_directories(oeabt_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 set_target_properties(oeabt_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     AUTOMOC OFF
     AUTOUIC OFF
     AUTORCC OFF
@@ -125,7 +126,9 @@ target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
 if(WIN32)
     target_link_libraries(oeabt_serial PUBLIC setupapi)
 endif()
-set_target_properties(oeabt_serial PROPERTIES POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+set_target_properties(oeabt_serial PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 
 if(MIB_BUILD_OEABT_TOOLS)
     add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)

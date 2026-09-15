@@ -238,7 +238,7 @@ terminal event, file reloads), `rust_enums_match_contract_json`.
 ### OEABT link dependencies
 
 The Linux bridge links `oeabt_serial` and then `oeabt_core` from
-`<build-dir>/src/backend`, after the backend/processing archives. These contain
+`<build-dir>` (the CMake archive output directory), after the backend/processing archives. These contain
 both the nanopositioner protocol and the shared native serial transport. The
 no-CMake path validates all four archives, and Cargo watches the OEABT archives
 for relinking. Windows uses the CMake-generated dependency manifest and marks
