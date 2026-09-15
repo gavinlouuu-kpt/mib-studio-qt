@@ -249,3 +249,12 @@ App-close released COM6 and the nanopositioner, and webcam showed LED dark.
 No voltage or mode commands were sent; these checks do not establish voltage
 accuracy or displacement. Runtime log: `data/logs/issue413-oeabt-desktop.log`.
 Full Windows suite: 105/105 passed. Docs and screenshot checks passed.
+
+
+### Integrated bridge link repair
+
+Bridge CI reproduced undefined OEABT protocol and native serial symbols after
+protocol integration. Rust build wiring now links the two new static archives
+from their actual `src/backend` output directory and watches them for relinking;
+Windows manifest handling classifies both as static. Linux bridge CI is the
+regression verification environment; local Qt tests alone cannot prove this.
