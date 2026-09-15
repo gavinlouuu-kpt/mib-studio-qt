@@ -160,3 +160,20 @@ evidence: `data/issue413-webcam/fixed-during.png`, `fixed-after.png`, and
 on/off behavior, not individual pulse timing. Camera images remain saturated.
 Scope access is no longer the current acceptance blocker under the operator's
 instruction. Latest-correction CI, merge and deployment remain outstanding.
+
+## Desktop acceptance follow-up
+
+The real desktop exposed paths the environment-configured hardware harness
+did not cover: with EGrabber disabled, implicit mock fallback blocked automatic
+MindVision discovery; after selection, Overview navigation automatically
+started capture. Added failing-first regressions in
+`backend.mindvision_selection_state` and `frontend.run_status_ui`, then fixed
+implicit selection state and the illuminated Overview gate. Both pass.
+The 102-test Windows fast lane passed before the final navigation correction;
+the changed frontend test passed afterward.
+
+The local development profile in `build-ninja/include/mindvisionConfig.json`
+still has the earlier 5000 Hz high-level preset and must be updated explicitly
+to the requested 1000 Hz / 100 µs strobe before desktop acceptance. A Windows
+Security network-access dialog currently blocks UI Stop and restart; the user
+has been asked to dismiss it. No security setting was changed by the agent.

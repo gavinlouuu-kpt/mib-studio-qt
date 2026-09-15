@@ -1,5 +1,14 @@
 # MainWindow
 
+## Illuminated rig startup (#413)
+
+Connecting a camera navigates to Overview, but a saved illuminated MindVision
+profile requires explicit Play. `onTabChanged` reads the selected saved profile
+through the shared parser and suppresses Overview auto-start for illuminated
+or unreadable profiles. Legacy non-illuminated profiles retain Overview
+auto-start. `frontend.run_status_ui` verifies navigation does not create a
+capture generation for an illuminated profile, using a fake camera factory.
+
 > `QMainWindow` subclass at the root of the UI. Holds a reference to
 > `backend::AppBackend&` and owns the tab widget, sidebar, and corner
 > actions.

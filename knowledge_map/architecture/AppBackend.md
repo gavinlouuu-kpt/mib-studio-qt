@@ -22,6 +22,13 @@ frameStore_  // shared_ptr<FrameStore>(5000)
 
 ## `initialize(dataDir)` — what it wires
 
+When EGrabber is unavailable but MindVision is enabled, an implicit default
+mock fallback leaves `isCameraConfigured()` false. This allows the existing
+single-camera startup discovery to select the rig. Explicit `MIB_CAMERA_MODE`
+choices and explicitly configured mock cameras retain their previous behavior.
+Regression: `backend.mindvision_selection_state` checks implicit versus
+explicit mock initialization without touching hardware (#413).
+
 See `src/backend/AppBackend.cpp` around lines 79–200.
 
 1. Creates `dataDir` and resolves a user-writable log path (falls back to

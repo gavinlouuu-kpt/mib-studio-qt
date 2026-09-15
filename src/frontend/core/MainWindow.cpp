@@ -10,6 +10,7 @@
 #include <QSplitter>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QDir>
@@ -41,6 +42,7 @@
 #include <vector>
 
 #include "backend/app/AppBackend.h"
+#include "backend/camera/mindvision/MindVisionConfig.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/services/CaptureService.h"
@@ -1888,12 +1890,23 @@ void MainWindow::onTabChanged(int index)
         stopExperimentServices();
     }
 
-    // Auto-start camera when navigating to Overview
-    if (index == OVERVIEW_TAB_INDEX)
-    {
-        auto &cap = backend_.capture();
-        if (!cap.isRunning() && backend_.isCameraConfigured())
-        {
+    // Illuminated capture requires an explicit Play action. A connection
+    // navigates here automatically, so navigation must never energize the rig.
+    bool autoStartOnOverview = true;
+    if (backend_.isMindVisionCameraSelected()) {
+        const auto selection = backend_.cameraSelection();
+        QFile savedProfile(QString::fromStdString(selection.mindVisionConfigPath));
+        autoStartOnOverview = false;
+        if (savedProfile.open(QIODevice::ReadOnly)) {
+            const auto parsed =
+                backend::camera::mindvision::parseConfig(savedProfile.readAll().toStdString());
+            autoStartOnOverview = parsed.ok && !parsed.config.illuminatedLive;
+        }
+    }
+    // Preserve legacy non-illuminated Overview auto-start.
+    if (index == OVERVIEW_TAB_INDEX && autoStartOnOverview) {
+        auto& cap = backend_.capture();
+        if (!cap.isRunning() && backend_.isCameraConfigured()) {
             SPDLOG_INFO("MainWindow: auto-starting camera on Overview navigation");
             if (cap.start())
             {

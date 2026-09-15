@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-09-15 — Desktop startup acceptance gaps (#413)
+
+Actual app checks found implicit mock fallback blocking MindVision discovery
+in builds without EGrabber, and automatic Overview navigation starting the
+camera before Play. The fallback now leaves selection open when no camera mode
+was explicitly requested. Illuminated profiles require explicit Play on
+Overview. Both failures have regressions proven to fail before correction.
+
 ## 2026-09-15 — Illuminated Live View Stop-level regression (#413)
 
 The 1000 Hz preset uses a 100 µs strobe, polarity 0. Webcam commissioning

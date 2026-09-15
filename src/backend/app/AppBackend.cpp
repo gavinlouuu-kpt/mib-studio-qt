@@ -723,6 +723,14 @@ namespace backend
                 cameraMode = "mock";
                 configureMock();
                 cameraFallbackReason_ = "EGrabber SDK is unavailable in this build";
+#if MIB_HAS_MINDVISION
+                // An implicit fallback is not an operator selection. Leave
+                // startup discovery enabled so a single MindVision camera
+                // can be selected without a separate Connect action.
+                if (std::getenv("MIB_CAMERA_MODE") == nullptr) {
+                    mockCameraConfigured_ = false;
+                }
+#endif
 #endif
             }
             else
