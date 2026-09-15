@@ -30,6 +30,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[services/BatchMaskSources]]
 
 ### Frontend (`src/frontend/`)
+- [[frontend/DesktopInstance]] — duplicate-launch protection for hardware ownership
 - [[frontend/_MOC|Frontend MOC]]
 - [[frontend/MainWindow]], [[frontend/Controllers]]
 - Native core selection: [[frontend/ProcessingCoreDialog]]

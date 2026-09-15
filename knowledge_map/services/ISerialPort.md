@@ -32,6 +32,13 @@ VID/PID/serial against Windows PnP)
 
 ## Key APIs
 
+Windows `waitForBytesWritten(ms)` polls `COMSTAT.cbOutQue` to a steady-clock
+deadline and reports `ERROR_TIMEOUT` or the driver's error. It does not call
+`FlushFileBuffers`, which ignores COM write timeouts and can block shutdown.
+`backend.serial_port_win32_timeout` tests a stalled driver, successful drain,
+unplug error, and port release using the real implementation with fake Win32
+calls. The POSIX implementation still uses `tcdrain`; this fix is Windows-only.
+
 - `open(int comPort, int baudRate)` / `close()` / `isOpen()`
 - `write(const std::vector<uint8_t>&) -> int` (bytes written, -1 on error)
 - `waitForBytesWritten(int ms)`, `waitForReadyRead(int ms)`, `readAll()`

@@ -1,5 +1,14 @@
 # MainWindow
 
+## Desktop exit and hardware release (2026-09-15)
+
+Accepted close stops `DeviceInitManager`, calls explicit backend shutdown,
+and queues application quit even if a detached top-level widget remains.
+`aboutToQuit` also stops discovery and the backend for other quit paths.
+Cancelled experiment-close confirmation leaves discovery and hardware running.
+Regression: `frontend.mainwindow_shutdown`. See [[DesktopInstance]] and
+[[../task/2026-09-15-hardware-shutdown]].
+
 ## Illuminated rig startup (#413)
 
 Connecting a camera navigates to Overview, but a saved illuminated MindVision

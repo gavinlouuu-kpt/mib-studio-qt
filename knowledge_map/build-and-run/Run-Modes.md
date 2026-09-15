@@ -7,6 +7,11 @@
 
 ## Executables
 
+The Qt desktop reserves one per-user session before opening hardware; a second
+launch reports the owner PID and exits. The lock spans installation paths and
+channels, and recovers after a dead owner. Existing builds without this guard
+must be closed before using the new build. See [[../frontend/DesktopInstance]].
+
 - **`mib_studio_qt.exe`** — the app. Hardware camera via
   [[../camera/EGrabberCamera]] or MindVision; the mock camera is reachable
   from [[../frontend/ConnectTab]] ("Configure Mock…") or forced via

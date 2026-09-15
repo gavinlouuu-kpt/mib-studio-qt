@@ -1,5 +1,13 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
+if(WIN32)
+    add_executable(serial_port_win32_timeout_test backend/serial_port_win32_timeout_test.cpp)
+    target_include_directories(serial_port_win32_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32)
+    add_test(NAME backend.serial_port_win32_timeout COMMAND serial_port_win32_timeout_test)
+    set_tests_properties(backend.serial_port_win32_timeout PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 15)
+endif()
+
 # Catch a MindVision-only Windows build silently substituting the nanopositioner
 # stub merely because the EGrabber SDK is disabled.
 if(WIN32 AND MIB_ENABLE_COREMOR)
@@ -72,6 +80,9 @@ add_test(NAME backend.emodulus_lut_degenerate COMMAND $<TARGET_FILE:mib_backend_
 set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;processing")
 
 mib_add_backend_test_executable(backend_lifecycle_smoke_test backend/backend_lifecycle_smoke_test.cpp)
+mib_add_backend_test_executable(hardware_shutdown_test backend/hardware_shutdown_test.cpp)
+add_test(NAME backend.hardware_shutdown COMMAND $<TARGET_FILE:mib_backend_tests> hardware_shutdown_test)
+set_tests_properties(backend.hardware_shutdown PROPERTIES LABELS "backend;concurrency;stress" TIMEOUT 60)
 add_test(NAME backend.lifecycle_smoke COMMAND $<TARGET_FILE:mib_backend_tests> backend_lifecycle_smoke_test)
 set_tests_properties(backend.lifecycle_smoke PROPERTIES LABELS "backend")
 

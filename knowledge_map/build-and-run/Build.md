@@ -1,5 +1,12 @@
 # Build
 
+Hardware shutdown regression targets (2026-09-15):
+`serial_port_win32_timeout_test` (Windows-only native transport fault injection),
+`hardware_shutdown_test` in `mib_backend_tests`, `mainwindow_shutdown_test`,
+and `desktop_instance_test`. The two desktop lifecycle tests are standalone
+because they run Qt event loops / subprocesses. Their AUTOUIC is disabled to
+keep `mib_frontend_common` the sole owner of generated UI headers.
+
 > CMake + Conan. Windows (VS2022 x64) is the primary target, with Linux
 > cloud builds supported for non-hardware paths.
 
