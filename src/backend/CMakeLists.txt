@@ -210,14 +210,19 @@ add_library(mib_backend STATIC
 
 target_link_libraries(mib_backend PUBLIC mib_processing)
 
-if(MIB_HAS_EGRABBER)
+if(MIB_HAS_COREMOR)
     target_sources(mib_backend PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
-        ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
     )
 else()
     target_sources(mib_backend PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.stub.cpp
+    )
+endif()
+
+if(MIB_HAS_EGRABBER)
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
     )
 endif()
 
@@ -332,7 +337,7 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_USE_SENTRY=0)
 endif()
 
-if(MIB_HAS_EGRABBER)
+if(MIB_HAS_COREMOR)
     set(COREMOR_LIB_DIR ${PROJECT_SOURCE_DIR}/include/Coremor)
     target_link_libraries(mib_backend PUBLIC
         ${COREMOR_LIB_DIR}/XMT_DLL_SER.lib

@@ -6,6 +6,10 @@ option(MIB_ENABLE_HARDWARE_SDKS
     "Enable proprietary Windows hardware SDK integrations (EGrabber/Coremor)"
     ${MIB_ENABLE_HARDWARE_SDKS_DEFAULT})
 
+option(MIB_ENABLE_COREMOR
+    "Enable the bundled Windows Coremor nanopositioner SDK independently of EGrabber"
+    ${WIN32})
+
 set(MIB_ENABLE_WINDOWS_PACKAGING_DEFAULT OFF)
 if(WIN32)
     set(MIB_ENABLE_WINDOWS_PACKAGING_DEFAULT ON)

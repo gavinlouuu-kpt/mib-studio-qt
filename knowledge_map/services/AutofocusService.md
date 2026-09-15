@@ -105,9 +105,29 @@ See `include/Coremor/` for the XMT_DLL_SER DLL shipped with the repo.
 
 ## Platform behavior
 
-- **Windows (`MIB_HAS_EGRABBER=1`)**: full Coremor-backed implementation
+- **Windows (`MIB_HAS_COREMOR=1`)**: full Coremor-backed implementation
   (`AutofocusService.cpp`) is compiled.
-- **Non-Windows (`MIB_HAS_EGRABBER=0`)**: `AutofocusService.stub.cpp` is
+- **Coremor disabled or non-Windows (`MIB_HAS_COREMOR=0`)**: `AutofocusService.stub.cpp` is
   compiled instead. It keeps the public API shape but `connect()`/probe
   operations are unsupported and return failure, which allows cloud/Linux
   builds to compile and exercise non-hardware features.
+
+
+## Vendor and discovery inventory (2026-09-15)
+
+| Vendor / controller family | Application support | Discovery |
+|---|---|---|
+| CoreMorrow / Coremor XMT | Bundled Windows SDK; `MIB_ENABLE_COREMOR=ON` by default on Windows, independent of EGrabber | Read voltage at the configured baud/address; accept only a plausible reply; scan available COM ports and auto-connect a unique match. |
+| OEABT | Connected vendor reported by the operator; exact controller model and protocol pending | No OEABT driver or identification query is implemented yet. Do not identify an OEABT controller using the Coremor voltage query. |
+
+This is the application's support inventory, not a claim that all models from
+these manufacturers share a protocol. OEABT's [O'motion controller documentation](https://www.oeabt.com/show.php?id=734&q=as8080)
+describes a USB ASCII interface, while its [Nano-Z3A specification](https://www.oeabt.com/uploadfile/upload/file/20210915/2021091510045152.pdf)
+describes analog piezo control. Confirm the connected model before adding a driver.
+USB CH340/CH344 manufacturer IDs identify the serial adapter, not the attached
+instrument; they cannot distinguish a pulse generator from a nanopositioner.
+
+The MindVision-only Windows build previously compiled the autofocus stub because
+Coremor selection was coupled to `MIB_HAS_EGRABBER`. A configure-time regression
+in `tests/CMakeLists.txt` now requires the real service and SDK link whenever
+Coremor is enabled. No serial protocol or control-loop behavior changed.

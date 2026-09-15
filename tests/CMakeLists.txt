@@ -1,5 +1,18 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
+# Catch a MindVision-only Windows build silently substituting the nanopositioner
+# stub merely because the EGrabber SDK is disabled.
+if(WIN32 AND MIB_ENABLE_COREMOR)
+    get_target_property(_backend_sources mib_backend SOURCES)
+    if(NOT "${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp" IN_LIST _backend_sources)
+        message(FATAL_ERROR "Coremor enabled, but the real nanopositioner service is missing")
+    endif()
+    get_target_property(_backend_links mib_backend LINK_LIBRARIES)
+    if(NOT "${PROJECT_SOURCE_DIR}/include/Coremor/XMT_DLL_SER.lib" IN_LIST _backend_links)
+        message(FATAL_ERROR "Coremor enabled, but its SDK is not linked")
+    endif()
+endif()
+
 # Backend tests are compiled into one runner, mib_backend_tests (see
 # cmake/MIBTestRunner.cmake for the how and why). CTest entries run
 # `mib_backend_tests <target> [args]`, one process per test. Tests that must

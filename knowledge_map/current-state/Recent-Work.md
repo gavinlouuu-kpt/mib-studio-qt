@@ -2017,3 +2017,13 @@ Full native experiment acceptance remains open.
   [operator guide](../../docs/howto/illuminated-live-view.md).
 
   Task record: [[../task/2026-09-14-one-click-illuminated-live]].
+
+
+### 2026-09-15 ? Nanopositioner vendor discovery follow-up
+
+Separated the bundled Windows Coremor SDK from EGrabber so a MindVision-only
+build can use the existing nanopositioner scan/auto-connect path. The configure
+regression failed before the wiring fix and passes afterward. The operator
+identified the attached vendor as OEABT; no OEABT driver exists yet. Controller
+model/protocol identification remains necessary for actual auto-connect.
+See [[../services/AutofocusService]] for the explicit support inventory.

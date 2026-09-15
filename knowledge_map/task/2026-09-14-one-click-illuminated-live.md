@@ -194,3 +194,13 @@ Local log: `data/logs/issue413-desktop-acceptance.log` (10:07–10:08 on the rig
 The earlier dialog and development-profile blockers are resolved. This is
 visual commissioning, not an electrical pulse-width measurement. Latest CI
 and merge/installed-release deployment remain outstanding.
+
+## Nanopositioner follow-up (2026-09-15)
+
+Operator identified the connected vendor as OEABT. Existing discovery only speaks
+Coremor XMT; USB adapters do not identify the attached controller. Exact OEABT
+model/protocol is pending before implementing its driver. Separately fixed the
+Windows build coupling that selected the autofocus stub whenever EGrabber was
+disabled. Configure regression failed before the fix; desktop build and all
+102 Windows tests passed afterward. Docs and screenshot checks passed. No
+OEABT auto-connect or hardware motion has been claimed or verified.

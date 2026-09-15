@@ -372,3 +372,12 @@ Also on the rig PC: ConanCenter now resolves `cpuinfo/[>=cci.20231129]` to
 cache fails with a version conflict. The local profile carries
 `[replace_requires] cpuinfo/*: cpuinfo/cci.20231129`; CI only avoids this via
 its restored cache.
+
+
+### Independent nanopositioner support (2026-09-15)
+
+Windows defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver
+even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
+`MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
+processing-only builds remain SDK-free for Coremor. See
+[[../services/AutofocusService]] for the vendor support inventory.
