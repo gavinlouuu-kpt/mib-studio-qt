@@ -25,24 +25,32 @@ std::vector<backend::services::DiscoveredCamera> discoverCamerasInWorker() {
     return cc.discoverAllCameras();
 }
 
-std::vector<int> probeNanopositionerPortsInWorker(int baudRate, unsigned char deviceAddress, int preferredPort) {
-    std::vector<int> validPorts;
-    std::vector<int> ports = backend::Tools::availableComPortNumbers();
-    if (preferredPort > 0 && std::find(ports.begin(), ports.end(), preferredPort) == ports.end()) {
-        ports.insert(ports.begin(), preferredPort);
-    }
-    std::stable_sort(ports.begin(), ports.end(), [preferredPort](int lhs, int rhs) {
-        const int lhsRank = (lhs == preferredPort) ? 0 : 1;
-        const int rhsRank = (rhs == preferredPort) ? 0 : 1;
-        return lhsRank == rhsRank ? lhs < rhs : lhsRank < rhsRank;
-    });
-    ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
-    for (int port : ports) {
-        if (backend::services::AutofocusService::probeComPort(port, baudRate, deviceAddress)) {
-            validPorts.push_back(port);
+std::vector<backend::nanopositioner::Endpoint>
+probeNanopositionerEndpointsInWorker(backend::nanopositioner::Endpoint preferred) {
+    std::vector<backend::nanopositioner::Endpoint> validEndpoints;
+    auto endpoints = backend::services::AutofocusService::availableEndpoints();
+    std::stable_sort(
+        endpoints.begin(), endpoints.end(), [&preferred](const auto& lhs, const auto& rhs) {
+            const int lhsRank =
+                (!preferred.persistentId.empty() && lhs.persistentId == preferred.persistentId) ? 0
+                                                                                                : 1;
+            const int rhsRank =
+                (!preferred.persistentId.empty() && rhs.persistentId == preferred.persistentId) ? 0
+                                                                                                : 1;
+            return lhsRank == rhsRank ? lhs.displayName < rhs.displayName : lhsRank < rhsRank;
+        });
+    for (auto endpoint : endpoints) {
+        if (preferred.backend != backend::nanopositioner::BackendKind::Auto &&
+            endpoint.backend != preferred.backend) {
+            continue;
+        }
+        endpoint.coremorBaudRate = preferred.coremorBaudRate;
+        endpoint.coremorAddress = preferred.coremorAddress;
+        if (backend::services::AutofocusService::probeEndpoint(endpoint)) {
+            validEndpoints.push_back(std::move(endpoint));
         }
     }
-    return validPorts;
+    return validEndpoints;
 }
 
 } // namespace
@@ -55,7 +63,8 @@ DeviceInitManager::DeviceInitManager(backend::AppBackend& backend, QObject* pare
 
     nanopositionerStepTimer_ = new QTimer(this);
     nanopositionerStepTimer_->setSingleShot(true);
-    connect(nanopositionerStepTimer_, &QTimer::timeout, this, &DeviceInitManager::onNanopositionerStepTimer);
+    connect(nanopositionerStepTimer_, &QTimer::timeout, this,
+            &DeviceInitManager::onNanopositionerStepTimer);
 }
 
 DeviceInitManager::~DeviceInitManager() = default;
@@ -95,11 +104,15 @@ void DeviceInitManager::onCameraStepTimer() {
 void DeviceInitManager::runCameraDiscoveryInWorker() {
     cameraStepRunning_ = true;
     if (!cameraWatcher_) {
-        cameraWatcher_ = std::make_unique<QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>>(this);
-        connect(cameraWatcher_.get(), &QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>::finished,
-                this, &DeviceInitManager::onCameraDiscoveryFinished);
+        cameraWatcher_ =
+            std::make_unique<QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>>(
+                this);
+        connect(cameraWatcher_.get(),
+                &QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>::finished, this,
+                &DeviceInitManager::onCameraDiscoveryFinished);
     }
-    QFuture<std::vector<backend::services::DiscoveredCamera>> future = QtConcurrent::run(discoverCamerasInWorker);
+    QFuture<std::vector<backend::services::DiscoveredCamera>> future =
+        QtConcurrent::run(discoverCamerasInWorker);
     cameraWatcher_->setFuture(future);
 }
 
@@ -126,12 +139,14 @@ void DeviceInitManager::onCameraDiscoveryFinished() {
         if (cam.cameraType == backend::services::CameraType::MindVision) {
             backend_.setMindVisionCameraSelection(cam.cameraIndex, cam.label);
             if (connectTab_) {
-                connectTab_->applyMindVisionSelection(cam.cameraIndex, QString::fromStdString(cam.label));
+                connectTab_->applyMindVisionSelection(cam.cameraIndex,
+                                                      QString::fromStdString(cam.label));
             }
         } else {
             backend_.setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
             if (connectTab_) {
-                connectTab_->applyCameraSelection(cam.interfaceIndex, cam.deviceIndex, QString::fromStdString(cam.label));
+                connectTab_->applyCameraSelection(cam.interfaceIndex, cam.deviceIndex,
+                                                  QString::fromStdString(cam.label));
             }
         }
         emit cameraInitFinished(true, QString::fromStdString(cam.label));
@@ -163,28 +178,34 @@ void DeviceInitManager::onNanopositionerStepTimer() {
     if (backend_.autofocus().isConnected()) {
         return;
     }
-    int baudRate = nanopositionerTab_->getBaudRate();
-    unsigned char deviceAddress = nanopositionerTab_->getDeviceAddress();
-    int preferredPort = nanopositionerTab_->getConfiguredComPort();
+    const auto preferredEndpoint = nanopositionerTab_->getConfiguredEndpoint();
 
-    if (preferredPort > 0 && nanopositionerRetryCount_ == 0) {
-        nanopositionerTab_->setNanopositionerStatus(tr("Checking saved nanopositioner port COM%1...").arg(preferredPort));
-        if (backend::services::AutofocusService::probeComPort(preferredPort, baudRate, deviceAddress) &&
-            backend_.autofocus().connect(preferredPort, baudRate, deviceAddress)) {
-            nanopositionerTab_->applyAutoConnectResult(preferredPort);
-            SPDLOG_INFO("DeviceInitManager: auto-connected to nanopositioner on saved COM{}", preferredPort);
+    if (!preferredEndpoint.persistentId.empty() && nanopositionerRetryCount_ == 0) {
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Checking saved nanopositioner endpoint %1...")
+                .arg(QString::fromStdString(preferredEndpoint.persistentId)));
+        if (backend::services::AutofocusService::probeEndpoint(preferredEndpoint) &&
+            backend_.autofocus().connect(preferredEndpoint)) {
+            nanopositionerTab_->applyAutoConnectResult(preferredEndpoint);
+            SPDLOG_INFO("DeviceInitManager: auto-connected to saved nanopositioner endpoint {}",
+                        preferredEndpoint.persistentId);
             emit nanopositionerInitFinished(true);
             return;
         }
-        SPDLOG_WARN("DeviceInitManager: saved nanopositioner COM{} did not validate; scanning all ports", preferredPort);
+        SPDLOG_WARN("DeviceInitManager: saved nanopositioner endpoint {} did not validate; "
+                    "scanning candidates",
+                    preferredEndpoint.persistentId);
     }
 
     if (!nanopositionerWatcher_) {
-        nanopositionerWatcher_ = std::make_unique<QFutureWatcher<std::vector<int>>>(this);
-        connect(nanopositionerWatcher_.get(), &QFutureWatcher<std::vector<int>>::finished,
-                this, &DeviceInitManager::onNanopositionerProbeFinished);
+        nanopositionerWatcher_ =
+            std::make_unique<QFutureWatcher<std::vector<backend::nanopositioner::Endpoint>>>(this);
+        connect(nanopositionerWatcher_.get(),
+                &QFutureWatcher<std::vector<backend::nanopositioner::Endpoint>>::finished, this,
+                &DeviceInitManager::onNanopositionerProbeFinished);
     }
-    QFuture<std::vector<int>> future = QtConcurrent::run(probeNanopositionerPortsInWorker, baudRate, deviceAddress, preferredPort);
+    QFuture<std::vector<backend::nanopositioner::Endpoint>> future =
+        QtConcurrent::run(probeNanopositionerEndpointsInWorker, preferredEndpoint);
     nanopositionerWatcher_->setFuture(future);
 }
 
@@ -192,37 +213,41 @@ void DeviceInitManager::onNanopositionerProbeFinished() {
     if (!nanopositionerWatcher_ || !nanopositionerWatcher_->isFinished() || !nanopositionerTab_) {
         return;
     }
-    std::vector<int> validPorts = nanopositionerWatcher_->result();
+    auto validEndpoints = nanopositionerWatcher_->result();
 
-    if (validPorts.empty()) {
+    if (validEndpoints.empty()) {
         if (nanopositionerRetryCount_ < NANOPOSITIONER_MAX_RETRIES) {
             ++nanopositionerRetryCount_;
             nanopositionerTab_->setNanopositionerStatus(
-                tr("Searching for nanopositioner... (retry %1/%2)").arg(nanopositionerRetryCount_).arg(NANOPOSITIONER_MAX_RETRIES));
+                tr("Searching for nanopositioner... (retry %1/%2)")
+                    .arg(nanopositionerRetryCount_)
+                    .arg(NANOPOSITIONER_MAX_RETRIES));
             nanopositionerStepTimer_->start(NANOPOSITIONER_RETRY_DELAY_MS);
         } else {
-            nanopositionerTab_->setNanopositionerStatus(tr("Nanopositioner not found. Click Refresh to search again."));
+            nanopositionerTab_->setNanopositionerStatus(
+                tr("Nanopositioner not found. Click Refresh to search again."));
             emit nanopositionerInitFinished(false);
         }
         return;
     }
 
-    if (validPorts.size() != 1) {
-        nanopositionerTab_->setNanopositionerStatus(tr("Multiple devices found; select one and click Connect."));
+    if (validEndpoints.size() != 1) {
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Multiple devices found; select one and click Connect."));
         emit nanopositionerInitFinished(false);
         return;
     }
 
-    int port = validPorts[0];
-    int baudRate = nanopositionerTab_->getBaudRate();
-    unsigned char deviceAddress = nanopositionerTab_->getDeviceAddress();
-    bool success = backend_.autofocus().connect(port, baudRate, deviceAddress);
+    const auto endpoint = validEndpoints.front();
+    bool success = backend_.autofocus().connect(endpoint);
     if (success) {
-        nanopositionerTab_->applyAutoConnectResult(port);
-        SPDLOG_INFO("DeviceInitManager: auto-connected to nanopositioner on COM{}", port);
+        nanopositionerTab_->applyAutoConnectResult(endpoint);
+        SPDLOG_INFO("DeviceInitManager: auto-connected to nanopositioner on {}",
+                    endpoint.systemPath);
         emit nanopositionerInitFinished(true);
     } else {
-        nanopositionerTab_->setNanopositionerStatus(tr("Auto-connect failed on COM%1").arg(port));
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Auto-connect failed on %1").arg(QString::fromStdString(endpoint.systemPath)));
         emit nanopositionerInitFinished(false);
     }
 }

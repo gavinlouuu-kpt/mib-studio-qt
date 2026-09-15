@@ -284,13 +284,12 @@ different Conan package IDs after reinstalls).
 - `cmake/MIBDependencies.cmake` sets `MIB_HAS_MINDVISION`:
   - `ON` when `MIB_ENABLE_MINDVISION=ON` for desktop/backend builds
   - `OFF` for processing-only builds, which do not compile camera services
+- `MIB_HAS_COREMOR` independently detects the Windows CoreMOR SDK.
 - When `MIB_HAS_EGRABBER=OFF`, build wiring skips:
   - EGrabber include path (`C:/Program Files/Euresys/eGrabber/include`)
-  - Coremor include path (`include/Coremor`)
-  - Coremor import library (`XMT_DLL_SER.lib`)
-  - Windows-only autofocus implementation (`AutofocusService.cpp`)
-- Non-Windows uses `src/backend/services/AutofocusService.stub.cpp` so Linux
-  cloud builds can compile and run mock/non-hardware workflows.
+- When `MIB_HAS_COREMOR=OFF`, build wiring skips the CoreMOR import library;
+  the full autofocus service and OEABT serial backend still build.
+- `MIB_BUILD_OEABT_TOOLS=ON` builds `oeabtctl` in the build root.
 - When `MIB_HAS_MINDVISION=ON`, CMake requires:
   - Windows: `CameraApiLoad.h` plus `MVCAMSDK.dll` / `MVCAMSDK_X64.dll`
   - Linux/macOS: `CameraApi.h` plus `libMVSDK.so` / `libmvsdk.dylib`

@@ -54,6 +54,8 @@
     "save_directory": "testing",
     "scatter_plot_enabled": true,
     "target_fps": 5000,
+    "autofocus_backend": "auto",
+    "autofocus_endpoint": "",
     "autofocus_com_port": 6,
     "autofocus_baud_rate": 115200,
     "autofocus_device_address": 1,

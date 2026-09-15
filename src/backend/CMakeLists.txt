@@ -104,6 +104,43 @@ if(MIB_BUILD_PROCESSING_ONLY)
     return()
 endif()
 
+# Clean-room OEABT compatibility layer. The protocol target is standard
+# C++17; native ISerialPort is shared with the existing serial services.
+add_library(oeabt_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/OeabtProtocol.cpp
+)
+target_include_directories(oeabt_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(oeabt_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+
+add_library(oeabt_serial STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
+)
+target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
+if(WIN32)
+    target_link_libraries(oeabt_serial PUBLIC setupapi)
+endif()
+set_target_properties(oeabt_serial PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+if(MIB_BUILD_OEABT_TOOLS)
+    add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)
+    target_link_libraries(oeabtctl PRIVATE oeabt_serial)
+    set_target_properties(oeabtctl PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+endif()
+
 # Native hot-swap artifact. It deliberately links only the mask kernel and
 # OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
 # Windows DLL before the registry publisher hashes it.
@@ -201,6 +238,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp
@@ -208,17 +247,10 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
-target_link_libraries(mib_backend PUBLIC mib_processing)
+target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
 
 if(MIB_HAS_EGRABBER)
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
-        ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
-    )
-else()
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.stub.cpp
-    )
+    target_sources(mib_backend PRIVATE ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp)
 endif()
 
 if(MIB_HAS_ONNXRUNTIME)
@@ -234,11 +266,11 @@ endif()
 # Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the
 # backend links no Qt SerialPort (epic #246).
 if(WIN32)
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortWin32.cpp
     )
 else()
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortPosix.cpp
     )
 endif()
@@ -259,6 +291,12 @@ if(MIB_HAS_EGRABBER)
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=1)
 else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=0)
+endif()
+
+if(MIB_HAS_COREMOR)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=1)
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=0)
 endif()
 
 if(MIB_HAS_MINDVISION)
@@ -282,9 +320,11 @@ target_include_directories(mib_backend PUBLIC
 )
 if(MIB_HAS_EGRABBER)
     target_include_directories(mib_backend PUBLIC
-        ${PROJECT_SOURCE_DIR}/include/Coremor
         "C:/Program Files/Euresys/eGrabber/include"
     )
+endif()
+if(MIB_HAS_COREMOR)
+    target_include_directories(mib_backend PUBLIC ${PROJECT_SOURCE_DIR}/include/Coremor)
 endif()
 if(MIB_HAS_MINDVISION)
     target_include_directories(mib_backend PUBLIC
@@ -332,7 +372,7 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_USE_SENTRY=0)
 endif()
 
-if(MIB_HAS_EGRABBER)
+if(MIB_HAS_COREMOR)
     set(COREMOR_LIB_DIR ${PROJECT_SOURCE_DIR}/include/Coremor)
     target_link_libraries(mib_backend PUBLIC
         ${COREMOR_LIB_DIR}/XMT_DLL_SER.lib

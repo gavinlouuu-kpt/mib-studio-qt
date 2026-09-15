@@ -34,7 +34,9 @@ fn ensure_backend_built(repo: &Path, build_dir: &Path) {
     let processing_lib = build_dir.join("libmib_processing.a");
 
     if std::env::var("MIB_BRIDGE_NO_CMAKE").is_ok() {
-        if !backend_lib.exists() || !processing_lib.exists() {
+        if !backend_lib.exists() || !processing_lib.exists()
+            || !build_dir.join("liboeabt_serial.a").exists()
+            || !build_dir.join("liboeabt_core.a").exists() {
             panic!(
                 "MIB_BRIDGE_NO_CMAKE set but backend archives are missing in {}",
                 build_dir.display()
@@ -136,13 +138,13 @@ fn windows_build(repo: &Path, include_dir: &Path) {
     // Order matters for static archives: the backend before its dependencies,
     // exactly as CMake linked the reference test.
     for lib in strings("libs") {
-        if lib == "mib_backend" || lib == "mib_processing" {
+        if ["mib_backend", "mib_processing", "oeabt_serial", "oeabt_core"].contains(&lib.as_str()) {
             println!("cargo:rustc-link-lib=static={lib}");
         } else {
             println!("cargo:rustc-link-lib={lib}");
         }
     }
-    for lib in ["mib_backend", "mib_processing"] {
+    for lib in ["mib_backend", "mib_processing", "oeabt_serial", "oeabt_core"] {
         let dir = manifest["runtime_dirs"][0].as_str().unwrap_or("build/Release");
         println!("cargo:rerun-if-changed={dir}/{lib}.lib");
     }
@@ -190,6 +192,10 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=static=mib_backend");
         println!("cargo:rustc-link-lib=static=mib_processing");
+        for lib in ["oeabt_serial", "oeabt_core"] {
+            println!("cargo:rerun-if-changed={}/lib{lib}.a", build_dir.display());
+            println!("cargo:rustc-link-lib=static={lib}");
+        }
 
         // sentry-native (CrashReporter): the backend-only preset builds it as a
         // static archive under _deps when MIB_USE_SENTRY is ON (inproc backend,

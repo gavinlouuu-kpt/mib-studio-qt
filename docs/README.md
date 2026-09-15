@@ -21,6 +21,8 @@ This folder hosts living documentation as we build functionality. Keep content c
   screenshots regenerate via `screenshot_tour`
   (`python3 scripts/check_screenshots.py` keeps pages and images in sync)
 - Integration: EGrabber — see `integration/egrabber.md`
+- Integration: OEABT nanopositioner — see
+  [integration/oeabt-nanopositioner.md](integration/oeabt-nanopositioner.md)
 - Integration: Ultra96 FPGA image pipeline — see
   [integration/ultra96-fpga-image-pipeline.md](integration/ultra96-fpga-image-pipeline.md)
 - Tasks/issues live in `knowledge_map/task/`

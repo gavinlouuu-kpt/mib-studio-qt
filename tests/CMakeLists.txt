@@ -98,6 +98,26 @@ mib_add_backend_test_executable(autofocus_math_test backend/autofocus_math_test.
 add_test(NAME backend.autofocus_math COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_math_test)
 set_tests_properties(backend.autofocus_math PROPERTIES LABELS "backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
+add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
+set_tests_properties(backend.oeabt_protocol PROPERTIES LABELS "backend;nanopositioner" TIMEOUT 30)
+
+mib_add_backend_test_executable(autofocus_backend_safety_test backend/autofocus_backend_safety_test.cpp)
+mib_backend_test_link(autofocus_backend_safety_test PRIVATE Threads::Threads)
+add_test(NAME backend.autofocus_backend_safety COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_backend_safety_test)
+set_tests_properties(backend.autofocus_backend_safety PROPERTIES
+    LABELS "backend;nanopositioner;concurrency"
+    TIMEOUT 30)
+
+if(UNIX AND NOT APPLE)
+    mib_add_backend_test_executable(oeabt_serial_pty_test backend/oeabt_serial_pty_test.cpp)
+    mib_backend_test_link(oeabt_serial_pty_test PRIVATE Threads::Threads)
+    add_test(NAME backend.oeabt_serial_pty COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_serial_pty_test)
+    set_tests_properties(backend.oeabt_serial_pty PROPERTIES
+        LABELS "backend;nanopositioner;concurrency"
+        TIMEOUT 30)
+endif()
+
 mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_test.cpp)
 mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
 add_test(NAME backend.hdf_write_queue COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_test)

@@ -1,20 +1,26 @@
 # AutofocusService
 
-> Closed-loop autofocus: drives a Coremor piezo nanopositioner over serial
-> using ring-ratio feedback from [[ProcessingService]].
+> Closed-loop autofocus: drives OEABT or CoreMOR piezo nanopositioners using
+> ring-ratio feedback from [[ProcessingService]].
 
 **Source:** `src/backend/services/AutofocusService.cpp`,
-`src/backend/services/AutofocusService.stub.cpp`,
 `include/backend/services/AutofocusService.h`,
+`src/backend/nanopositioner/NanopositionerBackends.cpp`,
+`src/backend/nanopositioner/oeabt/OeabtProtocol.cpp`,
 `include/backend/services/AutofocusMath.h` (pure control math)
-**Tests:** `tests/backend/autofocus_math_test.cpp`
+**Tests:** `tests/backend/autofocus_math_test.cpp`,
+`tests/backend/oeabt_protocol_test.cpp`,
+`tests/backend/autofocus_backend_safety_test.cpp`,
+`tests/backend/oeabt_serial_pty_test.cpp`
 **Related:** [[ProcessingService]], [[../frontend/NanopositionerTab]],
 [[../domain/Glossary]] (ring ratio)
 
 ## Responsibility
 
-- Manage serial connection to nanopositioner (`connect`, `disconnect`,
-  `probeComPort` for discovery).
+- Manage backend-neutral endpoint discovery and connection (`availableEndpoints`,
+  `probeEndpoint`, `connect`, `disconnect`). Legacy COM APIs wrap CoreMOR.
+- Select OEABT (Linux/Windows) or CoreMOR (Windows) through
+  `INanopositionerBackend`; require OEABT protocol identity before connection.
 - Consume ring-ratio samples via `onRingRatio(ringRatio, timestampNs)`
   (wired by [[../architecture/AppBackend]]).
 - Run a control loop on its own thread; manual voltage control
@@ -26,7 +32,9 @@
 ## Config — `AutofocusService::Config`
 
 - `focusSetpoint`, `focusRange` — target ring-ratio and tolerance
-- `voltageStep`, `fineVoltageStep`, `maxVoltage`, `minVoltage`, `initialVoltage`
+- `voltageStep`, `fineVoltageStep`, `maxVoltage`, `minVoltage`
+- `initialVoltage` remains readable for config compatibility but connect is
+  observe-only and does not apply it.
 - `manualVoltageStep`
 - `ringRatioStaleMs` — drop samples older than this
 - `requireNewSamplePerStep`, `minSamplesPerStep`
@@ -41,7 +49,7 @@ Three threads are involved in the autofocus path:
 |---|---|---|
 | Caller (ProcessingService realtime) | external | Calls `onRingRatio(ringRatio, ts)` on every valid frame — O(1) push into `pendingSamples_` + atomic freshness markers + `notify_one`. No sort, no deque work, no allocator pressure on the realtime thread. |
 | `statsThread_` | constructor → destructor | `statsLoop()` drains `pendingSamples_` under `pendingSamplesMutex_`, writes into the `std::deque<double>` ring-ratio buffer (`ringRatioMutex_`), trims to `MAX_BUFFER_SIZE` (1000), and refreshes `{median, average, min, max}RingRatio_` atomics. Wake-rate is capped at ~100 Hz via a 10 ms min-drain interval so the O(n log n) sort amortises across a batch. |
-| `controlThread_` | connect → disconnect | `controlLoop()` at ~20 Hz: reads stats atomics, talks Coremor XMT over serial, applies manual or automatic voltage steps. |
+| `controlThread_` | connect → disconnect | `controlLoop()` at ~20 Hz: reads stats atomics, owns all selected-backend I/O, and applies explicit manual or automatic voltage steps. |
 
 Two mutexes: `pendingSamplesMutex_` (producer ↔ `statsThread_`) and
 `ringRatioMutex_` (`statsThread_` ↔ `controlThread_`). The
@@ -70,16 +78,24 @@ The voltage decision is extracted into pure, device-free functions in
 - `clampVoltage(v, lo, hi)` — clamps, but passes the value through untouched if
   the limits are inverted (`hi < lo`) rather than fabricating a bound.
 
-`controlLoop()` delegates to `computeFocusVoltage`; `connect()` runs the
-configured `initialVoltage` through `clampVoltage` before the first
-`XMT_COMMAND_SinglePoint`, so a stale/misconfigured value can never drive the
-probe past its safe range.
+`controlLoop()` delegates to `computeFocusVoltage`. `connect()` only identifies
+the controller and reads limits/current voltage. Every write is validated
+against configured limits and the controller-reported maximum; invalid values
+are rejected rather than silently clamped at the transport boundary.
 
 ## Gotchas
 
+- Candidate VID/PID values do not establish identity. OEABT requires the
+  `Oeabt pzt controller` response before connection or any voltage write.
+- `probeEndpoint` is static and must not run against the active endpoint.
+- A read-only session disconnects without writing. After the first successful
+  manual/autofocus write, intentional disconnect applies the validated
+  `safeShutdownVoltage`.
+- Native serial operations run on the calling thread; a mutex-backed proxy
+  serializes complete operations, including multi-command voltage writes.
 - **Resting stage reads slightly negative.** A CoreMorrow controller at 0 V
   returns about -1 mV (-0.0004 .. -0.002 V on the bench). The probe window
-  (`PROBE_VOLTAGE_MIN`) is therefore -0.05 V, not 0: with a floor of exactly
+  (backend read validation) is therefore -0.05 V, not 0: with a floor of exactly
   0 the single-retry probe failed about one run in four, `hardware.nanopositioner`
   flaked, and at boot `DeviceInitManager` logged "saved nanopositioner COMn did
   not validate; scanning all ports" before connecting anyway (2026-09-08).
@@ -101,13 +117,14 @@ probe past its safe range.
 
 ## Third-party
 
-See `include/Coremor/` for the XMT_DLL_SER DLL shipped with the repo.
+See `include/Coremor/` for the optional Windows XMT DLL and
+`docs/integration/oeabt-nanopositioner.md` for the clean-room OEABT protocol
+evidence and hardware acceptance gate.
 
 ## Platform behavior
 
-- **Windows (`MIB_HAS_EGRABBER=1`)**: full Coremor-backed implementation
-  (`AutofocusService.cpp`) is compiled.
-- **Non-Windows (`MIB_HAS_EGRABBER=0`)**: `AutofocusService.stub.cpp` is
-  compiled instead. It keeps the public API shape but `connect()`/probe
-  operations are unsupported and return failure, which allows cloud/Linux
-  builds to compile and exercise non-hardware features.
+- **Linux**: full autofocus service plus OEABT native serial backend; Linux's
+  standard `ch341` driver handles the USB bridge.
+- **Windows**: OEABT uses the existing native serial interface. CoreMOR is
+  additionally available when `MIB_HAS_COREMOR=1`.
+- `MIB_HAS_COREMOR` and `MIB_HAS_EGRABBER` are independent compile guards.

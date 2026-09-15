@@ -23,6 +23,10 @@ option(MIB_BUILD_BACKEND_ONLY
     "Build only backend targets (no frontend executables)"
     OFF)
 
+option(MIB_BUILD_OEABT_TOOLS
+    "Build the oeabtctl serial diagnostic and hardware acceptance tool"
+    ON)
+
 option(MIB_BUILD_PYTHON_BINDINGS
     "Build the pybind11 Python bindings for mib_processing (bindings/python/)"
     OFF)

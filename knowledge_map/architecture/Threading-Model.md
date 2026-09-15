@@ -16,7 +16,7 @@
 | Realtime processing | [[../services/ProcessingService]] `realtimeLoop()` | FrameStore writeIndex | Low-latency per-frame analysis; drop-frames mode skips to latest |
 | Native processing-core contexts | selected `IProcessingKernel` | short context-pool mutex | Each concurrent processing call leases one plugin-owned context; a context is never shared concurrently |
 | Autofocus stats | [[../services/AutofocusService]] `statsLoop()` | `pendingSamplesCV_` + 10 ms drain interval | Drains ring-ratio samples pushed by `ProcessingService` realtime thread, maintains 1000-sample deque, refreshes `{median,average,min,max}RingRatio_` atomics. Runs for the full lifetime of the service, not just while connected. |
-| Autofocus control | [[../services/AutofocusService]] `controlLoop()` | serial COM | Reads ring-ratio stats atomics, writes voltage to nanopositioner. Runs only between `connect()` / `disconnect()`. |
+| Autofocus control | [[../services/AutofocusService]] `controlLoop()` | selected nanopositioner transport | Owns all OEABT/CoreMOR reads and writes, consumes ring-ratio stats atomics, and writes voltage only after explicit manual/autofocus requests. Runs only between `connect()` / `disconnect()`. |
 | Trigger | [[../services/TriggerService]] `triggerLoop()` | `triggerCV_` | Issues camera digital-output pulse on target-group events |
 | Syringe pump poll | [[../services/SyringePumpService]] per pump | serial (Modbus RTU) | UI-driven status polls |
 | Frame-recording | `AppBackend` `frameRecordingThread_` | FrameStore | Only active in recording mode; drains non-empty frames into HDF5 |

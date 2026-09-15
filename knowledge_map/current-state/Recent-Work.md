@@ -15,6 +15,17 @@ watermark; the coordinator also adds a 2-second time-based backstop. Test:
 
 ## Features shipped
 
+- **Cross-platform OEABT nanopositioner backend** (2026-08-31) — Added a
+  Qt-free C++17 protocol core, native ISerialPort adapter, guarded `oeabtctl`
+  diagnostic/acceptance CLI, and Linux/Windows MIB Studio backend selection
+  while retaining CoreMOR on Windows. Serial discovery uses persistent
+  endpoint IDs and protocol identity rather than trusting the generic CH341
+  VID/PID. Connect is observe-only; safe-shutdown voltage is written only
+  after an active control session. Legacy COM configuration migrates to an
+  explicit CoreMOR endpoint. Connected V0.5.4 tests now confirm command communication; voltage-accuracy
+  and physical-displacement acceptance remain open.
+  Task record: [[../task/2026-08-31-oeabt-nanopositioner]].
+
 - **ProcessingService::stop() lost-wakeup hang** (2026-09-09) — The ASan
   lane once timed out (600 s) on `backend.mindvision_selection_state`,
   a trivial state test, *after* it had printed "passed": the hang was in
