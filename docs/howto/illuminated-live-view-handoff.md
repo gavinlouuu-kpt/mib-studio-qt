@@ -112,18 +112,18 @@ current visual acceptance gate. Webcam evidence cannot establish pulse width.
    TSan, docs). On the rig PC: `cmake --build --preset windows-ninja-build`
    then `ctest --preset windows-ninja-test`; set `VSLANG=1033` in the build
    environment (see the build notes) or header edits will not recompile.
-2. Rigol-validate on the rig with the new default (1000 Hz rising-edge trigger,
-   polarity 0): CH2 trigger period 1000 µs / 20 µs pulse; CH1 one LED-current
-   pulse per trigger of about the strobe width, none between triggers, and no
-   current after Stop. Repeat at one adjusted FPS (2500). Record waveforms.
-   The September 15 software runs (`hardware.illuminated_live`) showed frame
-   brightness tracking strobe/exposure overlap only with polarity 0; the scope
-   is the acceptance measurement for that polarity choice.
-3. Frames were saturated (mean 255/255) with the 100 µs exposure/strobe even
-   at a 20 µs strobe: reduce R5D current or add attenuation on the rig, or lower
-   exposure/strobe in Config, before optical use. This is not a software gate.
-4. Update issue #413 and PR #414 with the scope results. No merge without
-   authorization.
+2. Current visual acceptance is complete on the branch desktop: automatic camera
+   selection stays Idle; Play acquires about 998?1000 fps and lights the LED;
+   Stop and app-close make the webcam view dark. The adjusted 2500 Hz harness
+   also passed, with 100 ?s strobe unchanged. See the task record for artifacts.
+3. Frames are saturated (mean 255/255) at the operator's 100 ?s exposure/strobe.
+   Optical commissioning requires driver-current adjustment or attenuation.
+   Preserve the operator's 100 ?s LED trigger; shortening it is not a remedy.
+4. Review and merge PR #414, deploy the matching build, and verify the installed
+   app on the rig. Completion of issue #413 is the operator's active instruction.
+5. Nanopositioner follow-up: Coremor is now independent of EGrabber at build
+   time. The attached controller is OEABT; its exact model and protocol remain
+   pending. Do not claim OEABT discovery or control from the Coremor driver.
 
 ## Hardware acceptance and limits
 
@@ -142,8 +142,8 @@ September 10 bench result was 5 kHz LED current with 64.6 us pulses; settled
 image mean about 150/255 versus 5.6 LED-off. This is prior bench evidence, not
 validation of this build. Sensor exposure edges remain unmeasured; the old
 47 us exposure-start inference is superseded. Generator range 400–40000 Hz is
-not a camera FPS guarantee. Use oscilloscope measurements for timing acceptance;
-SDK readback and frame brightness only supplement them.
+not a camera FPS guarantee. Webcam acceptance establishes visible on/off only; precise electrical timing
+remains unmeasured without an oscilloscope.
 
 The earlier screenshot workflow's mandatory setup step is superseded by the
 latest default automation. No generated screenshot is a hardware test result.
