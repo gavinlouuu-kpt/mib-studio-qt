@@ -1,7 +1,7 @@
 # NanopositionerTab
 
-> UI for [[../services/AutofocusService]]: COM port selection, manual
-> voltage nudging, autofocus enable, status display.
+> UI for [[../services/AutofocusService]]: backend/serial endpoint selection,
+> manual voltage nudging, autofocus enable, and status display.
 
 **Source:** `src/frontend/tabs/NanopositionerTab.cpp`,
 `include/frontend/tabs/NanopositionerTab.h`
@@ -9,7 +9,9 @@
 
 ## Responsibility
 
-- COM port enumeration + `probeComPort` for health checks.
+- Backend selection (`Auto`, `OEABT`, `CoreMOR`) and persistent serial endpoint
+  enumeration. A CH341 candidate is not shown as connected until protocol
+  identity succeeds.
 - Connect/disconnect; display connection status.
 - Manual voltage control (buttons drive `increaseVoltage`/`decreaseVoltage`).
 - Autofocus toggle (`setEnabled`).
@@ -22,19 +24,18 @@
 
 - This tab moved into the Config area recently — see task
   `knowledge_map/task/2025-11-19-nanopositioner-tab.md`.
-- Disconnecting applies `safeShutdownVoltage` before closing the port.
+- Connecting is observe-only. Disconnecting applies `safeShutdownVoltage`
+  only after an active control session; a read-only session closes untouched.
+- `autofocus_backend` and `autofocus_endpoint` are the canonical persisted
+  selection. Legacy `autofocus_com_port` migrates to CoreMOR.
 
 
-## Vendor-aware discovery (2026-09-15)
+### PR #413 discovery integration
 
-The tab displays the backend vendor inventory: CoreMorrow/XMT identification and
-OEABT protocol support pending. Refresh emits `discoveryRequested`, wired by
-DeviceInitManager to the existing background discovery path. During a scan,
-Connect, Refresh and serial settings are disabled to prevent a competing open
-or changing the settings before the result connects. No match remains explicit;
-OEABT is never reported connected merely from a USB adapter identity.
-
-The coordinator scans saved-port-first on its worker, without the old blocking
-saved-port shortcut on the UI thread. It auto-connects only one protocol-confirmed
-match. `frontend.config_tabs_state` verifies the inventory, Refresh signal and
-scan control exclusion. The protocol implementation will arrive separately.
+The shared vendor registry now uses native nanopositioner endpoints and includes
+both OEABT and CoreMorrow/XMT probes. Startup scans all candidates on its worker,
+auto-connects only a unique validated match, and Refresh repeats discovery.
+Connection and serial/vendor controls are disabled while scanning. A legacy
+COM-only setting retains its port preference but defaults to automatic vendor
+selection; an explicit saved vendor is preserved. Discovery and connection are
+observe-only, with no voltage or mode writes.

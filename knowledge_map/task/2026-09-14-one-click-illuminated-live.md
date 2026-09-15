@@ -230,3 +230,22 @@ shared runner. Reproduced locally as an unknown target; restored its standalone
 classification. The target now builds, and its real unsigned/signed/wrong-signer/
 tampered-signature checks pass against a copied Microsoft-signed SDK signtool
 fixture. No trust store or processing-core implementation was changed.
+
+
+## OEABT protocol integration and physical discovery (September 15)
+
+Integrated PR #416 head c947b40 (GitHub still reported it open at integration).
+Resolved overlapping build/UI/discovery changes using its native endpoint model,
+with the vendor registry, worker scan, unique-match requirement and Refresh
+control exclusion retained. A regression proved legacy COM-only profiles forced
+Coremor; they now preserve port preference with Auto vendor selection. Explicit
+vendor choices remain unchanged.
+
+Read-only CLI identified `Oeabt pzt controller` on COM7 (WCH 1a86:7523), reporting
+approximately 30.8?30.9 V, maximum 100 V and PWM capability. Desktop startup
+selected the camera without starting it and auto-connected OEABT on COM7.
+Play discovered the generator on COM6 and ran at 999 fps; webcam showed LED on.
+App-close released COM6 and the nanopositioner, and webcam showed LED dark.
+No voltage or mode commands were sent; these checks do not establish voltage
+accuracy or displacement. Runtime log: `data/logs/issue413-oeabt-desktop.log`.
+Full Windows suite: 105/105 passed. Docs and screenshot checks passed.

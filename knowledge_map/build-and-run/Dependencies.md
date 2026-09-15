@@ -26,7 +26,9 @@
   R2 artifacts and extract only the headers plus the current platform/CPU's
   shared library.
 - **Coremor XMT DLL** — `include/Coremor/` (`.h`, `.lib`, `.dll`). Used by
-  [[../services/AutofocusService]].
+  the optional Windows backend of [[../services/AutofocusService]]. OEABT uses
+  the existing ISerialPort adapter and the operating system's standard serial driver instead of a
+  vendored library.
 
 ## How they're wired
 
@@ -50,10 +52,10 @@
   target.
 - OpenCV and HDF5 DLLs are also copied next to the exe (see
   `docs/howto/windows-deploy.md`).
-- Windows-only hardware SDK linkage is gated by `MIB_HAS_EGRABBER`
-  (`WIN32` => `ON`, otherwise `OFF`):
+- Windows EGrabber linkage is gated by `MIB_HAS_EGRABBER`:
   - EGrabber headers/system path are only added when `MIB_HAS_EGRABBER=1`.
-  - Coremor include/lib wiring is only added when `MIB_HAS_EGRABBER=1`.
+- CoreMOR is gated independently by `MIB_HAS_COREMOR`; OEABT targets build on
+  Linux and Windows from standard C++17 plus Qt SerialPort.
 - MindVision SDK linkage is gated separately by `MIB_ENABLE_MINDVISION` /
   `MIB_HAS_MINDVISION`:
   - CMake locates the dynamic-loader header/DLL on Windows and the direct API

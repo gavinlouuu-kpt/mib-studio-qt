@@ -1,7 +1,8 @@
 #pragma once
 
+#include "backend/nanopositioner/INanopositionerBackend.h"
+
 #include <QObject>
-#include "backend/services/NanopositionerDiscovery.h"
 
 #include <vector>
 #include <memory>
@@ -9,10 +10,18 @@
 class QTimer;
 template <typename T> class QFutureWatcher;
 
-namespace backend { class AppBackend; }
-namespace backend::services { struct DiscoveredCamera; }
-namespace frontend { class ConnectTab; }
-namespace frontend { class NanopositionerTab; }
+namespace backend {
+class AppBackend;
+}
+namespace backend::services {
+struct DiscoveredCamera;
+}
+namespace frontend {
+class ConnectTab;
+}
+namespace frontend {
+class NanopositionerTab;
+}
 
 namespace frontend {
 
@@ -28,12 +37,14 @@ public:
     ~DeviceInitManager();
 
     void setConnectTab(ConnectTab* connectTab) { connectTab_ = connectTab; }
-    void setNanopositionerTab(NanopositionerTab* nanopositionerTab);
+    void setNanopositionerTab(NanopositionerTab* tab);
 
-    /** Start initialisation: schedule camera step (400 ms), then nanopositioner after camera completes. */
+    /** Start initialisation: schedule camera step (400 ms), then nanopositioner after camera
+     * completes. */
     void start();
 
-    /** Run camera discovery step once (e.g. for "Try again"). Does nothing if camera step is already running. */
+    /** Run camera discovery step once (e.g. for "Try again"). Does nothing if camera step is
+     * already running. */
     void runCameraStep();
 
 signals:
@@ -57,8 +68,10 @@ private:
 
     QTimer* cameraStepTimer_ = nullptr;
     QTimer* nanopositionerStepTimer_ = nullptr;
-    std::unique_ptr<QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>> cameraWatcher_;
-    std::unique_ptr<QFutureWatcher<std::vector<backend::services::nanopositioner::Candidate>>> nanopositionerWatcher_;
+    std::unique_ptr<QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>>
+        cameraWatcher_;
+    std::unique_ptr<QFutureWatcher<std::vector<backend::nanopositioner::Endpoint>>>
+        nanopositionerWatcher_;
 
     bool cameraStepScheduled_ = false;
     bool cameraStepRunning_ = false;

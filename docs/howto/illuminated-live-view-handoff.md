@@ -121,9 +121,10 @@ current visual acceptance gate. Webcam evidence cannot establish pulse width.
    Preserve the operator's 100 ?s LED trigger; shortening it is not a remedy.
 4. Review and merge PR #414, deploy the matching build, and verify the installed
    app on the rig. Completion of issue #413 is the operator's active instruction.
-5. Nanopositioner follow-up: Coremor is now independent of EGrabber at build
-   time. The attached controller is OEABT; its exact model and protocol remain
-   pending. Do not claim OEABT discovery or control from the Coremor driver.
+5. OEABT integration from PR #416 is now incorporated. The native protocol
+   identified the controller on COM7, and the desktop auto-connected observe-only
+   while camera/generator remained Idle. Live View ran at 999 fps concurrently;
+   app-close released both devices and the webcam showed the LED dark.
 
 ## Hardware acceptance and limits
 

@@ -110,8 +110,8 @@ int main(int argc, char* argv[])
     frontend::NanopositionerTab nanopositioner(backend);
     auto* vendors = nanopositioner.findChild<QLabel*>("nanopositionerVendorsLabel");
     MIB_REQUIRE(vendors, "nanopositioner vendor inventory exists");
-    MIB_EXPECT(vendors->text().contains("OEABT") && vendors->text().contains("pending"),
-               "OEABT inventory accurately reports pending protocol");
+    MIB_EXPECT(vendors->text().contains("OEABT") && vendors->text().contains("CoreMorrow"),
+               "inventory identifies both integrated vendors");
     auto* refresh = nanopositioner.findChild<QPushButton*>("refreshComPortBtn");
     auto* connectStage = nanopositioner.findChild<QPushButton*>("connectBtn");
     MIB_REQUIRE(refresh && connectStage, "discovery controls exist");
