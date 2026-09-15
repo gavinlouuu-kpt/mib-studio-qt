@@ -220,3 +220,13 @@ the new UI fixture initially constructed its tab before backend initialization.
 After correcting fixture order, both discovery/concurrency and UI checks pass.
 Thus all 103 checks pass across that run and the focused rerun. Documentation
 and screenshot checks pass. Current-head CI/TSan and deployment remain pending.
+
+
+### CI target repair
+
+Windows core CI failed because the signing workflow requested the standalone
+`processing_core_authenticode_test` target after it had been bundled into the
+shared runner. Reproduced locally as an unknown target; restored its standalone
+classification. The target now builds, and its real unsigned/signed/wrong-signer/
+tampered-signature checks pass against a copied Microsoft-signed SDK signtool
+fixture. No trust store or processing-core implementation was changed.

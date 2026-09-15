@@ -381,3 +381,13 @@ even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
 `MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
 processing-only builds remain SDK-free for Coremor. See
 [[../services/AutofocusService]] for the vendor support inventory.
+
+
+### Windows Authenticode test target
+
+`processing_core_authenticode_test` stays a standalone executable because the
+Python-wheel workflow and `scripts/test-processing-core-authenticode.ps1` invoke
+it directly with unsigned/signed fixture paths and a signer SPKI hash. Bundling
+it into `mib_backend_tests` removes the expected MSBuild target and breaks that
+release verification. The standalone-test list in `tests/CMakeLists.txt` preserves
+this contract.

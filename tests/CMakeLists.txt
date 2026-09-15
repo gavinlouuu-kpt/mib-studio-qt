@@ -19,6 +19,7 @@ endif()
 # stay their own executable are listed here with the reason.
 include(MIBTestRunner)
 set(MIB_STANDALONE_BACKEND_TESTS
+    processing_core_authenticode_test   # Windows signing workflow invokes this executable directly
     mib_backend_smoke_test              # tools/gen_bridge_link_manifest.py uses its .vcxproj as reference project
     hdf_export_service_test             # exporter-soak.yml builds and runs it directly
     crash_reporter_segv_test            # re-executes argv[0] --crash-child
