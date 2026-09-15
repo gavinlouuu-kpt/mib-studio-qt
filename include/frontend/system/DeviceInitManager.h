@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <memory>
+#include <atomic>
 
 class QTimer;
 template <typename T> class QFutureWatcher;
@@ -43,6 +44,10 @@ public:
      * completes. */
     void start();
 
+    // Terminal: cancel retries/results and finish any current probe before
+    // hardware teardown. Workers check cancellation between ports.
+    void stop();
+
     /** Run camera discovery step once (e.g. for "Try again"). Does nothing if camera step is
      * already running. */
     void runCameraStep();
@@ -63,6 +68,7 @@ private:
     void scheduleNanopositionerStep();
 
     backend::AppBackend& backend_;
+    std::shared_ptr<std::atomic<bool>> stopped_ = std::make_shared<std::atomic<bool>>(false);
     ConnectTab* connectTab_ = nullptr;
     NanopositionerTab* nanopositionerTab_ = nullptr;
 

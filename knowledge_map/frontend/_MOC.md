@@ -4,6 +4,7 @@
 > controllers to [[../architecture/AppBackend]].
 
 ## Core
+- [[DesktopInstance]] — per-user desktop ownership before hardware initialization
 - [[MainWindow]] — QMainWindow; tabs, corner widgets, sidebar, statusbar
 - [[Controllers]] — CameraController, ExperimentController
 

@@ -7,6 +7,14 @@
 
 ## System (`src/frontend/system/`)
 
+- **`DesktopInstance`** — [[DesktopInstance]] reserves one desktop session
+  before hardware initialization and retains ownership through teardown.
+- **`DeviceInitManager::stop()`** — terminal discovery cancellation. Stops
+  retries, ignores queued completion results, skips subsequent probes, and
+  waits for current workers to release temporary devices before backend
+  shutdown. Called on accepted main-window close, application quit, and
+  manager destruction. Vendor calls already in flight must still return.
+
 - **`QtLogBridge`** — `mib::frontend::installQtLogBridge()` installs a
   `qInstallMessageHandler` that routes Qt's process-wide log stream into spdlog
   (criticals/fatals also go to Sentry via

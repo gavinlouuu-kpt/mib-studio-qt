@@ -27,7 +27,8 @@ std::vector<backend::services::DiscoveredCamera> discoverCamerasInWorker() {
 }
 
 std::vector<backend::nanopositioner::Endpoint>
-probeNanopositionerEndpointsInWorker(backend::nanopositioner::Endpoint preferred) {
+probeNanopositionerEndpointsInWorker(backend::nanopositioner::Endpoint preferred,
+                                     std::shared_ptr<std::atomic<bool>> stopped) {
     std::vector<backend::nanopositioner::Endpoint> validEndpoints;
     auto endpoints = backend::services::AutofocusService::availableEndpoints();
     std::stable_sort(
@@ -48,8 +49,10 @@ probeNanopositionerEndpointsInWorker(backend::nanopositioner::Endpoint preferred
         endpoint.coremorBaudRate = preferred.coremorBaudRate;
         endpoint.coremorAddress = preferred.coremorAddress;
     }
-    const auto candidates = backend::services::nanopositioner::discover(
-        endpoints, backend::services::AutofocusService::probeEndpoint);
+    const auto candidates =
+        backend::services::nanopositioner::discover(endpoints, [stopped](const auto& endpoint) {
+            return !stopped->load() && backend::services::AutofocusService::probeEndpoint(endpoint);
+        });
     for (const auto& candidate : candidates) {
         if (!candidate.identifiedVendors.empty()) validEndpoints.push_back(candidate.port);
     }
@@ -70,7 +73,21 @@ DeviceInitManager::DeviceInitManager(backend::AppBackend& backend, QObject* pare
             &DeviceInitManager::onNanopositionerStepTimer);
 }
 
-DeviceInitManager::~DeviceInitManager() = default;
+DeviceInitManager::~DeviceInitManager() {
+    stop();
+}
+
+void DeviceInitManager::stop() {
+    stopped_->store(true);
+    cameraStepTimer_->stop();
+    nanopositionerStepTimer_->stop();
+    cameraStepScheduled_ = false;
+    SPDLOG_INFO("DeviceInitManager: shutdown waiting for active discovery");
+    // Workers own temporary hardware objects and never call the UI/backend.
+    if (cameraWatcher_) cameraWatcher_->waitForFinished();
+    if (nanopositionerWatcher_) nanopositionerWatcher_->waitForFinished();
+    SPDLOG_INFO("DeviceInitManager: discovery stopped");
+}
 
 void DeviceInitManager::setNanopositionerTab(NanopositionerTab* tab) {
     if (nanopositionerTab_) disconnect(nanopositionerTab_, nullptr, this, nullptr);
@@ -80,11 +97,13 @@ void DeviceInitManager::setNanopositionerTab(NanopositionerTab* tab) {
 }
 
 void DeviceInitManager::start() {
+    if (stopped_->load()) return;
     cameraStepScheduled_ = true;
     cameraStepTimer_->start(400);
 }
 
 void DeviceInitManager::runCameraStep() {
+    if (stopped_->load()) return;
     if (cameraStepRunning_) {
         SPDLOG_INFO("DeviceInitManager: camera step already running, skipping");
         return;
@@ -101,6 +120,7 @@ void DeviceInitManager::runCameraStep() {
 }
 
 void DeviceInitManager::onCameraStepTimer() {
+    if (stopped_->load()) return;
     if (!cameraStepScheduled_) {
         return;
     }
@@ -127,6 +147,7 @@ void DeviceInitManager::runCameraDiscoveryInWorker() {
 }
 
 void DeviceInitManager::onCameraDiscoveryFinished() {
+    if (stopped_->load()) return;
     cameraStepRunning_ = false;
     if (!cameraWatcher_ || !cameraWatcher_->isFinished()) {
         return;
@@ -170,6 +191,7 @@ void DeviceInitManager::onCameraDiscoveryFinished() {
 }
 
 void DeviceInitManager::scheduleNanopositionerStep() {
+    if (stopped_->load()) return;
     cameraStepScheduled_ = false;
     if (!nanopositionerTab_) {
         return;
@@ -182,6 +204,7 @@ void DeviceInitManager::scheduleNanopositionerStep() {
 }
 
 void DeviceInitManager::onNanopositionerStepTimer() {
+    if (stopped_->load()) return;
     if (!nanopositionerTab_) {
         return;
     }
@@ -202,11 +225,12 @@ void DeviceInitManager::onNanopositionerStepTimer() {
                 &DeviceInitManager::onNanopositionerProbeFinished);
     }
     QFuture<std::vector<backend::nanopositioner::Endpoint>> future =
-        QtConcurrent::run(probeNanopositionerEndpointsInWorker, preferredEndpoint);
+        QtConcurrent::run(probeNanopositionerEndpointsInWorker, preferredEndpoint, stopped_);
     nanopositionerWatcher_->setFuture(future);
 }
 
 void DeviceInitManager::onNanopositionerProbeFinished() {
+    if (stopped_->load()) return;
     if (!nanopositionerWatcher_ || !nanopositionerWatcher_->isFinished() || !nanopositionerTab_) {
         return;
     }

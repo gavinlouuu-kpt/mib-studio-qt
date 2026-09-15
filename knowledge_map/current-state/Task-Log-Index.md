@@ -13,6 +13,7 @@
 
 ### Camera lifecycle & hardware SDKs
 - [[../task/2026-09-15-mindvision-overview-roi]] - full-sensor overview, 400 Hz trigger, experiment ROI persistence and rig acceptance
+- [[../task/2026-09-15-hardware-shutdown]] — duplicate desktop protection, explicit disconnects, bounded Windows serial drain
 - `task/2025-11-14-safe-start-stop-egrabber.md`
 - `task/camera-reset.md`
 - `task/fps_mbs_zero.md`

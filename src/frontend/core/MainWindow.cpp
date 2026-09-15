@@ -656,6 +656,10 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     initManager_->setConnectTab(connectTab_);
     initManager_->setNanopositionerTab(sidebarWidget_ ? sidebarWidget_->nanopositionerTab() : nullptr);
     connectTab_->setDeviceInitManager(initManager_);
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+        initManager_->stop();
+        backend_.shutdown();
+    });
 
     // Connect tab change signal for auto-applying camera scripts
     connect(ui->tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
@@ -682,6 +686,7 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    if (initManager_) initManager_->stop();
     backend_.experiment().setStatusCallback({});
     backend_.setBackgroundCaptureCallback({});
     // Stop all timers that access backend_ via callbacks before the UI is
@@ -2059,6 +2064,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
         }
     }
 
+    if (initManager_) initManager_->stop();
+
     // An active run or a finalization in flight completes before the window
     // goes away (bounded: the coordinator drains the write queue, writes the
     // metadata and closes the file). AppBackend::shutdown() repeats this
@@ -2083,5 +2090,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Issue #358: persist geometry only when the close is accepted.
     saveWindowGeometry();
     saveSidebarPreference();
+    backend_.shutdown();
     QMainWindow::closeEvent(event);
+    // A utility window must not keep the desktop and hardware alive after
+    // the user accepts closing the main window.
+    if (event->isAccepted()) QMetaObject::invokeMethod(qApp, "quit", Qt::QueuedConnection);
 }
