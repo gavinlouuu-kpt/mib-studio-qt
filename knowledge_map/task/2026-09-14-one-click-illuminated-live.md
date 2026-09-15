@@ -109,6 +109,10 @@ Rigol confirmation of the LED current waveform remains the acceptance step.
 
 ## September 15: Stop-level fix verified at 1000 fps
 
+**Superseded inference:** the software-only result below used an incorrect
+relationship between strobe polarity and GPIO off level. The webcam result
+in the following section corrects it; these tests did not establish darkness.
+
 Stop requests the inactive GPIO level for the saved strobe polarity. The
 two-polarity regression was compiled against the old low-only call and failed
 its inactive-level assertion; restoring the fix passed `backend.illuminated_live`.
@@ -132,3 +136,27 @@ LED-off comparison, latest-fix sanitizer CI, merge and deployment are still
 outstanding. No connected Rigol USB device or documented network resource was
 found; its connection address has been requested. The previously published
 PR head `bb0ea38` has green CI, which does not cover this uncommitted fix.
+
+## September 15: webcam commissioning corrects GPIO shutdown
+
+The operator confirmed there is no Rigol available and explicitly substituted
+webcam visual confirmation. LED triggering requires upwards of roughly 45 µs;
+the normal 100 µs strobe remains unchanged at the 1000 fps target. The 20 µs
+generator camera-trigger pulse is a separate signal.
+
+Webcam `FF-Camera` showed bright blue illumination before Start and after Stop
+with commit `930c5fb`, which drove GPIO high for strobe polarity 0. An explicit
+SDK GPIO-low operation made the LED dark. Thus the inferred relationship was
+wrong: GPIO shutdown must drive low on this rig regardless of strobe polarity.
+The corrected regression was proven to fail against `930c5fb` and pass after
+restoring low, then the complete desktop was rebuilt.
+
+A fresh full AppBackend run with the corrected binary showed LED on during
+capture and dark after Stop in webcam frames. It delivered 15042 frames over
+15.05 seconds (999.4 fps), no reported transport loss/discards, Idle without
+failure after Stop, and independent generator readback of zero duty. Local
+evidence: `data/issue413-webcam/fixed-during.png`, `fixed-after.png`, and
+`data/logs/issue413-webcam-fixed-cycle.log`. The webcam establishes visible
+on/off behavior, not individual pulse timing. Camera images remain saturated.
+Scope access is no longer the current acceptance blocker under the operator's
+instruction. Latest-correction CI, merge and deployment remain outstanding.

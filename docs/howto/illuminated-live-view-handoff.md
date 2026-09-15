@@ -101,6 +101,13 @@ beta/release. Findings:
 
 ## Next system's work
 
+**Current operator instruction (September 15):** no Rigol is connected.
+Use webcam visual on/off confirmation for this acceptance run instead of
+waiting for scope access. Keep the LED strobe at 100 µs (the operator reports
+reliable triggering needs upwards of roughly 45 µs), at 1000 fps. The scope
+procedure below remains a future timing-characterization procedure, not the
+current visual acceptance gate. Webcam evidence cannot establish pulse width.
+
 1. Confirm PR CI is green on the latest head (backend build/test, ASan/UBSan,
    TSan, docs). On the rig PC: `cmake --build --preset windows-ninja-build`
    then `ctest --preset windows-ninja-test`; set `VSLANG=1033` in the build
@@ -122,10 +129,10 @@ beta/release. Findings:
 
 Generator CH1 -> camera trigger; physical camera OUT1 (SDK output 0) -> R5D.
 The SDK strobe polarity is 1 = active high, 0 = active low; on this rig the
-image followed the strobe only with polarity 0 (September 15), which implies the
-R5D lights on the low level, contrary to the earlier "OUT1 high = LED on" note.
-Stop drives OUT1 to the strobe's inactive level, so it is dark either way; the
-oscilloscope (or a look at the LED after Stop) decides the wiring. Rigol CH2 measures trigger, CH1 LED
+image followed the strobe only with polarity 0 (September 15). That does not
+establish the GPIO off level: subsequent webcam checks proved GPIO high leaves
+the LED lit and GPIO low makes it dark. Stop therefore drives GPIO low regardless
+of capture strobe polarity. Rigol CH2 measures trigger, CH1 LED
 current. Default: ROI 512x96, exposure setting 100 us, manual strobe
 100 us / delay 0 with polarity 0 (SDK active-low, see above), generator 1000 Hz / 2% (20 us trigger
 pulse), rising-edge trigger. Changed on September 15 from high-level trigger,

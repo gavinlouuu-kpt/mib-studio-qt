@@ -219,11 +219,11 @@ int main() {
         camera.stop();
         MIB_EXPECT(events.size() == size, "stop idempotent");
     }
-    // OUT1 off level follows the strobe polarity (SDK: 1 = active high, 0 =
-    // active low): the pulse lights the LED, so Stop drives the opposite level.
-    // Regression: the rig showed the LED lit at OUT1 low with polarity 0.
+    // GPIO state and strobe polarity are different SDK settings. Webcam
+    // commissioning confirmed OUT1 GPIO low is dark and high lights this rig,
+    // including when the capture strobe polarity is 0.
     for (int polarity = 0; polarity < 2; ++polarity) {
-        watchdog.mark("OUT1 off level per strobe polarity");
+        watchdog.mark("OUT1 GPIO low regardless of strobe polarity");
         const auto polarityPath =
             (dir / ("camera-pol" + std::to_string(polarity) + ".json")).string();
         std::ofstream(polarityPath) << R"({"width":512,"height":96,"exposure_time_us":100,
@@ -245,8 +245,8 @@ int main() {
         MindVisionCamera camera(0, polarityPath, sdk, session);
         MIB_REQUIRE(camera.start(), "polarity profile starts");
         camera.stop();
-        MIB_EXPECT(out1Levels.size() == 1 && out1Levels[0] == (polarity == 0 ? 1u : 0u),
-                   "Stop drives OUT1 to the strobe inactive level (polarity 0 -> high, 1 -> low)");
+        MIB_EXPECT(out1Levels.size() == 1 && out1Levels[0] == 0u,
+                   "Stop drives OUT1 GPIO low regardless of capture strobe polarity");
     }
     // CaptureService fault path releases generator before destroying camera.
     // Five delivered frames plus one explicitly rejected geometry frame.

@@ -45,6 +45,18 @@ the LED on — measured 2026-09-15). Generator channel is the selected channel
 (normally channel 1), 1000 Hz and 2% duty (a 20 µs trigger pulse). Serial
 connection settings come from the selected controls, not hard-coded host paths.
 
+For this R5D rig, the operator reports that the LED trigger must be longer
+than roughly 45 µs to fire reliably; retain the normal **100 µs LED strobe**.
+The generator's **20 µs camera-trigger pulse** is separate from the OUT1 LED
+strobe width. Do not shorten the LED strobe to address image saturation;
+adjust driver current or optical attenuation instead.
+
+For the current acceptance run, the operator has substituted webcam visual
+confirmation because no Rigol is connected. Compare illumination before Start,
+during Live View, and after Stop/restart. This establishes visible on/off
+behavior only; individual pulse widths and sensor exposure edges remain
+unmeasured. Retain the 1000 fps target and 100 µs LED strobe throughout.
+
 The default JSON includes this section (`auto` discovers the generator; custom
 rigs may use an explicit port):
 
@@ -84,10 +96,9 @@ enable a device that has not been selected during hardware setup.
   disconnect are refused while a capture generation owns the generator.
   Physical OUT1 (SDK index 0) is illumination; OUT2 (index 1) remains sorting.
 - Stop first gates the generator off and reads it back; then drives OUT1 as a
-  GPIO to the strobe's inactive level (polarity 1 = active high -> low,
-  polarity 0 = active low -> high) and stops the SDK. The strobe pulse is what
-  is expected to light the LED; physical darkness still needs commissioning
-  verification on the connected driver. Partial start failures use the same cleanup.
+  GPIO low and stops the SDK. Webcam commissioning confirmed GPIO low is dark
+  and high lights this rig. Do not infer the GPIO off level from the capture
+  strobe polarity. Partial start failures use the same cleanup.
   Retrieval errors and a three-second no-frame timeout fault illuminated runs.
 - An unconfirmed generator/LED stop survives in the lifecycle failure record
   and is surfaced by the Stop action. OFF is never inferred from a failed write.

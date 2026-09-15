@@ -2,12 +2,13 @@
 
 ## 2026-09-15 — Illuminated Live View Stop-level regression (#413)
 
-The 1000 Hz preset uses strobe polarity 0. Stop now requests the inactive
-GPIO level for the configured polarity instead of always requesting low.
-The two-polarity regression fails with the old low-only call and passes with
-the fix. Windows desktop rebuild and all 102 fast-lane tests passed (12
-sandbox-related failures passed on an unrestricted rerun). Scope confirmation
-of LED current after Stop remains required; SDK success is not that measurement.
+The 1000 Hz preset uses a 100 µs strobe, polarity 0. Webcam commissioning
+disproved the inferred polarity-dependent GPIO off level: high left the LED
+lit after Stop, while explicit GPIO low made it dark. Stop now drives low
+independently of strobe polarity. The corrected two-polarity regression fails
+against the high-on-stop code and passes after correction; desktop rebuild
+passed. The operator replaced unavailable scope acceptance with webcam on/off
+confirmation and specified LED pulses above roughly 45 µs, normally 100 µs.
 
 > Snapshot of recently merged features and fixes, as of 2025-11 / 2025-12.
 
