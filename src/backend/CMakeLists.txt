@@ -101,6 +101,37 @@ if(MIB_BUILD_PROCESSING_ONLY)
     return()
 endif()
 
+# Clean-room OEABT compatibility layer. The protocol target is standard
+# C++17; Qt is confined to endpoint enumeration and serial I/O.
+add_library(oeabt_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/OeabtProtocol.cpp
+)
+target_include_directories(oeabt_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(oeabt_core PROPERTIES
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+
+add_library(oeabt_qt_serial STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/QtSerialTransport.cpp
+)
+target_include_directories(oeabt_qt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(oeabt_qt_serial PUBLIC oeabt_core Qt6::Core Qt6::SerialPort)
+set_target_properties(oeabt_qt_serial PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(MIB_BUILD_OEABT_TOOLS)
+    add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)
+    target_link_libraries(oeabtctl PRIVATE oeabt_qt_serial)
+    set_target_properties(oeabtctl PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+endif()
+
 # Native hot-swap artifact. It deliberately links only the mask kernel and
 # OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
 # Windows DLL before the registry publisher hashes it.
@@ -193,22 +224,14 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/playback/PlaybackService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
-target_link_libraries(mib_backend PUBLIC mib_processing)
-
-if(MIB_HAS_EGRABBER)
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
-    )
-else()
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.stub.cpp
-    )
-endif()
+target_link_libraries(mib_backend PUBLIC mib_processing oeabt_qt_serial)
 
 if(MIB_HAS_ONNXRUNTIME)
     target_sources(mib_backend PRIVATE
@@ -236,6 +259,12 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=0)
 endif()
 
+if(MIB_HAS_COREMOR)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=1)
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=0)
+endif()
+
 if(MIB_HAS_MINDVISION)
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_MINDVISION=1)
 else()
@@ -253,9 +282,11 @@ target_include_directories(mib_backend PUBLIC
 )
 if(MIB_HAS_EGRABBER)
     target_include_directories(mib_backend PUBLIC
-        ${PROJECT_SOURCE_DIR}/include/Coremor
         "C:/Program Files/Euresys/eGrabber/include"
     )
+endif()
+if(MIB_HAS_COREMOR)
+    target_include_directories(mib_backend PUBLIC ${PROJECT_SOURCE_DIR}/include/Coremor)
 endif()
 if(MIB_HAS_MINDVISION)
     target_include_directories(mib_backend PUBLIC
@@ -290,7 +321,7 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_USE_SENTRY=0)
 endif()
 
-if(MIB_HAS_EGRABBER)
+if(MIB_HAS_COREMOR)
     set(COREMOR_LIB_DIR ${PROJECT_SOURCE_DIR}/include/Coremor)
     target_link_libraries(mib_backend PUBLIC
         ${COREMOR_LIB_DIR}/XMT_DLL_SER.lib

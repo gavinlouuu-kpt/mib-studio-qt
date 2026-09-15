@@ -14,7 +14,8 @@
 
 ## Hardware I/O
 - [[CameraControlService]] — GenICam script apply, device reset, discovery
-- [[AutofocusService]] — nanopositioner voltage via serial (Coremor XMT)
+- [[AutofocusService]] — backend-neutral nanopositioner control (OEABT serial
+  on Linux/Windows; CoreMOR XMT on Windows)
 - [[TriggerService]] — camera digital-output pulse on target-group detection
 - [[SyringePumpService]] — dual-pump Modbus RTU over serial
 

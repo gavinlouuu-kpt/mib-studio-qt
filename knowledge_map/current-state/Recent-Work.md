@@ -5,6 +5,17 @@
 
 ## Features shipped
 
+- **Cross-platform OEABT nanopositioner backend** (2026-08-31) — Added a
+  Qt-free C++17 protocol core, QSerialPort adapter, guarded `oeabtctl`
+  diagnostic/acceptance CLI, and Linux/Windows MIB Studio backend selection
+  while retaining CoreMOR on Windows. Serial discovery uses persistent
+  endpoint IDs and protocol identity rather than trusting the generic CH341
+  VID/PID. Connect is observe-only; safe-shutdown voltage is written only
+  after an active control session. Legacy COM configuration migrates to an
+  explicit CoreMOR endpoint. Real-hardware write release remains gated because
+  the physically confirmed controller adapter returned no identity bytes.
+  Task record: [[../task/2026-08-31-oeabt-nanopositioner]].
+
 - **Trigger-path hardening** (2026-07-18, issue #227) — the
   [[../services/TriggerService]] thread elevates itself to
   `THREAD_PRIORITY_TIME_CRITICAL` on Windows (best-effort `SCHED_FIFO`

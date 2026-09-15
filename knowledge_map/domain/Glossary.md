@@ -76,7 +76,12 @@
 - **Modbus RTU** — serial protocol used by
   [[../services/SyringePumpService]] (Sample + Sheath pumps).
 - **Coremor XMT** — serial protocol for the piezo nanopositioner used by
-  [[../services/AutofocusService]]. DLL under `include/Coremor/`.
+  the Windows backend of [[../services/AutofocusService]]. DLL under
+  `include/Coremor/`.
+- **OEABT** — single-piezo controller supported by
+  [[../services/AutofocusService]] through a clean-room ASCII serial backend.
+  Linux uses the standard `ch341` USB-serial driver; see
+  `docs/integration/oeabt-nanopositioner.md`.
 - **ONNX Runtime** — ML runtime for [[../services/YoloService]].
 
 ## Code idioms

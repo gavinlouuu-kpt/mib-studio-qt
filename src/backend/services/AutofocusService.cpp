@@ -3,53 +3,35 @@
 #include "backend/app/Tools.h"
 #include "backend/diagnostics/CrashStateMirror.h"
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#endif
-#include <Coremor/XMT_DLL_SER.h>
-
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
-#include <mutex>
 #include <thread>
 
 namespace backend::services {
 
 namespace {
-    // Plausible voltage range for XMT nanopositioner (V). Used to validate probe response.
-    constexpr double PROBE_VOLTAGE_MIN = 0.0;
-    constexpr double PROBE_VOLTAGE_MAX = 250.0;
-    constexpr int SERIAL_OPEN_ATTEMPTS = 3;
-    constexpr auto SERIAL_RETRY_DELAY = std::chrono::milliseconds(150);
-
-    std::mutex& xmtSerialMutex() {
-        static std::mutex mutex;
-        return mutex;
-    }
-
-    bool isPlausibleProbeVoltage(double val) {
-        return std::isfinite(val) && val >= PROBE_VOLTAGE_MIN && val <= PROBE_VOLTAGE_MAX;
-    }
-
-    int openComWithRetriesLocked(int comPort, int baudRate) {
-        int result = 0;
-        for (int attempt = 1; attempt <= SERIAL_OPEN_ATTEMPTS; ++attempt) {
-            CloseSer();
-            result = OpenComConnectRS232(comPort, baudRate);
-            if (result != 0) {
-                return result;
-            }
-            SPDLOG_DEBUG("AutofocusService: COM{} open attempt {}/{} failed",
-                         comPort, attempt, SERIAL_OPEN_ATTEMPTS);
-            std::this_thread::sleep_for(SERIAL_RETRY_DELAY);
-        }
-        return result;
-    }
+backend::nanopositioner::Endpoint legacyCoremorEndpoint(int comPort, int baudRate,
+                                                        unsigned char deviceAddress) {
+    backend::nanopositioner::Endpoint endpoint;
+    endpoint.backend = backend::nanopositioner::BackendKind::Coremor;
+    endpoint.persistentId = "COM" + std::to_string(comPort);
+    endpoint.systemPath = endpoint.persistentId;
+    endpoint.displayName = "CoreMOR on " + endpoint.persistentId;
+    endpoint.coremorPort = comPort;
+    endpoint.coremorBaudRate = baudRate;
+    endpoint.coremorAddress = deviceAddress;
+    return endpoint;
+}
 } // namespace
 
-AutofocusService::AutofocusService() {
+AutofocusService::AutofocusService()
+    : AutofocusService([](backend::nanopositioner::BackendKind kind) {
+          return backend::nanopositioner::createNanopositionerBackend(kind);
+      }) {}
+
+AutofocusService::AutofocusService(BackendFactory backendFactory)
+    : backendFactory_(std::move(backendFactory)) {
     // statsThread_ runs for the lifetime of the service so that ring-ratio
     // samples accepted via onRingRatio (called from the ProcessingService
     // realtime thread on every valid frame) can be drained off the realtime
@@ -69,74 +51,79 @@ AutofocusService::~AutofocusService() {
     }
 }
 
-bool AutofocusService::connect(int comPort, int baudRate, unsigned char deviceAddress) {
+bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requestedEndpoint) {
     if (connected_.load()) {
         disconnect();
     }
 
-    comPort_ = comPort;
-    baudRate_ = baudRate;
-    deviceAddress_ = deviceAddress;
+    auto endpoint = requestedEndpoint;
+    auto selectedKind = endpoint.backend;
+    if (selectedKind == backend::nanopositioner::BackendKind::Auto) {
+        selectedKind = endpoint.coremorPort > 0 && !endpoint.knownOeabtCandidate
+                           ? backend::nanopositioner::BackendKind::Coremor
+                           : backend::nanopositioner::BackendKind::Oeabt;
+    }
+    endpoint.backend = selectedKind;
 
-    {
-        std::scoped_lock serialLock(xmtSerialMutex());
-        int result = openComWithRetriesLocked(comPort, baudRate);
-        if (result == 0) {
-            SPDLOG_ERROR("AutofocusService: Failed to open COM{} at {} baud after {} attempts",
-                         comPort, baudRate, SERIAL_OPEN_ATTEMPTS);
-            if (statusCallback_) {
-                statusCallback_("Failed to open COM port " + std::to_string(comPort));
-            }
-            connected_.store(false);
-            CloseSer();
-            return false;
-        }
-
-        double currentVolt = XMT_COMMAND_ReadData(deviceAddress_, 5, 0, 0);
-        if (isPlausibleProbeVoltage(currentVolt)) {
-            currentVoltage_.store(currentVolt);
-            SPDLOG_INFO("AutofocusService: COM{} opened and responded at {:.2f} V", comPort, currentVolt);
-        } else {
-            // Some CoreMOR controllers return an invalid first read immediately after open.
-            // Keep the explicit user-selected connection open, but log the value for diagnostics
-            // instead of treating a single bad read as a hard failure.
-            SPDLOG_WARN("AutofocusService: COM{} opened but initial voltage read was not plausible: {}",
-                        comPort, currentVolt);
-        }
-
-        connected_.store(true);
-        {
-            auto& m = backend::diagnostics::CrashStateMirror::instance().autofocus;
-            m.connected.store(true);
-            m.voltage.store(currentVoltage_.load());
-            backend::diagnostics::CrashStateMirror::instance().setAutofocusPort(
-                "COM" + std::to_string(comPort));
-        }
-
-        // Initialize voltage
-        {
-            std::scoped_lock cfgLock(configMutex_);
-            // Clamp to the configured safe range so a stale/misconfigured
-            // initialVoltage can never drive the probe past its limits.
-            const double initialVoltage = autofocus::clampVoltage(
-                config_.initialVoltage, config_.minVoltage, config_.maxVoltage);
-            XMT_COMMAND_SinglePoint(deviceAddress_, 0, 0, 0, initialVoltage);
-            currentVoltage_.store(initialVoltage);
-            backend::diagnostics::CrashStateMirror::instance().autofocus.voltage.store(initialVoltage);
-        }
+    auto device = backendFactory_ ? backendFactory_(selectedKind) : nullptr;
+    if (!device) {
+        notifyStatus("No nanopositioner backend is available for the selected endpoint");
+        return false;
     }
 
-    // Start control thread
+    std::string error;
+    if (!device->connect(endpoint, error)) {
+        SPDLOG_ERROR("AutofocusService: {} connection failed for {}: {}",
+                     backend::nanopositioner::backendKindName(selectedKind),
+                     endpoint.displayName.empty() ? endpoint.systemPath : endpoint.displayName,
+                     error);
+        notifyStatus(error);
+        return false;
+    }
+
+    double voltage = 0.0;
+    if (!device->readVoltage(voltage, error)) {
+        device->disconnect();
+        notifyStatus(error);
+        return false;
+    }
+    currentVoltage_.store(voltage);
+    {
+        std::scoped_lock deviceLock(deviceMutex_);
+        device_ = std::move(device);
+        endpoint_ = endpoint;
+        endpoint_.systemPath = device_->connectedEndpoint();
+    }
+
+    comPort_ = endpoint.coremorPort;
+    baudRate_ = endpoint.coremorBaudRate;
+    deviceAddress_ = endpoint.coremorAddress;
+    activeControlSession_.store(false);
+    connected_.store(true);
+
+    {
+        auto& mirror = backend::diagnostics::CrashStateMirror::instance().autofocus;
+        mirror.connected.store(true);
+        mirror.voltage.store(currentVoltage_.load());
+        backend::diagnostics::CrashStateMirror::instance().setAutofocusPort(endpoint_.systemPath);
+    }
+
     if (!running_.load()) {
         running_.store(true);
         controlThread_ = std::thread(&AutofocusService::controlLoop, this);
     }
 
-    if (statusCallback_) {
-        statusCallback_("Connected to nanopositioner on COM" + std::to_string(comPort));
-    }
-
+    SPDLOG_INFO("AutofocusService: Connected to {} nanopositioner on {} at {:.3f} V (observe-only)",
+                backend::nanopositioner::backendKindName(selectedKind), endpoint_.systemPath,
+                currentVoltage_.load());
+    notifyStatus("Connected to " +
+                 std::string(backend::nanopositioner::backendKindName(selectedKind)) +
+                 " nanopositioner on " + endpoint_.systemPath);
     return true;
+}
+
+bool AutofocusService::connect(int comPort, int baudRate, unsigned char deviceAddress) {
+    return connect(legacyCoremorEndpoint(comPort, baudRate, deviceAddress));
 }
 
 void AutofocusService::disconnect() {
@@ -152,19 +139,28 @@ void AutofocusService::disconnect() {
         }
     }
 
-    // Set safe shutdown voltage and close the global SDK handle under the serial mutex.
-    {
-        std::scoped_lock serialLock(xmtSerialMutex());
-        std::scoped_lock cfgLock(configMutex_);
-        double safeVoltage = config_.safeShutdownVoltage;
-        if (connected_.load()) {
-            XMT_COMMAND_SinglePoint(deviceAddress_, 0, 0, 0, safeVoltage);
+    if (activeControlSession_.load()) {
+        double safeVoltage = 0.0;
+        {
+            std::scoped_lock cfgLock(configMutex_);
+            safeVoltage = config_.safeShutdownVoltage;
         }
-        CloseSer();
+        std::string error;
+        if (!writeDeviceVoltage(safeVoltage, error)) {
+            SPDLOG_ERROR("AutofocusService: Failed to apply safe shutdown voltage: {}", error);
+            notifyStatus("Failed to apply safe shutdown voltage: " + error);
+        }
     }
 
-    // Close COM port
+    {
+        std::scoped_lock deviceLock(deviceMutex_);
+        if (device_) {
+            device_->disconnect();
+            device_.reset();
+        }
+    }
     connected_.store(false);
+    activeControlSession_.store(false);
     backend::diagnostics::CrashStateMirror::instance().autofocus.connected.store(false);
 
     // Clear buffers (both pending inbox and ring-ratio buffer) so a later
@@ -180,43 +176,86 @@ void AutofocusService::disconnect() {
     }
 
     SPDLOG_INFO("AutofocusService: Disconnected from nanopositioner");
-    if (statusCallback_) {
-        statusCallback_("Disconnected from nanopositioner");
-    }
+    notifyStatus("Disconnected from nanopositioner");
 }
 
 bool AutofocusService::probeComPort(int comPort, int baudRate, unsigned char deviceAddress) {
-    // Caller must not be connected (SDK uses a single global COM handle).
-    std::scoped_lock serialLock(xmtSerialMutex());
-    int result = openComWithRetriesLocked(comPort, baudRate);
-    if (result == 0) {
-        CloseSer();
-        SPDLOG_DEBUG("AutofocusService: COM{} probe failed to open at {} baud", comPort, baudRate);
+    return probeEndpoint(legacyCoremorEndpoint(comPort, baudRate, deviceAddress));
+}
+
+std::vector<backend::nanopositioner::Endpoint> AutofocusService::availableEndpoints() {
+    auto endpoints = backend::nanopositioner::availableOeabtEndpoints();
+    endpoints.erase(
+        std::remove_if(endpoints.begin(), endpoints.end(),
+                       [](const auto& endpoint) { return !endpoint.knownOeabtCandidate; }),
+        endpoints.end());
+
+    for (int port : backend::Tools::availableComPortNumbers()) {
+        endpoints.push_back(legacyCoremorEndpoint(port, 115200, 1));
+    }
+    return endpoints;
+}
+
+bool AutofocusService::probeEndpoint(const backend::nanopositioner::Endpoint& endpoint) {
+    std::string error;
+    const bool ok = backend::nanopositioner::probeNanopositionerEndpoint(endpoint, error);
+    if (!ok) {
+        SPDLOG_DEBUG("AutofocusService: probe failed for {}: {}",
+                     endpoint.displayName.empty() ? endpoint.systemPath : endpoint.displayName,
+                     error);
+    }
+    return ok;
+}
+
+backend::nanopositioner::BackendKind AutofocusService::getBackendKind() const {
+    std::scoped_lock lock(deviceMutex_);
+    return device_ ? device_->kind() : endpoint_.backend;
+}
+
+std::string AutofocusService::getEndpointId() const {
+    std::scoped_lock lock(deviceMutex_);
+    return endpoint_.persistentId.empty() ? endpoint_.systemPath : endpoint_.persistentId;
+}
+
+bool AutofocusService::readDeviceVoltage(double& voltage, std::string& error) {
+    std::scoped_lock lock(deviceMutex_);
+    return device_ && device_->readVoltage(voltage, error);
+}
+
+bool AutofocusService::writeDeviceVoltage(double voltage, std::string& error) {
+    Config cfg;
+    {
+        std::scoped_lock cfgLock(configMutex_);
+        cfg = config_;
+    }
+    if (!std::isfinite(voltage) || voltage < cfg.minVoltage || voltage > cfg.maxVoltage) {
+        error = "Requested voltage is outside configured safety limits";
         return false;
     }
 
-    double val = XMT_COMMAND_ReadData(deviceAddress, 5, 0, 0);
-    if (!isPlausibleProbeVoltage(val)) {
-        std::this_thread::sleep_for(SERIAL_RETRY_DELAY);
-        val = XMT_COMMAND_ReadData(deviceAddress, 5, 0, 0);
+    std::scoped_lock lock(deviceMutex_);
+    if (!device_) {
+        error = "Nanopositioner is not connected";
+        return false;
     }
-    CloseSer();
-    bool plausible = isPlausibleProbeVoltage(val);
-    if (plausible) {
-        SPDLOG_DEBUG("AutofocusService: COM{} probe OK (read {:.2f} V)", comPort, val);
-    } else {
-        SPDLOG_DEBUG("AutofocusService: COM{} probe rejected voltage response {}", comPort, val);
+    if (const auto maximum = device_->maximumVoltage(); maximum && voltage > *maximum) {
+        error = "Requested voltage exceeds the controller-reported maximum";
+        return false;
     }
-    return plausible;
+    if (!device_->setVoltage(voltage, error)) {
+        return false;
+    }
+    activeControlSession_.store(true);
+    currentVoltage_.store(voltage);
+    backend::diagnostics::CrashStateMirror::instance().autofocus.voltage.store(voltage);
+    return true;
 }
 
 void AutofocusService::setEnabled(bool enabled) {
     enabled_.store(enabled);
     backend::diagnostics::CrashStateMirror::instance().autofocus.enabled.store(enabled);
     SPDLOG_INFO("AutofocusService: Autofocus {}", enabled ? "enabled" : "disabled");
-    if (statusCallback_) {
-        statusCallback_(enabled ? "Autofocus enabled" : "Autofocus disabled");
-    }
+    notifyStatus(enabled ? "Autofocus enabled" : "Autofocus disabled");
 }
 
 void AutofocusService::increaseVoltage() {
@@ -275,7 +314,8 @@ void AutofocusService::updateStatistics() {
         return;
     }
 
-    std::vector<double> sorted = std::vector<double>(ringRatioBuffer_.begin(), ringRatioBuffer_.end());
+    std::vector<double> sorted =
+        std::vector<double>(ringRatioBuffer_.begin(), ringRatioBuffer_.end());
     std::sort(sorted.begin(), sorted.end());
 
     double median = calculateMedian(sorted);
@@ -309,6 +349,17 @@ void AutofocusService::setStatusCallback(StatusCallback callback) {
     statusCallback_ = std::move(callback);
 }
 
+void AutofocusService::notifyStatus(const std::string& message) const {
+    StatusCallback callback;
+    {
+        std::scoped_lock lock(callbackMutex_);
+        callback = statusCallback_;
+    }
+    if (callback) {
+        callback(message);
+    }
+}
+
 void AutofocusService::statsLoop() {
     SPDLOG_INFO("AutofocusService: Stats loop started");
 
@@ -327,9 +378,8 @@ void AutofocusService::statsLoop() {
     while (statsRunning_.load()) {
         {
             std::unique_lock<std::mutex> lk(pendingSamplesMutex_);
-            pendingSamplesCV_.wait(lk, [this] {
-                return !statsRunning_.load() || !pendingSamples_.empty();
-            });
+            pendingSamplesCV_.wait(
+                lk, [this] { return !statsRunning_.load() || !pendingSamples_.empty(); });
             if (!statsRunning_.load() && pendingSamples_.empty()) break;
             drained.swap(pendingSamples_);
         }
@@ -375,31 +425,29 @@ void AutofocusService::controlLoop() {
                 cfg = config_;
             }
 
-            if (increaseVoltageRequest_.load()) {
-                double newVoltage = std::min(currentVoltage_.load() + cfg.manualVoltageStep, cfg.maxVoltage);
-                {
-                    std::scoped_lock serialLock(xmtSerialMutex());
-                    XMT_COMMAND_SinglePoint(deviceAddress_, 0, 0, 0, newVoltage);
-                }
-                currentVoltage_.store(newVoltage);
-                SPDLOG_DEBUG("AutofocusService: Manual voltage increased to {}V", newVoltage);
-                increaseVoltageRequest_.store(false);
-                if (statusCallback_) {
-                    statusCallback_("Voltage: " + std::to_string(newVoltage) + "V");
+            if (increaseVoltageRequest_.exchange(false)) {
+                double newVoltage =
+                    std::min(currentVoltage_.load() + cfg.manualVoltageStep, cfg.maxVoltage);
+                std::string error;
+                if (writeDeviceVoltage(newVoltage, error)) {
+                    SPDLOG_DEBUG("AutofocusService: Manual voltage increased to {}V", newVoltage);
+                    notifyStatus("Voltage: " + std::to_string(newVoltage) + "V");
+                } else {
+                    SPDLOG_ERROR("AutofocusService: Manual voltage increase failed: {}", error);
+                    notifyStatus("Voltage change failed: " + error);
                 }
             }
 
-            if (decreaseVoltageRequest_.load()) {
-                double newVoltage = std::max(currentVoltage_.load() - cfg.manualVoltageStep, cfg.minVoltage);
-                {
-                    std::scoped_lock serialLock(xmtSerialMutex());
-                    XMT_COMMAND_SinglePoint(deviceAddress_, 0, 0, 0, newVoltage);
-                }
-                currentVoltage_.store(newVoltage);
-                SPDLOG_DEBUG("AutofocusService: Manual voltage decreased to {}V", newVoltage);
-                decreaseVoltageRequest_.store(false);
-                if (statusCallback_) {
-                    statusCallback_("Voltage: " + std::to_string(newVoltage) + "V");
+            if (decreaseVoltageRequest_.exchange(false)) {
+                double newVoltage =
+                    std::max(currentVoltage_.load() - cfg.manualVoltageStep, cfg.minVoltage);
+                std::string error;
+                if (writeDeviceVoltage(newVoltage, error)) {
+                    SPDLOG_DEBUG("AutofocusService: Manual voltage decreased to {}V", newVoltage);
+                    notifyStatus("Voltage: " + std::to_string(newVoltage) + "V");
+                } else {
+                    SPDLOG_ERROR("AutofocusService: Manual voltage decrease failed: {}", error);
+                    notifyStatus("Voltage change failed: " + error);
                 }
             }
         }
@@ -414,12 +462,11 @@ void AutofocusService::controlLoop() {
 
             // Update current voltage from device
             double currentVolt = 0.0;
-            {
-                std::scoped_lock serialLock(xmtSerialMutex());
-                currentVolt = XMT_COMMAND_ReadData(deviceAddress_, 5, 0, 0);
-            }
-            if (isPlausibleProbeVoltage(currentVolt)) {
+            std::string readError;
+            if (readDeviceVoltage(currentVolt, readError)) {
                 currentVoltage_.store(currentVolt);
+            } else {
+                SPDLOG_WARN("AutofocusService: Voltage read failed: {}", readError);
             }
 
             // Get median ring ratio
@@ -429,35 +476,39 @@ void AutofocusService::controlLoop() {
             uint64_t currentSequence = ringRatioSequence_.load(std::memory_order_relaxed);
             uint64_t lastUpdateUs = lastRingRatioUpdateUs_.load(std::memory_order_relaxed);
             uint64_t nowUs = backend::Tools::getTimestamp();
-            bool freshTimestamp = (lastUpdateUs > 0) &&
-                                  (nowUs - lastUpdateUs <= static_cast<uint64_t>(cfg.ringRatioStaleMs) * 1000ULL);
+            bool freshTimestamp =
+                (lastUpdateUs > 0) &&
+                (nowUs - lastUpdateUs <= static_cast<uint64_t>(cfg.ringRatioStaleMs) * 1000ULL);
             bool hasNewSample = (currentSequence != lastAppliedSequence_);
             uint64_t samplesSinceStep = currentSequence - lastAppliedSequence_;
-            bool hasEnoughSamples = samplesSinceStep >= static_cast<uint64_t>(cfg.minSamplesPerStep);
+            bool hasEnoughSamples =
+                samplesSinceStep >= static_cast<uint64_t>(cfg.minSamplesPerStep);
 
             // Only perform autofocus control if we have valid data
-            if (medianRingRatio > 0.0 && freshTimestamp && 
+            if (medianRingRatio > 0.0 && freshTimestamp &&
                 (!cfg.requireNewSamplePerStep || hasNewSample) && hasEnoughSamples) {
-                
+
                 const double newVoltage = autofocus::computeFocusVoltage(
                     medianRingRatio, currentVoltage_.load(),
-                    autofocus::FocusParams{cfg.focusSetpoint, cfg.focusRange,
-                                           cfg.voltageStep, cfg.fineVoltageStep,
-                                           cfg.minVoltage, cfg.maxVoltage,
+                    autofocus::FocusParams{cfg.focusSetpoint, cfg.focusRange, cfg.voltageStep,
+                                           cfg.fineVoltageStep, cfg.minVoltage, cfg.maxVoltage,
                                            cfg.focusDirection});
 
                 // Apply the new voltage if it changed
                 if (std::abs(newVoltage - currentVoltage_.load()) > 0.01) {
-                    {
-                        std::scoped_lock serialLock(xmtSerialMutex());
-                        XMT_COMMAND_SinglePoint(deviceAddress_, 0, 0, 0, newVoltage);
+                    std::string error;
+                    if (!writeDeviceVoltage(newVoltage, error)) {
+                        SPDLOG_ERROR("AutofocusService: Autofocus voltage step failed: {}", error);
+                        notifyStatus("Autofocus voltage step failed: " + error);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        continue;
                     }
-                    currentVoltage_.store(newVoltage);
                     lastAppliedSequence_ = currentSequence;
 
-                    // Clear buffer after a step to ensure next statistics are based on post-step samples.
-                    // Also drop anything queued in pendingSamples_ that hasn't yet been absorbed by
-                    // statsLoop, otherwise pre-step samples would leak into the post-step buffer.
+                    // Clear buffer after a step to ensure next statistics are based on post-step
+                    // samples. Also drop anything queued in pendingSamples_ that hasn't yet been
+                    // absorbed by statsLoop, otherwise pre-step samples would leak into the
+                    // post-step buffer.
                     {
                         std::scoped_lock lock(pendingSamplesMutex_, ringRatioMutex_);
                         pendingSamples_.clear();
@@ -469,12 +520,11 @@ void AutofocusService::controlLoop() {
                         updateStatistics(); // Update statistics to reflect empty buffer
                     }
 
-                    SPDLOG_DEBUG("AutofocusService: Adjusted voltage to {}V (ring width: {:.3f}, deviation: {:.3f})",
-                                newVoltage, medianRingRatio, medianRingRatio - cfg.focusSetpoint);
-                    if (statusCallback_) {
-                        statusCallback_("Voltage: " + std::to_string(newVoltage) + "V (ring width: " + 
-                                      std::to_string(medianRingRatio) + ")");
-                    }
+                    SPDLOG_DEBUG("AutofocusService: Adjusted voltage to {}V (ring width: {:.3f}, "
+                                 "deviation: {:.3f})",
+                                 newVoltage, medianRingRatio, medianRingRatio - cfg.focusSetpoint);
+                    notifyStatus("Voltage: " + std::to_string(newVoltage) +
+                                 "V (ring width: " + std::to_string(medianRingRatio) + ")");
                 }
             }
         }
@@ -487,4 +537,3 @@ void AutofocusService::controlLoop() {
 }
 
 } // namespace backend::services
-

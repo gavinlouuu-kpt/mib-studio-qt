@@ -42,6 +42,7 @@
 
 ### Nanopositioner
 - `task/2025-11-19-nanopositioner-tab.md`
+- `task/2026-08-31-oeabt-nanopositioner.md`
 
 ### HDF Review scalability & crashes
 - `task/review_2gb_scalability.md`
@@ -78,6 +79,7 @@
 2026-05-22-boot-service-toggles.md
 2026-05-22-crash-monitoring.md
 2026-06-01-backend-only-build-test-mode.md
+2026-08-31-oeabt-nanopositioner.md
 2026-06-01-hdf5-crash-recovery-checkpoints.md
 2026-06-02-long-run-frame-growth.md
 2026-07-13-processing-conformance.md

@@ -15,14 +15,20 @@ if(NOT MIB_BUILD_PROCESSING_ONLY)
     find_package(onnxruntime CONFIG QUIET)
 endif()
 
-# Hardware SDKs (EGrabber/Coremor) are Windows-only in this project. Non-Windows
-# builds compile against service stubs so Linux can be used for fast local
-# verification without installing proprietary SDKs.
+# Proprietary hardware SDKs are Windows-only, but their availability is kept
+# independent so autofocus is not accidentally disabled with a camera SDK.
 set(MIB_HAS_EGRABBER OFF)
 if(WIN32 AND MIB_ENABLE_HARDWARE_SDKS)
     set(MIB_HAS_EGRABBER ON)
 endif()
-message(STATUS "Hardware SDK integrations: ${MIB_HAS_EGRABBER}")
+set(MIB_HAS_COREMOR OFF)
+if(WIN32 AND MIB_ENABLE_HARDWARE_SDKS AND
+   EXISTS "${PROJECT_SOURCE_DIR}/include/Coremor/XMT_DLL_SER.h" AND
+   EXISTS "${PROJECT_SOURCE_DIR}/include/Coremor/XMT_DLL_SER.lib")
+    set(MIB_HAS_COREMOR ON)
+endif()
+message(STATUS "EGrabber SDK integration: ${MIB_HAS_EGRABBER}")
+message(STATUS "CoreMOR SDK integration: ${MIB_HAS_COREMOR}")
 
 set(MIB_HAS_MINDVISION OFF)
 if(WIN32 AND MIB_ENABLE_MINDVISION)
