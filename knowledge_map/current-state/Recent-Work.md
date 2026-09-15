@@ -1,5 +1,23 @@
 # Recent Work
 
+## 2026-09-15 — Desktop startup acceptance gaps (#413)
+
+Actual app checks found implicit mock fallback blocking MindVision discovery
+in builds without EGrabber, and automatic Overview navigation starting the
+camera before Play. The fallback now leaves selection open when no camera mode
+was explicitly requested. Illuminated profiles require explicit Play on
+Overview. Both failures have regressions proven to fail before correction.
+
+## 2026-09-15 — Illuminated Live View Stop-level regression (#413)
+
+The 1000 Hz preset uses a 100 µs strobe, polarity 0. Webcam commissioning
+disproved the inferred polarity-dependent GPIO off level: high left the LED
+lit after Stop, while explicit GPIO low made it dark. Stop now drives low
+independently of strobe polarity. The corrected two-polarity regression fails
+against the high-on-stop code and passes after correction; desktop rebuild
+passed. The operator replaced unavailable scope acceptance with webcam on/off
+confirmation and specified LED pulses above roughly 45 µs, normally 100 µs.
+
 > Snapshot of recently merged features and fixes, as of 2025-11 / 2025-12.
 
 ## 2026-09-14 — Periodic flush byte-watermark fix (#407)
@@ -12,6 +30,22 @@ Fix: `ProcessingService::needsFlush()` fires on count **or** a 50 % byte-budget
 watermark; the coordinator also adds a 2-second time-based backstop. Test:
 `processing.flush_byte_watermark`.
 > Refresh from `git log --oneline -20` when outdated.
+
+## 2026-09-14 — Illuminated Live View review pass on the rig PC (#413, PR #414)
+
+Read-only probes on the rig PC found a second, never-configured generator
+module on COM4 answering address 1 with zeroed registers, which the lenient
+generator identity accepted; the real generator on COM6 keeps 0 Hz on channels
+it never set. Automatic discovery now requires the requested channel to hold a
+non-zero in-range frequency, excludes a pump-like responder via a read-only
+syringe-volume register check, and names busy/unset/non-generator ports in its
+error; `live_view` parsing
+and period/exposure/strobe rules live in `parseConfig` and gate Save as well as
+Play; Stop is honoured before handle open and CameraPlay; an unconfirmed
+generator/LED OFF survives handle-teardown faults; the default-profile upgrade
+matches a verbatim historical copy. Tests: `backend.illuminated_live`,
+`frontend.config_tabs_state`. Built and tested on the rig PC on 2026-09-15
+(Windows fast lane 102/102); no hardware acceptance yet.
 
 ## Features shipped
 
@@ -1987,3 +2021,40 @@ checks, frontend and Xvfb smoke). The next transport slice adds exact event
 integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
+
+- **One-click illuminated Live View** (2026-09-14, issue #413): saved XGC/R5D
+  profile, capture-owned generator/strobe lifecycle, failed-start/stop handling,
+  simplified Hardware Setup and fake-SDK/serial regression coverage. See
+  [operator guide](../../docs/howto/illuminated-live-view.md).
+
+  Task record: [[../task/2026-09-14-one-click-illuminated-live]].
+
+
+### 2026-09-15 ? Nanopositioner vendor discovery follow-up
+
+Separated the bundled Windows Coremor SDK from EGrabber so a MindVision-only
+build can use the existing nanopositioner scan/auto-connect path. The configure
+regression failed before the wiring fix and passes afterward. The operator
+identified the attached vendor as OEABT; no OEABT driver exists yet. Controller
+model/protocol identification remains necessary for actual auto-connect.
+See [[../services/AutofocusService]] for the explicit support inventory.
+
+
+### 2026-09-15 ? Vendor-aware nanopositioner discovery foundation
+
+Added an injectable vendor registry and serial inventory to startup discovery;
+CoreMorrow identifies through its existing read-only probe, while OEABT remains
+explicitly pending its separately supplied protocol. Refresh now requests a scan;
+scan controls prevent competing connects. Unique-match selection covers all ports
+including the saved port. See [[../services/AutofocusService]] and
+[[../frontend/NanopositionerTab]].
+
+
+### September 15 ? OEABT discovery verified on Windows rig
+
+Integrated the protocol from PR #416 with the vendor discovery framework.
+Fixed legacy COM-only migration to Auto (regression-first). Desktop startup
+auto-connected the identified OEABT controller on COM7; illuminated Live View
+ran at 999 fps using generator COM6 and 100 us strobe. App-close released both
+devices and webcam showed dark. No voltage/mode writes. Windows tests105/105
+passed. See [[../task/2026-09-14-one-click-illuminated-live]].

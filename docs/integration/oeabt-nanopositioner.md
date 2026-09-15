@@ -192,3 +192,14 @@ enumeration on current develop, with no Qt dependency in `mib_backend` or
 `oeabtctl`. `SerialTransport` extracts complete frames despite fragmented debug
 output. A mutex-backed backend proxy serializes complete multi-command operations
 for concurrent callers; no dedicated Qt event-loop thread is needed.
+
+
+### PR #413 discovery integration
+
+The shared vendor registry now uses native nanopositioner endpoints and includes
+both OEABT and CoreMorrow/XMT probes. Startup scans all candidates on its worker,
+auto-connects only a unique validated match, and Refresh repeats discovery.
+Connection and serial/vendor controls are disabled while scanning. A legacy
+COM-only setting retains its port preference but defaults to automatic vendor
+selection; an explicit saved vendor is preserved. Discovery and connection are
+observe-only, with no voltage or mode writes.

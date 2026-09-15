@@ -23,6 +23,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/Tools.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/services/NanopositionerDiscovery.h"
 
 using json = nlohmann::json;
 
@@ -107,8 +108,14 @@ NanopositionerTab::NanopositionerTab(backend::AppBackend& backend, QWidget* pare
             &NanopositionerTab::onConnectNanopositioner);
     connect(ui->disconnectBtn, &QPushButton::clicked, this,
             &NanopositionerTab::onDisconnectNanopositioner);
-    connect(ui->refreshComPortBtn, &QPushButton::clicked, this,
-            &NanopositionerTab::populateComPortList);
+    connect(ui->refreshComPortBtn, &QPushButton::clicked, this, [this]() {
+        populateComPortList();
+        emit discoveryRequested();
+    });
+    auto* vendorLabel = new QLabel(tr("Automatic identification: OEABT and CoreMorrow / XMT"), this);
+    vendorLabel->setObjectName("nanopositionerVendorsLabel");
+    vendorLabel->setWordWrap(true);
+    ui->groupVerticalLayout->insertWidget(0, vendorLabel);
     connect(ui->backendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int) {
                 configuredBackend_ = static_cast<backend::nanopositioner::BackendKind>(
@@ -158,6 +165,11 @@ NanopositionerTab::NanopositionerTab(backend::AppBackend& backend, QWidget* pare
 NanopositionerTab::~NanopositionerTab() {
     backend_.autofocus().setStatusCallback({});
     delete ui;
+}
+
+void NanopositionerTab::setDiscoveryRunning(bool running) {
+    discoveryRunning_ = running;
+    updateNanopositionerUI();
 }
 
 void NanopositionerTab::populateComPortList() {
@@ -266,18 +278,18 @@ void NanopositionerTab::updateNanopositionerUI() {
     bool connected = autofocus.isConnected();
     bool enabled = autofocus.isEnabled();
 
-    ui->connectBtn->setEnabled(!connected && ui->comPortCombo->count() > 0);
+    ui->connectBtn->setEnabled(!connected && !discoveryRunning_ && ui->comPortCombo->count() > 0);
     ui->disconnectBtn->setEnabled(connected);
-    ui->comPortCombo->setEnabled(!connected);
-    ui->refreshComPortBtn->setEnabled(!connected);
-    ui->backendCombo->setEnabled(!connected);
+    ui->comPortCombo->setEnabled(!connected && !discoveryRunning_);
+    ui->refreshComPortBtn->setEnabled(!connected && !discoveryRunning_);
+    ui->backendCombo->setEnabled(!connected && !discoveryRunning_);
     const auto endpoint = selectedEndpoint();
     const bool coremorSettings =
         endpoint.backend == backend::nanopositioner::BackendKind::Coremor ||
         (endpoint.backend == backend::nanopositioner::BackendKind::Auto &&
          endpoint.coremorPort > 0 && !endpoint.knownOeabtCandidate);
-    ui->baudRateCombo->setEnabled(!connected && coremorSettings);
-    ui->deviceAddressSpinBox->setEnabled(!connected && coremorSettings);
+    ui->baudRateCombo->setEnabled(!connected && !discoveryRunning_ && coremorSettings);
+    ui->deviceAddressSpinBox->setEnabled(!connected && !discoveryRunning_ && coremorSettings);
     ui->autofocusEnabledCheck->setEnabled(connected);
     ui->autofocusEnabledCheck->setCheckState(enabled ? Qt::Checked : Qt::Unchecked);
     ui->increaseVoltageBtn->setEnabled(connected);
@@ -293,6 +305,7 @@ void NanopositionerTab::updateNanopositionerUI() {
 }
 
 void NanopositionerTab::onConnectNanopositioner() {
+    if (discoveryRunning_) return;
     if (ui->comPortCombo->count() == 0) {
         return;
     }

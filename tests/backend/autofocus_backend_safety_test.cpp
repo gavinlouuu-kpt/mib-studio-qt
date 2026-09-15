@@ -71,9 +71,9 @@ int main() {
     {
         const auto legacy =
             backend::nanopositioner::resolvePersistedSelection(std::nullopt, std::nullopt, 6);
-        MIB_EXPECT(legacy.backend == backend::nanopositioner::BackendKind::Coremor &&
+        MIB_EXPECT(legacy.backend == backend::nanopositioner::BackendKind::Auto &&
                        legacy.endpointId == "COM6" && legacy.migratedLegacyComPort,
-                   "legacy COM-only config migrates to explicit CoreMOR endpoint");
+                   "legacy COM-only config preserves port preference without forcing vendor");
 
         const auto modern = backend::nanopositioner::resolvePersistedSelection(
             std::string("oeabt"), std::string("/dev/serial/by-path/controller"), 6);

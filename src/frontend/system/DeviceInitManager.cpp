@@ -1,4 +1,5 @@
 #include "frontend/system/DeviceInitManager.h"
+#include "backend/services/NanopositionerDiscovery.h"
 
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
@@ -39,16 +40,18 @@ probeNanopositionerEndpointsInWorker(backend::nanopositioner::Endpoint preferred
                                                                                                 : 1;
             return lhsRank == rhsRank ? lhs.displayName < rhs.displayName : lhsRank < rhsRank;
         });
-    for (auto endpoint : endpoints) {
-        if (preferred.backend != backend::nanopositioner::BackendKind::Auto &&
-            endpoint.backend != preferred.backend) {
-            continue;
-        }
+    endpoints.erase(std::remove_if(endpoints.begin(), endpoints.end(), [&preferred](const auto& endpoint) {
+        return preferred.backend != backend::nanopositioner::BackendKind::Auto &&
+               endpoint.backend != preferred.backend;
+    }), endpoints.end());
+    for (auto& endpoint : endpoints) {
         endpoint.coremorBaudRate = preferred.coremorBaudRate;
         endpoint.coremorAddress = preferred.coremorAddress;
-        if (backend::services::AutofocusService::probeEndpoint(endpoint)) {
-            validEndpoints.push_back(std::move(endpoint));
-        }
+    }
+    const auto candidates = backend::services::nanopositioner::discover(
+        endpoints, backend::services::AutofocusService::probeEndpoint);
+    for (const auto& candidate : candidates) {
+        if (!candidate.identifiedVendors.empty()) validEndpoints.push_back(candidate.port);
     }
     return validEndpoints;
 }
@@ -68,6 +71,13 @@ DeviceInitManager::DeviceInitManager(backend::AppBackend& backend, QObject* pare
 }
 
 DeviceInitManager::~DeviceInitManager() = default;
+
+void DeviceInitManager::setNanopositionerTab(NanopositionerTab* tab) {
+    if (nanopositionerTab_) disconnect(nanopositionerTab_, nullptr, this, nullptr);
+    nanopositionerTab_ = tab;
+    if (tab) connect(tab, &NanopositionerTab::discoveryRequested,
+                     this, &DeviceInitManager::scheduleNanopositionerStep);
+}
 
 void DeviceInitManager::start() {
     cameraStepScheduled_ = true;
@@ -180,22 +190,9 @@ void DeviceInitManager::onNanopositionerStepTimer() {
     }
     const auto preferredEndpoint = nanopositionerTab_->getConfiguredEndpoint();
 
-    if (!preferredEndpoint.persistentId.empty() && nanopositionerRetryCount_ == 0) {
-        nanopositionerTab_->setNanopositionerStatus(
-            tr("Checking saved nanopositioner endpoint %1...")
-                .arg(QString::fromStdString(preferredEndpoint.persistentId)));
-        if (backend::services::AutofocusService::probeEndpoint(preferredEndpoint) &&
-            backend_.autofocus().connect(preferredEndpoint)) {
-            nanopositionerTab_->applyAutoConnectResult(preferredEndpoint);
-            SPDLOG_INFO("DeviceInitManager: auto-connected to saved nanopositioner endpoint {}",
-                        preferredEndpoint.persistentId);
-            emit nanopositionerInitFinished(true);
-            return;
-        }
-        SPDLOG_WARN("DeviceInitManager: saved nanopositioner endpoint {} did not validate; "
-                    "scanning candidates",
-                    preferredEndpoint.persistentId);
-    }
+    if (nanopositionerWatcher_ && nanopositionerWatcher_->isRunning()) return;
+    nanopositionerTab_->setDiscoveryRunning(true);
+    nanopositionerTab_->setNanopositionerStatus(tr("Identifying nanopositioners across available ports..."));
 
     if (!nanopositionerWatcher_) {
         nanopositionerWatcher_ =
@@ -214,6 +211,7 @@ void DeviceInitManager::onNanopositionerProbeFinished() {
         return;
     }
     auto validEndpoints = nanopositionerWatcher_->result();
+    nanopositionerTab_->setDiscoveryRunning(false);
 
     if (validEndpoints.empty()) {
         if (nanopositionerRetryCount_ < NANOPOSITIONER_MAX_RETRIES) {

@@ -249,8 +249,12 @@ add_library(mib_backend STATIC
 
 target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
 
+
+
 if(MIB_HAS_EGRABBER)
-    target_sources(mib_backend PRIVATE ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp)
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
+    )
 endif()
 
 if(MIB_HAS_ONNXRUNTIME)

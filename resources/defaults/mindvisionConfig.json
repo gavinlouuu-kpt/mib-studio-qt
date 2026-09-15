@@ -3,7 +3,7 @@
   "height": 96,
   "offset_x": 0,
   "offset_y": 0,
-  "exposure_time_us": 1.0,
+  "exposure_time_us": 100.0,
   "analog_gain": 1,
   "auto_exposure_enabled": false,
   "ae_target_brightness": 100,
@@ -13,15 +13,25 @@
   "frame_speed": 2,
   "flip_horizontal": false,
   "flip_vertical": false,
-
   "trigger_mode": 2,
   "ext_trig_signal_type": 0,
   "ext_trig_jitter_us": 0,
   "acq_trigger_delay_us": 0,
   "trigger_count": 1,
-
   "strobe_mode": 1,
-  "strobe_pulse_width_us": 35,
-  "strobe_delay_us": 10,
-  "strobe_polarity": 1
+  "strobe_pulse_width_us": 100,
+  "strobe_delay_us": 0,
+  "strobe_polarity": 0,
+  "live_view": {
+    "enabled": true,
+    "port": "auto",
+    "address": 1,
+    "channel": 1,
+    "frequency_hz": 1000.0,
+    "duty_percent": 2.0,
+    "baud": 9600,
+    "data_bits": 8,
+    "parity": "N",
+    "stop_bits": 1
+  }
 }

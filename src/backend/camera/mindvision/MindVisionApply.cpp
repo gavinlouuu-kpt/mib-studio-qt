@@ -63,10 +63,13 @@ bool applyConfigToHandle(int hCamera, const Config& cfg, std::string* firstError
         }
     }
 
-    auto warnOnFail = [](const char* what, CameraSdkStatus st)
-    {
+    bool success = status == CAMERA_STATUS_SUCCESS;
+    auto warnOnFail = [&](const char* what, CameraSdkStatus st) {
         if (st != CAMERA_STATUS_SUCCESS)
         {
+            success = false;
+            if (firstError && firstError->empty())
+                *firstError = std::string(what) + " failed (status=" + std::to_string(st) + ")";
             SPDLOG_WARN("MindVision config: {} returned {}", what, st);
         }
     };
@@ -102,7 +105,7 @@ bool applyConfigToHandle(int hCamera, const Config& cfg, std::string* firstError
                CameraSetStrobeDelayTime(hCamera, static_cast<UINT>(cfg.strobeDelayUs)));
     warnOnFail("CameraSetStrobePolarity", CameraSetStrobePolarity(hCamera, cfg.strobePolarity));
 
-    return true;
+    return cfg.illuminatedLive ? success : true;
 }
 
 } // namespace backend::camera::mindvision

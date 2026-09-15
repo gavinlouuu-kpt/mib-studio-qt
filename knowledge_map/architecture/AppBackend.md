@@ -22,6 +22,13 @@ frameStore_  // shared_ptr<FrameStore>(5000)
 
 ## `initialize(dataDir)` — what it wires
 
+When EGrabber is unavailable but MindVision is enabled, an implicit default
+mock fallback leaves `isCameraConfigured()` false. This allows the existing
+single-camera startup discovery to select the rig. Explicit `MIB_CAMERA_MODE`
+choices and explicitly configured mock cameras retain their previous behavior.
+Regression: `backend.mindvision_selection_state` checks implicit versus
+explicit mock initialization without touching hardware (#413).
+
 See `src/backend/AppBackend.cpp` around lines 79–200.
 
 1. Creates `dataDir` and resolves a user-writable log path (falls back to
@@ -289,3 +296,46 @@ memory benchmark evidence.
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
+
+## Saved illuminated Live View (#413)
+
+`stageMindVisionConfigFromFile` selects a next-start camera profile without
+hardware I/O. A single factory helper constructs all MindVision sessions and
+binds an optional generator session from `live_view` JSON to the existing
+PulseGeneratorService. Camera selection is separate from profile persistence;
+switching camera modes must not lose the remembered MindVision setup.
+See [lifecycle](../../docs/howto/illuminated-live-view.md).
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.
+
+
+### Single parse for the rig profile (September 14, second pass)
+
+`makeLiveCamera` builds the generator session from `parseConfig(...).config.liveView`
+instead of a second ad-hoc JSON read, so staging, the capture factory, the
+camera and the settings UI share one validation (connection fields, generator
+range, exposure/strobe versus trigger period). Errors carry the parser's
+operator-facing message.

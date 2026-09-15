@@ -120,3 +120,12 @@ container WebKitGTK workarounds (`WEBKIT_DISABLE_DMABUF_RENDERER=1`,
 
 - [[Build]] for presets and commands.
 - `docs/howto/runtime-deploy.md` for runtime deployment details.
+
+
+### Independent nanopositioner support (2026-09-15)
+
+Windows defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver
+even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
+`MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
+processing-only builds remain SDK-free for Coremor. See
+[[../services/AutofocusService]] for the vendor support inventory.

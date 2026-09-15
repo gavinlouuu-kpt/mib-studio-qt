@@ -7,14 +7,37 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
+#include <cstdio>
 #include <string>
 #include <vector>
 
 namespace backend::camera::mindvision {
 
+// Saved `live_view` block (issue #413): the pulse-generator link and trigger
+// train that a coordinated illuminated capture owns. Parsed and validated in
+// parseConfig so the capture factory, the camera and the settings UI share one
+// rule set; nothing here is applied to hardware by the parser.
+struct LiveViewSettings {
+    std::string port{"auto"};  // system port name, or "auto" for discovery
+    int address{1};            // Modbus slave address 1..247
+    int channel{1};            // generator channel 1..4 (1-based, as saved)
+    double frequencyHz{1000.0}; // rig default (2026-09-15): one frame per pulse
+    double dutyPercent{2.0};    // 20 us trigger pulse at 1000 Hz
+    int baud{9600};
+    int dataBits{8};
+    char parity{'N'};
+    int stopBits{1};
+
+    double periodUs() const { return frequencyHz > 0.0 ? 1e6 / frequencyHz : 0.0; }
+    double triggerPulseUs() const { return periodUs() * dutyPercent / 100.0; }
+};
+
 // All fields default to the same values the inline parsers used, so a missing
 // key behaves exactly as before. Values are bounds-checked in parseConfig.
 struct Config {
+    bool illuminatedLive{false};
+    LiveViewSettings liveView{}; // meaningful only when illuminatedLive
     int width{512};
     int height{96};
     int offsetX{0};
@@ -64,6 +87,99 @@ inline int clampInt(int value, int lo, int hi, const char* field,
                            "], clamped to " + std::to_string(clamped));
     }
     return clamped;
+}
+
+inline std::string formatUs(double value)
+{
+    // Whole microseconds read naturally in operator-facing messages; keep one
+    // decimal only when the value is fractional.
+    char buffer[32];
+    if (std::fabs(value - std::round(value)) < 0.05) {
+        std::snprintf(buffer, sizeof(buffer), "%.0f", value);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.1f", value);
+    }
+    return buffer;
+}
+
+// Reads the enabled `live_view` block into c.liveView. Returns an empty string
+// on success, otherwise a message naming the offending field. Missing keys
+// take the bundled preset's defaults; a wrong JSON type is an error rather
+// than a silent fallback, because these values drive hardware.
+inline std::string parseLiveView(const nlohmann::json& live, Config& c)
+{
+    auto& lv = c.liveView;
+    auto number = [&live](const char* key, double& out) -> bool {
+        const auto it = live.find(key);
+        if (it == live.end()) return true;
+        if (!it->is_number()) return false;
+        out = it->get<double>();
+        return true;
+    };
+    auto integer = [&live](const char* key, int& out) -> bool {
+        const auto it = live.find(key);
+        if (it == live.end()) return true;
+        if (!it->is_number_integer()) return false;
+        out = it->get<int>();
+        return true;
+    };
+
+    if (const auto it = live.find("port"); it != live.end()) {
+        if (!it->is_string()) return "live_view.port must be a serial port name or \"auto\"";
+        lv.port = it->get<std::string>();
+    }
+    if (lv.port.empty()) return "live_view.port must be a serial port name or \"auto\"";
+    if (!integer("address", lv.address)) return "live_view.address must be an integer";
+    if (lv.address < 1 || lv.address > 247)
+        return "live_view.address must be a Modbus address between 1 and 247";
+    if (!integer("channel", lv.channel)) return "live_view.channel must be an integer";
+    if (lv.channel < 1 || lv.channel > 4) return "live_view.channel must be between 1 and 4";
+    if (!number("frequency_hz", lv.frequencyHz)) return "live_view.frequency_hz must be a number";
+    if (!std::isfinite(lv.frequencyHz) || lv.frequencyHz < 400.0 || lv.frequencyHz > 40000.0)
+        return "Requested FPS must be between 400 and 40000 (pulse generator range)";
+    if (!number("duty_percent", lv.dutyPercent)) return "live_view.duty_percent must be a number";
+    if (!std::isfinite(lv.dutyPercent) || lv.dutyPercent <= 0.0 || lv.dutyPercent >= 100.0)
+        return "live_view.duty_percent must be above 0 and below 100 (a continuous level cannot trigger)";
+    if (!integer("baud", lv.baud)) return "live_view.baud must be an integer";
+    if (lv.baud <= 0) return "live_view.baud must be positive";
+    if (!integer("data_bits", lv.dataBits)) return "live_view.data_bits must be an integer";
+    if (lv.dataBits < 5 || lv.dataBits > 8) return "live_view.data_bits must be between 5 and 8";
+    if (const auto it = live.find("parity"); it != live.end()) {
+        if (!it->is_string() || it->get<std::string>().size() != 1)
+            return "live_view.parity must be one of N, E, O";
+        lv.parity = it->get<std::string>()[0];
+    }
+    if (lv.parity != 'N' && lv.parity != 'E' && lv.parity != 'O')
+        return "live_view.parity must be one of N, E, O";
+    if (!integer("stop_bits", lv.stopBits)) return "live_view.stop_bits must be an integer";
+    if (lv.stopBits < 1 || lv.stopBits > 2) return "live_view.stop_bits must be 1 or 2";
+    return {};
+}
+
+// Static timing rules for one trigger period. These are necessary, not
+// sufficient: the camera's readout time at the ROI decides the achievable
+// frame rate, and only an oscilloscope establishes physical LED timing.
+inline std::string validateLiveViewTiming(const Config& c)
+{
+    const auto& lv = c.liveView;
+    const double period = lv.periodUs();
+    const std::string fps = formatUs(lv.frequencyHz);
+    if (c.exposureUs > period) {
+        return "Requested FPS " + fps + " gives a " + formatUs(period) +
+               " us trigger period; exposure " + formatUs(c.exposureUs) +
+               " us must not exceed it. Lower the FPS or the exposure.";
+    }
+    const double strobeEnd = static_cast<double>(c.strobeDelayUs + c.strobePulseUs);
+    if (strobeEnd >= period) {
+        return "Requested FPS " + fps + " gives a " + formatUs(period) +
+               " us trigger period; strobe delay + width (" + formatUs(strobeEnd) +
+               " us) must be shorter than it. Lower the FPS or the strobe width.";
+    }
+    if (lv.triggerPulseUs() < 1.0) {
+        return "Trigger pulse of " + formatUs(lv.triggerPulseUs()) +
+               " us is too short; increase live_view.duty_percent.";
+    }
+    return {};
 }
 } // namespace detail
 
@@ -151,6 +267,37 @@ inline ParseResult parseConfig(const std::string& jsonBytes)
     c.acqTriggerDelayUs = detail::clampInt(getInt("acq_trigger_delay_us", c.acqTriggerDelayUs), 0, 1000000, "acq_trigger_delay_us", w);
     c.triggerCount = detail::clampInt(getInt("trigger_count", c.triggerCount), 1, 1000, "trigger_count", w);
 
+    if (doc.contains("live_view")) {
+        const auto& live = doc["live_view"];
+        if (!live.is_object() || !live.contains("enabled") || !live["enabled"].is_boolean()) {
+            r.error = "live_view must contain a boolean enabled";
+            return r;
+        }
+        c.illuminatedLive = live["enabled"].get<bool>();
+        if (c.illuminatedLive) {
+            const std::string error = detail::parseLiveView(live, c);
+            if (!error.empty()) {
+                r.error = error;
+                return r;
+            }
+        }
+    }
+    if (c.illuminatedLive && (c.triggerMode != 2 ||
+                              (c.extTrigSignalType != 0 && c.extTrigSignalType != 2) ||
+                              c.strobeMode != 1 || c.aeEnabled ||
+                              c.triggerCount != 1 || c.strobePulseUs <= 0 || !w.empty())) {
+        r.error = "Illuminated Live View requires external trigger (rising edge or high level), "
+                  "manual exposure, one frame per trigger and manual strobe. "
+                  "Check Hardware Setup.";
+        return r;
+    }
+    if (c.illuminatedLive) {
+        const std::string error = detail::validateLiveViewTiming(c);
+        if (!error.empty()) {
+            r.error = error;
+            return r;
+        }
+    }
     r.config = c;
     r.ok = true;
     return r;

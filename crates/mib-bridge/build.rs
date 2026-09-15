@@ -32,11 +32,12 @@ fn repo_root() -> PathBuf {
 fn ensure_backend_built(repo: &Path, build_dir: &Path) {
     let backend_lib = build_dir.join("libmib_backend.a");
     let processing_lib = build_dir.join("libmib_processing.a");
+    let oeabt_serial_lib = build_dir.join("liboeabt_serial.a");
+    let oeabt_core_lib = build_dir.join("liboeabt_core.a");
 
     if std::env::var("MIB_BRIDGE_NO_CMAKE").is_ok() {
         if !backend_lib.exists() || !processing_lib.exists()
-            || !build_dir.join("liboeabt_serial.a").exists()
-            || !build_dir.join("liboeabt_core.a").exists() {
+            || !oeabt_serial_lib.exists() || !oeabt_core_lib.exists() {
             panic!(
                 "MIB_BRIDGE_NO_CMAKE set but backend archives are missing in {}",
                 build_dir.display()
@@ -66,7 +67,8 @@ fn ensure_backend_built(repo: &Path, build_dir: &Path) {
         && matches!(built, Ok(s) if s.success());
 
     if !ok {
-        if backend_lib.exists() && processing_lib.exists() {
+        if backend_lib.exists() && processing_lib.exists()
+            && oeabt_serial_lib.exists() && oeabt_core_lib.exists() {
             println!(
                 "cargo:warning=cmake backend build failed but archives exist; \
                  linking existing {}",
@@ -138,7 +140,7 @@ fn windows_build(repo: &Path, include_dir: &Path) {
     // Order matters for static archives: the backend before its dependencies,
     // exactly as CMake linked the reference test.
     for lib in strings("libs") {
-        if ["mib_backend", "mib_processing", "oeabt_serial", "oeabt_core"].contains(&lib.as_str()) {
+        if matches!(lib.as_str(), "mib_backend" | "mib_processing" | "oeabt_serial" | "oeabt_core") {
             println!("cargo:rustc-link-lib=static={lib}");
         } else {
             println!("cargo:rustc-link-lib={lib}");
@@ -192,6 +194,8 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=static=mib_backend");
         println!("cargo:rustc-link-lib=static=mib_processing");
+        // Autofocus and SerialBus use the native serial transport; its protocol
+        // implementation is another static archive. Preserve dependency order.
         for lib in ["oeabt_serial", "oeabt_core"] {
             println!("cargo:rerun-if-changed={}/lib{lib}.a", build_dir.display());
             println!("cargo:rustc-link-lib=static={lib}");

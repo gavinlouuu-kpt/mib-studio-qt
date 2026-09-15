@@ -86,3 +86,56 @@ constructed against the backend-owned `SerialBusManager`), driven from the
 MindVision section of [[../frontend/ConfigTabs]] (port dropdown + refresh,
 bus settings, address, scan, connect, frequency/duty, start/stop). Compiles on
 every platform — it has no MindVision SDK dependency.
+
+## Coordinated illuminated capture (#413)
+
+`beginLiveView`, `enableLiveView`, `endLiveView` own the selected channel for a
+capture generation, with identity-scoped tokens and serialized manual access.
+Preparation gates output off before frequency changes; enable/off use register
+readback. Manual writes/disconnect are refused while owned. Failed off leaves
+cached output unchanged and releases manual control for recovery. A recursive
+service mutex permits composition of the existing connection/write methods;
+serial I/O still belongs to the shared bus worker. `IlluminationSession.h` is
+the injected prepare/enable/disable callback contract, not another transport.
+See [operator workflow](../../docs/howto/illuminated-live-view.md).
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.
+
+
+### Automatic adoption keyed on the requested channel (September 14–15, second pass)
+
+`discoverLiveView(config, channel, ports)` adopts a port only when the
+identity read has the generator shape, `ScanHit::channelFrequencyRaw[channel]`
+is non-zero (`identityChannelConfigured`), and a read-only FC03 of the dLSP
+syringe pump's syringe-volume register `0x0061` answers 0 (`readRegisterOnPort`).
+Rig facts behind the rule: the module stores 0 Hz for channels never set
+(COM6 reads ch1 5000 Hz, ch2–4 0 Hz) and answers 0 for any register outside
+its map; a second never-configured module on COM4 answers all zeros; a pump
+left channel-enabled has raw 65536 (655.36 Hz) on channel 1 but a non-zero
+syringe volume. Ports the bus cannot open because another program holds them
+(`LinkError::PortBusy`), modules whose requested channel is unset, and
+non-generator responders are each named in the error. Manual `scanBus`
+classification is unchanged. Discovery never writes.

@@ -95,3 +95,11 @@ The frontend scheduler bounds aggregate pending pulls and discards retired view
 responses. Details and limitations: `docs/architecture/frame-packet-v1.md`.
 The accepted readiness/configuration/finalization/recovery handoff is still open
 under #372; this slice does not establish native experiment acceptance.
+
+## Illuminated Live View (#413)
+
+Generator prepare/enable execute on capture startup; stop runs through the
+existing serialized MindVision teardown, whether requested by the UI or a
+worker fault. Generator service ownership rejects manual writes/disconnect
+while a rig owns it. No new worker, frame-path serial polling or host-timer
+strobe scheduling is added. SDK stop uses its existing in-flight drain.

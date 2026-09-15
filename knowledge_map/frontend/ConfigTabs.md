@@ -132,3 +132,78 @@
 - Bundled defaults now include top-level `config_schema_version`. Remote
   profile support should treat missing schema as legacy local config rather
   than rejecting existing user profiles at startup.
+
+## Illuminated Live View setup (#413)
+
+MindVision exposure and Save remain visible; trigger/strobe/JSON and manual
+generator controls are collapsed under Advanced — Hardware Setup.
+Use XGC + R5D preset for Live View persists the selected serial identity/channel
+and tested 5 kHz/100 µs exposure/100 µs strobe settings in the active camera
+JSON. Save/reload stages the file through AppBackend without opening hardware.
+Apply on a coordinated profile also stages only; capture owns SDK application.
+Generator controls cannot change an active owned session. Settings edits require
+capture stopped. See [workflow](../../docs/howto/illuminated-live-view.md).
+
+
+### Everyday FPS adjustment
+
+Requested FPS is visible beside Exposure for a saved illuminated rig. Stop capture,
+change FPS, Save, and Play to apply it through the coordinated generator startup.
+It edits `live_view.frequency_hz`, not the camera's free-running speed selector.
+The generator supports 400–40000 Hz; this is not a camera throughput guarantee.
+The bench-tested point is 5000 FPS at 512×96. Observe actual acquisition rate and
+use Rigol for physical timing acceptance when commissioning another rate.
+
+Changing FPS preserves the trigger's active duration by scaling saved duty with
+frequency: the preset's 5000 Hz / 10% becomes 2500 Hz / 5%, retaining a requested
+20 µs trigger pulse. Exposure and strobe width/delay are not silently changed.
+Existing backend validation rejects exposure or strobe timing that exceeds the
+new period, and invalid generator duty. Legacy/manual profiles leave FPS disabled.
+The real-widget regression covers visibility, persistence, duty compensation,
+unchanged exposure/strobe, and restoration after reopening.
+
+
+### Separate setup from raw configuration
+
+Normal MindVision use hides the config file path and raw editor. Opening Hardware
+Setup shows the setting form without also showing JSON; an explicit “Edit raw
+configuration (JSON)” toggle reveals the editor. Closing Hardware Setup closes
+that editor too, without discarding edits. Saved illuminated rigs describe Save
+as staging the next Play, not requiring a separate Apply to Camera operation.
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.
+
+
+### Save validation and migration rule (September 14, second pass)
+
+`onSaveMv` runs `backend::camera::mindvision::parseConfig` on the editor text
+before writing; a profile whose FPS cannot fit exposure/strobe, or whose
+`live_view` link is malformed, is refused with the parser's message and the
+file and staged profile stay unchanged. The default-profile upgrade is the
+pure static `upgradedMindVisionDefault(current, bundled)`: only a JSON-equal
+copy of the verbatim pre-#413 bundled profile is replaced by the bundled
+preset. The Requested FPS spin box has keyboard tracking off and the
+compensated duty is rounded to 0.01 %.

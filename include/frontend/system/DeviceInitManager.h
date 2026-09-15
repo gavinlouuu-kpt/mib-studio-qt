@@ -37,9 +37,7 @@ public:
     ~DeviceInitManager();
 
     void setConnectTab(ConnectTab* connectTab) { connectTab_ = connectTab; }
-    void setNanopositionerTab(NanopositionerTab* nanopositionerTab) {
-        nanopositionerTab_ = nanopositionerTab;
-    }
+    void setNanopositionerTab(NanopositionerTab* tab);
 
     /** Start initialisation: schedule camera step (400 ms), then nanopositioner after camera
      * completes. */

@@ -1,11 +1,25 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
+# Catch a MindVision-only Windows build silently substituting the nanopositioner
+# stub merely because the EGrabber SDK is disabled.
+if(WIN32 AND MIB_ENABLE_COREMOR)
+    get_target_property(_backend_sources mib_backend SOURCES)
+    if(NOT "${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp" IN_LIST _backend_sources)
+        message(FATAL_ERROR "Coremor enabled, but the real nanopositioner service is missing")
+    endif()
+    get_target_property(_backend_links mib_backend LINK_LIBRARIES)
+    if(NOT "${PROJECT_SOURCE_DIR}/include/Coremor/XMT_DLL_SER.lib" IN_LIST _backend_links)
+        message(FATAL_ERROR "Coremor enabled, but its SDK is not linked")
+    endif()
+endif()
+
 # Backend tests are compiled into one runner, mib_backend_tests (see
 # cmake/MIBTestRunner.cmake for the how and why). CTest entries run
 # `mib_backend_tests <target> [args]`, one process per test. Tests that must
 # stay their own executable are listed here with the reason.
 include(MIBTestRunner)
 set(MIB_STANDALONE_BACKEND_TESTS
+    processing_core_authenticode_test   # Windows signing workflow invokes this executable directly
     mib_backend_smoke_test              # tools/gen_bridge_link_manifest.py uses its .vcxproj as reference project
     hdf_export_service_test             # exporter-soak.yml builds and runs it directly
     crash_reporter_segv_test            # re-executes argv[0] --crash-child
@@ -95,6 +109,9 @@ add_test(NAME backend.serial_port_enumeration COMMAND $<TARGET_FILE:mib_backend_
 set_tests_properties(backend.serial_port_enumeration PROPERTIES LABELS "backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(autofocus_math_test backend/autofocus_math_test.cpp)
+mib_add_backend_test_executable(nanopositioner_discovery_test backend/nanopositioner_discovery_test.cpp)
+add_test(NAME backend.nanopositioner_discovery COMMAND $<TARGET_FILE:mib_backend_tests> nanopositioner_discovery_test)
+set_tests_properties(backend.nanopositioner_discovery PROPERTIES LABELS "backend;concurrency;stress" TIMEOUT 30)
 add_test(NAME backend.autofocus_math COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_math_test)
 set_tests_properties(backend.autofocus_math PROPERTIES LABELS "backend" TIMEOUT 30)
 
@@ -161,6 +178,10 @@ set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera
 
 # Issue #366: MindVision Mono8/geometry fail-closed conversion, driven through
 # the injectable SDK seam (no hardware, no vendor headers).
+mib_add_backend_test_executable(illuminated_live_test backend/illuminated_live_test.cpp)
+add_test(NAME backend.illuminated_live COMMAND $<TARGET_FILE:mib_backend_tests> illuminated_live_test)
+set_tests_properties(backend.illuminated_live PROPERTIES LABELS "backend;camera;concurrency;safety" TIMEOUT 70)
+
 mib_add_backend_test_executable(mindvision_conversion_fault_test backend/mindvision_conversion_fault_test.cpp)
 mib_backend_test_link(mindvision_conversion_fault_test PRIVATE Threads::Threads)
 add_test(NAME backend.mindvision_conversion_fault COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_conversion_fault_test)
@@ -540,6 +561,13 @@ set_tests_properties(hardware.nanopositioner PROPERTIES LABELS "hardware" SKIP_R
 mib_add_backend_test_executable(hw_camera_test hardware/hw_camera_test.cpp)
 add_test(NAME hardware.camera COMMAND $<TARGET_FILE:mib_backend_tests> hw_camera_test)
 set_tests_properties(hardware.camera PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+# Issue #413: the complete one-click illuminated Live View cycle against the
+# real XGC/R5D rig (discovery, coordinated start, frames, coordinated stop,
+# generator-OFF readback, restart). Gated by MIB_TEST_ILLUMINATED_LIVE.
+mib_add_backend_test_executable(hw_illuminated_live_test hardware/hw_illuminated_live_test.cpp)
+add_test(NAME hardware.illuminated_live COMMAND $<TARGET_FILE:mib_backend_tests> hw_illuminated_live_test)
+set_tests_properties(hardware.illuminated_live PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 300)
 
 mib_add_backend_test_executable(hw_egrabber_script_test hardware/hw_egrabber_script_test.cpp)
 add_test(NAME hardware.egrabber_script COMMAND $<TARGET_FILE:mib_backend_tests> hw_egrabber_script_test)

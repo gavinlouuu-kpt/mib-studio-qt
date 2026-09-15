@@ -128,3 +128,14 @@ evidence and hardware acceptance gate.
 - **Windows**: OEABT uses the existing native serial interface. CoreMOR is
   additionally available when `MIB_HAS_COREMOR=1`.
 - `MIB_HAS_COREMOR` and `MIB_HAS_EGRABBER` are independent compile guards.
+
+
+### PR #413 discovery integration
+
+The shared vendor registry now uses native nanopositioner endpoints and includes
+both OEABT and CoreMorrow/XMT probes. Startup scans all candidates on its worker,
+auto-connects only a unique validated match, and Refresh repeats discovery.
+Connection and serial/vendor controls are disabled while scanning. A legacy
+COM-only setting retains its port preference but defaults to automatic vendor
+selection; an explicit saved vendor is preserved. Discovery and connection are
+observe-only, with no voltage or mode writes.

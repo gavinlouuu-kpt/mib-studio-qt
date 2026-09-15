@@ -233,3 +233,14 @@ Qt libraries (handoff gap G7, backend part). Guards:
 `experiment_lifecycle_end_to_end` (readiness gate `camera.session` blocks,
 Start → Active → Stop → terminal Complete with the remainder committed, typed
 terminal event, file reloads), `rust_enums_match_contract_json`.
+
+
+### OEABT link dependencies
+
+The Linux bridge links `oeabt_serial` and then `oeabt_core` from
+`<build-dir>` (the CMake archive output directory), after the backend/processing archives. These contain
+both the nanopositioner protocol and the shared native serial transport. The
+no-CMake path validates all four archives, and Cargo watches the OEABT archives
+for relinking. Windows uses the CMake-generated dependency manifest and marks
+the OEABT libraries as static. Missing these dependencies produces undefined
+SerialTransport/ControllerSession and platform serial symbols in bridge CI.

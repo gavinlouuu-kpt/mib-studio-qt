@@ -351,6 +351,9 @@ void CaptureService::run(uint64_t generation) {
         }
         if (camera) {
             camera->stop();
+            const auto shutdown = camera->lastFailure();
+            if (shutdown.code == "mindvision.rig_shutdown_unconfirmed")
+                recordFailure(CaptureFailureKind::ShutdownFailed, shutdown.message, generation);
         }
         {
             std::scoped_lock lk(cameraMutex_);

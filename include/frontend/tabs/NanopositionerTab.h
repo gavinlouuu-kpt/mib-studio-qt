@@ -34,6 +34,10 @@ public:
      * config, refreshes UI. */
     void applyAutoConnectResult(const backend::nanopositioner::Endpoint& endpoint);
 
+    void setDiscoveryRunning(bool running);
+signals:
+    void discoveryRequested();
+
 private slots:
     void onConnectNanopositioner();
     void onDisconnectNanopositioner();
@@ -55,6 +59,7 @@ private:
     backend::AppBackend& backend_;
     QTimer* statusUpdateTimer_ = nullptr;
     int configuredComPort_ = -1;
+    bool discoveryRunning_ = false;
     std::string configuredEndpointId_;
     backend::nanopositioner::BackendKind configuredBackend_ =
         backend::nanopositioner::BackendKind::Auto;

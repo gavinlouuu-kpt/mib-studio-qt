@@ -349,3 +349,44 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+## Windows Ninja: header dependencies need English cl.exe output (2026-09-15)
+
+CMake's Ninja generator tracks MSVC header dependencies by parsing cl.exe's
+`/showIncludes` lines and assumes the English prefix `Note: including file:`
+unless it detects another at configure time. On a host whose Visual Studio
+language is not English (the rig PC prints the Chinese prefix) no prefix was
+detected and `ninja -t deps <obj>` showed `#deps 0`: editing a header did not
+rebuild its includers, so a stale object could silently keep an old struct
+layout. `VSLANG=1033` only helps when the English language pack is installed; the rig
+PC's Build Tools carry only the system language, so cl.exe kept printing the
+localized prefix. Fix: add the English pack (`vs_installer.exe modify
+--installPath "<BuildTools>" --addProductLang en-US`) or pass the localized
+prefix as `-DCMAKE_CL_SHOWINCLUDES_PREFIX=...` at configure; until then run
+`cmake --build ... --clean-first` after header edits. sccache is not the cause
+(verified: the same prefix appears with and without the launcher).
+
+Also on the rig PC: ConanCenter now resolves `cpuinfo/[>=cci.20231129]` to
+`cci.20251210` while `onnxruntime/1.18.1` pins `cci.20231129`; a cold Conan
+cache fails with a version conflict. The local profile carries
+`[replace_requires] cpuinfo/*: cpuinfo/cci.20231129`; CI only avoids this via
+its restored cache.
+
+
+### Independent nanopositioner support (2026-09-15)
+
+Windows defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver
+even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
+`MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
+processing-only builds remain SDK-free for Coremor. See
+[[../services/AutofocusService]] for the vendor support inventory.
+
+
+### Windows Authenticode test target
+
+`processing_core_authenticode_test` stays a standalone executable because the
+Python-wheel workflow and `scripts/test-processing-core-authenticode.ps1` invoke
+it directly with unsigned/signed fixture paths and a signer SPKI hash. Bundling
+it into `mib_backend_tests` removes the expected MSBuild target and breaks that
+release verification. The standalone-test list in `tests/CMakeLists.txt` preserves
+this contract.

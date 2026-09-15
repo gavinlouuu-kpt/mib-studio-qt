@@ -371,7 +371,7 @@ PersistedSelection resolvePersistedSelection(const std::optional<std::string>& b
     if (legacyComPort && *legacyComPort > 0) {
         selection.legacyComPort = *legacyComPort;
         if (!backendName) {
-            selection.backend = BackendKind::Coremor;
+            selection.backend = BackendKind::Auto;
             selection.endpointId = "COM" + std::to_string(*legacyComPort);
             selection.migratedLegacyComPort = true;
         }

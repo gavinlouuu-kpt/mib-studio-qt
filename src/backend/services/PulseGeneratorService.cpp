@@ -141,6 +141,7 @@ PulseGeneratorService::PulseGeneratorService(serialbus::SerialBusManager& busMan
     : busManager_(busManager) {}
 
 PulseGeneratorService::~PulseGeneratorService() {
+    if (!endLiveView(liveViewOwner_)) SPDLOG_ERROR("Pulse generator OFF unconfirmed during shutdown");
     disconnect();
 }
 
@@ -154,6 +155,7 @@ bool PulseGeneratorService::connect(const std::string& portName, const SerialSet
                                     uint8_t modbusAddress) {
     std::scoped_lock lock(mutex_);
 
+    if (liveViewOwned_) return false;
     bus_.reset();
     status_ = Status{};
 
@@ -232,6 +234,7 @@ bool PulseGeneratorService::connect(const std::string& portName, const SerialSet
 
 void PulseGeneratorService::disconnect() {
     std::scoped_lock lock(mutex_);
+    if (liveViewOwned_) return;
     if (!bus_) {
         return;
     }
@@ -306,9 +309,13 @@ std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
             const bool plausible =
                 modbus::extractReadData(result.response, IDENTITY_REG_COUNT, data) &&
                 identityLooksLikeGenerator(data);
-            hits.push_back({static_cast<uint8_t>(addr),
-                            plausible ? ScanHit::Kind::PulseGenerator
-                                      : ScanHit::Kind::ModbusDevice});
+            ScanHit hit;
+            hit.address = static_cast<uint8_t>(addr);
+            hit.kind = plausible ? ScanHit::Kind::PulseGenerator : ScanHit::Kind::ModbusDevice;
+            if (plausible)
+                for (int ch = 0; ch < CHANNEL_COUNT; ++ch)
+                    hit.channelFrequencyRaw[static_cast<size_t>(ch)] = identityFrequencyRaw(data, ch);
+            hits.push_back(hit);
             break;
         }
         case serialbus::BusError::ModbusException:
@@ -337,7 +344,7 @@ bool PulseGeneratorService::setFrequency(int channel, double hz) {
         return false;
     }
     std::scoped_lock lock(mutex_);
-    if (!status_.connected) {
+    if (liveViewOwned_ || !status_.connected) {
         return false;
     }
     const double clamped = clampFrequency(hz);
@@ -359,7 +366,7 @@ bool PulseGeneratorService::setDutyCycle(int channel, double percent) {
         return false;
     }
     std::scoped_lock lock(mutex_);
-    if (!status_.connected) {
+    if (liveViewOwned_ || !status_.connected) {
         return false;
     }
     const double clamped = clampDuty(percent);
@@ -386,7 +393,7 @@ bool PulseGeneratorService::setOutputEnabled(int channel, bool on) {
         return false;
     }
     std::scoped_lock lock(mutex_);
-    if (!status_.connected) {
+    if (liveViewOwned_ || !status_.connected) {
         return false;
     }
     auto& state = status_.channels[static_cast<size_t>(channel)];
@@ -398,6 +405,206 @@ bool PulseGeneratorService::setOutputEnabled(int channel, bool on) {
     SPDLOG_INFO("PulseGeneratorService: addr{} ch{} output {} (duty {} %)",
                 config_.modbusAddress, channel + 1, on ? "enabled" : "disabled", dutyToWrite);
     return true;
+}
+
+uint32_t PulseGeneratorService::identityFrequencyRaw(const std::vector<uint8_t>& identityData,
+                                                     int channel) {
+    if (!validChannel(channel) || identityData.size() != CHANNEL_COUNT * 6) {
+        return 0;
+    }
+    const auto* regs = reinterpret_cast<const uint8_t*>(identityData.data());
+    const int off = channel * 6;
+    return (static_cast<uint32_t>(regs[off]) << 24) | (static_cast<uint32_t>(regs[off + 1]) << 16) |
+           (static_cast<uint32_t>(regs[off + 2]) << 8) | static_cast<uint32_t>(regs[off + 3]);
+}
+
+bool PulseGeneratorService::identityChannelConfigured(const std::vector<uint8_t>& identityData,
+                                                      int channel) {
+    return identityLooksLikeGenerator(identityData) &&
+           identityFrequencyRaw(identityData, channel) != 0;
+}
+
+bool PulseGeneratorService::readRegisterOnPort(const std::string& portName,
+                                               const SerialSettings& settings, uint8_t address,
+                                               uint16_t reg, uint16_t& value) {
+    std::shared_ptr<serialbus::ModbusBusSession> bus;
+    {
+        std::scoped_lock lock(mutex_);
+        bus = bus_;
+    }
+    if (!bus || bus->portName() != portName || bus->settings() != settings) {
+        serialbus::BusError busError = serialbus::BusError::None;
+        bus = busManager_.acquire(portName, settings, &busError, nullptr);
+        if (!bus) return false;
+    }
+    const auto result = bus->transact(modbus::buildReadRequest(address, reg, 1), 250);
+    std::vector<uint8_t> data;
+    if (result.error != serialbus::BusError::None ||
+        !modbus::extractReadData(result.response, 1, data) || data.size() != 2)
+        return false;
+    value = static_cast<uint16_t>((static_cast<uint16_t>(data[0]) << 8) | data[1]);
+    return true;
+}
+
+bool PulseGeneratorService::discoverLiveView(
+    Config& config, int channel, const std::vector<serialbus::PortInfo>& ports,
+    std::string* error) {
+    std::vector<std::string> matches;      // generator, requested channel configured
+    std::vector<std::string> unconfigured; // generator shape, requested channel 0 Hz
+    std::vector<std::string> lookalikes;   // answered at the address, not a generator
+    std::vector<std::string> busy;         // adapter held by another program/settings
+    std::atomic<bool> cancel{false};
+    if (!validChannel(channel)) {
+        if (error) *error = "Invalid generator channel";
+        return false;
+    }
+    auto listed = [](const std::vector<std::string>& names) {
+        std::string out;
+        for (const auto& n : names) out += (out.empty() ? "" : ", ") + n;
+        return out;
+    };
+    auto seen = [&](const std::string& name) {
+        for (const auto* list : {&matches, &unconfigured, &lookalikes, &busy})
+            if (std::find(list->begin(), list->end(), name) != list->end()) return true;
+        return false;
+    };
+    for (const auto& port : ports) {
+        // Avoid opening native serial ports belonging to unrelated instruments.
+        if (port.vendorId == 0 || port.productId == 0) continue;
+        // The system name ("COM6", "ttyUSB0") is what Hardware Setup saves and
+        // what the platform port opens; the location form is only a display hint.
+        const auto name = port.systemName.empty() ? port.systemLocation : port.systemName;
+        if (name.empty() || seen(name)) continue;
+        LinkError linkError = LinkError::None;
+        const auto hits = scanBus(name, config.serial, config.modbusAddress,
+                                  config.modbusAddress, cancel, 250, &linkError);
+        if (linkError == LinkError::PortBusy) {
+            busy.push_back(name);
+            continue;
+        }
+        for (const auto& hit : hits) {
+            if (hit.kind != ScanHit::Kind::PulseGenerator) {
+                // Foreign Modbus device or garbled reply: something answered
+                // here, and it must not be written to.
+                lookalikes.push_back(name);
+                SPDLOG_WARN("PulseGeneratorService: {} answered addr {} but is not a pulse "
+                            "generator (kind={}); excluded from automatic discovery",
+                            name, config.modbusAddress, static_cast<int>(hit.kind));
+                continue;
+            }
+            if (hit.channelFrequencyRaw[static_cast<size_t>(channel)] == 0) {
+                unconfigured.push_back(name);
+                SPDLOG_WARN("PulseGeneratorService: {} answers like a pulse generator but channel "
+                            "{} reads 0 Hz (never set); excluded from automatic discovery",
+                            name, channel + 1);
+                continue;
+            }
+            // A dLSP syringe pump whose channel-enable register was left at 1
+            // has the generator shape too (raw 65536 = 655.36 Hz on channel 1).
+            // Its syringe-volume register is 1–9999; a generator answers 0
+            // for any register outside its map.
+            uint16_t syringeVolume = 0;
+            if (readRegisterOnPort(name, config.serial, config.modbusAddress,
+                                   SYRINGE_PUMP_VOLUME_REGISTER, syringeVolume) &&
+                syringeVolume != 0) {
+                lookalikes.push_back(name);
+                SPDLOG_WARN("PulseGeneratorService: {} answers like a syringe pump (register "
+                            "0x{:04X} = {}); excluded from automatic discovery",
+                            name, SYRINGE_PUMP_VOLUME_REGISTER, syringeVolume);
+                continue;
+            }
+            matches.push_back(name);
+        }
+    }
+    if (matches.size() == 1) {
+        config.portName = matches.front();
+        return true;
+    }
+    if (!error) return false;
+    if (matches.empty()) {
+        std::string message = "No pulse generator found at Modbus address " +
+                              std::to_string(config.modbusAddress) + ".";
+        if (!busy.empty())
+            message += " " + listed(busy) + (busy.size() == 1 ? " is" : " are") +
+                       " in use by another program; close it or disconnect the generator there.";
+        if (!unconfigured.empty())
+            message += " " + listed(unconfigured) +
+                       (unconfigured.size() == 1 ? " answers" : " answer") +
+                       " like a pulse generator but channel " + std::to_string(channel + 1) +
+                       " has never been set (0 Hz); set it once in Hardware Setup.";
+        if (!lookalikes.empty())
+            message += " " + listed(lookalikes) + " answered but " +
+                       (lookalikes.size() == 1 ? "is" : "are") + " not a pulse generator.";
+        message += " Connect the generator's USB adapter and power, then retry. Non-default "
+                   "address/serial settings or an explicit port can be set in Hardware Setup.";
+        *error = message;
+    } else {
+        *error = "Multiple pulse generators found (" + listed(matches) +
+                 "). Select the intended adapter in Hardware Setup.";
+    }
+    return false;
+}
+
+bool PulseGeneratorService::beginLiveView(const Config& cfg, int channel, double hz, double duty,
+                                          const void* owner) {
+    std::scoped_lock lock(mutex_);
+    if (liveViewOwned_ || !validChannel(channel) || !std::isfinite(hz) || !std::isfinite(duty) ||
+        hz < MIN_FREQUENCY_HZ || hz > MAX_FREQUENCY_HZ || duty <= 0 || duty >= 100 ||
+        cfg.portName.empty() || cfg.modbusAddress < 1 || cfg.modbusAddress > 247)
+        return false;
+    if (!connect(cfg.portName, cfg.serial, cfg.modbusAddress)) return false;
+    // Take ownership even on partial failure: the caller must run endLiveView.
+    liveViewChannel_ = channel;
+    liveViewOwner_ = owner;
+    const bool ok = setOutputEnabled(channel, false) && setFrequency(channel, hz) &&
+                    setDutyCycle(channel, duty) && verifyLiveView(0);
+    liveViewOwned_ = true;
+    return ok;
+}
+
+bool PulseGeneratorService::enableLiveView(const void* owner) {
+    std::scoped_lock lock(mutex_);
+    if (!liveViewOwned_ || owner != liveViewOwner_ || !status_.connected) return false;
+    auto& state = status_.channels[static_cast<size_t>(liveViewChannel_)];
+    if (!writeFrame(buildDutyFrame(config_.modbusAddress, liveViewChannel_, state.dutyPercent)))
+        return false;
+    state.outputEnabled = true;
+    return verifyLiveView(state.dutyPercent);
+}
+
+bool PulseGeneratorService::endLiveView(const void* owner) {
+    std::scoped_lock lock(mutex_);
+    if (!liveViewOwned_ || owner != liveViewOwner_) return true;
+    const bool ok = status_.connected &&
+                    writeFrame(buildDutyFrame(config_.modbusAddress, liveViewChannel_, 0)) &&
+                    verifyLiveView(0);
+    if (ok) status_.channels[static_cast<size_t>(liveViewChannel_)].outputEnabled = false;
+    // Release manual control so an operator can reconnect/retry Stop if the
+    // link failed. Never change the cached output state to OFF on failure.
+    liveViewOwned_ = false;
+    return ok;
+}
+
+bool PulseGeneratorService::verifyLiveView(double duty) {
+    if (!bus_) return false;
+    const auto response =
+        bus_->transact(modbus::buildReadRequest(config_.modbusAddress, liveViewChannel_ * 3, 3),
+                       SERIAL_TIMEOUT_MS);
+    std::vector<uint8_t> data;
+    if (response.error != serialbus::BusError::None ||
+        !modbus::extractReadData(response.response, 3, data))
+        return false;
+    const uint32_t frequency =
+        (uint32_t(data[0]) << 24) | (uint32_t(data[1]) << 16) | (uint32_t(data[2]) << 8) | data[3];
+    const uint16_t actualDuty = (uint16_t(data[4]) << 8) | data[5];
+    return frequency == frequencyToRegisterValue(
+                            status_.channels[static_cast<size_t>(liveViewChannel_)].frequencyHz) &&
+           actualDuty == dutyToRegisterValue(duty);
+}
+
+bool PulseGeneratorService::liveViewOwned() const {
+    std::scoped_lock lock(mutex_);
+    return liveViewOwned_;
 }
 
 PulseGeneratorService::Status PulseGeneratorService::getStatus() const {

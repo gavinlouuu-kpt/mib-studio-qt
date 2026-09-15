@@ -10,12 +10,10 @@
 
 namespace backend::camera::mindvision {
 
-// Applies every field of `cfg` to an OPEN camera handle (CameraHandle is int
-// in the MVSDK). Must run before CameraPlay on the streaming path. Individual
-// setter failures warn and continue (historical behavior); `firstError`, when
-// non-null, receives a message for a CameraSetImageResolution failure only —
-// preserving CameraControlService's original error contract. Returns false
-// only when the SDK is unavailable at build time (stub).
+// Applies every field to an OPEN handle, before CameraPlay. Illuminated rig
+// profiles fail closed if any setter fails; legacy manual profiles retain
+// warn-and-continue behavior. firstError receives the first failed setter.
+// The SDK-unavailable implementation always returns false.
 bool applyConfigToHandle(int hCamera, const Config& cfg, std::string* firstError = nullptr);
 
 } // namespace backend::camera::mindvision

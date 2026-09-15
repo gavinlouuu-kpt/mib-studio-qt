@@ -1,3 +1,4 @@
+#include <QPlainTextEdit>
 // config_tabs_state_test (issue #361)
 //
 // ConfigTabs with explicit editor state and a bounded header (offscreen,
@@ -14,7 +15,9 @@
 //  - secondary actions live in a keyboard-accessible More menu.
 
 #include "backend/app/AppBackend.h"
+#include "backend/services/AutofocusService.h"
 #include "frontend/tabs/ConfigTabs.h"
+#include "frontend/tabs/NanopositionerTab.h"
 #include "frontend/utils/ApplicationSettings.h"
 #include "frontend/utils/ElidingLabel.h"
 
@@ -23,6 +26,13 @@
 #include "support/watchdog.h"
 
 #include <QAction>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QPushButton>
+#include <QDoubleSpinBox>
+#include <QTabWidget>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -97,12 +107,43 @@ int main(int argc, char* argv[])
 
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((td.path() / "data").string()), "backend init");
+    frontend::NanopositionerTab nanopositioner(backend);
+    auto* vendors = nanopositioner.findChild<QLabel*>("nanopositionerVendorsLabel");
+    MIB_REQUIRE(vendors, "nanopositioner vendor inventory exists");
+    MIB_EXPECT(vendors->text().contains("OEABT") && vendors->text().contains("CoreMorrow"),
+               "inventory identifies both integrated vendors");
+    auto* refresh = nanopositioner.findChild<QPushButton*>("refreshComPortBtn");
+    auto* connectStage = nanopositioner.findChild<QPushButton*>("connectBtn");
+    MIB_REQUIRE(refresh && connectStage, "discovery controls exist");
+    int discoveryRequests = 0;
+    QObject::connect(&nanopositioner, &frontend::NanopositionerTab::discoveryRequested,
+                     [&]() { ++discoveryRequests; });
+    refresh->click();
+    MIB_EXPECT(discoveryRequests == 1, "Refresh requests protocol discovery");
+    nanopositioner.setDiscoveryRunning(true);
+    MIB_EXPECT(!refresh->isEnabled() && !connectStage->isEnabled(), "probe excludes competing connection");
+    refresh->click();
+    MIB_EXPECT(discoveryRequests == 1, "running scan prevents duplicate request");
+    nanopositioner.setDiscoveryRunning(false);
+    MIB_EXPECT(refresh->isEnabled(), "scan completion restores refresh");
+    // This standalone fixture outlives its tab; detach the tab's status sink
+    // before backend teardown can emit a final status.
+    backend.autofocus().setStatusCallback({});
 
     frontend::ConfigTabs tabs(backend);
     tabs.setNonInteractiveForTests(true);
     tabs.resize(1366, 600);
     tabs.show();
     settle(10);
+
+    auto* defaultEditor = tabs.findChild<QPlainTextEdit*>("mvRawConfig");
+    MIB_REQUIRE(defaultEditor, "default camera profile editor exists");
+    const auto defaultRig = QJsonDocument::fromJson(defaultEditor->toPlainText().toUtf8()).object();
+    MIB_EXPECT(defaultRig["live_view"].toObject()["port"].toString() == "auto" &&
+                   defaultRig["live_view"].toObject()["enabled"].toBool(),
+               "default rig requires no manual setup");
+    MIB_EXPECT(defaultRig["exposure_time_us"].toDouble() == 100,
+               "automatic default uses tested exposure setting");
 
     // ---- explicit state ----------------------------------------------------
     wd.mark("state");
@@ -209,6 +250,138 @@ int main(int argc, char* argv[])
     MIB_EXPECT(fileBytes(cfgPath) == beforeReflow && tabs.appConfigEditorText() == editorBefore && !doc.dirty,
                "reflow wrote nothing and changed no document");
 
+    wd.mark("one-click rig setup persistence");
+    const QString rigPath = QString::fromStdString((td.path() / "camera.json").string());
+    writeFile(rigPath, QByteArrayLiteral("{\"custom_key\":42}"));
+    {
+        QSettings settings;
+        settings.setValue("Config/ExternalMindVisionConfigPath", rigPath);
+    }
+    {
+        frontend::ConfigTabs rigTabs(backend);
+        rigTabs.setNonInteractiveForTests(true);
+        rigTabs.resize(1000, 650);
+        rigTabs.show();
+        auto* pages = rigTabs.findChild<QTabWidget*>();
+        MIB_REQUIRE(pages, "config pages");
+        for (int i = 0; i < pages->count(); ++i)
+            if (pages->tabText(i).contains("MindVision")) pages->setCurrentIndex(i);
+        settle();
+        auto* advanced = rigTabs.findChild<QCheckBox*>("mvAdvancedSetup");
+        auto* exposure = rigTabs.findChild<QDoubleSpinBox*>("mvExposure");
+        auto* preset = rigTabs.findChild<QPushButton*>("mvSaveLiveRig");
+        auto* port = rigTabs.findChild<QComboBox*>("mvGeneratorPort");
+        MIB_REQUIRE(advanced && exposure && preset && port, "rig setup controls exist");
+        MIB_EXPECT(!advanced->isChecked() && !preset->isVisible() && exposure->isVisible(),
+                   "advanced hidden, exposure visible");
+        advanced->setChecked(true);
+        settle();
+        auto* rawToggle = rigTabs.findChild<QCheckBox*>("mvRawConfigToggle");
+        auto* rawEditor = rigTabs.findChild<QPlainTextEdit*>("mvRawConfig");
+        MIB_REQUIRE(rawToggle && rawEditor, "raw configuration has separate disclosure");
+        MIB_EXPECT(rawToggle->isVisible() && !rawEditor->isVisible(),
+                   "hardware setup does not also expose raw editor");
+        rawToggle->setChecked(true);
+        MIB_EXPECT(rawEditor->isVisible(), "raw configuration explicitly accessible");
+        port->addItem("Test adapter", "COM1");
+        port->setCurrentIndex(port->count() - 1);
+        preset->click();
+        settle();
+        const auto saved = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(saved["live_view"].toObject()["enabled"].toBool(),
+                   "preset persists coordinated ownership");
+        MIB_EXPECT(saved["live_view"].toObject()["port"].toString() == "COM1",
+                   "chosen adapter persisted");
+        MIB_EXPECT(saved["exposure_time_us"].toDouble() == 100 && saved["custom_key"].toInt() == 42,
+                   "preset preserves unrelated config");
+        MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
+                   "Save stages next capture without Apply");
+        auto* fps = rigTabs.findChild<QDoubleSpinBox*>("mvFps");
+        auto* save = rigTabs.findChild<QPushButton*>("mvSaveSetup");
+        MIB_REQUIRE(fps && save && fps->isEnabled(), "saved rig enables everyday FPS");
+        fps->setValue(2500);
+        save->click();
+        settle();
+        const auto adjusted = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(adjusted["live_view"].toObject()["frequency_hz"].toDouble() == 2500 &&
+                       adjusted["live_view"].toObject()["duty_percent"].toDouble() == 5,
+                   "FPS change preserves 20 us trigger pulse via adjusted duty");
+        MIB_EXPECT(adjusted["exposure_time_us"].toDouble() == 100 &&
+                       adjusted["strobe_pulse_width_us"].toInt() == 100,
+                   "FPS change does not silently change exposure or strobe");
+        // 40000 FPS is a 25 us period: the 100 us exposure and strobe cannot
+        // fit, so Save must refuse and leave the file and staged profile alone.
+        fps->setValue(40000);
+        save->click();
+        settle();
+        const auto refused = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(refused["live_view"].toObject()["frequency_hz"].toDouble() == 2500 &&
+                       refused["live_view"].toObject()["duty_percent"].toDouble() == 5,
+                   "FPS that cannot fit exposure/strobe is refused; file unchanged");
+        MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
+                   "refused save leaves the staged profile in place");
+        fps->setValue(2500);
+        save->click();
+        settle();
+        const auto restoredFps = QJsonDocument::fromJson(fileBytes(rigPath)).object();
+        MIB_EXPECT(restoredFps["live_view"].toObject()["frequency_hz"].toDouble() == 2500 &&
+                       restoredFps["live_view"].toObject()["duty_percent"].toDouble() == 5,
+                   "returning to a valid FPS restores the 20 us trigger duty exactly");
+        advanced->setChecked(false);
+        settle();
+        MIB_EXPECT(fps->isVisible(), "FPS visible with advanced collapsed");
+        MIB_EXPECT(!rawEditor->isVisible() && !rawToggle->isChecked(),
+                   "closing hardware setup also closes raw configuration");
+        rigTabs.grab().save("/tmp/mib-one-click-config.png");
+    }
+    {
+        frontend::ConfigTabs restored(backend);
+        auto* exposure = restored.findChild<QDoubleSpinBox*>("mvExposure");
+        MIB_EXPECT(exposure && exposure->value() == 100, "reopening restores saved exposure");
+        auto* fps = restored.findChild<QDoubleSpinBox*>("mvFps");
+        MIB_EXPECT(fps && fps->value() == 2500, "reopening restores saved FPS");
+        MIB_EXPECT(backend.cameraSelection().mindVisionConfigPath == rigPath.toStdString(),
+                   "reopening stages saved profile");
+    }
+
+    // Default-profile migration rule: exactly the historical bundled profile
+    // (as found on the rig PC on 2026-09-14) is upgraded; anything edited is not.
+    wd.mark("historical default migration");
+    {
+        QFile res(":/defaults/mindvisionConfig.json");
+        MIB_REQUIRE(res.open(QIODevice::ReadOnly), "bundled preset resource");
+        const QByteArray bundled = res.readAll();
+        const QByteArray historical = QByteArrayLiteral(
+            "{\n  \"width\": 512,\n  \"height\": 96,\n  \"offset_x\": 0,\n  \"offset_y\": 0,\n"
+            "  \"exposure_time_us\": 1.0,\n  \"analog_gain\": 1,\n"
+            "  \"auto_exposure_enabled\": false,\n  \"ae_target_brightness\": 100,\n"
+            "  \"gamma\": 100,\n  \"contrast\": 100,\n  \"sharpness\": 0,\n  \"frame_speed\": 2,\n"
+            "  \"flip_horizontal\": false,\n  \"flip_vertical\": false,\n\n  \"trigger_mode\": 2,\n"
+            "  \"ext_trig_signal_type\": 0,\n  \"ext_trig_jitter_us\": 0,\n"
+            "  \"acq_trigger_delay_us\": 0,\n  \"trigger_count\": 1,\n\n  \"strobe_mode\": 1,\n"
+            "  \"strobe_pulse_width_us\": 35,\n  \"strobe_delay_us\": 10,\n"
+            "  \"strobe_polarity\": 1\n}\n");
+        const QByteArray upgraded = frontend::ConfigTabs::upgradedMindVisionDefault(historical, bundled);
+        MIB_EXPECT(upgraded == bundled, "untouched historical default is upgraded");
+        const auto preset = QJsonDocument::fromJson(upgraded).object();
+        MIB_EXPECT(preset["live_view"].toObject()["port"].toString() == "auto" &&
+                       preset["exposure_time_us"].toDouble() == 100,
+                   "upgrade target is the automatic rig preset");
+        auto edited = QJsonDocument::fromJson(historical).object();
+        edited["exposure_time_us"] = 50.0;
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault(
+                       QJsonDocument(edited).toJson(), bundled).isEmpty(),
+                   "edited exposure is a user profile: preserved");
+        auto extended = QJsonDocument::fromJson(historical).object();
+        extended["custom_key"] = 1;
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault(
+                       QJsonDocument(extended).toJson(), bundled).isEmpty(),
+                   "extra keys mark a user profile: preserved");
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault(bundled, bundled).isEmpty(),
+                   "already-upgraded profile is left alone");
+        MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault("not json", bundled).isEmpty(),
+                   "unparseable profile is never overwritten");
+    }
     backend.shutdown();
     return mib::test::exitCode();
 }

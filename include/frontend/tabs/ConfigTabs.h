@@ -71,6 +71,13 @@ public:
     // Geometry-only reflow of the grouped JSON tables: moves the existing
     // group widgets into 1/2/3 columns; never reloads or rewrites data.
     void relayoutJsonSections(int availableWidth, bool force = false);
+    // Default-profile migration rule (issue #413): returns the bundled preset
+    // bytes when `current` is exactly the historical bundled MindVision
+    // profile (the one shipped before the automatic XGC/R5D rig preset), and
+    // an empty array for anything else — an edited or external profile is
+    // never rewritten. Pure; the caller decides whether to save.
+    static QByteArray upgradedMindVisionDefault(const QByteArray& current,
+                                                const QByteArray& bundled);
     // Test hooks: no modal dialogs; editor access.
     void setNonInteractiveForTests(bool on) { nonInteractive_ = on; }
     QString appConfigEditorText() const;
@@ -241,10 +248,12 @@ private:
     QPushButton* mvClearBtn_ = nullptr;
     frontend::ElidingLabel* mvPathLabel_ = nullptr;
     QLabel* mvUnsavedLabel_ = nullptr;
+    QLabel* mvLiveStatus_ = nullptr;
     // Trigger & strobe parameter form (two-way synced with the JSON editor)
     QComboBox* mvTriggerModeCombo_ = nullptr;
     QComboBox* mvSignalTypeCombo_ = nullptr;
     QDoubleSpinBox* mvExposureSpin_ = nullptr;
+    QDoubleSpinBox* mvFpsSpin_ = nullptr;
     QSpinBox* mvTrigDelaySpin_ = nullptr;
     QSpinBox* mvJitterSpin_ = nullptr;
     QSpinBox* mvTrigCountSpin_ = nullptr;

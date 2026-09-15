@@ -56,12 +56,16 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/camera/mindvision/MindVisionConfig.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/CaptureService.h"
 #include "backend/services/SerialBus.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/system/ProfileManager.h"
 #include "frontend/models/JsonTableModel.h"
 #include "frontend/utils/JsonFlatten.h"
+
+#include <cmath>
 
 namespace frontend {
 
@@ -342,10 +346,12 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         auto* page = new QWidget(this);
         auto* v = new QVBoxLayout(page);
         mvEdit_ = new QPlainTextEdit(page);
+        mvEdit_->setObjectName(QStringLiteral("mvRawConfig"));
         mvEdit_->setWordWrapMode(QTextOption::NoWrap);
         auto* row = new QHBoxLayout();
         mvReloadBtn_ = new QPushButton(tr("Reset"), page);
         mvSaveBtn_ = new QPushButton(tr("Save"), page);
+        mvSaveBtn_->setObjectName(QStringLiteral("mvSaveSetup"));
         mvApplyBtn_ = new QPushButton(tr("Apply to Camera"), page);
         mvApplyBtn_->setToolTip(tr("Requires a MindVision camera selected in the Connect tab. "
                                    "Stops capture, applies the config, and rebuilds the capture factory."));
@@ -401,12 +407,34 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvSignalTypeCombo_->addItem(tr("Double edge"), 4);
         mvSignalTypeCombo_->setToolTip(tr("External trigger signal type (ext_trig_signal_type)"));
         mvFormAdd(mvSignalTypeCombo_);
-        mvFormAdd(new QLabel(tr("Exposure (µs)"), mvForm));
+        auto* exposureRow = new QHBoxLayout();
+        exposureRow->addWidget(new QLabel(tr("Exposure (µs)"), page));
         mvExposureSpin_ = new QDoubleSpinBox(mvForm);
+        mvExposureSpin_->setObjectName(QStringLiteral("mvExposure"));
         mvExposureSpin_->setRange(0.8, 838860.0); // MV-XGC51 sensor range
         mvExposureSpin_->setDecimals(1);
         mvExposureSpin_->setValue(1.0);
-        mvFormAdd(mvExposureSpin_);
+        exposureRow->addWidget(mvExposureSpin_);
+        exposureRow->addWidget(new QLabel(tr("Requested FPS"), page));
+        mvFpsSpin_ = new QDoubleSpinBox(page);
+        mvFpsSpin_->setObjectName(QStringLiteral("mvFps"));
+        mvFpsSpin_->setRange(400.0, 40000.0);
+        mvFpsSpin_->setDecimals(1);
+        mvFpsSpin_->setValue(1000.0);
+        // Commit on Enter/focus-out only: the duty compensation in
+        // syncMvJsonFromForm is relative to the previous value, so per-keystroke
+        // intermediates would compound rounding into the saved duty.
+        mvFpsSpin_->setKeyboardTracking(false);
+        mvFpsSpin_->setToolTip(tr("Illuminated rig trigger rate. Save while stopped, then Play. "
+                                 "Exposure and strobe delay + width must fit in one trigger period "
+                                 "(Save reports the limit). Actual FPS depends on camera and ROI; "
+                                 "1000 FPS (rising-edge trigger) is the rig default measured on 2026-09-15."));
+        exposureRow->addWidget(mvFpsSpin_);
+        exposureRow->addStretch();
+        auto* advanced = new QCheckBox(tr("Advanced — Hardware Setup"), page);
+        advanced->setObjectName(QStringLiteral("mvAdvancedSetup"));
+        exposureRow->addWidget(advanced);
+        v->addLayout(exposureRow);
         mvFormAdd(new QLabel(tr("Delay (µs)"), mvForm));
         mvTrigDelaySpin_ = new QSpinBox(mvForm);
         mvTrigDelaySpin_->setRange(0, 1000000);
@@ -457,6 +485,7 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         auto* pgBusRow = new QHBoxLayout();
         pgBusRow->addWidget(new QLabel(tr("Port"), pgGroup));
         pgPortCombo_ = new QComboBox(pgGroup);
+        pgPortCombo_->setObjectName(QStringLiteral("mvGeneratorPort"));
         pgPortCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         pgPortCombo_->setMinimumContentsLength(12);
         pgPortCombo_->setToolTip(tr("System serial port (e.g. /dev/ttyUSB0 or COM3)."));
@@ -534,7 +563,90 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         pgStatusLabel_ = new QLabel(tr("Disconnected"), pgGroup);
         pgRow->addWidget(pgStatusLabel_);
         pgLayout->addLayout(pgRow);
+        auto* saveRig = new QPushButton(tr("Use XGC + R5D preset for Live View"), pgGroup);
+        saveRig->setObjectName(QStringLiteral("mvSaveLiveRig"));
+        saveRig->setToolTip(tr("Saves the selected generator connection and channel with the "
+                               "rig preset (1000 Hz rising-edge trigger, 20 us pulse). Does not start hardware."));
+        pgLayout->addWidget(saveRig);
+        connect(saveRig, &QPushButton::clicked, this, [this] {
+            if (backend_.capture().isRunning()) {
+                if (!nonInteractive_)
+                    QMessageBox::warning(this, tr("Hardware Setup"),
+                                         tr("Stop Live View before saving setup."));
+                return;
+            }
+            const QString port = pgPortCombo_->currentData().toString();
+            if (port.isEmpty()) {
+                if (!nonInteractive_)
+                    QMessageBox::warning(this, tr("Hardware Setup"),
+                                         tr("Select the generator's serial port first."));
+                return;
+            }
+            QJsonParseError parseError;
+            auto json = QJsonDocument::fromJson(mvEdit_->toPlainText().toUtf8(), &parseError);
+            if (parseError.error != QJsonParseError::NoError || !json.isObject()) {
+                if (!nonInteractive_)
+                    QMessageBox::warning(this, tr("Hardware Setup"),
+                                         tr("Fix the camera JSON before saving the preset."));
+                return;
+            }
+            auto obj = json.object();
+            obj["width"] = 512;
+            obj["height"] = 96;
+            obj["offset_x"] = 0;
+            obj["offset_y"] = 0;
+            obj["exposure_time_us"] = 100.0;
+            obj["auto_exposure_enabled"] = false;
+            obj["trigger_mode"] = 2;
+            obj["ext_trig_signal_type"] = 0; // rising edge: one frame per generator pulse
+            obj["trigger_count"] = 1;
+            obj["ext_trig_jitter_us"] = 0;
+            obj["acq_trigger_delay_us"] = 0;
+            obj["strobe_mode"] = 1;
+            obj["strobe_delay_us"] = 0;
+            obj["strobe_pulse_width_us"] = 100;
+            // Polarity 0 pulses OUT1 with the strobe on the XGC/R5D rig; 1 left
+            // the line idling high (LED on) — measured 2026-09-15.
+            obj["strobe_polarity"] = 0;
+            QJsonObject live;
+            live["enabled"] = true;
+            live["port"] = port;
+            live["address"] = pgAddrSpin_->value();
+            live["channel"] = pgChannelSpin_->value();
+            live["frequency_hz"] = 1000.0;
+            live["duty_percent"] = 2.0; // 20 us trigger pulse
+            live["baud"] = pgBaudCombo_->currentData().toInt();
+            live["data_bits"] = pgDataBitsCombo_->currentData().toInt();
+            live["parity"] = QString(pgParityCombo_->currentData().toChar());
+            live["stop_bits"] = pgStopBitsCombo_->currentData().toInt();
+            obj["live_view"] = live;
+            mvEdit_->setPlainText(QString::fromUtf8(QJsonDocument(obj).toJson()));
+            syncMvFormFromJson();
+            pgFreqSpin_->setValue(5000);
+            pgDutySpin_->setValue(10);
+            onSaveMv();
+        });
         v->addWidget(pgGroup);
+        mvLiveStatus_ = new QLabel(page);
+        mvLiveStatus_->setWordWrap(true);
+        v->addWidget(mvLiveStatus_);
+        v->addStretch(1);
+        auto* rawConfig = new QCheckBox(tr("Edit raw configuration (JSON)"), page);
+        rawConfig->setObjectName(QStringLiteral("mvRawConfigToggle"));
+        v->insertWidget(v->count() - 1, rawConfig);
+        mvEdit_->hide();
+        connect(rawConfig, &QCheckBox::toggled, mvEdit_, &QWidget::setVisible);
+        const QList<QWidget*> advancedWidgets{mvForm,       rawConfig,      pgGroup,
+                                              mvPathLabel_,
+                                              mvApplyBtn_,  mvReloadBtn_, mvSoftTriggerBtn_,
+                                              mvBrowseBtn_, mvClearBtn_};
+        for (auto* widget : advancedWidgets)
+            widget->hide();
+        connect(advanced, &QCheckBox::toggled, this, [advancedWidgets, rawConfig](bool shown) {
+            if (!shown) rawConfig->setChecked(false);
+            for (auto* widget : advancedWidgets)
+                widget->setVisible(shown);
+        });
 
         page->setLayout(v);
         tabs_->addTab(wrapPageInScroll(page), tr("Camera trigger && strobe (MindVision)"));
@@ -565,6 +677,8 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
             connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
                     this, &ConfigTabs::onMvFormChanged);
         }
+        connect(mvFpsSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &ConfigTabs::onMvFormChanged);
         connect(mvExposureSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                 this, &ConfigTabs::onMvFormChanged);
         connect(pgConnectBtn_, &QPushButton::clicked, this, &ConfigTabs::onPulseGenConnectToggle);
@@ -1049,6 +1163,51 @@ QString ConfigTabs::currentMvJsonPath() const {
     return defaultMvJsonPath();
 }
 
+namespace {
+// resources/defaults/mindvisionConfig.json as shipped through v1.1.2, before
+// issue #413 added the automatic XGC/R5D rig preset. Kept verbatim (not
+// derived from the current bundle) so a later change to the bundled preset
+// cannot silently widen or break the "untouched historical default" match.
+constexpr const char* kHistoricalDefaultMindVisionConfig = R"json({
+  "width": 512,
+  "height": 96,
+  "offset_x": 0,
+  "offset_y": 0,
+  "exposure_time_us": 1.0,
+  "analog_gain": 1,
+  "auto_exposure_enabled": false,
+  "ae_target_brightness": 100,
+  "gamma": 100,
+  "contrast": 100,
+  "sharpness": 0,
+  "frame_speed": 2,
+  "flip_horizontal": false,
+  "flip_vertical": false,
+  "trigger_mode": 2,
+  "ext_trig_signal_type": 0,
+  "ext_trig_jitter_us": 0,
+  "acq_trigger_delay_us": 0,
+  "trigger_count": 1,
+  "strobe_mode": 1,
+  "strobe_pulse_width_us": 35,
+  "strobe_delay_us": 10,
+  "strobe_polarity": 1
+})json";
+} // namespace
+
+QByteArray ConfigTabs::upgradedMindVisionDefault(const QByteArray& current,
+                                                 const QByteArray& bundled) {
+    QJsonParseError currentError{};
+    const auto currentDoc = QJsonDocument::fromJson(current, &currentError);
+    if (currentError.error != QJsonParseError::NoError || !currentDoc.isObject()) return {};
+    const auto historical = QJsonDocument::fromJson(kHistoricalDefaultMindVisionConfig).object();
+    if (currentDoc.object() != historical) return {};
+    const auto bundledDoc = QJsonDocument::fromJson(bundled);
+    if (!bundledDoc.isObject() || !bundledDoc.object()["live_view"].toObject()["enabled"].toBool())
+        return {};
+    return bundled;
+}
+
 void ConfigTabs::onReloadMv() {
     const QString path = currentMvJsonPath();
     if (path == defaultMvJsonPath()) {
@@ -1063,23 +1222,74 @@ void ConfigTabs::onReloadMv() {
         if (!nonInteractive_) QMessageBox::warning(this, tr("Reset mindvisionConfig.json"), tr("Failed to load: %1").arg(err));
         return;
     }
+    // Upgrade only an untouched historical bundled preset; never rewrite a custom profile.
+    if (path == defaultMvJsonPath()) {
+        QFile bundled(":/defaults/mindvisionConfig.json");
+        if (bundled.open(QIODevice::ReadOnly)) {
+            const QByteArray upgraded =
+                upgradedMindVisionDefault(mvEdit_->toPlainText().toUtf8(), bundled.readAll());
+            if (!upgraded.isEmpty()) {
+                mvEdit_->setPlainText(QString::fromUtf8(upgraded));
+                if (saveEditorToFile(mvEdit_, path, &err))
+                    SPDLOG_INFO("MindVision default profile upgraded to the automatic XGC/R5D "
+                                "rig preset: {}", path.toStdString());
+                else
+                    SPDLOG_WARN("Cannot save automatic rig preset: {}", err.toStdString());
+            }
+        }
+    }
     mvPathLabel_->setText(path);
     if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(false);
     syncMvFormFromJson();
+    std::string stageError;
+    if (!backend_.stageMindVisionConfigFromFile(path.toStdString(), &stageError))
+        SPDLOG_WARN("MindVision saved setup not staged: {}", stageError);
 }
 
 void ConfigTabs::onSaveMv() {
+    if (backend_.capture().isRunning()) {
+        if (!nonInteractive_)
+            QMessageBox::warning(this, tr("Save setup"),
+                                 tr("Stop Live View before changing setup."));
+        return;
+    }
     const QString path = currentMvJsonPath();
+    // Validate before writing: the same parse the camera runs at Play. An
+    // illuminated profile whose FPS cannot fit its exposure/strobe, or whose
+    // generator link is malformed, is reported here instead of failing Play
+    // later with the file already overwritten.
+    const auto parsed = backend::camera::mindvision::parseConfig(
+        mvEdit_->toPlainText().toStdString());
+    if (!parsed.ok) {
+        SPDLOG_WARN("MindVision setup not saved: {}", parsed.error);
+        if (!nonInteractive_)
+            QMessageBox::warning(this, tr("Save setup"),
+                                 tr("Not saved: %1").arg(QString::fromStdString(parsed.error)));
+        return;
+    }
     QString err;
     if (!saveEditorToFile(mvEdit_, path, &err)) {
         if (!nonInteractive_) QMessageBox::warning(this, tr("Save mindvisionConfig.json"), tr("Failed to save: %1").arg(err));
         return;
     }
     if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(false);
-    SPDLOG_INFO("MindVision config saved to {}", path.toStdString());
+    std::string stageError;
+    if (!backend_.stageMindVisionConfigFromFile(path.toStdString(), &stageError)) {
+        if (!nonInteractive_)
+            QMessageBox::warning(this, tr("Save setup"), QString::fromStdString(stageError));
+        return;
+    }
+    savePulseGenSettings();
+    SPDLOG_INFO("MindVision config saved for next Live View: {}", path.toStdString());
 }
 
 void ConfigTabs::onApplyMvConfig() {
+    const auto doc = QJsonDocument::fromJson(mvEdit_->toPlainText().toUtf8()).object();
+    if (doc["live_view"].toObject()["enabled"].toBool()) {
+        // A coordinated rig is applied on the capture owner's handle only.
+        onSaveMv();
+        return;
+    }
     if (!backend_.isMindVisionCameraSelected()) {
         if (!nonInteractive_) QMessageBox::warning(this, tr("Apply MindVision Config"),
                              tr("Select a MindVision camera in the Connect tab first."));
@@ -1170,7 +1380,20 @@ void ConfigTabs::syncMvFormFromJson() {
     }
     const QJsonObject obj = doc.object();
 
+    if (mvUnsavedLabel_)
+        mvUnsavedLabel_->setText(obj["live_view"].toObject()["enabled"].toBool()
+                                    ? tr("Unsaved changes — stop capture and Save before the next Play.")
+                                    : tr("Unsaved changes — Save, then Apply to Camera."));
+    if (mvLiveStatus_)
+        mvLiveStatus_->setText(obj["live_view"].toObject()["enabled"].toBool()
+                                   ? tr("Illuminated rig profile: Save changes, then Preview Play "
+                                        "/ Stop controls camera and LED together.")
+                                   : tr("Manual camera profile. To link illumination to Play / "
+                                        "Stop, choose the rig preset in Hardware Setup."));
     mvSyncGuard_ = true;
+    const auto live = obj["live_view"].toObject();
+    mvFpsSpin_->setEnabled(live["enabled"].toBool());
+    mvFpsSpin_->setValue(live.value("frequency_hz").toDouble(1000.0));
     selectComboData(mvTriggerModeCombo_, obj.value("trigger_mode").toInt(0));
     selectComboData(mvSignalTypeCombo_, obj.value("ext_trig_signal_type").toInt(0));
     mvExposureSpin_->setValue(obj.value("exposure_time_us").toDouble(3000.0));
@@ -1192,6 +1415,20 @@ void ConfigTabs::syncMvJsonFromForm() {
     // doesn't cover (ROI, gain, mirrors, ...). Invalid text starts fresh.
     QJsonObject obj = (doc.isObject()) ? doc.object() : QJsonObject{};
 
+    auto live = obj["live_view"].toObject();
+    if (live["enabled"].toBool()) {
+        const double oldHz = live.value("frequency_hz").toDouble(1000.0);
+        // Preserve the active trigger duration, not its duty fraction, across FPS edits.
+        // Rounded to the module's 0.01 % duty resolution so the saved value is
+        // what the generator can actually hold.
+        if (oldHz > 0 && oldHz != mvFpsSpin_->value()) {
+            const double duty = live.value("duty_percent").toDouble(10.0) *
+                                mvFpsSpin_->value() / oldHz;
+            live["duty_percent"] = std::round(duty * 100.0) / 100.0;
+            live["frequency_hz"] = mvFpsSpin_->value();
+            obj["live_view"] = live;
+        }
+    }
     obj["trigger_mode"] = mvTriggerModeCombo_->currentData().toInt();
     obj["ext_trig_signal_type"] = mvSignalTypeCombo_->currentData().toInt();
     obj["exposure_time_us"] = mvExposureSpin_->value();
@@ -1239,8 +1476,9 @@ backend::services::serialbus::SerialSettings pulseGenSettingsFromUi(
 void ConfigTabs::refreshPulseGenUi() {
     auto& gen = backend_.pulseGenerator();
     const bool connected = gen.isConnected();
+    const bool owned = gen.liveViewOwned();
     pgConnectBtn_->setText(connected ? tr("Disconnect") : tr("Connect"));
-    pgConnectBtn_->setEnabled(!pgScanRunning_);
+    pgConnectBtn_->setEnabled(!pgScanRunning_ && !owned);
     pgPortCombo_->setEnabled(!connected && !pgScanRunning_);
     pgRefreshPortsBtn_->setEnabled(!connected && !pgScanRunning_);
     pgBaudCombo_->setEnabled(!connected && !pgScanRunning_);
@@ -1250,9 +1488,9 @@ void ConfigTabs::refreshPulseGenUi() {
     pgAddrSpin_->setEnabled(!connected && !pgScanRunning_);
     pgScanBtn_->setEnabled(!connected);
     pgScanBtn_->setText(pgScanRunning_ ? tr("Cancel scan") : tr("Scan"));
-    pgApplyBtn_->setEnabled(connected);
-    pgStartBtn_->setEnabled(connected);
-    pgStopBtn_->setEnabled(connected);
+    pgApplyBtn_->setEnabled(connected && !owned);
+    pgStartBtn_->setEnabled(connected && !owned);
+    pgStopBtn_->setEnabled(connected && !owned);
     if (!connected) {
         const auto lastError = gen.lastError();
         if (pgScanRunning_) {

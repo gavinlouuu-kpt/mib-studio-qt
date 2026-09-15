@@ -31,12 +31,17 @@
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/processing/EModulusLutCatalog.h"
 
+#include "backend/camera/mindvision/MindVisionConfig.h"
+
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <limits>
 #include <string>
 #include <utility>
@@ -57,6 +62,59 @@ namespace backend
 {
     namespace
     {
+    // Builds the capture-owned MindVision camera for `path`. When the saved
+    // profile enables illuminated Live View, the same validated parse the
+    // camera uses at start (parseConfig: connection, range and timing rules)
+    // decides here whether a generator session is attached, so a profile that
+    // would fail at Play is rejected when it is staged. Throws std::runtime_error
+    // with the operator-facing reason; no hardware is touched.
+    std::unique_ptr<::camera::common::ICamera>
+    makeLiveCamera(int index, const std::string& path, services::PulseGeneratorService& generator) {
+        std::shared_ptr<services::IlluminationSession> session;
+        if (!path.empty()) {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) throw std::runtime_error("Cannot read saved MindVision setup: " + path);
+            const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+            const auto parsed = backend::camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) throw std::runtime_error(parsed.error);
+            if (parsed.config.illuminatedLive) {
+                const auto& lv = parsed.config.liveView;
+                services::PulseGeneratorService::Config cfg;
+                cfg.portName = lv.port;
+                cfg.modbusAddress = static_cast<uint8_t>(lv.address);
+                cfg.serial.baudRate = lv.baud;
+                cfg.serial.dataBits = lv.dataBits;
+                cfg.serial.parity = lv.parity;
+                cfg.serial.stopBits = lv.stopBits;
+                const int channel = lv.channel - 1; // service channels are 0-based
+                const double hz = lv.frequencyHz;
+                const double duty = lv.dutyPercent;
+                session = std::make_shared<services::IlluminationSession>();
+                const auto owner = std::make_shared<char>();
+                session->prepare = [&generator, cfg, channel, hz, duty, owner] {
+                    auto resolved = cfg;
+                    if (resolved.portName == "auto") {
+                        std::string error;
+                        if (!generator.discoverLiveView(resolved, channel, services::serialbus::availablePorts(), &error)) {
+                            SPDLOG_ERROR("Illuminated Live View: {}", error);
+                            throw std::runtime_error(error);
+                        }
+                        SPDLOG_INFO("Illuminated Live View: pulse generator discovered on {} (addr {})",
+                                    resolved.portName, resolved.modbusAddress);
+                    }
+                    return generator.beginLiveView(resolved, channel, hz, duty, owner.get());
+                };
+                session->enable = [&generator, owner] {
+                    return generator.enableLiveView(owner.get());
+                };
+                session->disable = [&generator, owner] {
+                    return generator.endLiveView(owner.get());
+                };
+            }
+        }
+        return std::make_unique<::camera::common::MindVisionCamera>(index, path, nullptr, session);
+    }
+
         // Get a user-writable log path, falling back to dataDir if needed
         std::string getLogPath(const std::string &dataDir)
         {
@@ -632,8 +690,9 @@ namespace backend
                 }
                 SPDLOG_INFO("AppBackend: configuring MindVision camera (index={}, config={})",
                             cameraIndex, configPath.empty() ? "<none>" : configPath);
-                captureService_->setCameraFactory([cameraIndex, configPath]() mutable
-                                                  { return std::make_unique<::camera::common::MindVisionCamera>(cameraIndex, configPath); });
+                captureService_->setCameraFactory([this, cameraIndex, configPath]() mutable {
+                    return makeLiveCamera(cameraIndex, configPath, *pulseGeneratorService_);
+                });
                 mockCameraConfigured_ = false;
                 effectiveCameraSource_ = "mindvision";
                 selectedIfIndex_ = -1;
@@ -664,6 +723,14 @@ namespace backend
                 cameraMode = "mock";
                 configureMock();
                 cameraFallbackReason_ = "EGrabber SDK is unavailable in this build";
+#if MIB_HAS_MINDVISION
+                // An implicit fallback is not an operator selection. Leave
+                // startup discovery enabled so a single MindVision camera
+                // can be selected without a separate Connect action.
+                if (std::getenv("MIB_CAMERA_MODE") == nullptr) {
+                    mockCameraConfigured_ = false;
+                }
+#endif
 #endif
             }
             else
@@ -855,9 +922,12 @@ namespace backend
         cameraFallbackReason_.clear();
 
 #if MIB_HAS_MINDVISION
+        if (lastMindVisionConfigPath_.empty())
+            lastMindVisionConfigPath_ = savedMindVisionConfigPath_;
         const std::string configPath = lastMindVisionConfigPath_;
-        captureService_->setCameraFactory([cameraIndex, configPath]()
-                                          { return std::make_unique<::camera::common::MindVisionCamera>(cameraIndex, configPath); });
+        captureService_->setCameraFactory([this, cameraIndex, configPath]() {
+            return makeLiveCamera(cameraIndex, configPath, *pulseGeneratorService_);
+        });
         effectiveCameraSource_ = "mindvision";
 #else
         SPDLOG_WARN("MindVision camera selection requested but MindVision SDK is unavailable; falling back to mock camera");
@@ -917,6 +987,34 @@ namespace backend
         return ok;
     }
 
+    bool AppBackend::stageMindVisionConfigFromFile(const std::string& path, std::string* errorOut) {
+        if (captureService_->isRunning()) {
+            if (errorOut) *errorOut = "Stop Live View before changing the saved camera setup";
+            return false;
+        }
+        try {
+            std::ifstream input(path);
+            if (!input) throw std::runtime_error("Cannot open camera setup");
+            const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+            const auto parsed = backend::camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) throw std::runtime_error(parsed.error);
+            // Construct only: validates generator settings, no SDK/serial I/O.
+            auto candidate = makeLiveCamera(selectedMvCameraIndex_, path, *pulseGeneratorService_);
+            lastMindVisionConfigPath_ = path;
+            savedMindVisionConfigPath_ = path;
+            if (selectedMvCameraIndex_ >= 0) {
+                const int idx = selectedMvCameraIndex_;
+                captureService_->setCameraFactory([this, idx, path] {
+                    return makeLiveCamera(idx, path, *pulseGeneratorService_);
+                });
+            }
+            return true;
+        } catch (const std::exception& e) {
+            if (errorOut) *errorOut = e.what();
+            return false;
+        }
+    }
+
     bool AppBackend::applyMindVisionConfigFromFile(const std::string &path, std::string *errorOut)
     {
         if (selectedMvCameraIndex_ < 0)
@@ -935,10 +1033,12 @@ namespace backend
         if (ok)
         {
             lastMindVisionConfigPath_ = path;
+            savedMindVisionConfigPath_ = path;
             const int idx = selectedMvCameraIndex_;
             const std::string configPath = lastMindVisionConfigPath_;
-            captureService_->setCameraFactory([idx, configPath]()
-                                              { return std::make_unique<::camera::common::MindVisionCamera>(idx, configPath); });
+            captureService_->setCameraFactory([this, idx, configPath]() {
+                return makeLiveCamera(idx, configPath, *pulseGeneratorService_);
+            });
             SPDLOG_INFO("MindVision capture factory updated with config: {}", path);
         }
         return ok;
