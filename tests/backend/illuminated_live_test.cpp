@@ -219,6 +219,35 @@ int main() {
         camera.stop();
         MIB_EXPECT(events.size() == size, "stop idempotent");
     }
+    // OUT1 off level follows the strobe polarity (SDK: 1 = active high, 0 =
+    // active low): the pulse lights the LED, so Stop drives the opposite level.
+    // Regression: the rig showed the LED lit at OUT1 low with polarity 0.
+    for (int polarity = 0; polarity < 2; ++polarity) {
+        watchdog.mark("OUT1 off level per strobe polarity");
+        const auto polarityPath =
+            (dir / ("camera-pol" + std::to_string(polarity) + ".json")).string();
+        std::ofstream(polarityPath) << R"({"width":512,"height":96,"exposure_time_us":100,
+          "trigger_mode":2,"ext_trig_signal_type":0,"strobe_mode":1,"strobe_pulse_width_us":100,
+          "strobe_polarity":)" << polarity
+                                    << R"(,"live_view":{"enabled":true,"port":"COM1"}})";
+        mib::test::FakeMindVisionSdk fake;
+        auto sdk = std::make_shared<mv::SdkOps>(*fake.ops());
+        sdk->armIllumination = [](int, const mv::Config&) { return true; };
+        std::vector<unsigned> out1Levels;
+        sdk->setIoStateEx = [&](int, int io, unsigned value) {
+            if (io == 0) out1Levels.push_back(value);
+            return 0;
+        };
+        auto session = std::make_shared<IlluminationSession>();
+        session->prepare = [] { return true; };
+        session->enable = [] { return true; };
+        session->disable = [] { return true; };
+        MindVisionCamera camera(0, polarityPath, sdk, session);
+        MIB_REQUIRE(camera.start(), "polarity profile starts");
+        camera.stop();
+        MIB_EXPECT(out1Levels.size() == 1 && out1Levels[0] == (polarity == 0 ? 1u : 0u),
+                   "Stop drives OUT1 to the strobe inactive level (polarity 0 -> high, 1 -> low)");
+    }
     // CaptureService fault path releases generator before destroying camera.
     // Five delivered frames plus one explicitly rejected geometry frame.
     for (int cycle = 0; cycle < 10; ++cycle) {

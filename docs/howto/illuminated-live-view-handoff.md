@@ -121,9 +121,13 @@ beta/release. Findings:
 ## Hardware acceptance and limits
 
 Generator CH1 -> camera trigger; physical camera OUT1 (SDK output 0) -> R5D.
-OUT1 high energizes LED, low disables it. Rigol CH2 measures trigger, CH1 LED
-current. Default: ROI 512x96, exposure setting 100 us, manual active-high strobe
-100 us / delay 0 with polarity 0, generator 1000 Hz / 2% (20 us trigger
+The SDK strobe polarity is 1 = active high, 0 = active low; on this rig the
+image followed the strobe only with polarity 0 (September 15), which implies the
+R5D lights on the low level, contrary to the earlier "OUT1 high = LED on" note.
+Stop drives OUT1 to the strobe's inactive level, so it is dark either way; the
+oscilloscope (or a look at the LED after Stop) decides the wiring. Rigol CH2 measures trigger, CH1 LED
+current. Default: ROI 512x96, exposure setting 100 us, manual strobe
+100 us / delay 0 with polarity 0 (SDK active-low, see above), generator 1000 Hz / 2% (20 us trigger
 pulse), rising-edge trigger. Changed on September 15 from high-level trigger,
 polarity 1, 5000 Hz / 10% after rig measurements (see the operator guide).
 

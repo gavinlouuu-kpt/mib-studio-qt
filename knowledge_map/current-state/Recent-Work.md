@@ -1,5 +1,14 @@
 # Recent Work
 
+## 2026-09-15 — Illuminated Live View Stop-level regression (#413)
+
+The 1000 Hz preset uses strobe polarity 0. Stop now requests the inactive
+GPIO level for the configured polarity instead of always requesting low.
+The two-polarity regression fails with the old low-only call and passes with
+the fix. Windows desktop rebuild and all 102 fast-lane tests passed (12
+sandbox-related failures passed on an unrestricted rerun). Scope confirmation
+of LED current after Stop remains required; SDK success is not that measurement.
+
 > Snapshot of recently merged features and fixes, as of 2025-11 / 2025-12.
 
 ## 2026-09-14 — Periodic flush byte-watermark fix (#407)

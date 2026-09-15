@@ -438,9 +438,13 @@ bool MindVisionCamera::stopIlluminationLocked() {
     }
     bool ledOff = true;
     if (hCamera_ >= 0) {
-        // IOMODE_GP_OUTPUT (3) then drive low: OUT1 high energizes the R5D.
+        // IOMODE_GP_OUTPUT (3), then drive the strobe's INACTIVE level: the
+        // strobe pulse (active level, CameraSetStrobePolarity 1 = high,
+        // 0 = low) is what lights the LED, so its opposite is dark under
+        // either driver wiring. Never assume "low = off".
+        const unsigned offLevel = rigConfig_.strobePolarity == 0 ? 1u : 0u;
         ledOff = sdk_->setOutputIoMode(hCamera_, 0, 3) == mv::kSdkSuccess;
-        ledOff = (sdk_->setIoStateEx(hCamera_, 0, 0) == mv::kSdkSuccess) && ledOff;
+        ledOff = (sdk_->setIoStateEx(hCamera_, 0, offLevel) == mv::kSdkSuccess) && ledOff;
     }
     rigActive_ = false;
     if (!generatorOff || !ledOff) {

@@ -83,8 +83,11 @@ enable a device that has not been selected during hardware setup.
 - Generator enable also checks register readback. Manual generator writes and
   disconnect are refused while a capture generation owns the generator.
   Physical OUT1 (SDK index 0) is illumination; OUT2 (index 1) remains sorting.
-- Stop first gates the generator off and reads it back; then forces OUT1 to
-  GPIO low and stops the SDK. Partial start failures use the same cleanup.
+- Stop first gates the generator off and reads it back; then drives OUT1 as a
+  GPIO to the strobe's inactive level (polarity 1 = active high -> low,
+  polarity 0 = active low -> high) and stops the SDK. The strobe pulse is what
+  is expected to light the LED; physical darkness still needs commissioning
+  verification on the connected driver. Partial start failures use the same cleanup.
   Retrieval errors and a three-second no-frame timeout fault illuminated runs.
 - An unconfirmed generator/LED stop survives in the lifecycle failure record
   and is surfaced by the Stop action. OFF is never inferred from a failed write.

@@ -106,3 +106,29 @@ The bundled preset, preset button and parser defaults now use signal type 0,
 polarity 0, 1000 Hz / 2 % (the user's chosen operating point). Saturation at
 255 even for a 20 µs strobe is an optical/R5D current matter, not software.
 Rigol confirmation of the LED current waveform remains the acceptance step.
+
+## September 15: Stop-level fix verified at 1000 fps
+
+Stop requests the inactive GPIO level for the saved strobe polarity. The
+two-polarity regression was compiled against the old low-only call and failed
+its inactive-level assertion; restoring the fix passed `backend.illuminated_live`.
+The complete Windows desktop rebuild succeeded. All 102 fast-lane tests passed
+across the initial run and an unrestricted rerun of 12 sandbox failures.
+Documentation and screenshot checks passed.
+
+Three fresh five-second hardware cycles using the bundled 1000 Hz / 2% profile
+delivered 998.4, 1000.2 and 1000.2 frames/s. Reported transport loss and discard
+counters were zero. Each Stop ended Idle without failure, released ownership,
+and independently read back generator channel 1 duty zero. Latest-frame mean
+remained 255/255. Runtime evidence is in
+`data/logs/issue413-1000fps-verified.log`; regression evidence is in
+`data/logs/issue413-regression-before.log`. These runtime logs stay local.
+MLflow upload remains pending because neither required credential variable is
+configured in this session.
+
+Completion remains unproven: scope CH2 trigger and CH1 current measurements at
+1000 Hz and an adjusted cadence, physical failure-cleanup acceptance, optical
+LED-off comparison, latest-fix sanitizer CI, merge and deployment are still
+outstanding. No connected Rigol USB device or documented network resource was
+found; its connection address has been requested. The previously published
+PR head `bb0ea38` has green CI, which does not cover this uncommitted fix.

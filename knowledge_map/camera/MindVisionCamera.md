@@ -289,7 +289,8 @@ leak in `backend.mindvision_conversion_fault` ("wedged driver").
 A validated `live_view.enabled` profile requires an injected
 `IlluminationSession`; it cannot silently start as camera-only. Preparation
 holds the generator off; strict SDK configuration and post-Play strobe/trigger
-readback precede enable. Stop gates generator before forcing OUT1 GPIO low
+readback precede enable. Stop gates generator before driving OUT1 (GPIO) to the strobe's inactive
+level (polarity-aware; the pulse lights the LED)
 and releasing the handle. Read errors/three seconds without frames fault
 illuminated capture. Sorting stays on OUT2. Legacy profiles are unchanged.
 
