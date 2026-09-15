@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace camera::common
@@ -28,7 +29,10 @@ public:
 
     explicit MindVisionCamera(
         int cameraIndex, std::string configPath = {}, std::shared_ptr<const SdkOps> sdk = nullptr,
-        std::shared_ptr<backend::services::IlluminationSession> illumination = nullptr);
+        std::shared_ptr<backend::services::IlluminationSession> illumination = nullptr,
+        bool overview = false,
+        std::optional<backend::camera::mindvision::Config> sessionConfig = std::nullopt,
+        std::function<void(const backend::camera::mindvision::SdkCapability&)> capabilitySink = {});
     ~MindVisionCamera() override;
 
     void applyConfig(const CameraConfig &config) override;
@@ -78,6 +82,9 @@ public:
 
 private:
     bool applyJsonConfig(int hCamera);
+    const bool overview_;
+    const std::optional<backend::camera::mindvision::Config> sessionConfig_;
+    const std::function<void(const backend::camera::mindvision::SdkCapability&)> capabilitySink_;
     // Gates the generator off and forces OUT1 low (must hold stateMutex_).
     // Returns false when either OFF was not confirmed; the failure record is
     // set and must survive any later handle-teardown record (see stop()).

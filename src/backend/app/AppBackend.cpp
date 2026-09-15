@@ -69,16 +69,25 @@ namespace backend
     // would fail at Play is rejected when it is staged. Throws std::runtime_error
     // with the operator-facing reason; no hardware is touched.
     std::unique_ptr<::camera::common::ICamera>
-    makeLiveCamera(int index, const std::string& path, services::PulseGeneratorService& generator) {
+    makeLiveCamera(int index, const std::string& path, services::PulseGeneratorService& generator,
+                   bool overview,
+                   std::function<void(const camera::mindvision::SdkCapability&)> capabilitySink) {
         std::shared_ptr<services::IlluminationSession> session;
+        camera::mindvision::Config effective;
         if (!path.empty()) {
             std::ifstream input(path, std::ios::binary);
             if (!input) throw std::runtime_error("Cannot read saved MindVision setup: " + path);
             const std::string bytes((std::istreambuf_iterator<char>(input)), {});
             const auto parsed = backend::camera::mindvision::parseConfig(bytes);
             if (!parsed.ok) throw std::runtime_error(parsed.error);
-            if (parsed.config.illuminatedLive) {
-                const auto& lv = parsed.config.liveView;
+            effective =
+                overview ? camera::mindvision::overviewConfig(parsed.config) : parsed.config;
+            effective.requireExactGeometry = true;
+            if (effective.illuminatedLive) {
+                const auto timingError =
+                    camera::mindvision::detail::validateLiveViewTiming(effective);
+                if (!timingError.empty()) throw std::runtime_error(timingError);
+                const auto& lv = effective.liveView;
                 services::PulseGeneratorService::Config cfg;
                 cfg.portName = lv.port;
                 cfg.modbusAddress = static_cast<uint8_t>(lv.address);
@@ -112,7 +121,9 @@ namespace backend
                 };
             }
         }
-        return std::make_unique<::camera::common::MindVisionCamera>(index, path, nullptr, session);
+        return std::make_unique<::camera::common::MindVisionCamera>(
+            index, path, nullptr, session, overview,
+            path.empty() ? std::nullopt : std::make_optional(effective), std::move(capabilitySink));
     }
 
         // Get a user-writable log path, falling back to dataDir if needed
@@ -691,12 +702,23 @@ namespace backend
                 SPDLOG_INFO("AppBackend: configuring MindVision camera (index={}, config={})",
                             cameraIndex, configPath.empty() ? "<none>" : configPath);
                 captureService_->setCameraFactory([this, cameraIndex, configPath]() mutable {
-                    return makeLiveCamera(cameraIndex, configPath, *pulseGeneratorService_);
+                    return makeLiveCamera(
+                        cameraIndex, configPath, *pulseGeneratorService_,
+                        mindVisionOverview_.load(),
+                        [this](const camera::mindvision::SdkCapability& sensor) {
+                            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                            mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                 sensor.minWidth, sensor.minHeight};
+                        });
                 });
                 mockCameraConfigured_ = false;
                 effectiveCameraSource_ = "mindvision";
                 selectedIfIndex_ = -1;
                 selectedDevIndex_ = -1;
+                {
+                    std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                    mindVisionSensor_ = {};
+                }
                 selectedMvCameraIndex_ = cameraIndex;
                 selectedLabel_ = configPath.empty()
                     ? std::string("MindVision camera ") + std::to_string(cameraIndex)
@@ -810,6 +832,7 @@ namespace backend
     {
         if (!captureService_)
             return;
+        releaseMindVisionOverviewStore();
         requestedCameraSource_ = "mock";
         effectiveCameraSource_ = "mock";
         cameraFallbackReason_.clear();
@@ -859,6 +882,7 @@ namespace backend
     {
         if (!captureService_)
             return;
+        releaseMindVisionOverviewStore();
         requestedCameraSource_ = "egrabber";
         cameraFallbackReason_.clear();
 
@@ -913,6 +937,10 @@ namespace backend
         if (!captureService_)
             return;
 
+        {
+            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+            mindVisionSensor_ = {};
+        }
         selectedMvCameraIndex_ = cameraIndex;
         selectedIfIndex_ = -1;
         selectedDevIndex_ = -1;
@@ -926,7 +954,13 @@ namespace backend
             lastMindVisionConfigPath_ = savedMindVisionConfigPath_;
         const std::string configPath = lastMindVisionConfigPath_;
         captureService_->setCameraFactory([this, cameraIndex, configPath]() {
-            return makeLiveCamera(cameraIndex, configPath, *pulseGeneratorService_);
+            return makeLiveCamera(cameraIndex, configPath, *pulseGeneratorService_,
+                                  mindVisionOverview_.load(),
+                                  [this](const camera::mindvision::SdkCapability& sensor) {
+                                      std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                                      mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                           sensor.minWidth, sensor.minHeight};
+                                  });
         });
         effectiveCameraSource_ = "mindvision";
 #else
@@ -999,13 +1033,25 @@ namespace backend
             const auto parsed = backend::camera::mindvision::parseConfig(bytes);
             if (!parsed.ok) throw std::runtime_error(parsed.error);
             // Construct only: validates generator settings, no SDK/serial I/O.
-            auto candidate = makeLiveCamera(selectedMvCameraIndex_, path, *pulseGeneratorService_);
+            auto candidate = makeLiveCamera(
+                selectedMvCameraIndex_, path, *pulseGeneratorService_, mindVisionOverview_.load(),
+                [this](const camera::mindvision::SdkCapability& sensor) {
+                    std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                    mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight, sensor.minWidth,
+                                         sensor.minHeight};
+                });
             lastMindVisionConfigPath_ = path;
             savedMindVisionConfigPath_ = path;
             if (selectedMvCameraIndex_ >= 0) {
                 const int idx = selectedMvCameraIndex_;
                 captureService_->setCameraFactory([this, idx, path] {
-                    return makeLiveCamera(idx, path, *pulseGeneratorService_);
+                    return makeLiveCamera(
+                        idx, path, *pulseGeneratorService_, mindVisionOverview_.load(),
+                        [this](const camera::mindvision::SdkCapability& sensor) {
+                            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                            mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                 sensor.minWidth, sensor.minHeight};
+                        });
                 });
             }
             return true;
@@ -1037,11 +1083,133 @@ namespace backend
             const int idx = selectedMvCameraIndex_;
             const std::string configPath = lastMindVisionConfigPath_;
             captureService_->setCameraFactory([this, idx, configPath]() {
-                return makeLiveCamera(idx, configPath, *pulseGeneratorService_);
+                return makeLiveCamera(
+                    idx, configPath, *pulseGeneratorService_, mindVisionOverview_.load(),
+                    [this](const camera::mindvision::SdkCapability& sensor) {
+                        std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                        mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                             sensor.minWidth, sensor.minHeight};
+                    });
             });
             SPDLOG_INFO("MindVision capture factory updated with config: {}", path);
         }
         return ok;
+    }
+
+    void AppBackend::releaseMindVisionOverviewStore() {
+        if (!mindVisionOverview_.load()) return;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        frameStore_ = std::make_shared<playback::FrameStore>(mindVisionExperimentCapacity_);
+        captureService_->setFrameStore(frameStore_);
+        playbackService_->setFrameStore(frameStore_);
+        mindVisionOverview_.store(false);
+    }
+
+    AppBackend::MindVisionSensor AppBackend::mindVisionSensor() const {
+        std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+        return mindVisionSensor_;
+    }
+
+    bool AppBackend::setMindVisionOverview(bool overview, std::string* errorOut) {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        if (!isMindVisionCameraSelected()) return fail("No MindVision camera selected");
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing camera mode");
+        if (mindVisionOverview_.load() == overview) return true;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        processingService_->setRealtimeEnabled(false);
+        try {
+            // Camera offsets are sensor coordinates. Processing receives the
+            // already-cropped image and uses local coordinates.
+            std::ifstream input(std::filesystem::u8path(lastMindVisionConfigPath_));
+            const auto parsed = camera::mindvision::parseConfig(
+                std::string(std::istreambuf_iterator<char>(input), {}));
+            if (!input || !parsed.ok) return fail("Cannot load MindVision experiment ROI");
+            processingService_->setRealtimeRoi({0, 0, parsed.config.width, parsed.config.height});
+            // A new store prevents stale overview images reaching processing and
+            // bounds full-sensor preview memory. Existing store readers can finish
+            // using their shared ownership; capture is joined before replacement.
+            if (overview) mindVisionExperimentCapacity_ = frameStore_->capacity();
+            auto next = std::make_shared<playback::FrameStore>(
+                overview ? 8 : mindVisionExperimentCapacity_);
+            frameStore_ = std::move(next);
+            captureService_->setFrameStore(frameStore_);
+            playbackService_->setFrameStore(frameStore_);
+            mindVisionOverview_.store(overview);
+            SPDLOG_INFO("MindVision mode staged: {}", overview ? "Overview" : "Experiment");
+            return true;
+        } catch (const std::exception& e) {
+            return fail(e.what());
+        }
+    }
+
+    bool AppBackend::saveMindVisionRoi(int x, int y, int width, int height, std::string* errorOut) {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment before editing its ROI");
+        if (!isMindVisionCameraSelected() || lastMindVisionConfigPath_.empty())
+            return fail("Select a saved MindVision profile first");
+        const auto sensor = mindVisionSensor();
+        if (x < 0 || y < 0 || width < std::max(1, sensor.minWidth) ||
+            height < std::max(1, sensor.minHeight) || x > 65535 || y > 65535 || width > 65535 ||
+            height > 65535 ||
+            (sensor.sensorWidth > 0 &&
+             (width > sensor.sensorWidth || x > sensor.sensorWidth - width)) ||
+            (sensor.sensorHeight > 0 &&
+             (height > sensor.sensorHeight || y > sensor.sensorHeight - height)))
+            return fail("ROI is outside the camera sensor bounds");
+        try {
+            const auto path = std::filesystem::u8path(lastMindVisionConfigPath_);
+            std::ifstream input(path, std::ios::binary);
+            if (!input) return fail("Cannot read MindVision experiment profile");
+            auto json = nlohmann::json::parse(input);
+            input.close();
+            json["offset_x"] = x;
+            json["offset_y"] = y;
+            json["width"] = width;
+            json["height"] = height;
+            const auto bytes = json.dump(2) + "\n";
+            const auto parsed = camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) return fail(parsed.error);
+            auto temporary = path;
+            temporary += ".roi-" + std::to_string(Tools::getTimestamp()) + ".tmp";
+            struct Cleanup {
+                std::filesystem::path path;
+                ~Cleanup() {
+                    std::error_code ec;
+                    std::filesystem::remove(path, ec);
+                }
+            } cleanup{temporary};
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            output.close();
+            if (!output) return fail("Cannot write temporary MindVision ROI profile");
+#ifdef _WIN32
+            if (!MoveFileExW(temporary.c_str(), path.c_str(),
+                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                return fail("Cannot replace MindVision profile (Windows error " +
+                            std::to_string(GetLastError()) + ")");
+#else
+            std::error_code ec;
+            std::filesystem::rename(temporary, path, ec);
+            if (ec) return fail("Cannot replace MindVision profile: " + ec.message());
+#endif
+            return true;
+        } catch (const std::exception& e) {
+            return fail(e.what());
+        }
     }
 
     bool AppBackend::isMindVisionCameraSelected() const

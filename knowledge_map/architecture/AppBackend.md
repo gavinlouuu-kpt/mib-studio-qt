@@ -339,3 +339,19 @@ instead of a second ad-hoc JSON read, so staging, the capture factory, the
 camera and the settings UI share one validation (connection fields, generator
 range, exposure/strobe versus trigger period). Errors carry the parser's
 operator-facing message.
+
+## MindVision acquisition modes (2026-09-15)
+
+`setMindVisionOverview(bool, error)` is a lifecycle-owner operation: it rejects
+active experiment/recording transitions, joins capture and realtime processing,
+stages the new mode, and replaces the shared FrameStore. Overview has 8 slots;
+Experiment restores the previous capacity. The empty replacement prevents old
+full-sensor frames becoming experiment backgrounds or processing inputs. The
+caller restarts realtime/playback and requests camera Start only when capture
+was already running. Switching providers releases the preview buffer limit.
+
+`mindVisionSensor()` returns a mutex-protected capability snapshot published by
+the capture worker. `saveMindVisionRoi` validates bounds and atomically replaces
+only width/height/offset fields of the selected JSON profile. ROI edits affect
+the next experiment start; immutable camera session configs avoid live-file
+races. Processing uses crop-local ROI coordinates (0,0,width,height).

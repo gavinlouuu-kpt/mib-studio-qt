@@ -37,6 +37,7 @@ struct LiveViewSettings {
 // key behaves exactly as before. Values are bounds-checked in parseConfig.
 struct Config {
     bool illuminatedLive{false};
+    bool requireExactGeometry{false}; // runtime mode transaction; never serialized
     LiveViewSettings liveView{}; // meaningful only when illuminatedLive
     int width{512};
     int height{96};
@@ -301,6 +302,21 @@ inline ParseResult parseConfig(const std::string& jsonBytes)
     r.config = c;
     r.ok = true;
     return r;
+}
+
+// Derive acquisition timing without changing the saved experiment profile.
+// The external generator cannot run below 400 Hz. Preserve pulse duration,
+// rounding duty to its actual 0.01 percent register resolution.
+inline Config overviewConfig(Config config) {
+    config.requireExactGeometry = true;
+    if (config.illuminatedLive) {
+        const double pulseUs = config.liveView.triggerPulseUs();
+        config.liveView.frequencyHz = 400.0;
+        config.liveView.dutyPercent = std::round(pulseUs * 400.0 / 100.0) / 100.0;
+    } else {
+        config.frameSpeed = 0; // camera's slow acquisition speed preset
+    }
+    return config;
 }
 
 } // namespace backend::camera::mindvision

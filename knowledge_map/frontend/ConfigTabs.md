@@ -216,3 +216,10 @@ at approximately 1000 fps with zero reported transport loss. Longer exposures
 reached saturation (10-100 microseconds). Exposure is directly editable in the visible
 MindVision Exposure (µs) field: Stop, edit, Save, then Start Live View.
 Custom saved profiles retain their values. Runtime sweep: `data/exposure-sweep/results.csv`.
+
+## MindVision ROI synchronization
+
+`syncMindVisionRoi` updates only the four ROI fields in valid editor JSON after
+Overview saves a selection. Other unsaved settings are retained. An unfinished,
+invalid JSON edit is preserved rather than replaced; it must be corrected before
+saving. The Overview settings are runtime overrides, not a second saved profile.

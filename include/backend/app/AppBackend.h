@@ -88,7 +88,7 @@ namespace backend
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
 
-        void configureMockCamera(const camera::mock::MockCameraOptions &options);
+        void configureMockCamera(const ::camera::mock::MockCameraOptions& options);
 
         // Select a specific hardware device (does not start capture)
         void setHardwareCameraSelection(int interfaceIndex, int deviceIndex, const std::string &label);
@@ -109,6 +109,19 @@ namespace backend
 
         // Returns true if a MindVision camera is currently selected.
         bool isMindVisionCameraSelected() const;
+
+        // Lifecycle-owner calls only. Stops capture/processing, replaces the frame
+        // store, stages the mode; caller decides whether to restart. No hardware
+        // is opened while idle. Rejected during an experiment or recording.
+        bool setMindVisionOverview(bool overview, std::string* errorOut = nullptr);
+        bool isMindVisionOverview() const { return mindVisionOverview_.load(); }
+        struct MindVisionSensor {
+            int sensorWidth{0}, sensorHeight{0}, minWidth{1}, minHeight{1};
+        };
+        MindVisionSensor mindVisionSensor() const;
+        // Atomic experiment-profile update; does not reconfigure the live overview.
+        bool saveMindVisionRoi(int x, int y, int width, int height,
+                               std::string* errorOut = nullptr);
 
         // Fire one software acquisition trigger on the live capture camera
         // (camera must be running in soft-trigger mode). NOT the sort pulse.
@@ -235,6 +248,11 @@ namespace backend
         int selectedMvCameraIndex_{-1};
         std::string lastMindVisionConfigPath_;
         std::string savedMindVisionConfigPath_;
+        void releaseMindVisionOverviewStore();
+        std::atomic<bool> mindVisionOverview_{false};
+        size_t mindVisionExperimentCapacity_{5000};
+        mutable std::mutex mindVisionSensorMutex_;
+        MindVisionSensor mindVisionSensor_{};
         bool mockCameraConfigured_{false};
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.

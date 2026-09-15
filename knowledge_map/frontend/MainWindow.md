@@ -260,3 +260,12 @@ created in `setupStatusSurfaces()`:
 - The coordinator's status callback captures `this` and posts a queued
   lambda; the destructor clears the callback before any member dies, and
   `AppBackend` (constructed before the window in `main()`) outlives it.
+
+## MindVision tab transitions (2026-09-15)
+
+Overview/Experiment navigation stages the matching MindVision mode through
+AppBackend before restarting realtime processing. Capture resumes only when
+already running; idle navigation does not enable illumination. The backend
+rejects mode changes during experiments/recording before services are stopped.
+MindVision ROI notifications use sensor offsets for the displayed selection and
+zero offsets for processing the hardware crop. The eGrabber script path is unchanged.

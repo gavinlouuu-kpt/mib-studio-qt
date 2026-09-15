@@ -390,3 +390,11 @@ it directly with unsigned/signed fixture paths and a signer SPKI hash. Bundling
 it into `mib_backend_tests` removes the expected MSBuild target and breaks that
 release verification. The standalone-test list in `tests/CMakeLists.txt` preserves
 this contract.
+
+### MindVision overview checks
+
+`backend.mindvision_overview_mode` exercises geometry faults and repeated capture
+cycles; `frontend.mindvision_overview` covers JSON ROI persistence and mode state.
+Both use existing shared test runners. `hw_illuminated_live_test` optionally
+alternates full-sensor and experiment modes with `MIB_TEST_OVERVIEW_MODES=1`;
+use an even number of runs to finish with the saved experiment settings.
