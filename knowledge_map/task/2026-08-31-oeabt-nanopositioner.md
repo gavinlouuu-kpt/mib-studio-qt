@@ -70,3 +70,7 @@ port enumeration. No Qt dependency or event-loop thread is reintroduced into
 the backend. The PTY test stresses concurrent callers through the serialized
 backend proxy; the tests use develop's consolidated test runner. CoreMOR
 readback retains the -0.05 V noise tolerance while writes remain nonnegative.
+
+CI exposed a Rust/Tauri static-link omission after the native port. Both OEABT
+archives now use the common build output directory and are explicitly linked
+and tracked by the bridge build script (Windows retains its CMake manifest).
