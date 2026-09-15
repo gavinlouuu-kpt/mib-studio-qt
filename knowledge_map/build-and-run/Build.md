@@ -350,3 +350,25 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+## Windows Ninja: header dependencies need English cl.exe output (2026-09-15)
+
+CMake's Ninja generator tracks MSVC header dependencies by parsing cl.exe's
+`/showIncludes` lines and assumes the English prefix `Note: including file:`
+unless it detects another at configure time. On a host whose Visual Studio
+language is not English (the rig PC prints the Chinese prefix) no prefix was
+detected and `ninja -t deps <obj>` showed `#deps 0`: editing a header did not
+rebuild its includers, so a stale object could silently keep an old struct
+layout. `VSLANG=1033` only helps when the English language pack is installed; the rig
+PC's Build Tools carry only the system language, so cl.exe kept printing the
+localized prefix. Fix: add the English pack (`vs_installer.exe modify
+--installPath "<BuildTools>" --addProductLang en-US`) or pass the localized
+prefix as `-DCMAKE_CL_SHOWINCLUDES_PREFIX=...` at configure; until then run
+`cmake --build ... --clean-first` after header edits. sccache is not the cause
+(verified: the same prefix appears with and without the launcher).
+
+Also on the rig PC: ConanCenter now resolves `cpuinfo/[>=cci.20231129]` to
+`cci.20251210` while `onnxruntime/1.18.1` pins `cci.20231129`; a cold Conan
+cache fails with a version conflict. The local profile carries
+`[replace_requires] cpuinfo/*: cpuinfo/cci.20231129`; CI only avoids this via
+its restored cache.

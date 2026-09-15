@@ -307,10 +307,10 @@ int main() {
                    extra + ",\"live_view\":{\"enabled\":true,\"port\":\"auto\",\"frequency_hz\":" +
                    std::to_string(hz) + liveExtra + "}}";
         };
-        auto ok = mv::parseConfig(profileWith("", 5000, ""));
+        auto ok = mv::parseConfig(profileWith("", 1000, ""));
         MIB_EXPECT(ok.ok && ok.config.liveView.port == "auto" &&
                        ok.config.liveView.channel == 1 && ok.config.liveView.address == 1 &&
-                       ok.config.liveView.dutyPercent == 10.0 &&
+                       ok.config.liveView.dutyPercent == 2.0 &&
                        ok.config.liveView.parity == 'N' && ok.config.liveView.baud == 9600,
                    "preset defaults fill missing live_view keys");
         MIB_EXPECT(std::fabs(ok.config.liveView.triggerPulseUs() - 20.0) < 1e-9,

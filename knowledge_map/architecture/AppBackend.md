@@ -303,8 +303,10 @@ See [lifecycle](../../docs/howto/illuminated-live-view.md).
 ### Automatic default rig setup (September 14 follow-up)
 
 The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
-9600 8N1, address 1, channel 1, 5000 Hz / 10%, exposure 100 µs, high-level
-external trigger and active-high manual strobe 100 µs / zero delay. The existing
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
 single-camera discovery selects the camera; Start performs read-only discovery
 of USB serial adapters at the configured address on the capture worker. Exactly
 one generator-compatible response is required before normal gated startup.

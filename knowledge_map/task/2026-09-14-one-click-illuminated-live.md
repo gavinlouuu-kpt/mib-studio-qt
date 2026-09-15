@@ -80,3 +80,29 @@ would therefore have rejected the real generator; adoption is now keyed on the
 requested channel being set, plus a read-only syringe-volume register check
 that excludes a dLSP pump left channel-enabled. `backend.illuminated_live`
 carries the rig register images as regressions.
+
+## September 15: rig measurements change the preset
+
+`hardware.illuminated_live` (new, LABEL hardware, gated by
+`MIB_TEST_ILLUMINATED_LIVE`) drives the full AppBackend path on the rig.
+Results at 512×96, exposure 100 µs, 20 µs trigger pulse, host frame counts over
+4–5 s, generator readback after every Stop = duty 0:
+
+| Trigger signal type | Generator | Frames/s | Latest frame mean grey |
+|---|---|---|---|
+| 2 (high level, shipped preset) | 5000 Hz | 4556–4592 | 255 |
+| 2 (high level) | 2500 Hz | 4497–4572 | 255 |
+| 2 (high level) | 1000 Hz | 4525 | 255 |
+| 0 (rising edge) | 1000 Hz | 997.3–998.0 | 255 (polarity 1, any strobe width/delay) |
+| 0 (rising edge), polarity 0, strobe delay 0 | 1000 Hz | 997.5 | 255 |
+| 0 (rising edge), polarity 0, strobe delay 900 µs | 1000 Hz | 997.4 | 52.2 |
+
+High-level trigger free-runs near the camera's readout limit regardless of the
+generator; rising edge gives one frame per pulse. With polarity 1 the image
+never responded to strobe width (1 µs) or delay (900 µs), with polarity 0 it
+went dark when the strobe could not overlap the exposure: on this rig
+polarity 0 pulses OUT1 with the strobe and polarity 1 leaves it idling high.
+The bundled preset, preset button and parser defaults now use signal type 0,
+polarity 0, 1000 Hz / 2 % (the user's chosen operating point). Saturation at
+255 even for a 20 µs strobe is an optical/R5D current matter, not software.
+Rigol confirmation of the LED current waveform remains the acceptance step.

@@ -22,8 +22,8 @@ struct LiveViewSettings {
     std::string port{"auto"};  // system port name, or "auto" for discovery
     int address{1};            // Modbus slave address 1..247
     int channel{1};            // generator channel 1..4 (1-based, as saved)
-    double frequencyHz{5000.0};
-    double dutyPercent{10.0};
+    double frequencyHz{1000.0}; // rig default (2026-09-15): one frame per pulse
+    double dutyPercent{2.0};    // 20 us trigger pulse at 1000 Hz
     int baud{9600};
     int dataBits{8};
     char parity{'N'};
@@ -282,11 +282,13 @@ inline ParseResult parseConfig(const std::string& jsonBytes)
             }
         }
     }
-    if (c.illuminatedLive && (c.triggerMode != 2 || c.extTrigSignalType != 2 || c.strobeMode != 1 ||
-                              c.strobePolarity != 1 || c.aeEnabled || c.triggerCount != 1 ||
-                              c.strobePulseUs <= 0 || !w.empty())) {
-        r.error = "Illuminated Live View requires external high-level trigger, manual exposure, "
-                  "one frame per trigger and active-high manual strobe. Check Hardware Setup.";
+    if (c.illuminatedLive && (c.triggerMode != 2 ||
+                              (c.extTrigSignalType != 0 && c.extTrigSignalType != 2) ||
+                              c.strobeMode != 1 || c.aeEnabled ||
+                              c.triggerCount != 1 || c.strobePulseUs <= 0 || !w.empty())) {
+        r.error = "Illuminated Live View requires external trigger (rising edge or high level), "
+                  "manual exposure, one frame per trigger and manual strobe. "
+                  "Check Hardware Setup.";
         return r;
     }
     if (c.illuminatedLive) {

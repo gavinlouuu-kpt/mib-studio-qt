@@ -420,7 +420,7 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvFpsSpin_->setObjectName(QStringLiteral("mvFps"));
         mvFpsSpin_->setRange(400.0, 40000.0);
         mvFpsSpin_->setDecimals(1);
-        mvFpsSpin_->setValue(5000.0);
+        mvFpsSpin_->setValue(1000.0);
         // Commit on Enter/focus-out only: the duty compensation in
         // syncMvJsonFromForm is relative to the previous value, so per-keystroke
         // intermediates would compound rounding into the saved duty.
@@ -428,7 +428,7 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         mvFpsSpin_->setToolTip(tr("Illuminated rig trigger rate. Save while stopped, then Play. "
                                  "Exposure and strobe delay + width must fit in one trigger period "
                                  "(Save reports the limit). Actual FPS depends on camera and ROI; "
-                                 "5000 FPS was tested at 512×96."));
+                                 "1000 FPS (rising-edge trigger) is the rig default measured on 2026-09-15."));
         exposureRow->addWidget(mvFpsSpin_);
         exposureRow->addStretch();
         auto* advanced = new QCheckBox(tr("Advanced — Hardware Setup"), page);
@@ -566,7 +566,7 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         auto* saveRig = new QPushButton(tr("Use XGC + R5D preset for Live View"), pgGroup);
         saveRig->setObjectName(QStringLiteral("mvSaveLiveRig"));
         saveRig->setToolTip(tr("Saves the selected generator connection and channel with the "
-                               "tested 5 kHz rig preset. Does not start hardware."));
+                               "rig preset (1000 Hz rising-edge trigger, 20 us pulse). Does not start hardware."));
         pgLayout->addWidget(saveRig);
         connect(saveRig, &QPushButton::clicked, this, [this] {
             if (backend_.capture().isRunning()) {
@@ -598,21 +598,23 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
             obj["exposure_time_us"] = 100.0;
             obj["auto_exposure_enabled"] = false;
             obj["trigger_mode"] = 2;
-            obj["ext_trig_signal_type"] = 2;
+            obj["ext_trig_signal_type"] = 0; // rising edge: one frame per generator pulse
             obj["trigger_count"] = 1;
             obj["ext_trig_jitter_us"] = 0;
             obj["acq_trigger_delay_us"] = 0;
             obj["strobe_mode"] = 1;
             obj["strobe_delay_us"] = 0;
             obj["strobe_pulse_width_us"] = 100;
-            obj["strobe_polarity"] = 1;
+            // Polarity 0 pulses OUT1 with the strobe on the XGC/R5D rig; 1 left
+            // the line idling high (LED on) — measured 2026-09-15.
+            obj["strobe_polarity"] = 0;
             QJsonObject live;
             live["enabled"] = true;
             live["port"] = port;
             live["address"] = pgAddrSpin_->value();
             live["channel"] = pgChannelSpin_->value();
-            live["frequency_hz"] = 5000.0;
-            live["duty_percent"] = 10.0;
+            live["frequency_hz"] = 1000.0;
+            live["duty_percent"] = 2.0; // 20 us trigger pulse
             live["baud"] = pgBaudCombo_->currentData().toInt();
             live["data_bits"] = pgDataBitsCombo_->currentData().toInt();
             live["parity"] = QString(pgParityCombo_->currentData().toChar());
@@ -1391,7 +1393,7 @@ void ConfigTabs::syncMvFormFromJson() {
     mvSyncGuard_ = true;
     const auto live = obj["live_view"].toObject();
     mvFpsSpin_->setEnabled(live["enabled"].toBool());
-    mvFpsSpin_->setValue(live.value("frequency_hz").toDouble(5000.0));
+    mvFpsSpin_->setValue(live.value("frequency_hz").toDouble(1000.0));
     selectComboData(mvTriggerModeCombo_, obj.value("trigger_mode").toInt(0));
     selectComboData(mvSignalTypeCombo_, obj.value("ext_trig_signal_type").toInt(0));
     mvExposureSpin_->setValue(obj.value("exposure_time_us").toDouble(3000.0));
@@ -1415,7 +1417,7 @@ void ConfigTabs::syncMvJsonFromForm() {
 
     auto live = obj["live_view"].toObject();
     if (live["enabled"].toBool()) {
-        const double oldHz = live.value("frequency_hz").toDouble(5000.0);
+        const double oldHz = live.value("frequency_hz").toDouble(1000.0);
         // Preserve the active trigger duration, not its duty fraction, across FPS edits.
         // Rounded to the module's 0.01 % duty resolution so the saved value is
         // what the generator can actually hold.

@@ -102,18 +102,20 @@ beta/release. Findings:
 ## Next system's work
 
 1. Confirm PR CI is green on the latest head (backend build/test, ASan/UBSan,
-   TSan, docs). The second-pass changes were not compiled locally.
-2. Produce a Windows build of this branch on a machine with the toolchain (or
-   an authorized `build-windows` dispatch) and run it on the rig PC. Close the
-   installed app first: it holds COM6, which makes discovery report the
-   generator as busy.
-3. Verify Start/Stop/restart with the automatic default: discovery must resolve
-   COM6 (not COM4), the log line "pulse generator discovered on COM6" appears,
-   and Stop leaves generator duty 0 and OUT1 low. Confirm the default profile
-   was upgraded once and an edited profile is left alone.
-4. Rigol-validate trigger (CH2) and LED current (CH1) at 5000 FPS and one
-   adjusted FPS, recording waveforms and the actual acquisition rate. Return
-   generator and LED off. Update issue #413 and PR #414. No merge without
+   TSan, docs). On the rig PC: `cmake --build --preset windows-ninja-build`
+   then `ctest --preset windows-ninja-test`; set `VSLANG=1033` in the build
+   environment (see the build notes) or header edits will not recompile.
+2. Rigol-validate on the rig with the new default (1000 Hz rising-edge trigger,
+   polarity 0): CH2 trigger period 1000 µs / 20 µs pulse; CH1 one LED-current
+   pulse per trigger of about the strobe width, none between triggers, and no
+   current after Stop. Repeat at one adjusted FPS (2500). Record waveforms.
+   The September 15 software runs (`hardware.illuminated_live`) showed frame
+   brightness tracking strobe/exposure overlap only with polarity 0; the scope
+   is the acceptance measurement for that polarity choice.
+3. Frames were saturated (mean 255/255) with the 100 µs exposure/strobe even
+   at a 20 µs strobe: reduce R5D current or add attenuation on the rig, or lower
+   exposure/strobe in Config, before optical use. This is not a software gate.
+4. Update issue #413 and PR #414 with the scope results. No merge without
    authorization.
 
 ## Hardware acceptance and limits
@@ -121,7 +123,9 @@ beta/release. Findings:
 Generator CH1 -> camera trigger; physical camera OUT1 (SDK output 0) -> R5D.
 OUT1 high energizes LED, low disables it. Rigol CH2 measures trigger, CH1 LED
 current. Default: ROI 512x96, exposure setting 100 us, manual active-high strobe
-100 us / delay 0, generator 5000 Hz / 10% (20 us trigger pulse).
+100 us / delay 0 with polarity 0, generator 1000 Hz / 2% (20 us trigger
+pulse), rising-edge trigger. Changed on September 15 from high-level trigger,
+polarity 1, 5000 Hz / 10% after rig measurements (see the operator guide).
 
 September 10 bench result was 5 kHz LED current with 64.6 us pulses; settled
 image mean about 150/255 versus 5.6 LED-off. This is prior bench evidence, not

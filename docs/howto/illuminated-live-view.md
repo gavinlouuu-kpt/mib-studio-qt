@@ -37,10 +37,12 @@ require updating Hardware Setup if the device node changes. Automatic discovery
 uses read-only probes and requires exactly one compatible generator before
 enabling the configured channel; it never selects among multiple matches.
 
-The preset uses 512×96 ROI, manual 100 µs exposure, external high-level trigger
-(mode 2, signal type 2), one frame per trigger, zero acquisition delay/jitter,
-manual active-high strobe (mode 1), width 100 µs and delay 0. Generator channel
-is the selected channel (normally channel 1), 5000 Hz and 10% duty. Serial
+The preset uses 512×96 ROI, manual 100 µs exposure, external rising-edge trigger
+(mode 2, signal type 0: one frame per generator pulse), zero acquisition
+delay/jitter, manual strobe (mode 1) width 100 µs, delay 0, polarity 0 (on this
+rig polarity 0 pulses OUT1 with the strobe; polarity 1 left OUT1 idling high and
+the LED on — measured 2026-09-15). Generator channel is the selected channel
+(normally channel 1), 1000 Hz and 2% duty (a 20 µs trigger pulse). Serial
 connection settings come from the selected controls, not hard-coded host paths.
 
 The default JSON includes this section (`auto` discovers the generator; custom
@@ -56,8 +58,8 @@ rigs may use an explicit port):
   "stop_bits": 1,
   "address": 1,
   "channel": 1,
-  "frequency_hz": 5000.0,
-  "duty_percent": 10.0
+  "frequency_hz": 1000.0,
+  "duty_percent": 2.0
 }
 ```
 
@@ -143,11 +145,13 @@ Requested FPS is visible beside Exposure for a saved illuminated rig. Stop captu
 change FPS, Save, and Play to apply it through the coordinated generator startup.
 It edits `live_view.frequency_hz`, not the camera's free-running speed selector.
 The generator supports 400–40000 Hz; this is not a camera throughput guarantee.
-The bench-tested point is 5000 FPS at 512×96. Observe actual acquisition rate and
+The rig default is 1000 FPS at 512×96 (rising-edge trigger, measured 997.7
+frames/s on 2026-09-15); with edge trigger the camera tops out near 4500
+frames/s at this ROI, so requests above that are not honoured. Observe actual acquisition rate and
 use Rigol for physical timing acceptance when commissioning another rate.
 
 Changing FPS preserves the trigger's active duration by scaling saved duty with
-frequency: the preset's 5000 Hz / 10% becomes 2500 Hz / 5%, retaining a requested
+frequency: the preset's 1000 Hz / 2% becomes 2500 Hz / 5%, retaining a requested
 20 µs trigger pulse. Exposure and strobe width/delay are not silently changed.
 Existing backend validation rejects exposure or strobe timing that exceeds the
 new period, and invalid generator duty. Legacy/manual profiles leave FPS disabled.
@@ -167,8 +171,10 @@ as staging the next Play, not requiring a separate Apply to Camera operation.
 ### Automatic default rig setup (September 14 follow-up)
 
 The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
-9600 8N1, address 1, channel 1, 5000 Hz / 10%, exposure 100 µs, high-level
-external trigger and active-high manual strobe 100 µs / zero delay. The existing
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
 single-camera discovery selects the camera; Start performs read-only discovery
 of USB serial adapters at the configured address on the capture worker. Exactly
 one generator-compatible response is required before normal gated startup.
@@ -260,3 +266,6 @@ Windows fast test lane passes (102 tests), including `frontend.config_tabs_state
 and `backend.illuminated_live`, which no PR lane compiles. With the installed
 app closed, the generator on COM6 reads channel 1 = 5000 Hz / 50 % and
 channels 2–4 = 0 Hz; the SDK enumerates one MV-XG51GM (GigE).
+
+Rig run records for September 15 (frame rates per trigger mode, the polarity
+finding and the new default): [evidence](../evidence/2026-09-15-illuminated-live-rig/README.md).

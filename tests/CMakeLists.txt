@@ -525,6 +525,13 @@ mib_add_backend_test_executable(hw_camera_test hardware/hw_camera_test.cpp)
 add_test(NAME hardware.camera COMMAND $<TARGET_FILE:mib_backend_tests> hw_camera_test)
 set_tests_properties(hardware.camera PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+# Issue #413: the complete one-click illuminated Live View cycle against the
+# real XGC/R5D rig (discovery, coordinated start, frames, coordinated stop,
+# generator-OFF readback, restart). Gated by MIB_TEST_ILLUMINATED_LIVE.
+mib_add_backend_test_executable(hw_illuminated_live_test hardware/hw_illuminated_live_test.cpp)
+add_test(NAME hardware.illuminated_live COMMAND $<TARGET_FILE:mib_backend_tests> hw_illuminated_live_test)
+set_tests_properties(hardware.illuminated_live PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 300)
+
 mib_add_backend_test_executable(hw_egrabber_script_test hardware/hw_egrabber_script_test.cpp)
 add_test(NAME hardware.egrabber_script COMMAND $<TARGET_FILE:mib_backend_tests> hw_egrabber_script_test)
 set_tests_properties(hardware.egrabber_script PROPERTIES LABELS "hardware;camera" SKIP_RETURN_CODE 77 TIMEOUT 60)
