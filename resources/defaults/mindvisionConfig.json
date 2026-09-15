@@ -3,7 +3,7 @@
   "height": 96,
   "offset_x": 0,
   "offset_y": 0,
-  "exposure_time_us": 100.0,
+  "exposure_time_us": 2.0,
   "analog_gain": 1,
   "auto_exposure_enabled": false,
   "ae_target_brightness": 100,

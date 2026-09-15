@@ -142,7 +142,7 @@ int main(int argc, char* argv[])
     MIB_EXPECT(defaultRig["live_view"].toObject()["port"].toString() == "auto" &&
                    defaultRig["live_view"].toObject()["enabled"].toBool(),
                "default rig requires no manual setup");
-    MIB_EXPECT(defaultRig["exposure_time_us"].toDouble() == 100,
+    MIB_EXPECT(defaultRig["exposure_time_us"].toDouble() == 2,
                "automatic default uses tested exposure setting");
 
     // ---- explicit state ----------------------------------------------------
@@ -365,7 +365,7 @@ int main(int argc, char* argv[])
         MIB_EXPECT(upgraded == bundled, "untouched historical default is upgraded");
         const auto preset = QJsonDocument::fromJson(upgraded).object();
         MIB_EXPECT(preset["live_view"].toObject()["port"].toString() == "auto" &&
-                       preset["exposure_time_us"].toDouble() == 100,
+                       preset["exposure_time_us"].toDouble() == 2,
                    "upgrade target is the automatic rig preset");
         auto edited = QJsonDocument::fromJson(historical).object();
         edited["exposure_time_us"] = 50.0;
