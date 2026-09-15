@@ -177,3 +177,20 @@ still has the earlier 5000 Hz high-level preset and must be updated explicitly
 to the requested 1000 Hz / 100 µs strobe before desktop acceptance. A Windows
 Security network-access dialog currently blocks UI Stop and restart; the user
 has been asked to dismiss it. No security setting was changed by the agent.
+
+### Desktop acceptance completed after the dialog was dismissed
+
+Rebuilt `ba149f6`, backed up the earlier development profile locally, and
+installed the bundled 1000 Hz / 2% profile at the development configuration
+path. Verified the exact process executable under `build-ninja/Release`.
+The app auto-selected MindVision and opened Overview idle. One Play click
+discovered COM6 and armed rising-edge trigger, polarity 0, width 100 µs,
+delay 0 and exposure 100 µs; desktop status showed 998–999 fps. The Windows
+Camera webcam preview showed the LED lit. Stop returned the command controls
+to Idle and the webcam showed darkness. A second Play rediscovered COM6 and
+armed the same settings. Closing the running app stopped capture generation 2,
+released COM6, exited the process, and left the LED visibly dark.
+Local log: `data/logs/issue413-desktop-acceptance.log` (10:07–10:08 on the rig).
+The earlier dialog and development-profile blockers are resolved. This is
+visual commissioning, not an electrical pulse-width measurement. Latest CI
+and merge/installed-release deployment remain outstanding.
