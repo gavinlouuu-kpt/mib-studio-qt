@@ -2,7 +2,7 @@
 
 The **Connect** tab is the first tab and the first stop after launch.
 Connecting *selects* a camera — frames only start streaming when you press
-**Start Camera** (main tab-bar corner).
+**Start Live View** (main tab-bar corner).
 
 ![Connect tab with the device list, Refresh/Connect buttons, and mock camera option](images/connect-tab.png)
 
@@ -39,7 +39,7 @@ reproducing issues away from the instrument.
 2. Pick a folder of frame images (PNG/TIFF/JPEG/BMP; streamed in filename
    order — use numeric prefixes like `frame_0001.png` for deterministic
    playback), the target frame rate, and whether to loop.
-3. Click **Start Camera** as usual.
+3. Click **Start Live View** as usual.
 
 Everything downstream — live view, processing, recording, review — behaves
 exactly as with a real camera.

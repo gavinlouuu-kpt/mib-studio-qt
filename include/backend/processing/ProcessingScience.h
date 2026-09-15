@@ -53,6 +53,29 @@ cv::Mat makeObjectMask(const cv::Size& size,
 
 bool contourTouchesRoiBorder(const std::vector<cv::Point>& contour, const cv::Rect& roi);
 
+// Why a detection failed validation, in the same priority order and with the
+// same early-exit semantics as the gating in filterProcessedObjects (and the
+// human-readable ExperimentMonitoringTab tooltip). NoContour and Border are
+// early exits: when either applies, metric-range reasons are not reported
+// because those metrics were not computed. This is the single source of truth
+// for both the live invalid-reason histogram and the UI tooltip.
+enum class InvalidReasonCode : uint8_t {
+    NoContour = 0,
+    Border,
+    Area,
+    Ring,
+    Deform,
+    AreaRatio,
+};
+inline constexpr int kInvalidReasonCount = 6;
+
+// Returns the reasons `result` is invalid. Empty for a valid detection.
+// pixelToMicronFactor converts result.area (pixels) to μm² to compare against
+// the μm² area gates, matching the gating and the tooltip exactly.
+std::vector<InvalidReasonCode> classifyInvalidReasons(const services::FilterResult& result,
+                                                      const services::ProcessingConfig& config,
+                                                      double pixelToMicronFactor = 1.0);
+
 cv::Rect2d resultBbox(const services::FilterResult& result);
 
 // Full per-frame object analysis over an already-generated mask.

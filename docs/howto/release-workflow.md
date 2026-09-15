@@ -259,6 +259,9 @@ The script reads `DEFAULT_VERSION`, calculates the new semantic version, updates
 
 ```powershell
 cmake -S . -B build `
+  -DMIB_ENABLE_MINDVISION=ON `
+  -DMIB_MINDVISION_SDK_ROOT=<provisioned-sdk-root> `
+  -DMIB_MINDVISION_RUNTIME_DIR=<provisioned-runtime-dir> `
   -DMIB_REQUIRE_PROCESSING_CORE_SIGNER_SPKI=ON `
   -DMIB_PROCESSING_CORE_SIGNER_SPKI_SHA256=<approved-64-hex-pin> `
   -DMIB_RELEASE_VERSION_OVERRIDE=<numeric-version> `
@@ -266,6 +269,13 @@ cmake -S . -B build `
 cmake --build build --config Release
 ctest --test-dir build --build-config Release --output-on-failure --timeout 30
 ```
+
+The supported release entry points run
+`scripts/provision-mindvision-sdk.ps1` before this configure step. It pins the
+team R2 SDK by SHA-256, validates the APIs used by the backend, and makes the
+extracted include/runtime paths available to CMake. Releases also require
+`build/Release/MVCAMSDK_X64.dll`; missing SDK support is a hard failure, not a
+stub fallback.
 
 The generic `windows-default` preset intentionally leaves the requirement off
 for local development and fork CI. Such an unpinned Release executable fails

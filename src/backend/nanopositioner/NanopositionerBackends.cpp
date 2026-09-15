@@ -164,7 +164,7 @@ std::mutex& coremorMutex() {
 }
 
 bool plausibleCoremorVoltage(double value) {
-    return std::isfinite(value) && value >= 0.0 && value <= kCoremorMaximumVoltage;
+    return std::isfinite(value) && value >= -0.05 && value <= kCoremorMaximumVoltage;
 }
 
 int openCoremorWithRetries(int port, int baudRate) {
@@ -257,7 +257,7 @@ public:
             error = "CoreMOR controller is not connected";
             return false;
         }
-        if (!plausibleCoremorVoltage(volts)) {
+        if (!plausibleCoremorVoltage(volts) || volts < 0.0) {
             error = "CoreMOR voltage is outside the supported range";
             return false;
         }

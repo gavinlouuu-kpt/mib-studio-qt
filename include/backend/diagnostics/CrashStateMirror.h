@@ -47,6 +47,13 @@ public:
         std::atomic<double> validFps{0.0};
         std::atomic<double> invalidFps{0.0};
         std::atomic<uint64_t> totalValidFlushed{0};
+        // Target-identification loss at crash time (see IdentificationCounters
+        // / getDroppedValidFrames): real detections dropped at the backlog cap,
+        // total sort targets identified, and targets that never got a pulse
+        // because a frame produced more than one.
+        std::atomic<uint64_t> droppedValidFrames{0};
+        std::atomic<uint64_t> targetGroupObjects{0};
+        std::atomic<uint64_t> unservedTargetGroupObjects{0};
     };
 
     struct Hdf5Slot {
@@ -97,6 +104,12 @@ public:
         std::atomic<bool> running{false};
         std::atomic<uint64_t> triggerCount{0};
         std::atomic<uint64_t> lastOnsetUs{0};
+        // Sort losses at crash time: requests evicted from a full queue, and
+        // pulses that could not be driven after dequeue (no camera / set
+        // failed). Plus the live acquisition->pulse latency EWMA.
+        std::atomic<uint64_t> droppedRequests{0};
+        std::atomic<uint64_t> droppedPulses{0};
+        std::atomic<uint64_t> targetLatencyUs{0};
     };
 
     struct RecorderSlot {

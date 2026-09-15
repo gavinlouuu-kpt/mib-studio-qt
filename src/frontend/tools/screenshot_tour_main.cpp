@@ -55,6 +55,7 @@ constexpr Shot kShots[] = {
     {"experiment-preview", "Experiment > Preview page with playback panel and config editor"},
     {"experiment-monitoring", "Experiment > Monitoring page with realtime metric charts"},
     {"review-tab", "Review tab for browsing recorded HDF5 experiments"},
+    {"sidebar-collapsed", "Main window with the hardware panel hidden (reopen control in the tab-bar corner)"},
     {"dialog-processing-settings", "Settings > Processing Settings dialog"},
     {"dialog-monitoring-settings", "Settings > Monitoring Settings dialog"},
     {"dialog-pixel-to-micron", "Settings > Pixel to Micron Conversion dialog"},
@@ -294,9 +295,30 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Issue #358: the tour's requested size is the viewport contract. The
+    // window is told the available desktop explicitly (the offscreen platform
+    // screen is only 800x600), and after settling we assert the *actual*
+    // geometry: a window silently enlarged by minimum-size constraints must
+    // fail the tour rather than produce a misleadingly successful PNG.
+    const QSize requested(parser.value(widthOpt).toInt(), parser.value(heightOpt).toInt());
     MainWindow window(backend);
-    window.resize(parser.value(widthOpt).toInt(), parser.value(heightOpt).toInt());
+    window.setAvailableGeometryOverrideForTests(QRect(QPoint(0, 0), requested + QSize(200, 200)));
+    window.resize(requested);
     window.show();
+    int geometryFailures = 0;
+    auto assertViewport = [&](const QString& where) {
+        const QSize need = window.minimumSizeHint().expandedTo(window.minimumSize());
+        if (window.size() != requested) {
+            SPDLOG_ERROR("screenshot_tour: {}: window is {}x{} but {}x{} was requested",
+                         where.toStdString(), window.width(), window.height(), requested.width(), requested.height());
+            ++geometryFailures;
+        }
+        if (need.width() > requested.width() || need.height() > requested.height()) {
+            SPDLOG_ERROR("screenshot_tour: {}: minimum size {}x{} exceeds the requested viewport {}x{}",
+                         where.toStdString(), need.width(), need.height(), requested.width(), requested.height());
+            ++geometryFailures;
+        }
+    };
 
     auto* tabs = window.findChild<QTabWidget*>(QStringLiteral("tabs"));
     if (!tabs || tabs->count() < 4) {
@@ -316,6 +338,7 @@ int main(int argc, char* argv[])
 
     tour.addStep(kSettleMs, [&]() {
         tabs->setCurrentIndex(0);
+        assertViewport(QStringLiteral("connect-tab"));
         sink.save(QStringLiteral("connect-tab"), window.grab());
     });
     tour.addStep(200, [&]() {
@@ -335,6 +358,7 @@ int main(int argc, char* argv[])
         }
     });
     tour.addStep(kSettleMs, [&]() {
+        assertViewport(QStringLiteral("overview-live"));
         sink.save(QStringLiteral("overview-live"), window.grab());
     });
     tour.addStep(200, [&]() {
@@ -342,15 +366,30 @@ int main(int argc, char* argv[])
         if (experimentTabs) experimentTabs->setCurrentIndex(0);
     });
     tour.addStep(kSettleMs, [&]() {
+        assertViewport(QStringLiteral("experiment-preview"));
         sink.save(QStringLiteral("experiment-preview"), window.grab());
         if (experimentTabs) experimentTabs->setCurrentIndex(1);
     });
     tour.addStep(kSettleMs, [&]() {
+        assertViewport(QStringLiteral("experiment-monitoring"));
         sink.save(QStringLiteral("experiment-monitoring"), window.grab());
         tabs->setCurrentIndex(3);
     });
     tour.addStep(kSettleMs, [&]() {
+        assertViewport(QStringLiteral("review-tab"));
         sink.save(QStringLiteral("review-tab"), window.grab());
+        // Issue #359: hide the hardware panel through the single owner path.
+        window.setHardwarePanelVisible(false);
+        tabs->setCurrentIndex(1);
+    });
+    tour.addStep(kSettleMs, [&]() {
+        assertViewport(QStringLiteral("sidebar-collapsed"));
+        if (window.isHardwarePanelVisible()) {
+            SPDLOG_ERROR("screenshot_tour: hardware panel still visible after hiding it");
+            ++geometryFailures;
+        }
+        sink.save(QStringLiteral("sidebar-collapsed"), window.grab());
+        window.setHardwarePanelVisible(true);
     });
 
     // Modal dialogs: schedule the grab-and-close first, then trigger the menu
@@ -383,7 +422,10 @@ int main(int argc, char* argv[])
     tour.start([&]() {
         const bool manifestOk = sink.writeManifest();
         const int missing = sink.missingCount();
-        exitCode = (manifestOk && missing == 0) ? 0 : 1;
+        exitCode = (manifestOk && missing == 0 && geometryFailures == 0) ? 0 : 1;
+        if (geometryFailures > 0) {
+            SPDLOG_ERROR("screenshot_tour: {} viewport/geometry assertion(s) failed", geometryFailures);
+        }
         if (missing > 0) {
             SPDLOG_ERROR("screenshot_tour: {} screenshot(s) missing or failed", missing);
         } else {

@@ -33,10 +33,24 @@ The window is a fixed set of task tabs plus a collapsible sidebar:
 - **Experiment** — nested **Preview** and **Monitoring** pages, with
   **Start/Stop Experiment** buttons in the tab-bar corner.
 - **Review** — open and inspect recorded HDF5 files.
-- **Start Camera / Stop Camera** buttons sit in the corner of the main tab
+- **Start Live View / Stop Camera** buttons sit in the corner of the main tab
   bar and control frame acquisition regardless of the current tab.
-- **Left sidebar** (collapsible) — background image preview, capture
-  statistics, nanopositioner controls, and syringe pump controls.
+- **Hardware panel** (left sidebar) — background image preview, capture
+  statistics, nanopositioner controls, and syringe pump controls. Hide or
+  show it with the **◀ / ▶** button in the left corner of the tab bar,
+  *Settings ▸ Hide/Show hardware panel*, or `Ctrl+Shift+H`; hiding it never
+  moves or resizes the window, and dragging the divider sets the width the
+  panel reopens with (clamped so the workspace always keeps its minimum
+  width on a smaller screen).
+
+![Main window with the hardware panel hidden and the reopen control in the tab-bar corner](images/sidebar-collapsed.png)
+
+The window remembers its size and position between sessions and validates
+them against the current desktop on startup: after moving to a smaller
+monitor or a different scaling factor it shrinks or moves back on-screen
+instead of leaving the title bar or controls unreachable. Long paths,
+profile names and status values are shortened with an ellipsis (hover for
+the full text; right-click to copy) rather than widening the window.
 - **Status bar** — live capture/processing statistics (see
   [Acquire & record](acquire-and-record.md#status-bar-statistics)) and the
   current ROI.

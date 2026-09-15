@@ -49,12 +49,24 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/RecordingAccounting.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/dialogs/BatchMaskDialog.h"
 #include "frontend/dialogs/FrameViewerDialog.h"
 #include "frontend/models/HdfMetricsModel.h"
 #include "frontend/utils/OverlayRenderer.h"
 #include "frontend/utils/HdfReviewExportPaths.h"
+#include "backend/recording/HdfExportService.h"
+#include "frontend/utils/ElidingLabel.h"
+
+#include <QToolButton>
+#include <QMenu>
+#include <QAction>
+
+#include <QFutureWatcher>
+#include <QPointer>
+#include <QProgressDialog>
+#include <QtConcurrent/QtConcurrent>
 
 #include <spdlog/spdlog.h>
 #include <opencv2/core.hpp>
@@ -79,72 +91,6 @@ struct HdfReviewLoadData {
     bool recordingMultiImageEnabled{false};
     size_t recordingMultiImageCount{1};
 };
-
-bool writeMetricsCsvData(const QString& filePath,
-                         const std::vector<backend::services::ProcessedFrame>& validFrames,
-                         const std::vector<backend::services::ProcessedFrame>& invalidFrames,
-                         double conversionFactor,
-                         QString* errorMessage)
-{
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (errorMessage) {
-            *errorMessage = QObject::tr("Failed to open file for writing: %1").arg(filePath);
-        }
-        return false;
-    }
-
-    QTextStream out(&file);
-    const double areaConversionFactor = conversionFactor * conversionFactor;
-
-    out << "Frame Type,Index,Timestamp,Object Id,Object Count,Track Id,Track First,Track Last,Track Observations,"
-        << "Deformability,Area,Area (um²),Area Ratio,Ring Ratio,"
-        << "Valid,Touches Border,Single Inner,In Range,Inner Count,"
-        << "Bright Q1,Bright Q2,Bright Q3,Bright Q4\n";
-
-    auto writeFrame = [&](const char* frameType, const backend::services::ProcessedFrame& frame) {
-        const auto& val = frame.validation;
-        const double areaMicrons = val.area * areaConversionFactor;
-        out << frameType << ",";
-        out << frame.index << ",";
-        out << frame.timestampNs << ",";
-        out << val.objectId << ",";
-        out << val.objectCount << ",";
-        out << val.trackId << ",";
-        out << val.trackFirstFrame << ",";
-        out << val.trackLastFrame << ",";
-        out << val.trackObservationCount << ",";
-        out << QString::number(val.deformability, 'f', 3) << ",";
-        out << QString::number(val.area, 'f', 2) << ",";
-        out << QString::number(areaMicrons, 'f', 2) << ",";
-        out << QString::number(val.areaRatio, 'f', 3) << ",";
-        out << QString::number(val.ringRatio, 'f', 3) << ",";
-        out << (val.isValid ? "Yes" : "No") << ",";
-        out << (val.touchesBorder ? "Yes" : "No") << ",";
-        out << (val.hasSingleInnerContour ? "Yes" : "No") << ",";
-        out << (val.inRange ? "Yes" : "No") << ",";
-        out << val.innerContourCount << ",";
-        out << QString::number(val.brightness.q1, 'f', 2) << ",";
-        out << QString::number(val.brightness.q2, 'f', 2) << ",";
-        out << QString::number(val.brightness.q3, 'f', 2) << ",";
-        out << QString::number(val.brightness.q4, 'f', 2) << "\n";
-    };
-
-    for (const auto& frame : validFrames) {
-        writeFrame("Valid", frame);
-    }
-    for (const auto& frame : invalidFrames) {
-        writeFrame("Invalid", frame);
-    }
-
-    if (out.status() != QTextStream::Ok) {
-        if (errorMessage) {
-            *errorMessage = QObject::tr("Failed while writing CSV: %1").arg(filePath);
-        }
-        return false;
-    }
-    return true;
-}
 
 bool loadHdfReviewData(const QString& filePath, HdfReviewLoadData& outData, QString* errorMessage)
 {
@@ -349,6 +295,31 @@ private:
     int frameIndex_;
 };
 
+// Issue #367: Review distinguishes empty / scientifically rejected /
+// processing failed / store loss / persistence failure and shows the
+// recorded completion state. Legacy files without accounting say so
+// explicitly instead of being presented as complete.
+QString HdfReviewTab::accountingSummary() const
+{
+    if (!hdfReader_) return {};
+    backend::recording::RecordingAccountingSnapshot a;
+    if (!hdfReader_->readRunAccounting(a)) {
+        return tr(" · accounting: not recorded (legacy file)");
+    }
+    const uint64_t storeLoss = a.storeOverwritten + a.storeNotCommitted + a.storeMalformed;
+    QString text = tr(" · run %1").arg(QString::fromLatin1(backend::recording::toString(a.completion)));
+    if (!a.reconciled) text += tr(" (accounting does not reconcile)");
+    text += tr(" — empty %1, rejected %2, processing failed %3, store loss %4, persisted %5/%6, persistence failed %7")
+                .arg(static_cast<qulonglong>(a.empty))
+                .arg(static_cast<qulonglong>(a.scientificallyRejected))
+                .arg(static_cast<qulonglong>(a.processingFailed))
+                .arg(static_cast<qulonglong>(storeLoss))
+                .arg(static_cast<qulonglong>(a.persistenceCommitted))
+                .arg(static_cast<qulonglong>(a.persistenceAdmitted))
+                .arg(static_cast<qulonglong>(a.persistenceFailed));
+    return text;
+}
+
 HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
     : QWidget(parent), ui(new Ui::HdfReviewTab), backend_(backend) {
     ui->setupUi(this);
@@ -369,6 +340,7 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
     connect(ui->batchExportAllBtn, &QPushButton::clicked, this, &HdfReviewTab::onBatchExportAll);
     connect(ui->exportChartsBtn, &QPushButton::clicked, this, &HdfReviewTab::onExportCharts);
     connect(ui->regenerateMasksBtn, &QPushButton::clicked, this, &HdfReviewTab::onRegenerateMasks);
+    setupBoundedFileRow();
     connect(ui->overlayModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &HdfReviewTab::onOverlayModeChanged);
     connect(ui->roiOverlayCheck, &QCheckBox::toggled, this, &HdfReviewTab::onToggleRoiOverlay);
@@ -485,6 +457,15 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
 }
 
 HdfReviewTab::~HdfReviewTab() {
+    // Issue #344: never destroy the tab under a running export job. The job
+    // owns its own reader/request, so cancelling makes it stop within one
+    // frame; the wait here is bounded by that.
+    exportCancel_.cancel();
+    if (exportWatcher_) {
+        exportWatcher_->disconnect(this);
+        exportWatcher_->waitForFinished();
+        exportWatcher_ = nullptr;
+    }
     // Clean up isoelastic curve line series
     for (auto it = isoelasticCurves_.begin(); it != isoelasticCurves_.end(); ++it) {
         QLineSeries* series = *it;
@@ -513,7 +494,7 @@ void HdfReviewTab::onCloseFile() {
     clearDisplay();
     hdfReader_.reset();
     loadedHdfFilePath_.clear();
-    ui->filePathLabel->setText(tr("No file selected"));
+    setFilePathText(tr("No file selected"));
     ui->statusLabel->setText(tr("Ready"));
     ui->closeFileBtn->setEnabled(false);
     ui->overlayModeLabel->setEnabled(false);
@@ -525,7 +506,7 @@ void HdfReviewTab::onCloseFile() {
 
 void HdfReviewTab::loadHdfFile(const QString& filePath) {
     ui->statusLabel->setText(tr("Loading..."));
-    ui->filePathLabel->setText(filePath);
+    setFilePathText(filePath);
     clearDisplay();
 
     SPDLOG_INFO("HdfReviewTab: opening file '{}'", filePath.toStdString());
@@ -582,7 +563,8 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
             recordingMultiImageCount_ = std::max<size_t>(1, static_cast<size_t>(multiImageCount));
             ui->statusLabel->setText(tr("Recording: %1 frames, %2 empty skipped")
                                      .arg(static_cast<qulonglong>(totalFrames))
-                                     .arg(static_cast<qulonglong>(filteredFrames)));
+                                     .arg(static_cast<qulonglong>(filteredFrames)) +
+                                     accountingSummary());
             SPDLOG_INFO("HdfReviewTab: recording multi-image enabled={}, count={}",
                         recordingMultiImageEnabled_,
                         recordingMultiImageCount_);
@@ -609,7 +591,7 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
         backend::services::ProcessingService::Roi loadedRoi{0, 0, 0, 0};
         if (hdfReader_->readExperimentInfo(startTimeNs, endTimeNs, totalValid, totalInvalid, &loadedRoi)) {
             ui->statusLabel->setText(QString("Valid: %1, Invalid: %2")
-                                 .arg(totalValid).arg(totalInvalid));
+                                 .arg(totalValid).arg(totalInvalid) + accountingSummary());
             roi_ = loadedRoi;
             SPDLOG_INFO("Loaded ROI from HDF5: x={}, y={}, w={}, h={}", roi_.x, roi_.y, roi_.w, roi_.h);
             ui->roiOverlayCheck->setEnabled(true);
@@ -663,6 +645,7 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
     ui->exportChartsBtn->setEnabled(hasData && !isRecordingMode_);
     ui->closeFileBtn->setEnabled(hasData);
     ui->regenerateMasksBtn->setEnabled(hasData);
+    updateSecondaryActionState();
 
     // Enable overlay controls if we have frames (not in recording mode — no masks/ROI)
     if (hasData && !isRecordingMode_) {
@@ -732,6 +715,7 @@ void HdfReviewTab::clearDisplay() {
     ui->exportAllBtn->setEnabled(false);
     ui->exportChartsBtn->setEnabled(false);
     ui->regenerateMasksBtn->setEnabled(false);
+    updateSecondaryActionState();
     ui->roiOverlayCheck->setEnabled(false);
     ui->roiOverlayCheck->setChecked(false);
 
@@ -1192,7 +1176,11 @@ void HdfReviewTab::setSelectedFrame(int frameIndex) {
 }
 
 void HdfReviewTab::onExportMetrics() {
-    if (validFrames_.empty() && invalidFrames_.empty()) {
+    if (exportInProgress()) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return;
+    }
+    if (loadedHdfFilePath_.isEmpty() || (validFrames_.empty() && invalidFrames_.empty())) {
         QMessageBox::information(this, tr("Export Metrics"),
                                  tr("No metrics data available to export."));
         return;
@@ -1211,12 +1199,33 @@ void HdfReviewTab::onExportMetrics() {
         return;
     }
 
-    if (exportMetricsToCsv(filePath)) {
-        rememberMetricsExportDir(QFileInfo(filePath).absolutePath());
-    }
+    backend::recording::HdfExportRequest request;
+    request.sourcePath = loadedHdfFilePath_.toStdString();
+    request.outputRoot = QFileInfo(filePath).absolutePath().toStdString();
+    request.format = backend::recording::HdfExportFormat::MetricsCsv;
+    request.conversionFactor = backend_.processing().getPixelToMicronFactor();
+    request.explicitDestination = filePath.toStdString();
+    beginExportJob(std::move(request), tr("Export Metrics"), [this, filePath](const backend::recording::HdfExportResult& r) {
+        finishExportUi();
+        if (r.completed()) {
+            rememberMetricsExportDir(QFileInfo(filePath).absolutePath());
+            QMessageBox::information(this, tr("Export Complete"),
+                                     tr("Exported %1 frames (Valid: %2, Invalid: %3) to:\n%4")
+                                         .arg(static_cast<qulonglong>(r.validCount + r.invalidCount))
+                                         .arg(static_cast<qulonglong>(r.validCount))
+                                         .arg(static_cast<qulonglong>(r.invalidCount))
+                                         .arg(QString::fromStdString(r.finalPath)));
+        } else {
+            reportExportNotCompleted(tr("Export Metrics"), r);
+        }
+    });
 }
 
 void HdfReviewTab::onBatchExportMetrics() {
+    if (exportInProgress()) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return;
+    }
     const QStringList filePaths = QFileDialog::getOpenFileNames(
         this,
         tr("Select HDF Files for Metrics Export"),
@@ -1236,79 +1245,13 @@ void HdfReviewTab::onBatchExportMetrics() {
         return;
     }
 
-    const QStringList outputPaths = frontend::hdfreviewexport::batchMetricsCsvPaths(filePaths, dirPath);
-    QStringList failures;
-    int exportedCount = 0;
-    const double conversionFactor = backend_.processing().getPixelToMicronFactor();
-
-    for (int i = 0; i < filePaths.size(); ++i) {
-        const QString& filePath = filePaths[i];
-        HdfReviewLoadData data;
-        QString error;
-        if (!loadHdfReviewData(filePath, data, &error)) {
-            failures << tr("%1: %2").arg(QFileInfo(filePath).fileName(), error);
-            continue;
-        }
-        if (data.isRecordingMode) {
-            failures << tr("%1: recording files do not contain metrics").arg(QFileInfo(filePath).fileName());
-            continue;
-        }
-        if (data.validFrames.empty() && data.invalidFrames.empty()) {
-            failures << tr("%1: no metrics data found").arg(QFileInfo(filePath).fileName());
-            continue;
-        }
-        if (!writeMetricsCsvData(outputPaths[i], data.validFrames, data.invalidFrames, conversionFactor, &error)) {
-            failures << tr("%1: %2").arg(QFileInfo(filePath).fileName(), error);
-            continue;
-        }
-        ++exportedCount;
-        SPDLOG_INFO("Batch exported metrics from {} to {}", filePath.toStdString(), outputPaths[i].toStdString());
-    }
-
-    if (exportedCount > 0) {
-        rememberMetricsExportDir(dirPath);
-    }
-
-    if (failures.isEmpty()) {
-        QMessageBox::information(this, tr("Batch Metrics Export Complete"),
-                                 tr("Exported metrics for %1 files to:\n%2")
-                                     .arg(exportedCount)
-                                     .arg(dirPath));
-    } else {
-        QMessageBox::warning(this, tr("Batch Metrics Export Complete"),
-                             tr("Exported metrics for %1 of %2 files to:\n%3\n\nFailures:\n%4")
-                                 .arg(exportedCount)
-                                 .arg(filePaths.size())
-                                 .arg(dirPath)
-                                 .arg(trimmedFailureList(failures)));
-    }
-}
-
-bool HdfReviewTab::exportMetricsToCsv(const QString& filePath, bool showCompletionMessage) {
-    QString error;
-    if (!writeMetricsCsvData(filePath,
-                             validFrames_,
-                             invalidFrames_,
-                             backend_.processing().getPixelToMicronFactor(),
-                             &error)) {
-        if (showCompletionMessage) {
-            QMessageBox::critical(this, tr("Export Error"), error);
-        }
-        return false;
-    }
-
-    const size_t totalFrames = validFrames_.size() + invalidFrames_.size();
-    if (showCompletionMessage) {
-        QMessageBox::information(this, tr("Export Complete"),
-                               tr("Exported %1 frames (Valid: %2, Invalid: %3) to:\n%4")
-                               .arg(totalFrames)
-                               .arg(validFrames_.size())
-                               .arg(invalidFrames_.size())
-                               .arg(filePath));
-    }
-
-    SPDLOG_INFO("Exported {} frames to CSV: {}", totalFrames, filePath.toStdString());
-    return true;
+    auto batch = std::make_unique<BatchExportState>();
+    batch->sources = filePaths;
+    batch->destinations = frontend::hdfreviewexport::batchMetricsCsvPaths(filePaths, dirPath);
+    batch->root = dirPath;
+    batch->metricsOnly = true;
+    batch_ = std::move(batch);
+    continueBatchExport();
 }
 
 void HdfReviewTab::onOverlayModeChanged(int index) {
@@ -1760,6 +1703,10 @@ void HdfReviewTab::showFrameViewer(int frameIndex) {
 }
 
 void HdfReviewTab::onExportAll() {
+    if (exportInProgress()) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return;
+    }
     if (!hdfReader_ || (validFrames_.empty() && invalidFrames_.empty())) {
         QMessageBox::warning(this, tr("Export Error"),
                             tr("No data available to export."));
@@ -1774,13 +1721,44 @@ void HdfReviewTab::onExportAll() {
         return;
     }
 
-    const QString targetDir = frontend::hdfreviewexport::exportAllDirectoryPath(loadedHdfFilePath_, rootPath);
-    if (exportAllData(targetDir)) {
-        rememberExportAllRootDir(rootPath);
+    // Series range + chart snapshots are decided/rendered on the GUI thread
+    // before the job exists; the worker never touches widgets.
+    backend::recording::HdfExportRequest request;
+    request.sourcePath = loadedHdfFilePath_.toStdString();
+    request.outputRoot = rootPath.toStdString();
+    request.format = backend::recording::HdfExportFormat::All;
+    request.conversionFactor = backend_.processing().getPixelToMicronFactor();
+    size_t seriesCount = 0, seriesRecords = 0;
+    int seriesH = 0, seriesW = 0;
+    if (!isRecordingMode_ && hdfReader_->getSeriesImageInfo(seriesRecords, seriesCount, seriesH, seriesW)) {
+        SeriesExportSelection selection;
+        if (!promptSeriesExportSelection(this, seriesCount, selection)) {
+            SPDLOG_INFO("HdfReviewTab: export-all cancelled while selecting series range");
+            return;
+        }
+        request.series.exportSeries = selection.exportSeriesImages;
+        request.series.startInclusive = selection.startInclusive;
+        request.series.endInclusive = selection.endInclusive;
     }
+    if (!isRecordingMode_) {
+        request.supplementalImages = renderChartSnapshots(validFrames_);
+    }
+    beginExportJob(std::move(request), tr("Export All"), [this, rootPath](const backend::recording::HdfExportResult& r) {
+        finishExportUi();
+        if (r.completed()) {
+            rememberExportAllRootDir(rootPath);
+            QMessageBox::information(this, tr("Export Complete"), exportSummary(r));
+        } else {
+            reportExportNotCompleted(tr("Export All"), r);
+        }
+    });
 }
 
 void HdfReviewTab::onBatchExportAll() {
+    if (exportInProgress()) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return;
+    }
     const QStringList filePaths = QFileDialog::getOpenFileNames(
         this,
         tr("Select HDF Files for Batch Export All"),
@@ -1800,77 +1778,311 @@ void HdfReviewTab::onBatchExportAll() {
         return;
     }
 
-    const QStringList outputDirs = frontend::hdfreviewexport::batchExportAllDirectoryPaths(filePaths, rootPath);
-    QStringList failures;
-    int exportedCount = 0;
+    auto batch = std::make_unique<BatchExportState>();
+    batch->sources = filePaths;
+    batch->destinations = frontend::hdfreviewexport::batchExportAllDirectoryPaths(filePaths, rootPath);
+    batch->root = rootPath;
+    batch->metricsOnly = false;
+    batch_ = std::move(batch);
+    continueBatchExport();
+}
 
-    auto savedReader = std::move(hdfReader_);
-    auto savedValidFrames = std::move(validFrames_);
-    auto savedInvalidFrames = std::move(invalidFrames_);
-    const bool savedRecordingMode = isRecordingMode_;
-    const bool savedRecordingMultiImageEnabled = recordingMultiImageEnabled_;
-    const size_t savedRecordingMultiImageCount = recordingMultiImageCount_;
-
-    for (int i = 0; i < filePaths.size(); ++i) {
-        const QString& filePath = filePaths[i];
-        HdfReviewLoadData data;
-        QString error;
-        if (!loadHdfReviewData(filePath, data, &error)) {
-            failures << tr("%1: %2").arg(QFileInfo(filePath).fileName(), error);
-            continue;
-        }
-        if (data.validFrames.empty() && data.invalidFrames.empty()) {
-            failures << tr("%1: no exportable frame data found").arg(QFileInfo(filePath).fileName());
-            continue;
-        }
-
-        hdfReader_ = std::move(data.reader);
-        validFrames_ = std::move(data.validFrames);
-        invalidFrames_ = std::move(data.invalidFrames);
-        isRecordingMode_ = data.isRecordingMode;
-        recordingMultiImageEnabled_ = data.recordingMultiImageEnabled;
-        recordingMultiImageCount_ = data.recordingMultiImageCount;
-
-        if (!exportAllData(outputDirs[i], false)) {
-            failures << tr("%1: export failed").arg(QFileInfo(filePath).fileName());
-            continue;
-        }
-        ++exportedCount;
-        SPDLOG_INFO("Batch exported all HDF review data from {} to {}",
-                    filePath.toStdString(),
-                    outputDirs[i].toStdString());
+// Issue #344: one job at a time, run off the GUI thread by the Qt-free
+// HdfExportService with its own read-only reader. The worker callable owns
+// everything it needs (request, cancel token, service) and never captures a
+// widget pointer; progress is re-dispatched to the GUI thread through a
+// QPointer + queued invocation.
+bool HdfReviewTab::beginExportJob(backend::recording::HdfExportRequest request, const QString& title,
+                                  std::function<void(const backend::recording::HdfExportResult&)> onDone) {
+    using backend::recording::HdfExportProgress;
+    using backend::recording::HdfExportResult;
+    if (exportWatcher_) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return false;
     }
+    exportCancel_ = backend::recording::HdfExportCancelToken{};
+    const auto token = exportCancel_;
+    exportDone_ = std::move(onDone);
 
-    hdfReader_ = std::move(savedReader);
-    validFrames_ = std::move(savedValidFrames);
-    invalidFrames_ = std::move(savedInvalidFrames);
-    isRecordingMode_ = savedRecordingMode;
-    recordingMultiImageEnabled_ = savedRecordingMultiImageEnabled;
-    recordingMultiImageCount_ = savedRecordingMultiImageCount;
-    if (hdfReader_ && (!validFrames_.empty() || !invalidFrames_.empty())) {
-        updateCharts();
+    if (!exportProgress_) {
+        exportProgress_ = new QProgressDialog(this);
+        exportProgress_->setWindowModality(Qt::WindowModal);
+        exportProgress_->setAutoClose(false);
+        exportProgress_->setAutoReset(false);
+        exportProgress_->setMinimumDuration(0);
+        exportProgress_->setCancelButtonText(tr("Cancel"));
+        connect(exportProgress_, &QProgressDialog::canceled, this, [this]() {
+            exportCancel_.cancel();
+            if (exportProgress_) exportProgress_->setLabelText(tr("Cancelling..."));
+        });
     }
+    exportProgress_->setWindowTitle(title);
+    exportProgress_->setLabelText(tr("Starting export..."));
+    exportProgress_->setRange(0, 0);
+    exportProgress_->show();
+    setExportControlsEnabled(false);
 
-    if (exportedCount > 0) {
-        rememberExportAllRootDir(rootPath);
-    }
+    QPointer<HdfReviewTab> self(this);
+    auto progressFn = [self](const HdfExportProgress& p) {
+        if (QObject* ctx = self.data()) {
+            QMetaObject::invokeMethod(ctx, [self, p]() { if (self) self->onExportProgress(p); }, Qt::QueuedConnection);
+        }
+    };
+    auto service = std::make_shared<backend::recording::HdfExportService>();
+    exportWatcher_ = new QFutureWatcher<HdfExportResult>(this);
+    connect(exportWatcher_, &QFutureWatcher<HdfExportResult>::finished, this, &HdfReviewTab::onExportJobFinished);
+    exportWatcher_->setFuture(QtConcurrent::run([service, request = std::move(request), token, progressFn]() {
+        return service->run(request, token, progressFn);
+    }));
+    SPDLOG_INFO("HdfReviewTab: export job launched ({})", title.toStdString());
+    return true;
+}
 
-    if (failures.isEmpty()) {
-        QMessageBox::information(this, tr("Batch Export All Complete"),
-                                 tr("Exported %1 files to source-specific folders under:\n%2")
-                                     .arg(exportedCount)
-                                     .arg(rootPath));
+void HdfReviewTab::onExportProgress(const backend::recording::HdfExportProgress& p) {
+    if (!exportWatcher_ || !exportProgress_) return;
+    const QString phase = QString::fromLatin1(backend::recording::toString(p.phase));
+    if (p.total > 0) {
+        exportProgress_->setRange(0, static_cast<int>(std::min<uint64_t>(p.total, 1000000)));
+        exportProgress_->setValue(static_cast<int>(std::min<uint64_t>(p.completed, 1000000)));
+        exportProgress_->setLabelText(tr("%1 (%2 / %3)").arg(phase)
+                                          .arg(static_cast<qulonglong>(p.completed))
+                                          .arg(static_cast<qulonglong>(p.total)));
     } else {
-        QMessageBox::warning(this, tr("Batch Export All Complete"),
-                             tr("Exported %1 of %2 files to source-specific folders under:\n%3\n\nFailures:\n%4")
-                                 .arg(exportedCount)
-                                 .arg(filePaths.size())
-                                 .arg(rootPath)
-                                 .arg(trimmedFailureList(failures)));
+        exportProgress_->setLabelText(phase);
+    }
+}
+
+void HdfReviewTab::onExportJobFinished() {
+    auto* watcher = exportWatcher_;
+    exportWatcher_ = nullptr;
+    if (!watcher) return;
+    const backend::recording::HdfExportResult result = watcher->result();
+    watcher->deleteLater();
+    auto done = std::move(exportDone_);
+    exportDone_ = {};
+    if (done) done(result);
+}
+
+void HdfReviewTab::finishExportUi() {
+    if (exportProgress_) {
+        exportProgress_->hide();
+    }
+    setExportControlsEnabled(true);
+}
+
+void HdfReviewTab::setExportControlsEnabled(bool enabled) {
+    ui->exportMetricsBtn->setEnabled(enabled);
+    ui->exportAllBtn->setEnabled(enabled);
+    ui->batchExportMetricsBtn->setEnabled(enabled);
+    ui->batchExportAllBtn->setEnabled(enabled);
+    ui->exportChartsBtn->setEnabled(enabled);
+    ui->regenerateMasksBtn->setEnabled(enabled && !loadedHdfFilePath_.isEmpty());
+    updateSecondaryActionState();
+}
+
+void HdfReviewTab::setupBoundedFileRow() {
+    // Secondary/batch actions move into one native menu so the primary row
+    // (open/close/export) stays bounded at 1366 px (issue #358). The hidden
+    // buttons keep their enable logic; the actions mirror it.
+    moreActionsBtn_ = new QToolButton(this);
+    moreActionsBtn_->setObjectName(QStringLiteral("reviewMoreActionsBtn"));
+    moreActionsBtn_->setText(tr("More…"));
+    moreActionsBtn_->setToolTip(tr("Batch exports, chart export and mask regeneration"));
+    moreActionsBtn_->setPopupMode(QToolButton::InstantPopup);
+    moreActionsBtn_->setFocusPolicy(Qt::StrongFocus);
+    auto* menu = new QMenu(moreActionsBtn_);
+    batchMetricsAct_ = menu->addAction(ui->batchExportMetricsBtn->text(), this, &HdfReviewTab::onBatchExportMetrics);
+    batchMetricsAct_->setToolTip(ui->batchExportMetricsBtn->toolTip());
+    batchAllAct_ = menu->addAction(ui->batchExportAllBtn->text(), this, &HdfReviewTab::onBatchExportAll);
+    batchAllAct_->setToolTip(ui->batchExportAllBtn->toolTip());
+    exportChartsAct_ = menu->addAction(ui->exportChartsBtn->text(), this, &HdfReviewTab::onExportCharts);
+    menu->addSeparator();
+    regenerateMasksAct_ = menu->addAction(ui->regenerateMasksBtn->text(), this, &HdfReviewTab::onRegenerateMasks);
+    regenerateMasksAct_->setToolTip(ui->regenerateMasksBtn->toolTip());
+    moreActionsBtn_->setMenu(menu);
+    for (QPushButton* hidden : {ui->batchExportMetricsBtn, ui->batchExportAllBtn, ui->exportChartsBtn, ui->regenerateMasksBtn}) {
+        hidden->hide();
+    }
+    const int insertAt = ui->fileRowLayout->indexOf(ui->exportAllBtn) + 1;
+    ui->fileRowLayout->insertWidget(insertAt, moreActionsBtn_);
+    ui->fileRowLayout->addStretch(1);
+
+    // Path: elided display, full value in tooltip / copy action.
+    filePathLabel_ = new frontend::ElidingLabel(ui->filePathLabel->text(), this);
+    filePathLabel_->setObjectName(QStringLiteral("reviewFilePathLabel"));
+    filePathLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    ui->fileInfoRowLayout->replaceWidget(ui->filePathLabel, filePathLabel_);
+    ui->filePathLabel->hide();
+    ui->overlayLegendLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+    updateSecondaryActionState();
+}
+
+void HdfReviewTab::updateSecondaryActionState() {
+    if (!moreActionsBtn_) return;
+    batchMetricsAct_->setEnabled(ui->batchExportMetricsBtn->isEnabled());
+    batchAllAct_->setEnabled(ui->batchExportAllBtn->isEnabled());
+    exportChartsAct_->setEnabled(ui->exportChartsBtn->isEnabled());
+    regenerateMasksAct_->setEnabled(ui->regenerateMasksBtn->isEnabled());
+}
+
+void HdfReviewTab::setFilePathText(const QString& text) {
+    ui->filePathLabel->setText(text);
+    if (filePathLabel_) filePathLabel_->setText(text);
+}
+
+QString HdfReviewTab::exportSummary(const backend::recording::HdfExportResult& r) const {
+    QString message = tr("Export complete:\n");
+    if (!r.recordingMode) {
+        message += tr("- CSV: %1\n").arg(r.metricsWritten ? tr("Yes") : tr("No"));
+    }
+    message += tr("- Images: %1\n").arg(static_cast<qulonglong>(r.imagesExported));
+    if (r.seriesExported > 0) {
+        message += tr("- Series Images: %1\n").arg(static_cast<qulonglong>(r.seriesExported));
+    }
+    if (!r.recordingMode) {
+        message += tr("- Charts: %1\n").arg(static_cast<qulonglong>(r.chartsExported));
+    }
+    if (!r.warnings.empty()) {
+        message += tr("- Warnings: %1\n").arg(static_cast<qulonglong>(r.warnings.size()));
+    }
+    message += tr("\nLocation: %1").arg(QString::fromStdString(r.finalPath));
+    return message;
+}
+
+void HdfReviewTab::reportExportNotCompleted(const QString& title, const backend::recording::HdfExportResult& r) {
+    if (r.status == backend::recording::HdfExportStatus::Cancelled) {
+        QMessageBox::information(this, title, tr("Export cancelled. Partial output was discarded."));
+        return;
+    }
+    QString text = tr("Export failed: %1").arg(QString::fromStdString(r.error));
+    if (!r.retainedPartialPath.empty()) {
+        text += tr("\n\nPartial output was retained at:\n%1").arg(QString::fromStdString(r.retainedPartialPath));
+    }
+    QMessageBox::critical(this, title, text);
+}
+
+std::map<std::string, cv::Mat> HdfReviewTab::renderChartSnapshots(
+    const std::vector<backend::services::ProcessedFrame>& validFrames) {
+    std::map<std::string, cv::Mat> snapshots;
+    generateScatterPlot(validFrames);
+    generateHistogram(validFrames);
+    auto toBgr = [](const QPixmap& pixmap) {
+        cv::Mat bgr;
+        if (pixmap.isNull()) return bgr;
+        QImage image = pixmap.toImage().convertToFormat(QImage::Format_RGB32);
+        cv::Mat rgba(image.height(), image.width(), CV_8UC4, const_cast<uchar*>(image.constBits()),
+                     static_cast<size_t>(image.bytesPerLine()));
+        cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR); // deep copy; independent of the QImage
+        return bgr;
+    };
+    snapshots["scatter_plot.tiff"] = toBgr(chartToPixmap(scatterPlotView_));
+    snapshots["ring_width_histogram.tiff"] = toBgr(chartToPixmap(histogramView_));
+    return snapshots;
+}
+
+void HdfReviewTab::continueBatchExport() {
+    if (!batch_) return;
+    while (batch_->index < batch_->sources.size()) {
+        const int i = batch_->index++;
+        const QString& filePath = batch_->sources[i];
+        backend::recording::HdfExportRequest request;
+        request.sourcePath = filePath.toStdString();
+        request.outputRoot = batch_->root.toStdString();
+        request.conversionFactor = backend_.processing().getPixelToMicronFactor();
+        request.explicitDestination = batch_->destinations[i].toStdString();
+        if (batch_->metricsOnly) {
+            request.format = backend::recording::HdfExportFormat::MetricsCsv;
+            // Recording files carry no metrics; reject up front like before.
+            backend::services::Hdf5Service probe;
+            if (probe.loadFile(request.sourcePath) && probe.isRecordingFile()) {
+                batch_->failures << tr("%1: recording files do not contain metrics").arg(QFileInfo(filePath).fileName());
+                continue;
+            }
+        } else {
+            request.format = backend::recording::HdfExportFormat::All;
+            // Per-file series prompt + chart snapshots on the GUI thread,
+            // from a separate reader — the live tab state is untouched.
+            HdfReviewLoadData data;
+            QString error;
+            if (!loadHdfReviewData(filePath, data, &error)) {
+                batch_->failures << tr("%1: %2").arg(QFileInfo(filePath).fileName(), error);
+                continue;
+            }
+            if (data.validFrames.empty() && data.invalidFrames.empty()) {
+                batch_->failures << tr("%1: no exportable frame data found").arg(QFileInfo(filePath).fileName());
+                continue;
+            }
+            size_t seriesCount = 0, seriesRecords = 0;
+            int seriesH = 0, seriesW = 0;
+            if (!data.isRecordingMode && data.reader->getSeriesImageInfo(seriesRecords, seriesCount, seriesH, seriesW)) {
+                SeriesExportSelection selection;
+                if (!promptSeriesExportSelection(this, seriesCount, selection)) {
+                    batch_->failures << tr("%1: cancelled").arg(QFileInfo(filePath).fileName());
+                    continue;
+                }
+                request.series.exportSeries = selection.exportSeriesImages;
+                request.series.startInclusive = selection.startInclusive;
+                request.series.endInclusive = selection.endInclusive;
+            }
+            if (!data.isRecordingMode) {
+                request.supplementalImages = renderChartSnapshots(data.validFrames);
+            }
+        }
+        const QString title = batch_->metricsOnly ? tr("Batch Metrics Export (%1/%2)") : tr("Batch Export All (%1/%2)");
+        if (!beginExportJob(std::move(request), title.arg(i + 1).arg(batch_->sources.size()),
+                            [this, filePath](const backend::recording::HdfExportResult& r) {
+                                if (!batch_) return;
+                                if (r.completed()) {
+                                    ++batch_->exported;
+                                    SPDLOG_INFO("Batch exported {} -> {}", filePath.toStdString(), r.finalPath);
+                                } else {
+                                    batch_->failures << tr("%1: %2").arg(QFileInfo(filePath).fileName(),
+                                                                         QString::fromStdString(r.error));
+                                    if (r.status == backend::recording::HdfExportStatus::Cancelled) {
+                                        batch_->index = batch_->sources.size(); // stop the chain
+                                    }
+                                }
+                                continueBatchExport();
+                            })) {
+            batch_->failures << tr("%1: could not start").arg(QFileInfo(filePath).fileName());
+            continue;
+        }
+        return; // the completion callback resumes the chain
+    }
+
+    // Batch finished.
+    auto batch = std::move(batch_);
+    batch_.reset();
+    finishExportUi();
+    if (!batch->metricsOnly && hdfReader_ && (!validFrames_.empty() || !invalidFrames_.empty())) {
+        updateCharts(); // restore the live file's charts after batch snapshots
+    }
+    if (batch->exported > 0) {
+        if (batch->metricsOnly) rememberMetricsExportDir(batch->root);
+        else rememberExportAllRootDir(batch->root);
+    }
+    const QString title = batch->metricsOnly ? tr("Batch Metrics Export Complete") : tr("Batch Export All Complete");
+    if (batch->failures.isEmpty()) {
+        QMessageBox::information(this, title,
+                                 (batch->metricsOnly ? tr("Exported metrics for %1 files to:\n%2")
+                                                     : tr("Exported %1 files to source-specific folders under:\n%2"))
+                                     .arg(batch->exported)
+                                     .arg(batch->root));
+    } else {
+        QMessageBox::warning(this, title,
+                             tr("Exported %1 of %2 files to:\n%3\n\nFailures:\n%4")
+                                 .arg(batch->exported)
+                                 .arg(batch->sources.size())
+                                 .arg(batch->root)
+                                 .arg(trimmedFailureList(batch->failures)));
     }
 }
 
 void HdfReviewTab::onExportCharts() {
+    if (exportInProgress()) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return;
+    }
     if (validFrames_.empty() && invalidFrames_.empty()) {
         QMessageBox::warning(this, tr("Export Error"),
                             tr("No data available to export charts."));
@@ -1942,311 +2154,6 @@ void HdfReviewTab::onExportCharts() {
                             tr("Some charts may not have been exported."));
     }
 }
-
-void HdfReviewTab::exportAllImagesToTiff(const QString& baseDir) {
-    if (!hdfReader_) {
-        return;
-    }
-
-    QDir dir(baseDir);
-    if (!dir.exists()) {
-        QMessageBox::critical(this, tr("Export Error"),
-                              tr("Directory does not exist: %1").arg(baseDir));
-        return;
-    }
-
-    int exportedCount = 0;
-    int seriesExportedCount = 0;
-    int totalCount = static_cast<int>(validFrames_.size() + invalidFrames_.size());
-
-    // Check if series images are available (recording files have none)
-    size_t seriesCount = 0, seriesRecords = 0;
-    int seriesH = 0, seriesW = 0;
-    bool hasSeriesImages = !isRecordingMode_
-        && hdfReader_->getSeriesImageInfo(seriesRecords, seriesCount, seriesH, seriesW);
-    SeriesExportSelection seriesSelection;
-    if (hasSeriesImages) {
-        if (!promptSeriesExportSelection(this, seriesCount, seriesSelection)) {
-            SPDLOG_INFO("HdfReviewTab: series export cancelled by user");
-            return;
-        }
-    }
-    const int seriesDigits = std::max(2, static_cast<int>(QString::number(
-        static_cast<qulonglong>(std::max<size_t>(seriesCount, 1))).size()));
-
-    // Export valid frames (in recording mode, these are the only frames)
-    const std::string validImgPath = imagesPath(true);
-    const QString validPrefix = isRecordingMode_ ? QStringLiteral("frame_") : QStringLiteral("valid_frame_");
-    for (size_t i = 0; i < validFrames_.size(); ++i) {
-        cv::Mat image;
-        if (hdfReader_->readImageByIndex(validImgPath, i, image)) {
-            QString fileName = QStringLiteral("%1%2.tiff").arg(validPrefix)
-                                 .arg(validFrames_[i].index, 6, 10, QChar('0'));
-            QString filePath = dir.filePath(fileName);
-
-            // Export without compression
-            if (cv::imwrite(filePath.toStdString(), image)) {
-                exportedCount++;
-            }
-        }
-
-        // Export series images if available
-        if (hasSeriesImages && seriesSelection.exportSeriesImages && i < seriesRecords) {
-            std::vector<cv::Mat> seriesImages;
-            if (hdfReader_->readSeriesImagesByIndex(i, seriesImages) && !seriesImages.empty()) {
-                const size_t startSeries = std::min(seriesSelection.startInclusive, seriesImages.size() - 1);
-                const size_t endSeries = std::min(seriesSelection.endInclusive, seriesImages.size() - 1);
-                for (size_t s = startSeries; s <= endSeries; ++s) {
-                    QString seriesFileName = QString("valid_frame_%1_series_%2.tiff")
-                        .arg(validFrames_[i].index, 6, 10, QChar('0'))
-                        .arg(static_cast<qulonglong>(s + 1), seriesDigits, 10, QChar('0'));
-                    QString seriesFilePath = dir.filePath(seriesFileName);
-                    if (cv::imwrite(seriesFilePath.toStdString(), seriesImages[s])) {
-                        seriesExportedCount++;
-                    }
-                }
-            }
-        }
-    }
-
-    // Export invalid frames (empty in recording mode)
-    const std::string invalidImgPath = imagesPath(false);
-    for (size_t i = 0; i < invalidFrames_.size(); ++i) {
-        cv::Mat image;
-        if (hdfReader_->readImageByIndex(invalidImgPath, i, image)) {
-            QString fileName = QString("invalid_frame_%1.tiff").arg(invalidFrames_[i].index, 6, 10, QChar('0'));
-            QString filePath = dir.filePath(fileName);
-
-            // Export without compression
-            if (cv::imwrite(filePath.toStdString(), image)) {
-                exportedCount++;
-            }
-        }
-    }
-
-    QString message = tr("Exported %1 of %2 images to:\n%3")
-        .arg(exportedCount).arg(totalCount).arg(baseDir);
-    if (hasSeriesImages) {
-        if (seriesSelection.exportSeriesImages) {
-            message += tr("\n+ %1 series images (frames %2-%3)")
-                .arg(seriesExportedCount)
-                .arg(static_cast<qulonglong>(seriesSelection.startInclusive + 1))
-                .arg(static_cast<qulonglong>(seriesSelection.endInclusive + 1));
-        } else {
-            message += tr("\n+ Series images skipped");
-        }
-    }
-    QMessageBox::information(this, tr("Export Complete"), message);
-    SPDLOG_INFO("Exported {} of {} base images, series_exported={} (enabled={}, start={}, end={}) to {}",
-                exportedCount,
-                totalCount,
-                seriesExportedCount,
-                seriesSelection.exportSeriesImages,
-                seriesSelection.startInclusive + 1,
-                seriesSelection.endInclusive + 1,
-                baseDir.toStdString());
-}
-
-bool HdfReviewTab::exportChartFromHdf5(const std::string& datasetPath, const QString& filePath) {
-    if (!hdfReader_) {
-        return false;
-    }
-
-    cv::Mat chartImage;
-    if (!hdfReader_->readImageByIndex(datasetPath, 0, chartImage)) {
-        SPDLOG_WARN("Failed to read chart from HDF5: {}", datasetPath);
-        return false;
-    }
-
-    // Charts are saved as BGR, which is what OpenCV imwrite expects
-    // Export without compression
-    if (!cv::imwrite(filePath.toStdString(), chartImage)) {
-        SPDLOG_ERROR("Failed to write chart TIFF: {}", filePath.toStdString());
-        return false;
-    }
-
-    SPDLOG_INFO("Exported chart from {} to {}", datasetPath, filePath.toStdString());
-    return true;
-}
-
-bool HdfReviewTab::exportAllData(const QString& baseDir, bool showCompletionMessage) {
-    if (!hdfReader_) {
-        return false;
-    }
-
-    QDir dir(baseDir);
-    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
-        if (showCompletionMessage) {
-            QMessageBox::critical(this, tr("Export Error"),
-                                  tr("Failed to create directory: %1").arg(baseDir));
-        }
-        return false;
-    }
-
-    int exportedImages = 0;
-    int exportedSeriesImages = 0;
-    int totalImages = static_cast<int>(validFrames_.size() + invalidFrames_.size());
-    bool csvExported = false;
-    bool chartsExported = !isRecordingMode_;   // N/A for recording files
-
-    size_t seriesCount = 0, seriesRecords = 0;
-    int seriesH = 0, seriesW = 0;
-    bool hasSeriesImages = !isRecordingMode_
-        && hdfReader_->getSeriesImageInfo(seriesRecords, seriesCount, seriesH, seriesW);
-    SeriesExportSelection seriesSelection;
-    if (hasSeriesImages) {
-        if (!promptSeriesExportSelection(this, seriesCount, seriesSelection)) {
-            SPDLOG_INFO("HdfReviewTab: export-all cancelled while selecting series range");
-            return false;
-        }
-    }
-    const int seriesDigits = std::max(2, static_cast<int>(QString::number(
-        static_cast<qulonglong>(std::max<size_t>(seriesCount, 1))).size()));
-
-    // Export CSV metrics (recording files have no per-frame metrics)
-    if (!isRecordingMode_) {
-        QString csvPath = dir.filePath("metrics.csv");
-        csvExported = exportMetricsToCsv(csvPath, false) && QFile::exists(csvPath);
-    }
-
-    // Export all images
-    // Export valid frames (in recording mode, the only frames — use a plain "frame_" prefix)
-    const std::string validImgPath = imagesPath(true);
-    const QString validPrefix = isRecordingMode_ ? QStringLiteral("frame_") : QStringLiteral("valid_frame_");
-    for (size_t i = 0; i < validFrames_.size(); ++i) {
-        cv::Mat image;
-        if (hdfReader_->readImageByIndex(validImgPath, i, image)) {
-            QString fileName = QStringLiteral("%1%2.tiff").arg(validPrefix)
-                                 .arg(validFrames_[i].index, 6, 10, QChar('0'));
-            QString filePath = dir.filePath(fileName);
-
-            // Export without compression
-            if (cv::imwrite(filePath.toStdString(), image)) {
-                exportedImages++;
-            }
-        }
-
-        if (hasSeriesImages && seriesSelection.exportSeriesImages && i < seriesRecords) {
-            std::vector<cv::Mat> seriesImages;
-            if (hdfReader_->readSeriesImagesByIndex(i, seriesImages) && !seriesImages.empty()) {
-                const size_t startSeries = std::min(seriesSelection.startInclusive, seriesImages.size() - 1);
-                const size_t endSeries = std::min(seriesSelection.endInclusive, seriesImages.size() - 1);
-                for (size_t s = startSeries; s <= endSeries; ++s) {
-                    QString seriesFileName = QString("valid_frame_%1_series_%2.tiff")
-                        .arg(validFrames_[i].index, 6, 10, QChar('0'))
-                        .arg(static_cast<qulonglong>(s + 1), seriesDigits, 10, QChar('0'));
-                    QString seriesFilePath = dir.filePath(seriesFileName);
-                    if (cv::imwrite(seriesFilePath.toStdString(), seriesImages[s])) {
-                        exportedSeriesImages++;
-                    }
-                }
-            }
-        }
-    }
-
-    // Export invalid frames (empty in recording mode)
-    const std::string invalidImgPath = imagesPath(false);
-    for (size_t i = 0; i < invalidFrames_.size(); ++i) {
-        cv::Mat image;
-        if (hdfReader_->readImageByIndex(invalidImgPath, i, image)) {
-            QString fileName = QString("invalid_frame_%1.tiff").arg(invalidFrames_[i].index, 6, 10, QChar('0'));
-            QString filePath = dir.filePath(fileName);
-
-            // Export without compression
-            if (cv::imwrite(filePath.toStdString(), image)) {
-                exportedImages++;
-            }
-        }
-    }
-
-    // Generate and export charts from current data (skip in recording mode — no metrics)
-    if (isRecordingMode_) {
-        QString message = tr("Export complete:\n- Images: %1 of %2\n\nLocation: %3")
-            .arg(exportedImages).arg(totalImages).arg(baseDir);
-        if (showCompletionMessage) {
-            QMessageBox::information(this, tr("Export Complete"), message);
-        }
-        SPDLOG_INFO("Exported recording data: Images={}/{}, Location={}",
-                    exportedImages, totalImages, baseDir.toStdString());
-        return exportedImages > 0 || totalImages == 0;
-    }
-    generateScatterPlot(validFrames_);
-    generateHistogram(validFrames_);
-    
-    QString scatterPath = dir.filePath("scatter_plot.tiff");
-    QPixmap scatterPixmap = chartToPixmap(scatterPlotView_);
-    if (!scatterPixmap.isNull()) {
-        QImage scatterImage = scatterPixmap.toImage();
-        // Convert to RGB32 format for consistent handling
-        scatterImage = scatterImage.convertToFormat(QImage::Format_RGB32);
-        cv::Mat scatterMat(scatterImage.height(), scatterImage.width(), CV_8UC4, 
-                          const_cast<uchar*>(scatterImage.constBits()), 
-                          scatterImage.bytesPerLine());
-        cv::Mat scatterBGR;
-        cv::cvtColor(scatterMat, scatterBGR, cv::COLOR_RGBA2BGR);
-        if (!cv::imwrite(scatterPath.toStdString(), scatterBGR)) {
-            chartsExported = false;
-        } else {
-            SPDLOG_INFO("Exported scatter plot {}x{} to {}", scatterBGR.cols, scatterBGR.rows, scatterPath.toStdString());
-        }
-    } else {
-        chartsExported = false;
-    }
-    
-    QString histogramPath = dir.filePath("ring_width_histogram.tiff");
-    QPixmap histogramPixmap = chartToPixmap(histogramView_);
-    if (!histogramPixmap.isNull()) {
-        QImage histogramImage = histogramPixmap.toImage();
-        // Convert to RGB32 format for consistent handling
-        histogramImage = histogramImage.convertToFormat(QImage::Format_RGB32);
-        cv::Mat histogramMat(histogramImage.height(), histogramImage.width(), CV_8UC4, 
-                            const_cast<uchar*>(histogramImage.constBits()), 
-                            histogramImage.bytesPerLine());
-        cv::Mat histogramBGR;
-        cv::cvtColor(histogramMat, histogramBGR, cv::COLOR_RGBA2BGR);
-        if (!cv::imwrite(histogramPath.toStdString(), histogramBGR)) {
-            chartsExported = false;
-        } else {
-            SPDLOG_INFO("Exported histogram {}x{} to {}", histogramBGR.cols, histogramBGR.rows, histogramPath.toStdString());
-        }
-    } else {
-        chartsExported = false;
-    }
-
-    QString message = tr("Export complete:\n");
-    message += tr("- CSV: %1\n").arg(csvExported ? tr("Yes") : tr("No"));
-    message += tr("- Images: %1 of %2\n").arg(exportedImages).arg(totalImages);
-    if (hasSeriesImages) {
-        if (seriesSelection.exportSeriesImages) {
-            message += tr("- Series Images: %1 (frames %2-%3)\n")
-                .arg(exportedSeriesImages)
-                .arg(static_cast<qulonglong>(seriesSelection.startInclusive + 1))
-                .arg(static_cast<qulonglong>(seriesSelection.endInclusive + 1));
-        } else {
-            message += tr("- Series Images: Skipped\n");
-        }
-    }
-    message += tr("- Charts: %1\n").arg(chartsExported ? tr("Yes") : tr("Partial/No"));
-    message += tr("\nLocation: %1").arg(baseDir);
-
-    if (showCompletionMessage) {
-        QMessageBox::information(this, tr("Export Complete"), message);
-    }
-    SPDLOG_INFO(
-        "Exported all data: CSV={}, Images={}/{}, Series={} (enabled={}, start={}, end={}), "
-        "Charts={}, Location={}",
-        csvExported,
-        exportedImages,
-        totalImages,
-        exportedSeriesImages,
-        seriesSelection.exportSeriesImages,
-        seriesSelection.startInclusive + 1,
-        seriesSelection.endInclusive + 1,
-        chartsExported,
-        baseDir.toStdString());
-    return csvExported && exportedImages == totalImages && chartsExported;
-}
-
 
 QString HdfReviewTab::metricsExportDir() const {
     if (!lastExportDir_.isEmpty()) {

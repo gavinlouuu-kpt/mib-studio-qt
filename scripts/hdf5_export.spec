@@ -50,6 +50,7 @@ hiddenimports = [
     'PySide6.QtWidgets',
     'export_hdf5',
     'export_worker',
+    'hdf_export_engine',
 ]
 
 # Numpy changed internal package layout between 1.x and 2.x.

@@ -92,6 +92,47 @@ public:
     std::vector<FrameTimingRecord> frameRecords() const;
     std::vector<TriggerTimingRecord> triggerRecords() const;
 
+    // Per-stage latency distribution over one set of records.
+    struct StageStats {
+        uint64_t count{0}; // samples contributing (pairs with both stamps set)
+        double avgUs{0.0};
+        uint64_t maxUs{0};
+        uint64_t p50Us{0};
+        uint64_t p95Us{0};
+        uint64_t p99Us{0};
+    };
+    // Latency percentiles derived from the retained rings. This is the detailed
+    // tier: it is populated only for frames/triggers that were recorded while
+    // instrumentation was enabled. Allocates and sorts locally, so call it off
+    // any hot path (e.g. a ~1 Hz UI tick or at capture stop). sampleLimit caps
+    // how many of the newest records are scanned (0 = all retained).
+    struct LatencySummary {
+        StageStats endToEndTarget; // fireUs - grabUs      (acquisition -> pulse onset)
+        StageStats requestToFire;  // fireUs - requestUs    (trigger queue wait + wake)
+        StageStats endToEndFrame;  // callbacksDoneUs - grabUs
+        StageStats frameAge;       // algoStartUs - grabUs  (consumer lag)
+        StageStats algo;           // algoEndUs - algoStartUs
+        StageStats dispatch;       // triggerDispatchUs - algoEndUs (trigger frames only)
+    };
+    LatencySummary summarize(size_t sampleLimit = 0) const;
+
+    // ---- Always-on live end-to-end target latency (acquisition -> pulse) ----
+    // Updated unconditionally on every driven pulse, independent of the
+    // enabled flag, so the headline "target seen -> sorted" latency is visible
+    // live without turning on the detailed recorder. nowUs()-based; cheap.
+    void noteTargetLatency(uint64_t latencyUs);
+    uint64_t lastTargetLatencyUs() const {
+        return liveTargetLatencyLastUs_.load(std::memory_order_relaxed);
+    }
+    double avgTargetLatencyUs() const {
+        return liveTargetLatencyEwmaUs_.load(std::memory_order_relaxed);
+    }
+    uint64_t maxTargetLatencyUs() const {
+        return liveTargetLatencyMaxUs_.load(std::memory_order_relaxed);
+    }
+    // Clear the live gauges (leaves the detailed rings alone). Safe any time.
+    void resetLiveLatency();
+
     // Write pipeline_frames.csv, pipeline_triggers.csv and pipeline_skips.csv
     // into `directory` (created if missing; files overwritten). Analyse with
     // scripts/analyze_pipeline_timing.py.
@@ -112,6 +153,11 @@ private:
     std::atomic<uint64_t> frameCount_{0};
     std::atomic<uint64_t> triggerCount_{0};
     std::atomic<uint64_t> skipped_[static_cast<size_t>(PipelineSkipReason::Count)]{};
+
+    // Always-on live end-to-end target latency gauge (see noteTargetLatency).
+    std::atomic<uint64_t> liveTargetLatencyLastUs_{0};
+    std::atomic<double> liveTargetLatencyEwmaUs_{0.0};
+    std::atomic<uint64_t> liveTargetLatencyMaxUs_{0};
 };
 
 const char* pipelineSkipReasonName(PipelineSkipReason reason);

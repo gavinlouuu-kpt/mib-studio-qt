@@ -1,0 +1,48 @@
+Start testing: Sep 07 15:21 HKT
+----------------------------------------------------------
+72/101 Testing: hardware.camera
+72/101 Test: hardware.camera
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/hw_camera_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"hardware.camera" start time: Sep 07 15:21 HKT
+Output:
+----------------------------------------------------------
+hardware test using MIB_TEST_CAMERA=1
+[2026-09-07 15:21:41.552] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/mib_hw_camera_9869597985102467419/data/logs/app.log
+[2026-09-07 15:21:41.553] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=true, autofocus=true, trigger=true, capture=true, playback=true
+[2026-09-07 15:21:41.553] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/mib_hw_camera_9869597985102467419/data/app.sqlite3
+[2026-09-07 15:21:41.553] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/mib_hw_camera_9869597985102467419/data
+[2026-09-07 15:21:41.553] [app] [warning] [YoloService.stub.cpp:21] YoloService: ONNX Runtime is unavailable; YOLO features are disabled in this build
+[2026-09-07 15:21:41.553] [app] [warning] [AppBackend.cpp:356] YOLO model not loaded - segmentation features will not be available
+[2026-09-07 15:21:42.765] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/.local/share/hw_camera_test/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 15:21:42.765] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=r2-public-catalog, revision=2026.07.14-1, path=/home/gavin/.local/share/hw_camera_test/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=verified, remote_updated=false, bundled_fallback=false, manifest=https://updates.yofo.bio/stable/emodulus-lut/latest.json
+[2026-09-07 15:21:42.765] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 15:21:42.765] [app] [info] [AppBackend.cpp:614] AppBackend: configuring MindVision camera (index=0, config=<none>)
+[2026-09-07 15:21:42.765] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 15:21:42.765] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+EXPECT FAILED: gotFrames (/home/gavin/Developer/.worktrees/reliability-qt-test/tests/hardware/hw_camera_test.cpp:56) real camera delivered frames within 5s
+camera produced 0 frames
+[2026-09-07 15:21:48.090] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:21:48.148] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:21:48.148] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:21:48.149] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   6.67 sec
+----------------------------------------------------------
+Test Failed.
+"hardware.camera" end time: Sep 07 15:21 HKT
+"hardware.camera" time elapsed: 00:00:06
+----------------------------------------------------------
+
+End testing: Sep 07 15:21 HKT
+
+hardware =   6.67 sec*proc

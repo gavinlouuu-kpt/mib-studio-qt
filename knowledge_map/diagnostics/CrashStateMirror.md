@@ -28,12 +28,15 @@ those atomics without locking.
 ```cpp
 struct CrashStateMirror {
     CaptureSlot       capture;       // running, framesProcessed, fps, dataRate
-    ProcessingSlot    processing;    // running, realtime, experiment, queue, jobs
+    ProcessingSlot    processing;    // running, realtime, experiment, queue, jobs,
+                                     //   droppedValidFrames, targetGroupObjects,
+                                     //   unservedTargetGroupObjects (sort-loss)
     Hdf5Slot          hdf5;          // fileOpen, pending/appended counts, path
     FrameStoreSlot    frameStore;    // capacity, totalWritten, latest/earliest
     AutofocusSlot     autofocus;     // connected, enabled, voltage, ringRatio
     SyringePumpSlot   syringePump;   // sample + sheath pump status
-    TriggerSlot       trigger;       // running, count, lastOnset
+    TriggerSlot       trigger;       // running, count, lastOnset, droppedRequests,
+                                     //   droppedPulses, targetLatencyUs
     RecorderSlot      recorder;      // recording, written, filtered
     AppSlot           app;           // cameraLabel, dataDir, buildVersion
 };

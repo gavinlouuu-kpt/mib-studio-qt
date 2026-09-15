@@ -156,6 +156,15 @@ jobs:
           curl.exe --fail --location --retry 3 --output resources\installers\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
         shell: pwsh
 
+      - name: Provision pinned MindVision SDK
+        shell: pwsh
+        run: |
+          $sdk = .\scripts\provision-mindvision-sdk.ps1 `
+            -Destination build\vendor\mindvision-sdk `
+            -PassThru
+          "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
+          "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
+
       - name: Install dependencies
         shell: pwsh
         run: |
@@ -188,7 +197,9 @@ jobs:
           $cmakeArgs = @(
             "--preset",
             "windows-default",
-            "-DMIB_ENABLE_MINDVISION=OFF",
+            "-DMIB_ENABLE_MINDVISION=ON",
+            "-DMIB_MINDVISION_SDK_ROOT=$env:MIB_MINDVISION_SDK_ROOT",
+            "-DMIB_MINDVISION_RUNTIME_DIR=$env:MIB_MINDVISION_RUNTIME_DIR",
             "-DMIB_REQUIRE_PROCESSING_CORE_SIGNER_SPKI=ON",
             "-DMIB_PROCESSING_CORE_SIGNER_SPKI_SHA256=$env:PROCESSING_CORE_SIGNER_SPKI_SHA256",
             "-DMIB_RELEASE_VERSION_OVERRIDE=${{ steps.version.outputs.artifact_version }}",
@@ -217,6 +228,15 @@ jobs:
 
       - name: Build Release
         run: cmake --build build --config Release
+
+      - name: Validate MindVision release payload
+        shell: pwsh
+        run: |
+          $runtime = "build\Release\MVCAMSDK_X64.dll"
+          if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) {
+            throw "MindVision runtime is missing from the release payload: $runtime"
+          }
+          Write-Host "MindVision runtime packaged: $runtime"
 
       - name: Run tests
         run: ctest --test-dir build --build-config Release --output-on-failure --timeout 30

@@ -1,0 +1,1055 @@
+[2026-09-07 15:28:26.582] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/mindvision_lifecycle_50_12354931131112129843/data/logs/app.log
+[2026-09-07 15:28:26.583] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=false, hdf5=false, processing=false, yolo=false, autofocus=false, trigger=true, capture=true, playback=false
+[2026-09-07 15:28:26.583] [app] [warning] [AppBackend.cpp:335] AppBackend: sqlite bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:28:26.583] [app] [warning] [AppBackend.cpp:344] AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:28:26.583] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:28:26.583] [app] [warning] [AppBackend.cpp:417] AppBackend: processing bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:28:26.583] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:28:26.583] [app] [info] [AppBackend.cpp:614] AppBackend: configuring MindVision camera (index=0, config=<none>)
+[2026-09-07 15:28:26.583] [app] [warning] [AppBackend.cpp:687] AppBackend: playback bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 15:28:26.583] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 15:28:26.583] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:28:26.583] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:28:31.909] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:28:31.910] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:28:31.910] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:28:31.910] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=1)
+[2026-09-07 15:28:31.912] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:28:32.069] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:32.070] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:32.070] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+cycle=1 generation=1 frames=0 stop_ms=159 cycle_ms=5486 immediate=1
+[2026-09-07 15:28:32.070] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:28:32.070] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:28:37.192] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:28:37.193] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:28:37.193] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:28:37.193] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=2)
+[2026-09-07 15:28:37.193] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:28:37.353] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:37.353] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:37.353] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=2, requested)
+cycle=2 generation=2 frames=0 stop_ms=159 cycle_ms=5283 immediate=1
+[2026-09-07 15:28:37.353] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:28:37.353] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=3, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:28:42.473] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:28:42.474] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:28:42.474] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:28:42.475] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=3)
+[2026-09-07 15:28:42.475] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:28:42.625] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:42.626] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=3, requested)
+cycle=3 generation=3 frames=0 stop_ms=151 cycle_ms=5272 immediate=1
+[2026-09-07 15:28:42.626] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:28:42.626] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=4, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:28:47.748] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:28:47.749] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:28:47.749] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:28:47.749] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=4)
+[2026-09-07 15:28:47.750] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:28:47.899] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:47.899] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:47.900] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=4, requested)
+cycle=4 generation=4 frames=0 stop_ms=150 cycle_ms=5273 immediate=1
+[2026-09-07 15:28:47.900] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:28:47.900] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=5, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:28:52.422] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:28:52.423] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:28:52.423] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:28:52.423] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=5)
+[2026-09-07 15:28:52.424] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:28:52.582] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:52.582] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:52.582] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=5, requested)
+cycle=5 generation=5 frames=0 stop_ms=158 cycle_ms=4682 immediate=1
+[2026-09-07 15:28:52.582] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:28:52.582] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=6, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:28:58.102] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:28:58.103] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:28:58.103] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:28:58.152] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:28:58.153] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=6)
+[2026-09-07 15:28:58.153] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:28:58.304] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:58.304] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:28:58.304] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=6, requested)
+cycle=6 generation=6 frames=2 stop_ms=150 cycle_ms=5721 immediate=0
+[2026-09-07 15:28:58.304] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:28:58.304] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=7, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:03.423] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:03.424] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:03.424] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:03.433] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:03.454] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=7)
+[2026-09-07 15:29:03.454] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:03.606] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:03.606] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:03.606] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=7, requested)
+cycle=7 generation=7 frames=3 stop_ms=151 cycle_ms=5301 immediate=0
+[2026-09-07 15:29:03.606] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:03.606] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=8, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:09.126] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:09.126] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:09.126] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:09.133] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:09.166] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=8)
+[2026-09-07 15:29:09.166] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:09.316] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:09.316] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:09.316] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=8, requested)
+cycle=8 generation=8 frames=4 stop_ms=150 cycle_ms=5710 immediate=0
+[2026-09-07 15:29:09.316] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:09.316] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=9, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:14.438] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:14.438] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:14.438] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:14.445] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:14.488] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=9)
+[2026-09-07 15:29:14.488] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:14.639] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:14.639] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:14.639] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=9, requested)
+cycle=9 generation=9 frames=5 stop_ms=150 cycle_ms=5322 immediate=0
+[2026-09-07 15:29:14.639] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:14.639] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=10, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:19.964] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:19.964] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:19.964] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:19.971] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:20.025] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=10)
+[2026-09-07 15:29:20.025] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:20.173] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:20.173] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:20.173] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=10, requested)
+cycle=10 generation=10 frames=6 stop_ms=148 cycle_ms=5534 immediate=0
+[2026-09-07 15:29:20.173] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:20.173] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=11, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:25.095] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:25.095] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:25.095] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:25.103] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:25.161] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=11)
+[2026-09-07 15:29:25.161] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:25.316] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:25.316] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:25.316] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=11, requested)
+cycle=11 generation=11 frames=7 stop_ms=155 cycle_ms=5143 immediate=0
+[2026-09-07 15:29:25.317] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:25.317] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=12, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:30.240] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:30.240] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:30.240] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:30.249] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:30.326] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=12)
+[2026-09-07 15:29:30.326] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:30.482] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:30.482] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:30.482] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=12, requested)
+cycle=12 generation=12 frames=8 stop_ms=155 cycle_ms=5165 immediate=0
+[2026-09-07 15:29:30.482] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:30.482] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=13, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:35.203] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:35.203] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:35.203] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:35.211] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:35.284] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=13)
+[2026-09-07 15:29:35.284] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:35.444] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:35.444] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:35.444] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=13, requested)
+cycle=13 generation=13 frames=9 stop_ms=160 cycle_ms=4962 immediate=0
+[2026-09-07 15:29:35.445] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:35.445] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=14, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:40.966] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:40.966] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:40.966] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:40.974] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:41.057] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=14)
+[2026-09-07 15:29:41.057] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:41.207] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:41.207] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:41.207] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=14, requested)
+cycle=14 generation=14 frames=10 stop_ms=150 cycle_ms=5763 immediate=0
+[2026-09-07 15:29:41.208] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:41.208] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=15, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:45.929] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:45.929] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:45.929] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:45.958] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:46.045] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=15)
+[2026-09-07 15:29:46.046] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:46.200] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:46.200] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:46.200] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=15, requested)
+cycle=15 generation=15 frames=11 stop_ms=154 cycle_ms=4992 immediate=0
+[2026-09-07 15:29:46.200] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:46.200] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=16, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:51.320] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:51.321] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:51.321] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:51.328] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:51.421] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=16)
+[2026-09-07 15:29:51.421] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:51.572] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:51.572] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:51.572] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=16, requested)
+cycle=16 generation=16 frames=12 stop_ms=150 cycle_ms=5372 immediate=0
+[2026-09-07 15:29:51.572] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:51.572] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=17, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:29:56.491] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:29:56.491] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:29:56.492] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:29:56.499] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:29:56.658] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=17)
+[2026-09-07 15:29:56.658] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:29:56.813] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:56.813] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:29:56.813] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=17, requested)
+cycle=17 generation=17 frames=13 stop_ms=155 cycle_ms=5241 immediate=0
+[2026-09-07 15:29:56.813] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:29:56.813] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=18, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:01.933] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:01.934] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:01.934] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:01.971] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:02.166] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=18)
+[2026-09-07 15:30:02.166] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:02.324] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:02.324] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:02.324] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=18, requested)
+cycle=18 generation=18 frames=14 stop_ms=158 cycle_ms=5510 immediate=0
+[2026-09-07 15:30:02.324] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:02.324] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=19, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:07.044] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:07.045] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:07.045] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:07.053] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:07.176] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=19)
+[2026-09-07 15:30:07.176] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:07.327] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:07.327] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:07.327] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=19, requested)
+cycle=19 generation=19 frames=15 stop_ms=151 cycle_ms=5003 immediate=0
+[2026-09-07 15:30:07.327] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:07.327] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=20, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:12.246] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:12.247] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:12.247] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:12.254] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:12.378] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=20)
+[2026-09-07 15:30:12.378] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:12.528] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:12.528] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:12.528] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=20, requested)
+cycle=20 generation=20 frames=16 stop_ms=150 cycle_ms=5200 immediate=0
+[2026-09-07 15:30:12.528] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:12.528] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=21, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:17.448] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:17.449] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:17.449] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:17.477] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:17.676] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=21)
+[2026-09-07 15:30:17.676] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:17.832] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:17.832] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:17.832] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=21, requested)
+cycle=21 generation=21 frames=17 stop_ms=155 cycle_ms=5303 immediate=0
+[2026-09-07 15:30:17.832] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:17.832] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=22, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:23.154] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:23.155] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:23.155] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:23.183] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:23.311] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=22)
+[2026-09-07 15:30:23.311] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:23.466] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:23.466] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:23.466] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=22, requested)
+cycle=22 generation=22 frames=18 stop_ms=155 cycle_ms=5634 immediate=0
+[2026-09-07 15:30:23.466] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:23.466] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=23, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:28.587] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:28.588] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:28.588] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:28.595] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:28.734] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=23)
+[2026-09-07 15:30:28.734] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:28.889] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:28.889] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:28.889] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=23, requested)
+cycle=23 generation=23 frames=19 stop_ms=155 cycle_ms=5423 immediate=0
+[2026-09-07 15:30:28.890] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:28.890] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=24, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:34.012] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:34.013] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:34.013] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:34.049] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:34.225] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=24)
+[2026-09-07 15:30:34.225] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:34.381] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:34.381] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:34.381] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=24, requested)
+cycle=24 generation=24 frames=20 stop_ms=156 cycle_ms=5491 immediate=0
+[2026-09-07 15:30:34.381] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:34.381] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=25, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:39.101] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:39.102] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:39.102] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:39.108] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:39.264] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=25)
+[2026-09-07 15:30:39.264] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:39.414] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:39.414] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:39.414] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=25, requested)
+cycle=25 generation=25 frames=21 stop_ms=150 cycle_ms=5032 immediate=0
+[2026-09-07 15:30:39.414] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:39.414] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=26, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:44.735] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:44.736] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:44.736] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:44.743] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:44.974] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=26)
+[2026-09-07 15:30:44.974] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:45.133] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:45.133] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:45.133] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=26, requested)
+cycle=26 generation=26 frames=22 stop_ms=159 cycle_ms=5718 immediate=0
+[2026-09-07 15:30:45.133] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:45.133] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=27, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:49.253] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:49.254] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:49.254] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:49.262] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:49.436] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=27)
+[2026-09-07 15:30:49.436] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:49.584] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:49.584] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:49.584] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=27, requested)
+cycle=27 generation=27 frames=23 stop_ms=148 cycle_ms=4451 immediate=0
+[2026-09-07 15:30:49.584] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:49.584] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=28, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:54.703] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:54.704] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:54.704] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:54.712] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:30:54.886] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=28)
+[2026-09-07 15:30:54.886] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:30:55.035] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:55.036] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:30:55.036] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=28, requested)
+cycle=28 generation=28 frames=24 stop_ms=149 cycle_ms=5451 immediate=0
+[2026-09-07 15:30:55.036] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:30:55.036] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=29, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:30:59.955] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:30:59.956] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:30:59.956] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:30:59.963] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:00.158] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=29)
+[2026-09-07 15:31:00.158] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:00.309] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:00.309] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:00.309] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=29, requested)
+cycle=29 generation=29 frames=25 stop_ms=150 cycle_ms=5273 immediate=0
+[2026-09-07 15:31:00.309] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:00.309] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=30, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:06.030] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:06.030] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:06.030] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:06.037] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:06.258] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=30)
+[2026-09-07 15:31:06.258] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:06.416] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:06.416] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:06.416] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=30, requested)
+cycle=30 generation=30 frames=26 stop_ms=158 cycle_ms=6107 immediate=0
+[2026-09-07 15:31:06.416] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:06.416] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=31, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:11.737] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:11.737] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:11.737] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:11.744] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:11.960] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=31)
+[2026-09-07 15:31:11.960] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:12.117] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:12.117] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:12.117] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=31, requested)
+cycle=31 generation=31 frames=27 stop_ms=158 cycle_ms=5701 immediate=0
+[2026-09-07 15:31:12.118] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:12.118] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=32, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:16.837] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:16.837] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:16.837] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:16.846] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:17.044] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=32)
+[2026-09-07 15:31:17.045] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:17.205] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:17.205] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:17.205] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=32, requested)
+cycle=32 generation=32 frames=28 stop_ms=160 cycle_ms=5087 immediate=0
+[2026-09-07 15:31:17.205] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:17.205] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=33, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:22.526] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:22.526] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:22.526] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:22.533] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:22.764] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=33)
+[2026-09-07 15:31:22.764] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:22.920] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:22.920] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:22.920] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=33, requested)
+cycle=33 generation=33 frames=29 stop_ms=155 cycle_ms=5714 immediate=0
+[2026-09-07 15:31:22.920] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:22.920] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=34, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:28.042] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:28.042] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:28.042] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:28.049] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:28.351] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=34)
+[2026-09-07 15:31:28.351] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:28.504] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:28.504] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:28.504] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=34, requested)
+cycle=34 generation=34 frames=30 stop_ms=153 cycle_ms=5584 immediate=0
+[2026-09-07 15:31:28.504] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:28.504] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=35, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:33.626] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:33.627] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:33.627] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:33.633] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:33.854] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=35)
+[2026-09-07 15:31:33.854] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:34.013] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:34.014] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:34.014] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=35, requested)
+cycle=35 generation=35 frames=31 stop_ms=159 cycle_ms=5509 immediate=0
+[2026-09-07 15:31:34.014] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:34.014] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=36, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:39.535] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:39.535] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:39.536] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:39.573] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:39.859] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=36)
+[2026-09-07 15:31:39.859] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:40.009] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:40.009] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:40.009] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=36, requested)
+cycle=36 generation=36 frames=32 stop_ms=150 cycle_ms=5995 immediate=0
+[2026-09-07 15:31:40.009] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:40.009] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=37, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:45.331] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:45.332] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:45.332] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:45.359] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:45.630] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=37)
+[2026-09-07 15:31:45.630] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:45.783] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:45.783] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:45.783] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=37, requested)
+cycle=37 generation=37 frames=33 stop_ms=152 cycle_ms=5773 immediate=0
+[2026-09-07 15:31:45.783] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:45.783] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=38, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:50.904] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:50.904] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:50.905] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:50.912] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:51.152] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=38)
+[2026-09-07 15:31:51.152] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:51.310] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:51.310] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:51.310] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=38, requested)
+cycle=38 generation=38 frames=34 stop_ms=157 cycle_ms=5526 immediate=0
+[2026-09-07 15:31:51.310] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:51.310] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=39, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:31:56.231] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:31:56.232] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:31:56.232] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:31:56.259] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:31:56.525] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=39)
+[2026-09-07 15:31:56.525] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:31:56.674] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:56.674] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:31:56.674] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=39, requested)
+cycle=39 generation=39 frames=35 stop_ms=149 cycle_ms=5364 immediate=0
+[2026-09-07 15:31:56.674] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:31:56.674] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=40, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:01.993] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:01.994] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:01.994] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:02.001] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:02.297] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=40)
+[2026-09-07 15:32:02.297] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:02.447] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:02.447] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:02.447] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=40, requested)
+cycle=40 generation=40 frames=36 stop_ms=149 cycle_ms=5772 immediate=0
+[2026-09-07 15:32:02.447] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:02.447] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=41, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:07.568] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:07.569] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:07.569] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:07.576] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:07.893] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=41)
+[2026-09-07 15:32:07.893] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:08.041] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:08.041] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:08.042] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=41, requested)
+cycle=41 generation=41 frames=37 stop_ms=149 cycle_ms=5594 immediate=0
+[2026-09-07 15:32:08.042] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:08.042] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=42, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:13.161] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:13.162] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:13.162] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:13.168] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:13.476] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=42)
+[2026-09-07 15:32:13.476] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:13.634] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:13.634] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:13.634] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=42, requested)
+cycle=42 generation=42 frames=38 stop_ms=157 cycle_ms=5592 immediate=0
+[2026-09-07 15:32:13.634] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:13.634] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=43, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:18.755] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:18.756] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:18.756] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:18.763] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:19.054] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=43)
+[2026-09-07 15:32:19.054] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:19.207] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:19.207] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:19.207] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=43, requested)
+cycle=43 generation=43 frames=39 stop_ms=152 cycle_ms=5573 immediate=0
+[2026-09-07 15:32:19.207] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:19.207] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=44, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:24.527] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:24.528] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:24.528] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:24.536] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:24.841] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=44)
+[2026-09-07 15:32:24.842] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:24.991] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:24.991] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=44, requested)
+cycle=44 generation=44 frames=40 stop_ms=149 cycle_ms=5784 immediate=0
+[2026-09-07 15:32:24.991] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:24.991] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=45, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:30.313] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:30.314] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:30.314] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:30.320] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:30.628] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=45)
+[2026-09-07 15:32:30.628] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:30.785] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:30.785] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:30.785] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=45, requested)
+cycle=45 generation=45 frames=41 stop_ms=157 cycle_ms=5793 immediate=0
+[2026-09-07 15:32:30.785] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:30.785] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=46, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:35.503] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:35.504] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:35.504] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:35.532] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:35.934] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=46)
+[2026-09-07 15:32:35.934] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:36.088] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:36.088] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:36.088] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=46, requested)
+cycle=46 generation=46 frames=42 stop_ms=154 cycle_ms=5303 immediate=0
+[2026-09-07 15:32:36.089] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:36.089] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=47, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:41.411] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:41.412] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:41.412] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:41.440] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:41.766] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=47)
+[2026-09-07 15:32:41.766] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:41.915] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:41.915] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:41.915] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=47, requested)
+cycle=47 generation=47 frames=43 stop_ms=148 cycle_ms=5826 immediate=0
+[2026-09-07 15:32:41.915] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:41.915] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=48, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:47.235] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:47.236] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:47.236] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:47.265] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:47.610] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=48)
+[2026-09-07 15:32:47.611] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:47.770] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:47.770] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:47.770] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=48, requested)
+cycle=48 generation=48 frames=44 stop_ms=159 cycle_ms=5855 immediate=0
+[2026-09-07 15:32:47.770] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:47.770] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=49, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:53.290] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:53.291] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:53.291] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:53.298] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:53.696] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=49)
+[2026-09-07 15:32:53.696] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:53.845] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:53.845] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:53.845] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=49, requested)
+cycle=49 generation=49 frames=45 stop_ms=149 cycle_ms=6075 immediate=0
+[2026-09-07 15:32:53.845] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 15:32:53.846] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=50, parts=1, buffers=20, mode=everyFrame
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 15:32:58.968] [app] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 816x624 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=509184 bytes)
+[2026-09-07 15:32:58.968] [app] [info] [MindVisionCamera.cpp:647] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-07 15:32:58.968] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:32:58.977] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 509184 bytes per slot across 5000 slots (2428.0 MB retained)
+[2026-09-07 15:32:59.332] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=50)
+[2026-09-07 15:32:59.333] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:32:59.490] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:59.490] [app] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:32:59.490] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=50, requested)
+cycle=50 generation=50 frames=46 stop_ms=157 cycle_ms=5644 immediate=0
+PASS cycles=50 generations=50 immediate_stop_attempts=5 final_state=idle
+exit=0

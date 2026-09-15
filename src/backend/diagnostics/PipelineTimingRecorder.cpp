@@ -2,6 +2,8 @@
 
 #include "backend/app/Tools.h"
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
@@ -69,6 +71,98 @@ std::vector<FrameTimingRecord> PipelineTimingRecorder::frameRecords() const {
 
 std::vector<TriggerTimingRecord> PipelineTimingRecorder::triggerRecords() const {
     return snapshotRing(triggers_, triggerCount_.load(std::memory_order_acquire), kTriggerCapacity);
+}
+
+namespace {
+
+// Reduce a set of stage durations (microseconds) to avg/max/percentiles.
+// `values` is consumed (sorted in place). Nearest-rank percentiles.
+PipelineTimingRecorder::StageStats reduceStage(std::vector<uint64_t>& values) {
+    PipelineTimingRecorder::StageStats s;
+    if (values.empty()) return s;
+    std::sort(values.begin(), values.end());
+    s.count = values.size();
+    uint64_t sum = 0;
+    for (uint64_t v : values) sum += v;
+    s.avgUs = static_cast<double>(sum) / static_cast<double>(values.size());
+    s.maxUs = values.back();
+    auto pct = [&](double p) {
+        // Nearest-rank: rank in [1, n]; index = ceil(p*n) - 1.
+        size_t idx = static_cast<size_t>(std::ceil(p * static_cast<double>(values.size())));
+        if (idx == 0) idx = 1;
+        if (idx > values.size()) idx = values.size();
+        return values[idx - 1];
+    };
+    s.p50Us = pct(0.50);
+    s.p95Us = pct(0.95);
+    s.p99Us = pct(0.99);
+    return s;
+}
+
+// Positive difference end - start, only when both stamps are set and ordered.
+// Appends to `out` when valid; skips otherwise (0 stamps / async-batch gaps).
+inline void pushDiff(std::vector<uint64_t>& out, uint64_t start, uint64_t end) {
+    if (start != 0 && end != 0 && end >= start) {
+        out.push_back(end - start);
+    }
+}
+
+} // namespace
+
+PipelineTimingRecorder::LatencySummary PipelineTimingRecorder::summarize(size_t sampleLimit) const {
+    auto frames = frameRecords();
+    auto triggers = triggerRecords();
+    if (sampleLimit > 0) {
+        if (frames.size() > sampleLimit) {
+            frames.erase(frames.begin(), frames.end() - static_cast<std::ptrdiff_t>(sampleLimit));
+        }
+        if (triggers.size() > sampleLimit) {
+            triggers.erase(triggers.begin(),
+                           triggers.end() - static_cast<std::ptrdiff_t>(sampleLimit));
+        }
+    }
+
+    std::vector<uint64_t> endToEndTarget, requestToFire, endToEndFrame, frameAge, algo, dispatch;
+    for (const auto& t : triggers) {
+        pushDiff(endToEndTarget, t.grabUs, t.fireUs);
+        pushDiff(requestToFire, t.requestUs, t.fireUs);
+    }
+    for (const auto& f : frames) {
+        pushDiff(endToEndFrame, f.grabUs, f.callbacksDoneUs);
+        pushDiff(frameAge, f.grabUs, f.algoStartUs);
+        pushDiff(algo, f.algoStartUs, f.algoEndUs);
+        pushDiff(dispatch, f.algoEndUs, f.triggerDispatchUs);
+    }
+
+    LatencySummary out;
+    out.endToEndTarget = reduceStage(endToEndTarget);
+    out.requestToFire = reduceStage(requestToFire);
+    out.endToEndFrame = reduceStage(endToEndFrame);
+    out.frameAge = reduceStage(frameAge);
+    out.algo = reduceStage(algo);
+    out.dispatch = reduceStage(dispatch);
+    return out;
+}
+
+void PipelineTimingRecorder::noteTargetLatency(uint64_t latencyUs) {
+    liveTargetLatencyLastUs_.store(latencyUs, std::memory_order_relaxed);
+    // EWMA (alpha = 1/16) for a smooth live gauge; seed on the first sample.
+    const double prev = liveTargetLatencyEwmaUs_.load(std::memory_order_relaxed);
+    const double next =
+        prev <= 0.0 ? static_cast<double>(latencyUs)
+                    : prev + (static_cast<double>(latencyUs) - prev) / 16.0;
+    liveTargetLatencyEwmaUs_.store(next, std::memory_order_relaxed);
+    uint64_t curMax = liveTargetLatencyMaxUs_.load(std::memory_order_relaxed);
+    while (latencyUs > curMax && !liveTargetLatencyMaxUs_.compare_exchange_weak(
+                                     curMax, latencyUs, std::memory_order_relaxed)) {
+        // curMax reloaded by compare_exchange_weak on failure.
+    }
+}
+
+void PipelineTimingRecorder::resetLiveLatency() {
+    liveTargetLatencyLastUs_.store(0, std::memory_order_relaxed);
+    liveTargetLatencyEwmaUs_.store(0.0, std::memory_order_relaxed);
+    liveTargetLatencyMaxUs_.store(0, std::memory_order_relaxed);
 }
 
 const char* pipelineSkipReasonName(PipelineSkipReason reason) {

@@ -2,11 +2,13 @@
 #include "ui_ConnectTab.h"
 
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QVariant>
 
 #include <spdlog/spdlog.h>
 
 #include "backend/app/AppBackend.h"
+#include "backend/camera/common/ICamera.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/CaptureService.h"
 #include "frontend/dialogs/MockConfigDialog.h"
@@ -69,6 +71,15 @@ ConnectTab::ConnectTab(backend::AppBackend& backend, QWidget* parent)
     connect(ui->refreshBtn, &QPushButton::clicked, this, &ConnectTab::onRefresh);
     connect(ui->connectBtn, &QPushButton::clicked, this, &ConnectTab::onConnect);
     connect(ui->mockBtn, &QPushButton::clicked, this, &ConnectTab::onConfigureMock);
+
+    // Combo index 0 = EveryFrame, 1 = LatestFrame (matches the .ui item order).
+    {
+        const QSignalBlocker blocker(ui->deliveryModeCombo);
+        ui->deliveryModeCombo->setCurrentIndex(
+            backend_.capture().activeDeliveryMode() == camera::common::FrameDeliveryMode::LatestFrame ? 1 : 0);
+    }
+    connect(ui->deliveryModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &ConnectTab::onDeliveryModeComboChanged);
 
     onRefresh();
 }
@@ -284,6 +295,48 @@ void ConnectTab::onConnect() {
     }
     ui->statusLabel->setText(tr("Connected to %1 (not capturing)").arg(label));
     emit connected();
+}
+
+void ConnectTab::onDeliveryModeComboChanged(int index) {
+    const auto mode = index == 1 ? camera::common::FrameDeliveryMode::LatestFrame
+                                 : camera::common::FrameDeliveryMode::EveryFrame;
+
+    // First (and only) frontend caller of CaptureService::setConfig: buffer
+    // sizing stays at the service defaults, only the delivery mode is
+    // user-selectable here.
+    backend::services::CaptureService::Config cfg{};
+    cfg.deliveryMode = mode;
+    backend_.capture().setConfig(cfg);
+
+    const QString modeLabel = mode == camera::common::FrameDeliveryMode::LatestFrame
+                                  ? tr("Latest Frame")
+                                  : tr("Every Frame");
+    if (backend_.capture().isRunning()) {
+        // Real backends only honor the mode at start(); never restart silently.
+        ui->statusLabel->setText(tr("Delivery mode set to %1 — applies at the next capture start.").arg(modeLabel));
+    } else {
+        ui->statusLabel->setText(tr("Delivery mode set to %1.").arg(modeLabel));
+    }
+    SPDLOG_INFO("ConnectTab: delivery mode set to {} (capture {})",
+                camera::common::toString(mode),
+                backend_.capture().isRunning() ? "running, applies at next start" : "stopped");
+    emit deliveryModeChanged(mode);
+}
+
+void ConnectTab::setDeliveryMode(camera::common::FrameDeliveryMode mode) {
+    const int index = mode == camera::common::FrameDeliveryMode::LatestFrame ? 1 : 0;
+    if (ui->deliveryModeCombo->currentIndex() == index) {
+        return;
+    }
+    // Triggers onDeliveryModeComboChanged, i.e. the same apply + persist path
+    // as a user selection.
+    ui->deliveryModeCombo->setCurrentIndex(index);
+}
+
+void ConnectTab::syncDeliveryMode(camera::common::FrameDeliveryMode mode) {
+    const QSignalBlocker blocker(ui->deliveryModeCombo);
+    ui->deliveryModeCombo->setCurrentIndex(
+        mode == camera::common::FrameDeliveryMode::LatestFrame ? 1 : 0);
 }
 
 void ConnectTab::onConfigureMock() {

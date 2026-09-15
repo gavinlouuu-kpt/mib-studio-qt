@@ -18,7 +18,12 @@ struct Frame {
     uint64_t height = 0;
     uint64_t pixelFormat = 0;  // Use PFNC codes to match Euresys metadata.
     size_t linePitch = 0;      // Bytes per line in the buffer (may exceed width).
-    uint64_t timestamp = 0;    // Nanoseconds or device ticks depending on source.
+    // Source timestamp in the unit/domain declared by the producing camera's
+    // ICamera::timestampDescriptor() (issue #368). Never assume nanoseconds.
+    uint64_t timestamp = 0;
+    // Raw device counter value before the adapter's normalization (0 when the
+    // source has no separate native counter). Preserved for audit.
+    uint64_t rawDeviceTicks = 0;
     // Host monotonic microseconds (Tools::getTimestamp clock) stamped by
     // CaptureService when grabFrame returns. 0 when the frame never went
     // through the capture loop. Unlike `timestamp` this is comparable across

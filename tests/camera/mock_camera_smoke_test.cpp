@@ -35,6 +35,22 @@ bool writeFrame(const std::filesystem::path& path, unsigned char value)
     const cv::Mat image(12, 16, CV_8UC1, cv::Scalar(value));
     return cv::imwrite(path.string(), image);
 }
+
+// A decoded mock frame should be Mono8, tightly packed (linePitch == width, so
+// data size == width*height), and — for our constant-fill inputs — every byte
+// should equal the written value. Guards the OpenCV decode against pitch/format
+// regressions, not just shape.
+bool frameIsUniform(const camera::common::Frame& f, unsigned char value)
+{
+    if (f.pixelFormat != 0x01080001ULL) return false;
+    if (f.linePitch != f.width) return false;
+    if (f.data.size() != f.width * f.height) return false;
+    for (unsigned char b : f.data)
+    {
+        if (b != value) return false;
+    }
+    return true;
+}
 } // namespace
 
 int main()
@@ -76,6 +92,13 @@ int main()
         std::filesystem::remove_all(frameDir);
         return 4;
     }
+    // frame_001.png (value 60) sorts first. Decoded pixels must survive intact.
+    if (!frameIsUniform(first, 60))
+    {
+        std::cerr << "first mock frame lost its pixel values / packing\n";
+        std::filesystem::remove_all(frameDir);
+        return 8;
+    }
 
     camera::common::CameraStats stats;
     if (!camera.pollStats(stats))
@@ -92,6 +115,12 @@ int main()
         std::filesystem::remove_all(frameDir);
         return 6;
     }
+    if (!frameIsUniform(second, 120))
+    {
+        std::cerr << "second mock frame lost its pixel values / packing\n";
+        std::filesystem::remove_all(frameDir);
+        return 9;
+    }
 
     camera::common::Frame third;
     if (camera.grabFrame(third) || camera.isRunning())
@@ -103,5 +132,34 @@ int main()
 
     camera.stop();
     std::filesystem::remove_all(frameDir);
+
+    // TIFF path: the unified OpenCV decode must handle .tif inputs too (the old
+    // code only reached OpenCV for TIFF as a QImageReader fallback).
+    const auto tiffDir = makeTempDir();
+    if (!writeFrame(tiffDir / "frame_001.tif", 200))
+    {
+        std::cerr << "failed to write mock camera TIFF frame\n";
+        std::filesystem::remove_all(tiffDir);
+        return 10;
+    }
+
+    camera::mock::MockCameraOptions tiffOptions;
+    tiffOptions.folder = tiffDir;
+    tiffOptions.frameInterval = std::chrono::microseconds::zero();
+    tiffOptions.loopFiles = false;
+
+    camera::mock::MockCamera tiffCamera(tiffOptions);
+    tiffCamera.applyConfig({});
+    camera::common::Frame tiffFrame;
+    const bool tiffOk = tiffCamera.start() && tiffCamera.grabFrame(tiffFrame) &&
+                        frameIsUniform(tiffFrame, 200);
+    tiffCamera.stop();
+    std::filesystem::remove_all(tiffDir);
+    if (!tiffOk)
+    {
+        std::cerr << "mock camera should decode a TIFF frame via OpenCV\n";
+        return 11;
+    }
+
     return 0;
 }

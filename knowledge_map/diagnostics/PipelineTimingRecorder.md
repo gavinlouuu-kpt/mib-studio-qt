@@ -81,8 +81,33 @@ loss is detectable.
   end-to-end), host-vs-device inter-frame gaps (exposes SDK-side queueing),
   and the accounting summary.
 
+## Live summary + always-on target latency
+
+Two additions expose latency without the CSV round-trip:
+
+- `summarize(sampleLimit=0)` reduces the retained rings to per-stage
+  avg/max/p50/p95/p99 (`LatencySummary`: end-to-end target `fireUs−grabUs`,
+  request→fire, end-to-end frame, frame age `algoStartUs−grabUs`, algo,
+  dispatch). It allocates + sorts locally, so call it off the hot path (a
+  ~1 Hz UI tick or at stop). Still the *detailed tier*: only populated for
+  records captured while enabled.
+- `noteTargetLatency(us)` / `lastTargetLatencyUs()` / `avgTargetLatencyUs()`
+  (EWMA) / `maxTargetLatencyUs()` / `resetLiveLatency()` are an **always-on**
+  gauge, updated unconditionally by `TriggerService::triggerLoop` on every
+  driven pulse (acquisition→pulse onset). This is the headline "target seen →
+  sorted" latency, visible in the status bar without `MIB_PIPELINE_TIMING`.
+  `ProcessingService::startExperiment` calls `resetLiveLatency()`.
+
+The identification funnel (valid/target-group/unserved) and invalid-reason
+histogram live on [[../services/ProcessingService]] (`getIdentificationCounters`);
+`analyze_pipeline_timing.py` also prints a funnel + pre-algo loss summary.
+
 ## Tests
 
+- `processing.identification_metrics`
+  (`tests/processing/processing_identification_metrics_test.cpp`) — the shared
+  invalid-reason classifier, `summarize()` percentiles, and the live
+  target-latency gauge.
 - `backend.pipeline_timing_recorder`
   (`tests/backend/pipeline_timing_recorder_test.cpp`) — disabled no-op, ring
   wrap, concurrent writers, CSV dump.

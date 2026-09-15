@@ -91,8 +91,16 @@ are rejected rather than silently clamped at the transport boundary.
 - A read-only session disconnects without writing. After the first successful
   manual/autofocus write, intentional disconnect applies the validated
   `safeShutdownVoltage`.
-- QSerialPort is created and used on the single control/caller thread that owns
-  the backend; concurrent serial transactions are not supported.
+- QSerialPort is created and used on the dedicated NanopositionerIo thread;
+  callers are serialized through the backend proxy.
+- **Resting stage reads slightly negative.** A CoreMorrow controller at 0 V
+  returns about -1 mV (-0.0004 .. -0.002 V on the bench). The probe window
+  (backend read validation) is therefore -0.05 V, not 0: with a floor of exactly
+  0 the single-retry probe failed about one run in four, `hardware.nanopositioner`
+  flaked, and at boot `DeviceInitManager` logged "saved nanopositioner COMn did
+  not validate; scanning all ports" before connecting anyway (2026-09-08).
+- `probeComPort` is **static** and requires the service to be
+  **disconnected** — it opens/closes the port itself for discovery.
 - `focusDirection` inverts the sign of voltage adjustments — wrong value
   causes runaway.
 - Ring-ratio buffer does not track stream ID; if camera restarts, consider

@@ -90,6 +90,31 @@ struct FilterResult {
     std::shared_ptr<const std::vector<std::vector<cv::Point>>> allContours;
 };
 
+// One analysed frame (or one object of a frame — several ProcessedFrames can
+// share the same source index). Image members are read-only after
+// publication (frozen-Mats invariant): every consumer shares them by
+// refcount and never clones merely for lifetime (issue #370).
+struct ProcessedFrame {
+    uint64_t index{0};
+    uint64_t timestampNs{0};
+    // Host monotonic acquisition stamp carried from playback::Frame (0 if unknown).
+    uint64_t hostTimestampUs{0};
+    cv::Mat originalImage;
+    cv::Mat processedImage; // mask
+    FilterResult validation;
+    // Multi-image series: additional images captured after the trigger frame.
+    // seriesImages[0] is the trigger image (same as originalImage), followed by subsequent frames.
+    // Empty when multi-image mode is disabled.
+    std::vector<cv::Mat> seriesImages;
+};
+
+struct BufferedFrameCounts {
+    size_t valid{0};
+    size_t invalid{0};
+
+    size_t total() const { return valid + invalid; }
+};
+
 // Host-owned batch tracking state. The lifecycle (creation, per-frame
 // bookkeeping) belongs to the caller; the matching DECISION is
 // version-sensitive science owned by the selected processing kernel.

@@ -1,6 +1,9 @@
 {
     "config_schema_version": 1,
     "buffer_threshold": 1000,
+    "camera": {
+        "frame_delivery_mode": "everyFrame"
+    },
     "realtime_processing": {
         "mode": "inline",
         "batch_size": 16,

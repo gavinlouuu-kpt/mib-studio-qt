@@ -142,6 +142,47 @@
     </layout>
    </item>
    <item>
+    <layout class="QHBoxLayout" name="deliveryModeLayout">
+     <item>
+      <widget class="QLabel" name="deliveryModeCaption">
+       <property name="text">
+        <string>Delivery mode:</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="deliveryModeCombo">
+       <property name="toolTip">
+        <string>Frame delivery policy applied at the camera SDK queue. A change while capturing applies at the next capture start.</string>
+       </property>
+       <item>
+        <property name="text">
+         <string>Every Frame — preserves sequence</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Latest Frame — lowest latency; may drop frames</string>
+        </property>
+       </item>
+      </widget>
+     </item>
+     <item>
+      <spacer name="deliveryModeSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
     <widget class="QLabel" name="statusLabel">
      <property name="text">
       <string>Select a device and click Connect.</string>

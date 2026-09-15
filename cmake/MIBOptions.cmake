@@ -14,9 +14,9 @@ option(MIB_ENABLE_WINDOWS_PACKAGING
     "Enable Windows runtime deployment and InnoSetup packaging targets"
     ${MIB_ENABLE_WINDOWS_PACKAGING_DEFAULT})
 
-set(MIB_ENABLE_MINDVISION_DEFAULT OFF)
+set(MIB_ENABLE_MINDVISION_DEFAULT ON)
 option(MIB_ENABLE_MINDVISION
-    "Enable MindVision camera SDK integration (Windows only, requires external SDK)"
+    "Enable MindVision camera SDK integration (requires the platform SDK)"
     ${MIB_ENABLE_MINDVISION_DEFAULT})
 
 option(MIB_BUILD_BACKEND_ONLY

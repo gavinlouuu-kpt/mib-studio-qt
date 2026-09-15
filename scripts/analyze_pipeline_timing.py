@@ -142,9 +142,36 @@ def main():
     else:
         print(f"  (missing {skips_path})")
 
-    # --- target-group summary ---
+    # --- identification funnel + loss ---
+    # Quantifies "loss of target identification": how the objects the detector
+    # produced narrowed down to sort pulses, and where identified frames were
+    # lost before reaching the algorithm at all (the skip reasons).
+    valid_objs = sum(f["valid_count"] for f in frames)
+    invalid_objs = sum(f["invalid_count"] for f in frames)
     tg_frames = [f for f in frames if f["is_target_group"]]
-    print(f"\ntarget-group frames: {len(tg_frames)} / {len(frames)}")
+    total_objs = valid_objs + invalid_objs
+    print("\n-- Identification funnel --")
+    print(f"  objects detected:       {total_objs}")
+    if total_objs:
+        print(f"  valid (passed gates):   {valid_objs} ({100.0 * valid_objs / total_objs:.1f}%)")
+        print(f"  invalid (gated out):    {invalid_objs} "
+              f"({100.0 * invalid_objs / total_objs:.1f}%)")
+    print(f"  frames requesting sort: {len(tg_frames)} / {len(frames)}")
+
+    # Frames lost before the algorithm (from the skip file) are identification
+    # opportunities that never happened. ring_behind / dropped_to_latest are the
+    # ones that indicate the realtime consumer could not keep up.
+    if skips_path.exists():
+        loss = {}
+        with skips_path.open(newline="") as f:
+            for row in csv.DictReader(f):
+                if row["reason"] in ("ring_behind", "dropped_to_latest",
+                                     "kernel_error", "batch_queue_rejected"):
+                    loss[row["reason"]] = int(row["count"])
+        lost = sum(loss.values())
+        if lost:
+            detail = ", ".join(f"{k}={v}" for k, v in loss.items() if v)
+            print(f"  frames lost pre-algo:   {lost}  ({detail})")
     return 0
 
 

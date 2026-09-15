@@ -194,6 +194,19 @@ Keep device-independent protocol/logic in a plain unit test instead (e.g. the
 Modbus framing lives in `backend::services::modbus` and is covered by
 `backend.modbus_rtu` with zero hardware).
 
+### 8. Headless Qt frontend tests on Windows
+
+`frontend.*` tests that create a `QApplication` force `QT_QPA_PLATFORM=offscreen`.
+On Windows the packaged tree only carries `qwindows.dll` and the offscreen
+platform has no font database, so `cmake/MIBQtOffscreenTests.cmake`
+(`mib_apply_qt_offscreen_plugin_path()`, called at the end of every
+`CMakeLists.txt` that registers `frontend.*` tests) sets
+`QT_QPA_PLATFORM_PLUGIN_PATH` to the Conan Qt plugin directory and
+`QT_QPA_FONTDIR` to the system fonts for those tests. Without it the tests
+fail-fast (`0xc0000409`) and the Windows crash dialog holds the process until
+the CTest timeout. Register new frontend tests with the `frontend.` prefix so
+the helper picks them up.
+
 ## Mandatory rules
 
 - **Watchdog, never a naked `join()`/`wait()`.** A deadlocked test must fail

@@ -27,7 +27,9 @@
     <number>6</number>
    </property>
    <item>
-    <layout class="QHBoxLayout" name="fileRowLayout">
+    <layout class="QVBoxLayout" name="fileRowsLayout">
+     <item>
+      <layout class="QHBoxLayout" name="fileRowLayout">
      <item>
       <widget class="QPushButton" name="selectFileBtn">
        <property name="text">
@@ -105,6 +107,10 @@
        </property>
       </widget>
      </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="fileInfoRowLayout">
      <item>
       <widget class="QLabel" name="overlayModeLabel">
        <property name="text">
@@ -190,6 +196,8 @@
        </property>
       </widget>
      </item>
+      </layout>
+     </item>
     </layout>
    </item>
    <item>
@@ -221,7 +229,7 @@
          </property>
          <property name="minimumSize">
           <size>
-           <width>400</width>
+           <width>0</width>
            <height>0</height>
           </size>
          </property>
@@ -281,7 +289,7 @@
          </property>
          <property name="minimumSize">
           <size>
-           <width>400</width>
+           <width>0</width>
            <height>0</height>
           </size>
          </property>

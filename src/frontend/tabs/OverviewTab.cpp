@@ -139,6 +139,9 @@ namespace frontend
     }
 
     OverviewTab::~OverviewTab() {
+        if (timer_) {
+            timer_->stop();
+        }
         delete ui;
     }
 

@@ -1,0 +1,14 @@
+E0907 15:56:50.948758 4108212 MVCAMAPI.cpp:382] CameraInit Failed, err:32774,Version:2.1.0.49,FriendlyName:MV-XG51GM#A9FE6AF1,SN:056061120465
+CameraSdkInit=0
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+CameraEnumerateDevice=0 count=1
+device[0] product=MV-XG51GM friendly=MV-XG51GM#A9FE6AF1 port=169.254.106.241-169.254.100.1 sensor=CMOS 0.5M
+CameraInit[0]=32774 handle=-1

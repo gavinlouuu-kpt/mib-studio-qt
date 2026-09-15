@@ -119,6 +119,9 @@ std::string CrashStateMirror::snapshotJsonString() const {
         {"valid_fps", processing.validFps.load()},
         {"invalid_fps", processing.invalidFps.load()},
         {"total_valid_flushed", processing.totalValidFlushed.load()},
+        {"dropped_valid_frames", processing.droppedValidFrames.load()},
+        {"target_group_objects", processing.targetGroupObjects.load()},
+        {"unserved_target_group_objects", processing.unservedTargetGroupObjects.load()},
     };
 
     j["hdf5"] = {
@@ -169,6 +172,9 @@ std::string CrashStateMirror::snapshotJsonString() const {
         {"running", trigger.running.load()},
         {"trigger_count", trigger.triggerCount.load()},
         {"last_onset_us", trigger.lastOnsetUs.load()},
+        {"dropped_requests", trigger.droppedRequests.load()},
+        {"dropped_pulses", trigger.droppedPulses.load()},
+        {"target_latency_us", trigger.targetLatencyUs.load()},
     };
 
     j["recorder"] = {

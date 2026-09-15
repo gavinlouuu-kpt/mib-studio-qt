@@ -1,0 +1,1342 @@
+Start testing: Sep 07 15:38 HKT
+----------------------------------------------------------
+4/101 Testing: backend.lifecycle_smoke
+4/101 Test: backend.lifecycle_smoke
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/backend_lifecycle_smoke_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"backend.lifecycle_smoke" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 15:38:16.519] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/mib_backend_lifecycle_6795072728484016121/logs/app.log
+[2026-09-07 15:38:16.519] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=true, autofocus=true, trigger=true, capture=true, playback=true
+[2026-09-07 15:38:16.519] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/mib_backend_lifecycle_6795072728484016121/app.sqlite3
+[2026-09-07 15:38:16.519] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/mib_backend_lifecycle_6795072728484016121
+[2026-09-07 15:38:16.519] [app] [warning] [YoloService.stub.cpp:21] YoloService: ONNX Runtime is unavailable; YOLO features are disabled in this build
+[2026-09-07 15:38:16.519] [app] [warning] [AppBackend.cpp:356] YOLO model not loaded - segmentation features will not be available
+[2026-09-07 15:38:16.520] [app] [warning] [EModulusLutCatalog.cpp:547] EModulusLutCatalog: file:///nonexistent/mib-lut-manifest.json: manifest fetch failed; using local cache
+[2026-09-07 15:38:16.639] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/.local/share/backend_lifecycle_smoke_test/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 15:38:16.640] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=r2-public-catalog, revision=2026.07.14-1, path=/home/gavin/.local/share/backend_lifecycle_smoke_test/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=verified, remote_updated=false, bundled_fallback=false, manifest=file:///nonexistent/mib-lut-manifest.json
+[2026-09-07 15:38:16.641] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 15:38:16.641] [app] [info] [AppBackend.cpp:568] AppBackend: configuring MockCamera (folder=/tmp/mib_backend_lifecycle_6795072728484016121/mock_frames, interval=1000 us, ~1000.0 fps, loop=true)
+[2026-09-07 15:38:16.641] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 15:38:16.641] [app] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+[2026-09-07 15:38:16.641] [app] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 15:38:16.642] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   0.21 sec
+----------------------------------------------------------
+Test Passed.
+"backend.lifecycle_smoke" end time: Sep 07 15:38 HKT
+"backend.lifecycle_smoke" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/101 Testing: backend.mindvision_conversion_fault
+17/101 Test: backend.mindvision_conversion_fault
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/mindvision_conversion_fault_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"backend.mindvision_conversion_fault" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: CameraSetIspOutFormat(MONO8) failed (status=-3); acquisition requires a Mono8 ISP output (mindvision.isp_format_rejected)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision ISP output format 0x02180014 (3 byte/px) is not Mono8; acquisition requires a verified Mono8 output (mindvision.geometry.unsupportedFormat)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision ISP output format 0x02180015 (3 byte/px) is not Mono8; acquisition requires a verified Mono8 output (mindvision.geometry.unsupportedFormat)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision ISP output format 0x01100007 (2 byte/px) is not Mono8; acquisition requires a verified Mono8 output (mindvision.geometry.unsupportedFormat)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: CameraGetIspOutFormat failed (status=-9); cannot verify the ISP output format (mindvision.isp_format_unverified)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision image width 0 is outside the supported range [1, 65535] (mindvision.geometry.invalidWidth)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision image height 0 is outside the supported range [1, 65535] (mindvision.geometry.invalidHeight)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision image width -1 is outside the supported range [1, 65535] (mindvision.geometry.invalidWidth)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision image height -7 is outside the supported range [1, 65535] (mindvision.geometry.invalidHeight)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision image width 100000 is outside the supported range [1, 65535] (mindvision.geometry.invalidWidth)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: CameraAlignMalloc(49152) failed (mindvision.alloc_failed)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: CameraPlay failed (status=-4) (mindvision.play_failed)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: CameraEnumerateDevice failed (status=-1, count=0) (mindvision.no_devices)
+[2026-09-07 15:38:16.658] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[2026-09-07 15:38:16.658] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:38:16.658] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[2026-09-07 15:38:16.658] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision frame geometry 640x480 differs from the session allocation 512x96 (mindvision.frame.frameGeometryMismatch)
+[2026-09-07 15:38:16.658] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:38:16.658] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 640x480 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=307200 bytes)
+[2026-09-07 15:38:16.659] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:38:16.659] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[2026-09-07 15:38:16.659] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision frame geometry 256x96 differs from the session allocation 512x96 (mindvision.frame.frameGeometryMismatch)
+[2026-09-07 15:38:16.659] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:38:16.659] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[2026-09-07 15:38:16.659] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:38:16.659] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[2026-09-07 15:38:16.759] [error] [MindVisionCamera.cpp:319] MindVisionCamera: 1 SDK operation(s) still in flight after 100 ms; abandoning handle 100 instead of uninitializing under a live call
+[2026-09-07 15:38:16.759] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision SDK call did not return before stop; handle abandoned (mindvision.inflight_drain_timeout)
+[2026-09-07 15:38:16.759] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:38:16.759] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=latestFrame, buffer=49152 bytes)
+[2026-09-07 15:38:16.759] [error] [MindVisionCamera.cpp:92] MindVisionCamera: MindVision frame geometry 512x200 differs from the session allocation 512x96 (mindvision.frame.frameGeometryMismatch)
+[2026-09-07 15:38:16.759] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+<end of output>
+Test time =   0.26 sec
+----------------------------------------------------------
+Test Passed.
+"backend.mindvision_conversion_fault" end time: Sep 07 15:38 HKT
+"backend.mindvision_conversion_fault" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/101 Testing: backend.capture_lifecycle
+18/101 Test: backend.capture_lifecycle
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/capture_lifecycle_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"backend.capture_lifecycle" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 15:38:16.962] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.963] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:16.963] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.964] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:16.964] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.964] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:16.964] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.964] [info] [CaptureService.cpp:655] CaptureService stopped (gen=2, requested)
+[2026-09-07 15:38:16.964] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.966] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:16.966] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, faulted)
+[2026-09-07 15:38:16.966] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.967] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:16.967] [info] [CaptureService.cpp:655] CaptureService stopped (gen=2, faulted)
+[2026-09-07 15:38:16.967] [info] [CaptureService.cpp:382] CaptureService starting: gen=3, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.969] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:16.969] [info] [CaptureService.cpp:655] CaptureService stopped (gen=3, faulted)
+[2026-09-07 15:38:16.969] [info] [CaptureService.cpp:382] CaptureService starting: gen=4, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.970] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:16.970] [info] [CaptureService.cpp:655] CaptureService stopped (gen=4, faulted)
+[2026-09-07 15:38:16.970] [info] [CaptureService.cpp:382] CaptureService starting: gen=5, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.972] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:16.972] [info] [CaptureService.cpp:655] CaptureService stopped (gen=5, faulted)
+[2026-09-07 15:38:16.972] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:16.972] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:16.972] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.122] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:17.122] [error] [CaptureService.cpp:146] CaptureService::start rejected: no camera factory configured
+[2026-09-07 15:38:17.122] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.123] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:382] CaptureService starting: gen=3, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:655] CaptureService stopped (gen=3, faulted)
+[2026-09-07 15:38:17.123] [info] [CaptureService.cpp:382] CaptureService starting: gen=4, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:655] CaptureService stopped (gen=4, requested)
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:382] CaptureService starting: gen=5, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.124] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:382] CaptureService starting: gen=6, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:655] CaptureService stopped (gen=6, faulted)
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:382] CaptureService starting: gen=7, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:655] CaptureService stopped (gen=7, requested)
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:382] CaptureService starting: gen=8, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.124] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.124] [info] [CaptureService.cpp:382] CaptureService starting: gen=9, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:655] CaptureService stopped (gen=9, faulted)
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:382] CaptureService starting: gen=10, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:655] CaptureService stopped (gen=10, requested)
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:382] CaptureService starting: gen=11, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.125] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:382] CaptureService starting: gen=12, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:655] CaptureService stopped (gen=12, faulted)
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:382] CaptureService starting: gen=13, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:655] CaptureService stopped (gen=13, requested)
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:382] CaptureService starting: gen=14, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.125] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.125] [info] [CaptureService.cpp:382] CaptureService starting: gen=15, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:655] CaptureService stopped (gen=15, faulted)
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:382] CaptureService starting: gen=16, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:655] CaptureService stopped (gen=16, requested)
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:382] CaptureService starting: gen=17, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.126] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:382] CaptureService starting: gen=18, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:655] CaptureService stopped (gen=18, faulted)
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:382] CaptureService starting: gen=19, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:655] CaptureService stopped (gen=19, requested)
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:382] CaptureService starting: gen=20, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.126] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.126] [info] [CaptureService.cpp:382] CaptureService starting: gen=21, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:655] CaptureService stopped (gen=21, faulted)
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:382] CaptureService starting: gen=22, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:655] CaptureService stopped (gen=22, requested)
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:382] CaptureService starting: gen=23, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.127] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:382] CaptureService starting: gen=24, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:655] CaptureService stopped (gen=24, faulted)
+[2026-09-07 15:38:17.127] [info] [CaptureService.cpp:382] CaptureService starting: gen=25, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:655] CaptureService stopped (gen=25, requested)
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:382] CaptureService starting: gen=26, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.128] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:382] CaptureService starting: gen=27, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:655] CaptureService stopped (gen=27, faulted)
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:382] CaptureService starting: gen=28, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:655] CaptureService stopped (gen=28, requested)
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:382] CaptureService starting: gen=29, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.128] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:382] CaptureService starting: gen=30, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.128] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:655] CaptureService stopped (gen=30, faulted)
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:382] CaptureService starting: gen=31, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:655] CaptureService stopped (gen=31, requested)
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:382] CaptureService starting: gen=32, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.129] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:382] CaptureService starting: gen=33, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:655] CaptureService stopped (gen=33, faulted)
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:382] CaptureService starting: gen=34, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:655] CaptureService stopped (gen=34, requested)
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:382] CaptureService starting: gen=35, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.129] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.129] [info] [CaptureService.cpp:382] CaptureService starting: gen=36, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:655] CaptureService stopped (gen=36, faulted)
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:382] CaptureService starting: gen=37, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:655] CaptureService stopped (gen=37, requested)
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:382] CaptureService starting: gen=38, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.130] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:382] CaptureService starting: gen=39, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:655] CaptureService stopped (gen=39, faulted)
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:382] CaptureService starting: gen=40, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:655] CaptureService stopped (gen=40, requested)
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:382] CaptureService starting: gen=41, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.130] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.130] [info] [CaptureService.cpp:382] CaptureService starting: gen=42, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:655] CaptureService stopped (gen=42, faulted)
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:382] CaptureService starting: gen=43, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:655] CaptureService stopped (gen=43, requested)
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:382] CaptureService starting: gen=44, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.131] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:382] CaptureService starting: gen=45, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:655] CaptureService stopped (gen=45, faulted)
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:382] CaptureService starting: gen=46, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:655] CaptureService stopped (gen=46, requested)
+[2026-09-07 15:38:17.131] [info] [CaptureService.cpp:382] CaptureService starting: gen=47, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.132] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:382] CaptureService starting: gen=48, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:655] CaptureService stopped (gen=48, faulted)
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:382] CaptureService starting: gen=49, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:655] CaptureService stopped (gen=49, requested)
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:382] CaptureService starting: gen=50, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.132] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:382] CaptureService starting: gen=51, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:655] CaptureService stopped (gen=51, faulted)
+[2026-09-07 15:38:17.132] [info] [CaptureService.cpp:382] CaptureService starting: gen=52, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:655] CaptureService stopped (gen=52, requested)
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:382] CaptureService starting: gen=53, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.133] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:382] CaptureService starting: gen=54, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:655] CaptureService stopped (gen=54, faulted)
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:382] CaptureService starting: gen=55, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:655] CaptureService stopped (gen=55, requested)
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:382] CaptureService starting: gen=56, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.133] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.133] [info] [CaptureService.cpp:382] CaptureService starting: gen=57, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:655] CaptureService stopped (gen=57, faulted)
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:382] CaptureService starting: gen=58, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:655] CaptureService stopped (gen=58, requested)
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:382] CaptureService starting: gen=59, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.134] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:382] CaptureService starting: gen=60, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:655] CaptureService stopped (gen=60, faulted)
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:382] CaptureService starting: gen=61, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:655] CaptureService stopped (gen=61, requested)
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:382] CaptureService starting: gen=62, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.134] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.134] [info] [CaptureService.cpp:382] CaptureService starting: gen=63, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:655] CaptureService stopped (gen=63, faulted)
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:382] CaptureService starting: gen=64, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:655] CaptureService stopped (gen=64, requested)
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:382] CaptureService starting: gen=65, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.135] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:382] CaptureService starting: gen=66, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:655] CaptureService stopped (gen=66, faulted)
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:382] CaptureService starting: gen=67, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:655] CaptureService stopped (gen=67, requested)
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:382] CaptureService starting: gen=68, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.135] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.135] [info] [CaptureService.cpp:382] CaptureService starting: gen=69, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:655] CaptureService stopped (gen=69, faulted)
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:382] CaptureService starting: gen=70, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:655] CaptureService stopped (gen=70, requested)
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:382] CaptureService starting: gen=71, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.136] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:382] CaptureService starting: gen=72, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:655] CaptureService stopped (gen=72, faulted)
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:382] CaptureService starting: gen=73, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.136] [info] [CaptureService.cpp:655] CaptureService stopped (gen=73, requested)
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:382] CaptureService starting: gen=74, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.137] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:382] CaptureService starting: gen=75, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:655] CaptureService stopped (gen=75, faulted)
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:382] CaptureService starting: gen=76, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:655] CaptureService stopped (gen=76, requested)
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:382] CaptureService starting: gen=77, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.137] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:382] CaptureService starting: gen=78, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.137] [info] [CaptureService.cpp:655] CaptureService stopped (gen=78, faulted)
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:382] CaptureService starting: gen=79, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:655] CaptureService stopped (gen=79, requested)
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:382] CaptureService starting: gen=80, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.138] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:382] CaptureService starting: gen=81, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:655] CaptureService stopped (gen=81, faulted)
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:382] CaptureService starting: gen=82, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:655] CaptureService stopped (gen=82, requested)
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:382] CaptureService starting: gen=83, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.138] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.138] [info] [CaptureService.cpp:382] CaptureService starting: gen=84, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:655] CaptureService stopped (gen=84, faulted)
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:382] CaptureService starting: gen=85, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:655] CaptureService stopped (gen=85, requested)
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:382] CaptureService starting: gen=86, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.139] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:382] CaptureService starting: gen=87, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:655] CaptureService stopped (gen=87, faulted)
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:382] CaptureService starting: gen=88, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:655] CaptureService stopped (gen=88, requested)
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:382] CaptureService starting: gen=89, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.139] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.139] [info] [CaptureService.cpp:382] CaptureService starting: gen=90, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:655] CaptureService stopped (gen=90, faulted)
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:382] CaptureService starting: gen=91, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:655] CaptureService stopped (gen=91, requested)
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:382] CaptureService starting: gen=92, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.140] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:382] CaptureService starting: gen=93, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:655] CaptureService stopped (gen=93, faulted)
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:382] CaptureService starting: gen=94, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:655] CaptureService stopped (gen=94, requested)
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:382] CaptureService starting: gen=95, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.140] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.140] [info] [CaptureService.cpp:382] CaptureService starting: gen=96, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:655] CaptureService stopped (gen=96, faulted)
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:382] CaptureService starting: gen=97, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:655] CaptureService stopped (gen=97, requested)
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:382] CaptureService starting: gen=98, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.141] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:382] CaptureService starting: gen=99, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:655] CaptureService stopped (gen=99, faulted)
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:382] CaptureService starting: gen=100, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:655] CaptureService stopped (gen=100, requested)
+[2026-09-07 15:38:17.141] [info] [CaptureService.cpp:382] CaptureService starting: gen=101, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.141] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:382] CaptureService starting: gen=102, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:655] CaptureService stopped (gen=102, faulted)
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:382] CaptureService starting: gen=103, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:655] CaptureService stopped (gen=103, requested)
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:382] CaptureService starting: gen=104, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.142] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:382] CaptureService starting: gen=105, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:655] CaptureService stopped (gen=105, faulted)
+[2026-09-07 15:38:17.142] [info] [CaptureService.cpp:382] CaptureService starting: gen=106, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:655] CaptureService stopped (gen=106, requested)
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:382] CaptureService starting: gen=107, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.143] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:382] CaptureService starting: gen=108, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:655] CaptureService stopped (gen=108, faulted)
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:382] CaptureService starting: gen=109, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:655] CaptureService stopped (gen=109, requested)
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:382] CaptureService starting: gen=110, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.143] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:382] CaptureService starting: gen=111, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.143] [info] [CaptureService.cpp:655] CaptureService stopped (gen=111, faulted)
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:382] CaptureService starting: gen=112, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:655] CaptureService stopped (gen=112, requested)
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:382] CaptureService starting: gen=113, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.144] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:382] CaptureService starting: gen=114, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:655] CaptureService stopped (gen=114, faulted)
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:382] CaptureService starting: gen=115, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:655] CaptureService stopped (gen=115, requested)
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:382] CaptureService starting: gen=116, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.144] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.144] [info] [CaptureService.cpp:382] CaptureService starting: gen=117, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:655] CaptureService stopped (gen=117, faulted)
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:382] CaptureService starting: gen=118, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:655] CaptureService stopped (gen=118, requested)
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:382] CaptureService starting: gen=119, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.145] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:382] CaptureService starting: gen=120, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 15:38:17.145] [info] [CaptureService.cpp:655] CaptureService stopped (gen=120, faulted)
+capture_lifecycle: 120 stress cycles, final generation 120
+<end of output>
+Test time =   0.31 sec
+----------------------------------------------------------
+Test Passed.
+"backend.capture_lifecycle" end time: Sep 07 15:38 HKT
+"backend.capture_lifecycle" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/101 Testing: backend.timestamp_telemetry
+20/101 Test: backend.timestamp_telemetry
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/timestamp_telemetry_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"backend.timestamp_telemetry" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 15:38:17.273] [info] [MindVisionCamera.cpp:294] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[2026-09-07 15:38:17.273] [info] [MindVisionCamera.cpp:349] MindVisionCamera: stopped
+[2026-09-07 15:38:17.274] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:18.276] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:18.276] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:19.278] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:19.278] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:19.279] [info] [Hdf5Service.cpp:323] HDF5 file opened: /tmp/timestamp_telemetry_5691135904746205324/prov.h5
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5G.c line 444 in H5Gopen2(): unable to open group
+    major: Symbol table
+    minor: Can't open object
+  #001: ../../../src/H5Gint.c line 268 in H5G__open_name(): group not found
+    major: Symbol table
+    minor: Object not found
+  #002: ../../../src/H5Gloc.c line 398 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #003: ../../../src/H5Gtraverse.c line 830 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #004: ../../../src/H5Gtraverse.c line 607 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #005: ../../../src/H5Gloc.c line 355 in H5G__loc_find_cb(): object 'recorded_frames' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5G.c line 444 in H5Gopen2(): unable to open group
+    major: Symbol table
+    minor: Can't open object
+  #001: ../../../src/H5Gint.c line 268 in H5G__open_name(): group not found
+    major: Symbol table
+    minor: Object not found
+  #002: ../../../src/H5Gloc.c line 398 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #003: ../../../src/H5Gtraverse.c line 830 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #004: ../../../src/H5Gtraverse.c line 607 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #005: ../../../src/H5Gloc.c line 355 in H5G__loc_find_cb(): object 'recording_info' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'start_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'start_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'start_time_ns'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'end_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'end_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'end_time_ns'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'total_recorded_frames'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'total_recorded_frames'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'total_recorded_frames'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'total_filtered_empty_frames'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'total_filtered_empty_frames'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'total_filtered_empty_frames'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'multi_image_enabled'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'multi_image_enabled'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'multi_image_enabled'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'multi_image_count'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'multi_image_count'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'multi_image_count'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_version'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_version'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_version'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_contract_version'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_contract_version'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_contract_version'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_engine_abi_version'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_engine_abi_version'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_engine_abi_version'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_sha256'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_sha256'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_sha256'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_release_tag'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_release_tag'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_release_tag'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_manifest_sha256'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_manifest_sha256'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_manifest_sha256'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_source'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_source'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_source'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_build_id'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_build_id'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_build_id'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_runtime_fingerprint'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_runtime_fingerprint'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_runtime_fingerprint'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'mode'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'mode'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'mode'
+    major: Attribute
+    minor: Object not found
+[2026-09-07 15:38:19.280] [info] [Hdf5Service.cpp:3391] Recording info written: recorded=0, filtered=0, multi_image_enabled=0, multi_image_count=1
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'timestamp_schema_version'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'timestamp_schema_version'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'timestamp_schema_version'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'timestamp_ticks_per_second'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'timestamp_ticks_per_second'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'timestamp_ticks_per_second'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'timestamp_native_ticks_per_second'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'timestamp_native_ticks_per_second'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'timestamp_native_ticks_per_second'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'timestamp_counter_bits'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'timestamp_counter_bits'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'timestamp_counter_bits'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'timestamp_session_generation'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'timestamp_session_generation'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'timestamp_session_generation'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_session_generation'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_session_generation'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_session_generation'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_frames_delivered_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_frames_delivered_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_frames_delivered_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_frames_delivered_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_frames_delivered_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_frames_delivered_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_capture_frame_rate_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_capture_frame_rate_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_capture_frame_rate_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_capture_frame_rate_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_capture_frame_rate_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_capture_frame_rate_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_capture_data_rate_mbps_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_capture_data_rate_mbps_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_capture_data_rate_mbps_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_capture_data_rate_mbps_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_capture_data_rate_mbps_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_capture_data_rate_mbps_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_sdk_completed_queue_depth_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_sdk_completed_queue_depth_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_sdk_completed_queue_depth_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_sdk_completed_queue_depth_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_sdk_completed_queue_depth_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_sdk_completed_queue_depth_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_sdk_input_buffer_count_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_sdk_input_buffer_count_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_sdk_input_buffer_count_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_sdk_input_buffer_count_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_sdk_input_buffer_count_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_sdk_input_buffer_count_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_buffer_underruns_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_buffer_underruns_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_buffer_underruns_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_buffer_underruns_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_buffer_underruns_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_buffer_underruns_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_transport_lost_frames_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_transport_lost_frames_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_transport_lost_frames_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_transport_lost_frames_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_transport_lost_frames_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_transport_lost_frames_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_intentionally_discarded_frames_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_intentionally_discarded_frames_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_intentionally_discarded_frames_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_intentionally_discarded_frames_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_intentionally_discarded_frames_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_intentionally_discarded_frames_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_frame_age_us_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_frame_age_us_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_frame_age_us_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_frame_age_us_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_frame_age_us_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_frame_age_us_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_publish_latency_us_value'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_publish_latency_us_value'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_publish_latency_us_value'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'telemetry_publish_latency_us_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'telemetry_publish_latency_us_sample_host_time_us'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'telemetry_publish_latency_us_sample_host_time_us'
+    major: Attribute
+    minor: Object not found
+[2026-09-07 15:38:19.280] [info] [Hdf5Service.cpp:342] HDF5 final flush completed: /tmp/timestamp_telemetry_5691135904746205324/prov.h5 (0.028 ms)
+[2026-09-07 15:38:19.280] [info] [Hdf5Service.cpp:373] HDF5 file closed: /tmp/timestamp_telemetry_5691135904746205324/prov.h5 (H5Fclose took 0.083 ms)
+[2026-09-07 15:38:19.280] [info] [Hdf5Service.cpp:1677] HDF5 file opened for reading: /tmp/timestamp_telemetry_5691135904746205324/prov.h5
+[2026-09-07 15:38:19.281] [info] [Hdf5Service.cpp:373] HDF5 file closed: /tmp/timestamp_telemetry_5691135904746205324/prov.h5 (H5Fclose took 0.012 ms)
+[2026-09-07 15:38:19.281] [info] [Hdf5Service.cpp:323] HDF5 file opened: /tmp/timestamp_telemetry_5691135904746205324/legacy.h5
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5G.c line 444 in H5Gopen2(): unable to open group
+    major: Symbol table
+    minor: Can't open object
+  #001: ../../../src/H5Gint.c line 268 in H5G__open_name(): group not found
+    major: Symbol table
+    minor: Object not found
+  #002: ../../../src/H5Gloc.c line 398 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #003: ../../../src/H5Gtraverse.c line 830 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #004: ../../../src/H5Gtraverse.c line 607 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #005: ../../../src/H5Gloc.c line 355 in H5G__loc_find_cb(): object 'recorded_frames' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5G.c line 444 in H5Gopen2(): unable to open group
+    major: Symbol table
+    minor: Can't open object
+  #001: ../../../src/H5Gint.c line 268 in H5G__open_name(): group not found
+    major: Symbol table
+    minor: Object not found
+  #002: ../../../src/H5Gloc.c line 398 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #003: ../../../src/H5Gtraverse.c line 830 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #004: ../../../src/H5Gtraverse.c line 607 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #005: ../../../src/H5Gloc.c line 355 in H5G__loc_find_cb(): object 'recording_info' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'start_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'start_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'start_time_ns'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'end_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'end_time_ns'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'end_time_ns'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'total_recorded_frames'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'total_recorded_frames'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'total_recorded_frames'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'total_filtered_empty_frames'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'total_filtered_empty_frames'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'total_filtered_empty_frames'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'multi_image_enabled'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'multi_image_enabled'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'multi_image_enabled'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'multi_image_count'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'multi_image_count'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'multi_image_count'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_version'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_version'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_version'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_contract_version'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_contract_version'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_contract_version'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_engine_abi_version'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_engine_abi_version'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_engine_abi_version'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_sha256'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_sha256'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_sha256'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_release_tag'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_release_tag'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_release_tag'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_manifest_sha256'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_manifest_sha256'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_manifest_sha256'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_source'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_source'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_source'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_core_build_id'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_core_build_id'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_core_build_id'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'processing_runtime_fingerprint'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'processing_runtime_fingerprint'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'processing_runtime_fingerprint'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (1.10.10) thread 1:
+  #000: ../../../src/H5A.c line 416 in H5Aopen(): unable to open attribute: 'mode'
+    major: Attribute
+    minor: Can't open object
+  #001: ../../../src/H5Aint.c line 419 in H5A__open(): unable to load attribute info from object header for attribute: 'mode'
+    major: Attribute
+    minor: Can't open object
+  #002: ../../../src/H5Oattribute.c line 496 in H5O__attr_open_by_name(): can't locate attribute: 'mode'
+    major: Attribute
+    minor: Object not found
+[2026-09-07 15:38:19.281] [info] [Hdf5Service.cpp:3391] Recording info written: recorded=0, filtered=0, multi_image_enabled=0, multi_image_count=1
+[2026-09-07 15:38:19.281] [info] [Hdf5Service.cpp:342] HDF5 final flush completed: /tmp/timestamp_telemetry_5691135904746205324/legacy.h5 (0.000 ms)
+[2026-09-07 15:38:19.281] [info] [Hdf5Service.cpp:373] HDF5 file closed: /tmp/timestamp_telemetry_5691135904746205324/legacy.h5 (H5Fclose took 0.011 ms)
+[2026-09-07 15:38:19.281] [info] [Hdf5Service.cpp:1677] HDF5 file opened for reading: /tmp/timestamp_telemetry_5691135904746205324/legacy.h5
+[2026-09-07 15:38:19.281] [info] [Hdf5Service.cpp:373] HDF5 file closed: /tmp/timestamp_telemetry_5691135904746205324/legacy.h5 (H5Fclose took 0.007 ms)
+<end of output>
+Test time =   2.31 sec
+----------------------------------------------------------
+Test Passed.
+"backend.timestamp_telemetry" end time: Sep 07 15:38 HKT
+"backend.timestamp_telemetry" time elapsed: 00:00:02
+----------------------------------------------------------
+
+21/101 Testing: backend.experiment_readiness
+21/101 Test: backend.experiment_readiness
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/experiment_readiness_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"backend.experiment_readiness" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 15:38:19.595] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/experiment_readiness_7297475461586732760/data/logs/app.log
+[2026-09-07 15:38:19.596] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=true, autofocus=true, trigger=true, capture=true, playback=true
+[2026-09-07 15:38:19.596] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/experiment_readiness_7297475461586732760/data/app.sqlite3
+[2026-09-07 15:38:19.596] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/experiment_readiness_7297475461586732760/data
+[2026-09-07 15:38:19.596] [app] [warning] [YoloService.stub.cpp:21] YoloService: ONNX Runtime is unavailable; YOLO features are disabled in this build
+[2026-09-07 15:38:19.596] [app] [warning] [AppBackend.cpp:356] YOLO model not loaded - segmentation features will not be available
+[2026-09-07 15:38:19.596] [app] [warning] [EModulusLutCatalog.cpp:550] EModulusLutCatalog: manifest fetch failed and no local cache exists
+[2026-09-07 15:38:19.596] [app] [warning] [AppBackend.cpp:375] AppBackend: LUT catalog resolution failed, falling back to bundled path /tmp/experiment_readiness_7297475461586732760/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt: Bundled LUT not found: /tmp/experiment_readiness_7297475461586732760/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-09-07 15:38:19.596] [app] [warning] [EModulusLut.cpp:149] EModulusLut: Failed to load LUT from /tmp/experiment_readiness_7297475461586732760/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-09-07 15:38:19.596] [app] [warning] [AppBackend.cpp:402] Young's modulus LUT not loaded - emodulus gating will not be available
+[2026-09-07 15:38:19.596] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=bundled-fallback, revision=bundled, path=/tmp/experiment_readiness_7297475461586732760/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=unknown, remote_updated=false, bundled_fallback=false, manifest=
+[2026-09-07 15:38:19.597] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 15:38:19.597] [app] [warning] [AppBackend.cpp:644] AppBackend: hardware mode requested but EGrabber SDK is unavailable; keeping mock camera
+[2026-09-07 15:38:19.597] [app] [info] [AppBackend.cpp:568] AppBackend: configuring MockCamera (folder=/tmp/experiment_readiness_7297475461586732760/data/mock_frames, interval=33000 us, ~30.3 fps, loop=true)
+[2026-09-07 15:38:19.597] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 15:38:19.597] [app] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+readiness gen=1 ready=0
+  camera.session             fail         camera is idle
+  camera.source              warn         simulated (mock) camera selected effective=mock label=
+  camera.deliveryMode        unavailable  delivery mode is confirmed only by a running camera
+  camera.geometry            unavailable  no frame has been received yet
+  processing.roi             pass          96x96@0,0
+  processing.core            pass          0.2.1 contract 1
+  processing.config          pass          version 3 sha a3dc2be42574
+  calibration.pixelToMicron  pass          0.488600
+  processing.background      warn         no background image set; detection uses frame thresholds only
+  trigger.output             notRequired  target-group sorting disabled
+  storage.output             pass          /tmp/experiment_readiness_7297475461586732760/run1.h5
+  storage.hdf5               pass
+  lifecycle.recording        pass
+  lifecycle.experiment       pass
+  lifecycle.fault            pass
+  telemetry.transportLoss    unavailable  no active session
+[2026-09-07 15:38:19.597] [app] [warning] [ExperimentCoordinator.cpp:593] ExperimentCoordinator: start refused — not ready: camera.session, camera.deliveryMode, camera.geometry, telemetry.transportLoss
+[2026-09-07 15:38:19.597] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:19.599] [app] [info] [MockCamera.cpp:84] MockCamera started with 16 files from /tmp/experiment_readiness_7297475461586732760/frames (preloaded 16 frames)
+[2026-09-07 15:38:19.599] [app] [info] [MockCamera.cpp:211] MockCamera: simulated trigger output configured on line 'TTLIO12'
+[2026-09-07 15:38:19.599] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:38:19.610] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 9216 bytes per slot across 5000 slots (43.9 MB retained)
+readiness gen=2 ready=1
+  camera.session             pass          generation 1
+  camera.source              warn         simulated (mock) camera selected effective=mock label=
+  camera.deliveryMode        pass          everyFrame
+  camera.geometry            pass          96x96 pf=0x1080001
+  processing.roi             pass          96x96@0,0
+  processing.core            pass          0.2.1 contract 1
+  processing.config          pass          version 3 sha a3dc2be42574
+  calibration.pixelToMicron  pass          0.488600
+  processing.background      warn         no background image set; detection uses frame thresholds only
+  trigger.output             notRequired  target-group sorting disabled
+  storage.output             pass          /tmp/experiment_readiness_7297475461586732760/run1.h5
+  storage.hdf5               pass
+  lifecycle.recording        pass
+  lifecycle.experiment       pass
+  lifecycle.fault            pass
+  telemetry.transportLoss    warn         transport loss has not been reported for this session unavailable
+[2026-09-07 15:38:19.663] [app] [warning] [ExperimentCoordinator.cpp:585] ExperimentCoordinator: start refused — readiness generation 2 is stale (current 3); re-run the preflight
+[2026-09-07 15:38:19.663] [app] [warning] [ExperimentCoordinator.cpp:585] ExperimentCoordinator: start refused — readiness generation 3 is stale (current 4); re-run the preflight
+[2026-09-07 15:38:19.663] [app] [warning] [ExperimentCoordinator.cpp:585] ExperimentCoordinator: start refused — readiness generation 4 is stale (current 5); re-run the preflight
+[2026-09-07 15:38:19.663] [app] [warning] [ExperimentCoordinator.cpp:585] ExperimentCoordinator: start refused — readiness generation 5 is stale (current 6); re-run the preflight
+[2026-09-07 15:38:19.663] [app] [warning] [ExperimentCoordinator.cpp:593] ExperimentCoordinator: start refused — not ready: lifecycle.fault
+[2026-09-07 15:38:19.663] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:38:19.664] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:19.664] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 15:38:19.665] [app] [info] [MockCamera.cpp:84] MockCamera started with 16 files from /tmp/experiment_readiness_7297475461586732760/frames (preloaded 16 frames)
+[2026-09-07 15:38:19.665] [app] [info] [MockCamera.cpp:211] MockCamera: simulated trigger output configured on line 'TTLIO12'
+[2026-09-07 15:38:19.665] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 15:38:19.667] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 9216 bytes per slot across 5000 slots (43.9 MB retained)
+[2026-09-07 15:38:19.674] [app] [warning] [ExperimentCoordinator.cpp:585] ExperimentCoordinator: start refused — readiness generation 8 is stale (current 10); re-run the preflight
+[2026-09-07 15:38:19.674] [app] [warning] [AppBackend.cpp:748] Hardware camera selection ignored: EGrabber SDK is unavailable on this platform
+[2026-09-07 15:38:19.675] [app] [warning] [ExperimentCoordinator.cpp:593] ExperimentCoordinator: start refused — not ready: camera.source
+[2026-09-07 15:38:19.676] [app] [info] [Hdf5Service.cpp:323] HDF5 file opened: /tmp/experiment_readiness_7297475461586732760/run1.h5
+[2026-09-07 15:38:19.676] [app] [info] [ProcessingService.cpp:496] ProcessingService: experiment started, frame buffers cleared (flush interval: 100 frames, max buffered: 1000 frames / 512 MB, invalid sampling: every 100th)
+[2026-09-07 15:38:19.676] [app] [info] [ExperimentCoordinator.cpp:649] ExperimentCoordinator: started run 1 (readiness gen 15, capture gen 2, camera mock [simulated]) -> /tmp/experiment_readiness_7297475461586732760/run1.h5
+concurrent: started=1 busy=3 other=0
+[2026-09-07 15:38:19.676] [app] [info] [ProcessingService.cpp:507] ProcessingService: experiment ended, valid frames: 0, invalid frames: 0
+[2026-09-07 15:38:19.676] [app] [info] [Hdf5Service.cpp:342] HDF5 final flush completed: /tmp/experiment_readiness_7297475461586732760/run1.h5 (0.020 ms)
+[2026-09-07 15:38:19.677] [app] [info] [Hdf5Service.cpp:373] HDF5 file closed: /tmp/experiment_readiness_7297475461586732760/run1.h5 (H5Fclose took 0.094 ms)
+[2026-09-07 15:38:19.677] [app] [info] [Hdf5Service.cpp:1677] HDF5 file opened for reading: /tmp/experiment_readiness_7297475461586732760/run1.h5
+[2026-09-07 15:38:19.677] [app] [info] [Hdf5Service.cpp:373] HDF5 file closed: /tmp/experiment_readiness_7297475461586732760/run1.h5 (H5Fclose took 0.009 ms)
+[2026-09-07 15:38:19.677] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 15:38:19.677] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=2, requested)
+[2026-09-07 15:38:19.877] [app] [info] [ProcessingService.cpp:921] Background calibration started: required=5 maxAttempts=20 timeoutMs=5000 configVersion=9
+[2026-09-07 15:38:19.890] [app] [info] [ProcessingService.cpp:953] Background calibration finished: state=2 attempted=5 accepted=5 rejectedNonEmpty=0 rejectedFailed=0 — published background from 5 empty frames
+bg success: state=2 attempted=5 accepted=5 nonEmpty=0 failed=0 msg=published background from 5 empty frames
+[2026-09-07 15:38:19.946] [app] [info] [ProcessingService.cpp:921] Background calibration started: required=5 maxAttempts=8 timeoutMs=5000 configVersion=10
+[2026-09-07 15:38:19.967] [app] [info] [ProcessingService.cpp:953] Background calibration finished: state=3 attempted=8 accepted=2 rejectedNonEmpty=6 rejectedFailed=0 — only 2/5 empty frames in 8 attempts (6 contaminated)
+bg contaminated: state=3 attempted=8 accepted=2 nonEmpty=6 msg=only 2/5 empty frames in 8 attempts (6 contaminated)
+[2026-09-07 15:38:19.970] [app] [info] [ProcessingService.cpp:921] Background calibration started: required=5 maxAttempts=50 timeoutMs=100 configVersion=10
+[2026-09-07 15:38:20.120] [app] [info] [ProcessingService.cpp:953] Background calibration finished: state=4 attempted=0 accepted=0 rejectedNonEmpty=0 rejectedFailed=0 — timed out after 100 ms with 0/5 accepted
+[2026-09-07 15:38:20.121] [app] [info] [ProcessingService.cpp:921] Background calibration started: required=5 maxAttempts=50 timeoutMs=5000 configVersion=10
+[2026-09-07 15:38:20.124] [app] [info] [ProcessingService.cpp:953] Background calibration finished: state=6 attempted=1 accepted=1 rejectedNonEmpty=0 rejectedFailed=0 — cancelled by operator
+[2026-09-07 15:38:20.186] [app] [info] [ProcessingService.cpp:921] Background calibration started: required=5 maxAttempts=50 timeoutMs=5000 configVersion=10
+[2026-09-07 15:38:20.189] [app] [info] [ProcessingService.cpp:953] Background calibration finished: state=5 attempted=1 accepted=1 rejectedNonEmpty=0 rejectedFailed=0 — processing configuration changed during calibration
+[2026-09-07 15:38:20.194] [app] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 15:38:20.194] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   0.82 sec
+----------------------------------------------------------
+Test Passed.
+"backend.experiment_readiness" end time: Sep 07 15:38 HKT
+"backend.experiment_readiness" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/101 Testing: processing.memory_budget
+25/101 Test: processing.memory_budget
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/memory_budget_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"processing.memory_budget" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 15:38:20.404] [info] [FrameStore.cpp:69] FrameStore: reserved 49152 bytes per slot across 64 slots (3.0 MB retained)
+[2026-09-07 15:38:20.405] [info] [FrameStore.cpp:693] FrameStore: Resized from 64 to 16 capacity, cleared buffer (new size < available frames)
+[2026-09-07 15:38:20.405] [info] [ProcessingService.cpp:110] ProcessingService started with 1 workers
+[2026-09-07 15:38:20.405] [info] [ProcessingService.cpp:282] ProcessingService: activated processing core 0.2.1 (contract=1, abi=1, source=bundled); previous core was 0.2.1
+[2026-09-07 15:38:20.405] [info] [ProcessingService.cpp:1326] Batch pipeline started: batch_size=64, max_queue=1000, workers=1, max_delay_ms=2000
+[2026-09-07 15:38:20.407] [info] [ProcessingService.cpp:1354] Batch pipeline stopped: accepted=3, processed=3, dropped=7, batches=1
+[2026-09-07 15:38:20.407] [info] [ProcessingService.cpp:132] ProcessingService stopped
+[2026-09-07 15:38:20.407] [info] [ProcessingService.cpp:110] ProcessingService started with 1 workers
+[2026-09-07 15:38:20.407] [info] [ProcessingService.cpp:282] ProcessingService: activated processing core 0.2.1 (contract=1, abi=1, source=bundled); previous core was 0.2.1
+[2026-09-07 15:38:20.409] [info] [ProcessingService.cpp:1275] processBatch: processed 5 images into 6 records across 6 tracks (roi=512x96 at 0,0, background=false)
+[2026-09-07 15:38:20.411] [info] [ProcessingService.cpp:1275] processBatch: processed 5 images into 6 records across 6 tracks (roi=512x96 at 0,0, background=false)
+[2026-09-07 15:38:20.411] [info] [ProcessingService.cpp:132] ProcessingService stopped
+[2026-09-07 15:38:20.416] [info] [FrameStore.cpp:69] FrameStore: reserved 49152 bytes per slot across 4096 slots (192.0 MB retained)
+[2026-09-07 15:38:20.417] [info] [ProcessingService.cpp:110] ProcessingService started with 2 workers
+[2026-09-07 15:38:20.417] [info] [ProcessingService.cpp:282] ProcessingService: activated processing core 0.2.1 (contract=1, abi=1, source=bundled); previous core was 0.2.1
+[2026-09-07 15:38:20.417] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 1th frame
+[2026-09-07 15:38:20.417] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+realtime: push 2500 frames 51.7 ms; processed 2500 in 456.7 ms (5475 fps); monitoring active
+[2026-09-07 15:38:21.284] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/memory_budget_12689382831103970858
+[2026-09-07 15:38:21.284] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 15:38:21.284] [info] [ProcessingService.cpp:531] Experiment buffer byte budget set to 1.875 MB
+[2026-09-07 15:38:21.284] [info] [ProcessingService.cpp:496] ProcessingService: experiment started, frame buffers cleared (flush interval: 1000 frames, max buffered: 4000 frames / 1.875 MB, invalid sampling: every 1th)
+[2026-09-07 15:38:21.288] [warning] [ProcessingService.cpp:1592] Experiment frame backlog capped: dropped valid=1, invalid=0 (buffered=20, max=4000, total_dropped_valid=1, total_dropped_invalid=0)
+[2026-09-07 15:38:21.333] [info] [ProcessingService.cpp:507] ProcessingService: experiment ended, valid frames: 20, invalid frames: 0
+[2026-09-07 15:38:21.335] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 15:38:21.335] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   1.06 sec
+----------------------------------------------------------
+Test Passed.
+"processing.memory_budget" end time: Sep 07 15:38 HKT
+"processing.memory_budget" time elapsed: 00:00:01
+----------------------------------------------------------
+
+26/101 Testing: performance.memory_budget
+26/101 Test: performance.memory_budget
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/memory_budget_bench"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"performance.memory_budget" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[bench] environment: {"rss_start_mb": 58.043, "frame_w": 512, "frame_h": 96, "threads": 24}
+[2026-09-07 15:38:21.489] [info] [ProcessingService.cpp:110] ProcessingService started with 1 workers
+[2026-09-07 15:38:21.489] [info] [ProcessingService.cpp:282] ProcessingService: activated processing core 0.2.1 (contract=1, abi=1, source=bundled); previous core was 0.2.1
+[2026-09-07 15:38:21.538] [info] [ProcessingService.cpp:1275] processBatch: processed 200 images into 200 records across 0 tracks (roi=512x96 at 0,0, background=false)
+[bench] A_objects_0: {"frames": 200, "results": 200, "ms_per_frame": 0.218, "unique_allocation_bytes": 19660800, "retained_bytes_per_owner_sum": 19660800, "former_clone_per_object_bytes": 19660800, "allocations_per_result": 1.000, "rss_delta_mb": 22.285}
+[2026-09-07 15:38:21.582] [info] [ProcessingService.cpp:1275] processBatch: processed 200 images into 37 records across 37 tracks (roi=512x96 at 0,0, background=false)
+[bench] A_objects_1: {"frames": 200, "results": 37, "ms_per_frame": 0.212, "unique_allocation_bytes": 3637248, "retained_bytes_per_owner_sum": 3637248, "former_clone_per_object_bytes": 3637248, "allocations_per_result": 1.000, "rss_delta_mb": 0.090}
+[2026-09-07 15:38:21.655] [info] [ProcessingService.cpp:1275] processBatch: processed 200 images into 41 records across 41 tracks (roi=512x96 at 0,0, background=false)
+[bench] A_objects_8: {"frames": 200, "results": 41, "ms_per_frame": 0.353, "unique_allocation_bytes": 3342336, "retained_bytes_per_owner_sum": 4030464, "former_clone_per_object_bytes": 4030464, "allocations_per_result": 0.829, "rss_delta_mb": 0.000}
+[2026-09-07 15:38:21.655] [info] [ProcessingService.cpp:132] ProcessingService stopped
+[bench] B_slow_persistence: {"frames": 20000, "budget_bytes": 67108864, "peak_bytes": 67043328, "retained_frames": 682, "evicted": 19318, "us_per_append": 2.959, "rss_delta_mb": 36.152}
+[bench] C_large_frames: {"frame_bytes": 4456448, "budget_bytes": 268435456, "retained_frames": 60, "frame_cap": 1000, "evicted": 240, "ms_total": 357.347, "rss_delta_mb": 197.828}
+[2026-09-07 15:38:22.083] [info] [FrameStore.cpp:69] FrameStore: reserved 49152 bytes per slot across 512 slots (24.0 MB retained)
+[2026-09-07 15:38:22.083] [info] [ProcessingService.cpp:110] ProcessingService started with 2 workers
+[2026-09-07 15:38:22.084] [info] [ProcessingService.cpp:282] ProcessingService: activated processing core 0.2.1 (contract=1, abi=1, source=bundled); previous core was 0.2.1
+[2026-09-07 15:38:22.084] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+[bench] D_long_monitoring: {"frames": 6000, "processed": 6000, "ring_bytes_at_3k": 98304000, "ring_bytes_at_6k": 98304000, "ring_entries": 1000, "ring_replaced": 5000, "frames_per_s": 5692.663, "rss_delta_mb": 100.652}
+[bench] E_frame_store_everyframe: {"capacity": 512, "retained_bytes": 25165824, "peak_bytes": 25165824, "overwrites": 5489, "plateau": true}
+[bench] E_frame_store_latestframe: {"pushed": 10000, "processed_delta": 6213, "retained_bytes": 25165824, "ms_push_loop": 340.946}
+[2026-09-07 15:38:23.530] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 15:38:23.542] [info] [ProcessingService.cpp:1275] processBatch: processed 60 images into 11 records across 11 tracks (roi=512x96 at 0,0, background=false)
+[bench] G_series_retention: {"results": 11, "max_series_images": 4, "retained_bytes": 3244032}
+[2026-09-07 15:38:23.542] [info] [ProcessingService.cpp:132] ProcessingService stopped
+[bench] F_metadata_1M: {"frames": 1000000, "ns_per_frame": 10.199, "rss_delta_mb": 0.000, "completion": 0}
+[bench] summary: {"rss_end_mb": 221.949, "rss_peak_mb": 326.941, "rss_delta_total_mb": 163.906}
+<end of output>
+Test time =   2.34 sec
+----------------------------------------------------------
+Test Passed.
+"performance.memory_budget" end time: Sep 07 15:38 HKT
+"performance.memory_budget" time elapsed: 00:00:02
+----------------------------------------------------------
+
+30/101 Testing: camera.delivery_mode_overload
+30/101 Test: camera.delivery_mode_overload
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/delivery_mode_overload_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"camera.delivery_mode_overload" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   3.25 sec
+----------------------------------------------------------
+Test Passed.
+"camera.delivery_mode_overload" end time: Sep 07 15:38 HKT
+"camera.delivery_mode_overload" time elapsed: 00:00:03
+----------------------------------------------------------
+
+31/101 Testing: camera.delivery_mode_contract
+31/101 Test: camera.delivery_mode_contract
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/delivery_mode_contract_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-backend/tests
+"camera.delivery_mode_contract" start time: Sep 07 15:38 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 15:38:27.076] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=8, mode=latestFrame
+[2026-09-07 15:38:28.095] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:28.095] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=8, mode=everyFrame
+[2026-09-07 15:38:28.105] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 15:38:28.105] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=latestFrame
+[2026-09-07 15:38:28.105] [error] [CaptureService.cpp:658] CaptureService exception: This camera backend does not support Latest Frame delivery; select Every Frame or use a backend with newest-frame support
+<end of output>
+Test time =   1.33 sec
+----------------------------------------------------------
+Test Passed.
+"camera.delivery_mode_contract" end time: Sep 07 15:38 HKT
+"camera.delivery_mode_contract" time elapsed: 00:00:01
+----------------------------------------------------------
+
+End testing: Sep 07 15:38 HKT
+
+backend =   9.55 sec*proc
+
+camera =   7.46 sec*proc
+
+hdf5 =   3.13 sec*proc
+
+memory =   3.40 sec*proc
+
+performance =   2.34 sec*proc
+
+processing =   1.88 sec*proc
+
+recording =   3.13 sec*proc
+
+safety =   2.14 sec*proc
+
+stress =   0.31 sec*proc

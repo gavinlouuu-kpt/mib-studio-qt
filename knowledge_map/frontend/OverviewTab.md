@@ -51,3 +51,6 @@ position. ROI drag events emit `roiPositionChanged(QPointF)`, which
 - The `SimpleImageCanvas` cache holds a reference to `scaledImgCache_`
   which can be a large allocation (full canvas resolution). It is freed
   when the canvas is destroyed or on the first resize.
+- The destructor explicitly stops `timer_` before `delete ui` — if the
+  50fps timer fires during widget destruction, `onTick()` accesses
+  `backend_.playback()` on a potentially-freed backend (use-after-free).

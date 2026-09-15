@@ -29,7 +29,7 @@ from ._mib_processing import (
     save_masks_to_hdf5,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 #: Default ProcessingConfig, taken from the C++ struct's own field defaults
 #: (include/backend/processing/ProcessingService.h), not from the desktop
 #: app's resources/defaults/config.json. Callers should generally pull the
