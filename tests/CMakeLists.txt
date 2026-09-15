@@ -131,6 +131,10 @@ mib_add_backend_test_executable(device_discovery_service_test backend/device_dis
 mib_backend_test_link(device_discovery_service_test PRIVATE Threads::Threads)
 add_test(NAME backend.device_discovery_service COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_service_test)
 set_tests_properties(backend.device_discovery_service PROPERTIES LABELS "backend;discovery;concurrency;stress" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_fault_test backend/device_discovery_fault_test.cpp)
+mib_backend_test_link(device_discovery_fault_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_fault COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_fault_test)
+set_tests_properties(backend.device_discovery_fault PROPERTIES LABELS "backend;discovery;fault-injection" TIMEOUT 60)
 
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
