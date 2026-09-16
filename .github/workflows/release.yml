@@ -88,6 +88,10 @@ jobs:
       - name: Install Conan
         run: |
           pip install conan boto3 numpy
+          # Export the Python that has numpy so CMake's find_package(Python3)
+          # picks it up via the hint variable and CTest scripts can import numpy.
+          $pyExe = (Get-Command python).Source
+          "Python3_ROOT_DIR=$(Split-Path $pyExe)" >> $env:GITHUB_ENV
           conan profile detect --force
 
           # Create CI profile pinned to msvc 194 to match prebuilt binaries
@@ -164,6 +168,9 @@ jobs:
             -PassThru
           "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
           "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force resources\installers | Out-Null
+          Copy-Item build\vendor\mindvision-sdk\mindvision-sdk-installer.exe `
+            resources\installers\MindVision-Camera-Platform-Setup2.1.10.195_202604021438.exe
 
       - name: Install dependencies
         shell: pwsh
