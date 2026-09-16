@@ -74,10 +74,14 @@ Overview untouched.
 
 ## Not verified here
 
-- Linux backend CI, TSan and ASan/UBSan lanes (run on the PR).
-- Hardware acceptance (MindVision, eGrabber, CoreMorrow/OEABT, pulse
-  generator: none/one/multiple, refresh, unplug/replug, cancel, close during
-  scan, relaunch) — no rig attached to this host; nothing is claimed.
+- Linux backend CI, TSan and ASan/UBSan lanes (run on PR #421; GCC fix `9dfee2a`).
+- Hardware acceptance (partial, rig PC 2026-09-16): startup discovery,
+  auto-selection, auto-connection, shutdown ordering, close-during-scan,
+  relaunch verified on real MindVision camera + OEABT nanopositioner. GUI
+  interactive tests (Refresh, Cancel, Scan, active-device conflict,
+  unplug/replug) and pulse-generator Scan not tested (non-interactive
+  session). eGrabber and CoreMorrow not installed. Full matrix recorded in
+  the execution plan.
 - The React/Tauri desktop was type-checked and unit-tested, not launched.
 
 ## Limits and debt

@@ -16,8 +16,11 @@ discovery before releasing serial hardware. Facade and bridge gained the
 asynchronous discovery trio (ABI 14) replacing `fetch_camera_discovery`.
 Windows fast lane and integration lane green (118 / 11 tests), Rust contract
 16/16 on the Ninja tree via the new `tools/gen_bridge_link_manifest_ninja.py`,
-desktop `tsc` + vitest 124/124. Linux/sanitizer lanes and hardware acceptance
-are not claimed here. See [[../task/2026-09-15-device-discovery-service]].
+desktop `tsc` + vitest 124/124. Linux/sanitizer lanes run on PR #421 (GCC aggregate-init fix `9dfee2a`).
+Partial hardware acceptance on the rig PC: startup discovery, auto-selection
+(MindVision), auto-connection (OEABT on COM7), shutdown ordering,
+close-during-scan, and relaunch verified; GUI-interactive tests not claimed.
+See [[../task/2026-09-15-device-discovery-service]].
 
 ## 2026-09-15 — Desktop hardware ownership and shutdown
 

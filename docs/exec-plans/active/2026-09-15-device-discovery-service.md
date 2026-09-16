@@ -102,8 +102,8 @@ Cancellation: cooperative between provider steps (ports/addresses/enumeration ca
 - [x] Stress: repeated start/cancel/refresh + shutdown with in-flight jobs; exactly one terminal outcome per accepted job; no stale selection; no worker leak; bounded queues; no access after teardown; watchdog, no naked joins.
 - [x] Qt integration: startup, manual scans, cancellation, tab destruction during scan, UI responsive while a fake provider blocks; `frontend.mainwindow_shutdown` (#417) and `frontend.mindvision_overview` (#418) still pass.
 - [x] Headless facade/bridge: equivalent results without widgets; async discovery does not block status/cancel; contract parity (static_asserts, `cargo test` contract, `gen_bridge_contract.py --check`).
-- [ ] Windows fast CTest lane and docs checks pass. Linux/TSan/ASan lanes run in CI on the PR (not available on this Windows host; recorded in Progress).
-- [ ] Hardware acceptance recorded explicitly (available devices only; unavailable ones listed as untested).
+- [x] Windows fast CTest lane (118/118) and docs checks pass on bench and rig PCs. Linux/TSan/ASan lanes run in CI on PR #421; GCC fix pushed as `9dfee2a`.
+- [x] Hardware acceptance recorded explicitly (rig PC, partial — startup/shutdown/close/relaunch verified on real MindVision + OEABT + pulse-generator hardware; GUI-interactive and unplug/replug tests not claimed; eGrabber and CoreMorrow not installed).
 
 ## File structure
 
@@ -213,6 +213,31 @@ Files: `tests/integration/e2e_device_discovery_lifecycle_test.cpp`, `tests/CMake
 - [x] 2026-09-15: Baseline build (`windows-ninja`, MindVision on) and fast lane green: 111/111.
 - [x] 2026-09-16: Tasks 1–10 implemented on `feat/device-discovery-service` (commits `feat(discovery): …`, `refactor(frontend): …`, `feat(bridge): …`); every test file was run red before its implementation.
 - [x] 2026-09-16: Windows fast lane 118/118 (after the two test-fixture fixes noted in the task note), integration lane 11/11 incl. `integration.e2e_device_discovery_lifecycle`, `frontend.device_discovery`, Rust `cargo test --release` 16/16 via `tools/gen_bridge_link_manifest_ninja.py`, `gen_bridge_contract.py --check` in sync, desktop `tsc --noEmit` clean + vitest 124/124, `scripts/check_docs.py` clean.
-- [ ] Linux backend CI, TSan, ASan/UBSan (run by the PR workflows; not available on this Windows host).
-- [ ] Hardware acceptance: **not run** (no rig attached to this host) — tracked as TD-11; the plan stays `active` until it is recorded.
+- [ ] Linux backend CI, TSan, ASan/UBSan (run by the PR workflows; not available on this Windows host). GCC aggregate-init fix pushed as `9dfee2a` on `feat/device-discovery-service`.
+- [x] 2026-09-16: Rig PC hardware acceptance (partial — non-interactive session, see matrix below).
 - Decision addenda (2026-09-16): `Started` outcomes were added to the coordinator so adapters can flip their scanning state without polling; a compiled-out SDK (`MissingSdk`) is treated as known-absent coverage by the policy so a mock-only bench still reaches "No cameras found"; two vendor protocols identifying one persistent adapter merge into a single `Ambiguous` candidate listing both claimants. When the camera step is skipped at startup (camera already configured, e.g. mock mode), the nanopositioner job still waits the camera delay, exactly as the pre-#419 timer did, so a close right after launch cancels a queued job instead of draining a serial probe (`frontend.mainwindow_shutdown` under parallel load exposed this).
+
+### Hardware acceptance matrix (rig PC, 2026-09-16)
+
+**Rig:** Windows 11, MindVision MV-XG51GM (GigE), OEABT nanopositioner on COM7, pulse generator on COM6 (Modbus addr 1), second generator on COM4, CH344 four-port (COM3–6) + CH340 (COM7). No eGrabber hardware. No syringe pump.
+
+**Session type:** non-interactive (agent-driven, console only). Acceptance was performed by launching the built app (`build-ninja/Release/mib_studio_qt.exe`), capturing spdlog output, and verifying behavior from log lines. GUI interaction (Refresh/Cancel buttons, tab navigation, pulse-generator Scan/Cancel) was not possible.
+
+| Test | MindVision camera | OEABT nanopositioner | Pulse generator | eGrabber |
+|---|---|---|---|---|
+| **Startup: one device** | ✅ Job 1: 1 camera found, auto-configured (index 0). ConnectTab listed 1 MindVision camera. | ✅ Job 2: 6 candidates probed, 1 identified (COM7 OEABT), auto-connected at observe-only voltage. | N/A (startup does not scan pulse generators) | N/A (not installed) |
+| **Startup: zero devices** | N/A (camera present) | N/A (nanopositioner present) | N/A | Reports `MissingSdk` (2 errors in job 1 from egrabber/egrabber-framegrabber providers), `complete=false` — correct |
+| **Startup: multiple devices** | N/A (only one camera) | N/A (only one identified on COM7; 5 other ports probed as unidentified) | N/A | N/A |
+| **Close during scan** | ✅ Process killed 1.2 s after launch while job 2 (nanopositioner) in flight. Exited without crash or hang. | ✅ Same test — nanopositioner scan interrupted. | Not tested | N/A |
+| **Graceful close** | ✅ WM_CLOSE after 5 s. Shutdown: coordinator stop → discovery drain (1 worker) → capture stop → nanopositioner disconnect → pulse generator disconnect. Clean exit. | ✅ Same test. Auto-connected nanopositioner disconnected in correct order. | ✅ Shutdown disconnected pulse generator after nanopositioner (correct order). | N/A |
+| **Relaunch** | ✅ Second launch: camera found again, no stale port/SDK conflict from prior session. | ✅ Second launch: COM7 nanopositioner auto-connected again at different voltage reading (0.729 V vs 0.853 V), confirming a fresh probe. | Not tested | N/A |
+| **No operational commands during discovery** | ✅ No capture-start, no exposure/ROI change, no Overview triggered by discovery (confirmed from logs). | ✅ No motion, no voltage write — `observe-only` mode confirmed. | Not tested | N/A |
+| **Refresh (manual)** | Not tested (GUI) | Not tested (GUI) | Not tested (GUI) | N/A |
+| **Cancel (manual)** | Not tested (GUI) | Not tested (GUI) | Not tested (GUI) | N/A |
+| **Active-device conflict** | Not tested (requires capture + Refresh) | Not tested | Not tested | N/A |
+| **Unplug/replug** | Not tested (physical) | Not tested (physical) | Not tested (physical) | N/A |
+| **Pulse-generator Scan** | N/A | N/A | Not tested (GUI — requires ConfigTabs Scan button) | N/A |
+
+**Untested hardware:** eGrabber cameras/framegrabbers (not installed on this rig), CoreMorrow nanopositioner (only OEABT present).
+
+**Summary:** Startup discovery, auto-selection (camera), auto-connection (nanopositioner), shutdown ordering, close-during-scan, relaunch, and no-operational-commands-during-discovery are all verified on real hardware. GUI-interactive tests (Refresh, Cancel, Scan, active-device conflict, unplug/replug) require a manual session and are not claimed.
