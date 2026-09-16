@@ -1,5 +1,9 @@
 # Dependencies
 
+Desktop ownership uses existing Qt Core `QLockFile`; no new dependency is
+needed. The Windows serial timeout regression links `setupapi` and `advapi32`
+directly and simulates driver calls without connecting hardware.
+
 > Third-party stack. Managed by Conan (`conanfile.txt`).
 
 | Package | Version | Shared? | Notes |
@@ -129,3 +133,7 @@ even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
 `MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
 processing-only builds remain SDK-free for Coremor. See
 [[../services/AutofocusService]] for the vendor support inventory.
+
+## Optional synchronization calibration package
+
+`tools/sync_tuning` requires Python 3.10+ and uses only the standard library for capture orchestration, statistics and profile writes. Its optional `plot` extra adds matplotlib. The separate CMake `mib_sync_capture` executable reuses `mib_backend` and the configured MindVision SDK/runtime; the Python wheel does not bundle native DLLs.

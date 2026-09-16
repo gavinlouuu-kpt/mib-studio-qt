@@ -30,6 +30,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[services/BatchMaskSources]]
 
 ### Frontend (`src/frontend/`)
+- [[frontend/DesktopInstance]] — duplicate-launch protection for hardware ownership
 - [[frontend/_MOC|Frontend MOC]]
 - [[frontend/MainWindow]], [[frontend/Controllers]]
 - Native core selection: [[frontend/ProcessingCoreDialog]]
@@ -86,3 +87,5 @@ verifies wikilink integrity (enforced in CI).
 - `docs/` — user-facing how-tos (`docs/howto/*.md`) and integration notes
 - `docs/golden-principles.md` — mechanical rules for this repo
 - `knowledge_map/task/` — dated task records (historical design/debug notes)
+
+- LED/camera calibration: [[camera/MindVisionCamera]] and [[task/2026-09-16-sync-tuning-package]].

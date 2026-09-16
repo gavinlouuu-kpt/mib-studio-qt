@@ -1,5 +1,12 @@
 # Build
 
+Hardware shutdown regression targets (2026-09-15):
+`serial_port_win32_timeout_test` (Windows-only native transport fault injection),
+`hardware_shutdown_test` in `mib_backend_tests`, `mainwindow_shutdown_test`,
+and `desktop_instance_test`. The two desktop lifecycle tests are standalone
+because they run Qt event loops / subprocesses. Their AUTOUIC is disabled to
+keep `mib_frontend_common` the sole owner of generated UI headers.
+
 > CMake + Conan. Windows (VS2022 x64) is the primary target, with Linux
 > cloud builds supported for non-hardware paths.
 
@@ -390,3 +397,15 @@ it directly with unsigned/signed fixture paths and a signer SPKI hash. Bundling
 it into `mib_backend_tests` removes the expected MSBuild target and breaks that
 release verification. The standalone-test list in `tests/CMakeLists.txt` preserves
 this contract.
+
+### MindVision overview checks
+
+`backend.mindvision_overview_mode` exercises geometry faults and repeated capture
+cycles; `frontend.mindvision_overview` covers JSON ROI persistence and mode state.
+Both use existing shared test runners. `hw_illuminated_live_test` optionally
+alternates full-sensor and experiment modes with `MIB_TEST_OVERVIEW_MODES=1`;
+use an even number of runs to finish with the saved experiment settings.
+
+## Synchronization calibration tool
+
+`mib_sync_capture` is built from `tools/sync_tuning/capture.cpp` when `mib_backend` exists and `MIB_BUILD_SYNC_TUNING=ON` (default). It has no frontend or test-harness dependency; executables share the normal runtime directory and SDK/runtime DLL requirements. `python -m pip install "./tools/sync_tuning[plot]"` installs the separate Python orchestration package. See [calibration build/use](../../tools/sync_tuning/README.md). Processing-only builds omit this target.

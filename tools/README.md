@@ -31,3 +31,7 @@ Requires Python 3.8+, a virtual environment is created under `tools/.venv` and d
 ## Classification
 
 See [docs/supported-tools-classification.md](../docs/supported-tools-classification.md) for which scripts are supported end-user tools vs dev-only.
+
+## Camera synchronization calibration
+
+The [sync-tuning package](sync_tuning/README.md) is a separate Python API/CLI and CMake native sampler for MindVision/LED calibration. It is built and installed separately from the HDF5 tool bundles above; it is not automatically added to published tool releases.

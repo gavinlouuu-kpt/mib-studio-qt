@@ -1,5 +1,24 @@
 # Recent Work
 
+## 2026-09-16 — MindVision Experiment overlay ROI
+
+MindVision Experiment navigation now synchronizes PlaybackPanel's independent
+overlay ROI with the backend's full hardware-crop ROI. Previously a saved or
+drawn sub-ROI stayed offset on the preview after processing reset to `(0,0)`.
+The regression in `frontend.mindvision_overview` fails before the fix on both
+overlay extent and frontend/backend ROI agreement. See [[../frontend/OverviewTab]].
+
+## 2026-09-15 — Desktop hardware ownership and shutdown
+
+Added per-user duplicate-launch protection before hardware initialization,
+explicit serial-device release in backend shutdown, cancellation/draining of
+startup discovery, and main-window close that exits despite utility windows.
+Windows serial output waits now honor their timeout. Three regressions were
+reproduced before fixing them; four new guards and the 116-test Windows
+non-hardware suite pass. The hidden incident process was in its normal Qt event
+loop, so a shutdown deadlock is not claimed. See
+[[../task/2026-09-15-hardware-shutdown]] and [[../frontend/DesktopInstance]].
+
 ## 2026-09-15 — Desktop startup acceptance gaps (#413)
 
 Actual app checks found implicit mock fallback blocking MindVision discovery
@@ -2058,3 +2077,13 @@ auto-connected the identified OEABT controller on COM7; illuminated Live View
 ran at 999 fps using generator COM6 and 100 us strobe. App-close released both
 devices and webcam showed dark. No voltage/mode writes. Windows tests105/105
 passed. See [[../task/2026-09-14-one-click-illuminated-live]].
+
+- **2026-09-15 - MindVision overview/ROI:** full native sensor preview, 400 Hz
+  illuminated trigger (50 fps display cap), editable 512x96 default experiment
+  ROI saved to MindVision JSON, bounded preview memory, and transactional mode
+  switching. Rig acceptance measured 816x624 at about 400 fps and restored
+  512x96 at (64,48) at about 998 fps, with generator OFF readback after each stop.
+
+## 2026-09-16 — Reusable LED/camera synchronization calibration
+
+Added an installable Python API/CLI plus the standalone `mib_sync_capture` target for repeatable raw-frame intensity sweeps, band/clipping/loss gates, interval selection, longer validation and backed-up profile application. No production capture/threading or processing ABI changes. See [[../task/2026-09-16-sync-tuning-package]] and [usage](../../tools/sync_tuning/README.md).

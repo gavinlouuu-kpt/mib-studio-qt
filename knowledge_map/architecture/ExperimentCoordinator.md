@@ -180,3 +180,9 @@ across the HDF5 open + provenance write, which is why a second caller gets
 - A `requestStop()` right after `start()` returned is accepted; the worker
   wakes immediately (condition variable), so the run may finalize with zero
   admitted frames and still be `Complete`.
+
+## MindVision overview gate
+
+Readiness includes a failing `camera.mode` gate while MindVision Overview is
+selected. Experiments require the Experiment acquisition mode, preventing a
+full-sensor preview session from being recorded as an experimental ROI session.

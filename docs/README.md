@@ -42,3 +42,5 @@ Run `python3 scripts/check_docs.py` after editing any markdown; CI enforces it.
 
 - [One-click illuminated Live View](howto/illuminated-live-view.md) — saved
   MindVision XGC/R5D rig setup, coordinated Play/Stop and commissioning evidence.
+
+- [Reusable LED/camera calibration](../tools/sync_tuning/README.md) — Python API/CLI, native raw-frame sampler, validation and guarded profile apply.

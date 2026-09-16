@@ -1,5 +1,26 @@
 # MainWindow
 
+## MindVision ROI synchronization (2026-09-16)
+
+Entering Experiment synchronizes PlaybackPanel's overlay ROI to the backend's
+crop-local processing ROI after refreshing Overview. A previous preview sub-ROI
+must not survive visually while processing resets to the full hardware crop.
+The synchronization uses `setRoi(..., false)` to preserve the saved processing
+profile. Regression: `frontend.mindvision_overview` (failed before the fix).
+The same test switches to the Euresys frontend route without opening hardware:
+JS ROI loading/persistence, sensor-coordinate propagation, preservation of a
+preview sub-ROI on Experiment navigation, and MindVision profile isolation are
+asserted. The synchronization remains inside the MindVision provider guard.
+
+## Desktop exit and hardware release (2026-09-15)
+
+Accepted close stops `DeviceInitManager`, calls explicit backend shutdown,
+and queues application quit even if a detached top-level widget remains.
+`aboutToQuit` also stops discovery and the backend for other quit paths.
+Cancelled experiment-close confirmation leaves discovery and hardware running.
+Regression: `frontend.mainwindow_shutdown`. See [[DesktopInstance]] and
+[[../task/2026-09-15-hardware-shutdown]].
+
 ## Illuminated rig startup (#413)
 
 Connecting a camera navigates to Overview, but a saved illuminated MindVision
@@ -260,3 +281,12 @@ created in `setupStatusSurfaces()`:
 - The coordinator's status callback captures `this` and posts a queued
   lambda; the destructor clears the callback before any member dies, and
   `AppBackend` (constructed before the window in `main()`) outlives it.
+
+## MindVision tab transitions (2026-09-15)
+
+Overview/Experiment navigation stages the matching MindVision mode through
+AppBackend before restarting realtime processing. Capture resumes only when
+already running; idle navigation does not enable illumination. The backend
+rejects mode changes during experiments/recording before services are stopped.
+MindVision ROI notifications use sensor offsets for the displayed selection and
+zero offsets for processing the hardware crop. The eGrabber script path is unchanged.

@@ -283,3 +283,28 @@ channels 2–4 = 0 Hz; the SDK enumerates one MV-XG51GM (GigE).
 
 Rig run records for September 15 (frame rates per trigger mode, the polarity
 finding and the new default): [evidence](../evidence/2026-09-15-illuminated-live-rig/README.md).
+
+## Overview and experiment ROI
+
+Overview displays the camera's full native sensor, with an editable experiment
+ROI defaulting to **512x96**. Drag the rectangle to choose the experiment region;
+change W/H when a different supported crop is needed. The selection is saved to
+the active MindVision JSON profile. If the camera rejects a crop size, startup
+stays stopped and reports the requested and camera-reported dimensions.
+
+Overview requests **400 Hz**, the pulse generator's minimum, and preserves the
+saved trigger pulse duration. For the default 20 us pulse this is 0.80% duty.
+The image display refreshes at up to **50 fps**; measured capture FPS is shown
+separately. Native sensor dimensions and actual acquisition rate depend on the
+connected camera. On the September 15 acceptance rig, full sensor was 816x624
+and sustained about 400 fps.
+
+Switching to Experiment applies the selected hardware ROI and restores the
+saved experiment trigger rate. Switching tabs while live stops, reconfigures,
+and resumes acquisition; switching while idle leaves the rig idle until Start.
+Overview uses a small preview buffer and keeps experiment processing disabled.
+The experiment buffer starts empty after mode changes.
+
+## Reusable image-based synchronization calibration
+
+The [sync-tuning package](../../tools/sync_tuning/README.md) automates the September 16 raw-frame measurement workflow. It sweeps acquisition delay and explicitly supplied exposures in both Overview and experiment modes, rejects dark/clipped/unstable streams, selects a tested interval center, and performs longer validation. `--apply` is optional; the exact original profile is backed up and concurrent file edits are preserved. The standalone `mib_sync_capture` target uses AppBackend cleanup, without focus, pump, sorting or desktop automation. Camera/generator owners must release their connections first. This is image-stability calibration, not an electrical timing measurement.
