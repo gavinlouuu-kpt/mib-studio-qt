@@ -29,6 +29,11 @@
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
+#include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/discovery/providers/CameraEnumerationProvider.h"
+#include "backend/discovery/providers/NanopositionerProvider.h"
+#include "backend/discovery/providers/PulseGeneratorProvider.h"
 #include "backend/processing/EModulusLutCatalog.h"
 
 #include "backend/camera/mindvision/MindVisionConfig.h"
@@ -215,6 +220,18 @@ namespace backend
 
     void AppBackend::shutdown() {
         SPDLOG_INFO("AppBackend: shutdown begin");
+        // Discovery first (issue #419): stop the startup policy so no late
+        // result can select or connect anything, refuse new jobs, cancel and
+        // join every discovery worker. Only then may serial adapters and the
+        // camera be released below: a probe must never observe a half
+        // torn-down service graph.
+        if (startupDiscovery_) {
+            startupDiscovery_->stop();
+        }
+        if (deviceDiscovery_) {
+            SPDLOG_INFO("AppBackend: shutdown draining device discovery");
+            deviceDiscovery_->shutdownDiscovery();
+        }
         // Stop threads before member destruction begins. Members are destroyed
         // in reverse declaration order, so triggerService_/autofocusService_
         // die before processingService_ — a still-running realtime loop would
@@ -329,6 +346,49 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
+
+        // Device discovery (issue #419, ADR 0005): one job service, compiled-in
+        // providers wrapping the existing enumeration/probe code, a camera
+        // guard so enumeration never runs behind a live capture, and the
+        // startup policy with the pre-#419 defaults (started by the shell).
+        deviceDiscovery_ = std::make_unique<discovery::DeviceDiscoveryService>();
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::mindVision(*cameraControlService_));
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::eGrabber(*cameraControlService_));
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::eGrabberFramegrabbers(*cameraControlService_));
+        deviceDiscovery_->registerProvider(discovery::NanopositionerProvider::production());
+        deviceDiscovery_->registerProvider(
+            std::make_unique<discovery::PulseGeneratorProvider>(*pulseGeneratorService_));
+        const auto captureBusy = [this] { return captureService_ && captureService_->isRunning(); };
+        deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Camera, captureBusy);
+        deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Framegrabber, captureBusy);
+
+        discovery::StartupDiscoveryCoordinator::Hooks hooks;
+        hooks.cameraConfigured = [this] { return isCameraConfigured(); };
+        hooks.captureRunning = captureBusy;
+        hooks.nanopositionerConnected = [this] {
+            return autofocusService_ && autofocusService_->isConnected();
+        };
+        hooks.selectCamera = [this](const discovery::DiscoveredDevice &device) {
+            if (!device.camera) return false;
+            const auto &cam = *device.camera;
+            if (cam.cameraType == services::CameraType::MindVision)
+            {
+                setMindVisionCameraSelection(cam.cameraIndex, cam.label);
+            }
+            else
+            {
+                setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
+            }
+            return true;
+        };
+        hooks.connectNanopositioner = [this](const nanopositioner::Endpoint &endpoint) {
+            return autofocusService_ && autofocusService_->connect(endpoint);
+        };
+        startupDiscovery_ =
+            std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
 
         bool bootSqlite = true;
         bool bootHdf5 = true;
@@ -847,6 +907,8 @@ namespace backend
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
+    discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
+    discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {

@@ -127,7 +127,12 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         request.retry.delay = timing.nanopositionerRetryDelay;
         request.deadline = timing.nanopositionerDeadline;
         request.origin = origin;
-        if (hooks.preferredNanopositioner) request.preferredNanopositioner = hooks.preferredNanopositioner();
+        std::function<std::optional<nanopositioner::Endpoint>()> preferredHook;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            preferredHook = hooks.preferredNanopositioner;
+        }
+        if (preferredHook) request.preferredNanopositioner = preferredHook();
         const auto start = service.startDiscovery(request);
         if (!start.accepted) {
             SPDLOG_WARN("StartupDiscovery: nanopositioner step refused: {}", start.reason);
@@ -244,8 +249,13 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         outcome.attempt = snapshot.attempt;
         outcome.maxAttempts = snapshot.maxAttempts;
         std::string preferred;
-        if (hooks.preferredNanopositioner) {
-            if (const auto ep = hooks.preferredNanopositioner()) preferred = ep->persistentId;
+        std::function<std::optional<nanopositioner::Endpoint>()> preferredHook;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            preferredHook = hooks.preferredNanopositioner;
+        }
+        if (preferredHook) {
+            if (const auto ep = preferredHook()) preferred = ep->persistentId;
         }
         const auto decision = decideNanopositioner(snapshot, preferred);
         switch (decision.kind) {
@@ -301,6 +311,13 @@ void StartupDiscoveryCoordinator::setExecutor(Executor executor)
 {
     std::lock_guard<std::mutex> lk(impl_->mutex);
     impl_->executor = executor ? std::move(executor) : Executor([](std::function<void()> fn) { fn(); });
+}
+
+void StartupDiscoveryCoordinator::setPreferredNanopositionerHook(
+    std::function<std::optional<nanopositioner::Endpoint>()> hook)
+{
+    std::lock_guard<std::mutex> lk(impl_->mutex);
+    impl_->hooks.preferredNanopositioner = std::move(hook);
 }
 
 void StartupDiscoveryCoordinator::setCameraListener(CameraListener listener)

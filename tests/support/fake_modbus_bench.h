@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -51,6 +52,9 @@ struct FakeModbusBench {
     std::map<std::string, std::vector<FakeModbusWire*>> wires;
     std::set<std::string> busy; // held by another program
     std::atomic<int> openPorts{0};
+    // Optional observers for ordering assertions (called on the bus I/O thread).
+    std::function<void(const std::string&)> onOpen;
+    std::function<void(const std::string&)> onClose;
 
     void attach(const std::string& port, FakeModbusWire* wire) { wires[port].push_back(wire); }
 };
@@ -78,14 +82,19 @@ public:
         }
         slaves_ = &it->second;
         opened_ = true;
+        name_ = name;
         ++bench_.openPorts;
+        if (bench_.onOpen) bench_.onOpen(name);
         return true;
     }
     int lastSystemError() const override { return systemError_; }
     bool isOpen() const override { return opened_; }
     void close() override
     {
-        if (opened_) --bench_.openPorts;
+        if (opened_) {
+            --bench_.openPorts;
+            if (bench_.onClose) bench_.onClose(name_);
+        }
         opened_ = false;
     }
     int write(const std::vector<uint8_t>& q) override
@@ -148,6 +157,7 @@ private:
     FakeModbusBench& bench_;
     const std::vector<FakeModbusWire*>* slaves_ = nullptr;
     bool opened_ = false;
+    std::string name_;
     int systemError_ = 0;
     std::vector<uint8_t> rx_;
 };

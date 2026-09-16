@@ -89,6 +89,11 @@ public:
     StartupDiscoveryCoordinator& operator=(const StartupDiscoveryCoordinator&) = delete;
 
     void setExecutor(Executor executor);
+    // The saved nanopositioner preference lives in the shell (vendor filter,
+    // serial settings, remembered port); the shell installs it here. Invoked
+    // in executor context when a nanopositioner step starts.
+    void setPreferredNanopositionerHook(
+        std::function<std::optional<nanopositioner::Endpoint>()> hook);
     void setCameraListener(CameraListener listener);
     void setNanopositionerListener(NanopositionerListener listener);
 
