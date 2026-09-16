@@ -108,8 +108,10 @@ NanopositionerTab::NanopositionerTab(backend::AppBackend& backend, QWidget* pare
             &NanopositionerTab::onConnectNanopositioner);
     connect(ui->disconnectBtn, &QPushButton::clicked, this,
             &NanopositionerTab::onDisconnectNanopositioner);
+    // Refresh never enumerates or probes on the UI thread: the adapter runs a
+    // backend discovery job and calls showDiscoveryCandidates() (#419).
     connect(ui->refreshComPortBtn, &QPushButton::clicked, this, [this]() {
-        populateComPortList();
+        if (discoveryRunning_) return;
         emit discoveryRequested();
     });
     auto* vendorLabel = new QLabel(tr("Automatic identification: OEABT and CoreMorrow / XMT"), this);
@@ -133,8 +135,9 @@ NanopositionerTab::NanopositionerTab(backend::AppBackend& backend, QWidget* pare
 
     // Load config first so probe/auto-connect use saved baud and device address
     loadConfig();
-    // Populate COM port list (probe uses baud/address from config now)
+    // The combo is filled by the first discovery job (startup or Refresh).
     populateComPortList();
+    setNanopositionerStatus(tr("Click Refresh to search for nanopositioners."));
     updateNanopositionerUI();
 
     // Status update timer
@@ -172,10 +175,20 @@ void NanopositionerTab::setDiscoveryRunning(bool running) {
     updateNanopositionerUI();
 }
 
+void NanopositionerTab::showDiscoveryCandidates(
+    const backend::discovery::DiscoverySnapshot& snapshot) {
+    std::vector<backend::nanopositioner::Endpoint> endpoints;
+    for (const auto& device : snapshot.candidates) {
+        if (device.kind != backend::discovery::DeviceKind::Nanopositioner || !device.nanopositioner) continue;
+        endpoints.push_back(*device.nanopositioner);
+    }
+    endpoints_ = std::move(endpoints);
+    populateComPortList();
+}
+
 void NanopositionerTab::populateComPortList() {
     const std::string previouslySelected = selectedEndpoint().persistentId;
     ui->comPortCombo->clear();
-    endpoints_ = backend::services::AutofocusService::availableEndpoints();
 
     const auto filter =
         static_cast<backend::nanopositioner::BackendKind>(ui->backendCombo->currentData().toInt());
@@ -202,6 +215,9 @@ void NanopositionerTab::populateComPortList() {
         }
     }
 
+    if (endpoints_.empty() && ui->comPortCombo->count() == 0) {
+        return; // nothing discovered yet: keep the caller's status text
+    }
     setNanopositionerStatus(
         ui->comPortCombo->count() == 0
             ? tr("No matching serial devices found. Check USB/power, then click Refresh.")
@@ -268,6 +284,9 @@ void NanopositionerTab::setNanopositionerStatus(const QString& message) {
 
 void NanopositionerTab::applyAutoConnectResult(const backend::nanopositioner::Endpoint& endpoint) {
     configuredEndpointId_ = endpoint.persistentId;
+    bool known = false;
+    for (const auto& ep : endpoints_) known |= ep.persistentId == endpoint.persistentId;
+    if (!known) endpoints_.push_back(endpoint);
     populateComPortList();
     saveConfig();
     updateNanopositionerUI();

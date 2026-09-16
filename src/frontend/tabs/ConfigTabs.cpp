@@ -1,3 +1,4 @@
+#include "backend/discovery/DeviceDiscoveryService.h"
 #include "frontend/tabs/ConfigTabs.h"
 #include "frontend/utils/ElidingLabel.h"
 #include "frontend/system/ConfigDocumentStore.h"
@@ -518,11 +519,13 @@ ConfigTabs::ConfigTabs(backend::AppBackend& backend, QWidget* parent)
         pgBusRow->addWidget(pgStopBitsCombo_);
         pgBusRow->addWidget(new QLabel(tr("Addr"), pgGroup));
         pgAddrSpin_ = new QSpinBox(pgGroup);
+        pgAddrSpin_->setObjectName(QStringLiteral("pgAddrSpin"));
         pgAddrSpin_->setRange(1, 255);
         pgAddrSpin_->setValue(1);
         pgAddrSpin_->setToolTip(tr("Modbus slave address of the pulse generator on this bus."));
         pgBusRow->addWidget(pgAddrSpin_);
         pgScanBtn_ = new QPushButton(tr("Scan"), pgGroup);
+        pgScanBtn_->setObjectName(QStringLiteral("pgScanBtn"));
         pgScanBtn_->setToolTip(tr("Probe addresses 1–16 on the selected port with a read-only "
                                   "register read. Never writes to any device."));
         pgBusRow->addWidget(pgScanBtn_);
@@ -830,7 +833,10 @@ void ConfigTabs::updateJsonNotices()
 }
 
 ConfigTabs::~ConfigTabs() {
+    // Cancel (never join) an in-flight scan; the subscription member blocks
+    // on an in-flight callback when it is destroyed right after this body.
     stopPulseGenScan();
+    pgScanSubscription_.reset();
 }
 
 QString ConfigTabs::appDirIncludePath(const QString& fileName) const {
@@ -1652,15 +1658,14 @@ void ConfigTabs::restorePulseGenSettings() {
 }
 
 void ConfigTabs::stopPulseGenScan() {
-    pgScanCancel_.store(true);
-    if (pgScanThread_.joinable()) {
-        pgScanThread_.join();
+    if (pgScanJob_ != 0) {
+        backend_.deviceDiscovery().cancelDiscovery(pgScanJob_);
     }
+    pgScanJob_ = 0;
     pgScanRunning_ = false;
 }
 
 void ConfigTabs::onPulseGenScanToggle() {
-    using ScanHit = backend::services::PulseGeneratorService::ScanHit;
     if (pgScanRunning_) {
         stopPulseGenScan();
         refreshPulseGenUi();
@@ -1672,70 +1677,96 @@ void ConfigTabs::onPulseGenScanToggle() {
                              tr("Select a serial port before scanning."));
         return;
     }
-    if (pgScanThread_.joinable()) {
-        pgScanThread_.join();
-    }
     const auto settings = pulseGenSettingsFromUi(pgBaudCombo_, pgDataBitsCombo_,
                                                  pgParityCombo_, pgStopBitsCombo_);
-    pgScanCancel_.store(false);
+    if (!pgScanSubscription_.active()) {
+        pgScanSubscription_.subscribe(backend_.deviceDiscovery(), this,
+                                      [this](const backend::discovery::DiscoverySnapshot& s) {
+                                          onPulseGenScanFinished(s);
+                                      });
+    }
+    // Bounded, read-only, cancellable probe through the backend discovery
+    // service: explicit port, serial settings and address range (1-16), so no
+    // broad sweep can ever start from here (issue #419).
+    backend::discovery::DiscoveryRequest request;
+    request.kinds = {backend::discovery::DeviceKind::PulseGenerator};
+    request.serialScope = backend::discovery::SerialScanScope{};
+    request.serialScope->portName = portName.toStdString();
+    request.serialScope->settings = settings;
+    request.serialScope->addressFrom = 1;
+    request.serialScope->addressTo = 16;
+    request.serialScope->perAddressTimeoutMs = 250;
+    request.origin = "config-tabs";
+    const auto start = backend_.deviceDiscovery().startDiscovery(request);
+    if (!start.accepted) {
+        if (!nonInteractive_) QMessageBox::warning(this, tr("Pulse Generator"),
+                             tr("Could not start the scan: %1")
+                                 .arg(QString::fromStdString(start.reason)));
+        return;
+    }
+    pgScanJob_ = start.jobId;
     pgScanRunning_ = true;
     refreshPulseGenUi();
-    // Bounded, read-only, cancelable probe off the GUI thread; results are
-    // marshaled back with a queued call.
-    pgScanThread_ = std::thread([this, portName, settings]() {
-        using LinkError = backend::services::PulseGeneratorService::LinkError;
-        LinkError scanError = LinkError::None;
-        const auto hits = backend_.pulseGenerator().scanBus(
-            portName.toStdString(), settings, 1, 16, pgScanCancel_, 250, &scanError);
-        QMetaObject::invokeMethod(this, [this, portName, hits, scanError]() {
-            pgScanRunning_ = false;
-            refreshPulseGenUi();
-            if (pgScanCancel_.load()) {
-                return;
-            }
-            if (scanError != backend::services::PulseGeneratorService::LinkError::None) {
-                // The port itself could not be opened — very different advice
-                // than a silent bus.
-                QMessageBox::warning(
-                    this, tr("Pulse Generator"),
-                    tr("Could not open %1 for scanning: %2. The port may be held "
-                       "by another program, or by MIB with different serial settings.")
-                        .arg(portName)
-                        .arg(QString::fromLatin1(
-                            backend::services::PulseGeneratorService::toString(scanError))));
-                return;
-            }
-            if (hits.empty()) {
-                if (!nonInteractive_) QMessageBox::information(this, tr("Pulse Generator"),
-                                         tr("No Modbus devices responded on %1 "
-                                            "(addresses 1–16).").arg(portName));
-                return;
-            }
-            QStringList lines;
-            uint8_t firstGenerator = 0;
-            for (const auto& hit : hits) {
-                switch (hit.kind) {
-                case ScanHit::Kind::PulseGenerator:
-                    if (firstGenerator == 0) firstGenerator = hit.address;
-                    lines << tr("Address %1 — pulse generator").arg(hit.address);
-                    break;
-                case ScanHit::Kind::ModbusDevice:
-                    lines << tr("Address %1 — Modbus device (not a pulse generator, "
-                                "left untouched)").arg(hit.address);
-                    break;
-                case ScanHit::Kind::Error:
-                    lines << tr("Address %1 — corrupt/inconsistent response "
-                                "(possible duplicate-address collision)").arg(hit.address);
-                    break;
-                }
-            }
-            if (firstGenerator != 0) {
-                pgAddrSpin_->setValue(firstGenerator);
-            }
-            if (!nonInteractive_) QMessageBox::information(this, tr("Pulse Generator scan — %1").arg(portName),
-                                     lines.join(QStringLiteral("\n")));
-        }, Qt::QueuedConnection);
-    });
+}
+
+void ConfigTabs::onPulseGenScanFinished(const backend::discovery::DiscoverySnapshot& snapshot) {
+    using ScanHit = backend::services::PulseGeneratorService::ScanHit;
+    namespace disc = backend::discovery;
+    if (snapshot.jobId != pgScanJob_ || !disc::isTerminal(snapshot.state)) return;
+    const QString portName = pgPortCombo_->currentData().toString();
+    pgScanJob_ = 0;
+    pgScanRunning_ = false;
+    refreshPulseGenUi();
+    if (snapshot.state == disc::JobState::Cancelled) {
+        return;
+    }
+    // A port-level failure (busy, unopenable, incompatible settings) is very
+    // different advice than a silent bus.
+    for (const auto& e : snapshot.errors) {
+        if (e.kind == disc::ErrorKind::Busy || e.kind == disc::ErrorKind::OpenFailed ||
+            e.kind == disc::ErrorKind::PermissionDenied || e.kind == disc::ErrorKind::Timeout ||
+            e.kind == disc::ErrorKind::Unsupported || e.kind == disc::ErrorKind::InvalidRequest ||
+            e.kind == disc::ErrorKind::ProviderException) {
+            if (!nonInteractive_) QMessageBox::warning(
+                this, tr("Pulse Generator"),
+                tr("Could not open %1 for scanning: %2. The port may be held "
+                   "by another program, or by MIB with different serial settings.")
+                    .arg(portName)
+                    .arg(QString::fromStdString(e.message)));
+            return;
+        }
+    }
+    if (snapshot.candidates.empty()) {
+        if (!nonInteractive_) QMessageBox::information(this, tr("Pulse Generator"),
+                                 tr("No Modbus devices responded on %1 "
+                                    "(addresses 1–16).").arg(portName));
+        return;
+    }
+    QStringList lines;
+    uint8_t firstGenerator = 0;
+    for (const auto& device : snapshot.candidates) {
+        if (!device.pulseGenerator) continue;
+        const auto& hit = *device.pulseGenerator;
+        switch (hit.kind) {
+        case ScanHit::Kind::PulseGenerator:
+            if (firstGenerator == 0) firstGenerator = hit.address;
+            lines << tr("Address %1 — pulse generator").arg(hit.address);
+            break;
+        case ScanHit::Kind::ModbusDevice:
+            lines << tr("Address %1 — Modbus device (not a pulse generator, "
+                        "left untouched)").arg(hit.address);
+            break;
+        case ScanHit::Kind::Error:
+            lines << tr("Address %1 — corrupt/inconsistent response "
+                        "(possible duplicate-address collision)").arg(hit.address);
+            break;
+        }
+    }
+    if (firstGenerator != 0) {
+        pgAddrSpin_->setValue(firstGenerator);
+    }
+    if (!nonInteractive_) QMessageBox::information(this, tr("Pulse Generator scan — %1").arg(portName),
+                             lines.join(QStringLiteral("\n")));
 }
 
 void ConfigTabs::onPulseGenConnectToggle() {

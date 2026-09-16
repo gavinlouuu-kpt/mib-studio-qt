@@ -47,6 +47,10 @@ public:
     // Registration happens at composition time (AppBackend::initialize) and
     // in tests; providers live until the service is destroyed.
     void registerProvider(std::unique_ptr<IDeviceDiscoveryProvider> provider);
+    // Removes a provider by ID (test seam: swap production providers for
+    // fakes). Refused while any job is in flight; returns false then or when
+    // the ID is unknown.
+    bool unregisterProvider(const std::string& providerId);
     std::vector<std::string> providerIds() const;
     bool hasProviderFor(DeviceKind kind) const;
 

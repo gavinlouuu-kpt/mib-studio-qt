@@ -1,5 +1,6 @@
 #pragma once
 
+#include "backend/discovery/DeviceDiscoveryTypes.h"
 #include "backend/nanopositioner/INanopositionerBackend.h"
 
 #include <QWidget>
@@ -35,6 +36,11 @@ public:
     void applyAutoConnectResult(const backend::nanopositioner::Endpoint& endpoint);
 
     void setDiscoveryRunning(bool running);
+    /** Fill the endpoint combo from a discovery snapshot (identified and
+     * unidentified candidates; issue #419). The tab never enumerates ports
+     * itself: Refresh emits discoveryRequested() and the results come back
+     * here on the UI thread. */
+    void showDiscoveryCandidates(const backend::discovery::DiscoverySnapshot& snapshot);
 signals:
     void discoveryRequested();
 
@@ -52,6 +58,7 @@ private:
     void loadConfig();
     void saveConfig();
     QString configPath() const;
+    // Rebuild the combo from endpoints_ (no enumeration).
     void populateComPortList();
     backend::nanopositioner::Endpoint selectedEndpoint() const;
 

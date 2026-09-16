@@ -304,7 +304,10 @@ int main()
         cam->reset();
         std::atomic<int> lateOutcomes{0};
         StartupDiscoveryCoordinator stopping(service, hooks, timing);
-        stopping.setCameraListener([&](const auto&) { ++lateOutcomes; });
+        stopping.setCameraListener([&](const auto& o) {
+            // Started fires synchronously inside runCameraStep(), before stop().
+            if (o.kind != StartupDiscoveryCoordinator::CameraOutcome::Kind::Started) ++lateOutcomes;
+        });
         MIB_EXPECT(stopping.runCameraStep(), "blocked camera step accepted");
         MIB_REQUIRE(cam->waitUntilEntered(2000ms), "camera probe blocked");
         stopping.stop();

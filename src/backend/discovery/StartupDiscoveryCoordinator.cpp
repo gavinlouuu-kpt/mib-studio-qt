@@ -81,11 +81,11 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         DiscoveryRequest request;
         request.kinds = {DeviceKind::Camera, DeviceKind::Framegrabber};
         request.initialDelay = delay;
-        request.deadline = timing.cameraDeadline;
         request.origin = origin;
         {
             std::lock_guard<std::mutex> lk(mutex);
             if (cameraRunning) return false;
+            request.deadline = timing.cameraDeadline;
         }
         const auto start = service.startDiscovery(request);
         if (!start.accepted) {
@@ -104,6 +104,10 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         }
         SPDLOG_INFO("StartupDiscovery: camera step started (job {}, delay {} ms)", start.jobId,
                     delay.count());
+        CameraOutcome started;
+        started.kind = CameraOutcome::Kind::Started;
+        started.jobId = start.jobId;
+        emitCamera(started);
         return true;
     }
 
@@ -123,13 +127,13 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         }
         DiscoveryRequest request;
         request.kinds = {DeviceKind::Nanopositioner};
-        request.retry.maxRetries = timing.nanopositionerRetries;
-        request.retry.delay = timing.nanopositionerRetryDelay;
-        request.deadline = timing.nanopositionerDeadline;
         request.origin = origin;
         std::function<std::optional<nanopositioner::Endpoint>()> preferredHook;
         {
             std::lock_guard<std::mutex> lk(mutex);
+            request.retry.maxRetries = timing.nanopositionerRetries;
+            request.retry.delay = timing.nanopositionerRetryDelay;
+            request.deadline = timing.nanopositionerDeadline;
             preferredHook = hooks.preferredNanopositioner;
         }
         if (preferredHook) request.preferredNanopositioner = preferredHook();
@@ -149,6 +153,11 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
             lastReportedAttempt = 1;
         }
         SPDLOG_INFO("StartupDiscovery: nanopositioner step started (job {})", start.jobId);
+        NanopositionerOutcome started;
+        started.kind = NanopositionerOutcome::Kind::Started;
+        started.jobId = start.jobId;
+        started.maxAttempts = request.retry.maxRetries + 1;
+        emitNano(started);
         return true;
     }
 
@@ -313,6 +322,18 @@ void StartupDiscoveryCoordinator::setExecutor(Executor executor)
     impl_->executor = executor ? std::move(executor) : Executor([](std::function<void()> fn) { fn(); });
 }
 
+void StartupDiscoveryCoordinator::setTiming(Timing timing)
+{
+    std::lock_guard<std::mutex> lk(impl_->mutex);
+    impl_->timing = timing;
+}
+
+StartupDiscoveryCoordinator::Timing StartupDiscoveryCoordinator::timing() const
+{
+    std::lock_guard<std::mutex> lk(impl_->mutex);
+    return impl_->timing;
+}
+
 void StartupDiscoveryCoordinator::setPreferredNanopositionerHook(
     std::function<std::optional<nanopositioner::Endpoint>()> hook)
 {
@@ -344,7 +365,12 @@ void StartupDiscoveryCoordinator::start()
         impl_->beginNano("startup-nanopositioner");
         return;
     }
-    impl_->beginCamera(impl_->timing.cameraDelay, true, "startup-camera");
+    std::chrono::milliseconds delay;
+    {
+        std::lock_guard<std::mutex> lk(impl_->mutex);
+        delay = impl_->timing.cameraDelay;
+    }
+    impl_->beginCamera(delay, true, "startup-camera");
 }
 
 bool StartupDiscoveryCoordinator::runCameraStep()

@@ -240,6 +240,19 @@ void DeviceDiscoveryService::registerProvider(std::unique_ptr<IDeviceDiscoveryPr
     providers_.push_back(std::move(provider));
 }
 
+bool DeviceDiscoveryService::unregisterProvider(const std::string& providerId)
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    for (const auto& [id, job] : jobs_) {
+        if (!job->done) return false;
+    }
+    const auto it = std::find_if(providers_.begin(), providers_.end(),
+                                 [&](const auto& p) { return p->id() == providerId; });
+    if (it == providers_.end()) return false;
+    providers_.erase(it);
+    return true;
+}
+
 std::vector<std::string> DeviceDiscoveryService::providerIds() const
 {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -396,6 +409,7 @@ StartResult DeviceDiscoveryService::startDiscovery(const DiscoveryRequest& reque
     job->snapshot.generation = job->id;
     job->snapshot.state = JobState::Queued;
     job->snapshot.maxAttempts = request.retry.maxRetries + 1;
+    job->snapshot.kinds = request.kinds;
     job->snapshot.origin = request.origin;
     jobs_.emplace(job->id, job);
     SPDLOG_INFO("DeviceDiscoveryService: job {} queued (origin='{}', kinds={})", job->id,

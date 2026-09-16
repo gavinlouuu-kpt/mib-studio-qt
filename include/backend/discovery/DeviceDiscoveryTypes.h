@@ -161,6 +161,7 @@ struct DiscoverySnapshot {
     bool overflow{false};
     int attempt{0};
     int maxAttempts{1};
+    std::vector<DeviceKind> kinds; // requested kinds, echoed for consumers
     std::vector<DiscoveredDevice> candidates;
     std::vector<DiscoveryError> errors;
     std::vector<std::string> providersRun;

@@ -52,7 +52,9 @@ public:
     };
 
     struct CameraOutcome {
-        enum class Kind { Skipped, NoneFound, Selected, RequireSelection, Incomplete, Refused };
+        // Started: a camera job was accepted (jobId set) — adapters flip
+        // their "scanning" state here.
+        enum class Kind { Started, Skipped, NoneFound, Selected, RequireSelection, Incomplete, Refused };
         Kind kind{Kind::Skipped};
         std::optional<DiscoveredDevice> device;
         std::uint64_t jobId{0};
@@ -62,6 +64,7 @@ public:
 
     struct NanopositionerOutcome {
         enum class Kind {
+            Started,   // a nanopositioner job was accepted (jobId set)
             Skipped,
             Searching, // a retry is pending: attempt/maxAttempts are set
             NotFound,
@@ -89,6 +92,10 @@ public:
     StartupDiscoveryCoordinator& operator=(const StartupDiscoveryCoordinator&) = delete;
 
     void setExecutor(Executor executor);
+    // Replace the delays/retries (tests shorten them). Applies to steps
+    // started afterwards.
+    void setTiming(Timing timing);
+    Timing timing() const;
     // The saved nanopositioner preference lives in the shell (vendor filter,
     // serial settings, remembered port); the shell installs it here. Invoked
     // in executor context when a nanopositioner step starts.

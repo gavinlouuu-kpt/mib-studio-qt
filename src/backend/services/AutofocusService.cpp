@@ -51,6 +51,12 @@ AutofocusService::~AutofocusService() {
     }
 }
 
+bool AutofocusService::setBackendFactory(BackendFactory backendFactory) {
+    if (connected_.load()) return false;
+    backendFactory_ = std::move(backendFactory);
+    return true;
+}
+
 bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requestedEndpoint) {
     if (connected_.load()) {
         disconnect();
