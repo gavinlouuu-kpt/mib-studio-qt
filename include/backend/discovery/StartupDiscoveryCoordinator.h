@@ -49,6 +49,7 @@ public:
         std::chrono::milliseconds nanopositionerRetryDelay{4000};
         std::chrono::milliseconds cameraDeadline{60000};
         std::chrono::milliseconds nanopositionerDeadline{60000};
+        Timing() = default; // GCC requires a declared ctor for = {} default arg
     };
 
     struct CameraOutcome {
