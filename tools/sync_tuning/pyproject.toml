@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mib-sync-tuning"
+version = "0.1.0"
+description = "Raw-frame MindVision/LED synchronization calibration for MIB Studio"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = []
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.7"]
+
+[project.scripts]
+mib-sync-tune = "mib_sync_tuning.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

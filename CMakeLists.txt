@@ -26,6 +26,10 @@ include(CTest)
 
 add_subdirectory(src/backend)
 
+if(TARGET mib_backend)
+    add_subdirectory(tools/sync_tuning)
+endif()
+
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
