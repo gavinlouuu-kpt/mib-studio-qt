@@ -49,7 +49,6 @@ public:
         std::chrono::milliseconds nanopositionerRetryDelay{4000};
         std::chrono::milliseconds cameraDeadline{60000};
         std::chrono::milliseconds nanopositionerDeadline{60000};
-        Timing() = default; // GCC requires a declared ctor for = {} default arg
     };
 
     struct CameraOutcome {
@@ -86,7 +85,8 @@ public:
     using CameraListener = std::function<void(const CameraOutcome&)>;
     using NanopositionerListener = std::function<void(const NanopositionerOutcome&)>;
 
-    StartupDiscoveryCoordinator(DeviceDiscoveryService& service, Hooks hooks, Timing timing = Timing{});
+    StartupDiscoveryCoordinator(DeviceDiscoveryService& service, Hooks hooks);
+    StartupDiscoveryCoordinator(DeviceDiscoveryService& service, Hooks hooks, Timing timing);
     ~StartupDiscoveryCoordinator(); // stop()
 
     StartupDiscoveryCoordinator(const StartupDiscoveryCoordinator&) = delete;

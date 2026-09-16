@@ -305,6 +305,11 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
 
 // ---- public surface ----------------------------------------------------------------
 
+StartupDiscoveryCoordinator::StartupDiscoveryCoordinator(DeviceDiscoveryService& service, Hooks hooks)
+    : StartupDiscoveryCoordinator(service, std::move(hooks), Timing{})
+{
+}
+
 StartupDiscoveryCoordinator::StartupDiscoveryCoordinator(DeviceDiscoveryService& service, Hooks hooks,
                                                          Timing timing)
     : impl_(std::make_shared<Impl>(service, std::move(hooks), timing))
