@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 13;
+export const BRIDGE_ABI_VERSION = 14;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -49,6 +49,51 @@ export const CAMERA_SELECTION_MODES = {
   Mock: 1,
   Hardware: 2,
   MindVision: 3,
+} as const;
+
+export const DISCOVERY_DEVICE_KINDS = {
+  Camera: 0,
+  Framegrabber: 1,
+  Nanopositioner: 2,
+  PulseGenerator: 3,
+} as const;
+
+export const DISCOVERY_JOB_STATES = {
+  Queued: 0,
+  Running: 1,
+  Completed: 2,
+  Cancelled: 3,
+  Failed: 4,
+} as const;
+
+export const DISCOVERY_IDENTITY_STRENGTHS = {
+  None: 0,
+  SessionLocal: 1,
+  Persistent: 2,
+} as const;
+
+export const DISCOVERY_IDENTIFICATION_STATUSES = {
+  Identified: 0,
+  Unidentified: 1,
+  Ambiguous: 2,
+  Unsupported: 3,
+} as const;
+
+export const DISCOVERY_ERROR_KINDS = {
+  None: 0,
+  InvalidRequest: 1,
+  Busy: 2,
+  OpenFailed: 3,
+  PermissionDenied: 4,
+  Timeout: 5,
+  MalformedResponse: 6,
+  Unsupported: 7,
+  MissingSdk: 8,
+  ProviderException: 9,
+  Cancelled: 10,
+  Overflow: 11,
+  ShuttingDown: 12,
+  TooManyJobs: 13,
 } as const;
 
 export const REVIEW_IMAGE_DATASETS = {

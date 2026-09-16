@@ -560,6 +560,14 @@ mib_backend_test_link(e2e_pipeline_stress_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_pipeline_stress COMMAND $<TARGET_FILE:mib_backend_tests> e2e_pipeline_stress_test)
 set_tests_properties(integration.e2e_pipeline_stress PROPERTIES LABELS "integration;e2e" TIMEOUT 120)
 
+# Issue #419: end-to-end device-discovery lifecycle over a real AppBackend
+# (startup policy, explicit pulse-generator scan on the fake Modbus bench,
+# cancel, shutdown ordering versus hardware release).
+mib_add_backend_test_executable(e2e_device_discovery_lifecycle_test integration/e2e_device_discovery_lifecycle_test.cpp)
+mib_backend_test_link(e2e_device_discovery_lifecycle_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_device_discovery_lifecycle COMMAND $<TARGET_FILE:mib_backend_tests> e2e_device_discovery_lifecycle_test)
+set_tests_properties(integration.e2e_device_discovery_lifecycle PROPERTIES LABELS "integration;e2e;discovery" TIMEOUT 120)
+
 mib_add_backend_test_executable(e2e_live_view_latency_test integration/e2e_live_view_latency_test.cpp)
 mib_backend_test_link(e2e_live_view_latency_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_live_view_latency COMMAND $<TARGET_FILE:mib_backend_tests> e2e_live_view_latency_test)
