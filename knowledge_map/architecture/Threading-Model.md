@@ -1,10 +1,19 @@
 # Threading Model
 
-Desktop exit drains `DeviceInitManager` workers before backend shutdown;
-nanopositioner probes check an atomic cancellation token between devices.
-Queued discovery completion callbacks cannot reopen hardware after stop.
-Windows serial transmit drain polls to the supplied timeout, avoiding the
-unbounded `FlushFileBuffers` wait. See [[../task/2026-09-15-hardware-shutdown]].
+Device discovery (#419) runs on backend-owned worker threads: one per
+discovery job inside [[../services/DeviceDiscoveryService]], providers
+sequential within a job and serialized per resource class across jobs.
+Observers fire on the worker with no service lock held; the Qt adapter
+(`DeviceInitManager`, `DiscoverySubscription`) re-posts every result to the
+UI thread, and the startup policy's selection/connection hooks run through
+the adapter's UI-thread executor because `AppBackend`'s selection setters are
+read by widgets. No frontend object owns a discovery thread any more.
+`AppBackend::shutdown()` stops the policy and joins every discovery worker
+before releasing serial hardware; a vendor enumeration already inside the SDK
+must still return (TD-10). Windows serial transmit drain polls to the supplied
+timeout, avoiding the unbounded `FlushFileBuffers` wait. See
+[[../task/2026-09-15-hardware-shutdown]] and
+[[../task/2026-09-15-device-discovery-service]].
 
 > Who runs on which thread. Getting this wrong causes deadlocks, missed
 > frames, or UI freezes.
@@ -26,6 +35,7 @@ unbounded `FlushFileBuffers` wait. See [[../task/2026-09-15-hardware-shutdown]].
 | Trigger | [[../services/TriggerService]] `triggerLoop()` | `triggerCV_` | Issues camera digital-output pulse on target-group events |
 | Syringe pump poll | [[../services/SyringePumpService]] per pump | serial (Modbus RTU) | UI-driven status polls |
 | Frame-recording | `AppBackend` `frameRecordingThread_` | FrameStore | Only active in recording mode; drains non-empty frames into HDF5 |
+| Discovery workers | [[../services/DeviceDiscoveryService]] (one per job, ≤ 4) | provider enumeration / probe, retry-delay CV | Camera SDK enumeration, nanopositioner identity probes, pulse-generator FC03 scans; cooperative cancel between steps; joined at `shutdownDiscovery()` |
 
 ## Sync primitives
 

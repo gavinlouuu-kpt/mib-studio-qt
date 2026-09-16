@@ -1,5 +1,21 @@
 # AppBackend
 
+## Device discovery ownership (2026-09-16, #419)
+
+`initialize()` constructs [[../services/DeviceDiscoveryService]] after the
+hardware services, registers the compiled-in providers (MindVision, eGrabber
+cameras, eGrabber framegrabbers, nanopositioner, pulse generator), installs
+the capture-busy guard for camera kinds, and builds the
+`StartupDiscoveryCoordinator` with hooks onto `isCameraConfigured()`,
+`capture().isRunning()`, `autofocus().isConnected()`,
+`set*CameraSelection()` and `autofocus().connect()`. The coordinator is
+started by the Qt adapter (`DeviceInitManager`), not here. `shutdown()`
+begins with `startupDiscovery().stop()` and
+`deviceDiscovery().shutdownDiscovery()` so every probe has ended before
+capture and serial hardware are released. Accessors: `deviceDiscovery()`,
+`startupDiscovery()`. Both members are declared after the services they
+reference so they are destroyed first.
+
 ## Explicit hardware shutdown (2026-09-15)
 
 `shutdown()` now disconnects autofocus, both syringe pumps, and the pulse
@@ -25,7 +41,9 @@ All services are `std::unique_ptr`; [[../data-model/FrameStore]] is
 sqliteService_, hdf5Service_,
 captureService_, processingService_, playbackService_,
 cameraControlService_, autofocusService_,
-triggerService_, yoloService_, syringePumpService_
+triggerService_, yoloService_, syringePumpService_,
+pulseGeneratorService_,
+deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
 ```
 

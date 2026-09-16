@@ -111,7 +111,11 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         return true;
     }
 
-    bool beginNano(const char* origin)
+    // `delay` keeps the pre-#419 startup timing when the camera step is
+    // skipped: the nanopositioner probe still waits for the camera timer, so
+    // a close right after launch cancels a queued job instead of draining a
+    // serial probe.
+    bool beginNano(const char* origin, std::chrono::milliseconds delay = std::chrono::milliseconds(0))
     {
         if (stopped.load()) return false;
         if (hook(hooks.nanopositionerConnected)) {
@@ -128,6 +132,7 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         DiscoveryRequest request;
         request.kinds = {DeviceKind::Nanopositioner};
         request.origin = origin;
+        request.initialDelay = delay;
         std::function<std::optional<nanopositioner::Endpoint>()> preferredHook;
         {
             std::lock_guard<std::mutex> lk(mutex);
@@ -362,7 +367,12 @@ void StartupDiscoveryCoordinator::start()
         outcome.message = "camera already configured or capturing";
         SPDLOG_INFO("StartupDiscovery: camera step skipped ({})", outcome.message);
         impl_->emitCamera(outcome);
-        impl_->beginNano("startup-nanopositioner");
+        std::chrono::milliseconds delay;
+        {
+            std::lock_guard<std::mutex> lk(impl_->mutex);
+            delay = impl_->timing.cameraDelay;
+        }
+        impl_->beginNano("startup-nanopositioner", delay);
         return;
     }
     std::chrono::milliseconds delay;

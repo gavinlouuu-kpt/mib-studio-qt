@@ -19,6 +19,10 @@
 
 - Manage backend-neutral endpoint discovery and connection (`availableEndpoints`,
   `probeEndpoint`, `connect`, `disconnect`). Legacy COM APIs wrap CoreMOR.
+  Since #419 the static enumeration/probe pair is consumed by the
+  `nanopositioner` provider of [[DeviceDiscoveryService]]; the UI never calls
+  them directly. `setBackendFactory(factory)` swaps the driver factory while
+  disconnected (test seam for fake stages behind a real `AppBackend`).
 - Select OEABT (Linux/Windows) or CoreMOR (Windows) through
   `INanopositionerBackend`; require OEABT protocol identity before connection.
 - Consume ring-ratio samples via `onRingRatio(ringRatio, timestampNs)`

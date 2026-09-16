@@ -19,6 +19,7 @@
 #include "support/assert.h"
 #include "support/fake_discovery_providers.h"
 #include "support/fake_modbus_bench.h"
+#include "support/queue_camera.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
@@ -79,8 +80,23 @@ int main()
         MIB_EXPECT(!backend.startupDiscovery().isStopped(), "startup coordinator ready");
 
         // Camera guard: a running capture makes camera enumeration report Busy
-        // instead of touching an SDK behind a live camera.
-        MIB_REQUIRE(backend.capture().start(), "mock capture starts");
+        // instead of touching an SDK behind a live camera. A queue-backed test
+        // camera keeps capture running for as long as the test needs (the
+        // folder-backed mock can exit on its own in an empty temp data dir).
+        backend.capture().setCameraFactory([] {
+            return std::make_unique<mib::test::QueueBackedTestCamera>(
+                mib::test::QueueBackedTestCamera::Options{});
+        });
+        MIB_REQUIRE(backend.capture().start(), "test capture starts");
+        // start() returns while the lifecycle is still Starting; the guard
+        // reads isRunning(), so wait for the capture thread to publish it.
+        {
+            const auto deadline = std::chrono::steady_clock::now() + 5000ms;
+            while (!backend.capture().isRunning() && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(2ms);
+            }
+        }
+        MIB_REQUIRE(backend.capture().isRunning(), "test capture running");
         DiscoveryRequest cam;
         cam.kinds = {DeviceKind::Camera};
         cam.providers = {"mindvision"};

@@ -96,12 +96,12 @@ Cancellation: cooperative between provider steps (ports/addresses/enumeration ca
 
 ## Acceptance criteria
 
-- [ ] Fake-provider tests: zero/one/multiple, same endpoint claimed twice, stable identity vs changed index/path, separate bus addresses, mock/framegrabber filtering, partial/overflow cannot auto-connect.
-- [ ] Fault tests: busy port, incompatible settings, missing SDK, permission/open failure, malformed response, provider exception, timeout, cancellation during enumeration/probe/retry, saved preference to missing/ambiguous device.
-- [ ] Instrumented fakes assert zero operational/configuration commands during discovery; cancellation never disconnects an established connection.
-- [ ] Stress: repeated start/cancel/refresh + shutdown with in-flight jobs; exactly one terminal outcome per accepted job; no stale selection; no worker leak; bounded queues; no access after teardown; watchdog, no naked joins.
-- [ ] Qt integration: startup, manual scans, cancellation, tab destruction during scan, UI responsive while a fake provider blocks; `frontend.mainwindow_shutdown` (#417) and `frontend.mindvision_overview` (#418) still pass.
-- [ ] Headless facade/bridge: equivalent results without widgets; async discovery does not block status/cancel; contract parity (static_asserts, `cargo test` contract, `gen_bridge_contract.py --check`).
+- [x] Fake-provider tests: zero/one/multiple, same endpoint claimed twice, stable identity vs changed index/path, separate bus addresses, mock/framegrabber filtering, partial/overflow cannot auto-connect.
+- [x] Fault tests: busy port, incompatible settings, missing SDK, permission/open failure, malformed response, provider exception, timeout, cancellation during enumeration/probe/retry, saved preference to missing/ambiguous device.
+- [x] Instrumented fakes assert zero operational/configuration commands during discovery; cancellation never disconnects an established connection.
+- [x] Stress: repeated start/cancel/refresh + shutdown with in-flight jobs; exactly one terminal outcome per accepted job; no stale selection; no worker leak; bounded queues; no access after teardown; watchdog, no naked joins.
+- [x] Qt integration: startup, manual scans, cancellation, tab destruction during scan, UI responsive while a fake provider blocks; `frontend.mainwindow_shutdown` (#417) and `frontend.mindvision_overview` (#418) still pass.
+- [x] Headless facade/bridge: equivalent results without widgets; async discovery does not block status/cancel; contract parity (static_asserts, `cargo test` contract, `gen_bridge_contract.py --check`).
 - [ ] Windows fast CTest lane and docs checks pass. Linux/TSan/ASan lanes run in CI on the PR (not available on this Windows host; recorded in Progress).
 - [ ] Hardware acceptance recorded explicitly (available devices only; unavailable ones listed as untested).
 
@@ -139,77 +139,80 @@ Cancellation: cooperative between provider steps (ports/addresses/enumeration ca
 
 Files: `include/backend/discovery/DeviceDiscoveryTypes.h`, `IDeviceDiscoveryProvider.h`, `DeviceDiscoveryService.h`, `src/backend/discovery/DeviceDiscoveryService.cpp`, `tests/support/fake_discovery_providers.h`, `tests/backend/device_discovery_service_test.cpp`, `src/backend/CMakeLists.txt`, `tests/CMakeLists.txt`.
 
-- [ ] Write `device_discovery_service_test.cpp` covering: request validation (empty kinds, retry > 10, delay > 60 s, deadline > 10 min give `InvalidRequest`), zero/one/multiple candidates, dedup by persistent identity across changed `sdkIndex`/`systemPath`, separate `busAddress` on one port are distinct, two providers claiming one endpoint give `Ambiguous`, overflow (300 candidates) gives `overflow && !complete`, coalescing of identical running requests, `kMaxConcurrentJobs` gives `TooManyJobs`, retained job eviction, snapshot returns while a provider blocks, cancel unblocks a blocked provider and yields exactly one terminal state, shutdown with a job in flight yields `Cancelled` and `activeWorkerCount()==0`, observer receives exactly one terminal notification per job and none after shutdown.
-- [ ] Run `ctest --test-dir build-ninja -R backend.device_discovery_service`; expected: build failure (types missing).
-- [ ] Implement types/interface/service; register sources in CMake; `add_test(backend.device_discovery_service ... LABELS "backend;concurrency;stress" TIMEOUT 60)`.
-- [ ] Build + run: PASS. Commit `feat(discovery): add DeviceDiscoveryService job core with fake-provider tests`.
+- [x] Write `device_discovery_service_test.cpp` covering: request validation (empty kinds, retry > 10, delay > 60 s, deadline > 10 min give `InvalidRequest`), zero/one/multiple candidates, dedup by persistent identity across changed `sdkIndex`/`systemPath`, separate `busAddress` on one port are distinct, two providers claiming one endpoint give `Ambiguous`, overflow (300 candidates) gives `overflow && !complete`, coalescing of identical running requests, `kMaxConcurrentJobs` gives `TooManyJobs`, retained job eviction, snapshot returns while a provider blocks, cancel unblocks a blocked provider and yields exactly one terminal state, shutdown with a job in flight yields `Cancelled` and `activeWorkerCount()==0`, observer receives exactly one terminal notification per job and none after shutdown.
+- [x] Run `ctest --test-dir build-ninja -R backend.device_discovery_service`; expected: build failure (types missing).
+- [x] Implement types/interface/service; register sources in CMake; `add_test(backend.device_discovery_service ... LABELS "backend;concurrency;stress" TIMEOUT 60)`.
+- [x] Build + run: PASS. Commit `feat(discovery): add DeviceDiscoveryService job core with fake-provider tests`.
 
 ### Task 2: Fault semantics
 
 Files: `tests/backend/device_discovery_fault_test.cpp`, service tweaks.
 
-- [ ] Test: provider throws gives `ProviderException` error and `Completed` with `complete=false`; provider-reported Busy/OpenFailed/PermissionDenied/MalformedResponse/MissingSdk/Unsupported preserved verbatim per provider; deadline exceeded between providers gives `Failed` + `Timeout` with partial candidates retained; cancellation during initial delay, during provider, during retry delay each gives `Cancelled` promptly (gated on progress, not ms); retry policy re-runs providers until an identified candidate appears (attempt/maxAttempts visible), stops on cancel.
-- [ ] Run (FAIL), implement, run (PASS), commit `test(discovery): fault-injection coverage for discovery jobs`.
+- [x] Test: provider throws gives `ProviderException` error and `Completed` with `complete=false`; provider-reported Busy/OpenFailed/PermissionDenied/MalformedResponse/MissingSdk/Unsupported preserved verbatim per provider; deadline exceeded between providers gives `Failed` + `Timeout` with partial candidates retained; cancellation during initial delay, during provider, during retry delay each gives `Cancelled` promptly (gated on progress, not ms); retry policy re-runs providers until an identified candidate appears (attempt/maxAttempts visible), stops on cancel.
+- [x] Run (FAIL), implement, run (PASS), commit `test(discovery): fault-injection coverage for discovery jobs`.
 
 ### Task 3: Startup policy + coordinator
 
 Files: `StartupDiscoveryPolicy.{h,cpp}`, `StartupDiscoveryCoordinator.{h,cpp}`, `tests/backend/startup_discovery_policy_test.cpp`.
 
-- [ ] Policy tests: `decideCamera`: Completed+complete with exactly one physical identified camera gives `SelectUnique`; framegrabbers/synthetic ignored; 2 cameras give `RequireSelection`; zero gives `NoneFound`; incomplete/cancelled/failed give `NotDecidable`. `decideNanopositioner`: unique identified gives `ConnectUnique`; ambiguous or more than one gives `RequireSelection` even when one matches the saved preference; zero gives `Retry` while attempts remain else `NotFound`; incomplete gives `NotDecidable`.
-- [ ] Coordinator tests (fake providers + fake select/connect hooks): sequence camera (initialDelay) then nanopositioner; retry count x delay; hooks called exactly once; `stop()` before completion gives no hook calls; stale generation (a manual job finishing after a newer startup job) ignored; `runCameraStep()` refused while a camera job is running; camera skipped when guard says configured/capturing.
-- [ ] Implement, PASS, commit `feat(discovery): startup selection/connection policy and coordinator`.
+- [x] Policy tests: `decideCamera`: Completed+complete with exactly one physical identified camera gives `SelectUnique`; framegrabbers/synthetic ignored; 2 cameras give `RequireSelection`; zero gives `NoneFound`; incomplete/cancelled/failed give `NotDecidable`. `decideNanopositioner`: unique identified gives `ConnectUnique`; ambiguous or more than one gives `RequireSelection` even when one matches the saved preference; zero gives `Retry` while attempts remain else `NotFound`; incomplete gives `NotDecidable`.
+- [x] Coordinator tests (fake providers + fake select/connect hooks): sequence camera (initialDelay) then nanopositioner; retry count x delay; hooks called exactly once; `stop()` before completion gives no hook calls; stale generation (a manual job finishing after a newer startup job) ignored; `runCameraStep()` refused while a camera job is running; camera skipped when guard says configured/capturing.
+- [x] Implement, PASS, commit `feat(discovery): startup selection/connection policy and coordinator`.
 
 ### Task 4: Real providers with injectable seams + instrumented fakes
 
 Files: `providers/*.{h,cpp}`, `tests/backend/device_discovery_providers_test.cpp`.
 
-- [ ] Tests: `CameraEnumerationProvider` maps `DiscoveredCamera`/`DiscoveredFramegrabber` fields verbatim, MindVision `cameraIndex` is `SessionLocal`, eGrabber `interfaceID/deviceID` is `Persistent`; enumerator throwing gives `ProviderException`; guard busy gives `Busy`. `NanopositionerProvider` orders preferred first, filters by requested vendor, copies baud/address, probes each endpoint once, records unidentified endpoints, cancels between endpoints, maps `identifiedVendors.size()>1` to `Ambiguous`; instrumented fake backend records zero `setVoltage` calls; an `AutofocusService` connected through a fake factory stays connected across a cancelled discovery. `PulseGeneratorProvider` over the fake Modbus bench (from `illuminated_live_test`): generator/ModbusDevice/Error hits mapped, `writeCommands==0`, busy port gives `Busy`, missing port gives `OpenFailed`, corrupt frames give `MalformedResponse`, cancel between addresses, request without `serialScope` gives `InvalidRequest`.
-- [ ] Implement, PASS, commit `feat(discovery): camera, nanopositioner and pulse-generator providers`.
+- [x] Tests: `CameraEnumerationProvider` maps `DiscoveredCamera`/`DiscoveredFramegrabber` fields verbatim, MindVision `cameraIndex` is `SessionLocal`, eGrabber `interfaceID/deviceID` is `Persistent`; enumerator throwing gives `ProviderException`; guard busy gives `Busy`. `NanopositionerProvider` orders preferred first, filters by requested vendor, copies baud/address, probes each endpoint once, records unidentified endpoints, cancels between endpoints, maps `identifiedVendors.size()>1` to `Ambiguous`; instrumented fake backend records zero `setVoltage` calls; an `AutofocusService` connected through a fake factory stays connected across a cancelled discovery. `PulseGeneratorProvider` over the fake Modbus bench (from `illuminated_live_test`): generator/ModbusDevice/Error hits mapped, `writeCommands==0`, busy port gives `Busy`, missing port gives `OpenFailed`, corrupt frames give `MalformedResponse`, cancel between addresses, request without `serialScope` gives `InvalidRequest`.
+- [x] Implement, PASS, commit `feat(discovery): camera, nanopositioner and pulse-generator providers`.
 
 ### Task 5: AppBackend wiring, shutdown order, stress
 
 Files: `AppBackend.{h,cpp}`, `tests/backend/device_discovery_stress_test.cpp`.
 
-- [ ] Tests: `AppBackend::deviceDiscovery()`/`startupDiscovery()` exist; shutdown with a blocked fake job in flight terminates it `Cancelled` before `autofocus().disconnect()` is reached (order asserted via observer + fake backend timeline); stress loop of start/cancel/refresh across 4 threads with watchdog; exactly one terminal per job; `activeWorkerCount()==0` after shutdown; second `shutdown()` idempotent.
-- [ ] Implement wiring (declare `deviceDiscovery_` after camera/autofocus/serial services; construct after `pulseGeneratorService_`; register providers; camera guard). PASS. Commit `feat(discovery): wire DeviceDiscoveryService into AppBackend shutdown order`.
+- [x] Tests: `AppBackend::deviceDiscovery()`/`startupDiscovery()` exist; shutdown with a blocked fake job in flight terminates it `Cancelled` before `autofocus().disconnect()` is reached (order asserted via observer + fake backend timeline); stress loop of start/cancel/refresh across 4 threads with watchdog; exactly one terminal per job; `activeWorkerCount()==0` after shutdown; second `shutdown()` idempotent.
+- [x] Implement wiring (declare `deviceDiscovery_` after camera/autofocus/serial services; construct after `pulseGeneratorService_`; register providers; camera guard). PASS. Commit `feat(discovery): wire DeviceDiscoveryService into AppBackend shutdown order`.
 
 ### Task 6: Qt adapter migration (DeviceInitManager, ConnectTab, NanopositionerTab)
 
 Files: `include/frontend/system/DiscoverySubscription.h`, `DeviceInitManager.{h,cpp}`, `ConnectTab.{h,cpp}`, `NanopositionerTab.{h,cpp}`, `tests/frontend/device_discovery_ui_test.cpp`, `src/frontend/qt/CMakeLists.txt`.
 
-- [ ] Test (offscreen): backend with fake blocking camera provider + fake nanopositioner provider; `DeviceInitManager::start()`; a 50 ms QTimer keeps ticking while the provider blocks (UI responsive); release gives `ConnectTab` camera list and selection status; `NanopositionerTab` shows identifying status then the auto-connect result; Refresh while running is coalesced (single job); destroying `ConnectTab` mid-scan does not crash; `stop()` cancels and returns promptly.
-- [ ] Implement: `DeviceInitManager` keeps its public API, drives the coordinator, no QtConcurrent/QFutureWatcher, no tab-owned workers; `ConnectTab::populateDevices` consumes snapshots (no synchronous enumeration in the constructor or Refresh); `tryAutoConnect` fallback removed; `NanopositionerTab` Refresh consumes snapshot candidates (identified + unidentified) for its combo.
-- [ ] PASS plus `frontend.config_tabs_state`, `frontend.mainwindow_shutdown`, `frontend.mindvision_overview`, `frontend.camera_action_state` still PASS. Commit `refactor(frontend): drive camera/nanopositioner discovery through the backend service`.
+- [x] Test (offscreen): backend with fake blocking camera provider + fake nanopositioner provider; `DeviceInitManager::start()`; a 50 ms QTimer keeps ticking while the provider blocks (UI responsive); release gives `ConnectTab` camera list and selection status; `NanopositionerTab` shows identifying status then the auto-connect result; Refresh while running is coalesced (single job); destroying `ConnectTab` mid-scan does not crash; `stop()` cancels and returns promptly.
+- [x] Implement: `DeviceInitManager` keeps its public API, drives the coordinator, no QtConcurrent/QFutureWatcher, no tab-owned workers; `ConnectTab::populateDevices` consumes snapshots (no synchronous enumeration in the constructor or Refresh); `tryAutoConnect` fallback removed; `NanopositionerTab` Refresh consumes snapshot candidates (identified + unidentified) for its combo.
+- [x] PASS plus `frontend.config_tabs_state`, `frontend.mainwindow_shutdown`, `frontend.mindvision_overview`, `frontend.camera_action_state` still PASS. Commit `refactor(frontend): drive camera/nanopositioner discovery through the backend service`.
 
 ### Task 7: Pulse-generator scan migration (ConfigTabs)
 
 Files: `ConfigTabs.{h,cpp}`, extend `device_discovery_ui_test.cpp`.
 
-- [ ] Test: Scan toggles a `PulseGenerator` job with explicit scope; Cancel gives job `Cancelled` and the button restored; result auto-fills the first generator address; destroying ConfigTabs during a scan is safe; no `std::thread` member remains.
-- [ ] Implement, PASS, commit `refactor(frontend): route pulse-generator scans through DeviceDiscoveryService`.
+- [x] Test: Scan toggles a `PulseGenerator` job with explicit scope; Cancel gives job `Cancelled` and the button restored; result auto-fills the first generator address; destroying ConfigTabs during a scan is safe; no `std::thread` member remains.
+- [x] Implement, PASS, commit `refactor(frontend): route pulse-generator scans through DeviceDiscoveryService`.
 
 ### Task 8: Facade + bridge + desktop contract
 
 Files: `BackendFacade.{h,cpp}`, `crates/mib-bridge/src/{lib.rs,shim.h,shim.cpp}`, `crates/mib-bridge/contract/bridge-contract.json`, `crates/mib-bridge/tests/contract.rs`, `desktop/src-tauri/src/lib.rs`, `desktop/src/{bridge.ts,bridgeContract.ts,App.tsx}`, `tests/backend/discovery_facade_test.cpp`.
 
-- [ ] Facade test: `startDeviceDiscovery` returns jobId; `fetchDeviceDiscovery` polls; `cancelDeviceDiscovery`; `fetchCameraSelection` returns while a fake provider blocks; legacy `fetchCameraDiscovery` (worker) equals async result + mock entry; facade `shutdown()` drains jobs.
-- [ ] Bridge: add `BridgeDiscoveryStart/BridgeDiscoveredDevice/BridgeDiscoverySnapshot`, fns `start_camera_discovery`, `fetch_device_discovery`, `cancel_device_discovery`; remove `fetch_camera_discovery` from shim/Rust/Tauri/TS; contract JSON gains `discovery_job_states`, `discovery_device_kinds`, `discovery_identification_statuses`, `discovery_error_kinds`; ABI 14; static_asserts; contract test updated; `gen_bridge_contract.py`; `bridge.ts` helpers `startCameraDiscovery/fetchDeviceDiscovery/cancelDeviceDiscovery` + `pollCameraDiscovery()` returning the existing `CameraDiscovery` shape; `App.tsx` uses it.
-- [ ] Verify: `ctest -R backend.discovery_facade`, `python scripts/gen_bridge_contract.py --check`, desktop `npx tsc --noEmit` and `npx vitest run`, `cargo test -p mib-bridge` (Windows link manifest; if not producible locally record the exact blocker). Commit `feat(bridge): asynchronous device discovery contract (ABI 14)`.
+- [x] Facade test: `startDeviceDiscovery` returns jobId; `fetchDeviceDiscovery` polls; `cancelDeviceDiscovery`; `fetchCameraSelection` returns while a fake provider blocks; legacy `fetchCameraDiscovery` (worker) equals async result + mock entry; facade `shutdown()` drains jobs.
+- [x] Bridge: add `BridgeDiscoveryStart/BridgeDiscoveredDevice/BridgeDiscoverySnapshot`, fns `start_camera_discovery`, `fetch_device_discovery`, `cancel_device_discovery`; remove `fetch_camera_discovery` from shim/Rust/Tauri/TS; contract JSON gains `discovery_job_states`, `discovery_device_kinds`, `discovery_identification_statuses`, `discovery_error_kinds`; ABI 14; static_asserts; contract test updated; `gen_bridge_contract.py`; `bridge.ts` helpers `startCameraDiscovery/fetchDeviceDiscovery/cancelDeviceDiscovery` + `pollCameraDiscovery()` returning the existing `CameraDiscovery` shape; `App.tsx` uses it.
+- [x] Verify: `ctest -R backend.discovery_facade`, `python scripts/gen_bridge_contract.py --check`, desktop `npx tsc --noEmit` and `npx vitest run`, `cargo test -p mib-bridge` (Windows link manifest; if not producible locally record the exact blocker). Commit `feat(bridge): asynchronous device discovery contract (ABI 14)`.
 
 ### Task 9: e2e lifecycle test
 
 Files: `tests/integration/e2e_device_discovery_lifecycle_test.cpp`, `tests/CMakeLists.txt`.
 
-- [ ] Real `AppBackend` (mock camera mode, fake serial factory, fake nanopositioner backend factory injected through `AutofocusService`), fake providers registered next to the real ones: startup coordinator selects nothing for camera (configured mock), connects the unique nanopositioner through the real `AutofocusService`, explicit pulse-generator scan over the fake Modbus bench reports the generator without writes; cancelled scan leaves the nanopositioner connected; shutdown with a blocked job terminates it `Cancelled` before hardware release; candidate accounting asserted (candidates == identified + unidentified + ambiguous). Labels `integration;e2e`, watchdog 60 s.
-- [ ] PASS, commit `test(discovery): end-to-end lifecycle over AppBackend`.
+- [x] Real `AppBackend` (mock camera mode, fake serial factory, fake nanopositioner backend factory injected through `AutofocusService`), fake providers registered next to the real ones: startup coordinator selects nothing for camera (configured mock), connects the unique nanopositioner through the real `AutofocusService`, explicit pulse-generator scan over the fake Modbus bench reports the generator without writes; cancelled scan leaves the nanopositioner connected; shutdown with a blocked job terminates it `Cancelled` before hardware release; candidate accounting asserted (candidates == identified + unidentified + ambiguous). Labels `integration;e2e`, watchdog 60 s.
+- [x] PASS, commit `test(discovery): end-to-end lifecycle over AppBackend`.
 
 ### Task 10: Consolidation, docs, vault
 
-- [ ] Remove dead code (QtConcurrent discovery, `ConnectTab` fallback, `pgScanThread_`); update vault notes (new `services/DeviceDiscoveryService.md`, `_MOC`, `README`, `Agent-Onboarding`, `architecture/AppBackend`, `Threading-Model`, `Rust-Bridge`, `frontend/System-Utilities`, `ConnectTab`, `NanopositionerTab`, `ConfigTabs`, `MainWindow`, `services/CameraControlService`, `AutofocusService`, `PulseGeneratorService`, `SerialBus`), `Recent-Work`, task note, tech-debt tracker (TD-10 refresh, bridge Windows verification, provider limitations).
-- [ ] `python scripts/check_docs.py`, `python scripts/check_screenshots.py`, full Windows fast lane + integration lane. Update this plan's Progress; keep `Status: active` until hardware acceptance is recorded, then move to `completed/`.
+- [x] Remove dead code (QtConcurrent discovery, `ConnectTab` fallback, `pgScanThread_`); update vault notes (new `services/DeviceDiscoveryService.md`, `_MOC`, `README`, `Agent-Onboarding`, `architecture/AppBackend`, `Threading-Model`, `Rust-Bridge`, `frontend/System-Utilities`, `ConnectTab`, `NanopositionerTab`, `ConfigTabs`, `MainWindow`, `services/CameraControlService`, `AutofocusService`, `PulseGeneratorService`, `SerialBus`), `Recent-Work`, task note, tech-debt tracker (TD-10 refresh, bridge Windows verification, provider limitations).
+- [x] `python scripts/check_docs.py`, `python scripts/check_screenshots.py`, full Windows fast lane + integration lane. Update this plan's Progress; keep `Status: active` until hardware acceptance is recorded, then move to `completed/`.
 
 ## Progress
 
 - [x] 2026-09-15: Baseline build (`windows-ninja`, MindVision on) and fast lane green: 111/111.
-- [ ] Task 1 to Task 10 (see checkboxes above).
-- Hardware acceptance: not yet run (no rig attached to this host).
+- [x] 2026-09-16: Tasks 1–10 implemented on `feat/device-discovery-service` (commits `feat(discovery): …`, `refactor(frontend): …`, `feat(bridge): …`); every test file was run red before its implementation.
+- [x] 2026-09-16: Windows fast lane 118/118 (after the two test-fixture fixes noted in the task note), integration lane 11/11 incl. `integration.e2e_device_discovery_lifecycle`, `frontend.device_discovery`, Rust `cargo test --release` 16/16 via `tools/gen_bridge_link_manifest_ninja.py`, `gen_bridge_contract.py --check` in sync, desktop `tsc --noEmit` clean + vitest 124/124, `scripts/check_docs.py` clean.
+- [ ] Linux backend CI, TSan, ASan/UBSan (run by the PR workflows; not available on this Windows host).
+- [ ] Hardware acceptance: **not run** (no rig attached to this host) — tracked as TD-11; the plan stays `active` until it is recorded.
+- Decision addenda (2026-09-16): `Started` outcomes were added to the coordinator so adapters can flip their scanning state without polling; a compiled-out SDK (`MissingSdk`) is treated as known-absent coverage by the policy so a mock-only bench still reaches "No cameras found"; two vendor protocols identifying one persistent adapter merge into a single `Ambiguous` candidate listing both claimants. When the camera step is skipped at startup (camera already configured, e.g. mock mode), the nanopositioner job still waits the camera delay, exactly as the pre-#419 timer did, so a close right after launch cancels a queued job instead of draining a serial probe (`frontend.mainwindow_shutdown` under parallel load exposed this).

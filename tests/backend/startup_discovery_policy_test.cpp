@@ -323,6 +323,47 @@ int main()
                    "cancelled worker drains");
     }
 
+    // ---- coordinator: a skipped camera step keeps the startup delay ---------------------
+    {
+        // Pre-#419 the nanopositioner step ran from the 400 ms camera timer even
+        // when the camera was already configured; a close right after launch
+        // therefore never had to wait for a serial probe. Preserve that.
+        watchdog.mark("skip-keeps-delay");
+        DeviceDiscoveryService service;
+        auto* np = new ScriptedProvider("nanopositioner", DeviceKind::Nanopositioner);
+        np->result.candidates = {nano("np-a", "COM7")};
+        service.registerProvider(std::unique_ptr<ScriptedProvider>(np));
+        std::atomic<int> connects{0};
+        StartupDiscoveryCoordinator::Hooks hooks;
+        hooks.cameraConfigured = [] { return true; };
+        hooks.captureRunning = [] { return false; };
+        hooks.nanopositionerConnected = [] { return false; };
+        hooks.selectCamera = [](const DiscoveredDevice&) { return true; };
+        hooks.connectNanopositioner = [&](const backend::nanopositioner::Endpoint&) { ++connects; return true; };
+        hooks.preferredNanopositioner = [] { return std::optional<backend::nanopositioner::Endpoint>{}; };
+        StartupDiscoveryCoordinator::Timing timing;
+        timing.cameraDelay = 300ms;
+        timing.nanopositionerRetries = 0;
+        StartupDiscoveryCoordinator coordinator(service, hooks, timing);
+        coordinator.start();
+        MIB_EXPECT(coordinator.nanopositionerStepRunning(), "nanopositioner step owns a job right away");
+        std::this_thread::sleep_for(100ms);
+        MIB_EXPECT(np->calls.load() == 0, "no serial probe before the startup delay elapsed");
+        const auto t0 = std::chrono::steady_clock::now();
+        coordinator.stop();
+        MIB_REQUIRE(waitFor([&] { return service.activeWorkerCount() == 0; }), "queued job cancels promptly");
+        const auto stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        MIB_EXPECT(stopMs < 150, "stopping during the delay does not wait for a probe");
+        MIB_EXPECT(np->calls.load() == 0 && connects.load() == 0, "nothing probed or connected after an early stop");
+
+        // Without a stop, the step runs after the delay and connects.
+        StartupDiscoveryCoordinator later(service, hooks, timing);
+        later.start();
+        MIB_REQUIRE(waitFor([&] { return connects.load() == 1; }), "delayed nanopositioner step connects");
+        MIB_EXPECT(np->calls.load() == 1, "one probe pass after the delay");
+        later.stop();
+    }
+
     // ---- coordinator: executor runs actions where the shell wants them ----------------
     {
         watchdog.mark("executor");

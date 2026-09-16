@@ -9,11 +9,25 @@
 
 - **`DesktopInstance`** — [[DesktopInstance]] reserves one desktop session
   before hardware initialization and retains ownership through teardown.
-- **`DeviceInitManager::stop()`** — terminal discovery cancellation. Stops
-  retries, ignores queued completion results, skips subsequent probes, and
-  waits for current workers to release temporary devices before backend
-  shutdown. Called on accepted main-window close, application quit, and
-  manager destruction. Vendor calls already in flight must still return.
+- **`DeviceInitManager`** (#419) — Qt **adapter** over the backend
+  `StartupDiscoveryCoordinator` ([[../services/DeviceDiscoveryService]]).
+  Same public surface as before (`start`, `stop`, `runCameraStep`,
+  `setConnectTab`, `setNanopositionerTab`, `cameraInitFinished`,
+  `nanopositionerInitFinished`) but it owns no worker: it installs a
+  UI-thread executor (queued `QMetaObject::invokeMethod`) so the policy's
+  selection/connection hooks and outcome listeners run on the UI thread,
+  forwards the saved nanopositioner preference from `NanopositionerTab`, and
+  maps outcomes onto the tabs (`showDiscoveryResults`, `apply*Selection`,
+  `reportNoCameras`, `reportMultipleCameras`, `reportDiscoveryProblem`,
+  `showDiscoveryCandidates`, `applyAutoConnectResult`, status text).
+  `stop()` is terminal: it stops the coordinator (cancels owned jobs, no
+  further hooks); draining the workers is `AppBackend::shutdown()`'s job.
+  The destructor detaches every callback before the QObject goes away.
+- **`DiscoverySubscription`** (`include/frontend/system/DiscoverySubscription.h`)
+  — RAII observer on `DeviceDiscoveryService` that re-posts snapshots to a
+  QObject with a queued invocation; destroying it removes the observer and
+  blocks until an in-flight callback returns, so a tab that owns one as a
+  member can be destroyed mid-scan. Used by `ConnectTab` and `ConfigTabs`.
 
 - **`QtLogBridge`** — `mib::frontend::installQtLogBridge()` installs a
   `qInstallMessageHandler` that routes Qt's process-wide log stream into spdlog
@@ -103,9 +117,9 @@
   `camera.frame_delivery_mode` is classified medium-risk in profile diffs
   (`isMediumRiskPath`), and `configSourceForPath` buckets `camera.*` paths as
   Config (not "Camera script", which only matches the `camera_script*` keys).
-- **`DeviceInitManager`** — runs [[../services/CameraControlService]]
-  `discoverCameras()` off the UI thread. Emits a signal when discovery
-  completes (including "no cameras found").
+- **`DeviceInitManager`** — see the System section above (#419 adapter);
+  emits `cameraInitFinished` / `nanopositionerInitFinished` when the startup
+  policy reports an outcome (including "no cameras found").
 - **`PlaybackPanel`** — the scrub+preview widget used by [[PreviewPage]]
   and [[MainWindow]]. Owns a `QImage` display, ROI overlay, scrub slider,
   display-FPS throttle, and overlay mode (Off/Mask/Contours/Both).
