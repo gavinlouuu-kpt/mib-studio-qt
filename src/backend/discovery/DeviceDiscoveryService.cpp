@@ -124,31 +124,60 @@ void consolidate(std::vector<DiscoveredDevice>& candidates, std::vector<Discover
         const auto key = identityKey(c);
         const auto it = byIdentity.find(key);
         if (it != byIdentity.end()) {
+            // Same physical device seen twice (changed SDK index/OS path, or
+            // two vendor protocols on one adapter): keep one entry, union the
+            // claims, and never let a merge hide a conflict.
             auto& keep = out[it->second];
             keep.diagnostics.insert(keep.diagnostics.end(), c.diagnostics.begin(),
                                     c.diagnostics.end());
+            bool claimsDiffer = false;
+            for (const auto& claim : c.claimedBy) {
+                if (std::find(keep.claimedBy.begin(), keep.claimedBy.end(), claim) ==
+                    keep.claimedBy.end()) {
+                    keep.claimedBy.push_back(claim);
+                    claimsDiffer = true;
+                }
+            }
+            if (c.identification == IdentificationStatus::Ambiguous ||
+                (claimsDiffer && keep.identification == IdentificationStatus::Identified &&
+                 c.identification == IdentificationStatus::Identified)) {
+                keep.identification = IdentificationStatus::Ambiguous;
+            } else if (keep.identification == IdentificationStatus::Unidentified &&
+                       c.identification == IdentificationStatus::Identified) {
+                keep.identification = IdentificationStatus::Identified;
+            }
             continue;
         }
         byIdentity.emplace(key, out.size());
         out.push_back(std::move(c));
     }
 
-    // Conflicting identified claims for one physical endpoint (same kind,
-    // same path/address) from different providers stay ambiguous.
+    // More than one identified candidate for one physical endpoint (same
+    // kind, same path/address) is a conflict, whether the claims come from
+    // different providers or from one provider's vendor protocols: mark them
+    // ambiguous and list every claimant instead of silently choosing.
+    std::map<std::string, std::size_t> identifiedAt;
     std::map<std::string, std::set<std::string>> claims;
     for (const auto& c : out) {
         if (c.endpoint.systemPath.empty()) continue;
-        if (c.identification != IdentificationStatus::Identified) continue;
+        if (c.identification != IdentificationStatus::Identified &&
+            c.identification != IdentificationStatus::Ambiguous) {
+            continue;
+        }
+        ++identifiedAt[endpointKey(c)];
         claims[endpointKey(c)].insert(c.providerId);
+        for (const auto& claim : c.claimedBy) claims[endpointKey(c)].insert(claim);
     }
     for (auto& c : out) {
         if (c.endpoint.systemPath.empty()) continue;
-        const auto it = claims.find(endpointKey(c));
-        if (it == claims.end() || it->second.size() < 2) continue;
+        const auto key = endpointKey(c);
+        const auto n = identifiedAt.find(key);
+        if (n == identifiedAt.end() || n->second < 2) continue;
         if (c.identification == IdentificationStatus::Identified) {
             c.identification = IdentificationStatus::Ambiguous;
         }
-        c.claimedBy.assign(it->second.begin(), it->second.end());
+        const auto& set = claims[key];
+        c.claimedBy.assign(set.begin(), set.end());
     }
     for (auto& c : out) {
         if (c.claimedBy.empty() && c.identification == IdentificationStatus::Identified) {

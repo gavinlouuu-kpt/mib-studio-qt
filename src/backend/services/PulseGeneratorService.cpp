@@ -263,6 +263,14 @@ PulseGeneratorService::LinkError PulseGeneratorService::lastError() const {
 std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
     const std::string& portName, const SerialSettings& settings, uint8_t from, uint8_t to,
     const std::atomic<bool>& cancel, int perAddressTimeoutMs, LinkError* error) {
+    return scanBus(portName, settings, from, to,
+                   [&cancel] { return cancel.load(std::memory_order_relaxed); },
+                   perAddressTimeoutMs, error);
+}
+
+std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
+    const std::string& portName, const SerialSettings& settings, uint8_t from, uint8_t to,
+    const std::function<bool()>& cancelled, int perAddressTimeoutMs, LinkError* error) {
     std::vector<ScanHit> hits;
     if (error) {
         *error = LinkError::None;
@@ -292,7 +300,7 @@ std::vector<PulseGeneratorService::ScanHit> PulseGeneratorService::scanBus(
     }
 
     for (int addr = from; addr <= to; ++addr) {
-        if (cancel.load(std::memory_order_relaxed)) {
+        if (cancelled && cancelled()) {
             SPDLOG_INFO("PulseGeneratorService: scan cancelled at addr {}", addr);
             break;
         }

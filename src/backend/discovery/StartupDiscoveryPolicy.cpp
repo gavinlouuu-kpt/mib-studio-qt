@@ -6,7 +6,16 @@ namespace backend::discovery {
 
 bool isDecidable(const DiscoverySnapshot& snapshot)
 {
-    return snapshot.state == JobState::Completed && snapshot.complete && !snapshot.overflow;
+    if (snapshot.state != JobState::Completed || snapshot.overflow) return false;
+    if (snapshot.complete) return true;
+    // A compiled-out SDK is known-absent coverage: nothing could ever be
+    // found there, so the remaining providers' result is still decidable.
+    // Any other gap (busy, timeout, exception, ...) is unknown coverage.
+    if (snapshot.errors.empty()) return false;
+    for (const auto& e : snapshot.errors) {
+        if (e.kind != ErrorKind::MissingSdk && e.kind != ErrorKind::Unsupported) return false;
+    }
+    return true;
 }
 
 CameraDecision decideCamera(const DiscoverySnapshot& snapshot)

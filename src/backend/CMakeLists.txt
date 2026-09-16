@@ -243,6 +243,9 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/DeviceDiscoveryService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryPolicy.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/CameraEnumerationProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/NanopositionerProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/PulseGeneratorProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp

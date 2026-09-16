@@ -139,6 +139,10 @@ mib_add_backend_test_executable(startup_discovery_policy_test backend/startup_di
 mib_backend_test_link(startup_discovery_policy_test PRIVATE Threads::Threads)
 add_test(NAME backend.startup_discovery_policy COMMAND $<TARGET_FILE:mib_backend_tests> startup_discovery_policy_test)
 set_tests_properties(backend.startup_discovery_policy PROPERTIES LABELS "backend;discovery;concurrency" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_providers_test backend/device_discovery_providers_test.cpp)
+mib_backend_test_link(device_discovery_providers_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_providers COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_providers_test)
+set_tests_properties(backend.device_discovery_providers PROPERTIES LABELS "backend;discovery;nanopositioner;serial" TIMEOUT 60)
 
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)

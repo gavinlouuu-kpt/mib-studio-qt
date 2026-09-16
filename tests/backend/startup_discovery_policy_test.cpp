@@ -100,6 +100,19 @@ int main()
         partial.complete = false;
         MIB_EXPECT(decideCamera(partial).kind == CameraDecision::Kind::NotDecidable,
                    "incomplete coverage never selects");
+        // A compiled-out SDK is known-absent coverage, not unknown coverage:
+        // the decision stays possible (a mock-only bench still gets "No
+        // cameras found"), while any other error keeps the result undecidable.
+        auto missingSdk = completedSnapshot({cam});
+        missingSdk.complete = false;
+        missingSdk.errors.push_back({"egrabber", ErrorKind::MissingSdk, "compiled out", ""});
+        MIB_EXPECT(decideCamera(missingSdk).kind == CameraDecision::Kind::SelectUnique,
+                   "missing-SDK coverage gaps do not block a decision");
+        auto busy = completedSnapshot({cam});
+        busy.complete = false;
+        busy.errors.push_back({"mindvision", ErrorKind::Busy, "capturing", ""});
+        MIB_EXPECT(decideCamera(busy).kind == CameraDecision::Kind::NotDecidable,
+                   "a busy provider leaves the result undecidable");
         auto overflow = completedSnapshot({cam});
         overflow.overflow = true;
         MIB_EXPECT(decideCamera(overflow).kind == CameraDecision::Kind::NotDecidable,
