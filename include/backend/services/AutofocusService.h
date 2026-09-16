@@ -26,6 +26,10 @@ public:
     explicit AutofocusService(BackendFactory backendFactory);
     ~AutofocusService();
 
+    // Test seam: swap the driver factory (e.g. a fake OEABT backend) on a
+    // service owned by AppBackend. Refused (returns false) while connected.
+    bool setBackendFactory(BackendFactory backendFactory);
+
     // Connection management
     bool connect(const backend::nanopositioner::Endpoint& endpoint);
     bool connect(int comPort, int baudRate, unsigned char deviceAddress);

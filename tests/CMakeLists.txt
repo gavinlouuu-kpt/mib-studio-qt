@@ -126,6 +126,32 @@ set_tests_properties(backend.nanopositioner_discovery PROPERTIES LABELS "backend
 add_test(NAME backend.autofocus_math COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_math_test)
 set_tests_properties(backend.autofocus_math PROPERTIES LABELS "backend" TIMEOUT 30)
 
+# Issue #419: backend device-discovery job service over fake providers.
+mib_add_backend_test_executable(device_discovery_service_test backend/device_discovery_service_test.cpp)
+mib_backend_test_link(device_discovery_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_service COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_service_test)
+set_tests_properties(backend.device_discovery_service PROPERTIES LABELS "backend;discovery;concurrency;stress" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_fault_test backend/device_discovery_fault_test.cpp)
+mib_backend_test_link(device_discovery_fault_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_fault COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_fault_test)
+set_tests_properties(backend.device_discovery_fault PROPERTIES LABELS "backend;discovery;fault-injection" TIMEOUT 60)
+mib_add_backend_test_executable(startup_discovery_policy_test backend/startup_discovery_policy_test.cpp)
+mib_backend_test_link(startup_discovery_policy_test PRIVATE Threads::Threads)
+add_test(NAME backend.startup_discovery_policy COMMAND $<TARGET_FILE:mib_backend_tests> startup_discovery_policy_test)
+set_tests_properties(backend.startup_discovery_policy PROPERTIES LABELS "backend;discovery;concurrency" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_providers_test backend/device_discovery_providers_test.cpp)
+mib_backend_test_link(device_discovery_providers_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_providers COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_providers_test)
+set_tests_properties(backend.device_discovery_providers PROPERTIES LABELS "backend;discovery;nanopositioner;serial" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_stress_test backend/device_discovery_stress_test.cpp)
+mib_backend_test_link(device_discovery_stress_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_stress COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_stress_test)
+set_tests_properties(backend.device_discovery_stress PROPERTIES LABELS "backend;discovery;concurrency;stress" TIMEOUT 120)
+mib_add_backend_test_executable(discovery_facade_test backend/discovery_facade_test.cpp)
+mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
+set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
+
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
 set_tests_properties(backend.oeabt_protocol PROPERTIES LABELS "backend;nanopositioner" TIMEOUT 30)
@@ -533,6 +559,14 @@ mib_backend_test_link(e2e_pipeline_stress_test PRIVATE Threads::Threads)
 # fixed; see backend.trigger_service_start_stop_race for the focused guard.)
 add_test(NAME integration.e2e_pipeline_stress COMMAND $<TARGET_FILE:mib_backend_tests> e2e_pipeline_stress_test)
 set_tests_properties(integration.e2e_pipeline_stress PROPERTIES LABELS "integration;e2e" TIMEOUT 120)
+
+# Issue #419: end-to-end device-discovery lifecycle over a real AppBackend
+# (startup policy, explicit pulse-generator scan on the fake Modbus bench,
+# cancel, shutdown ordering versus hardware release).
+mib_add_backend_test_executable(e2e_device_discovery_lifecycle_test integration/e2e_device_discovery_lifecycle_test.cpp)
+mib_backend_test_link(e2e_device_discovery_lifecycle_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_device_discovery_lifecycle COMMAND $<TARGET_FILE:mib_backend_tests> e2e_device_discovery_lifecycle_test)
+set_tests_properties(integration.e2e_device_discovery_lifecycle PROPERTIES LABELS "integration;e2e;discovery" TIMEOUT 120)
 
 mib_add_backend_test_executable(e2e_live_view_latency_test integration/e2e_live_view_latency_test.cpp)
 mib_backend_test_link(e2e_live_view_latency_test PRIVATE Threads::Threads)

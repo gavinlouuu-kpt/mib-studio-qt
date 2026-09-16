@@ -14,7 +14,11 @@
 - [[SqliteService]] — small metadata DB
 
 ## Hardware I/O
-- [[CameraControlService]] — GenICam script apply, device reset, discovery
+- [[DeviceDiscoveryService]] — backend discovery **jobs** (bounded, cancellable,
+  provider-based) + startup selection/connection policy; every camera /
+  nanopositioner / pulse-generator scan runs through it (#419, ADR 0005)
+- [[CameraControlService]] — GenICam script apply, device reset, SDK enumeration
+  (wrapped by the discovery providers)
 - [[AutofocusService]] — backend-neutral nanopositioner control (OEABT serial
   on Linux/Windows; CoreMOR XMT on Windows)
 - [[TriggerService]] — camera digital-output pulse on target-group detection

@@ -41,7 +41,11 @@ the same bus is a second `PulseGeneratorService` instance built on the same
   (corrupt/possible duplicate-address collision). A port that cannot be
   acquired at all is reported through the `error` out-param so the GUI can
   distinguish it from a silent bus. Synchronous — callers run it off the GUI
-  thread ([[../frontend/ConfigTabs]] uses a worker `std::thread`).
+  thread: since #419 the `pulse-generator` provider of
+  [[DeviceDiscoveryService]] calls it on a discovery worker (a
+  `std::function<bool()>` cancel overload exists for that; the atomic-flag
+  overload delegates to it), and [[../frontend/ConfigTabs]] starts a
+  discovery job with an explicit `SerialScanScope` instead of owning a thread.
 - `identityLooksLikeGenerator(data)` — plausibility gate on the 12-register
   identity read: per channel, frequency raw must be 0 or within
   [400 Hz, 40 kHz]×100 and duty raw ≤ 10000. Both `connect()` (refuses with

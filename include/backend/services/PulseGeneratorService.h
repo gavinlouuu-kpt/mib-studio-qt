@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -116,6 +117,13 @@ public:
     // through `error` (so callers can distinguish that from a silent bus).
     std::vector<ScanHit> scanBus(const std::string& portName, const SerialSettings& settings,
                                  uint8_t from, uint8_t to, const std::atomic<bool>& cancel,
+                                 int perAddressTimeoutMs = 250, LinkError* error = nullptr);
+    // Same scan with a callback cancellation token (checked between
+    // addresses) so the discovery service can drive it without a thread
+    // that flips an atomic (issue #419). `cancelled` may be empty.
+    std::vector<ScanHit> scanBus(const std::string& portName, const SerialSettings& settings,
+                                 uint8_t from, uint8_t to,
+                                 const std::function<bool()>& cancelled,
                                  int perAddressTimeoutMs = 250, LinkError* error = nullptr);
 
     // Read-only discovery for `port: "auto"` profiles: probes every USB serial

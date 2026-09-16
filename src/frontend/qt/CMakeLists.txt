@@ -250,6 +250,11 @@ if(BUILD_TESTING)
     # seeds <exe>/../include from :/defaults on a fresh build tree — without
     # the resource the constructor blocked headless tests in a modal warning).
     include(MIBTestRunner)
+    # Issue #419: Qt adapter over the backend device-discovery service
+    # (fake providers, offscreen widgets, responsiveness, coalescing, stop).
+    mib_test_runner_add(mib_frontend_tests device_discovery_ui_test ${PROJECT_SOURCE_DIR}/tests/frontend/device_discovery_ui_test.cpp)
+    add_test(NAME frontend.device_discovery COMMAND $<TARGET_FILE:mib_frontend_tests> device_discovery_ui_test)
+    set_tests_properties(frontend.device_discovery PROPERTIES LABELS "frontend;discovery;concurrency;safety" TIMEOUT 180)
     mib_test_runner_add(mib_frontend_tests mindvision_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/mindvision_overview_test.cpp)
     add_test(NAME frontend.mindvision_overview COMMAND $<TARGET_FILE:mib_frontend_tests> mindvision_overview_test)
     set_tests_properties(frontend.mindvision_overview PROPERTIES LABELS "frontend;camera;safety" TIMEOUT 120)

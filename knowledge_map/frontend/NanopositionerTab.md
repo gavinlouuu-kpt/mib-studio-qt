@@ -30,6 +30,19 @@
   selection. Legacy `autofocus_com_port` migrates to CoreMOR.
 
 
+### Discovery service (#419)
+
+Refresh only emits `discoveryRequested()`; `DeviceInitManager` runs a
+nanopositioner job on [[../services/DeviceDiscoveryService]] and delivers
+the result through `showDiscoveryCandidates(snapshot)`, which fills the
+combo with identified **and** unidentified endpoints (identity is still
+verified only when connecting). The tab no longer calls
+`AutofocusService::availableEndpoints()` itself: until the first job runs the
+combo is empty and the status says "Click Refresh to search for
+nanopositioners." `setDiscoveryRunning(true)` is applied on the `Started`
+outcome and cleared on any terminal outcome; the retry text is
+"Searching for nanopositioner... (retry n/m)" as before.
+
 ### PR #413 discovery integration
 
 The shared vendor registry now uses native nanopositioner endpoints and includes

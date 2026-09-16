@@ -45,6 +45,11 @@ namespace camera::mock
 }
 
 namespace backend::app { class ExperimentCoordinator; }
+namespace backend::discovery
+{
+    class DeviceDiscoveryService;
+    class StartupDiscoveryCoordinator;
+}
 
 namespace backend
 {
@@ -84,6 +89,14 @@ namespace backend
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
+        // Device discovery job service (issue #419, ADR 0005): every camera /
+        // nanopositioner / pulse-generator scan runs through it. Frontends
+        // start jobs and poll snapshots; they never enumerate hardware.
+        discovery::DeviceDiscoveryService &deviceDiscovery();
+        // Startup selection/connection policy over the discovery service.
+        // Constructed here but started by the shell (Qt adapter) so headless
+        // consumers keep today's no-auto-connect behaviour.
+        discovery::StartupDiscoveryCoordinator &startupDiscovery();
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
@@ -235,6 +248,10 @@ namespace backend
         std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
         std::unique_ptr<services::SyringePumpService> syringePumpService_;
         std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
+        // Declared after every service the providers/hooks reference so the
+        // discovery workers and the coordinator are destroyed first.
+        std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
+        std::unique_ptr<discovery::StartupDiscoveryCoordinator> startupDiscovery_;
         std::shared_ptr<playback::FrameStore> frameStore_;
 
         // Shell-injected LUT fetch config (ADR 0002).

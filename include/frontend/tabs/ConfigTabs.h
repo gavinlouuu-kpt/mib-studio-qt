@@ -1,5 +1,7 @@
 #pragma once
 
+#include "backend/discovery/DeviceDiscoveryTypes.h"
+#include "frontend/system/DiscoverySubscription.h"
 #include <QWidget>
 #include <QMap>
 #include <QVector>
@@ -146,6 +148,7 @@ private:
     void savePulseGenSettings() const;
     void restorePulseGenSettings();
     void stopPulseGenScan();
+    void onPulseGenScanFinished(const backend::discovery::DiscoverySnapshot& snapshot);
     void syncMvFormFromJson();
     void syncMvJsonFromForm();
     void clearJsonSyncIndicators();
@@ -276,9 +279,12 @@ private:
     QSpinBox* pgAddrSpin_ = nullptr;
     QPushButton* pgScanBtn_ = nullptr;
     QPushButton* pgConnectBtn_ = nullptr;
-    std::thread pgScanThread_;
-    std::atomic<bool> pgScanCancel_{false};
+    // Scan runs as a backend discovery job with an explicit port/address
+    // scope (issue #419); results return on the UI thread through the
+    // subscription. No tab-owned thread.
+    std::uint64_t pgScanJob_ = 0;
     bool pgScanRunning_ = false;
+    frontend::DiscoverySubscription pgScanSubscription_;
     QSpinBox* pgChannelSpin_ = nullptr;
     QDoubleSpinBox* pgFreqSpin_ = nullptr;
     QDoubleSpinBox* pgDutySpin_ = nullptr;

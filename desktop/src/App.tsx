@@ -470,7 +470,7 @@ export default function App() {
 
   const refreshCameraState = useCallback(async () => {
     try {
-      setDiscovery(await bridge.fetchCameraDiscovery());
+      setDiscovery(await bridge.discoverCameras());
       setCamSelection(await bridge.fetchCameraSelection());
     } catch (e) {
       append(`discovery error: ${e}`);

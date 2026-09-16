@@ -37,6 +37,15 @@ From `CMakePresets.json`:
   rebuild 26 s with sccache warm — versus 56 s no-op / 107 s header touch
   / ~10 min full under the VS generator. Set `MIB_MINDVISION_SDK_ROOT` in
   the environment before the first configure of a new build dir.
+- **Rust bridge on the Ninja tree** (2026-09-16): `python
+  tools/gen_bridge_link_manifest_ninja.py` reads `build-ninja/build.ninja`
+  (the `mib_backend_smoke_test` link line and `mib_backend` compile settings)
+  and writes `build-ninja/mib-bridge-link-manifest.json`; then, from a VS 2022
+  x64 shell with `MIB_BRIDGE_NO_CMAKE=1`,
+  `MIB_BRIDGE_LINK_MANIFEST=<repo>\build-ninja\mib-bridge-link-manifest.json`
+  and `build-ninja\Release` on `PATH`, `cargo test --release` in
+  `crates/mib-bridge` runs the contract tests against the fast local build
+  (the VS-generator `tools/gen_bridge_link_manifest.py` path still works).
 - **sccache**: `cmake/MIBCompilerSettings.cmake` uses `sccache` as the
   C/C++ compiler launcher whenever it is on PATH (`winget install
   Mozilla.sccache`; override with `-DMIB_COMPILER_LAUNCHER=`). Release

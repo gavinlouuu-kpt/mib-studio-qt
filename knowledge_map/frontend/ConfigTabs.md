@@ -78,15 +78,21 @@
   separates **Port / bus settings / Slave address / Channel**: a
   `QSerialPortInfo`-populated port dropdown (system name + description +
   USB S/N + VID:PID) with an explicit Refresh, baud/data/parity/stop combos,
-  Modbus address spin, a read-only **Scan** (addresses 1–16, worker thread,
-  cancelable, classifies generators vs generic Modbus devices vs
+  Modbus address spin, a read-only **Scan** (addresses 1–16; since #419 a
+  [[../services/DeviceDiscoveryService]] job with an explicit
+  `SerialScanScope` — no tab-owned thread — cancelable through
+  `cancelDiscovery`, classifies generators vs generic Modbus devices vs
   corrupt/collision responses; never writes), Connect (typed `LinkError`
   status on failure), channel, frequency 400–40000 Hz defaulting to 5000 Hz
   = the 5000 fps bench trigger rate, duty %, Set/Start/Stop. Settings persist
   in the QSettings group `PulseGenerator` (port name **plus USB
   serial/VID/PID** so a renamed `/dev/ttyUSB*` node re-resolves when the
   identity matches exactly one port; ambiguous matches force operator
-  selection). `~ConfigTabs` cancels/joins any running scan thread.
+  selection). `~ConfigTabs` cancels a running scan job and drops its
+  `DiscoverySubscription` (blocking only on an in-flight callback; the
+  service drains workers at backend shutdown). Widget object names
+  `pgScanBtn`, `pgAddrSpin`, `mvGeneratorPort` are used by
+  `frontend.device_discovery`.
 - MindVision "Trigger & strobe parameters" form: combos/spinboxes for
   trigger mode, edge type, exposure (0.8–838860 µs = MV-XGC51 sensor range),
   trigger delay/jitter/count, strobe mode/delay/width/polarity. **Two-way

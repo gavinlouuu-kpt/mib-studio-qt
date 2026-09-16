@@ -60,7 +60,8 @@ fn abi_version_is_stable() {
     // shared-backend experiment lifecycle (#372): command actions, start/
     // stop outcomes, run completion states, readiness gate statuses, typed
     // ExperimentStatus companions and fetch_experiment_readiness.
-    assert_eq!(ffi::bridge_abi_version(), 13);
+    // v14 the asynchronous device-discovery jobs (#419, ADR 0005).
+    assert_eq!(ffi::bridge_abi_version(), 14);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
@@ -398,14 +399,40 @@ fn camera_discovery_and_selection_contract() {
     let mut bridge = ffi::new_backend_bridge();
     assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
 
-    // Discovery always contains the synthetic mock entry (camera_type 2);
-    // hardware lists are empty without the SDKs on this platform.
-    let discovery = bridge.pin_mut().fetch_camera_discovery();
-    assert!(discovery.valid);
+    // Discovery is a job (ABI 14): start, poll to a terminal state. A camera
+    // job always carries the synthetic mock entry (camera_type 2, synthetic);
+    // hardware candidates are empty without the SDKs on this platform.
+    let start = bridge.pin_mut().start_camera_discovery();
+    assert!(start.accepted && start.job_id != 0, "camera discovery job refused: {}", start.reason);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let snapshot = loop {
+        let s = bridge.pin_mut().fetch_device_discovery(start.job_id);
+        assert!(s.valid, "discovery snapshot invalid for job {}", start.job_id);
+        // 2 Completed, 3 Cancelled, 4 Failed (contract discovery_job_states).
+        if s.state >= 2 {
+            break s;
+        }
+        assert!(Instant::now() < deadline, "camera discovery job did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // On platforms with camera SDKs the job Completes (2); without them every
+    // provider reports MissingSdk and the job is Failed (4). Both are terminal
+    // and the facade still appends the synthetic mock entry.
     assert!(
-        discovery.cameras.iter().any(|c| c.camera_type == 2),
+        snapshot.state == 2 || snapshot.state == 4,
+        "camera discovery job should reach a terminal state (Completed=2 or Failed=4), got {}",
+        snapshot.state,
+    );
+    assert!(
+        snapshot.candidates.iter().any(|c| c.camera_type == 2 && c.synthetic && c.kind == 0),
         "mock camera entry missing from discovery"
     );
+    assert!(!bridge.pin_mut().cancel_device_discovery(start.job_id), "cancel of an ended job is refused");
+    assert!(!bridge.pin_mut().fetch_device_discovery(987_654_321).valid, "unknown job is invalid");
+    // A refused request reports a contract discovery_error_kinds value.
+    let empty = ffi::BridgeDiscoveryRequest::default();
+    let refused = bridge.pin_mut().start_device_discovery(&empty);
+    assert!(!refused.accepted && refused.rejection == 1, "empty request is InvalidRequest (1)");
 
     // The boot selection is authoritative: on platforms without the camera
     // SDKs the backend falls back to a mock factory at initialize, so the
@@ -587,6 +614,15 @@ fn rust_enums_match_contract_json() {
         ("experiment_stop_outcomes", &[("Accepted", 0), ("NotActive", 1), ("Busy", 2)]),
         ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
         ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
+        // ABI 14 discovery groups (#419): pinned in C++ by static_asserts in shim.cpp.
+        ("discovery_device_kinds", &[("Camera", 0), ("Framegrabber", 1), ("Nanopositioner", 2), ("PulseGenerator", 3)]),
+        ("discovery_job_states", &[("Queued", 0), ("Running", 1), ("Completed", 2), ("Cancelled", 3), ("Failed", 4)]),
+        ("discovery_identity_strengths", &[("None", 0), ("SessionLocal", 1), ("Persistent", 2)]),
+        ("discovery_identification_statuses", &[("Identified", 0), ("Unidentified", 1), ("Ambiguous", 2), ("Unsupported", 3)]),
+        ("discovery_error_kinds", &[("None", 0), ("InvalidRequest", 1), ("Busy", 2), ("OpenFailed", 3), ("PermissionDenied", 4),
+                                    ("Timeout", 5), ("MalformedResponse", 6), ("Unsupported", 7), ("MissingSdk", 8),
+                                    ("ProviderException", 9), ("Cancelled", 10), ("Overflow", 11), ("ShuttingDown", 12),
+                                    ("TooManyJobs", 13)]),
     ];
     for (group, values) in groups {
         let obj = contract[*group].as_object().unwrap_or_else(|| panic!("missing contract group {group}"));

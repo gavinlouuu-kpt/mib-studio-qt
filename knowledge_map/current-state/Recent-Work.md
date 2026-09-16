@@ -1,5 +1,27 @@
 # Recent Work
 
+## 2026-09-16 — Device discovery service with providers (#419)
+
+Device discovery moved into a backend job service
+([[../services/DeviceDiscoveryService]], ADR 0005): bounded, cancellable,
+coalescing jobs over providers that wrap the existing MindVision / eGrabber /
+nanopositioner / pulse-generator enumeration and read-only identity probes,
+provider-aware dedup with explicit ambiguity, overflow that never looks like
+a unique match, and a separate startup selection/connection policy with the
+pre-#419 defaults (camera after 400 ms, nanopositioner 3 × 4 s). The Qt
+`DeviceInitManager` is now an adapter (no QtConcurrent workers), ConnectTab /
+NanopositionerTab / ConfigTabs consume snapshots (no UI-thread enumeration or
+fallback, no tab-owned scan thread), and `AppBackend::shutdown()` drains
+discovery before releasing serial hardware. Facade and bridge gained the
+asynchronous discovery trio (ABI 14) replacing `fetch_camera_discovery`.
+Windows fast lane and integration lane green (118 / 11 tests), Rust contract
+16/16 on the Ninja tree via the new `tools/gen_bridge_link_manifest_ninja.py`,
+desktop `tsc` + vitest 124/124. Linux/sanitizer lanes run on PR #421 (GCC aggregate-init fix `9dfee2a`).
+Partial hardware acceptance on the rig PC: startup discovery, auto-selection
+(MindVision), auto-connection (OEABT on COM7), shutdown ordering,
+close-during-scan, and relaunch verified; GUI-interactive tests not claimed.
+See [[../task/2026-09-15-device-discovery-service]].
+
 ## 2026-09-15 — Desktop hardware ownership and shutdown
 
 Added per-user duplicate-launch protection before hardware initialization,

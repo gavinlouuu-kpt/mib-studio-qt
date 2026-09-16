@@ -12,6 +12,7 @@
 - `task/2026-08-24-exporter-stability.md` — #344 exporter phase
 
 ### Camera lifecycle & hardware SDKs
+- [[../task/2026-09-15-device-discovery-service]] — backend discovery job service, providers, startup policy, ABI 14 bridge (#419)
 - [[../task/2026-09-15-mindvision-overview-roi]] - full-sensor overview, 400 Hz trigger, experiment ROI persistence and rig acceptance
 - [[../task/2026-09-15-hardware-shutdown]] — duplicate desktop protection, explicit disconnects, bounded Windows serial drain
 - `task/2025-11-14-safe-start-stop-egrabber.md`

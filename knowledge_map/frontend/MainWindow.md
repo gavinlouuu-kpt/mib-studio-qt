@@ -2,9 +2,11 @@
 
 ## Desktop exit and hardware release (2026-09-15)
 
-Accepted close stops `DeviceInitManager`, calls explicit backend shutdown,
-and queues application quit even if a detached top-level widget remains.
-`aboutToQuit` also stops discovery and the backend for other quit paths.
+Accepted close stops `DeviceInitManager` (which stops the backend startup
+discovery policy, #419), calls explicit backend shutdown (which drains the
+discovery workers before releasing hardware), and queues application quit
+even if a detached top-level widget remains. `aboutToQuit` also stops
+discovery and the backend for other quit paths.
 Cancelled experiment-close confirmation leaves discovery and hardware running.
 Regression: `frontend.mainwindow_shutdown`. See [[DesktopInstance]] and
 [[../task/2026-09-15-hardware-shutdown]].
@@ -84,7 +86,8 @@ capture generation for an illuminated profile, using a fake camera factory.
 - `onTabChanged(index)` — starts/stops the realtime loop when entering or
   leaving the experiment-related tabs (ExperimentController state).
 - `onNoCamerasFound` — shows a friendly dialog when
-  `DeviceInitManager` reports empty discovery.
+  `DeviceInitManager` reports empty discovery (the startup policy's
+  `NoneFound` outcome; an incomplete scan reports its reason instead).
 - Startup restores the persisted native core through
   [[ProcessingCoreDialog]] before capture begins. A restore/pin failure is
   visible in the status bar and experiment start remains blocked.

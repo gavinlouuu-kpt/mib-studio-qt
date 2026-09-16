@@ -548,6 +548,96 @@ namespace backend::bridge
         std::vector<BackendDiscoveredFramegrabber> framegrabbers;
     };
 
+    // ---- Device discovery jobs (issue #419, ADR 0005; ABI 14) ----
+    // Frontend-neutral mirror of backend::discovery. Integer fields are
+    // contract-pinned (bridge-contract.json): `kinds`/`kind` =
+    // discovery_device_kinds, `state` = discovery_job_states,
+    // `identification` = discovery_identification_statuses,
+    // `identityStrength` = discovery_identity_strengths, error/rejection
+    // kinds = discovery_error_kinds. `cameraType` keeps the camera_types
+    // meaning (0 EGrabber, 1 MindVision, 2 Mock; -1 when not a camera).
+    struct BackendDiscoveryRequest
+    {
+        std::vector<int> kinds;
+        std::vector<std::string> providers;
+        bool hasSerialScope{false};
+        std::string serialPortName;
+        int baudRate{9600};
+        int dataBits{8};
+        char parity{'N'};
+        int stopBits{1};
+        int addressFrom{1};
+        int addressTo{16};
+        int perAddressTimeoutMs{250};
+        int initialDelayMs{0};
+        int deadlineMs{60000};
+        int maxRetries{0};
+        int retryDelayMs{0};
+        std::string origin;
+    };
+
+    struct BackendDiscoveryStart
+    {
+        bool accepted{false};
+        bool coalesced{false};
+        std::uint64_t jobId{0};
+        int rejection{0};
+        std::string reason;
+    };
+
+    struct BackendDiscoveredDevice
+    {
+        int kind{0};
+        std::string providerId;
+        std::string displayName;
+        std::string systemPath;
+        std::string persistentId;
+        int sdkIndex{-1};
+        int interfaceIndex{-1};
+        int deviceIndex{-1};
+        int streamIndex{-1};
+        int busAddress{-1};
+        std::string stableIdentity;
+        int identityStrength{0};
+        int identification{1};
+        std::vector<std::string> claimedBy;
+        std::vector<std::string> capabilities;
+        bool synthetic{false};
+        // Legacy camera/framegrabber payload (verbatim BE-2 fields).
+        int cameraType{-1};
+        std::string interfaceId;
+        std::string deviceId;
+        std::string streamId;
+        std::string modelName;
+        std::string firmwareVersion;
+        std::string label;
+    };
+
+    struct BackendDiscoveryError
+    {
+        std::string providerId;
+        int kind{0};
+        std::string message;
+        std::string endpoint;
+    };
+
+    struct BackendDiscoverySnapshot
+    {
+        bool valid{false};
+        std::uint64_t jobId{0};
+        std::uint64_t generation{0};
+        int state{0};
+        bool complete{false};
+        bool overflow{false};
+        int attempt{0};
+        int maxAttempts{1};
+        std::vector<int> kinds;
+        std::vector<BackendDiscoveredDevice> candidates;
+        std::vector<BackendDiscoveryError> errors;
+        std::vector<std::string> providersRun;
+        std::string origin;
+    };
+
     // Authoritative selected-device snapshot (BE-2). `mode` values are
     // contract-pinned: 0 None, 1 Mock, 2 Hardware, 3 MindVision.
     struct BackendCameraSelection
@@ -698,9 +788,18 @@ namespace backend::bridge
         // rows across the valid+invalid ring buffers (metrics only, no images).
         bool fetchMonitoringSnapshot(BackendMonitoringSnapshot &out, std::size_t maxRows) const;
         bool fetchTriggerStatus(BackendTriggerStatus &out) const;
-        // Camera discovery/selection pulls (BE-2). Discovery enumerates
-        // EGrabber + MindVision devices (empty without the SDKs) plus the
-        // synthetic mock entry; the selection snapshot is authoritative.
+        // Asynchronous device discovery (issue #419, ABI 14): start a job on
+        // the backend service, poll its bounded snapshot, cancel it. Camera
+        // snapshots additionally carry the synthetic mock entry (camera type
+        // 2, `synthetic=true`) so the shell can always offer the mock source.
+        // None of these block on a running probe.
+        BackendDiscoveryStart startDeviceDiscovery(const BackendDiscoveryRequest &request);
+        bool cancelDeviceDiscovery(std::uint64_t jobId);
+        bool fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out) const;
+        // Compatibility wrapper (BE-2 shape) over the discovery service: runs
+        // a camera+framegrabber job and BLOCKS until it ends (bounded by the
+        // job deadline). Worker-thread callers only; never call from a UI
+        // thread. New consumers use the asynchronous trio above.
         bool fetchCameraDiscovery(BackendCameraDiscovery &out) const;
         bool fetchCameraSelection(BackendCameraSelection &out) const;
         bool fetchPumpStatus(int pumpId, BackendPumpStatus &out) const;
