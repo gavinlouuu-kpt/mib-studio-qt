@@ -86,7 +86,7 @@ public:
     using CameraListener = std::function<void(const CameraOutcome&)>;
     using NanopositionerListener = std::function<void(const NanopositionerOutcome&)>;
 
-    StartupDiscoveryCoordinator(DeviceDiscoveryService& service, Hooks hooks, Timing timing = {});
+    StartupDiscoveryCoordinator(DeviceDiscoveryService& service, Hooks hooks, Timing timing = Timing{});
     ~StartupDiscoveryCoordinator(); // stop()
 
     StartupDiscoveryCoordinator(const StartupDiscoveryCoordinator&) = delete;
