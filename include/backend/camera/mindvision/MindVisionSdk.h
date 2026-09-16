@@ -47,6 +47,10 @@ struct SdkFrameInfo {
 
 struct SdkCapability {
     bool monoSensor{false};
+    int sensorWidth{0};
+    int sensorHeight{0};
+    int minWidth{1};
+    int minHeight{1};
 };
 
 struct SdkFrameStatistic {

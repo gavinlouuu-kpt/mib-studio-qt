@@ -69,9 +69,13 @@ MindVisionCamera::InFlightOp::~InFlightOp()
 
 MindVisionCamera::MindVisionCamera(
     int cameraIndex, std::string configPath, std::shared_ptr<const SdkOps> sdk,
-    std::shared_ptr<backend::services::IlluminationSession> illumination)
-    : illumination_(std::move(illumination)), sdk_(sdk ? std::move(sdk) : mv::realMindVisionSdk()),
-      cameraIndex_(cameraIndex), configPath_(std::move(configPath)) {}
+    std::shared_ptr<backend::services::IlluminationSession> illumination, bool overview,
+    std::optional<mv::Config> sessionConfig,
+    std::function<void(const mv::SdkCapability&)> capabilitySink)
+    : overview_(overview), sessionConfig_(std::move(sessionConfig)),
+      capabilitySink_(std::move(capabilitySink)), illumination_(std::move(illumination)),
+      sdk_(sdk ? std::move(sdk) : mv::realMindVisionSdk()), cameraIndex_(cameraIndex),
+      configPath_(std::move(configPath)) {}
 
 MindVisionCamera::~MindVisionCamera()
 {
@@ -113,10 +117,20 @@ mv::SessionGeometry MindVisionCamera::sessionGeometry() const
 
 bool MindVisionCamera::applyJsonConfig(int hCamera)
 {
-    if (rigActive_) {
+    if (rigActive_ || overview_ || sessionConfig_) {
         configuredTriggerMode_ = rigConfig_.triggerMode;
         if (!sdk_->applyConfig(hCamera, rigConfig_)) {
-            recordFailure("mindvision.config_apply_failed", "Camera rejected saved rig setup");
+            int actualW = 0, actualH = 0;
+            std::string message =
+                "Camera rejected requested ROI or camera settings; check the camera log";
+            if (sdk_->getImageResolution(hCamera, actualW, actualH) == mv::kSdkSuccess &&
+                (actualW != rigConfig_.width || actualH != rigConfig_.height)) {
+                message = "Requested ROI " + std::to_string(rigConfig_.width) + "x" +
+                          std::to_string(rigConfig_.height) + " is unsupported; camera reports " +
+                          std::to_string(actualW) + "x" + std::to_string(actualH) +
+                          ". Choose supported ROI dimensions in Overview.";
+            }
+            recordFailure("mindvision.config_apply_failed", message);
             return false;
         }
         return true;
@@ -169,8 +183,8 @@ bool MindVisionCamera::start()
     lastFailure_ = {};
     sessionGeometry_ = {};
 
-    rigConfig_ = {};
-    if (!configPath_.empty()) {
+    rigConfig_ = sessionConfig_.value_or(mv::Config{});
+    if (!sessionConfig_ && !configPath_.empty()) {
         std::ifstream file(configPath_, std::ios::binary);
         const auto parsed = mv::parseConfig(std::string(std::istreambuf_iterator<char>(file), {}));
         if (!file || !parsed.ok) {
@@ -180,7 +194,13 @@ bool MindVisionCamera::start()
         }
         rigConfig_ = parsed.config;
     }
+    if (overview_ && !sessionConfig_) rigConfig_ = mv::overviewConfig(rigConfig_);
     if (rigConfig_.illuminatedLive) {
+        const auto timingError = mv::detail::validateLiveViewTiming(rigConfig_);
+        if (!timingError.empty() || rigConfig_.liveView.dutyPercent >= 100.0) {
+            recordFailure("mindvision.overview_timing", "Invalid overview timing: " + timingError);
+            return false;
+        }
         if (!illumination_ || !illumination_->prepare || !illumination_->enable ||
             !illumination_->disable) {
             recordFailure(
@@ -278,6 +298,27 @@ bool MindVisionCamera::start()
                           "CameraGetCapability failed (status=" + std::to_string(status) + ")");
     }
 
+    if (capabilitySink_) capabilitySink_(cap);
+    if (overview_) {
+        if (cap.sensorWidth <= 0 || cap.sensorHeight <= 0 || cap.sensorWidth > 65535 ||
+            cap.sensorHeight > 65535)
+            return failClosed("mindvision.overview_geometry",
+                              "Camera did not report full sensor dimensions");
+        rigConfig_.width = cap.sensorWidth;
+        rigConfig_.height = cap.sensorHeight;
+        rigConfig_.offsetX = rigConfig_.offsetY = 0;
+        SPDLOG_INFO("MindVision Overview: full sensor {}x{}, trigger {} Hz, display cap 50 fps",
+                    rigConfig_.width, rigConfig_.height,
+                    rigConfig_.illuminatedLive ? rigConfig_.liveView.frequencyHz : 0.0);
+    }
+    if (rigConfig_.requireExactGeometry && cap.sensorWidth > 0 &&
+        (rigConfig_.width < cap.minWidth || rigConfig_.height < cap.minHeight ||
+         rigConfig_.width > cap.sensorWidth || rigConfig_.height > cap.sensorHeight ||
+         rigConfig_.offsetX > cap.sensorWidth - rigConfig_.width ||
+         rigConfig_.offsetY > cap.sensorHeight - rigConfig_.height))
+        return failClosed("mindvision.roi_bounds",
+                          "Experiment ROI is outside the camera sensor bounds");
+
     if (!applyJsonConfig(hCamera_))
     {
         // applyJsonConfig recorded the specific failure.
@@ -292,6 +333,11 @@ bool MindVisionCamera::start()
         return failClosed("mindvision.resolution_failed",
                           "CameraGetImageResolution failed (status=" + std::to_string(status) + ")");
     }
+
+    if (rigConfig_.requireExactGeometry &&
+        (width != rigConfig_.width || height != rigConfig_.height))
+        return failClosed("mindvision.roi_readback",
+                          "Camera resolution does not match the requested mode");
 
     // Required Mono8 output (issue #366): the pipeline is mono8-only and the
     // destination buffer is sized 1 byte/px. A failure to set the format is a

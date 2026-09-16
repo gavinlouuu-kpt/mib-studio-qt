@@ -117,7 +117,13 @@ std::shared_ptr<const SdkOps> buildRealOps()
     ops->getCapability = [](int handle, SdkCapability& cap) -> SdkStatus {
         tSdkCameraCapbility c{};
         const CameraSdkStatus st = CameraGetCapability(handle, &c);
-        if (st == CAMERA_STATUS_SUCCESS) cap.monoSensor = c.sIspCapacity.bMonoSensor != 0;
+        if (st == CAMERA_STATUS_SUCCESS) {
+            cap.monoSensor = c.sIspCapacity.bMonoSensor != 0;
+            cap.sensorWidth = c.sResolutionRange.iWidthMax;
+            cap.sensorHeight = c.sResolutionRange.iHeightMax;
+            cap.minWidth = c.sResolutionRange.iWidthMin;
+            cap.minHeight = c.sResolutionRange.iHeightMin;
+        }
         return st;
     };
     ops->armIllumination = [](int h, const Config& c) -> bool {

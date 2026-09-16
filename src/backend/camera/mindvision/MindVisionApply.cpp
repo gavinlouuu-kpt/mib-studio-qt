@@ -105,7 +105,23 @@ bool applyConfigToHandle(int hCamera, const Config& cfg, std::string* firstError
                CameraSetStrobeDelayTime(hCamera, static_cast<UINT>(cfg.strobeDelayUs)));
     warnOnFail("CameraSetStrobePolarity", CameraSetStrobePolarity(hCamera, cfg.strobePolarity));
 
-    return cfg.illuminatedLive ? success : true;
+    if (cfg.requireExactGeometry) {
+        tSdkImageResolution actual{};
+        const auto st = CameraGetImageResolution(hCamera, &actual);
+        if (st != CAMERA_STATUS_SUCCESS || actual.iWidth != cfg.width ||
+            actual.iHeight != cfg.height || actual.iWidthFOV != cfg.width ||
+            actual.iHeightFOV != cfg.height || actual.iHOffsetFOV != cfg.offsetX ||
+            actual.iVOffsetFOV != cfg.offsetY) {
+            success = false;
+            if (firstError && firstError->empty())
+                *firstError = "Camera ROI readback differs from selection";
+            SPDLOG_ERROR(
+                "MindVision ROI readback differs: requested {}x{} @ {},{}; actual {}x{} @ {},{}",
+                cfg.width, cfg.height, cfg.offsetX, cfg.offsetY, actual.iWidth, actual.iHeight,
+                actual.iHOffsetFOV, actual.iVOffsetFOV);
+        }
+    }
+    return (cfg.illuminatedLive || cfg.requireExactGeometry) ? success : true;
 }
 
 } // namespace backend::camera::mindvision
