@@ -86,6 +86,7 @@ struct DeviceDiscoveryService::Job {
     std::atomic<bool> cancel{false};
     DiscoverySnapshot snapshot;   // guarded by service mutex_
     bool done{false};             // terminal state published (mutex_)
+    std::atomic<bool> exited{false}; // worker function returned; safe to join
     std::thread worker;           // joined by reap/shutdown/destructor
 };
 
@@ -191,11 +192,10 @@ DeviceDiscoveryService::~DeviceDiscoveryService()
     {
         std::lock_guard<std::mutex> lk(mutex_);
         for (auto& [id, job] : jobs_) {
-            if (job->worker.joinable()) threads.push_back(std::move(job->worker));
+            if (job->worker.joinable() && job->worker.get_id() != std::this_thread::get_id()) {
+                threads.push_back(std::move(job->worker));
+            }
         }
-        threads.insert(threads.end(), std::make_move_iterator(reaped_.begin()),
-                       std::make_move_iterator(reaped_.end()));
-        reaped_.clear();
     }
     for (auto& t : threads) {
         if (t.joinable()) t.join();
@@ -320,6 +320,11 @@ StartResult DeviceDiscoveryService::startDiscovery(const DiscoveryRequest& reque
         return result;
     }
 
+    // Join workers that already exited and drop over-retained jobs. Joins
+    // happen without the service lock so a worker still notifying observers
+    // (which may call back into this service) can never deadlock us.
+    reapFinished();
+
     std::lock_guard<std::mutex> lk(mutex_);
     if (shutdown_) {
         result.rejection = ErrorKind::ShuttingDown;
@@ -335,7 +340,6 @@ StartResult DeviceDiscoveryService::startDiscovery(const DiscoveryRequest& reque
             return result;
         }
     }
-    reapFinishedLocked();
 
     const std::string key = coalesceKey(request);
     std::size_t active = 0;
@@ -467,11 +471,17 @@ void DeviceDiscoveryService::shutdownDiscovery()
         shutdown_ = true;
         for (auto& [id, job] : jobs_) {
             if (!job->done) job->cancel.store(true);
-            if (job->worker.joinable()) threads.push_back(std::move(job->worker));
+            if (!job->worker.joinable()) continue;
+            if (job->worker.get_id() == std::this_thread::get_id()) {
+                // shutdownDiscovery() from inside an observer/provider: the
+                // caller's own worker cannot be joined here; the destructor
+                // or a later shutdown from another thread reaps it.
+                SPDLOG_ERROR("DeviceDiscoveryService: shutdown called from discovery worker of job {}",
+                             id);
+                continue;
+            }
+            threads.push_back(std::move(job->worker));
         }
-        threads.insert(threads.end(), std::make_move_iterator(reaped_.begin()),
-                       std::make_move_iterator(reaped_.end()));
-        reaped_.clear();
         if (first) {
             SPDLOG_INFO("DeviceDiscoveryService: shutdown draining {} worker(s)", threads.size());
         }
@@ -510,20 +520,31 @@ std::size_t DeviceDiscoveryService::activeWorkerCount() const
     return n;
 }
 
-void DeviceDiscoveryService::reapFinishedLocked()
+void DeviceDiscoveryService::reapFinished()
 {
-    // Threads of published jobs exit promptly after notifying observers;
-    // joining them here keeps the handle count bounded without blocking on a
-    // probe. Threads still running stay attached to their job.
-    for (auto& t : reaped_) {
+    // Only threads whose run() returned are joined (the join is immediate);
+    // a worker still notifying observers keeps its handle until shutdown.
+    std::vector<std::thread> threads;
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        for (auto& [id, job] : jobs_) {
+            if (job->exited.load() && job->worker.joinable() &&
+                job->worker.get_id() != std::this_thread::get_id()) {
+                threads.push_back(std::move(job->worker));
+            }
+        }
+        evictRetainedLocked();
+    }
+    for (auto& t : threads) {
         if (t.joinable()) t.join();
     }
-    reaped_.clear();
-    evictRetainedLocked();
 }
 
 void DeviceDiscoveryService::evictRetainedLocked()
 {
+    // Keep the newest kMaxRetainedJobs terminal jobs; a terminal job whose
+    // worker handle is still attached (not yet joined) is never dropped so
+    // the thread stays owned.
     std::vector<std::uint64_t> terminal;
     for (const auto& [id, job] : jobs_) {
         if (job->done) terminal.push_back(id);
@@ -534,7 +555,7 @@ void DeviceDiscoveryService::evictRetainedLocked()
         terminal.erase(terminal.begin());
         auto it = jobs_.find(id);
         if (it == jobs_.end()) continue;
-        if (it->second->worker.joinable()) reaped_.push_back(std::move(it->second->worker));
+        if (it->second->worker.joinable()) continue;
         jobs_.erase(it);
     }
 }
@@ -561,12 +582,7 @@ void DeviceDiscoveryService::publish(Job& job, const DiscoverySnapshot& snapshot
     {
         std::lock_guard<std::mutex> lk(mutex_);
         job.snapshot = snapshot;
-        if (terminal) {
-            job.done = true;
-            // Hand the thread handle to the reap list so a later start/shutdown
-            // joins it; the thread itself is about to exit.
-            if (job.worker.joinable()) reaped_.push_back(std::move(job.worker));
-        }
+        if (terminal) job.done = true;
     }
     cv_.notify_all();
     notifyObservers(snapshot);
@@ -753,6 +769,7 @@ void DeviceDiscoveryService::run(std::shared_ptr<Job> jobPtr)
                 job.id, toString(finalState), snap.candidates.size(), snap.errors.size(),
                 snap.complete);
     publish(job, snap, true);
+    job.exited.store(true);
 }
 
 } // namespace backend::discovery

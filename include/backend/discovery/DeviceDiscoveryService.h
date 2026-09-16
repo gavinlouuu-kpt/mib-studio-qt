@@ -89,7 +89,7 @@ private:
     bool waitCancellable(Job& job, std::chrono::milliseconds duration);
     void publish(Job& job, const DiscoverySnapshot& snapshot, bool terminal);
     void notifyObservers(const DiscoverySnapshot& snapshot);
-    void reapFinishedLocked();
+    void reapFinished();
     void evictRetainedLocked();
     std::shared_ptr<std::mutex> resourceMutexFor(const std::string& resourceClass);
     std::vector<IDeviceDiscoveryProvider*> selectProviders(const DiscoveryRequest& request) const;
@@ -101,7 +101,6 @@ private:
     std::map<DeviceKind, ResourceGuard> guards_;
     std::map<std::string, std::shared_ptr<std::mutex>> resourceMutexes_;
     std::map<std::uint64_t, std::shared_ptr<Job>> jobs_;
-    std::vector<std::thread> reaped_;
     std::uint64_t nextJobId_{1};
     bool shutdown_{false};
 
