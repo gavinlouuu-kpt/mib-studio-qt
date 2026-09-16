@@ -1,5 +1,13 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
+if(WIN32)
+    add_executable(serial_port_win32_timeout_test backend/serial_port_win32_timeout_test.cpp)
+    target_include_directories(serial_port_win32_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32)
+    add_test(NAME backend.serial_port_win32_timeout COMMAND serial_port_win32_timeout_test)
+    set_tests_properties(backend.serial_port_win32_timeout PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 15)
+endif()
+
 # Catch a MindVision-only Windows build silently substituting the nanopositioner
 # stub merely because the EGrabber SDK is disabled.
 if(WIN32 AND MIB_ENABLE_COREMOR)
@@ -72,6 +80,9 @@ add_test(NAME backend.emodulus_lut_degenerate COMMAND $<TARGET_FILE:mib_backend_
 set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;processing")
 
 mib_add_backend_test_executable(backend_lifecycle_smoke_test backend/backend_lifecycle_smoke_test.cpp)
+mib_add_backend_test_executable(hardware_shutdown_test backend/hardware_shutdown_test.cpp)
+add_test(NAME backend.hardware_shutdown COMMAND $<TARGET_FILE:mib_backend_tests> hardware_shutdown_test)
+set_tests_properties(backend.hardware_shutdown PROPERTIES LABELS "backend;concurrency;stress" TIMEOUT 60)
 add_test(NAME backend.lifecycle_smoke COMMAND $<TARGET_FILE:mib_backend_tests> backend_lifecycle_smoke_test)
 set_tests_properties(backend.lifecycle_smoke PROPERTIES LABELS "backend")
 
@@ -171,6 +182,11 @@ mib_add_backend_test_executable(serial_bus_pty_test backend/serial_bus_pty_test.
 mib_backend_test_link(serial_bus_pty_test PRIVATE Threads::Threads)
 add_test(NAME backend.serial_bus_pty COMMAND $<TARGET_FILE:mib_backend_tests> serial_bus_pty_test)
 set_tests_properties(backend.serial_bus_pty PROPERTIES LABELS "backend" TIMEOUT 60)
+
+mib_add_backend_test_executable(mindvision_overview_mode_test backend/mindvision_overview_mode_test.cpp)
+mib_backend_test_link(mindvision_overview_mode_test PRIVATE Threads::Threads)
+add_test(NAME backend.mindvision_overview_mode COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_overview_mode_test)
+set_tests_properties(backend.mindvision_overview_mode PROPERTIES LABELS "backend;camera;safety;stress;invariant" TIMEOUT 100)
 
 mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config_test.cpp)
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_config_test)
@@ -922,6 +938,19 @@ mib_add_backend_test_executable(hw_discovery_reentry_test hardware/hw_discovery_
 mib_backend_test_link(hw_discovery_reentry_test PRIVATE Threads::Threads)
 add_test(NAME hardware.discovery_reentry COMMAND $<TARGET_FILE:mib_backend_tests> hw_discovery_reentry_test)
 set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;camera" SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+mib_add_backend_test_executable(sync_intensity_test tools/sync_intensity_test.cpp)
+add_test(NAME tools.sync_intensity COMMAND $<TARGET_FILE:mib_backend_tests> sync_intensity_test)
+set_tests_properties(tools.sync_intensity PROPERTIES LABELS "backend;tools;invariant" TIMEOUT 30)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME tools.sync_tuning
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_sync_tuning.py)
+    set_tests_properties(tools.sync_tuning PROPERTIES LABELS "tools;roundtrip;fault" TIMEOUT 60)
+endif()
+if(TARGET mib_sync_capture)
+    add_test(NAME tools.sync_capture_help COMMAND mib_sync_capture --help)
+    set_tests_properties(tools.sync_capture_help PROPERTIES LABELS "tools" TIMEOUT 15)
+endif()
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)

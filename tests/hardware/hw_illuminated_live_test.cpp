@@ -28,6 +28,7 @@
 #include "support/watchdog.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -60,6 +61,7 @@ int main(int argc, char* argv[])
     (void)argv;
     mib::test::requireDeviceEnv("MIB_TEST_ILLUMINATED_LIVE");
     const std::string profilePath = mib::test::requireDeviceEnv("MIB_MINDVISION_CONFIG");
+    const bool testModes = mib::test::envInt("MIB_TEST_OVERVIEW_MODES", 0) != 0;
     const int runSeconds = mib::test::envInt("MIB_TEST_RUN_SECONDS", 5);
     const int restarts = mib::test::envInt("MIB_TEST_RESTARTS", 1);
     mib::test::Watchdog wd(60 + (runSeconds + 30) * (restarts + 1));
@@ -85,6 +87,12 @@ int main(int argc, char* argv[])
     MIB_REQUIRE(!gen.liveViewOwned(), "generator not owned before the first start");
 
     for (int run = 0; run <= restarts; ++run) {
+        const bool overview = testModes && run % 2 == 0;
+        if (testModes) {
+            std::string error;
+            MIB_REQUIRE(backend.setMindVisionOverview(overview, &error), error.c_str());
+            MIB_EXPECT(!cap.isRunning(), "mode staging stays idle until explicit start");
+        }
         wd.mark(run == 0 ? "first start" : "restart");
         std::printf("=== run %d: start ===\n", run + 1);
         std::fflush(stdout);
@@ -105,6 +113,16 @@ int main(int argc, char* argv[])
         MIB_EXPECT(gen.getStatus().channels[static_cast<size_t>(channel)].outputEnabled,
                    "requested channel enabled after camera armed");
 
+        if (testModes) {
+            const auto actual = gen.getStatus().channels[static_cast<size_t>(channel)];
+            const auto expected = overview
+                                      ? backend::camera::mindvision::overviewConfig(profile.config)
+                                      : profile.config;
+            MIB_EXPECT(std::abs(actual.frequencyHz - expected.liveView.frequencyHz) < 0.01,
+                       "mode trigger frequency verified");
+            MIB_EXPECT(std::abs(actual.dutyPercent - expected.liveView.dutyPercent) < 0.01,
+                       "mode pulse width preserved");
+        }
         const uint64_t framesAtStart = cap.stats().framesProcessed.load();
         const auto t0 = std::chrono::steady_clock::now();
         while (std::chrono::steady_clock::now() - t0 < std::chrono::seconds(runSeconds)) {
@@ -120,6 +138,17 @@ int main(int argc, char* argv[])
         if (auto store = backend.getFrameStore()) {
             backend::playback::Frame frame;
             if (store->getLatest(frame) && !frame.data.empty()) {
+                if (testModes) {
+                    const auto sensor = backend.mindVisionSensor();
+                    const int expectedW = overview ? sensor.sensorWidth : profile.config.width;
+                    const int expectedH = overview ? sensor.sensorHeight : profile.config.height;
+                    std::printf("[mode] %s actual=%llux%llu expected=%dx%d ROI=%d,%d buffer=%zu\n",
+                                overview ? "Overview" : "Experiment", frame.width, frame.height,
+                                expectedW, expectedH, overview ? 0 : profile.config.offsetX,
+                                overview ? 0 : profile.config.offsetY, store->capacity());
+                    MIB_EXPECT(frame.width == expectedW && frame.height == expectedH,
+                               "mode frame geometry");
+                }
                 unsigned long long sum = 0;
                 for (const auto v : frame.data) sum += v;
                 meanGrey = static_cast<double>(sum) / static_cast<double>(frame.data.size());
