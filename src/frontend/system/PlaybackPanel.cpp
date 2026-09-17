@@ -23,6 +23,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QLabel>
+#include <QFontMetrics>
 #include <QMessageBox>
 #include <QStandardPaths>
 #include <limits>
@@ -34,6 +35,7 @@
 #include "backend/services/CrashReporter.h"
 #include "backend/playback/PlaybackService.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/services/DotGridService.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/app/Tools.h"
 #include "frontend/dialogs/BufferSaveDialog.h"
@@ -81,6 +83,7 @@ namespace
                              QImage *overlay,
                              QRect *imageRoi,
                              QList<PlaybackPanel::ColoredContour> *contours,
+                             PlaybackPanel::DotGridOverlay *dotGrid,
                              PlaybackPanel::FitMode *fitMode,
                              QWidget *parent = nullptr)
             : QWidget(parent),
@@ -88,6 +91,7 @@ namespace
               overlay_(overlay),
               imageRoi_(imageRoi),
               contours_(contours),
+              dotGrid_(dotGrid),
               fitMode_(fitMode) {}
 
         std::function<void(const QRect &)> onRoiSelected;
@@ -156,6 +160,41 @@ namespace
                         scaledPoly << q.toPoint();
                     }
                     p.drawPolyline(scaledPoly);
+                }
+            }
+
+            // Dot-grid wafer localization: detected dots, image-centre marker, pose text
+            if (dotGrid_ && dotGrid_->active)
+            {
+                if (dotGrid_->valid)
+                {
+                    QPen dotPen(QColor(255, 160, 0));
+                    dotPen.setWidth(1);
+                    p.setPen(dotPen);
+                    p.setBrush(Qt::NoBrush);
+                    const double r = std::max(3.0, 6.0 * scale);
+                    for (const QPointF &d : dotGrid_->dots)
+                    {
+                        const QPointF q = d * scale + topLeft;
+                        p.drawEllipse(q, r, r);
+                    }
+                    QPen centrePen(QColor(0, 220, 255));
+                    centrePen.setWidth(2);
+                    p.setPen(centrePen);
+                    const QPointF c = dotGrid_->centre * scale + topLeft;
+                    p.drawLine(c + QPointF(-14, 0), c + QPointF(14, 0));
+                    p.drawLine(c + QPointF(0, -14), c + QPointF(0, 14));
+                }
+                if (!dotGrid_->text.isEmpty())
+                {
+                    const QFontMetrics fm(p.font());
+                    const QRect textRect = fm.boundingRect(QRect(0, 0, 640, 200), Qt::AlignLeft | Qt::TextWordWrap, dotGrid_->text);
+                    const QRectF box(topLeft.x() + 8, topLeft.y() + 8, textRect.width() + 14, textRect.height() + 10);
+                    p.setPen(Qt::NoPen);
+                    p.setBrush(QColor(0, 0, 0, 150));
+                    p.drawRoundedRect(box, 4, 4);
+                    p.setPen(dotGrid_->valid ? QColor(255, 220, 120) : QColor(255, 130, 130));
+                    p.drawText(box.adjusted(7, 5, -7, -5), Qt::AlignLeft | Qt::TextWordWrap, dotGrid_->text);
                 }
             }
 
@@ -297,6 +336,7 @@ namespace
         QImage *overlay_ = nullptr;
         QRect *imageRoi_ = nullptr;
         QList<PlaybackPanel::ColoredContour> *contours_ = nullptr;
+        PlaybackPanel::DotGridOverlay *dotGrid_ = nullptr;
         PlaybackPanel::FitMode *fitMode_ = nullptr;
         bool dragging_ = false;
         QPoint dragStartWidgetPos_;
@@ -313,7 +353,7 @@ PlaybackPanel::PlaybackPanel(backend::AppBackend &backend, QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    canvas_ = new ImageCanvas(&frameImage_, &overlayImage_, &imageRoi_, &overlayContours_, &fitMode_, this);
+    canvas_ = new ImageCanvas(&frameImage_, &overlayImage_, &imageRoi_, &overlayContours_, &dotGridOverlay_, &fitMode_, this);
     slider_ = new QSlider(Qt::Horizontal, this);
     slider_->setRange(0, 0);
     slider_->setSingleStep(1);
@@ -370,7 +410,11 @@ PlaybackPanel::PlaybackPanel(backend::AppBackend &backend, QWidget *parent)
     controlsLayout->addWidget(saveBufferBtn_);
     controlsLayout->addWidget(recordBtn_);
     controlsLayout->addWidget(recordStatusLabel_);
+    dotGridBtn_ = new QToolButton(controls);
+    dotGridBtn_->setText("Wafer Grid: Off");
+    dotGridBtn_->setToolTip("Decode the wafer dot-grid fiducial pattern in the live image and show the absolute position on the wafer");
     controlsLayout->addWidget(fitBtn_);
+    controlsLayout->addWidget(dotGridBtn_);
     controlsLayout->addStretch(1);
     layout->addWidget(controls);
 
@@ -386,6 +430,7 @@ PlaybackPanel::PlaybackPanel(backend::AppBackend &backend, QWidget *parent)
     connect(saveBufferBtn_, &QToolButton::clicked, this, &PlaybackPanel::onSaveBuffer);
     connect(recordBtn_, &QToolButton::clicked, this, &PlaybackPanel::onToggleRecording);
     connect(fitBtn_, &QToolButton::clicked, this, &PlaybackPanel::onToggleFit);
+    connect(dotGridBtn_, &QToolButton::clicked, this, &PlaybackPanel::onToggleDotGrid);
 
     // Space shortcut to start/stop capture
     {
@@ -647,6 +692,7 @@ void PlaybackPanel::onTick()
         {
             computeProcessedOverlay();
         }
+        updateDotGridOverlay();
         if (canvas_)
             canvas_->update();
 
@@ -1509,4 +1555,76 @@ void PlaybackPanel::updateBackgroundIndicator() {
         setBgBtn_->setText("Set Background");
         setBgBtn_->setToolTip("Capture current frame as background (when paused)");
     }
+}
+
+void PlaybackPanel::onToggleDotGrid()
+{
+    backend::services::DotGridService::Config cfg = backend_.dotGrid().getConfig();
+    cfg.enabled = !cfg.enabled;
+    std::string err;
+    if (!backend_.dotGrid().setConfig(cfg, &err))
+    {
+        SPDLOG_WARN("PlaybackPanel: cannot toggle dot-grid localization: {}", err);
+        QMessageBox::warning(this, tr("Wafer Grid"),
+                             tr("Dot-grid localization is not available: %1").arg(QString::fromStdString(err)));
+        return;
+    }
+    SPDLOG_INFO("PlaybackPanel: dot-grid localization {}", cfg.enabled ? "enabled" : "disabled");
+    dotGridOverlay_.valid = false;
+    dotGridOverlay_.dots.clear();
+    dotGridOverlay_.text.clear();
+    updateDotGridOverlay();
+    if (canvas_)
+        canvas_->update();
+}
+
+void PlaybackPanel::updateDotGridOverlay()
+{
+    // The service may also be switched by config.json (dot_grid.enabled), so
+    // the button and overlay follow the service state rather than a local flag.
+    const bool enabled = backend_.dotGrid().isEnabled();
+    if (dotGridOverlay_.active != enabled)
+    {
+        dotGridOverlay_.active = enabled;
+        dotGridOverlay_.valid = false;
+        dotGridOverlay_.dots.clear();
+        dotGridOverlay_.text.clear();
+        if (dotGridBtn_)
+            dotGridBtn_->setText(enabled ? "Wafer Grid: On" : "Wafer Grid: Off");
+    }
+    if (!enabled)
+        return;
+
+    backend::services::DotGridService::Pose pose;
+    if (!backend_.dotGrid().getLatestPose(pose))
+    {
+        dotGridOverlay_.valid = false;
+        dotGridOverlay_.text = tr("Wafer grid: waiting for a frame");
+        return;
+    }
+    dotGridOverlay_.valid = pose.valid;
+    dotGridOverlay_.dots.clear();
+    if (!pose.valid)
+    {
+        dotGridOverlay_.text = tr("Wafer grid: %1 (%2 dots)")
+                                   .arg(QString::fromStdString(pose.reason))
+                                   .arg(pose.dots);
+        return;
+    }
+    dotGridOverlay_.dots.reserve(static_cast<int>(pose.dotsPx.size()));
+    for (const auto &d : pose.dotsPx)
+        dotGridOverlay_.dots.append(QPointF(d.x, d.y));
+    dotGridOverlay_.centre = QPointF(pose.imageWidth / 2.0, pose.imageHeight / 2.0);
+    const QString chip = pose.chip.empty() ? QString() : tr("chip %1   ").arg(QString::fromStdString(pose.chip));
+    dotGridOverlay_.text =
+        QStringLiteral("Wafer X %1 \u00B5m   Y %2 \u00B5m\n\u03B8 %3\u00B0   %4 \u00B5m/px   %5\n%6%7 dots   votes %8   %9 ms")
+            .arg(QString::number(pose.centreXUm, 'f', 1))
+            .arg(QString::number(pose.centreYUm, 'f', 1))
+            .arg(QString::number(pose.thetaDeg, 'f', 2))
+            .arg(QString::number(pose.umPerPx, 'f', 4))
+            .arg(pose.mirrored ? tr("mirrored") : tr("direct"))
+            .arg(chip)
+            .arg(pose.dots)
+            .arg(pose.votes)
+            .arg(QString::number(pose.decodeMs, 'f', 1));
 }

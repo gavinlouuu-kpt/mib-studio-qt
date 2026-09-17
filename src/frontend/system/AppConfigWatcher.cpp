@@ -23,6 +23,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/services/DotGridService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CaptureService.h"
 #include "frontend/system/ConfigDocumentStore.h"
@@ -449,6 +450,45 @@ namespace frontend
 			{
 				backend_.processing().setPixelToMicronFactor(factor);
 				SPDLOG_INFO("AppConfigWatcher: applied pixel_to_micron_factor={}", factor);
+			}
+		}
+
+		// 2.6) Dot-grid wafer localization (knowledge_map/services/DotGridService.md).
+		// um_per_px_hint <= 0 falls back to pixel_to_micron_factor; the decoder
+		// measures the true scale itself, the hint only sizes the blob detector.
+		if (root.contains("dot_grid") && root.value("dot_grid").isObject())
+		{
+			const QJsonObject dg = root.value("dot_grid").toObject();
+			backend::services::DotGridService::Config cfg = backend_.dotGrid().getConfig();
+			cfg.enabled = dg.value("enabled").toBool(cfg.enabled);
+			cfg.intervalMs = dg.value("interval_ms").toInt(cfg.intervalMs);
+			const double hint = dg.value("um_per_px_hint").toDouble(0.0);
+			cfg.umPerPxHint = hint > 0.0 ? hint : backend_.processing().getPixelToMicronFactor();
+			cfg.minVotes = dg.value("min_votes").toInt(cfg.minVotes);
+			cfg.minAgreement = dg.value("min_agreement").toDouble(cfg.minAgreement);
+			cfg.codebookPath = dg.value("codebook_path").toString().toStdString();
+			if (dg.contains("codebook") && dg.value("codebook").isObject())
+			{
+				const QJsonObject cb = dg.value("codebook").toObject();
+				auto &c = cfg.codebook;
+				c.seed = static_cast<uint64_t>(cb.value("seed").toDouble(static_cast<double>(c.seed)));
+				c.columns = cb.value("columns").toInt(c.columns);
+				c.rows = cb.value("rows").toInt(c.rows);
+				c.pitchUm = cb.value("pitch_um").toDouble(c.pitchUm);
+				c.dotDiameterUm = cb.value("dot_diameter_um").toDouble(c.dotDiameterUm);
+				c.displacementUm = cb.value("displacement_um").toDouble(c.displacementUm);
+				c.originXUm = cb.value("origin_x_um").toDouble(c.originXUm);
+				c.originYUm = cb.value("origin_y_um").toDouble(c.originYUm);
+			}
+			std::string err;
+			if (backend_.dotGrid().setConfig(cfg, &err))
+			{
+				SPDLOG_INFO("AppConfigWatcher: applied dot_grid (enabled={}, interval_ms={}, pitch={}um, codebook='{}')",
+							cfg.enabled, cfg.intervalMs, cfg.codebook.pitchUm, cfg.codebookPath);
+			}
+			else
+			{
+				SPDLOG_WARN("AppConfigWatcher: dot_grid config rejected: {}", err);
 			}
 		}
 

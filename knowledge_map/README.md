@@ -21,6 +21,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
+- Wafer localization (dot-grid fiducials): [[services/DotGridService]]
 - Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
   [[services/TriggerService]], [[services/SyringePumpService]],

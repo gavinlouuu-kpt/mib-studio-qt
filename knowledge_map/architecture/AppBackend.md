@@ -41,7 +41,7 @@ All services are `std::unique_ptr`; [[../data-model/FrameStore]] is
 sqliteService_, hdf5Service_,
 captureService_, processingService_, playbackService_,
 cameraControlService_, autofocusService_,
-triggerService_, yoloService_, syringePumpService_,
+triggerService_, dotGridService_, yoloService_, syringePumpService_,
 pulseGeneratorService_,
 deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
@@ -124,6 +124,7 @@ Supported backend tokens:
 - `yolo`
 - `autofocus` (disables ring-ratio callback wiring from processing)
 - `trigger` (disables processing/camera trigger wiring)
+- `dot_grid` (alias: `dotgrid`; leaves [[../services/DotGridService]] constructed but not started)
 - `capture` (alias: `camera`)
 - `playback`
 - `all` (disables all backend startup paths above)

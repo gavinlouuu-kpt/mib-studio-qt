@@ -73,5 +73,23 @@
     "display_fps": 60,
     "safe_shutdown_voltage": 0.0,
     "focus_direction": true,
-    "pixel_to_micron_factor": 0.4886
+    "pixel_to_micron_factor": 0.4886,
+    "dot_grid": {
+        "enabled": false,
+        "interval_ms": 250,
+        "um_per_px_hint": 0.0,
+        "min_votes": 3,
+        "min_agreement": 0.9,
+        "codebook_path": "",
+        "codebook": {
+            "seed": 7,
+            "columns": 3700,
+            "rows": 3700,
+            "pitch_um": 30.0,
+            "dot_diameter_um": 12.0,
+            "displacement_um": 5.0,
+            "origin_x_um": 0.0,
+            "origin_y_um": 0.0
+        }
+    }
 }

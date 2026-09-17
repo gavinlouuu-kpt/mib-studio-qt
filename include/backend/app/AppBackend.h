@@ -23,6 +23,7 @@ namespace backend::services
     class CameraControlService;
     class AutofocusService;
     class TriggerService;
+    class DotGridService;
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
@@ -86,6 +87,7 @@ namespace backend
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
         services::TriggerService &trigger();
+        services::DotGridService &dotGrid();
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
@@ -242,6 +244,7 @@ namespace backend
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;
         std::unique_ptr<services::TriggerService> triggerService_;
+        std::unique_ptr<services::DotGridService> dotGridService_;
         std::unique_ptr<services::YoloService> yoloService_;
         // Shared RS485/Modbus bus registry — declared before the serial
         // services so it outlives their sessions.

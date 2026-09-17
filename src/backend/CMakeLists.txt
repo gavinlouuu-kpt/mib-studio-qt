@@ -35,6 +35,8 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
@@ -238,6 +240,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/DeviceDiscoveryService.cpp

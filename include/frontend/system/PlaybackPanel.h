@@ -5,6 +5,9 @@
 #include <QRect>
 #include <QList>
 #include <QPolygon>
+#include <QPointF>
+#include <QString>
+#include <QVector>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -30,6 +33,15 @@ public:
     struct ColoredContour {
         QPolygon polygon;
         QColor color;
+    };
+    // Dot-grid wafer localization overlay, fed from DotGridService on each
+    // tick while the "Wafer Grid" toggle is on (knowledge_map/services/DotGridService.md).
+    struct DotGridOverlay {
+        bool active{false};    // localization enabled
+        bool valid{false};     // latest decode succeeded
+        QVector<QPointF> dots; // detected dot centroids, image pixels
+        QPointF centre;        // image centre marker (the reported wafer position)
+        QString text;          // pose summary drawn in the corner
     };
 
     // ROI management
@@ -76,6 +88,7 @@ private slots:
     void onSaveBuffer();
     void onLogMetrics();
     void onToggleFit();
+    void onToggleDotGrid();
     void onAutoBackgroundToggled(bool enabled);
     void onToggleRecording();
     void updateRecordingUI();
@@ -86,6 +99,7 @@ protected:
 private:
     void computeProcessedOverlay();
     void updateOverlayButtonUi();
+    void updateDotGridOverlay();
     void resetMetrics();
     void trackFrameDisplay(uint64_t frameIndex, uint64_t frameTimestamp, uint64_t displayTime);
     void saveRoiToConfig(const QRect& roi);
@@ -108,6 +122,7 @@ private:
     QToolButton* recordBtn_ = nullptr;
     QLabel* recordStatusLabel_ = nullptr;
     QToolButton* fitBtn_ = nullptr;
+    QToolButton* dotGridBtn_ = nullptr;
     bool scrubbing_ = false;
     bool followLive_ = true;           // auto-follow latest when true
     bool prevCaptureRunning_ = false;  // detect start transitions
@@ -122,6 +137,7 @@ private:
     QImage backgroundGray_;            // stored as grayscale QImage
     QImage overlayImage_;              // RGBA overlay (mask)
     QList<ColoredContour> overlayContours_;  // image-space contours with classification color
+    DotGridOverlay dotGridOverlay_;
 
     // Last overlay computation timing (ms)
     double lastOverlayComputeMs_ = 0.0;

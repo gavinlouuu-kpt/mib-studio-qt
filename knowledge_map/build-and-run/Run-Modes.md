@@ -37,7 +37,7 @@ Read at startup (see `main.cpp` and [[../architecture/AppBackend]]):
 | `MIB_MOCK_CAMERA_LOOP=true\|false` | true | Loop or stop at end |
 | `MIB_MINDVISION_CAMERA_INDEX=<n>` | 0 | MindVision device index used by startup selection |
 | `MIB_MINDVISION_CONFIG=<path>` | — | JSON config applied before MindVision capture starts |
-| `MIB_DISABLED_SERVICES=<csv>` | unset | Disable startup paths (`sqlite,hdf5,processing,yolo,autofocus,trigger,capture/camera,playback,auto_update,all`) |
+| `MIB_DISABLED_SERVICES=<csv>` | unset | Disable startup paths (`sqlite,hdf5,processing,yolo,autofocus,trigger,dot_grid,capture/camera,playback,auto_update,all`) |
 
 Sample frames ship at `data/mock_frames/frame_00000.tiff`.
 

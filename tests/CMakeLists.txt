@@ -314,6 +314,20 @@ mib_add_backend_test_executable(processing_science_golden_test processing/proces
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_golden_test)
 set_tests_properties(processing.science_golden PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+# Dot-grid wafer localization (docs/architecture/dot-grid-localization.md).
+mib_add_backend_test_executable(dot_grid_codebook_test processing/dot_grid_codebook_test.cpp)
+add_test(NAME processing.dot_grid_codebook COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_codebook_test)
+set_tests_properties(processing.dot_grid_codebook PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(dot_grid_decoder_test processing/dot_grid_decoder_test.cpp)
+add_test(NAME processing.dot_grid_decoder COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_decoder_test)
+set_tests_properties(processing.dot_grid_decoder PROPERTIES LABELS "processing;backend" TIMEOUT 120)
+
+mib_add_backend_test_executable(dot_grid_service_test backend/dot_grid_service_test.cpp)
+mib_backend_test_link(dot_grid_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.dot_grid_service COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_service_test)
+set_tests_properties(backend.dot_grid_service PROPERTIES LABELS "backend;processing;stress" TIMEOUT 120)
+
 mib_add_backend_test_executable(processing_identification_metrics_test processing/processing_identification_metrics_test.cpp)
 add_test(NAME processing.identification_metrics COMMAND $<TARGET_FILE:mib_backend_tests> processing_identification_metrics_test)
 set_tests_properties(processing.identification_metrics PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -944,6 +958,16 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(scripts.compare_metrics PROPERTIES
         LABELS "scripts;contract;processing"
         TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.dot_grid_reference
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/dot_grid/test_dotgrid.py
+    )
+    set_tests_properties(scripts.dot_grid_reference PROPERTIES
+        LABELS "scripts;processing"
+        TIMEOUT 120
+        SKIP_RETURN_CODE 77
     )
 
     add_test(

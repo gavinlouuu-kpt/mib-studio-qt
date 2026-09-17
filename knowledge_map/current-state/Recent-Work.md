@@ -1,5 +1,25 @@
 # Recent Work
 
+## 2026-09-17 — Dot-grid wafer localization (fiducial pattern + decoder + overlay)
+
+The camera can now tell where on the Wafer_soRT wafer, and on which chip, it
+is looking: an Anoto-style displaced-dot lattice (30 µm pitch, 12 µm dots,
+5 µm shift, seed 7) is generated into the channel-layer mask by
+`scripts/dot_grid/` (DXF → GDS + `codebook.json`), and the Qt-free
+`backend::dotgrid` codebook/decoder in `mib_processing` decodes any ~6 × 6 dot
+patch to absolute mask coordinates, rotation, measured µm/px, mirror flag
+(glass-side viewing) and chip id. [[../services/DotGridService]] samples the
+latest FrameStore frame every 250 ms on its own thread and publishes a
+`Pose`; `PlaybackPanel` shows it behind a **Wafer Grid** toggle;
+`config.json` gained `dot_grid`, `MIB_DISABLED_SERVICES` gained `dot_grid`.
+Tests: `processing.dot_grid_codebook` (C++/Python golden parity),
+`processing.dot_grid_decoder`, `backend.dot_grid_service`,
+`scripts.dot_grid_reference`. ADR 0006; design in
+`docs/architecture/dot-grid-localization.md`; how-to in
+`docs/howto/dot-grid-mask-generation.md`; exec plan
+`docs/exec-plans/active/2026-09-17-dot-grid-localization.md`.
+Task record: [[../task/2026-09-17-dot-grid-localization]].
+
 ## 2026-09-16 — Device discovery service with providers (#419)
 
 Device discovery moved into a backend job service

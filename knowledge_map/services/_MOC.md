@@ -7,6 +7,8 @@
 - [[CaptureService]] — dedicated thread; `camera->grabFrame()` → FrameStore
 - [[ProcessingService]] — worker pool + realtime loop; OpenCV pipeline
 - [[PlaybackService]] — UI-facing wrapper over FrameStore
+- [[DotGridService]] — low-rate wafer localization from the dot-grid fiducial
+  pattern (absolute position, rotation, scale, mirror, chip id); ADR 0006
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
