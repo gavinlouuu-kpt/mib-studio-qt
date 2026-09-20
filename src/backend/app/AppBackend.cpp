@@ -444,11 +444,10 @@ namespace backend
             std::string err;
             if (!supervisor_->configure(cfg, &err)) {
                 SPDLOG_WARN("AppBackend: supervisor configuration rejected: {}", err);
-            } else if (cfg.mode == supervisor::SupervisorMode::Shadow) {
-                if (!supervisor_->start(&err)) {
-                    SPDLOG_WARN("AppBackend: supervisor shadow mode not started: {}", err);
-                }
             }
+            // The worker is started at the end of initialize(): its snapshot
+            // builder reads camera selection / service state that is still
+            // being written below.
         }
 
         bool bootSqlite = true;
@@ -951,6 +950,13 @@ namespace backend
             backend::services::CrashReporter::setTag("data_dir", dataDir);
             backend::services::CrashReporter::breadcrumb("lifecycle",
                 "AppBackend initialized");
+        }
+
+        if (supervisor_ && supervisor_->config().mode == supervisor::SupervisorMode::Shadow) {
+            std::string err;
+            if (!supervisor_->start(&err)) {
+                SPDLOG_WARN("AppBackend: supervisor shadow mode not started: {}", err);
+            }
         }
 
         SPDLOG_INFO("Backend initialized.");
