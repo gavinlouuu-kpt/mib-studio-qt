@@ -29,6 +29,12 @@
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
   source) via Modbus RTU over serial; addressed device on a shared bus
 
+## Supervision (advisory only)
+- [[SupervisorService]] — AI Experiment Supervisor in **shadow mode**: frozen
+  versioned snapshots, deterministic policy first, provider seam (rule
+  baseline / JEV adapter), audited recommendations, zero actuation (#422,
+  ADR 0006)
+
 ## Optional / specialised
 - [[YoloService]] — ONNX Runtime session (segmentation; placeholder-ish)
 - [[RecorderService]] — raw frame container writer (recording mode)

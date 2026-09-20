@@ -246,6 +246,17 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/CameraEnumerationProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/NanopositionerProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/PulseGeneratorProvider.cpp
+    # AI Experiment Supervisor (issue #422, ADR 0006): Qt-free shadow-mode
+    # decision layer. No hardware or actuation dependency by construction.
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/DecisionContract.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/ExperimentSnapshot.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/SafetyPolicy.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/RuleProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/DecisionRecord.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/SupervisorService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/EvaluationHarness.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/JevProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/supervisor/ExperimentSnapshotBuilder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp

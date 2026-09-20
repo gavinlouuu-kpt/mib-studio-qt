@@ -12,6 +12,7 @@
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/supervisor/JevProvider.h" // HttpPostFn seam (ADR 0002 pattern)
 
 namespace backend::services
 {
@@ -45,6 +46,7 @@ namespace camera::mock
 }
 
 namespace backend::app { class ExperimentCoordinator; }
+namespace backend::supervisor { class SupervisorService; }
 namespace backend::discovery
 {
     class DeviceDiscoveryService;
@@ -180,6 +182,13 @@ namespace backend
 
         // Backend-owned experiment readiness + Start transaction (issue #369).
         app::ExperimentCoordinator& experiment();
+        // AI Experiment Supervisor (issue #422, ADR 0006): shadow-mode
+        // recommendations only. Disabled by default; MIB_SUPERVISOR_MODE=shadow
+        // enables it at boot. Holds no actuation path. The optional JEV
+        // provider needs a shell-injected HTTP POST seam (ADR 0002 pattern):
+        // without one it fails closed to "not configured".
+        supervisor::SupervisorService& supervisor();
+        void setSupervisorHttpPost(supervisor::HttpPostFn post);
         // Shared RS485 bus registry (pump, pulse generator); tests inject a
         // fake serial-port factory here.
         services::serialbus::SerialBusManager& serialBus();
@@ -252,6 +261,13 @@ namespace backend
         // discovery workers and the coordinator are destroyed first.
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
         std::unique_ptr<discovery::StartupDiscoveryCoordinator> startupDiscovery_;
+        // Declared after the services its snapshot builder reads; destroyed
+        // (and joined) before them.
+        void installSupervisorProvider();
+        std::unique_ptr<supervisor::SupervisorService> supervisor_;
+        supervisor::HttpPostFn supervisorHttpPost_;
+        std::string supervisorProviderChoice_{"rule"};
+        std::string supervisorLogDir_;
         std::shared_ptr<playback::FrameStore> frameStore_;
 
         // Shell-injected LUT fetch config (ADR 0002).

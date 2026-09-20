@@ -31,6 +31,7 @@ Jump to the notes that match your task:
 | Processing-core versions / native hot-swap | [[frontend/ProcessingCoreDialog]] + [[services/ProcessingService]] |
 | Autofocus / nanopositioner | [[services/AutofocusService]] + [[frontend/NanopositionerTab]] |
 | Device discovery (camera / nanopositioner / pulse-generator scans, startup auto-select) | [[services/DeviceDiscoveryService]] + [[frontend/System-Utilities]] (`DeviceInitManager`) + [[task/2026-09-15-device-discovery-service]] |
+| AI Experiment Supervisor (shadow-mode recommendations, JEV/rule providers, offline evaluation) | [[services/SupervisorService]] + [[task/2026-09-20-ai-experiment-supervisor]] |
 | Hidden desktop / hardware held after close | [[frontend/DesktopInstance]] + [[task/2026-09-15-hardware-shutdown]] |
 | Syringe pumps | [[services/SyringePumpService]] (serial via [[services/ISerialPort]]) + [[frontend/SyringePumpTab]] |
 | Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |

@@ -1,5 +1,21 @@
 # Recent Work
 
+## 2026-09-20 — AI Experiment Supervisor: shadow-mode foundation (#422)
+
+New Qt-free module `backend::supervisor` ([[../services/SupervisorService]],
+ADR 0006): versioned replayable `ExperimentSnapshot` built read-only from
+the backend, closed decision contract with strict parsers, deterministic
+`SafetyPolicy` that the model cannot override, provider seam with a rule
+baseline and a JEV adapter (pinned model, typed validation, credential
+boundary, injected HTTP transport), JSON-lines audit sidecar, non-blocking
+shadow scheduler owned by `AppBackend` (off by default,
+`MIB_SUPERVISOR_MODE=shadow`), an offline evaluation harness with 18
+labelled fixtures and a `supervisor_eval_run` tool (rule in CI, live JEV
+opt-in). Verified: policy precedence, fail-closed provider errors, hung
+provider beside a live mock experiment (stop/finalize/shutdown unaffected),
+zero actuation. Not yet: UI panel, bridge exposure, live JEV report
+(phase E). See [[../task/2026-09-20-ai-experiment-supervisor]].
+
 ## 2026-09-16 — Device discovery service with providers (#419)
 
 Device discovery moved into a backend job service

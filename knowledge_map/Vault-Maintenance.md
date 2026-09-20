@@ -16,6 +16,7 @@ below is the policy it cannot check for you.
 | `src/backend/playback/FrameStore.*` | [[data-model/FrameStore]] |
 | HDF5 schema / dataset paths (`Hdf5Service.cpp`) | [[data-model/HDF5-Storage]] + [[services/Hdf5Service]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
+| Supervisor code under `src/backend/supervisor/`, fixtures `tests/supervisor/` | [[services/SupervisorService]] (+ the rule table / fixture spec) |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |
 | Conventions / logging patterns | [[conventions/Code-Conventions]], [[conventions/Logging]] |
 | Domain vocabulary (new metric, new concept) | [[domain/Glossary]], [[domain/Microscopy-Pipeline]] |

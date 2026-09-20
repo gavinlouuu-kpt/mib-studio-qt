@@ -33,6 +33,9 @@ This folder hosts living documentation as we build functionality. Keep content c
   [gold_standard_metrics.md](gold_standard_metrics.md) and
   [portable-processing-sync.md](portable-processing-sync.md)
 - Post-processing tools (export, reanalyse) — see [howto/tools.md](howto/tools.md)
+- AI Experiment Supervisor (shadow mode, offline/live evaluation) — see
+  [howto/supervisor-evaluation.md](howto/supervisor-evaluation.md) and ADR
+  [0006](decisions/0006-ai-experiment-supervisor.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)

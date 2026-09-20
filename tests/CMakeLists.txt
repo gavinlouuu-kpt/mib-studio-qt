@@ -39,6 +39,7 @@ set(MIB_STANDALONE_BACKEND_TESTS
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
     processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
+    supervisor_eval_run                 # opt-in live JEV evaluation tool; links libcurl when available
 )
 
 function(mib_add_backend_test_executable target source)
@@ -151,6 +152,44 @@ mib_add_backend_test_executable(discovery_facade_test backend/discovery_facade_t
 mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
 add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
 set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
+
+# Issue #422: AI Experiment Supervisor (shadow mode). Network-free; the JEV
+# adapter is exercised over a fake HTTP transport.
+mib_add_backend_test_executable(supervisor_contract_test backend/supervisor_contract_test.cpp)
+add_test(NAME backend.supervisor_contract COMMAND $<TARGET_FILE:mib_backend_tests> supervisor_contract_test)
+set_tests_properties(backend.supervisor_contract PROPERTIES LABELS "backend;supervisor;round-trip;fault-injection" TIMEOUT 30)
+mib_add_backend_test_executable(supervisor_policy_test backend/supervisor_policy_test.cpp)
+add_test(NAME backend.supervisor_policy COMMAND $<TARGET_FILE:mib_backend_tests> supervisor_policy_test)
+set_tests_properties(backend.supervisor_policy PROPERTIES LABELS "backend;supervisor;invariant" TIMEOUT 30)
+mib_add_backend_test_executable(supervisor_harness_test backend/supervisor_harness_test.cpp)
+add_test(NAME backend.supervisor_harness COMMAND $<TARGET_FILE:mib_backend_tests> supervisor_harness_test
+         ${PROJECT_SOURCE_DIR}/tests/supervisor)
+set_tests_properties(backend.supervisor_harness PROPERTIES LABELS "backend;supervisor;round-trip" TIMEOUT 60)
+mib_add_backend_test_executable(supervisor_service_test backend/supervisor_service_test.cpp)
+mib_backend_test_link(supervisor_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.supervisor_service COMMAND $<TARGET_FILE:mib_backend_tests> supervisor_service_test)
+set_tests_properties(backend.supervisor_service PROPERTIES LABELS "backend;supervisor;concurrency;stress;fault-injection" TIMEOUT 120)
+mib_add_backend_test_executable(supervisor_jev_provider_test backend/supervisor_jev_provider_test.cpp)
+add_test(NAME backend.supervisor_jev_provider COMMAND $<TARGET_FILE:mib_backend_tests> supervisor_jev_provider_test)
+set_tests_properties(backend.supervisor_jev_provider PROPERTIES LABELS "backend;supervisor;fault-injection" TIMEOUT 60)
+mib_add_backend_test_executable(e2e_supervisor_shadow_test integration/e2e_supervisor_shadow_test.cpp)
+mib_backend_test_link(e2e_supervisor_shadow_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_supervisor_shadow COMMAND $<TARGET_FILE:mib_backend_tests> e2e_supervisor_shadow_test)
+set_tests_properties(integration.e2e_supervisor_shadow PROPERTIES LABELS "integration;e2e;supervisor;concurrency" TIMEOUT 120)
+# Offline evaluation tool (CI runs the rule provider over the fixtures; live
+# JEV is opt-in — see docs/howto/supervisor-evaluation.md).
+mib_add_backend_test_executable(supervisor_eval_run tools/supervisor_eval_run.cpp)
+find_package(CURL QUIET)
+if(TARGET CURL::libcurl)
+    target_link_libraries(supervisor_eval_run PRIVATE CURL::libcurl)
+    target_compile_definitions(supervisor_eval_run PRIVATE MIB_SUPERVISOR_EVAL_CURL=1)
+else()
+    target_compile_definitions(supervisor_eval_run PRIVATE MIB_SUPERVISOR_EVAL_CURL=0)
+endif()
+add_test(NAME backend.supervisor_eval_rule COMMAND $<TARGET_FILE:supervisor_eval_run>
+         --fixtures ${PROJECT_SOURCE_DIR}/tests/supervisor --provider rule --fail-on-unsafe
+         --out ${PROJECT_BINARY_DIR}/supervisor-eval-rule.json)
+set_tests_properties(backend.supervisor_eval_rule PROPERTIES LABELS "backend;supervisor" TIMEOUT 60)
 
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)

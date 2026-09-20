@@ -3,6 +3,24 @@
 > Domain and code terms you'll run into. Short definitions; follow
 > `[[WikiLinks]]` for detail.
 
+## Experiment supervision (issue #422)
+
+- **Shadow mode** — the AI Experiment Supervisor runs beside an experiment
+  and records recommendations that are never executed (`executed=false`).
+  See [[../services/SupervisorService]].
+- **ExperimentSnapshot** — frozen, versioned, canonically serialized view of
+  the run at one decision point; unknown metrics are `null`, never 0.
+- **Decision contract** — the five closed-vocabulary questions
+  (run quality, primary problem, next action, adjustment target/direction);
+  unknown tokens are rejected.
+- **Decision provider** — anything that answers the contract for a snapshot
+  (`RuleProvider`, `JevProvider`); interchangeable, no hardware access.
+- **Safety policy** — deterministic hard invariants evaluated before the
+  provider; the model cannot override them.
+- **DecisionRecord** — the audit line (snapshot hash, policy, provider
+  distributions/confidence/latency/error, recommendation, eligibility,
+  operator action) in the `*.supervisor.jsonl` sidecar.
+
 ## Microscopy / measurement
 
 - **Deformability** — shape deviation from a perfect circle. Computed in

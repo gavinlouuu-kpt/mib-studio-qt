@@ -22,6 +22,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
 - Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]
+- AI Experiment Supervisor (shadow mode, advisory only): [[services/SupervisorService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
   [[services/TriggerService]], [[services/SyringePumpService]],
   [[services/ISerialPort]]

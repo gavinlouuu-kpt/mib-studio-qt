@@ -1,5 +1,20 @@
 # AppBackend
 
+## AI Experiment Supervisor ownership (2026-09-20, #422)
+
+`AppBackend::initialize` constructs [[../services/SupervisorService]]
+after discovery, installs the snapshot source
+(`supervisor::buildExperimentSnapshot(*this, ctx)`) and the provider chosen
+by `MIB_SUPERVISOR_PROVIDER` (`rule` default, `jev` needs
+`MIB_JEV_ENDPOINT` / `MIB_JEV_MODEL` / credential env var and a shell
+transport via `setSupervisorHttpPost`, ADR 0002 pattern), and starts shadow
+mode only when `MIB_SUPERVISOR_MODE=shadow` (`MIB_SUPERVISOR_INTERVAL_MS`,
+`MIB_SUPERVISOR_OBJECTIVE`, `MIB_SUPERVISOR_TARGET_VALID`); the sidecar goes
+to `<data>/supervisor/`. `shutdown()` stops the supervisor **first** (its
+worker reads capture/processing/trigger counters), then discovery, the
+coordinator, trigger, capture, processing and hardware as before. Accessor:
+`supervisor()`. The supervisor has no actuation path.
+
 ## Device discovery ownership (2026-09-16, #419)
 
 `initialize()` constructs [[../services/DeviceDiscoveryService]] after the

@@ -34,6 +34,9 @@
 #include "backend/discovery/providers/CameraEnumerationProvider.h"
 #include "backend/discovery/providers/NanopositionerProvider.h"
 #include "backend/discovery/providers/PulseGeneratorProvider.h"
+#include "backend/supervisor/ExperimentSnapshotBuilder.h"
+#include "backend/supervisor/RuleProvider.h"
+#include "backend/supervisor/SupervisorService.h"
 #include "backend/processing/EModulusLutCatalog.h"
 
 #include "backend/camera/mindvision/MindVisionConfig.h"
@@ -228,6 +231,12 @@ namespace backend
         if (startupDiscovery_) {
             startupDiscovery_->stop();
         }
+        // Supervisor (issue #422) reads service counters from its own worker;
+        // join it before any service it observes is stopped.
+        if (supervisor_) {
+            SPDLOG_INFO("AppBackend: shutdown stopping experiment supervisor");
+            supervisor_->shutdown();
+        }
         if (deviceDiscovery_) {
             SPDLOG_INFO("AppBackend: shutdown draining device discovery");
             deviceDiscovery_->shutdownDiscovery();
@@ -389,6 +398,58 @@ namespace backend
         };
         startupDiscovery_ =
             std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
+
+        // AI Experiment Supervisor (issue #422, ADR 0006). Off unless
+        // MIB_SUPERVISOR_MODE=shadow; provider MIB_SUPERVISOR_PROVIDER=rule|jev
+        // (rule by default; jev additionally needs MIB_JEV_ENDPOINT,
+        // MIB_JEV_MODEL, the credential named by MIB_JEV_API_KEY_ENV and a
+        // shell-injected transport). Nothing here can actuate hardware.
+        supervisor_ = std::make_unique<supervisor::SupervisorService>();
+        supervisorLogDir_ = (std::filesystem::path(dataDir) / "supervisor").string();
+        {
+            const char *providerEnv = std::getenv("MIB_SUPERVISOR_PROVIDER");
+            supervisorProviderChoice_ = (providerEnv && *providerEnv) ? providerEnv : "rule";
+            installSupervisorProvider();
+            supervisor_->setSnapshotSource([this](uint64_t sequence) -> std::optional<supervisor::ExperimentSnapshot> {
+                supervisor::SnapshotBuildContext ctx;
+                ctx.sequence = sequence;
+                const auto cfg = supervisor_->config();
+                ctx.objective = cfg.objective;
+                ctx.targetValidObjects = cfg.targetValidObjects;
+                return supervisor::buildExperimentSnapshot(*this, ctx);
+            });
+            supervisor::SupervisorConfig cfg;
+            if (const char *modeEnv = std::getenv("MIB_SUPERVISOR_MODE")) {
+                if (const auto mode = supervisor::parseSupervisorMode(modeEnv)) cfg.mode = *mode;
+                else SPDLOG_WARN("AppBackend: unknown MIB_SUPERVISOR_MODE '{}' (off|shadow); supervisor stays off", modeEnv);
+            }
+            if (const char *intervalEnv = std::getenv("MIB_SUPERVISOR_INTERVAL_MS")) {
+                const int v = std::atoi(intervalEnv);
+                if (v >= cfg.minIntervalMs) cfg.intervalMs = v;
+            }
+            if (const char *objectiveEnv = std::getenv("MIB_SUPERVISOR_OBJECTIVE")) cfg.objective = objectiveEnv;
+            if (const char *targetEnv = std::getenv("MIB_SUPERVISOR_TARGET_VALID")) {
+                const long long v = std::atoll(targetEnv);
+                if (v > 0) cfg.targetValidObjects = static_cast<uint64_t>(v);
+            }
+            if (cfg.mode == supervisor::SupervisorMode::Shadow) {
+                std::error_code ec;
+                std::filesystem::create_directories(supervisorLogDir_, ec);
+                const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch()).count();
+                cfg.logPath = (std::filesystem::path(supervisorLogDir_) /
+                               ("shadow-" + std::to_string(stamp) + ".supervisor.jsonl")).string();
+                cfg.runId = "boot-" + std::to_string(stamp);
+            }
+            std::string err;
+            if (!supervisor_->configure(cfg, &err)) {
+                SPDLOG_WARN("AppBackend: supervisor configuration rejected: {}", err);
+            } else if (cfg.mode == supervisor::SupervisorMode::Shadow) {
+                if (!supervisor_->start(&err)) {
+                    SPDLOG_WARN("AppBackend: supervisor shadow mode not started: {}", err);
+                }
+            }
+        }
 
         bool bootSqlite = true;
         bool bootHdf5 = true;
@@ -908,6 +969,39 @@ namespace backend
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
     discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
+
+    supervisor::SupervisorService &AppBackend::supervisor() { return *supervisor_; }
+
+    void AppBackend::installSupervisorProvider()
+    {
+        if (!supervisor_) return;
+        if (supervisorProviderChoice_ == "jev") {
+            auto cfg = supervisor::jevConfigFromEnvironment();
+            if (!cfg) {
+                SPDLOG_WARN("AppBackend: MIB_SUPERVISOR_PROVIDER=jev but MIB_JEV_ENDPOINT/MIB_JEV_MODEL are not set; "
+                            "the JEV provider will fail closed (not configured)");
+                cfg = supervisor::JevConfig{};
+            }
+            if (!supervisorHttpPost_) {
+                SPDLOG_WARN("AppBackend: JEV provider has no HTTP transport yet (shell must call setSupervisorHttpPost)");
+            }
+            if (!supervisor_->setProvider(std::make_unique<supervisor::JevProvider>(*cfg, supervisorHttpPost_))) {
+                SPDLOG_WARN("AppBackend: cannot replace the supervisor provider while shadow mode is running");
+            }
+            return;
+        }
+        if (supervisorProviderChoice_ != "rule") {
+            SPDLOG_WARN("AppBackend: unknown MIB_SUPERVISOR_PROVIDER '{}' (rule|jev); using rule", supervisorProviderChoice_);
+            supervisorProviderChoice_ = "rule";
+        }
+        supervisor_->setProvider(std::make_unique<supervisor::RuleProvider>());
+    }
+
+    void AppBackend::setSupervisorHttpPost(supervisor::HttpPostFn post)
+    {
+        supervisorHttpPost_ = std::move(post);
+        if (supervisorProviderChoice_ == "jev") installSupervisorProvider();
+    }
     discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
