@@ -9,8 +9,10 @@
 // decision action (hooks + listeners) is handed to the injected executor. The
 // default executor runs inline on the worker; the Qt adapter posts to the UI
 // thread because AppBackend's selection setters are not thread-safe against
-// the widgets that read them. stop() is terminal: owned jobs are cancelled
-// and pending/late actions do nothing. Vault:
+// the widgets that read them. stop() is terminal: owned jobs are cancelled,
+// pending/late actions do nothing, and an action already running on another
+// thread is waited for (bounded, 5 s) so no hook or listener runs after
+// stop() returns (issue #431). Vault:
 // knowledge_map/services/DeviceDiscoveryService.md.
 #pragma once
 
@@ -114,7 +116,9 @@ public:
     // (stopped, already running, already connected).
     bool runNanopositionerStep();
 
-    // Terminal. Cancels owned jobs; no hook or listener runs afterwards.
+    // Terminal. Cancels owned jobs and waits (bounded) for an action already
+    // running on another thread; no hook or listener runs after it returns.
+    // Safe to call from inside a hook or listener (no self-wait).
     void stop();
     bool isStopped() const;
 

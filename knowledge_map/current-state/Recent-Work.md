@@ -8,6 +8,15 @@ spec files packaged `scripts/hdf5_export_app.py`). Removed; the tools bundle
 (`tools/build_*`, `tools/hdf5_export_app/hdf5_export.spec`, output
 `tools/dist/`) is the only build, and `docs/howto/hdf5-export-app.md` now
 documents it. TD-14 closed.
+## 2026-09-21 — StartupDiscoveryCoordinator::stop() drains in-flight listeners (#431)
+
+TSan (sanitizer lane on #424) caught a heap-use-after-free in
+`startup_discovery_policy_test`: the nanopositioner "running" flag clears
+before the terminal outcome is delivered, the test returned on the flag, and
+the worker-thread listener appended to destroyed storage. `stop()` now waits
+(bounded) for actions in flight on other threads, never for itself; the test
+waits for delivery and a new block proves `stop()` returns only after a slow
+listener finished. See [[../services/DeviceDiscoveryService]].
 
 ## 2026-09-21 — Repository root cleanup
 
