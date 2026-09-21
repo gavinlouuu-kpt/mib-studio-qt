@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-09-21 — StartupDiscoveryCoordinator::stop() drains in-flight listeners (#431)
+
+TSan (sanitizer lane on #424) caught a heap-use-after-free in
+`startup_discovery_policy_test`: the nanopositioner "running" flag clears
+before the terminal outcome is delivered, the test returned on the flag, and
+the worker-thread listener appended to destroyed storage. `stop()` now waits
+(bounded) for actions in flight on other threads, never for itself; the test
+waits for delivery and a new block proves `stop()` returns only after a slow
+listener finished. See [[../services/DeviceDiscoveryService]].
+
 ## 2026-09-21 — Repository root cleanup
 
 PR 6 of the self-provisioning plan. Six build logs, a debug log and

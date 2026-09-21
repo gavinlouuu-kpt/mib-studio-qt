@@ -3,12 +3,22 @@
 #include "backend/discovery/StartupDiscoveryPolicy.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <utility>
 
 #include <spdlog/spdlog.h>
 
 namespace backend::discovery {
+
+namespace {
+// Depth of coordinator actions running on the current thread. stop() must not
+// wait for in-flight actions when it is itself called from inside one (a hook
+// or listener that decides to stop), or it would wait for itself.
+thread_local int g_actionDepth = 0;
+constexpr auto kStopDrainTimeout = std::chrono::seconds(5);
+} // namespace
 
 struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
     Impl(DeviceDiscoveryService& s, Hooks h, Timing t)
@@ -34,6 +44,44 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
     std::uint64_t observerId{0};
     std::atomic<bool> stopped{false};
 
+    // Actions (decisions, hook calls, listener delivery) currently executing on
+    // any thread. stop() drains this so that "no hook or listener runs after
+    // stop() returns" holds even when the executor runs inline on the
+    // discovery worker (issue #431: a listener was still appending to the
+    // caller's storage after stop() and the storage had been destroyed).
+    std::mutex drainMutex;
+    std::condition_variable drainCv;
+    int inFlight{0}; // drainMutex
+
+    struct ActionScope {
+        Impl& impl;
+        explicit ActionScope(Impl& i) : impl(i)
+        {
+            std::lock_guard<std::mutex> lk(impl.drainMutex);
+            ++impl.inFlight;
+            ++g_actionDepth;
+        }
+        ~ActionScope()
+        {
+            --g_actionDepth;
+            {
+                std::lock_guard<std::mutex> lk(impl.drainMutex);
+                --impl.inFlight;
+            }
+            impl.drainCv.notify_all();
+        }
+    };
+
+    // Called by stop(): wait (bounded) for actions running on other threads.
+    void drainActions()
+    {
+        if (g_actionDepth > 0) return; // stop() from inside an action: nothing to wait for
+        std::unique_lock<std::mutex> lk(drainMutex);
+        if (!drainCv.wait_for(lk, kStopDrainTimeout, [this] { return inFlight == 0; })) {
+            SPDLOG_WARN("StartupDiscovery: stop() timed out waiting for {} in-flight action(s)", inFlight);
+        }
+    }
+
     // ---- helpers -----------------------------------------------------------
     bool hook(const std::function<bool()>& fn) const { return fn ? fn() : false; }
 
@@ -45,11 +93,21 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
             exec = executor;
         }
         std::weak_ptr<Impl> weak = weak_from_this();
-        exec([weak, action = std::move(action)] {
+        auto task = [weak, action = std::move(action)] {
             auto self = weak.lock();
-            if (!self || self->stopped.load()) return;
+            if (!self) return;
+            // The scope is entered before the stopped check so that stop()
+            // either observes this action in flight (and waits for it) or the
+            // action observes stopped (and does nothing) — never neither.
+            ActionScope scope(*self);
+            if (self->stopped.load()) return;
             action(*self);
-        });
+        };
+        if (exec) {
+            exec(std::move(task));
+        } else {
+            task(); // an adapter that detached its executor: run inline
+        }
     }
 
     void emitCamera(const CameraOutcome& outcome)
@@ -434,6 +492,7 @@ void StartupDiscoveryCoordinator::stop()
     }
     if (cameraJob) impl_->service.cancelDiscovery(cameraJob);
     if (nanoJob) impl_->service.cancelDiscovery(nanoJob);
+    impl_->drainActions();
     SPDLOG_INFO("StartupDiscovery: stopped (camera job {}, nanopositioner job {})", cameraJob, nanoJob);
 }
 
