@@ -65,6 +65,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[build-and-run/Build]]
 - [[build-and-run/Run-Modes]]
 - [[build-and-run/Dependencies]]
+- [[build-and-run/Assets]] — external datasets and model weights (Hub-hosted, pinned in `env/assets.json`)
 
 ### Conventions
 - [[conventions/Code-Conventions]]

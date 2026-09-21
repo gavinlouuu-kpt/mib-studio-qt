@@ -168,6 +168,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -179,6 +184,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -190,6 +200,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -304,6 +319,19 @@
       },
       "name": "windows-ninja-hardware-test",
       "configurePreset": "windows-ninja"
+    },
+    {
+      "name": "linux-network-test",
+      "displayName": "Test Linux Backend-only: network-labelled tests only (Hub datasets)",
+      "configurePreset": "linux-backend-only",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "network"
+        }
+      }
     }
   ]
 }

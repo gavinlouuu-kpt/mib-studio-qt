@@ -331,15 +331,19 @@ function(mib_configure_windows_deployment app_target)
         COMMENT "Copying Conan package DLLs for ${app_target}"
     )
 
-    # Copy resources/models directory (YOLO model files).
-    add_custom_command(TARGET ${app_target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-                "$<TARGET_FILE_DIR:${app_target}>/resources/models"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${PROJECT_SOURCE_DIR}/resources/models/yolo11n-seg.onnx"
-                "$<TARGET_FILE_DIR:${app_target}>/resources/models/"
-        COMMENT "Copying YOLO model files for ${app_target}"
-    )
+    # Copy the provisioned YOLO model (env/assets.json -> MIB_YOLO_MODEL_PATH,
+    # resolved in MIBDependencies.cmake) to the runtime path AppBackend expects:
+    # <exe>/resources/models/yolo11n-seg.onnx.
+    if(MIB_HAS_ONNXRUNTIME)
+        add_custom_command(TARGET ${app_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:${app_target}>/resources/models"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MIB_YOLO_MODEL_PATH}"
+                    "$<TARGET_FILE_DIR:${app_target}>/resources/models/"
+            COMMENT "Copying YOLO model asset for ${app_target}"
+        )
+    endif()
 
     # crashpad_handler.exe is required next to the application when
     # sentry-native is built with the Crashpad backend (the default on

@@ -108,15 +108,16 @@ cache in `.cache/huggingface/` (already gitignored).
 
 - 2026-09-21: Baseline branch is `develop` (repository default), not `main`.
 - 2026-09-21: Datasets **and** model weights are hosted on Hugging Face
-  (user decision). Datasets stay under `gavinlouuu/`; models go to a Hub
-  *model* repo (`gavinlouuu/mib-yolo11n-seg`, assumed namespace, confirm before
-  PR 1) holding both `.onnx` and `.pt` so retraining provenance travels with
+  (user decision). Datasets stay under `gavinlouuu/`; models go to the public
+  Hub *model* repo `gavinlouuu/mib-yolo11n-seg` (created 2026-09-21, commit
+  `2149ceb`; Ultralytics weights are AGPL so public is fine) holding both `.onnx` and `.pt` so retraining provenance travels with
   the artifact.
 - 2026-09-21: No Git LFS. The Hub already gives revision pinning, SHA-256,
   private repos and a Python client; LFS would add a second binary store and
   a quota to manage.
-- 2026-09-21: One fetch mechanism: `huggingface_hub.hf_hub_download` /
-  `snapshot_download` with `revision=<sha>`. The kin10 test keeps its Dataset
+- 2026-09-21: One fetch mechanism: `scripts/provision-assets.py`, stdlib
+  `urllib` against `resolve/<revision>` URLs with an optional bearer token,
+  chosen over `huggingface_hub` so CI and CMake need no Python package. The kin10 test keeps its Dataset
   Viewer REST path (no Python dependency inside the C++ harness, exit 77
   semantics proven) but reads dataset id, config, split and row list from
   `env/assets.json` via a generated header or a CTest `ENVIRONMENT` property,
@@ -160,8 +161,8 @@ Acceptance: `git ls-files .claude` shows only `skills/`; `gitleaks detect` (or a
 
 ## PR 1: asset manifest, Hugging Face hosting, provisioner
 
-- [ ] Create the Hub model repo and upload `yolo11n-seg.onnx`, `yolo11n-seg.pt`, `convert_yolo11n_seg_to_onnx.py` and a model card stating the source checkpoint, export flags and the ONNX opset. Record the commit SHA.
-- [ ] Write `env/assets.json`:
+- [x] Create the Hub model repo and upload `yolo11n-seg.onnx`, `yolo11n-seg.pt`, `convert_yolo11n_seg_to_onnx.py` and a model card stating the source checkpoint, export flags and the ONNX opset. Record the commit SHA.
+- [x] Write `env/assets.json`:
 
   ```json
   {
@@ -187,16 +188,16 @@ Acceptance: `git ls-files .claude` shows only `skills/`; `gitleaks detect` (or a
   }
   ```
 
-- [ ] Write `scripts/provision-assets.py` (stdlib + `huggingface_hub` only): `--all`, `--required-only`, `--public-only`, `--asset <id>`, `--list`, `--check` (no download, exit 1 on missing/mismatch). Downloads to `build/vendor/assets/<kind>/<id>/`, verifies SHA-256, writes `provisioned.json` with resolved revision. Uses `HF_TOKEN` from env when present; on a 401 for a private asset prints the exact env var name and the Hub URL.
-- [ ] `git rm` the two weight files. Update `MIBWindowsDeployment.cmake:334-340` and the dev-tree copy to source from `build/vendor/assets/models/yolo11n-seg/`; when `MIB_HAS_ONNXRUNTIME=ON` and the file is absent, `message(FATAL_ERROR "run: python3 scripts/provision-assets.py --asset yolo11n-seg")`. `YoloService.cpp` fallback search unchanged.
-- [ ] Replace `scripts/fetch_hf_512x96stream.py` with `provision-assets.py --asset 512x96stream-mock-frames`; update `docs/howto/mock-camera-dev-mode.md`, `pipeline-latency-diagnosis.md`, `synthetic-condition-validation.md`, `build-windows.yml:428`.
-- [ ] `scripts/synthetic_condition_validation.py`, `empty_frame_detection.py`, kedro `parameters.yml`: read repo id and revision from `env/assets.json` (small shared helper `scripts/assets_manifest.py`).
-- [ ] kin10 test: dataset/config/split/rows come from the manifest via a CTest `ENVIRONMENT` property set in `tests/CMakeLists.txt` (CMake reads `env/assets.json` with `string(JSON …)`); harness keeps Dataset Viewer + exit 77.
-- [ ] Label `backend.kin10_hf_dataset_pipeline` and the conformance-with-corpus test `network`. Add `-LE network` to `linux-backend-only-test`, `windows-ninja-test`, `windows-test`; add `linux-network-test` preset (`-L network`).
-- [ ] `docs/gold_standard_metrics.md:221`: replace the Windows user-folder path with the `z-adjustment-50v` asset id and the provisioning command, or upload that HDF5 to the private dataset and pin it. (Decide; record here.)
-- [ ] Merge `scripts/requirements.txt`, `tools/requirements-runtime.txt`, `tools/requirements-build.txt` into `env/requirements-{scripts,tools-runtime,tools-build}.txt` with `huggingface_hub` pinned; delete the old files; update `tools/build_mac.sh`, `tools/build_windows.ps1`, workflows.
-- [ ] `scripts/check_docs.py`: new check that every `gavinlouuu/<name>` Hub id in `scripts/`, `tests/`, `tools/`, `docs/howto/`, `.github/` appears in `env/assets.json`.
-- [ ] Vault: new note `knowledge_map/build-and-run/Assets.md` (manifest, provisioner, token policy, how to bump a revision); update `Dependencies.md`, `services/YoloService.md`, `camera/MockCamera.md`, `Run-Modes.md`; `docs/howto/hf-dataset-integration-tests.md` shrinks to "see Assets.md + run the network lane".
+- [x] Write `scripts/provision-assets.py` (stdlib + `huggingface_hub` only): `--all`, `--required-only`, `--public-only`, `--asset <id>`, `--list`, `--check` (no download, exit 1 on missing/mismatch). Downloads to `build/vendor/assets/<kind>/<id>/`, verifies SHA-256, writes `provisioned.json` with resolved revision. Uses `HF_TOKEN` from env when present; on a 401 for a private asset prints the exact env var name and the Hub URL.
+- [x] `git rm` the two weight files. Update `MIBWindowsDeployment.cmake:334-340` and the dev-tree copy to source from `build/vendor/assets/models/yolo11n-seg/`; when `MIB_HAS_ONNXRUNTIME=ON` and the file is absent, `message(FATAL_ERROR "run: python3 scripts/provision-assets.py --asset yolo11n-seg")`. `YoloService.cpp` fallback search unchanged.
+- [x] Replace `scripts/fetch_hf_512x96stream.py` with `provision-assets.py --asset 512x96stream-mock-frames`; update `docs/howto/mock-camera-dev-mode.md`, `pipeline-latency-diagnosis.md`, `synthetic-condition-validation.md`, `build-windows.yml:428`.
+- [x] `scripts/synthetic_condition_validation.py`, `empty_frame_detection.py`, kedro `parameters.yml`: read repo id and revision from `env/assets.json` (small shared helper `scripts/assets_manifest.py`).
+- [x] kin10 test: the Python and shell harnesses read dataset/config/split/rows from the manifest through `scripts/assets_manifest.py` (simpler than a CTest `ENVIRONMENT` property; CMake reads the manifest only for the model path); harness keeps Dataset Viewer + exit 77.
+- [x] `backend.kin10_hf_dataset_pipeline` already carried `network` + `SKIP_RETURN_CODE 77`; the Windows fast presets already excluded `integration`. Added `exclude network` to the three Linux test presets and a `linux-network-test` preset (`include network`).
+- [x] `docs/gold_standard_metrics.md`: z-adjustment section now provisions via the `z-adjustment-50v` asset; the PANC1 local path is dropped (file was never available; if it surfaces, pin it as an asset).
+- [ ] **Deferred to PR 2 (bootstrap owns the Python env).** Merge the three requirements files into `env/`. `provision-assets.py` is stdlib-only, so no `huggingface_hub` pin is needed for provisioning.
+- [x] `scripts/check_docs.py`: new check that every `gavinlouuu/<name>` Hub id in `scripts/`, `tests/`, `tools/`, `docs/howto/`, `.github/` appears in `env/assets.json`.
+- [x] Vault: new note `knowledge_map/build-and-run/Assets.md` (manifest, provisioner, token policy, how to bump a revision); update `Dependencies.md`, `services/YoloService.md`, `camera/MockCamera.md`, `Run-Modes.md`; `docs/howto/hf-dataset-integration-tests.md` shrinks to "see Assets.md + run the network lane".
 
 Acceptance: fresh clone, `python3 scripts/provision-assets.py --required-only` then `cmake --preset linux-backend-only` configures with ONNX on; `--check` exits 1 before and 0 after; CTest default preset runs zero `network` tests; `git ls-files resources/models` shows only the README and converter.
 
@@ -256,14 +257,12 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 
 ## Open questions (answer before the PR that needs them)
 
-- PR 1: Hub namespace for the model repo (`gavinlouuu/` assumed; an org namespace if the lab wants shared ownership).
-- PR 1: keep `gold_standard_metrics.md`'s PANC1 HDF5 as a pinned private asset, or drop the reference.
 - PR 3: publish the devcontainer image to GHCR, or build it per job.
 
 ## Progress
 
-- [ ] PR 0 secrets
-- [ ] PR 1 assets on Hugging Face
+- [x] PR 0 secrets (#424; credentials rotated 2026-09-21)
+- [x] PR 1 assets on Hugging Face
 - [ ] PR 2 doctor and bootstrap
 - [ ] PR 3 devcontainer and CI convergence
 - [ ] PR 4 presets and pins

@@ -1,0 +1,117 @@
+{
+  "$comment": "External datasets and model weights the build, tests and scripts depend on. One entry per asset, pinned by Hub revision (commit SHA) and, where a single file is consumed, by SHA-256. Fetch with scripts/provision-assets.py; check with --check. Bumping an asset is a reviewed change to this file. See knowledge_map/build-and-run/Assets.md.",
+  "version": 1,
+  "root": "build/vendor/assets",
+  "assets": [
+    {
+      "id": "yolo11n-seg",
+      "kind": "model",
+      "repo": "gavinlouuu/mib-yolo11n-seg",
+      "repo_type": "model",
+      "revision": "2149cebc45ea3a3e06677528c997ed0dbfb05cd7",
+      "visibility": "public",
+      "token_required": false,
+      "required": true,
+      "files": [
+        {
+          "path": "yolo11n-seg.onnx",
+          "sha256": "5555f71a4f65f3b8166d7b9c74b72c80a5e61ff2d6c04a09b219a2b50553f0c7"
+        }
+      ],
+      "consumers": [
+        "cmake/MIBDependencies.cmake (configure-time presence check when ONNX Runtime is found)",
+        "cmake/MIBWindowsDeployment.cmake (post-build copy next to the exe)",
+        "src/backend/app/AppBackend.cpp (runtime path <exe>/resources/models/yolo11n-seg.onnx)",
+        "src/backend/services/YoloService.cpp"
+      ],
+      "notes": "The Hub repo also holds the source .pt checkpoint and the export script; only the .onnx is provisioned. Required only when ONNX Runtime is available (Windows Conan builds)."
+    },
+    {
+      "id": "512x96stream-kin10",
+      "kind": "dataset",
+      "repo": "gavinlouuu/512x96stream",
+      "repo_type": "dataset",
+      "revision": "787a751f69016cdfc62d7f9cf2ddd482add6508c",
+      "visibility": "public",
+      "token_required": false,
+      "required": false,
+      "viewer": {
+        "config": "default",
+        "split": "train",
+        "rows": [0, 1, 2, 2500, 4999]
+      },
+      "consumers": [
+        "tests/integration/kin10_hf_dataset_pipeline_test.cpp (CTest backend.kin10_hf_dataset_pipeline, label network)",
+        "tools/kin10_run_hf_dataset_test.py",
+        "tools/kin10_run_hf_dataset_test.sh",
+        "tools/kin6_generate_hf_evidence.sh"
+      ],
+      "notes": "Fetched at test time through the Dataset Viewer API (no token, exit 77 on transient failure); not materialised by provision-assets.py. The harnesses read dataset, config, split and rows from this entry."
+    },
+    {
+      "id": "512x96stream-mock-frames",
+      "kind": "dataset",
+      "repo": "gavinlouuu/512x96stream",
+      "repo_type": "dataset",
+      "revision": "787a751f69016cdfc62d7f9cf2ddd482add6508c",
+      "visibility": "public",
+      "token_required": false,
+      "required": false,
+      "files": [
+        {
+          "pattern": "image.{index:04d}.tiff",
+          "index_start": 0,
+          "index_count": 5000,
+          "default_count": 1000
+        }
+      ],
+      "consumers": [
+        "MockCamera via MIB_MOCK_CAMERA_DIR",
+        "tests/tools/mock_pipeline_timing_run.cpp",
+        "scripts/synthetic_condition_validation.py",
+        "docs/howto/pipeline-latency-diagnosis.md"
+      ],
+      "notes": "512x96 grayscale TIFF stream frames. --count limits how many are materialised (default 1000). Integrity is the revision pin; no per-file digests."
+    },
+    {
+      "id": "z-adjustment-50v",
+      "kind": "dataset",
+      "repo": "gavinlouuu/z_adjustment-data",
+      "repo_type": "dataset",
+      "revision": "fc62e3147fb0237e46e6eebd0fb09e669abef12f",
+      "visibility": "private",
+      "token_required": true,
+      "required": false,
+      "files": [
+        {
+          "path": "50V_in_focus/recording_20260511_160006.h5",
+          "sha256": "7ed2a721c85adc600688e32d4c4dbb7a58f0c725e351559ebc946eddab311bdc"
+        }
+      ],
+      "consumers": [
+        "scripts/run_processing_conformance.py (--hdf5)",
+        "scripts/z_adjustment_50v_reference.json (fixture id)",
+        "docs/gold_standard_metrics.md"
+      ],
+      "notes": "1.5 GB HDF5 recording. Needs HF_TOKEN with read access to the private dataset. Real-corpus conformance evidence; not part of any default test preset."
+    },
+    {
+      "id": "dc-ds",
+      "kind": "dataset",
+      "repo": "gavinlouuu/dc_ds",
+      "repo_type": "dataset",
+      "revision": "cb78262586f02b1be08d3accde5d9243789813c4",
+      "visibility": "public",
+      "token_required": false,
+      "required": false,
+      "hf_datasets": {
+        "split": "train"
+      },
+      "consumers": [
+        "scripts/empty_frame_detection.py",
+        "scripts/kedro_frame_detection/conf/base/parameters.yml"
+      ],
+      "notes": "Labelled parquet dataset consumed through the `datasets` library (load_dataset with revision). Not materialised by provision-assets.py."
+    }
+  ]
+}

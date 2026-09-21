@@ -36,6 +36,7 @@ commit/PR. The source-file to vault-note mapping is in
 
 ```bash
 ./scripts/provision-mindvision-sdk.sh      # Linux/macOS; populates build/vendor
+python3 scripts/provision-assets.py        # model weights/datasets from the Hub (env/assets.json)
 cmake --preset linux-backend-only         # Linux, backend lib + tests only
 cmake --build --preset linux-backend-only-build
 ```
