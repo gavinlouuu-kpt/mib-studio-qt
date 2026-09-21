@@ -4,6 +4,9 @@
 
 ## Step 1 — Orient
 
+0. Run `scripts/doctor.sh` (Windows: `.\scripts\doctor.ps1`); if it lists
+   anything, `scripts/bootstrap.sh` installs it. Build/test commands only work
+   once the doctor exits 0 ([[build-and-run/Build]]).
 1. Read `AGENTS.md` (top-level agent map: navigation, build commands, hard conventions).
 2. Read [[architecture/Overview]] — what this app is and how it's layered.
 3. Read [[architecture/Data-Flow]] — the realtime path from camera to HDF5.

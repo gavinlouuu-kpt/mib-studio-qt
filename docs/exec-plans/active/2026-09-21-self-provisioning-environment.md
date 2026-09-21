@@ -146,7 +146,7 @@ cache in `.cache/huggingface/` (already gitignored).
 - [x] `grep -rn 'apt-get install' .github/workflows` matches only the composite action, plus one line inside `python-wheel.yml`'s `docker run` of a slim image (provisioning the test container, not the runner).
 - [ ] `git ls-files | grep -E '\.(onnx|pt|log)$'` is empty; `git ls-files .claude` is empty.
 - [ ] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`; `scripts/check_docs.py` enforces this.
-- [ ] `AGENTS.md` "Build and Run" is three commands: doctor, bootstrap, preset.
+- [x] `AGENTS.md` "Build and Run" is three commands: doctor, bootstrap, preset (PR 2).
 - [x] No path under `/home/<user>` or `C:/Users/<user>` in any tracked build/config file. Remaining hits are history notes (`knowledge_map/task/`, `Recent-Work.md`), evidence bundles, and `deploy/*/README.md` server runbooks that document a specific host's directory layout (kept; not a build input). The tracked build logs go in PR 6.
 
 ## PR 0: secrets (do first, smallest possible diff)
@@ -237,12 +237,12 @@ Acceptance: whole-plan criterion 1 and 3 pass; all seven workflows green on the 
 
 ## PR 5: documentation consolidation
 
-- [ ] Split `knowledge_map/build-and-run/Build.md`: keep presets, targets, commands, platform guards (current truth only). Move every dated paragraph (windows-ninja bench numbers, sccache, bridge manifest, Chinese cl.exe, cpuinfo, Authenticode target note) into existing or new `knowledge_map/task/YYYY-MM-DD-*.md` notes and link them from a "History" list.
-- [ ] `docs/howto/linux-build.md` → prerequisites are "run doctor"; keep only the preset matrix and the `mib_processing`-only fast loop.
-- [ ] `README.md` "Building": replace the Windows-only Conan walkthrough with the three-command block and a link to `Build.md`.
-- [ ] `WORKFLOW.md` (Symphony) `before_run`: add `scripts/doctor.sh || scripts/bootstrap.sh --public-assets-only`.
-- [ ] `knowledge_map/Agent-Onboarding.md` Step 1: insert "run `scripts/doctor.sh`" before reading the architecture notes.
-- [ ] `docs/golden-principles.md`: add the "every list has one home" rule and the asset-pinning rule.
+- [x] Split `knowledge_map/build-and-run/Build.md`: keep presets, targets, commands, platform guards (current truth only). Move every dated paragraph (windows-ninja bench numbers, sccache, bridge manifest, Chinese cl.exe, cpuinfo, Authenticode target note) into existing or new `knowledge_map/task/YYYY-MM-DD-*.md` notes and link them from a "History" list.
+- [x] (PR 2) `docs/howto/linux-build.md` → prerequisites are "run doctor"; keep only the preset matrix and the `mib_processing`-only fast loop.
+- [x] (PR 2) `README.md` "Building": replace the Windows-only Conan walkthrough with the three-command block and a link to `Build.md`.
+- [x] `WORKFLOW.md` (Symphony) `before_run`: add `scripts/doctor.sh || scripts/bootstrap.sh --public-assets-only`.
+- [x] `knowledge_map/Agent-Onboarding.md` Step 1: insert "run `scripts/doctor.sh`" before reading the architecture notes.
+- [x] `docs/golden-principles.md`: add the "every list has one home" rule and the asset-pinning rule.
 
 Acceptance: `scripts/check_docs.py` passes; `grep -rn 'apt install\|apt-get install' docs knowledge_map README.md AGENTS.md` returns only references to `env/apt-packages.txt`.
 
@@ -265,6 +265,6 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 - [x] PR 2 doctor and bootstrap
 - [x] PR 3 devcontainer and CI convergence
 - [x] PR 4 presets and pins
-- [ ] PR 5 docs consolidation
+- [x] PR 5 docs consolidation
 - [ ] PR 6 root cleanup
 - [ ] Move this plan to `completed/`; open tech-debt entries for anything skipped

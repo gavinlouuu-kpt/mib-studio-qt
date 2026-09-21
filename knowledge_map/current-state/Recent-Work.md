@@ -1,5 +1,17 @@
 # Recent Work
 
+## 2026-09-21 — Build docs consolidated: Build.md is current truth, dated notes moved to task/
+
+PR 5 of the self-provisioning plan. `build-and-run/Build.md` now holds only
+what is true today (start-here, containers/CI, a preset table, targets,
+commands, Conan, platform guards) plus a History list; the dated paragraphs
+moved to `task/2026-09-09-windows-ninja-fast-loop.md`,
+`task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo.md`, and the existing
+hardware-shutdown, MindVision-overview and cloud-toolchain notes. Golden
+principle 12 ("every setup list has exactly one home") is the rule the plan
+implements. `WORKFLOW.md` (Symphony) runs the doctor/bootstrap before each
+run; Agent-Onboarding step 0 is the doctor.
+
 ## 2026-09-21 — Preset hygiene: no user paths, described presets, showIncludes gate
 
 PR 4 of the self-provisioning plan. `CMakePresets.json` no longer carries
