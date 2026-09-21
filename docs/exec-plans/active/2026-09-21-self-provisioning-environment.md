@@ -143,7 +143,7 @@ cache in `.cache/huggingface/` (already gitignored).
 
 - [ ] `docker build .devcontainer && docker run … bash -lc 'scripts/bootstrap.sh && cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build && ctest --preset linux-backend-only-test'` is green from a clean image, with `network`-labelled tests excluded by the preset.
 - [ ] On a macOS or Windows host with nothing installed, `scripts/doctor.{sh,ps1}` exits 1 and lists every missing item with a copy-pasteable fix; after `bootstrap`, `doctor` exits 0.
-- [ ] `grep -rn 'apt-get install' .github/workflows` matches only the composite action.
+- [x] `grep -rn 'apt-get install' .github/workflows` matches only the composite action, plus one line inside `python-wheel.yml`'s `docker run` of a slim image (provisioning the test container, not the runner).
 - [ ] `git ls-files | grep -E '\.(onnx|pt|log)$'` is empty; `git ls-files .claude` is empty.
 - [ ] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`; `scripts/check_docs.py` enforces this.
 - [ ] `AGENTS.md` "Build and Run" is three commands: doctor, bootstrap, preset.
@@ -220,11 +220,11 @@ Acceptance: on a clean `ubuntu:24.04` container and on a Mac with Homebrew, doct
 
 ## PR 3: devcontainer and CI convergence
 
-- [ ] `.devcontainer/Dockerfile`: `ubuntu:24.04`, `COPY env/apt-packages.txt`, install sections `base backend frontend`, non-root user, Conan + Python venv. `devcontainer.json`: `postCreateCommand: scripts/bootstrap.sh --public-assets-only`, mounts `.cache/huggingface` and the Conan cache as named volumes, forwards `HF_TOKEN` from the host if set.
-- [ ] `.github/actions/setup-linux-env/action.yml` (composite): inputs `sections`, `provision-assets` (`required|public|all`), `conan` (bool). Reads `env/apt-packages.txt`. Replace the apt/pip/provision steps in `backend-ci`, `bridge-ci`, `desktop-ci`, `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux jobs) with it.
-- [ ] Add `network-tests.yml` (nightly + manual): setup with `provision-assets all`, `HF_TOKEN` from secrets, `ctest --preset linux-network-test`.
-- [ ] Optional: publish the devcontainer image to GHCR on changes to `env/` or `.devcontainer/`, and let the composite action use `container:` when the image is current. Record the decision here.
-- [ ] Vault: `Build.md` "CI lanes" table lists the composite action as the single source; `docs/architecture/testing-strategy.md` gains the `network` lane.
+- [x] `.devcontainer/Dockerfile`: `ubuntu:24.04`, `COPY env/apt-packages.txt`, install sections `base backend frontend`, non-root user, Conan + Python venv. `devcontainer.json`: `postCreateCommand: scripts/bootstrap.sh --public-assets-only`, mounts `.cache/huggingface` and the Conan cache as named volumes, forwards `HF_TOKEN` from the host if set.
+- [x] `.github/actions/setup-linux-env/action.yml` (composite): inputs `sections`, `provision-assets` (`required|public|all`), `conan` (bool). Reads `env/apt-packages.txt`. Replace the apt/pip/provision steps in `backend-ci`, `bridge-ci`, `desktop-ci`, `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux jobs) with it.
+- [x] Add `network-tests.yml` (nightly + manual): setup with `provision-assets all`, `HF_TOKEN` from secrets, `ctest --preset linux-network-test`.
+- [x] Decision: no GHCR image for now. Package installs take ~2 min per job and the composite action keeps lanes independent of an image publish step; revisit if apt time dominates.
+- [x] Vault: `Build.md` "CI lanes" table lists the composite action as the single source; `docs/architecture/testing-strategy.md` gains the `network` lane.
 
 Acceptance: whole-plan criterion 1 and 3 pass; all seven workflows green on the PR.
 
@@ -257,14 +257,13 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 
 ## Open questions (answer before the PR that needs them)
 
-- PR 3: publish the devcontainer image to GHCR, or build it per job.
 
 ## Progress
 
 - [x] PR 0 secrets (#424; credentials rotated 2026-09-21)
 - [x] PR 1 assets on Hugging Face
 - [x] PR 2 doctor and bootstrap
-- [ ] PR 3 devcontainer and CI convergence
+- [x] PR 3 devcontainer and CI convergence
 - [ ] PR 4 presets and pins
 - [ ] PR 5 docs consolidation
 - [ ] PR 6 root cleanup

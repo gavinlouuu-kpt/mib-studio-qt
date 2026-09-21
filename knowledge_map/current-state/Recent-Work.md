@@ -1,5 +1,16 @@
 # Recent Work
 
+## 2026-09-21 — Devcontainer, one composite setup action for every Linux lane, nightly network tests
+
+PR 3 of the self-provisioning plan. `.devcontainer/` (Ubuntu 24.04 built from
+`env/apt-packages.txt`, `/opt/venv` with Conan + NumPy, post-create runs the
+bootstrap and doctor, cache volumes, `HF_TOKEN` passthrough). The seven
+hand-typed apt lists in `backend-ci`, `bridge-ci`, `desktop-ci`, `sanitizers`,
+`soak`, `exporter-soak`, `python-wheel` are replaced by
+`.github/actions/setup-linux-env` (sections + extras, Conan, MindVision SDK,
+assets). New `network-tests.yml` runs `linux-network-test` nightly. Decision:
+build the image per job rather than publish to GHCR. See [[../build-and-run/Build]].
+
 ## 2026-09-21 — doctor/bootstrap scripts; env/ is the single home for setup lists
 
 PR 2 of the self-provisioning plan. `scripts/doctor.{sh,ps1}` report what a

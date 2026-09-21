@@ -32,13 +32,30 @@ these read has exactly one home:
 
 | Concern | File | Read by |
 |---|---|---|
-| apt packages, by `# section:` | `env/apt-packages.txt` | doctor/bootstrap; devcontainer + CI composite action (plan PR 3) |
+| apt packages, by `# section:` | `env/apt-packages.txt` | doctor/bootstrap; `.devcontainer/Dockerfile`; `.github/actions/setup-linux-env` (every Linux CI lane) |
 | Homebrew formulae | `env/brew-packages.txt` | doctor/bootstrap on macOS |
 | tool minimums | `env/toolchain.toml` | doctor (flat `name = ">=x"` lines) |
 | runtime pins | `rust-toolchain.toml`, `.nvmrc` + `desktop/package.json` engines, `.python-version`, `mise.toml` | rustup, nvm/Node, pyenv/uv, mise |
 | Python packages | `env/requirements-build.txt` (conan, numpy), `-scripts.txt`, `-tools-runtime.txt`, `-tools-build.txt` | bootstrap, `tools/build_*`, `scripts/build_*`, CI |
 | Conan host profiles | `conan/profiles/linux-gcc13`, `windows-msvc194`, `windows-msvc194-ninja` (carries the `cpuinfo` `[replace_requires]`) | `conan install -pr conan/profiles/<name>`; Windows workflows |
 | external datasets / models | `env/assets.json` | `scripts/provision-assets.py`, CMake, harnesses ([[Assets]]) |
+
+## Containers and CI lanes (2026-09-21)
+
+`.devcontainer/` builds `ubuntu:24.04` + sections `base,backend,frontend` of
+`env/apt-packages.txt`, a `/opt/venv` with Conan + NumPy, and on create runs
+`scripts/bootstrap.sh --skip-packages --public-assets-only` (SDK, `.venv`,
+Conan profile, public assets) then the doctor. Named volumes keep the
+Hugging Face and Conan caches across rebuilds; `HF_TOKEN` passes through from
+the host when set. The image is built per job/container, not published
+(decision in the plan). `.github/actions/setup-linux-env` is the one place
+Linux workflows get packages (`sections`, `extra-packages`), Conan
+(`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
+`desktop-ci`, `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
+and `network-tests` all use it, and `grep apt-get .github/workflows` should
+match nothing. `network-tests.yml` (nightly + manual) runs
+`ctest --preset linux-network-test`; every default test preset excludes the
+`network` label.
 
 ## Presets
 

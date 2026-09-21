@@ -65,11 +65,10 @@ python3 scripts/check_screenshots.py           # user manual <-> screenshot harn
 ctest --preset linux-backend-only-test         # backend unit tests
 ```
 
-CI: [`backend-ci.yml`](.github/workflows/backend-ci.yml) builds and tests the
-backend on Linux; [`docs-ci.yml`](.github/workflows/docs-ci.yml) runs the
-knowledge checks; [`ci.yml`](.github/workflows/ci.yml) validates Windows
-packaging scripts; [`docs-site.yml`](.github/workflows/docs-site.yml)
-publishes `docs/manual/` as the user-guide website (`mkdocs.yml`).
+CI: Linux lanes install via [`setup-linux-env`](.github/actions/setup-linux-env/action.yml)
+(reads `env/apt-packages.txt`); `backend-ci.yml` builds and tests the backend,
+`docs-ci.yml` runs the knowledge checks, `ci.yml` validates Windows packaging
+scripts, `docs-site.yml` publishes `docs/manual/` (`mkdocs.yml`).
 
 ## Testing framework (safeguards)
 

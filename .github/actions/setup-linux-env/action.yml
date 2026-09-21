@@ -1,0 +1,69 @@
+name: Set up Linux build environment
+description: >-
+  Installs the apt packages for the requested sections of env/apt-packages.txt,
+  optionally Conan + NumPy (env/requirements-build.txt), the pinned MindVision
+  SDK and the external assets from env/assets.json. The single source of the
+  package list for every Linux lane; do not add apt-get lines to workflows.
+inputs:
+  sections:
+    description: Comma-separated sections of env/apt-packages.txt (base,backend,frontend,desktop-shell,test-extras)
+    default: base,backend
+  extra-packages:
+    description: Lane-specific apt packages that do not belong in env/apt-packages.txt (space-separated)
+    default: ""
+  conan:
+    description: Install env/requirements-build.txt (Conan 2, NumPy) and detect the default profile
+    default: "false"
+  mindvision:
+    description: Run scripts/provision-mindvision-sdk.sh and export MIB_MINDVISION_* to GITHUB_ENV
+    default: "true"
+  assets:
+    description: Which env/assets.json assets to provision (required, public, all, none)
+    default: none
+runs:
+  using: composite
+  steps:
+    - name: Install apt packages (env/apt-packages.txt)
+      shell: bash
+      env:
+        SECTIONS: ${{ inputs.sections }}
+        EXTRA: ${{ inputs.extra-packages }}
+      run: |
+        set -euo pipefail
+        pkgs="$(awk -v want=",${SECTIONS}," '
+            /^# section:/ { sec=$3; next }
+            /^#/ || /^[[:space:]]*$/ { next }
+            index(want, "," sec ",") { print $1 }
+          ' env/apt-packages.txt | tr '\n' ' ')"
+        echo "sections=${SECTIONS}: ${pkgs}${EXTRA}"
+        sudo apt-get update
+        # shellcheck disable=SC2086
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${pkgs} ${EXTRA}
+
+    - name: Install Conan + NumPy (env/requirements-build.txt)
+      if: inputs.conan == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -m pip install --upgrade pip
+        python3 -m pip install -r env/requirements-build.txt
+        conan profile detect --force
+
+    - name: Provision pinned MindVision SDK
+      if: inputs.mindvision == 'true'
+      shell: bash
+      run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+
+    - name: Provision external assets (env/assets.json)
+      if: inputs.assets != 'none'
+      shell: bash
+      env:
+        SCOPE: ${{ inputs.assets }}
+      run: |
+        set -euo pipefail
+        case "$SCOPE" in
+          required) python3 scripts/provision-assets.py --required-only ;;
+          public)   python3 scripts/provision-assets.py --public-only ;;
+          all)      python3 scripts/provision-assets.py --all ;;
+          *) echo "unknown assets scope: $SCOPE" >&2; exit 2 ;;
+        esac

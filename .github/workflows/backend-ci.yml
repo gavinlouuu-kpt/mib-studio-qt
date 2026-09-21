@@ -27,41 +27,15 @@ jobs:
         shell: bash
         run: mkdir -p artifacts/backend-ci
 
-      - name: Install Linux system packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            curl \
-            git \
-            libcurl4-openssl-dev \
-            libgl1-mesa-dev \
-            libhdf5-dev \
-            libopencv-dev \
-            libspdlog-dev \
-            libsqlite3-dev \
-            libxkbcommon-dev \
-            nlohmann-json3-dev \
-            pkg-config \
-            python3-pip
-          # No Qt SDK: the backend is fully Qt-free (epic #246 Phase 1 exit
-          # gate). Installing no qt6-* packages proves linux-backend-only
-          # configures/builds/tests without Qt.
-
-      - name: Provision pinned MindVision SDK
-        shell: bash
-        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
-
-      - name: Install Conan
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install conan numpy
-          conan profile detect --force
+      # Sections base+backend only: no qt6-* packages, which proves the backend
+      # is Qt-free (epic #246 Phase 1 exit gate). The list is env/apt-packages.txt.
+      - name: Set up Linux build environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,backend
+          conan: "true"
+          mindvision: "true"
+          assets: required
 
       - name: Probe Conan dependency availability
         shell: bash

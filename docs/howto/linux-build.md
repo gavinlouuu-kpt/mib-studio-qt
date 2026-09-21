@@ -63,6 +63,10 @@ to skip it entirely.
 
 ## Cloud agent / fresh container setup
 
+`.devcontainer/` is the reference container: open the repo in a devcontainer
+(VS Code, GitHub Codespaces, or `docker build -f .devcontainer/Dockerfile .`)
+and the post-create step provisions everything below automatically.
+
 A freshly cloned cloud container ships `cmake`/`ninja`/`g++` but **no Qt, no
 OpenCV/HDF5/spdlog, and an empty Conan cache**, so none of the presets above
 configure until you provision system packages. Two paths, fastest first.
