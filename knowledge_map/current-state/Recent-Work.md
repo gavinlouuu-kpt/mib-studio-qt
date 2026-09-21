@@ -1,5 +1,16 @@
 # Recent Work
 
+## 2026-09-21 — Preset hygiene: no user paths, described presets, showIncludes gate
+
+PR 4 of the self-provisioning plan. `CMakePresets.json` no longer carries
+`/home/gavin/...` ignore paths (they belong in the gitignored
+`CMakeUserPresets.json`; `CMakeUserPresets.example.json` shows how) and every
+configure preset has a `description` naming its `env/` sections and Conan
+profile. `cmake/MIBCompilerSettings.cmake` now fails a Ninja + MSVC configure
+when `CMAKE_CL_SHOWINCLUDES_PREFIX` is empty instead of silently losing header
+dependencies (`MIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX=ON` to override). See
+[[../build-and-run/Build]].
+
 ## 2026-09-21 — Devcontainer, one composite setup action for every Linux lane, nightly network tests
 
 PR 3 of the self-provisioning plan. `.devcontainer/` (Ubuntu 24.04 built from

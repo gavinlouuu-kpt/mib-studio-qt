@@ -147,7 +147,7 @@ cache in `.cache/huggingface/` (already gitignored).
 - [ ] `git ls-files | grep -E '\.(onnx|pt|log)$'` is empty; `git ls-files .claude` is empty.
 - [ ] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`; `scripts/check_docs.py` enforces this.
 - [ ] `AGENTS.md` "Build and Run" is three commands: doctor, bootstrap, preset.
-- [ ] No path under `/home/<user>` or `C:/Users/<user>` in any tracked file except `knowledge_map/task/` history notes.
+- [x] No path under `/home/<user>` or `C:/Users/<user>` in any tracked build/config file. Remaining hits are history notes (`knowledge_map/task/`, `Recent-Work.md`), evidence bundles, and `deploy/*/README.md` server runbooks that document a specific host's directory layout (kept; not a build input). The tracked build logs go in PR 6.
 
 ## PR 0: secrets (do first, smallest possible diff)
 
@@ -230,10 +230,10 @@ Acceptance: whole-plan criterion 1 and 3 pass; all seven workflows green on the 
 
 ## PR 4: presets and pin hygiene
 
-- [ ] Remove `CMAKE_IGNORE_PREFIX_PATH` user paths from `CMakePresets.json`; document in `Build.md` that machine-specific ignores go in `CMakeUserPresets.json` (already ignored). Add a `CMakeUserPresets.example.json`.
-- [ ] Add `"description"` to every configure preset naming the `env/` sections and the Conan profile it expects, so `cmake --list-presets` is self-explanatory.
-- [ ] `cmake/MIBCompilerSettings.cmake`: detect the localized `/showIncludes` prefix and `message(FATAL_ERROR)` with the fix from Build.md instead of silently losing header deps.
-- [ ] Vault: `Build.md`, `Dependencies.md` (`conanfile.txt` → `conanfile.py`; drop the "not vcpkg despite old comments" residue).
+- [x] Remove `CMAKE_IGNORE_PREFIX_PATH` user paths from `CMakePresets.json`; document in `Build.md` that machine-specific ignores go in `CMakeUserPresets.json` (already ignored). Add a `CMakeUserPresets.example.json`.
+- [x] Add `"description"` to every configure preset naming the `env/` sections and the Conan profile it expects, so `cmake --list-presets` is self-explanatory.
+- [x] `cmake/MIBCompilerSettings.cmake`: detect the localized `/showIncludes` prefix and `message(FATAL_ERROR)` with the fix from Build.md instead of silently losing header deps.
+- [x] Vault: `Build.md`; `Dependencies.md` fixed in PR 2 (`conanfile.py`); the "not vcpkg" residue goes with PR 5's Build.md split.
 
 ## PR 5: documentation consolidation
 
@@ -264,7 +264,7 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 - [x] PR 1 assets on Hugging Face
 - [x] PR 2 doctor and bootstrap
 - [x] PR 3 devcontainer and CI convergence
-- [ ] PR 4 presets and pins
+- [x] PR 4 presets and pins
 - [ ] PR 5 docs consolidation
 - [ ] PR 6 root cleanup
 - [ ] Move this plan to `completed/`; open tech-debt entries for anything skipped

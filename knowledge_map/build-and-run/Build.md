@@ -59,6 +59,12 @@ match nothing. `network-tests.yml` (nightly + manual) runs
 
 ## Presets
 
+Every configure preset carries a `description` naming the `env/` sections
+and Conan profile it expects (`cmake --list-presets` shows them). The shared
+file holds no machine-specific paths: put ignores such as a conda or
+linuxbrew prefix in `CMakeUserPresets.json` (gitignored; start from
+`CMakeUserPresets.example.json`).
+
 From `CMakePresets.json`:
 - `windows-default` — VS2022 x64, uses `build/conan_toolchain.cmake`
 - `linux-backend-only` — Linux backend-only configure (`mib_backend` + tests;
@@ -426,9 +432,12 @@ layout. `VSLANG=1033` only helps when the English language pack is installed; th
 PC's Build Tools carry only the system language, so cl.exe kept printing the
 localized prefix. Fix: add the English pack (`vs_installer.exe modify
 --installPath "<BuildTools>" --addProductLang en-US`) or pass the localized
-prefix as `-DCMAKE_CL_SHOWINCLUDES_PREFIX=...` at configure; until then run
-`cmake --build ... --clean-first` after header edits. sccache is not the cause
-(verified: the same prefix appears with and without the launcher).
+prefix as `-DCMAKE_CL_SHOWINCLUDES_PREFIX=...` at configure. Since 2026-09-21
+`cmake/MIBCompilerSettings.cmake` fails the Ninja configure when the prefix
+is empty (override: `-DMIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX=ON`, then always
+`--clean-first` after header edits), and `scripts/doctor.ps1` reports what
+your cl.exe prints. sccache is not the cause (verified: the same prefix
+appears with and without the launcher).
 
 Also on the rig PC: ConanCenter now resolves `cpuinfo/[>=cci.20231129]` to
 `cci.20251210` while `onnxruntime/1.18.1` pins `cci.20231129`; a cold Conan
