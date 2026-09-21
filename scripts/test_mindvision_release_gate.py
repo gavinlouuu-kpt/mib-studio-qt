@@ -112,7 +112,7 @@ class MindVisionReleaseGateTest(unittest.TestCase):
         for relative_path in (
             ".github/workflows/build-windows.yml",
             ".github/workflows/release.yml",
-            "release.ps1",
+            "scripts/release/release.ps1",
         ):
             with self.subTest(path=relative_path):
                 content = self.read(relative_path)
@@ -123,6 +123,11 @@ class MindVisionReleaseGateTest(unittest.TestCase):
                 self.assertNotIn("MIB_ENABLE_MINDVISION=OFF", content)
 
     def test_every_full_ci_build_provisions_the_platform_sdk(self) -> None:
+        # Linux lanes provision through the composite action (its `mindvision`
+        # input runs scripts/provision-mindvision-sdk.sh); the action itself must
+        # keep calling the script.
+        action = self.read(".github/actions/setup-linux-env/action.yml")
+        self.assertIn("provision-mindvision-sdk.sh", action)
         for relative_path in (
             ".github/workflows/backend-ci.yml",
             ".github/workflows/sanitizers.yml",
@@ -130,12 +135,19 @@ class MindVisionReleaseGateTest(unittest.TestCase):
         ):
             with self.subTest(path=relative_path):
                 content = self.read(relative_path)
-                self.assertIn("provision-mindvision-sdk.sh", content)
+                self.assertTrue(
+                    "provision-mindvision-sdk.sh" in content
+                    or ("uses: ./.github/actions/setup-linux-env" in content and 'mindvision: "true"' in content),
+                    f"{relative_path} must provision the MindVision SDK",
+                )
                 self.assertNotIn("MIB_ENABLE_MINDVISION=OFF", content)
 
         processing_core = self.read(".github/workflows/python-wheel.yml")
         self.assertIn("provision-mindvision-sdk.ps1", processing_core)
-        self.assertIn("provision-mindvision-sdk.sh", processing_core)
+        self.assertTrue(
+            "provision-mindvision-sdk.sh" in processing_core
+            or ("uses: ./.github/actions/setup-linux-env" in processing_core and 'mindvision: "true"' in processing_core)
+        )
 
 
 if __name__ == "__main__":
