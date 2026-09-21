@@ -3,6 +3,13 @@
 `backend.kin10_hf_dataset_pipeline` validates the async batch processing path
 against the public Hugging Face dataset `gavinlouuu/512x96stream`.
 
+The dataset id, config, split and default sample rows are declared once in
+[`env/assets.json`](../../env/assets.json) (asset `512x96stream-kin10`); both
+harnesses (`tools/kin10_run_hf_dataset_test.py` and `.sh`) read them from
+there via `scripts/assets_manifest.py`. The test carries the CTest label
+`network`: the Linux test presets exclude it, `linux-network-test` runs only
+network-labelled tests, and `build-windows.yml` runs `ctest -LE network`.
+
 The test runner downloads a small, stable sample set through the Hugging Face
 Dataset Viewer API. It does not require `HF_TOKEN`, `huggingface-cli`, or manual
 login for the public dataset.
@@ -34,7 +41,7 @@ Linux:
 ```bash
 cmake --preset linux-backend-only
 cmake --build --preset linux-backend-only-build --target kin10_hf_dataset_pipeline_test
-ctest --preset linux-backend-only-test -R backend.kin10_hf_dataset_pipeline --output-on-failure
+ctest --preset linux-network-test -R backend.kin10_hf_dataset_pipeline
 ```
 
 CTest writes downloaded frames, sample overlays, and `metrics.json` under:
@@ -61,8 +68,8 @@ python tools/kin10_run_hf_dataset_test.py `
 
 ## Sample Selection And Cache
 
-By default the runner uses rows `0,1,2,2500,4999` from config `default`, split
-`train`. The rows are cached in the selected output directory:
+By default the runner uses the rows listed in `env/assets.json`
+(`0,1,2,2500,4999` from config `default`, split `train`). The rows are cached in the selected output directory:
 
 ```text
 <output-dir>/cache/hf_row_00000.jpg

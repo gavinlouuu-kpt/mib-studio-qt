@@ -229,10 +229,17 @@ if (-not $SkipBuild) {
     Write-Host "`n--- Step 3: Build Release ---" -ForegroundColor Cyan
 
     if ($DryRun) {
+        Write-Host "[DRY RUN] Would provision the pinned external assets (env/assets.json)" -ForegroundColor Gray
         Write-Host "[DRY RUN] Would provision the pinned MindVision SDK and configure MIB_ENABLE_MINDVISION=ON" -ForegroundColor Gray
         Write-Host "[DRY RUN] Would reconfigure Release with the repository processing-core signer trust pin" -ForegroundColor Gray
         Write-Host "[DRY RUN] Would build the full Release target set and run CTest" -ForegroundColor Gray
     } else {
+        Write-Host "Provisioning the pinned external assets (env/assets.json)..." -ForegroundColor Yellow
+        python "$PSScriptRoot\scripts\provision-assets.py" --required-only
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: asset provisioning failed (scripts/provision-assets.py exit $LASTEXITCODE)" -ForegroundColor Red
+            exit 1
+        }
         Write-Host "Provisioning the pinned MindVision SDK..." -ForegroundColor Yellow
         $mindVisionSdk = & "$PSScriptRoot\scripts\provision-mindvision-sdk.ps1" `
             -Destination "$PSScriptRoot\build\vendor\mindvision-sdk" `

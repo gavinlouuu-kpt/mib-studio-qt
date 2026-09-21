@@ -18,6 +18,20 @@ Set the following environment variables before launching `mib_studio_qt`:
 - `MIB_MOCK_CAMERA_INTERVAL_MS` (optional) &mdash; delay between frames in milliseconds, default `33` (~30 fps). For finer control use the mock config dialog or set options programmatically (microsecond precision).
 - `MIB_MOCK_CAMERA_LOOP` (optional) &mdash; set to `false`, `0`, or `no` to stop after the last frame. Otherwise the sequence loops.
 
+## Getting real stream frames
+
+A 5,000-frame 512x96 grayscale stream is published on the Hugging Face Hub and
+declared in [`env/assets.json`](../../env/assets.json) as
+`512x96stream-mock-frames`. Materialise as many frames as you need (default
+1,000) and point the mock at the folder:
+
+```bash
+python3 scripts/provision-assets.py --asset 512x96stream-mock-frames --count 1000
+MIB_CAMERA_MODE=mock MIB_MOCK_CAMERA_DIR=build/vendor/assets/datasets/512x96stream-mock-frames ./build/.../mib_studio_qt
+```
+
+The two frames under `data/mock_frames/` are only a smoke-test placeholder.
+
 ## Image requirements
 
 The mock loads files with `QImageReader`, so any Qt-supported format works: `.png`, `.jpg`, `.jpeg`, `.bmp`, `.tif`, `.tiff`, etc. Each image is converted to PFNC `Mono8` (`0x01080001`) before being forwarded through `CaptureService`, matching the grayscale payload produced by our EGrabber path.

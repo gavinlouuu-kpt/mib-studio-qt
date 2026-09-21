@@ -1,3 +1,4 @@
+# Asset id dc-ds in env/assets.json; keep in sync when bumping the pin there.
 dataset_name: "gavinlouuu/dc_ds"
 
 processing:

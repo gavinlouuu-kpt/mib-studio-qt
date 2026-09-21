@@ -165,6 +165,10 @@ jobs:
           "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
           "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
 
+      - name: Provision pinned assets (env/assets.json)
+        shell: pwsh
+        run: python scripts/provision-assets.py --required-only
+
       - name: Install dependencies
         shell: pwsh
         run: |

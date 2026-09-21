@@ -32,6 +32,9 @@ This folder hosts living documentation as we build functionality. Keep content c
   non-Qt consumers like Biowork) — see
   [gold_standard_metrics.md](gold_standard_metrics.md) and
   [portable-processing-sync.md](portable-processing-sync.md)
+- External datasets and model weights (Hugging Face, pinned in
+  `env/assets.json`, fetched by `scripts/provision-assets.py`) — see
+  [../knowledge_map/build-and-run/Assets.md](../knowledge_map/build-and-run/Assets.md)
 - Post-processing tools (export, reanalyse) — see [howto/tools.md](howto/tools.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)

@@ -1,5 +1,22 @@
 # Recent Work
 
+## 2026-09-21 — External assets manifest; model weights moved to Hugging Face
+
+PR 1 of the self-provisioning plan. `env/assets.json` now declares every
+dataset and model the repo depends on (Hub id, pinned revision, SHA-256,
+visibility, consumers); `scripts/provision-assets.py` (stdlib) fetches and
+verifies them into `build/vendor/assets/`, `scripts/assets_manifest.py` is the
+only way code names a Hub repo, and `scripts/check_docs.py` fails on any
+undeclared `gavinlouuu/<repo>` id. `yolo11n-seg.onnx`/`.pt` left git for
+`gavinlouuu/mib-yolo11n-seg`; CMake resolves `MIB_YOLO_MODEL_PATH` from the
+manifest, fails configure with the fix command when ONNX Runtime is present
+and the file is missing, and Windows CI / `release.ps1` provision before
+configuring. kin10/kin6 harnesses, `synthetic_condition_validation.py` and
+`empty_frame_detection.py` read the corpus from the manifest;
+`fetch_hf_512x96stream.py` is replaced by the `512x96stream-mock-frames`
+asset. Linux test presets exclude label `network`; `linux-network-test`
+runs it. See [[../build-and-run/Assets]].
+
 ## 2026-09-21 — Self-provisioning environment plan; tracked agent settings removed
 
 Opened `docs/exec-plans/active/2026-09-21-self-provisioning-environment.md`
