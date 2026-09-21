@@ -9,6 +9,13 @@ CommandNotFound error per absent tool instead of a MISSING line (fixed with a
 remaining arguments, so PowerShell bound `-pr` to its own `-ProgressAction`
 (fixed: `Run` takes one string array). Both scripts now run end to end in that
 environment; TD-15 is narrowed to a real Windows host run.
+## 2026-09-21 — e2e_device_discovery_lifecycle waits for outcome delivery
+
+Same race as #431 in the integration test: it waited on
+`nanopositionerStepRunning()` (cleared before the listener runs) and then
+asserted the Connected outcome, failing once on a PR lane. It now waits for
+the delivery itself.
+
 ## 2026-09-21 — StartupDiscoveryCoordinator::stop() drains in-flight listeners (#431)
 
 TSan (sanitizer lane on #424) caught a heap-use-after-free in
