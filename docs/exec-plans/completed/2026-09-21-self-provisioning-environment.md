@@ -1,6 +1,6 @@
 # Self-provisioning environment: one manifest per concern, assets on Hugging Face
 
-Status: active
+Status: completed
 
 > **For agentic workers:** work one PR at a time in the order below. Each PR has
 > its own acceptance box; do not start the next PR until the previous one's box
@@ -141,7 +141,7 @@ cache in `.cache/huggingface/` (already gitignored).
 
 ## Acceptance criteria (whole plan)
 
-- [ ] `docker build .devcontainer && docker run … bash -lc 'scripts/bootstrap.sh && cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build && ctest --preset linux-backend-only-test'` is green from a clean image, with `network`-labelled tests excluded by the preset.
+- [x] 2026-09-21, local Docker (arm64): image from `.devcontainer/Dockerfile`, then `scripts/bootstrap.sh --skip-packages --public-assets-only` → doctor clean → `cmake --preset linux-backend-only` → build → `ctest --preset linux-backend-only-test`: 114/114 passed (hardware/soak skipped, `network` excluded). Two defects found and fixed on the way (`libglib2.0-0t64`; four `scripts.*` cases after the root move).
 - [x] macOS (2026-09-21, bash 3.2): `doctor.sh` exit 1 with four fixes → `bootstrap.sh --public-assets-only` → `doctor.sh` exit 0; second bootstrap a no-op in 5.7 s. Windows: `doctor.ps1`/`bootstrap.ps1` written, parse-checked by `ci.yml`, not yet run on a Windows host.
 - [x] `grep -rn 'apt-get install' .github/workflows` matches only the composite action, plus one line inside `python-wheel.yml`'s `docker run` of a slim image (provisioning the test container, not the runner).
 - [x] `git ls-files | grep -E '\.(onnx|pt)$'` is empty; the only tracked `.log` files are evidence bundles under `docs/evidence/` (kept on purpose); `git ls-files .claude` lists only `skills/`.
@@ -260,6 +260,9 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 
 ## Progress
 
+All seven PRs are open as a stacked draft chain (#424 → #430); merge bottom-up. Windows CI (`build-windows.yml`) is the remaining external check for the model-asset configure gate, the repo Conan profiles and `release.ps1`'s new location.
+
+
 - [x] PR 0 secrets (#424; credentials rotated 2026-09-21)
 - [x] PR 1 assets on Hugging Face
 - [x] PR 2 doctor and bootstrap
@@ -267,4 +270,4 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 - [x] PR 4 presets and pins
 - [x] PR 5 docs consolidation
 - [x] PR 6 root cleanup
-- [ ] Move this plan to `completed/`; open tech-debt entries for anything skipped
+- [x] Moved to `completed/` 2026-09-21; skipped items logged as TD-14 (duplicate packagers) and TD-15 (Windows doctor/bootstrap unverified on a Windows host).
