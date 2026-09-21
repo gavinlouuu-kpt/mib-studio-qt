@@ -8,6 +8,13 @@ spec files packaged `scripts/hdf5_export_app.py`). Removed; the tools bundle
 (`tools/build_*`, `tools/hdf5_export_app/hdf5_export.spec`, output
 `tools/dist/`) is the only build, and `docs/howto/hdf5-export-app.md` now
 documents it. TD-14 closed.
+## 2026-09-21 — e2e_device_discovery_lifecycle waits for outcome delivery
+
+Same race as #431 in the integration test: it waited on
+`nanopositionerStepRunning()` (cleared before the listener runs) and then
+asserted the Connected outcome, failing once on a PR lane. It now waits for
+the delivery itself.
+
 ## 2026-09-21 — StartupDiscoveryCoordinator::stop() drains in-flight listeners (#431)
 
 TSan (sanitizer lane on #424) caught a heap-use-after-free in
