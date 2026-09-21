@@ -37,6 +37,10 @@ python3 scripts/provision-assets.py --asset 512x96stream-mock-frames --count 200
 python3 scripts/provision-assets.py --check --required-only     # no network; exit 1 + fix command
 ```
 
+Multi-file assets download with 8 parallel workers (`--jobs N`); the
+1,000-frame default of `512x96stream-mock-frames` takes about three minutes
+(each Hub file is a redirect plus a fresh TLS connection, ~2 s).
+
 Files land in `<root>/<kind>s/<id>/…` with a `provisioned.json` beside them.
 `root` is `build/vendor/assets` (gitignored) or `MIB_ASSETS_DIR`, honoured
 identically by CMake and Python. Downloads use `resolve/<revision>` URLs,

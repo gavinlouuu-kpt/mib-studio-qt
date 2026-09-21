@@ -35,15 +35,16 @@ commit/PR. The source-file to vault-note mapping is in
 ## Build and Run
 
 ```bash
-./scripts/provision-mindvision-sdk.sh      # Linux/macOS; populates build/vendor
-python3 scripts/provision-assets.py        # model weights/datasets from the Hub (env/assets.json)
-cmake --preset linux-backend-only         # Linux, backend lib + tests only
-cmake --build --preset linux-backend-only-build
+scripts/doctor.sh          # what this host is missing, with the exact fix commands
+scripts/bootstrap.sh       # install it: packages, Conan, MindVision SDK, assets (env/)
+cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build
 ```
 
-Windows: run `./scripts/provision-mindvision-sdk.ps1`, then configure/build the
-`windows-default` preset. MindVision is default-on for desktop builds;
-`MIB_BUILD_PROCESSING_ONLY=ON` remains SDK-free.
+Windows: `.\scripts\doctor.ps1`, `.\scripts\bootstrap.ps1`, then the
+`windows-default` (VS) or `windows-ninja` (fast loop) preset. Every list the
+setup depends on lives once under `env/` (packages, toolchain minimums,
+requirements, assets) plus `conan/profiles/`; see
+[`knowledge_map/build-and-run/Build.md`](knowledge_map/build-and-run/Build.md).
 
 - `mib_studio_qt` — the app; mock camera via ConnectTab "Configure Mock…" or
   `MIB_CAMERA_MODE=mock` + `MIB_MOCK_CAMERA_DIR=<path>` (see
@@ -51,10 +52,10 @@ Windows: run `./scripts/provision-mindvision-sdk.ps1`, then configure/build the
 - `screenshot_tour` — headless UI tour regenerating the user-manual
   screenshots ([`docs/manual/README.md`](docs/manual/README.md))
 
-**Fresh cloud agent / container:** provision packages first (`apt-get update` —
-the index is stale). Ubuntu Noble's Qt 6.4.2 builds and passes backend CTest; or
-build only `mib_processing` for the fastest Qt-free loop. Exact commands:
-[`docs/howto/linux-build.md`](docs/howto/linux-build.md).
+**Fresh cloud agent / container:** `scripts/bootstrap.sh --public-assets-only`
+(runs `apt-get update` first; the image index is stale). Ubuntu Noble's Qt 6.4.2
+builds and passes backend CTest; or build only `mib_processing` for the fastest
+Qt-free loop. Details: [`docs/howto/linux-build.md`](docs/howto/linux-build.md).
 
 ## Verification
 

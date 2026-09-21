@@ -195,7 +195,7 @@ Acceptance: `git ls-files .claude` shows only `skills/`; `gitleaks detect` (or a
 - [x] kin10 test: the Python and shell harnesses read dataset/config/split/rows from the manifest through `scripts/assets_manifest.py` (simpler than a CTest `ENVIRONMENT` property; CMake reads the manifest only for the model path); harness keeps Dataset Viewer + exit 77.
 - [x] `backend.kin10_hf_dataset_pipeline` already carried `network` + `SKIP_RETURN_CODE 77`; the Windows fast presets already excluded `integration`. Added `exclude network` to the three Linux test presets and a `linux-network-test` preset (`include network`).
 - [x] `docs/gold_standard_metrics.md`: z-adjustment section now provisions via the `z-adjustment-50v` asset; the PANC1 local path is dropped (file was never available; if it surfaces, pin it as an asset).
-- [ ] **Deferred to PR 2 (bootstrap owns the Python env).** Merge the three requirements files into `env/`. `provision-assets.py` is stdlib-only, so no `huggingface_hub` pin is needed for provisioning.
+- [x] Done in PR 2: the three requirements files moved to `env/requirements-{scripts,tools-runtime,tools-build}.txt`; `env/requirements-build.txt` (conan, numpy) added. `provision-assets.py` is stdlib-only, so no `huggingface_hub` pin is needed for provisioning.
 - [x] `scripts/check_docs.py`: new check that every `gavinlouuu/<name>` Hub id in `scripts/`, `tests/`, `tools/`, `docs/howto/`, `.github/` appears in `env/assets.json`.
 - [x] Vault: new note `knowledge_map/build-and-run/Assets.md` (manifest, provisioner, token policy, how to bump a revision); update `Dependencies.md`, `services/YoloService.md`, `camera/MockCamera.md`, `Run-Modes.md`; `docs/howto/hf-dataset-integration-tests.md` shrinks to "see Assets.md + run the network lane".
 
@@ -203,12 +203,12 @@ Acceptance: fresh clone, `python3 scripts/provision-assets.py --required-only` t
 
 ## PR 2: doctor and bootstrap
 
-- [ ] `env/apt-packages.txt` with `# section: base|backend|frontend|desktop-shell|sanitizers` headers, populated by diffing the seven workflow lists and `linux-build.md` (superset, then trim what no lane needs; record removals here). `env/brew-packages.txt` for macOS (cmake, ninja, conan, sevenzip, hdf5, opencv, spdlog, nlohmann-json, qt@6).
-- [ ] `env/toolchain.toml`: minimum versions for cmake (3.21), ninja, conan (2.x), python (3.12), node (22), rust (stable, pinned in `rust-toolchain.toml`), MSVC (19.4x). Add `rust-toolchain.toml`, `.nvmrc`, `.python-version`, `engines` in `desktop/package.json`, and a `mise.toml` mirroring the same pins for hosts that use mise.
-- [ ] `scripts/doctor.sh` and `doctor.ps1`: check OS, each toolchain version against `env/toolchain.toml`, packages from the relevant list, Conan profile presence, MindVision SDK in `build/vendor`, `provision-assets.py --check --required-only`, `HF_TOKEN` only if `--with-private`, VS 2022 x64 shell on Windows, English `cl.exe` `/showIncludes` prefix (from Build.md). Output: one line per item, `OK`/`MISSING`/`OLD`, then a "Run these:" block. Exit 1 if anything is missing. No side effects.
-- [ ] `scripts/bootstrap.sh` and `bootstrap.ps1`: `--sections`, `--public-assets-only`, `--dry-run`. Steps: package manager install from the list, `pip install -r env/requirements-scripts.txt` into `.venv`, `conan profile detect` if absent and copy repo profiles, `provision-mindvision-sdk`, `provision-assets --required-only`, then print the preset to use for this host. Rerunnable.
-- [ ] Move the inline Windows Conan profile from `build-windows.yml`, `release.yml`, `python-wheel.yml` into `conan/profiles/windows-msvc194-ninja` (and a VS-generator twin); add the `cpuinfo` `[replace_requires]` line there; workflows pass `-pr:h conan/profiles/…`.
-- [ ] Vault: `Build.md` gains a five-line "Start here" block pointing at doctor/bootstrap; `AGENTS.md` Build and Run becomes:
+- [x] `env/apt-packages.txt` with `# section: base|backend|frontend|desktop-shell|sanitizers` headers, populated by diffing the seven workflow lists and `linux-build.md` (superset, then trim what no lane needs; record removals here). Removed nothing; added `ninja-build`, `python3-venv`, `ca-certificates`, `libfmt-dev`, `libssl-dev` (Linux Ed25519 verify) which only the how-to or CMake mentioned. `env/brew-packages.txt` for macOS (cmake, ninja, conan, sevenzip, hdf5, opencv, spdlog, nlohmann-json, qt@6).
+- [x] `env/toolchain.toml`: minimum versions for cmake (3.21), ninja, conan (2.x), python (3.12), node (22), rust (stable, pinned in `rust-toolchain.toml`), MSVC (19.4x). Add `rust-toolchain.toml`, `.nvmrc`, `.python-version`, `engines` in `desktop/package.json`, and a `mise.toml` mirroring the same pins for hosts that use mise.
+- [x] `scripts/doctor.sh` and `doctor.ps1`: check OS, each toolchain version against `env/toolchain.toml`, packages from the relevant list, Conan profile presence, MindVision SDK in `build/vendor`, `provision-assets.py --check --required-only`, `HF_TOKEN` only if `--with-private`, VS 2022 x64 shell on Windows, English `cl.exe` `/showIncludes` prefix (from Build.md). Output: one line per item, `OK`/`MISSING`/`OLD`, then a "Run these:" block. Exit 1 if anything is missing. No side effects.
+- [x] `scripts/bootstrap.sh` and `bootstrap.ps1`: `--sections`, `--public-assets-only`, `--dry-run`. Steps: package manager install from the list, `pip install -r env/requirements-scripts.txt` into `.venv`, `conan profile detect` if absent and copy repo profiles, `provision-mindvision-sdk`, `provision-assets --required-only`, then print the preset to use for this host. Rerunnable.
+- [x] Move the inline Windows Conan profile from `build-windows.yml`, `release.yml`, `python-wheel.yml` into `conan/profiles/windows-msvc194-ninja` (and a VS-generator twin); add the `cpuinfo` `[replace_requires]` line there; workflows pass `-pr:h conan/profiles/…`.
+- [x] Vault: `Build.md` gains a "Start here" block pointing at doctor/bootstrap; `AGENTS.md` Build and Run becomes:
 
   ```bash
   scripts/doctor.sh          # what is missing, with fixes
@@ -263,7 +263,7 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 
 - [x] PR 0 secrets (#424; credentials rotated 2026-09-21)
 - [x] PR 1 assets on Hugging Face
-- [ ] PR 2 doctor and bootstrap
+- [x] PR 2 doctor and bootstrap
 - [ ] PR 3 devcontainer and CI convergence
 - [ ] PR 4 presets and pins
 - [ ] PR 5 docs consolidation

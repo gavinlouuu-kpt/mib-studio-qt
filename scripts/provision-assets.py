@@ -21,6 +21,7 @@ failure, 4 bad arguments.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -121,23 +122,28 @@ def select_assets(args: argparse.Namespace) -> List[Asset]:
     return chosen
 
 
-def provision_one(asset: Asset, root: Path, token: Optional[str], count: Optional[int], force: bool) -> Dict:
+def provision_one(asset: Asset, root: Path, token: Optional[str], count: Optional[int], force: bool,
+                  jobs: int = 8) -> Dict:
     target = asset_dir(asset, root)
     target.mkdir(parents=True, exist_ok=True)
     record = {"id": asset.id, "repo": asset.repo, "repo_type": asset.repo_type,
               "revision": asset.revision, "files": []}
     paths = list(asset.file_paths(count))
     print(f"[{asset.id}] {asset.repo}@{asset.revision[:12]} -> {target} ({len(paths)} file(s))")
-    for index, path in enumerate(paths, 1):
+    pending: List[str] = []
+    for path in paths:
         dest = target / path
         expected = asset.expected_sha256(path)
         if dest.is_file() and dest.stat().st_size > 0 and not force:
             if expected is None or sha256_of(dest) == expected:
                 record["files"].append({"path": path, "sha256": expected or sha256_of(dest),
                                         "bytes": dest.stat().st_size, "status": "cached"})
-                if len(paths) > 20 and index % 100 == 0:
-                    print(f"  {index}/{len(paths)} (cached)")
                 continue
+        pending.append(path)
+
+    def fetch(path: str) -> Dict:
+        dest = target / path
+        expected = asset.expected_sha256(path)
         actual = download(asset.resolve_url(path), dest, token if asset.token_required or token else None)
         if expected and actual != expected:
             dest.unlink(missing_ok=True)
@@ -146,13 +152,20 @@ def provision_one(asset: Asset, root: Path, token: Optional[str], count: Optiona
                 f"  The Hub file at revision {asset.revision} does not match env/assets.json; "
                 f"do not silently update the pin—investigate."
             )
-        record["files"].append({"path": path, "sha256": actual, "bytes": dest.stat().st_size,
-                                "status": "downloaded"})
-        if len(paths) > 20 and index % 100 == 0:
-            print(f"  {index}/{len(paths)}")
+        return {"path": path, "sha256": actual, "bytes": dest.stat().st_size, "status": "downloaded"}
+
+    # Indexed datasets are thousands of small files: fetch them concurrently.
+    workers = max(1, min(jobs, len(pending))) if pending else 1
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for result in pool.map(fetch, pending):
+            record["files"].append(result)
+            done += 1
+            if len(pending) > 20 and done % 100 == 0:
+                print(f"  {done}/{len(pending)} downloaded")
+    record["files"].sort(key=lambda f: paths.index(f["path"]))
     (target / "provisioned.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    downloaded = sum(1 for f in record["files"] if f["status"] == "downloaded")
-    print(f"[{asset.id}] ok: {downloaded} downloaded, {len(record['files']) - downloaded} cached")
+    print(f"[{asset.id}] ok: {len(pending)} downloaded, {len(paths) - len(pending)} cached")
     return record
 
 
@@ -189,6 +202,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser.add_argument("--check", action="store_true", help="verify only; no network")
     parser.add_argument("--list", action="store_true", help="print the manifest and exit")
     parser.add_argument("--force", action="store_true", help="re-download even if cached")
+    parser.add_argument("--jobs", type=int, default=8, help="parallel downloads for multi-file assets (default 8)")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.list:
@@ -235,7 +249,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             print(f"[{asset.id}] needs a token: set HF_TOKEN with read access to {asset.hub_url}", file=sys.stderr)
             return EXIT_AUTH
         try:
-            provision_one(asset, root, token, args.count, args.force)
+            provision_one(asset, root, token, args.count, args.force, args.jobs)
         except AuthRequired as exc:
             print(f"[{asset.id}] authentication rejected for {exc}; set HF_TOKEN with read access to {asset.hub_url}",
                   file=sys.stderr)

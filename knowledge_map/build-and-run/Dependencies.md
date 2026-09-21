@@ -4,7 +4,9 @@ Desktop ownership uses existing Qt Core `QLockFile`; no new dependency is
 needed. The Windows serial timeout regression links `setupapi` and `advapi32`
 directly and simulates driver calls without connecting hardware.
 
-> Third-party stack. Managed by Conan (`conanfile.txt`).
+> Third-party stack. Managed by Conan (`conanfile.py`; host profiles in
+> `conan/profiles/`). System-package equivalents for Linux/macOS builds are
+> listed once in `env/apt-packages.txt` / `env/brew-packages.txt`.
 
 | Package | Version | Shared? | Notes |
 |---|---|---|---|

@@ -18,7 +18,7 @@ From the repository root:
 - **Windows:** `.\tools\build_windows.ps1` (optionally `-Clean`). Output: `tools\dist\`.
 - **macOS:** `./tools/build_mac.sh` (options: `--clean`, `--dmg`). Output: `tools/dist/`.
 
-Requires Python 3.8+, a virtual environment is created under `tools/.venv` and dependencies from `tools/requirements-runtime.txt` and `tools/requirements-build.txt`.
+Requires Python 3.8+, a virtual environment is created under `tools/.venv` and dependencies from `env/requirements-tools-runtime.txt` and `env/requirements-tools-build.txt`.
 
 ## Packaging and distribution
 

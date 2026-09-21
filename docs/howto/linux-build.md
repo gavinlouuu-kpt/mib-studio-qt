@@ -6,26 +6,15 @@ MindVision is enabled by default from the pinned Linux SDK on R2.
 
 ## Prerequisites
 
-- CMake 3.21+
-- A C++17 compiler toolchain
-- Ninja
-
-For the fastest local loop on Ubuntu, install system development packages:
-
 ```bash
-sudo apt install cmake build-essential ninja-build pkg-config git \
-  qt6-base-dev qt6-charts-dev qt6-serialport-dev \
-  libopencv-dev libhdf5-dev libspdlog-dev nlohmann-json3-dev libsqlite3-dev
+scripts/doctor.sh --sections base,backend            # or add ,frontend for the Qt build
+scripts/bootstrap.sh --sections base,backend         # installs what the doctor listed
 ```
 
-For backend-only build/test loops (no frontend binaries), this smaller set is
-enough:
-
-```bash
-sudo apt install cmake build-essential pkg-config git \
-  qt6-base-dev qt6-serialport-dev \
-  libopencv-dev libhdf5-dev libspdlog-dev nlohmann-json3-dev libsqlite3-dev
-```
+The package list is `env/apt-packages.txt` (sections `base`, `backend`,
+`frontend`, `desktop-shell`, `test-extras`); tool minimums are
+`env/toolchain.toml`. Do not copy package names into docs or workflows; point
+at those files.
 
 Provision the architecture-matched MindVision headers/shared library before
 configuring either desktop preset:
@@ -78,18 +67,16 @@ A freshly cloned cloud container ships `cmake`/`ninja`/`g++` but **no Qt, no
 OpenCV/HDF5/spdlog, and an empty Conan cache**, so none of the presets above
 configure until you provision system packages. Two paths, fastest first.
 
-First, always refresh apt — the base image index is stale and 404s otherwise:
-
-```bash
-sudo apt-get update
-```
+The short version is `scripts/bootstrap.sh --public-assets-only` (it runs
+`apt-get update` first — the base image index is stale and 404s otherwise).
+The two hand-driven paths below show what that expands to.
 
 **Fastest loop — Qt-free processing core.** The `mib_processing` static lib
 (portable processing contract) needs only OpenCV + HDF5 + spdlog, no Qt:
 
 ```bash
-sudo apt-get install -y --no-install-recommends \
-    libopencv-dev libhdf5-dev libspdlog-dev libfmt-dev nlohmann-json3-dev
+sudo apt-get update
+scripts/bootstrap.sh --sections base,backend --skip-sdk --skip-assets   # env/apt-packages.txt
 
 cmake -S . -B build/proc-only -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DMIB_BUILD_PROCESSING_ONLY=ON -DMIB_BUILD_BACKEND_ONLY=ON \
@@ -111,12 +98,7 @@ configures, builds `mib_backend` + `mib_frontend_common`, and passes the whole
 `linux-backend-only` CTest suite):
 
 ```bash
-sudo apt-get install -y --no-install-recommends \
-    qt6-base-dev qt6-charts-dev qt6-serialport-dev libsqlite3-dev \
-    libopencv-dev libhdf5-dev libspdlog-dev libfmt-dev nlohmann-json3-dev \
-    libcurl4-openssl-dev   # sentry-native curl transport (presets default Sentry ON)
-
-./scripts/provision-mindvision-sdk.sh
+scripts/bootstrap.sh --sections base,backend,frontend --public-assets-only
 
 cmake --preset linux-backend-only          # or linux-system-release for the frontend libs
 cmake --build --preset linux-backend-only-build

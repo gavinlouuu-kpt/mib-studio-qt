@@ -33,7 +33,7 @@ pip install h5py numpy opencv-python
 Or from the project:
 
 ```bash
-pip install -r scripts/requirements.txt
+pip install -r env/requirements-scripts.txt
 ```
 
 ## Usage

@@ -290,16 +290,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip conan
           conan profile detect --force
-          @"
-          [settings]
-          os=Windows
-          arch=x86_64
-          compiler=msvc
-          compiler.version=194
-          compiler.cppstd=17
-          compiler.runtime=dynamic
-          build_type=Release
-          "@ | Out-File -FilePath "$env:USERPROFILE\.conan2\profiles\ci" -Encoding UTF8
+          # Host/build profile lives in the repo (conan/profiles/windows-msvc194); the
+          # same file serves local builds, so CI and a developer PC resolve one graph.
+          conan profile show -pr conan/profiles/windows-msvc194
           if ($env:CONAN_REMOTE_URL) {
             conan remote add team-conan $env:CONAN_REMOTE_URL --index 0 --force
             conan remote login team-conan $env:CONAN_REMOTE_USER -p $env:CONAN_REMOTE_PASSWORD
@@ -317,7 +310,7 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: >-
-          conan install . -of build --build=missing -s build_type=Release -pr ci
+          conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194
           -o "opencv/*:shared=False"
 
       - name: Provision pinned MindVision SDK

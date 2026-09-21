@@ -1,5 +1,25 @@
 # Recent Work
 
+## 2026-09-21 — doctor/bootstrap scripts; env/ is the single home for setup lists
+
+PR 2 of the self-provisioning plan. `scripts/doctor.{sh,ps1}` report what a
+host is missing (toolchain minimums from `env/toolchain.toml`, packages from
+`env/apt-packages.txt` / `env/brew-packages.txt` by section, Conan default
+profile, MindVision SDK, required assets, optional `HF_TOKEN`) with one fix
+command per item and exit 1; `scripts/bootstrap.{sh,ps1}` install the same
+idempotently (apt/brew or winget, `.venv` + `env/requirements-build.txt`,
+`conan profile detect`, SDK, assets, and on Windows `conan install` with the
+repo profile). The inline `ci` Conan profile in `build-windows.yml`,
+`release.yml`, `python-wheel.yml` is replaced by
+`conan/profiles/windows-msvc194[-ninja]`, which also carries the `cpuinfo`
+`[replace_requires]` pin that previously lived only in a Build.md paragraph.
+`scripts/requirements.txt` and `tools/requirements-*.txt` moved to
+`env/requirements-{scripts,tools-runtime,tools-build}.txt`;
+`env/requirements-build.txt` (conan, numpy) is new. Runtime pins added:
+`rust-toolchain.toml`, `.nvmrc` + `desktop/package.json` engines,
+`.python-version`, `mise.toml`. AGENTS.md / README / linux-build.md now say
+"run the doctor" instead of restating package lists. See [[../build-and-run/Build]].
+
 ## 2026-09-21 — External assets manifest; model weights moved to Hugging Face
 
 PR 1 of the self-provisioning plan. `env/assets.json` now declares every

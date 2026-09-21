@@ -1,0 +1,6 @@
+# Rust toolchain for crates/mib-bridge and desktop/src-tauri.
+# CI (bridge-ci.yml, desktop-ci.yml) uses dtolnay/rust-toolchain@stable; this
+# file makes rustup pick the same channel locally.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

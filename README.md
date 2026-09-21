@@ -22,40 +22,19 @@ When running algorithm experiments (reanalysis, parameter sweeps, pipeline compa
 Standalone tools for working with HDF5 files after recording (export, reanalyse) are built and distributed separately. See [docs/howto/tools.md](docs/howto/tools.md) for download location, quickstart, and compatibility.
 ## Building
 
-### Prerequisites
+```bash
+scripts/doctor.sh        # Linux/macOS: what is missing, with fix commands   (Windows: .\scripts\doctor.ps1)
+scripts/bootstrap.sh     # install it                                        (Windows: .\scripts\bootstrap.ps1)
+cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build
+```
 
-1. **Conan** - Install Conan 2.x if not already installed:
-   ```bash
-   pip install conan
-   ```
+Windows builds use Conan + VS 2022: `.\scripts\bootstrap.ps1` runs
+`conan install` with `conan/profiles/windows-msvc194`, then
+`cmake --preset windows-default` and `cmake --build build --config Release`
+(fast loop: `-Generator Ninja` + `windows-ninja`). Presets, targets, and the
+one-home-per-list layout under `env/` are documented in
+[knowledge_map/build-and-run/Build.md](knowledge_map/build-and-run/Build.md).
 
-2. **CMake** - Version 3.21 or higher
-
-3. **C++ Compiler** - MSVC (Visual Studio) on Windows
-
-### Setup
-
-1. **Install Conan dependencies**:
-   ```bash
-   conan install . -of build --build=missing -s build_type=Release
-   ```
-   
-   For Debug builds, also install Debug packages:
-   ```bash
-   conan install . -of build --build=missing -s build_type=Debug
-   ```
-
-2. **Configure CMake using preset**:
-   ```bash
-   cmake --preset windows-default
-   ```
-
-3. **Build the project**:
-   ```bash
-    Build Release configuration: `cmake --build build --config Release`
-   
-   Or for Debug:
-   
 ### Building Windows Installer
 
 To create a Windows installer for distribution, see [docs/howto/build-installer.md](docs/howto/build-installer.md).

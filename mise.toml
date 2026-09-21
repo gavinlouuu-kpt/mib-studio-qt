@@ -1,0 +1,6 @@
+# Optional: `mise install` pins the language runtimes for hosts that use mise.
+# cmake/ninja/conan and system libraries come from scripts/bootstrap.* (env/).
+[tools]
+python = "3.12"
+node = "22"
+rust = "stable"
