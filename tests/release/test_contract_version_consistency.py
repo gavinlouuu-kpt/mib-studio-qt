@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ContractVersionConsistencyTest(unittest.TestCase):
@@ -41,10 +41,10 @@ class ContractVersionConsistencyTest(unittest.TestCase):
         self.assertIsNotNone(match, "CONTRACT_VERSION not found in bindings/python/src/bindings.cpp")
         declarations["bindings/python/src/bindings.cpp"] = int(match.group(1))
 
-        publish_script = (REPO_ROOT / "publish-processing-core.py").read_text(encoding="utf-8")
+        publish_script = (REPO_ROOT / "scripts" / "release" / "publish-processing-core.py").read_text(encoding="utf-8")
         match = re.search(r"DEFAULT_CONTRACT_VERSION\s*=\s*(\d+)", publish_script)
-        self.assertIsNotNone(match, "DEFAULT_CONTRACT_VERSION not found in publish-processing-core.py")
-        declarations["publish-processing-core.py"] = int(match.group(1))
+        self.assertIsNotNone(match, "DEFAULT_CONTRACT_VERSION not found in scripts/release/publish-processing-core.py")
+        declarations["scripts/release/publish-processing-core.py"] = int(match.group(1))
 
         abi_header = (
             REPO_ROOT / "include" / "backend" / "processing" / "ProcessingCoreAbi.h"

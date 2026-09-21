@@ -23,16 +23,16 @@ on:
       - 'scripts/test_run_processing_conformance.py'
       - 'scripts/bump_mib_processing_version.py'
       - 'scripts/test-processing-core-authenticode.ps1'
-      - 'publish-processing-core.py'
-      - 'publish-profiles.py'
-      - 'test_publish_profiles.py'
-      - 'test_publish_processing_core.py'
-      - 'test_bump_mib_processing_version.py'
-      - 'test_contract_version_consistency.py'
-      - 'test_processing_core_wheel_architectures.py'
-      - 'test_processing_core_signer_release_gate.py'
-      - 'test_verify_processing_core_manifest.py'
-      - 'verify-processing-core-manifest.py'
+      - 'scripts/release/publish-processing-core.py'
+      - 'scripts/release/publish-profiles.py'
+      - 'tests/release/test_publish_profiles.py'
+      - 'tests/release/test_publish_processing_core.py'
+      - 'tests/release/test_bump_mib_processing_version.py'
+      - 'tests/release/test_contract_version_consistency.py'
+      - 'tests/release/test_processing_core_wheel_architectures.py'
+      - 'tests/release/test_processing_core_signer_release_gate.py'
+      - 'tests/release/test_verify_processing_core_manifest.py'
+      - 'scripts/release/verify-processing-core-manifest.py'
       - 'docs/gold_standard_metrics.schema.json'
       - 'cmake/MIBOptions.cmake'
       - 'cmake/MIBLinkHelpers.cmake'
@@ -60,16 +60,16 @@ on:
       - 'scripts/test_run_processing_conformance.py'
       - 'scripts/bump_mib_processing_version.py'
       - 'scripts/test-processing-core-authenticode.ps1'
-      - 'publish-processing-core.py'
-      - 'publish-profiles.py'
-      - 'test_publish_profiles.py'
-      - 'test_publish_processing_core.py'
-      - 'test_bump_mib_processing_version.py'
-      - 'test_contract_version_consistency.py'
-      - 'test_processing_core_wheel_architectures.py'
-      - 'test_processing_core_signer_release_gate.py'
-      - 'test_verify_processing_core_manifest.py'
-      - 'verify-processing-core-manifest.py'
+      - 'scripts/release/publish-processing-core.py'
+      - 'scripts/release/publish-profiles.py'
+      - 'tests/release/test_publish_profiles.py'
+      - 'tests/release/test_publish_processing_core.py'
+      - 'tests/release/test_bump_mib_processing_version.py'
+      - 'tests/release/test_contract_version_consistency.py'
+      - 'tests/release/test_processing_core_wheel_architectures.py'
+      - 'tests/release/test_processing_core_signer_release_gate.py'
+      - 'tests/release/test_verify_processing_core_manifest.py'
+      - 'scripts/release/verify-processing-core-manifest.py'
       - 'docs/gold_standard_metrics.schema.json'
       - '.github/workflows/python-wheel.yml'
       - '.github/workflows/processing-core-promote.yml'
@@ -213,13 +213,13 @@ jobs:
         if: matrix.full_test
         run: |
           python -m unittest -v \
-            test_publish_processing_core.py \
-            test_publish_profiles.py \
-            test_bump_mib_processing_version.py \
-            test_contract_version_consistency.py \
-            test_processing_core_wheel_architectures.py \
-            test_processing_core_signer_release_gate.py \
-            test_verify_processing_core_manifest.py
+            tests/release/test_publish_processing_core.py \
+            tests/release/test_publish_profiles.py \
+            tests/release/test_bump_mib_processing_version.py \
+            tests/release/test_contract_version_consistency.py \
+            tests/release/test_processing_core_wheel_architectures.py \
+            tests/release/test_processing_core_signer_release_gate.py \
+            tests/release/test_verify_processing_core_manifest.py
 
       - name: Verify importable version + contract
         if: matrix.full_test
@@ -617,7 +617,7 @@ jobs:
           from pathlib import Path
           descriptor = Path(sys.argv[1])
           spec = importlib.util.spec_from_file_location(
-              "publish_processing_core", "publish-processing-core.py")
+              "publish_processing_core", "scripts/release/publish-processing-core.py")
           publisher = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(publisher)
           version = json.loads(descriptor.read_text(encoding="utf-8"))["version"]
@@ -1057,7 +1057,7 @@ jobs:
           fi
           python -m pip install --upgrade pip boto3
           tag="${GITHUB_REF#refs/tags/}"
-          python publish-processing-core.py \
+          python scripts/release/publish-processing-core.py \
             --from-release "$tag" \
             --repo "${{ github.repository }}" \
             --channel "$PROCESSING_CHANNEL" \

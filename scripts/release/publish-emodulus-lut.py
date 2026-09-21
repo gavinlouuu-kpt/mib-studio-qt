@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a MIB Studio tools zip to Cloudflare R2."""
+"""Publish the Young's modulus LUT and manifest to Cloudflare R2."""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +12,12 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import sys as _sys
+from pathlib import Path as _Path
+
+# This file lives in scripts/release/; `scripts` is imported as a package from the
+# repository root (scripts/s3_upload.py), so put the root on sys.path first.
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 from scripts.s3_upload import upload_file_to_s3, upload_file_with_wrangler
 
 
@@ -19,6 +25,7 @@ DEFAULT_BUCKET = "mib-studio-qt-updates"
 DEFAULT_PUBLIC_BASE_URL = "https://updates.yofo.bio"
 ARTIFACT_CACHE_CONTROL = "public, max-age=31536000, immutable"
 MANIFEST_CACHE_CONTROL = "public, max-age=60, must-revalidate"
+DEFAULT_LUT_NAME = "scaled_isoelastic_data_LUT_6.16-4.24.txt"
 
 
 def join_public_object_url(base_url: str, key: str) -> str:
@@ -33,21 +40,8 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def detect_version(zip_path: Path) -> str:
-    match = re.fullmatch(r"MIB_Studio_Tools_v(\d+\.\d+\.\d+)_windows\.zip", zip_path.name)
-    if not match:
-        raise ValueError("Cannot extract version from filename. Expected MIB_Studio_Tools_vX.Y.Z_windows.zip")
-    return match.group(1)
-
-
-def find_default_zip(repo_root: Path) -> Path | None:
-    tools_dist = repo_root / "tools" / "dist"
-    candidates = sorted(
-        tools_dist.glob("MIB_Studio_Tools_v*_windows.zip"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    return candidates[0] if candidates else None
+def humanize_lut_name(lut_id: str) -> str:
+    return lut_id.replace("_", " ").strip().title()
 
 
 def write_manifest_file(manifest: dict[str, object], manifest_out: str | None) -> Path:
@@ -58,7 +52,7 @@ def write_manifest_file(manifest: dict[str, object], manifest_out: str | None) -
         handle = tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
-            prefix="mib_tools_latest_",
+            prefix="emodulus_lut_latest_",
             suffix=".json",
             delete=False,
         )
@@ -71,14 +65,18 @@ def write_manifest_file(manifest: dict[str, object], manifest_out: str | None) -
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default=None)
-    parser.add_argument("--zip", default=None, help="Path to MIB_Studio_Tools_vX.Y.Z_windows.zip")
+    parser.add_argument("--lut", default=str(Path("resources") / "isoelastic_curve" / DEFAULT_LUT_NAME))
+    parser.add_argument("--lut-id", default=None, help="Stable LUT identifier (defaults to file stem)")
+    parser.add_argument("--display-name", default=None, help="Human-friendly LUT name (defaults to a title-cased LUT id)")
+    parser.add_argument("--revision", required=True, help="Remote revision label, e.g. 2026.06.11-1")
     parser.add_argument("--endpoint", default=os.getenv("MIB_STUDIO_R2_ENDPOINT"))
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--public-base-url", default=DEFAULT_PUBLIC_BASE_URL)
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--profile", default=os.getenv("MIB_STUDIO_R2_PROFILE"))
     parser.add_argument("--acl", default="")
+    parser.add_argument("--app-min-version", default="")
+    parser.add_argument("--app-max-version", default="")
     parser.add_argument("--manifest-out", default=None, help="Write generated manifest to this path")
     parser.add_argument("--dry-run", action="store_true", help="Generate metadata but do not upload")
     parser.add_argument(
@@ -137,54 +135,48 @@ def upload_object(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    repo_root = Path(__file__).resolve().parent
-    zip_path = Path(args.zip) if args.zip else find_default_zip(repo_root)
+    lut_path = Path(args.lut)
 
-    print("=== Publishing MIB Studio Tools ===")
+    print("=== Publishing Young's modulus LUT ===")
 
-    if zip_path is None:
-        print(
-            "ERROR: No tools zip found in tools/dist. Build with tools/build_windows.ps1 then tools/package-tools.ps1",
-            file=sys.stderr,
-        )
+    if not lut_path.is_file():
+        print(f"ERROR: LUT file does not exist: {lut_path}", file=sys.stderr)
         return 1
 
-    if not zip_path.is_file():
-        print(f"ERROR: Zip file does not exist: {zip_path}", file=sys.stderr)
-        return 1
+    lut_id = args.lut_id or lut_path.stem
+    display_name = args.display_name or humanize_lut_name(lut_id)
 
-    try:
-        version = args.version or detect_version(zip_path)
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    if args.version is None:
-        print(f"Extracted version from filename: {version}")
-
-    size_bytes = zip_path.stat().st_size
+    size_bytes = lut_path.stat().st_size
     if size_bytes <= 0:
-        print("ERROR: Zip file size is invalid", file=sys.stderr)
+        print(f"ERROR: LUT file size is invalid: {size_bytes}", file=sys.stderr)
         return 1
 
     print("\n1. Computing SHA-256 hash...")
-    digest = sha256_file(zip_path)
+    digest = sha256_file(lut_path)
     print(f"   Hash: {digest}")
     print(f"   Size: {size_bytes} bytes")
 
-    tools_prefix = f"{args.channel}/tools"
-    zip_key = f"{tools_prefix}/{zip_path.name}"
-    manifest_key = f"{tools_prefix}/tools-latest.json"
-    zip_url = join_public_object_url(args.public_base_url, zip_key)
+    lut_key = f"{args.channel}/emodulus-lut/{lut_path.name}"
+    manifest_key = f"{args.channel}/emodulus-lut/latest.json"
+    lut_url = join_public_object_url(args.public_base_url, lut_key)
     manifest_url = join_public_object_url(args.public_base_url, manifest_key)
 
     print("\n2. Generating manifest...")
     manifest: dict[str, object] = {
-        "version": version,
-        "zip_url": zip_url,
-        "zip_sha256": digest,
-        "zip_size_bytes": size_bytes,
+        "manifest_schema_version": 1,
+        "lut_id": lut_id,
+        "display_name": display_name,
+        "revision": args.revision,
+        "download_url": lut_url,
+        "sha256": digest,
+        "size_bytes": size_bytes,
         "published_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if args.app_min_version:
+        manifest["app_min_version"] = args.app_min_version
+    if args.app_max_version:
+        manifest["app_max_version"] = args.app_max_version
+
     manifest_path = write_manifest_file(manifest, args.manifest_out)
     print(f"   Manifest created: {manifest_path}")
 
@@ -192,21 +184,21 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDRY RUN: skipped R2 uploads")
         print("\n=== Publish Preview ===")
         print(f"Manifest URL: {manifest_url}")
-        print(f"Zip URL: {zip_url}")
+        print(f"LUT URL: {lut_url}")
         return 0
 
     try:
-        print("\n3. Uploading zip...")
+        print("\n3. Uploading LUT...")
         upload_object(
             args=args,
-            key=zip_key,
-            file_path=zip_path,
-            content_type="application/zip",
+            key=lut_key,
+            file_path=lut_path,
+            content_type="text/plain",
             cache_control=ARTIFACT_CACHE_CONTROL,
         )
-        print("   Zip uploaded successfully")
+        print("   LUT uploaded successfully")
 
-        print("\n4. Uploading tools-latest.json...")
+        print("\n4. Uploading latest.json...")
         upload_object(
             args=args,
             key=manifest_key,
@@ -224,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n=== Publish Complete ===")
     print(f"Manifest URL: {manifest_url}")
-    print(f"Zip URL: {zip_url}")
+    print(f"LUT URL: {lut_url}")
     return 0
 
 

@@ -42,7 +42,7 @@ libegl1
 libgl1
 libxkbcommon0
 libxcb-cursor0
-libglib2.0-0
+libglib2.0-0t64   # Ubuntu 24.04 (time64) name; Debian/older Ubuntu: libglib2.0-0
 
 # section: desktop-shell
 # React + Tauri shell under desktop/ (Rust and Node come from

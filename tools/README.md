@@ -25,7 +25,7 @@ Requires Python 3.8+, a virtual environment is created under `tools/.venv` and d
 1. **Create versioned zip** (from `tools/`): `.\package-tools.ps1` or `.\package-tools.ps1 -Version 0.1.7`  
    Output: `tools/dist/MIB_Studio_Tools_vX.Y.Z_windows.zip` (exes + README.txt).
 
-2. **Publish to Cloudflare R2** (from repo root): `.\publish-tools.ps1 -Zip "tools\dist\MIB_Studio_Tools_v0.1.7_windows.zip"`
+2. **Publish to Cloudflare R2** (from repo root): `.\scripts\release\publish-tools.ps1 -Zip "tools\dist\MIB_Studio_Tools_v0.1.7_windows.zip"`
    Uploads the zip to `stable/tools/` and writes `tools-latest.json` under `https://updates.yofo.bio/stable/tools/` so users can fetch the latest tools programmatically.
 
 ## Classification

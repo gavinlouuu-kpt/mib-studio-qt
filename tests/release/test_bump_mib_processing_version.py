@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().parent / "scripts" / "bump_mib_processing_version.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "bump_mib_processing_version.py"
 _spec = importlib.util.spec_from_file_location("bump_mib_processing_version", SCRIPT_PATH)
 bump = importlib.util.module_from_spec(_spec)
 sys.modules["bump_mib_processing_version"] = bump

@@ -11,7 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().parent / "verify-processing-core-manifest.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "release" / "verify-processing-core-manifest.py"
 _spec = importlib.util.spec_from_file_location("verify_processing_core_manifest", SCRIPT_PATH)
 verify = importlib.util.module_from_spec(_spec)
 sys.modules["verify_processing_core_manifest"] = verify

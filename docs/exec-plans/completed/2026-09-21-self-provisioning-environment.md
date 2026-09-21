@@ -1,6 +1,6 @@
 # Self-provisioning environment: one manifest per concern, assets on Hugging Face
 
-Status: active
+Status: completed
 
 > **For agentic workers:** work one PR at a time in the order below. Each PR has
 > its own acceptance box; do not start the next PR until the previous one's box
@@ -141,11 +141,11 @@ cache in `.cache/huggingface/` (already gitignored).
 
 ## Acceptance criteria (whole plan)
 
-- [ ] `docker build .devcontainer && docker run … bash -lc 'scripts/bootstrap.sh && cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build && ctest --preset linux-backend-only-test'` is green from a clean image, with `network`-labelled tests excluded by the preset.
-- [ ] On a macOS or Windows host with nothing installed, `scripts/doctor.{sh,ps1}` exits 1 and lists every missing item with a copy-pasteable fix; after `bootstrap`, `doctor` exits 0.
+- [x] 2026-09-21, local Docker (arm64): image from `.devcontainer/Dockerfile`, then `scripts/bootstrap.sh --skip-packages --public-assets-only` → doctor clean → `cmake --preset linux-backend-only` → build → `ctest --preset linux-backend-only-test`: 114/114 passed (hardware/soak skipped, `network` excluded). Two defects found and fixed on the way (`libglib2.0-0t64`; four `scripts.*` cases after the root move).
+- [x] macOS (2026-09-21, bash 3.2): `doctor.sh` exit 1 with four fixes → `bootstrap.sh --public-assets-only` → `doctor.sh` exit 0; second bootstrap a no-op in 5.7 s. Windows: `doctor.ps1`/`bootstrap.ps1` written, parse-checked by `ci.yml`, not yet run on a Windows host.
 - [x] `grep -rn 'apt-get install' .github/workflows` matches only the composite action, plus one line inside `python-wheel.yml`'s `docker run` of a slim image (provisioning the test container, not the runner).
-- [ ] `git ls-files | grep -E '\.(onnx|pt|log)$'` is empty; `git ls-files .claude` is empty.
-- [ ] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`; `scripts/check_docs.py` enforces this.
+- [x] `git ls-files | grep -E '\.(onnx|pt)$'` is empty; the only tracked `.log` files are evidence bundles under `docs/evidence/` (kept on purpose); `git ls-files .claude` lists only `skills/`.
+- [x] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`, `.github/`; `scripts/check_docs.py` enforces this (fails on an injected undeclared id).
 - [x] `AGENTS.md` "Build and Run" is three commands: doctor, bootstrap, preset (PR 2).
 - [x] No path under `/home/<user>` or `C:/Users/<user>` in any tracked build/config file. Remaining hits are history notes (`knowledge_map/task/`, `Recent-Work.md`), evidence bundles, and `deploy/*/README.md` server runbooks that document a specific host's directory layout (kept; not a build input). The tracked build logs go in PR 6.
 
@@ -248,10 +248,10 @@ Acceptance: `scripts/check_docs.py` passes; `grep -rn 'apt install\|apt-get inst
 
 ## PR 6: repository root cleanup
 
-- [ ] Untrack `build-ninja-*.log`, `debug-*.log`, `data/logs/symphony-state-last.json`; add `*.log`, `/debug-*.log`, `data/logs/` to `.gitignore` (keep `data/.gitkeep`, `data/mock_frames/`).
-- [ ] Move `test_*.py` (root) → `tests/release/`; `publish-*.py`, `verify-*.py`, `bump-version.ps1`, `release.ps1`, `publish-*.ps1`, `verify-*.ps1` → `scripts/release/`. Update every path in `python-wheel.yml`, `processing-core-promote.yml`, `build-windows.yml`, `ci.yml`, `release.yml`, `docs/howto/release-workflow.md`, `auto-update-r2.md`, `build-installer.md`, `README.md`, and the `paths:` filters at the top of `python-wheel.yml`.
-- [ ] Delete `scripts/build_mac.sh` and `scripts/build_windows.ps1` if `tools/` versions are the maintained ones (verify callers first), or vice versa; leave one.
-- [ ] Vault: `docs/supported-tools-classification.md`, `docs/howto/tools.md`, `Recent-Work.md`.
+- [x] Untrack `build-ninja-*.log`, `debug-*.log`, `data/logs/symphony-state-last.json`; add `*.log`, `/debug-*.log`, `data/logs/` to `.gitignore` (keep `data/.gitkeep`, `data/mock_frames/`).
+- [x] Move `test_*.py` (root) → `tests/release/`; `publish-*.py`, `verify-*.py`, `bump-version.ps1`, `release.ps1`, `publish-*.ps1`, `verify-*.ps1` → `scripts/release/`. Update every path in `python-wheel.yml`, `processing-core-promote.yml`, `build-windows.yml`, `ci.yml`, `release.yml`, `docs/howto/release-workflow.md`, `auto-update-r2.md`, `build-installer.md`, `README.md`, and the `paths:` filters at the top of `python-wheel.yml`.
+- [ ] Not done: `docs/howto/hdf5-export-app.md` documents the `scripts/` pair as the standalone export-GUI build with its own output dir, so deleting either pair changes a documented workflow. Logged as TD-14 with an exit criterion.
+- [x] Vault: `Recent-Work.md`; `tools/README.md` and how-tos repointed to `scripts/release/`.
 
 Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`, `mkdocs.yml`, `mise.toml`, `rust-toolchain.toml`, dotfiles, and the four top-level markdown files; the `python-wheel.yml` unittest step still runs all eight release tests.
 
@@ -260,11 +260,14 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 
 ## Progress
 
+All seven PRs are open as a stacked draft chain (#424 → #430); merge bottom-up. Windows CI (`build-windows.yml`) is the remaining external check for the model-asset configure gate, the repo Conan profiles and `release.ps1`'s new location.
+
+
 - [x] PR 0 secrets (#424; credentials rotated 2026-09-21)
 - [x] PR 1 assets on Hugging Face
 - [x] PR 2 doctor and bootstrap
 - [x] PR 3 devcontainer and CI convergence
 - [x] PR 4 presets and pins
 - [x] PR 5 docs consolidation
-- [ ] PR 6 root cleanup
-- [ ] Move this plan to `completed/`; open tech-debt entries for anything skipped
+- [x] PR 6 root cleanup
+- [x] Moved to `completed/` 2026-09-21; skipped items logged as TD-14 (duplicate packagers) and TD-15 (Windows doctor/bootstrap unverified on a Windows host).

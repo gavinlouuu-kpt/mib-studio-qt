@@ -1,5 +1,5 @@
 # Compatibility wrapper for the Python public update manifest verifier.
-# Prefer: python verify-update-manifest.py --manifest-url https://updates.yofo.bio/stable/latest.json
+# Prefer: python scripts/release/verify-update-manifest.py --manifest-url https://updates.yofo.bio/stable/latest.json
 
 param(
     [string]$ManifestUrl = "https://updates.yofo.bio/stable/latest.json",

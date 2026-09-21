@@ -31,6 +31,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import sys as _sys
+from pathlib import Path as _Path
+
+# This file lives in scripts/release/; `scripts` is imported as a package from the
+# repository root (scripts/s3_upload.py), so put the root on sys.path first.
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 from scripts.s3_upload import (
     download_bytes_from_s3,
     upload_file_to_s3,
@@ -597,7 +603,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--pyproject",
-        default=str(Path(__file__).resolve().parent / "bindings" / "python" / "pyproject.toml"),
+        default=str(Path(__file__).resolve().parents[2] / "bindings" / "python" / "pyproject.toml"),
         help="Path to the authoritative wheel pyproject.toml.",
     )
     parser.add_argument("--release-tag", default=None, help="Defaults to mib-processing-v<wheel-version>")
