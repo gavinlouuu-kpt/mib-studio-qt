@@ -31,9 +31,14 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $RepoRoot
 
 function Step($t) { Write-Host ""; Write-Host "==> $t" -ForegroundColor White }
-function Run { param([Parameter(ValueFromRemainingArguments)] $cmd)
+# Takes the command as ONE array so that tokens such as -pr, -e or -s are never
+# bound to PowerShell common parameters (-ProgressAction, -ErrorAction, ...).
+function Run([string[]]$cmd) {
     Write-Host "    $ $($cmd -join ' ')"
-    if (-not $DryRun) { & $cmd[0] $cmd[1..($cmd.Count - 1)]; if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) { throw "command failed ($LASTEXITCODE): $($cmd -join ' ')" } }
+    if ($DryRun) { return }
+    $exe = $cmd[0]; $args = @(); if ($cmd.Count -gt 1) { $args = $cmd[1..($cmd.Count - 1)] }
+    & $exe @args
+    if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw "command failed ($LASTEXITCODE): $($cmd -join ' ')" }
 }
 function Has($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
@@ -49,16 +54,16 @@ if (-not $SkipTools) {
         @{ cmd = "python"; id = "Python.Python.3.12" }
     )
     foreach ($w in $wanted) {
-        if (Has $w.cmd) { Write-Host "    $($w.cmd) present" } else { Run winget install --id $w.id -e --accept-source-agreements --accept-package-agreements }
+        if (Has $w.cmd) { Write-Host "    $($w.cmd) present" } else { Run @("winget", "install", "--id", $w.id, "-e", "--accept-source-agreements", "--accept-package-agreements") }
     }
     if (-not (Has sccache)) { Write-Host "    (optional) sccache speeds Ninja rebuilds: winget install --id Mozilla.sccache -e" }
     if ($InstallVisualStudio) {
-        Run winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --addProductLang en-US"
+        Run @("winget", "install", "--id", "Microsoft.VisualStudio.2022.BuildTools", "-e", "--override", "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --addProductLang en-US")
     }
     Step "Conan (env/requirements-build.txt)"
-    if (Has conan) { Write-Host "    conan present: $(conan --version)" } else { Run python -m pip install -r (Join-Path $RepoRoot "env\requirements-build.txt") }
+    if (Has conan) { Write-Host "    conan present: $(conan --version)" } else { Run @("python", "-m", "pip", "install", "-r", (Join-Path $RepoRoot "env\requirements-build.txt")) }
     $p = conan profile path default 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $p) { Run conan profile detect }
+    if ($LASTEXITCODE -ne 0 -or -not $p) { Run @("conan", "profile", "detect") }
 }
 
 if (-not $SkipSdk) {
@@ -67,14 +72,14 @@ if (-not $SkipSdk) {
     if ((Test-Path (Join-Path $sdkRoot "include\CameraApiLoad.h")) -or (Test-Path (Join-Path $sdkRoot "include\CameraApi.h"))) {
         Write-Host "    already provisioned at $sdkRoot"
     } else {
-        Run powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\provision-mindvision-sdk.ps1") -Destination (Join-Path $RepoRoot "build\vendor\mindvision-sdk")
+        Run @("powershell", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $RepoRoot "scripts\provision-mindvision-sdk.ps1"), "-Destination", (Join-Path $RepoRoot "build\vendor\mindvision-sdk"))
     }
 }
 
 if (-not $SkipAssets) {
     $scope = if ($PublicAssetsOnly) { "--public-only" } else { "--required-only" }
     Step "External assets (env/assets.json) $scope"
-    Run python (Join-Path $RepoRoot "scripts\provision-assets.py") $scope
+    Run @("python", (Join-Path $RepoRoot "scripts\provision-assets.py"), $scope)
 }
 
 if (-not $SkipConanInstall) {
@@ -85,7 +90,7 @@ if (-not $SkipConanInstall) {
         $profile = "conan/profiles/windows-msvc194"; $of = "build"; $preset = "windows-default"
     }
     Step "conan install ($profile -> $of/)"
-    Run conan install . -of $of --build=missing -s build_type=$BuildType -pr $profile
+    Run @("conan", "install", ".", "-of", $of, "--build=missing", "-s", "build_type=$BuildType", "-pr", $profile)
     Step "Done"
     Write-Host "    cmake --preset $preset"
     Write-Host "    cmake --build --preset $preset-build$(if ($Generator -eq 'VisualStudio' -and $BuildType -eq 'Release') { '-release' })"

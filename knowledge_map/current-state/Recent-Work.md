@@ -1,5 +1,14 @@
 # Recent Work
 
+## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
+
+Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,
+emulated) found two defects a parse check cannot: the doctor printed a
+CommandNotFound error per absent tool instead of a MISSING line (fixed with a
+`Get-Command` guard), and the bootstrap's `Run` helper took the command as
+remaining arguments, so PowerShell bound `-pr` to its own `-ProgressAction`
+(fixed: `Run` takes one string array). Both scripts now run end to end in that
+environment; TD-15 is narrowed to a real Windows host run.
 ## 2026-09-21 — One packager for the export GUI (TD-14)
 
 `scripts/build_mac.sh`, `scripts/build_windows.ps1` and `scripts/hdf5_export.spec`
