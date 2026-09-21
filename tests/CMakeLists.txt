@@ -867,7 +867,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.publish_processing_core
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_publish_processing_core.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_processing_core.py
     )
     set_tests_properties(scripts.publish_processing_core PROPERTIES
         LABELS "scripts;contract"
@@ -876,7 +876,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.publish_profiles
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_publish_profiles.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_profiles.py
     )
     set_tests_properties(scripts.publish_profiles PROPERTIES
         LABELS "scripts;contract"
@@ -885,7 +885,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.contract_version_consistency
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_contract_version_consistency.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_contract_version_consistency.py
     )
     set_tests_properties(scripts.contract_version_consistency PROPERTIES
         LABELS "scripts;contract"
@@ -894,7 +894,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.bump_mib_processing_version
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_bump_mib_processing_version.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_bump_mib_processing_version.py
     )
     set_tests_properties(scripts.bump_mib_processing_version PROPERTIES
         LABELS "scripts;contract"
@@ -903,7 +903,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.verify_processing_core_manifest
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_verify_processing_core_manifest.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_verify_processing_core_manifest.py
     )
     set_tests_properties(scripts.verify_processing_core_manifest PROPERTIES
         LABELS "scripts;contract"
@@ -912,7 +912,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.processing_core_signer_release_gate
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_processing_core_signer_release_gate.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_processing_core_signer_release_gate.py
     )
     set_tests_properties(scripts.processing_core_signer_release_gate PROPERTIES
         LABELS "scripts;contract;release"
@@ -921,7 +921,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.desktop_release_version
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_desktop_release_version.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_desktop_release_version.py
     )
     set_tests_properties(scripts.desktop_release_version PROPERTIES
         LABELS "scripts;release"

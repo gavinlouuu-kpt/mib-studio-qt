@@ -5,7 +5,7 @@ import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))  # so publish-update.py can import scripts.s3_upload
-_spec = importlib.util.spec_from_file_location("pub", _ROOT / "publish-update.py")
+_spec = importlib.util.spec_from_file_location("pub", _ROOT / "scripts" / "release" / "publish-update.py")
 pub = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pub)
 

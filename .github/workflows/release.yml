@@ -90,19 +90,9 @@ jobs:
           pip install conan boto3 numpy
           conan profile detect --force
 
-          # Create CI profile pinned to msvc 194 to match prebuilt binaries
-          @"
-          [settings]
-          os=Windows
-          arch=x86_64
-          compiler=msvc
-          compiler.version=194
-          compiler.cppstd=17
-          compiler.runtime=dynamic
-          build_type=Release
-          "@ | Out-File -FilePath "$env:USERPROFILE\.conan2\profiles\ci" -Encoding UTF8
-          Write-Host "CI Conan profile created:"
-          conan profile show -pr ci
+          # Host/build profile lives in the repo (conan/profiles/windows-msvc194); the
+          # same file serves local builds, so CI and a developer PC resolve one graph.
+          conan profile show -pr conan/profiles/windows-msvc194
 
           # Add team Conan remote as primary
           if ($env:CONAN_REMOTE_URL) {
@@ -165,16 +155,20 @@ jobs:
           "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
           "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
 
+      - name: Provision pinned assets (env/assets.json)
+        shell: pwsh
+        run: python scripts/provision-assets.py --required-only
+
       - name: Install dependencies
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          conan install . -of build --build=missing -s build_type=Release -pr ci
+          conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194
           if ($LASTEXITCODE -ne 0) {
             Write-Host "WARNING: Conan install failed with current remotes (possibly team-conan). Retrying after disabling team-conan remote." -ForegroundColor Yellow
             conan remote remove team-conan 2>$null
-            conan install . -of build --build=missing -s build_type=Release -pr ci
+            conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194
             if ($LASTEXITCODE -ne 0) {
               Write-Host "ERROR: Conan install failed after removing team-conan remote." -ForegroundColor Red
               exit 1
@@ -359,7 +353,7 @@ jobs:
         run: |
           $artifactVersion = '${{ steps.version.outputs.artifact_version }}'
           $updateExe = Get-Item -LiteralPath "build\dist\MIB_Studio_Qt_Update_v$artifactVersion.exe"
-          python publish-update.py `
+          python scripts\release\publish-update.py `
             --installer $updateExe.FullName `
             --version "${{ steps.version.outputs.version }}" `
             --channel "${{ steps.version.outputs.channel }}" `

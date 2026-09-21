@@ -135,7 +135,7 @@ source .venv/bin/activate
 
 ```bash
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r ../env/requirements-scripts.txt
 ```
 
 ### 3. Build with PyInstaller
@@ -261,15 +261,15 @@ Where `XXXXXX` is the zero-padded frame index.
 
 **"PyInstaller not found"**
 - Ensure you've activated the virtual environment
-- Run `pip install -r requirements.txt` again
+- Run `pip install -r ../env/requirements-scripts.txt` again
 - If you are using system Python (no venv), run:
   `python3 -m pip install --user pyinstaller`
 
 **"Module not found" errors during build**
-- Check that all dependencies in `requirements.txt` are installed
+- Check that all dependencies in `env/requirements-scripts.txt` are installed
 - Try cleaning and rebuilding: `build_windows.ps1 -Clean` or `./build_mac.sh --clean`
 - On Linux system Python, install user-scoped deps:
-  `python3 -m pip install --user -r requirements.txt`
+  `python3 -m pip install --user -r ../env/requirements-scripts.txt`
 
 ### Runtime Issues
 

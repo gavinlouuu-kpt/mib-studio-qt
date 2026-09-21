@@ -4,7 +4,9 @@ Desktop ownership uses existing Qt Core `QLockFile`; no new dependency is
 needed. The Windows serial timeout regression links `setupapi` and `advapi32`
 directly and simulates driver calls without connecting hardware.
 
-> Third-party stack. Managed by Conan (`conanfile.txt`).
+> Third-party stack. Managed by Conan (`conanfile.py`; host profiles in
+> `conan/profiles/`). System-package equivalents for Linux/macOS builds are
+> listed once in `env/apt-packages.txt` / `env/brew-packages.txt`.
 
 | Package | Version | Shared? | Notes |
 |---|---|---|---|
@@ -29,6 +31,9 @@ directly and simulates driver calls without connecting hardware.
   `scripts/provision-mindvision-sdk.sh`. The scripts fetch SHA-256-pinned team
   R2 artifacts and extract only the headers plus the current platform/CPU's
   shared library.
+- **External assets (model weights, datasets)** — not in git. Pinned by Hub
+  revision and SHA-256 in `env/assets.json`, fetched into `build/vendor/assets/`
+  by `scripts/provision-assets.py`. See [[Assets]].
 - **Coremor XMT DLL** — `include/Coremor/` (`.h`, `.lib`, `.dll`). Used by
   the optional Windows backend of [[../services/AutofocusService]]. OEABT uses
   the existing ISerialPort adapter and the operating system's standard serial driver instead of a

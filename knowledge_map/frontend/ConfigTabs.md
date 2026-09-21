@@ -111,7 +111,7 @@
   checks, checksum-verified updates, and field-level diffing through
   [[../frontend/System-Utilities]] `ProfileManager`.
 - Profile catalogs for manual remote updates are published outside the app via
-  `publish-profiles.py` to
+  `scripts/release/publish-profiles.py` to
   `https://updates.yofo.bio/profiles/<channel>/catalog.json`; see
   `docs/howto/auto-update-r2.md`.
 

@@ -38,7 +38,7 @@
   independently in six places (`test_contract_version_consistency.py` guards
   against drift until/unless that's folded into one source of truth).
 - **Processing core registry** — versioned engine metadata published by
-  `publish-processing-core.py`: a complete short-cache active pointer at
+  `scripts/release/publish-processing-core.py`: a complete short-cache active pointer at
   `{channel}/processing-core/latest.json`, immutable manifests under
   `versions/<version>.json`, and an enumerable `index.json`. Schema v2 pins
   the canonical core/contract version, hash-qualified Python wheels, optional

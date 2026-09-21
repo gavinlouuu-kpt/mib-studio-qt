@@ -59,7 +59,7 @@ python -m pip install --upgrade pip
 
 # Install dependencies
 Write-Host "Installing dependencies..." -ForegroundColor Cyan
-pip install -r requirements.txt
+pip install -r ..\env\requirements-scripts.txt
 
 # Verify we're in the right directory and files exist
 Write-Host "Verifying files..." -ForegroundColor Cyan

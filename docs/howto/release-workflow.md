@@ -4,11 +4,11 @@ This guide documents the end-to-end process for releasing a new version of MIB S
 
 ## Overview
 
-The release pipeline builds on a local Windows machine with the required proprietary dependencies, publishes installer assets to GitHub Releases with `gh`, and publishes the auto-update package to Cloudflare R2 through the Python command `publish-update.py`.
-Calibration and lookup-table updates can be published independently with `publish-emodulus-lut.py`; see [`auto-update-r2.md`](auto-update-r2.md) for the LUT-specific object layout and rollback behavior.
+The release pipeline builds on a local Windows machine with the required proprietary dependencies, publishes installer assets to GitHub Releases with `gh`, and publishes the auto-update package to Cloudflare R2 through the Python command `scripts/release/publish-update.py`.
+Calibration and lookup-table updates can be published independently with `scripts/release/publish-emodulus-lut.py`; see [`auto-update-r2.md`](auto-update-r2.md) for the LUT-specific object layout and rollback behavior.
 
 All three desktop release entrypoints fail closed on release identity and
-artifacts. `release.ps1` and both Actions workflows remove prior installer
+artifacts. `scripts/release/release.ps1` and both Actions workflows remove prior installer
 outputs, require the exact numeric-version Setup and Update filenames, and
 publish only those checked bytes. A beta release such as `v1.2.3-beta.4` still
 uses `MIB_Studio_Qt_{Setup,Update}_v1.2.3.exe` locally and on GitHub, because
@@ -16,17 +16,17 @@ Inno Setup consumes CMake's numeric `PROJECT_VERSION`. Its immutable R2 object
 is `MIB_Studio_Qt_Update_v1.2.3-beta.4.exe`, so successive betas cannot
 overwrite one long-cached key.
 
-### One-Command Release (`release.ps1`)
+### One-Command Release (`scripts/release/release.ps1`)
 
 ```powershell
 # Production: bump, build, tag, push, create GitHub Release, publish to stable
-.\release.ps1 --patch --push
+.\scripts\release\release.ps1 --patch --push
 
 # Beta: bump, build, tag as v0.2.2-beta.1, push, publish to beta channel
-.\release.ps1 --patch --beta --push
+.\scripts\release\release.ps1 --patch --beta --push
 
 # Preview what would happen
-.\release.ps1 --patch --push --dry-run
+.\scripts\release\release.ps1 --patch --push --dry-run
 ```
 
 Dry-run reports the prospective version and tag calculated from the selected
@@ -54,7 +54,7 @@ tag's numeric version. A stale fallback at `1.0.3` with reachable
 6. Atomically pushes branch and tag to GitHub.
 7. Creates a GitHub Release with installers and SHA-256 checksums; failure is
    fatal.
-8. Publishes the update package to Cloudflare R2 via `publish-update.py`;
+8. Publishes the update package to Cloudflare R2 via `scripts/release/publish-update.py`;
    failure is fatal.
 
 All release publishers pass validated one-configure CMake overrides for both
@@ -78,7 +78,7 @@ missing; the manual `build-windows.yml` workflow checks it before writing the
 prospective version into its workspace. It does not commit, tag, or push until
 tests, both installer builds, exact-artifact validation, and Actions artifact
 upload have succeeded; stable branch and tag refs are then pushed atomically.
-Every non-`--skip-build` `release.ps1` run reads the
+Every non-`--skip-build` `scripts/release/release.ps1` run reads the
 same variable from the destination repository before changing the version and
 reconfigures CMake with the required production gate, including local/no-push
 installer builds. `--skip-build` produces no binary and remains exempt.
@@ -236,21 +236,21 @@ For R2 bucket, DNS, cache, migration, and rollback details, see [`auto-update-r2
 ### Step 1: Bump Version
 
 For a release, first resolve the effective line (including reachable beta
-tags). `release.ps1` consumes this JSON automatically:
+tags). `scripts/release/release.ps1` consumes this JSON automatically:
 
 ```powershell
 python scripts/resolve_desktop_release_version.py --bump patch
 ```
 
-`bump-version.ps1` only increments the fallback literal; use it for manual
+`scripts/release/bump-version.ps1` only increments the fallback literal; use it for manual
 maintenance only when the resolver reports `default_version ==
 current_version`.
 
 ```powershell
-.\bump-version.ps1 --patch
-.\bump-version.ps1 --minor
-.\bump-version.ps1 --major
-.\bump-version.ps1 --patch --tag
+.\scripts\release\bump-version.ps1 --patch
+.\scripts\release\bump-version.ps1 --minor
+.\scripts\release\bump-version.ps1 --major
+.\scripts\release\bump-version.ps1 --patch --tag
 ```
 
 The script reads `DEFAULT_VERSION`, calculates the new semantic version, updates the CMake version file, and optionally creates an annotated git tag.
@@ -314,12 +314,12 @@ Use the update package for auto-updates. The full setup installer is for first-t
 
 ### Step 4: Publish Packages
 
-Set R2 publishing configuration. By default, `publish-update.py` uses Wrangler when `MIB_STUDIO_R2_ENDPOINT` is not set. Set `MIB_STUDIO_R2_ENDPOINT` and `MIB_STUDIO_R2_PROFILE` only when publishing through S3-compatible credentials.
+Set R2 publishing configuration. By default, `scripts/release/publish-update.py` uses Wrangler when `MIB_STUDIO_R2_ENDPOINT` is not set. Set `MIB_STUDIO_R2_ENDPOINT` and `MIB_STUDIO_R2_PROFILE` only when publishing through S3-compatible credentials.
 
 Publish the update package:
 
 ```bash
-python publish-update.py \
+python scripts/release/publish-update.py \
   --installer "build/dist/MIB_Studio_Qt_Update_v0.2.0.exe" \
   --version "0.2.0" \
   --release-notes-url "https://github.com/gavinlouuu-kpt/mib-studio-qt/releases/tag/v0.2.0"
@@ -328,10 +328,10 @@ python publish-update.py \
 Publish the optional full installer:
 
 ```bash
-python publish-update.py --installer "build/dist/MIB_Studio_Qt_Setup_v0.2.0.exe"
+python scripts/release/publish-update.py --installer "build/dist/MIB_Studio_Qt_Setup_v0.2.0.exe"
 ```
 
-`publish-update.py`:
+`scripts/release/publish-update.py`:
 
 - Validates the installer exists and has nonzero size.
 - Auto-detects the version from `MIB_Studio_Qt_(Setup|Update)_vX.Y.Z.exe`.
@@ -363,13 +363,13 @@ Important parameters:
 After publishing, verify public access from a network path that does not use private credentials:
 
 ```bash
-python verify-update-manifest.py
+python scripts/release/verify-update-manifest.py
 ```
 
 For beta channel:
 
 ```bash
-python verify-update-manifest.py --manifest-url "https://updates.yofo.bio/beta/latest.json"
+python scripts/release/verify-update-manifest.py --manifest-url "https://updates.yofo.bio/beta/latest.json"
 ```
 
 Manual checks:
@@ -397,15 +397,15 @@ Launch the app and use Help -> Check for Updates.
 # Production release
 $env:MIB_STUDIO_R2_ENDPOINT = "https://<account-id>.r2.cloudflarestorage.com"
 $env:MIB_STUDIO_R2_PROFILE = "mib-studio-r2"
-.\release.ps1 --patch --push
+.\scripts\release\release.ps1 --patch --push
 
 # Beta release
-.\release.ps1 --patch --beta --push
+.\scripts\release\release.ps1 --patch --beta --push
 ```
 
 ## Step-by-Step Reference
 
-Prefer `release.ps1`; it performs the effective-version calculation, identity
+Prefer `scripts/release/release.ps1`; it performs the effective-version calculation, identity
 override, test gate, and atomic ref push as one fail-closed operation. The
 commands below assume `v0.2.2` was already selected with
 `scripts/resolve_desktop_release_version.py`, written to `DEFAULT_VERSION`,
@@ -423,8 +423,8 @@ cmake --build build --config Release --target package_installer
 cmake --build build --config Release --target package_installer_update
 git push --atomic origin HEAD:main refs/tags/v0.2.2
 gh release create v0.2.2 build\dist\MIB_Studio_Qt_Setup_v0.2.2.exe build\dist\MIB_Studio_Qt_Update_v0.2.2.exe
-python publish-update.py --installer "build/dist/MIB_Studio_Qt_Update_v0.2.2.exe" --version 0.2.2
-python verify-update-manifest.py
+python scripts/release/publish-update.py --installer "build/dist/MIB_Studio_Qt_Update_v0.2.2.exe" --version 0.2.2
+python scripts/release/verify-update-manifest.py
 ```
 
 ## Workflow Diagram
@@ -439,7 +439,7 @@ flowchart TD
     Installers --> Push[6. Atomically push branch + tag]
     Push --> GHRelease[7. Create GitHub Release<br/>gh CLI]
     GHRelease --> R2[8. Publish to Cloudflare R2<br/>publish-update.py]
-    R2 --> Verify[9. Verify public manifest<br/>verify-update-manifest.py]
+    R2 --> Verify[9. Verify public manifest<br/>scripts/release/verify-update-manifest.py]
     Verify --> Done([Release Complete])
 
     Commit -->|--beta| BetaTag[Tag: v0.2.2-beta.1]
@@ -464,7 +464,7 @@ other client. Do not reintroduce an `s3.yofo.bio` manifest or redirect.
 If a bad R2 release is published:
 
 1. Publish a corrected `stable/latest.json` that points at the last known-good update package.
-2. Run `python verify-update-manifest.py`.
+2. Run `python scripts/release/verify-update-manifest.py`.
 3. Purge Cloudflare cache for mutable manifest paths if stale content is observed.
 4. Confirm clients pick up the corrected `updates.yofo.bio` manifest (no legacy `s3.yofo.bio` endpoint is involved).
 
@@ -484,7 +484,7 @@ If a bad R2 release is published:
 
 **Auto-update check fails**
 
-- Run `python verify-update-manifest.py`.
+- Run `python scripts/release/verify-update-manifest.py`.
 - Confirm `installer_url` in the manifest points to
   `https://updates.yofo.bio/<channel>/MIB_Studio_Qt_Update_v<full-version>.exe`
   (including the `-beta.*` suffix for beta releases).

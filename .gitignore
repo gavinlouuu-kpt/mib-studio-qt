@@ -43,3 +43,12 @@ mcu/
 # MkDocs user-guide site build output (docs-site.yml / mkdocs build)
 site/
 /build-*/
+
+# Per-machine agent settings (may contain permission allowlists with local paths or credentials)
+.claude/settings.local.json
+.claude/*.local.*
+
+# Build/debug logs at the repo root and agent-runner state never belong in git
+# (evidence bundles under docs/evidence/ keep their logs deliberately)
+/*.log
+data/logs/

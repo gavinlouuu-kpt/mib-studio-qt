@@ -1,5 +1,101 @@
 # Recent Work
 
+## 2026-09-21 — Repository root cleanup
+
+PR 6 of the self-provisioning plan. Six build logs, a debug log and
+`data/logs/symphony-state-last.json` are untracked (`*.log`, `data/logs/`
+ignored). The eight release-tooling unit tests moved to `tests/release/`
+(CTest `scripts.*` targets and `python-wheel.yml` updated) and the publish /
+verify / bump / release scripts to `scripts/release/` (`release.ps1` and
+`bump-version.ps1` resolve the repo root from their new location; workflows,
+`ci.yml`'s syntax check, README and how-tos repointed). The duplicated
+`scripts/build_*` vs `tools/build_*` packagers are logged as TD-14 rather than
+deleted, since `docs/howto/hdf5-export-app.md` still documents the `scripts/`
+pair. See [[../build-and-run/Build]].
+
+## 2026-09-21 — Build docs consolidated: Build.md is current truth, dated notes moved to task/
+
+PR 5 of the self-provisioning plan. `build-and-run/Build.md` now holds only
+what is true today (start-here, containers/CI, a preset table, targets,
+commands, Conan, platform guards) plus a History list; the dated paragraphs
+moved to `task/2026-09-09-windows-ninja-fast-loop.md`,
+`task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo.md`, and the existing
+hardware-shutdown, MindVision-overview and cloud-toolchain notes. Golden
+principle 12 ("every setup list has exactly one home") is the rule the plan
+implements. `WORKFLOW.md` (Symphony) runs the doctor/bootstrap before each
+run; Agent-Onboarding step 0 is the doctor.
+
+## 2026-09-21 — Preset hygiene: no user paths, described presets, showIncludes gate
+
+PR 4 of the self-provisioning plan. `CMakePresets.json` no longer carries
+`/home/gavin/...` ignore paths (they belong in the gitignored
+`CMakeUserPresets.json`; `CMakeUserPresets.example.json` shows how) and every
+configure preset has a `description` naming its `env/` sections and Conan
+profile. `cmake/MIBCompilerSettings.cmake` now fails a Ninja + MSVC configure
+when `CMAKE_CL_SHOWINCLUDES_PREFIX` is empty instead of silently losing header
+dependencies (`MIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX=ON` to override). See
+[[../build-and-run/Build]].
+
+## 2026-09-21 — Devcontainer, one composite setup action for every Linux lane, nightly network tests
+
+PR 3 of the self-provisioning plan. `.devcontainer/` (Ubuntu 24.04 built from
+`env/apt-packages.txt`, `/opt/venv` with Conan + NumPy, post-create runs the
+bootstrap and doctor, cache volumes, `HF_TOKEN` passthrough). The seven
+hand-typed apt lists in `backend-ci`, `bridge-ci`, `desktop-ci`, `sanitizers`,
+`soak`, `exporter-soak`, `python-wheel` are replaced by
+`.github/actions/setup-linux-env` (sections + extras, Conan, MindVision SDK,
+assets). New `network-tests.yml` runs `linux-network-test` nightly. Decision:
+build the image per job rather than publish to GHCR. See [[../build-and-run/Build]].
+
+## 2026-09-21 — doctor/bootstrap scripts; env/ is the single home for setup lists
+
+PR 2 of the self-provisioning plan. `scripts/doctor.{sh,ps1}` report what a
+host is missing (toolchain minimums from `env/toolchain.toml`, packages from
+`env/apt-packages.txt` / `env/brew-packages.txt` by section, Conan default
+profile, MindVision SDK, required assets, optional `HF_TOKEN`) with one fix
+command per item and exit 1; `scripts/bootstrap.{sh,ps1}` install the same
+idempotently (apt/brew or winget, `.venv` + `env/requirements-build.txt`,
+`conan profile detect`, SDK, assets, and on Windows `conan install` with the
+repo profile). The inline `ci` Conan profile in `build-windows.yml`,
+`release.yml`, `python-wheel.yml` is replaced by
+`conan/profiles/windows-msvc194[-ninja]`, which also carries the `cpuinfo`
+`[replace_requires]` pin that previously lived only in a Build.md paragraph.
+`scripts/requirements.txt` and `tools/requirements-*.txt` moved to
+`env/requirements-{scripts,tools-runtime,tools-build}.txt`;
+`env/requirements-build.txt` (conan, numpy) is new. Runtime pins added:
+`rust-toolchain.toml`, `.nvmrc` + `desktop/package.json` engines,
+`.python-version`, `mise.toml`. AGENTS.md / README / linux-build.md now say
+"run the doctor" instead of restating package lists. See [[../build-and-run/Build]].
+
+## 2026-09-21 — External assets manifest; model weights moved to Hugging Face
+
+PR 1 of the self-provisioning plan. `env/assets.json` now declares every
+dataset and model the repo depends on (Hub id, pinned revision, SHA-256,
+visibility, consumers); `scripts/provision-assets.py` (stdlib) fetches and
+verifies them into `build/vendor/assets/`, `scripts/assets_manifest.py` is the
+only way code names a Hub repo, and `scripts/check_docs.py` fails on any
+undeclared `gavinlouuu/<repo>` id. `yolo11n-seg.onnx`/`.pt` left git for
+`gavinlouuu/mib-yolo11n-seg`; CMake resolves `MIB_YOLO_MODEL_PATH` from the
+manifest, fails configure with the fix command when ONNX Runtime is present
+and the file is missing, and Windows CI / `release.ps1` provision before
+configuring. kin10/kin6 harnesses, `synthetic_condition_validation.py` and
+`empty_frame_detection.py` read the corpus from the manifest;
+`fetch_hf_512x96stream.py` is replaced by the `512x96stream-mock-frames`
+asset. Linux test presets exclude label `network`; `linux-network-test`
+runs it. See [[../build-and-run/Assets]].
+
+## 2026-09-21 — Self-provisioning environment plan; tracked agent settings removed
+
+Opened `docs/exec-plans/completed/2026-09-21-self-provisioning-environment.md`
+(seven PRs: secrets, assets on Hugging Face, doctor/bootstrap, devcontainer +
+CI convergence, preset hygiene, docs consolidation, root cleanup). PR 0 lands
+here: `.claude/settings.local.json` was tracked in this public repository and
+its permission allowlist carried two plaintext credentials (MLflow tracking
+and the team Conan remote) since 2026-03-24; the file is untracked and
+ignored, both credentials must be rotated by their owners, and golden
+principle 11 now states the rule. No other tracked file contained either
+value. See [[../../docs/exec-plans/completed/2026-09-21-self-provisioning-environment]].
+
 ## 2026-09-16 — Device discovery service with providers (#419)
 
 Device discovery moved into a backend job service

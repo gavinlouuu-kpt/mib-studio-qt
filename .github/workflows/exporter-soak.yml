@@ -27,12 +27,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Set up Linux environment (Qt runtime libs for PySide6)
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base
+          extra-packages: libegl1 libgl1 libxkbcommon0 libxcb-cursor0
+          mindvision: "false"
+          assets: none
+
       - name: Install Python dependencies
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libxcb-cursor0
           python3 -m pip install --upgrade pip
           python3 -m pip install PySide6 h5py numpy opencv-python-headless psutil
 
@@ -72,19 +78,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Linux system packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake curl git libgl1-mesa-dev libhdf5-dev libopencv-dev \
-            libspdlog-dev libsqlite3-dev libxkbcommon-dev nlohmann-json3-dev \
-            pkg-config python3-pip qt6-base-dev qt6-serialport-dev
-
-      - name: Provision pinned MindVision SDK
-        shell: bash
-        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+      - name: Set up Linux build environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,backend,frontend
+          conan: "false"
+          mindvision: "true"
+          assets: none
 
       - name: Configure and build
         shell: bash

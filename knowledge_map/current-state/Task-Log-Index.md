@@ -11,6 +11,11 @@
   evidence pointers, open hardware items
 - `task/2026-08-24-exporter-stability.md` — #344 exporter phase
 
+### Build environment
+- [[../task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo]] — localized cl.exe `/showIncludes` prefix, `cpuinfo` Conan conflict (rig PC)
+- [[../task/2026-09-09-windows-ninja-fast-loop]] — `windows-ninja` preset measurements, sccache, Rust bridge on the Ninja tree
+- [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — cloud image `-lstdc++` fix
+
 ### Camera lifecycle & hardware SDKs
 - [[../task/2026-09-15-device-discovery-service]] — backend discovery job service, providers, startup policy, ABI 14 bridge (#419)
 - [[../task/2026-09-15-mindvision-overview-roi]] - full-sensor overview, 400 Hz trigger, experiment ROI persistence and rig acceptance
