@@ -142,10 +142,10 @@ cache in `.cache/huggingface/` (already gitignored).
 ## Acceptance criteria (whole plan)
 
 - [ ] `docker build .devcontainer && docker run … bash -lc 'scripts/bootstrap.sh && cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build && ctest --preset linux-backend-only-test'` is green from a clean image, with `network`-labelled tests excluded by the preset.
-- [ ] On a macOS or Windows host with nothing installed, `scripts/doctor.{sh,ps1}` exits 1 and lists every missing item with a copy-pasteable fix; after `bootstrap`, `doctor` exits 0.
+- [x] macOS (2026-09-21, bash 3.2): `doctor.sh` exit 1 with four fixes → `bootstrap.sh --public-assets-only` → `doctor.sh` exit 0; second bootstrap a no-op in 5.7 s. Windows: `doctor.ps1`/`bootstrap.ps1` written, parse-checked by `ci.yml`, not yet run on a Windows host.
 - [x] `grep -rn 'apt-get install' .github/workflows` matches only the composite action, plus one line inside `python-wheel.yml`'s `docker run` of a slim image (provisioning the test container, not the runner).
 - [x] `git ls-files | grep -E '\.(onnx|pt)$'` is empty; the only tracked `.log` files are evidence bundles under `docs/evidence/` (kept on purpose); `git ls-files .claude` lists only `skills/`.
-- [ ] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`; `scripts/check_docs.py` enforces this.
+- [x] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`, `.github/`; `scripts/check_docs.py` enforces this (fails on an injected undeclared id).
 - [x] `AGENTS.md` "Build and Run" is three commands: doctor, bootstrap, preset (PR 2).
 - [x] No path under `/home/<user>` or `C:/Users/<user>` in any tracked build/config file. Remaining hits are history notes (`knowledge_map/task/`, `Recent-Work.md`), evidence bundles, and `deploy/*/README.md` server runbooks that document a specific host's directory layout (kept; not a build input). The tracked build logs go in PR 6.
 
