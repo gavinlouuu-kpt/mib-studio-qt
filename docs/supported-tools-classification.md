@@ -24,7 +24,7 @@ Not shipped as standalone binaries. Used for development, QA, or automation.
 | `compare_metrics.py` | QA: compare metrics/conformance JSON, including optional masks, series, target, and tracking evidence. |
 | `run_processing_conformance.py` | QA: run the installed wheel and fail on drift from the committed reference. |
 | `gold_standard_dataset.json` | Committed deterministic full-parity wheel-conformance reference. |
-| `build_windows.ps1`, `build_mac.sh` | Build scripts for packaging; remain in `scripts/` or are mirrored under `tools/` for building. |
+| (packagers) | The PyInstaller builders live only under `tools/` (`tools/build_windows.ps1`, `tools/build_mac.sh`, spec `tools/hdf5_export_app/hdf5_export.spec`); the `scripts/` copies were removed 2026-09-21 (TD-14). |
 | `env/requirements-scripts.txt` | Dependencies for `scripts/`; the tools bundle uses `env/requirements-tools-runtime.txt` and `env/requirements-tools-build.txt`; build-time packages (Conan, NumPy) are `env/requirements-build.txt`. |
 
 Optional future: ship `export_hdf5.py` CLI or `compare_metrics.py` as part of the tools bundle if we want them user-facing.
