@@ -29,122 +29,43 @@ The HDF5 Export GUI Application is a standalone PySide6 (Qt for Python) applicat
 
 ## Building the Application
 
+The export GUI ships inside the **MIB Studio Tools** bundle together with
+`mib_reanalyse_hdf5`; there is one packager per platform under `tools/`
+(`docs/howto/tools.md`). The former duplicate under `scripts/` was removed on
+2026-09-21 (TD-14).
+
 ### Windows
 
-1. **Navigate to the scripts directory:**
-   ```powershell
-   cd scripts
-   ```
+```powershell
+cd tools
+.\build_windows.ps1          # -Clean to rebuild from scratch
+```
 
-2. **Run the build script:**
-   ```powershell
-   .\build_windows.ps1
-   ```
+Output: `tools\dist\hdf5_export_app.exe` (plus `mib_reanalyse_hdf5.exe`).
 
-   To clean previous builds first:
-   ```powershell
-   .\build_windows.ps1 -Clean
-   ```
+### macOS / Linux
 
-3. **Find the executable:**
-   The built executable will be located at:
-   ```
-   scripts\dist\hdf5_export_app.exe
-   ```
+```bash
+cd tools
+./build_mac.sh               # --clean to rebuild; --dmg for MIB_Studio_Tools.dmg on macOS
+```
 
-### macOS
+Output: `tools/dist/hdf5_export_app.app` on macOS (`tools/dist/hdf5_export_app`
+on Linux) and `tools/dist/mib_reanalyse_hdf5`.
 
-1. **Navigate to the scripts directory:**
-   ```bash
-   cd scripts
-   ```
-
-2. **Make the build script executable (first time only):**
-   ```bash
-   chmod +x build_mac.sh
-   ```
-
-3. **Run the build script:**
-   ```bash
-   ./build_mac.sh
-   ```
-
-   To clean previous builds:
-   ```bash
-   ./build_mac.sh --clean
-   ```
-
-   To also create a DMG file:
-   ```bash
-   ./build_mac.sh --dmg
-   ```
-
-4. **Find the application bundle:**
-   The built application will be located at:
-   ```
-   scripts/dist/hdf5_export_app.app
-   ```
-
-   If you created a DMG:
-   ```
-   scripts/dist/hdf5_export_app.dmg
-   ```
-
-### Linux
-
-1. **Navigate to the scripts directory:**
-   ```bash
-   cd scripts
-   ```
-
-2. **Run the Unix build script:**
-   ```bash
-   ./build_mac.sh
-   ```
-
-   To clean previous builds:
-   ```bash
-   ./build_mac.sh --clean
-   ```
-
-3. **Find the executable:**
-   The built executable will be located at:
-   ```
-   scripts/dist/hdf5_export_app
-   ```
+Both scripts create `tools/.venv`, install `env/requirements-tools-runtime.txt`
+and `env/requirements-tools-build.txt`, and run PyInstaller with
+`tools/hdf5_export_app/hdf5_export.spec`, which packages
+`scripts/hdf5_export_app.py` and its `export_hdf5` / `export_worker` modules.
 
 ## Manual Build Process
 
-If you prefer to build manually:
-
-### 1. Set Up Virtual Environment
-
-**Windows:**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**macOS / Linux:**
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+cd tools
+python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
+pip install -r ../env/requirements-tools-runtime.txt -r ../env/requirements-tools-build.txt
+pyinstaller hdf5_export_app/hdf5_export.spec --clean --workpath build --distpath dist
 ```
-
-### 2. Install Dependencies
-
-```bash
-pip install --upgrade pip
-pip install -r ../env/requirements-scripts.txt
-```
-
-### 3. Build with PyInstaller
-
-```bash
-pyinstaller hdf5_export.spec --clean
-```
-
-The executable will be in the `dist` directory.
 
 ## Using the Application
 
@@ -267,7 +188,7 @@ Where `XXXXXX` is the zero-padded frame index.
 
 **"Module not found" errors during build**
 - Check that all dependencies in `env/requirements-scripts.txt` are installed
-- Try cleaning and rebuilding: `build_windows.ps1 -Clean` or `./build_mac.sh --clean`
+- Try cleaning and rebuilding: `tools\build_windows.ps1 -Clean` or `tools/build_mac.sh --clean`
 - On Linux system Python, install user-scoped deps:
   `python3 -m pip install --user -r ../env/requirements-scripts.txt`
 

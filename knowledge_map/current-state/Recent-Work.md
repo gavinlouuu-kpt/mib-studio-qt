@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-09-21 — One packager for the export GUI (TD-14)
+
+`scripts/build_mac.sh`, `scripts/build_windows.ps1` and `scripts/hdf5_export.spec`
+were a diverged copy of the MIB Studio Tools packagers under `tools/` (both
+spec files packaged `scripts/hdf5_export_app.py`). Removed; the tools bundle
+(`tools/build_*`, `tools/hdf5_export_app/hdf5_export.spec`, output
+`tools/dist/`) is the only build, and `docs/howto/hdf5-export-app.md` now
+documents it. TD-14 closed.
 ## 2026-09-21 — e2e_device_discovery_lifecycle waits for outcome delivery
 
 Same race as #431 in the integration test: it waited on
