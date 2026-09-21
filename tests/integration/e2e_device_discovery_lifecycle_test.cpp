@@ -200,6 +200,15 @@ int main()
     MIB_REQUIRE(waitFor([&] { return backend.autofocus().isConnected(); }),
                 "startup connects the unique identified nanopositioner through AutofocusService");
     MIB_REQUIRE(waitFor([&] { return !coordinator.nanopositionerStepRunning(); }), "startup step ends");
+    // The running flag clears before the terminal outcome is delivered to the
+    // listener; wait for the delivery itself (same race as #431).
+    MIB_REQUIRE(waitFor([&] {
+                    std::lock_guard<std::mutex> lk(outcomesMutex);
+                    for (const auto& o : nanoOutcomes)
+                        if (o.kind == StartupDiscoveryCoordinator::NanopositionerOutcome::Kind::Connected) return true;
+                    return false;
+                }),
+                "nanopositioner connected outcome delivered");
     MIB_EXPECT(nanoState->connects.load() == 1, "exactly one connection attempt");
     MIB_EXPECT(nanoState->writes.load() == 0, "no voltage writes during discovery or connect");
     MIB_EXPECT(probes.load() == 2, "both endpoints probed once, no retry needed");

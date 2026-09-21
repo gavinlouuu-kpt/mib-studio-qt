@@ -1,5 +1,12 @@
 # Recent Work
 
+## 2026-09-21 — e2e_device_discovery_lifecycle waits for outcome delivery
+
+Same race as #431 in the integration test: it waited on
+`nanopositionerStepRunning()` (cleared before the listener runs) and then
+asserted the Connected outcome, failing once on a PR lane. It now waits for
+the delivery itself.
+
 ## 2026-09-21 — StartupDiscoveryCoordinator::stop() drains in-flight listeners (#431)
 
 TSan (sanitizer lane on #424) caught a heap-use-after-free in
