@@ -23,7 +23,8 @@ hooks:
       git clone --depth 1 https://github.com/KPT1020/mib-studio-qt.git .
     fi
     git status --short
-  timeout_ms: 120000
+    scripts/doctor.sh --quiet || scripts/bootstrap.sh --public-assets-only
+  timeout_ms: 600000
 agent:
   max_concurrent_agents: 2
   max_turns: 8

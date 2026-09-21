@@ -85,3 +85,15 @@ or rewriting history does not un-publish it. Before committing, a quick
 `git grep -nE '(PASSWORD|TOKEN|SECRET|API_KEY)=' -- ':!*.md'` should return
 only `$VAR`, `os.environ`, or `secrets.` references.
 
+## 12. Every setup list has exactly one home
+
+Package names, tool minimums, Python requirements, Conan profiles and
+external assets each live in one machine-readable file under `env/` or
+`conan/profiles/` (`knowledge_map/build-and-run/Build.md` has the table).
+Docs and workflows show the command that reads the file; they never restate
+its contents. External datasets and model weights are pinned by Hub revision
+and SHA-256 in `env/assets.json` and fetched by `scripts/provision-assets.py`;
+code names a Hub repo only through `scripts/assets_manifest.py`
+(`check_docs.py` enforces it). Machine-specific paths go in gitignored
+per-machine files (`CMakeUserPresets.json`, `.claude/settings.local.json`),
+never in shared config.
