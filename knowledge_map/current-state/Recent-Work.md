@@ -1,5 +1,17 @@
 # Recent Work
 
+## 2026-09-21 — Self-provisioning environment plan; tracked agent settings removed
+
+Opened `docs/exec-plans/active/2026-09-21-self-provisioning-environment.md`
+(seven PRs: secrets, assets on Hugging Face, doctor/bootstrap, devcontainer +
+CI convergence, preset hygiene, docs consolidation, root cleanup). PR 0 lands
+here: `.claude/settings.local.json` was tracked in this public repository and
+its permission allowlist carried two plaintext credentials (MLflow tracking
+and the team Conan remote) since 2026-03-24; the file is untracked and
+ignored, both credentials must be rotated by their owners, and golden
+principle 11 now states the rule. No other tracked file contained either
+value. See [[../../docs/exec-plans/active/2026-09-21-self-provisioning-environment]].
+
 ## 2026-09-16 — Device discovery service with providers (#419)
 
 Device discovery moved into a backend job service

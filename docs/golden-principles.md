@@ -73,3 +73,15 @@ Known debt goes to the tracker — never into silent TODOs.
 
 Logs, sqlite, HDF5 output, and mock frames live under `data/` (gitignored).
 Never commit experiment data, credentials, or machine-local paths.
+
+## 11. Credentials never enter the tree
+
+Secrets come from environment variables or CI secrets at the moment they are
+used — never from a tracked file, and never as a literal inside a command
+that gets recorded (agent permission allowlists such as
+`.claude/settings.local.json` are per-machine and gitignored for this
+reason). If a credential lands in git, rotate it first; removing the file
+or rewriting history does not un-publish it. Before committing, a quick
+`git grep -nE '(PASSWORD|TOKEN|SECRET|API_KEY)=' -- ':!*.md'` should return
+only `$VAR`, `os.environ`, or `secrets.` references.
+
