@@ -52,7 +52,7 @@ jobs:
           fi
           python -m pip install --upgrade pip boto3
           published_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          python publish-processing-core.py \
+          python scripts/release/publish-processing-core.py \
             --promote-version "$VERSION" \
             --channel "$CHANNEL" \
             --published-at "$published_at" \
@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           url="https://updates.yofo.bio/${CHANNEL}/processing-core/latest.json?promotion=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          python verify-processing-core-manifest.py --manifest-url "$url"
+          python scripts/release/verify-processing-core-manifest.py --manifest-url "$url"
           python - "$url" "$VERSION" <<'PY'
           import json
           import sys

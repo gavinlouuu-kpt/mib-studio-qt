@@ -144,7 +144,7 @@ cache in `.cache/huggingface/` (already gitignored).
 - [ ] `docker build .devcontainer && docker run … bash -lc 'scripts/bootstrap.sh && cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build && ctest --preset linux-backend-only-test'` is green from a clean image, with `network`-labelled tests excluded by the preset.
 - [ ] On a macOS or Windows host with nothing installed, `scripts/doctor.{sh,ps1}` exits 1 and lists every missing item with a copy-pasteable fix; after `bootstrap`, `doctor` exits 0.
 - [x] `grep -rn 'apt-get install' .github/workflows` matches only the composite action, plus one line inside `python-wheel.yml`'s `docker run` of a slim image (provisioning the test container, not the runner).
-- [ ] `git ls-files | grep -E '\.(onnx|pt|log)$'` is empty; `git ls-files .claude` is empty.
+- [x] `git ls-files | grep -E '\.(onnx|pt)$'` is empty; the only tracked `.log` files are evidence bundles under `docs/evidence/` (kept on purpose); `git ls-files .claude` lists only `skills/`.
 - [ ] `env/assets.json` lists every Hub id referenced anywhere in `scripts/`, `tests/`, `tools/`, `docs/howto/`; `scripts/check_docs.py` enforces this.
 - [x] `AGENTS.md` "Build and Run" is three commands: doctor, bootstrap, preset (PR 2).
 - [x] No path under `/home/<user>` or `C:/Users/<user>` in any tracked build/config file. Remaining hits are history notes (`knowledge_map/task/`, `Recent-Work.md`), evidence bundles, and `deploy/*/README.md` server runbooks that document a specific host's directory layout (kept; not a build input). The tracked build logs go in PR 6.
@@ -248,10 +248,10 @@ Acceptance: `scripts/check_docs.py` passes; `grep -rn 'apt install\|apt-get inst
 
 ## PR 6: repository root cleanup
 
-- [ ] Untrack `build-ninja-*.log`, `debug-*.log`, `data/logs/symphony-state-last.json`; add `*.log`, `/debug-*.log`, `data/logs/` to `.gitignore` (keep `data/.gitkeep`, `data/mock_frames/`).
-- [ ] Move `test_*.py` (root) → `tests/release/`; `publish-*.py`, `verify-*.py`, `bump-version.ps1`, `release.ps1`, `publish-*.ps1`, `verify-*.ps1` → `scripts/release/`. Update every path in `python-wheel.yml`, `processing-core-promote.yml`, `build-windows.yml`, `ci.yml`, `release.yml`, `docs/howto/release-workflow.md`, `auto-update-r2.md`, `build-installer.md`, `README.md`, and the `paths:` filters at the top of `python-wheel.yml`.
-- [ ] Delete `scripts/build_mac.sh` and `scripts/build_windows.ps1` if `tools/` versions are the maintained ones (verify callers first), or vice versa; leave one.
-- [ ] Vault: `docs/supported-tools-classification.md`, `docs/howto/tools.md`, `Recent-Work.md`.
+- [x] Untrack `build-ninja-*.log`, `debug-*.log`, `data/logs/symphony-state-last.json`; add `*.log`, `/debug-*.log`, `data/logs/` to `.gitignore` (keep `data/.gitkeep`, `data/mock_frames/`).
+- [x] Move `test_*.py` (root) → `tests/release/`; `publish-*.py`, `verify-*.py`, `bump-version.ps1`, `release.ps1`, `publish-*.ps1`, `verify-*.ps1` → `scripts/release/`. Update every path in `python-wheel.yml`, `processing-core-promote.yml`, `build-windows.yml`, `ci.yml`, `release.yml`, `docs/howto/release-workflow.md`, `auto-update-r2.md`, `build-installer.md`, `README.md`, and the `paths:` filters at the top of `python-wheel.yml`.
+- [ ] Not done: `docs/howto/hdf5-export-app.md` documents the `scripts/` pair as the standalone export-GUI build with its own output dir, so deleting either pair changes a documented workflow. Logged as TD-14 with an exit criterion.
+- [x] Vault: `Recent-Work.md`; `tools/README.md` and how-tos repointed to `scripts/release/`.
 
 Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`, `mkdocs.yml`, `mise.toml`, `rust-toolchain.toml`, dotfiles, and the four top-level markdown files; the `python-wheel.yml` unittest step still runs all eight release tests.
 
@@ -266,5 +266,5 @@ Acceptance: `ls` at the repo root shows only directories, `CMakeLists.txt`, `CMa
 - [x] PR 3 devcontainer and CI convergence
 - [x] PR 4 presets and pins
 - [x] PR 5 docs consolidation
-- [ ] PR 6 root cleanup
+- [x] PR 6 root cleanup
 - [ ] Move this plan to `completed/`; open tech-debt entries for anything skipped

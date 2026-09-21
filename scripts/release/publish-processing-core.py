@@ -597,7 +597,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--pyproject",
-        default=str(Path(__file__).resolve().parent / "bindings" / "python" / "pyproject.toml"),
+        default=str(Path(__file__).resolve().parents[2] / "bindings" / "python" / "pyproject.toml"),
         help="Path to the authoritative wheel pyproject.toml.",
     )
     parser.add_argument("--release-tag", default=None, help="Defaults to mib-processing-v<wheel-version>")

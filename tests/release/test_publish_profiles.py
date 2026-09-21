@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).resolve().parent / "publish-profiles.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "scripts" / "release" / "publish-profiles.py"
 SPEC = importlib.util.spec_from_file_location("publish_profiles", SCRIPT)
 assert SPEC and SPEC.loader
 publish_profiles = importlib.util.module_from_spec(SPEC)

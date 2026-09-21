@@ -137,7 +137,7 @@ def upload_object(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    repo_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parents[2]
     zip_path = Path(args.zip) if args.zip else find_default_zip(repo_root)
 
     print("=== Publishing MIB Studio Tools ===")

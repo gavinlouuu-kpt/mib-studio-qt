@@ -22,7 +22,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$resolvedScriptRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path
+# This script lives in scripts/release/; every path below is repo-root relative.
+$RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+
+$resolvedScriptRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $resolvedWorkingDirectory = (Resolve-Path -LiteralPath (Get-Location).Path).Path
 if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals(
         $resolvedScriptRoot.TrimEnd('\', '/'),
@@ -130,10 +133,10 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "`n--- Step 1: Bump Version ---" -ForegroundColor Cyan
 
 $bumpName = if ($Patch) { "patch" } elseif ($Minor) { "minor" } else { "major" }
-$versionFile = "$PSScriptRoot\cmake\MIBVersion.cmake"
+$versionFile = "$RepoRoot\cmake\MIBVersion.cmake"
 $cmakeContent = Get-Content $versionFile -Raw
-$versionInfoJson = & $python "$PSScriptRoot\scripts\resolve_desktop_release_version.py" `
-    --repo-root $PSScriptRoot --bump $bumpName
+$versionInfoJson = & $python "$RepoRoot\scripts\resolve_desktop_release_version.py" `
+    --repo-root $RepoRoot --bump $bumpName
 if ($LASTEXITCODE -ne 0 -or -not $versionInfoJson) {
     Write-Host "ERROR: Could not resolve the effective desktop release version" -ForegroundColor Red
     exit 1
@@ -218,7 +221,7 @@ if ($DryRun) {
     Write-Host "Tag $tagName created on version bump commit" -ForegroundColor Green
 }
 
-$distDir = Join-Path $PSScriptRoot "build\dist"
+$distDir = Join-Path $RepoRoot "build\dist"
 $expectedSetupPath = Join-Path $distDir "MIB_Studio_Qt_Setup_v$newVersion.exe"
 $expectedUpdatePath = Join-Path $distDir "MIB_Studio_Qt_Update_v$newVersion.exe"
 $setupExe = $null
@@ -235,17 +238,17 @@ if (-not $SkipBuild) {
         Write-Host "[DRY RUN] Would build the full Release target set and run CTest" -ForegroundColor Gray
     } else {
         Write-Host "Provisioning the pinned external assets (env/assets.json)..." -ForegroundColor Yellow
-        python "$PSScriptRoot\scripts\provision-assets.py" --required-only
+        python "$RepoRoot\scripts\provision-assets.py" --required-only
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: asset provisioning failed (scripts/provision-assets.py exit $LASTEXITCODE)" -ForegroundColor Red
             exit 1
         }
         Write-Host "Provisioning the pinned MindVision SDK..." -ForegroundColor Yellow
-        $mindVisionSdk = & "$PSScriptRoot\scripts\provision-mindvision-sdk.ps1" `
-            -Destination "$PSScriptRoot\build\vendor\mindvision-sdk" `
+        $mindVisionSdk = & "$RepoRoot\scripts\provision-mindvision-sdk.ps1" `
+            -Destination "$RepoRoot\build\vendor\mindvision-sdk" `
             -PassThru
         Write-Host "Configuring the repository processing-core signer trust pin..." -ForegroundColor Yellow
-        cmake -S $PSScriptRoot -B "$PSScriptRoot\build" `
+        cmake -S $RepoRoot -B "$RepoRoot\build" `
             -DMIB_ENABLE_MINDVISION=ON `
             "-DMIB_MINDVISION_SDK_ROOT=$($mindVisionSdk.SdkRoot)" `
             "-DMIB_MINDVISION_RUNTIME_DIR=$($mindVisionSdk.RuntimeDir)" `
@@ -258,7 +261,7 @@ if (-not $SkipBuild) {
             exit 1
         }
         $identity = @{}
-        Get-Content -LiteralPath "$PSScriptRoot\build\mib-release-identity.txt" | ForEach-Object {
+        Get-Content -LiteralPath "$RepoRoot\build\mib-release-identity.txt" | ForEach-Object {
             $parts = $_ -split '=', 2
             if ($parts.Count -eq 2) { $identity[$parts[0]] = $parts[1] }
         }
@@ -268,18 +271,18 @@ if (-not $SkipBuild) {
             exit 1
         }
         Write-Host "Building Release..." -ForegroundColor Yellow
-        cmake --build "$PSScriptRoot\build" --config Release
+        cmake --build "$RepoRoot\build" --config Release
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Build failed" -ForegroundColor Red
             exit 1
         }
-        $mindVisionRuntime = "$PSScriptRoot\build\Release\MVCAMSDK_X64.dll"
+        $mindVisionRuntime = "$RepoRoot\build\Release\MVCAMSDK_X64.dll"
         if (-not (Test-Path -LiteralPath $mindVisionRuntime -PathType Leaf)) {
             Write-Host "ERROR: MindVision runtime is missing from the release payload: $mindVisionRuntime" -ForegroundColor Red
             exit 1
         }
         Write-Host "Running Release tests..." -ForegroundColor Yellow
-        ctest --test-dir "$PSScriptRoot\build" --build-config Release `
+        ctest --test-dir "$RepoRoot\build" --build-config Release `
             --output-on-failure --timeout 30
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Release tests failed" -ForegroundColor Red
@@ -304,7 +307,7 @@ if (-not $SkipBuild) {
             Remove-Item -Force
 
         Write-Host "Building full installer..." -ForegroundColor Yellow
-        cmake --build "$PSScriptRoot\build" --config Release --target package_installer
+        cmake --build "$RepoRoot\build" --config Release --target package_installer
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Full installer build failed" -ForegroundColor Red
             exit 1
@@ -316,7 +319,7 @@ if (-not $SkipBuild) {
         Write-Host "Full installer built" -ForegroundColor Green
 
         Write-Host "Building update package..." -ForegroundColor Yellow
-        cmake --build "$PSScriptRoot\build" --config Release --target package_installer_update
+        cmake --build "$RepoRoot\build" --config Release --target package_installer_update
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Update package build failed" -ForegroundColor Red
             exit 1
@@ -409,7 +412,7 @@ $checksumLines``````
                 Write-Host "Publishing to $channel channel..." -ForegroundColor Yellow
                 $python = if ($env:PYTHON) { $env:PYTHON } else { "python" }
                 $publishArgs = @(
-                    "$PSScriptRoot\publish-update.py",
+                    "$RepoRoot\scripts\release\publish-update.py",
                     "--installer", $updateExe.FullName,
                     "--version", $tagName.Substring(1),
                     "--channel", $channel,

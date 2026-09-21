@@ -15,7 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-SCRIPT_PATH = Path(__file__).resolve().parent / "publish-processing-core.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "release" / "publish-processing-core.py"
 _spec = importlib.util.spec_from_file_location("publish_processing_core", SCRIPT_PATH)
 publish_processing_core = importlib.util.module_from_spec(_spec)
 sys.modules["publish_processing_core"] = publish_processing_core
@@ -739,11 +740,8 @@ class CommandLineTest(unittest.TestCase):
 
 class ReadWheelVersionTest(unittest.TestCase):
     def test_reads_version_from_real_pyproject(self) -> None:
-        pyproject = Path(__file__).resolve().parent / "bindings" / "python" / "pyproject.toml"
-        wrapper = (
-            Path(__file__).resolve().parent
-            / "bindings" / "python" / "python" / "mib_processing" / "__init__.py"
-        )
+        pyproject = REPO_ROOT / "bindings" / "python" / "pyproject.toml"
+        wrapper = REPO_ROOT / "bindings" / "python" / "python" / "mib_processing" / "__init__.py"
         match = re.search(
             r'^__version__\s*=\s*["\']([^"\']+)["\']',
             wrapper.read_text(encoding="utf-8"),

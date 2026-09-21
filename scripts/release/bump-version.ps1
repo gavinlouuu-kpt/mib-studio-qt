@@ -1,5 +1,5 @@
 # PowerShell script to bump the fallback CMake version
-# Usage: .\bump-version.ps1 --patch|--minor|--major [--tag]
+# Usage: .\scripts\release\bump-version.ps1 --patch|--minor|--major [--tag]
 
 param(
     [Parameter(Mandatory=$false)]
@@ -27,7 +27,7 @@ if ($Major) { $bumpCount++ }
 
 if ($bumpCount -eq 0) {
     Write-Host "ERROR: Must specify one of --patch, --minor, or --major" -ForegroundColor Red
-    Write-Host "Usage: .\bump-version.ps1 --patch|--minor|--major [--tag]" -ForegroundColor Yellow
+    Write-Host "Usage: .\scripts\release\bump-version.ps1 --patch|--minor|--major [--tag]" -ForegroundColor Yellow
     exit 1
 }
 
@@ -37,7 +37,7 @@ if ($bumpCount -gt 1) {
 }
 
 # Find fallback CMake version module
-$versionFile = Join-Path $PSScriptRoot "cmake\MIBVersion.cmake"
+$versionFile = Join-Path $PSScriptRoot "..\..\cmake\MIBVersion.cmake"
 if (-not (Test-Path $versionFile)) {
     Write-Host "ERROR: Version file not found at: $versionFile" -ForegroundColor Red
     exit 1

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 OPTIONS_FILE = REPO_ROOT / "cmake" / "MIBOptions.cmake"
 PIN_NAME = "MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256"
 REQUIRE_NAME = "MIB_REQUIRE_PROCESSING_CORE_SIGNER_SPKI"
@@ -117,7 +117,7 @@ class ProcessingCoreSignerReleaseWiringTest(unittest.TestCase):
         )
 
     def test_local_release_reads_repo_pin_before_bump_and_reconfigures(self) -> None:
-        content = self.read("release.ps1")
+        content = self.read("scripts/release/release.ps1")
         preflight = content[: content.index("# --- Step 1: Bump version ---")]
         self.assertIn("if (-not $SkipBuild) {", preflight)
         self.assertNotIn("if ($Push -and -not $SkipBuild) {", preflight)
@@ -202,7 +202,7 @@ class DesktopReleaseSafetyWiringTest(unittest.TestCase):
         return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
 
     def test_local_release_uses_only_fresh_exact_version_installers(self) -> None:
-        content = self.read("release.ps1")
+        content = self.read("scripts/release/release.ps1")
         self.assertIn('"MIB_Studio_Qt_Setup_v$newVersion.exe"', content)
         self.assertIn('"MIB_Studio_Qt_Update_v$newVersion.exe"', content)
         self.assertNotIn('MIB_Studio_Qt_Setup_v*.exe', content)
@@ -212,7 +212,7 @@ class DesktopReleaseSafetyWiringTest(unittest.TestCase):
         self.assertIn("ERROR: Update package build failed", content)
 
     def test_local_release_dry_run_calculates_prospective_version(self) -> None:
-        content = self.read("release.ps1")
+        content = self.read("scripts/release/release.ps1")
         calculate = content.index("# Calculate the prospective version without mutating the tree")
         dry_run = content.index("if ($DryRun) {")
         self.assertLess(calculate, dry_run)
@@ -301,7 +301,7 @@ class DesktopReleaseSafetyWiringTest(unittest.TestCase):
         for path in (
             ".github/workflows/build-windows.yml",
             ".github/workflows/release.yml",
-            "release.ps1",
+            "scripts/release/release.ps1",
         ):
             with self.subTest(path=path):
                 content = self.read(path)
@@ -310,7 +310,7 @@ class DesktopReleaseSafetyWiringTest(unittest.TestCase):
                 self.assertIn("mib-release-identity.txt", content)
 
         manual = self.read(".github/workflows/build-windows.yml")
-        local = self.read("release.ps1")
+        local = self.read("scripts/release/release.ps1")
         self.assertIn("resolve_desktop_release_version.py", manual)
         self.assertIn("resolve_desktop_release_version.py", local)
         self.assertLess(
@@ -329,9 +329,9 @@ class DesktopReleaseSafetyWiringTest(unittest.TestCase):
         self.assertIn("cmake --build build --config Release", manual_build_block)
         self.assertNotIn("--target mib_studio_qt", manual_build_block)
 
-        local = self.read("release.ps1")
-        local_build = local.index('cmake --build "$PSScriptRoot\\build" --config Release')
-        local_tests = local.index('ctest --test-dir "$PSScriptRoot\\build"')
+        local = self.read("scripts/release/release.ps1")
+        local_build = local.index('cmake --build "$RepoRoot\\build" --config Release')
+        local_tests = local.index('ctest --test-dir "$RepoRoot\\build"')
         local_package = local.index("# --- Step 4: Build installers ---")
         self.assertLess(local_build, local_tests)
         self.assertLess(local_tests, local_package)
@@ -346,7 +346,7 @@ class DesktopReleaseSafetyWiringTest(unittest.TestCase):
         self.assertLess(tagged_tests, tagged_package)
 
     def test_local_push_and_publish_fail_closed(self) -> None:
-        content = self.read("release.ps1")
+        content = self.read("scripts/release/release.ps1")
         self.assertIn("Run release.ps1 from the repository root", content)
         self.assertIn("OrdinalIgnoreCase.Equals", content)
         self.assertIn("Release requires a clean working tree", content)

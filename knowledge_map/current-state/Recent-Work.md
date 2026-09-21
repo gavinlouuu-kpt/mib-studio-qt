@@ -1,5 +1,18 @@
 # Recent Work
 
+## 2026-09-21 — Repository root cleanup
+
+PR 6 of the self-provisioning plan. Six build logs, a debug log and
+`data/logs/symphony-state-last.json` are untracked (`*.log`, `data/logs/`
+ignored). The eight release-tooling unit tests moved to `tests/release/`
+(CTest `scripts.*` targets and `python-wheel.yml` updated) and the publish /
+verify / bump / release scripts to `scripts/release/` (`release.ps1` and
+`bump-version.ps1` resolve the repo root from their new location; workflows,
+`ci.yml`'s syntax check, README and how-tos repointed). The duplicated
+`scripts/build_*` vs `tools/build_*` packagers are logged as TD-14 rather than
+deleted, since `docs/howto/hdf5-export-app.md` still documents the `scripts/`
+pair. See [[../build-and-run/Build]].
+
 ## 2026-09-21 — Build docs consolidated: Build.md is current truth, dated notes moved to task/
 
 PR 5 of the self-provisioning plan. `build-and-run/Build.md` now holds only

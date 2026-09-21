@@ -353,7 +353,7 @@ jobs:
         run: |
           $artifactVersion = '${{ steps.version.outputs.artifact_version }}'
           $updateExe = Get-Item -LiteralPath "build\dist\MIB_Studio_Qt_Update_v$artifactVersion.exe"
-          python publish-update.py `
+          python scripts\release\publish-update.py `
             --installer $updateExe.FullName `
             --version "${{ steps.version.outputs.version }}" `
             --channel "${{ steps.version.outputs.channel }}" `
