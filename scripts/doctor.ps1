@@ -33,6 +33,9 @@ function Get-ToolMin($name) {
     return $null
 }
 function Get-ToolVersion($name) {
+    $exe = switch ($name) { "python" { "python" } "rust" { "cargo" } default { $name } }
+    # An absent executable is a MISSING line, not a CommandNotFound error.
+    if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { return $null }
     $out = switch ($name) {
         "git"    { git --version 2>$null }
         "cmake"  { (cmake --version 2>$null) | Select-Object -First 1 }
@@ -97,7 +100,7 @@ if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
 
 Section "Conan"
 if (Get-Command conan -ErrorAction SilentlyContinue) {
-    $p = conan profile path default 2>$null
+    $p = & conan profile path default 2>$null
     if ($LASTEXITCODE -eq 0 -and $p) { Write-Ok "default profile: $p" } else { Write-Miss "Conan default profile" "conan profile detect" }
     Write-Ok "repo profiles: $((Get-ChildItem (Join-Path $RepoRoot 'conan\profiles') | ForEach-Object Name) -join ' ')"
 }
