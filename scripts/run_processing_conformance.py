@@ -69,7 +69,7 @@ def load_hdf5_frames(
         import h5py
     except ImportError as exc:
         raise RuntimeError(
-            "h5py is required for --hdf5 inputs; install scripts/requirements.txt"
+            "h5py is required for --hdf5 inputs; install env/requirements-scripts.txt"
         ) from exc
 
     normalized_path = f"/{dataset_path.lstrip('/')}"

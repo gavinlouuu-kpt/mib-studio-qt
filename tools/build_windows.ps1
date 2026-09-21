@@ -40,8 +40,8 @@ Write-Host "Upgrading pip..." -ForegroundColor Cyan
 python -m pip install --upgrade pip
 
 Write-Host "Installing dependencies..." -ForegroundColor Cyan
-pip install -r requirements-runtime.txt
-pip install -r requirements-build.txt
+pip install -r ..\env\requirements-tools-runtime.txt
+pip install -r ..\env\requirements-tools-build.txt
 
 $distPath = "dist"
 $workPath = "build"

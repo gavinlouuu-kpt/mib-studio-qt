@@ -111,11 +111,11 @@ fi
 # Install dependencies
 echo -e "${CYAN}Installing dependencies...${NC}"
 if [ "$IN_VENV" = true ]; then
-    "$PYTHON_EXE" -m pip install -r requirements.txt
+    "$PYTHON_EXE" -m pip install -r ../env/requirements-scripts.txt
 else
-    if ! "$PYTHON_EXE" -m pip install --user -r requirements.txt; then
+    if ! "$PYTHON_EXE" -m pip install --user -r ../env/requirements-scripts.txt; then
         echo -e "${YELLOW}Warning: --user install failed, retrying with --break-system-packages.${NC}"
-        "$PYTHON_EXE" -m pip install --break-system-packages -r requirements.txt
+        "$PYTHON_EXE" -m pip install --break-system-packages -r ../env/requirements-scripts.txt
     fi
 fi
 

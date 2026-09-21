@@ -10,7 +10,52 @@ keep `mib_frontend_common` the sole owner of generated UI headers.
 > CMake + Conan. Windows (VS2022 x64) is the primary target, with Linux
 > cloud builds supported for non-hardware paths.
 
-**Source:** `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`
+**Source:** `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`,
+`env/` (`apt-packages.txt`, `brew-packages.txt`, `toolchain.toml`,
+`requirements-*.txt`, `assets.json`), `conan/profiles/`,
+`scripts/doctor.{sh,ps1}`, `scripts/bootstrap.{sh,ps1}`
+
+## Start here (any host, 2026-09-21)
+
+```bash
+scripts/doctor.sh [--sections base,backend,frontend,desktop-shell] [--with-private]
+scripts/bootstrap.sh [--sections ...] [--public-assets-only] [--dry-run]
+```
+
+The doctor only checks and prints one fix command per missing item; the
+bootstrap installs (system packages via apt/brew, a `.venv` with Conan and
+NumPy from `env/requirements-build.txt`, the MindVision SDK, the required
+assets) and is safe to rerun. Windows: `.\scripts\doctor.ps1` /
+`.\scripts\bootstrap.ps1 [-Generator Ninja]` (winget for tools, then
+`conan install` with `conan/profiles/windows-msvc194[-ninja]`). Every list
+these read has exactly one home:
+
+| Concern | File | Read by |
+|---|---|---|
+| apt packages, by `# section:` | `env/apt-packages.txt` | doctor/bootstrap; `.devcontainer/Dockerfile`; `.github/actions/setup-linux-env` (every Linux CI lane) |
+| Homebrew formulae | `env/brew-packages.txt` | doctor/bootstrap on macOS |
+| tool minimums | `env/toolchain.toml` | doctor (flat `name = ">=x"` lines) |
+| runtime pins | `rust-toolchain.toml`, `.nvmrc` + `desktop/package.json` engines, `.python-version`, `mise.toml` | rustup, nvm/Node, pyenv/uv, mise |
+| Python packages | `env/requirements-build.txt` (conan, numpy), `-scripts.txt`, `-tools-runtime.txt`, `-tools-build.txt` | bootstrap, `tools/build_*`, `scripts/build_*`, CI |
+| Conan host profiles | `conan/profiles/linux-gcc13`, `windows-msvc194`, `windows-msvc194-ninja` (carries the `cpuinfo` `[replace_requires]`) | `conan install -pr conan/profiles/<name>`; Windows workflows |
+| external datasets / models | `env/assets.json` | `scripts/provision-assets.py`, CMake, harnesses ([[Assets]]) |
+
+## Containers and CI lanes (2026-09-21)
+
+`.devcontainer/` builds `ubuntu:24.04` + sections `base,backend,frontend` of
+`env/apt-packages.txt`, a `/opt/venv` with Conan + NumPy, and on create runs
+`scripts/bootstrap.sh --skip-packages --public-assets-only` (SDK, `.venv`,
+Conan profile, public assets) then the doctor. Named volumes keep the
+Hugging Face and Conan caches across rebuilds; `HF_TOKEN` passes through from
+the host when set. The image is built per job/container, not published
+(decision in the plan). `.github/actions/setup-linux-env` is the one place
+Linux workflows get packages (`sections`, `extra-packages`), Conan
+(`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
+`desktop-ci`, `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
+and `network-tests` all use it, and `grep apt-get .github/workflows` should
+match nothing. `network-tests.yml` (nightly + manual) runs
+`ctest --preset linux-network-test`; every default test preset excludes the
+`network` label.
 
 ## Presets
 
@@ -32,7 +77,10 @@ From `CMakePresets.json`:
   rely on), Ninja generator, needs a
   VS 2022 x64 developer shell (`vcvars64.bat`) and its own Conan toolchain:
   `conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja`
-  (add `-r conancenter` if the team remote prompts for credentials). On the
+  (add `-r conancenter` if the team remote prompts for credentials; the
+  repo profile `-pr conan/profiles/windows-msvc194-ninja` carries the Ninja
+  conf and the `cpuinfo` pin, so `-c tools.cmake.cmaketoolchain:generator=Ninja`
+  is only needed with an ad-hoc profile). On the
   bench PC: cold full build 67 s, no-op 0.1 s, header touch 16 s, clean
   rebuild 26 s with sccache warm — versus 56 s no-op / 107 s header touch
   / ~10 min full under the VS generator. Set `MIB_MINDVISION_SDK_ROOT` in
@@ -384,9 +432,11 @@ prefix as `-DCMAKE_CL_SHOWINCLUDES_PREFIX=...` at configure; until then run
 
 Also on the rig PC: ConanCenter now resolves `cpuinfo/[>=cci.20231129]` to
 `cci.20251210` while `onnxruntime/1.18.1` pins `cci.20231129`; a cold Conan
-cache fails with a version conflict. The local profile carries
-`[replace_requires] cpuinfo/*: cpuinfo/cci.20231129`; CI only avoids this via
-its restored cache.
+cache fails with a version conflict. Since 2026-09-21 the repo profiles
+`conan/profiles/windows-msvc194*` carry
+`[replace_requires] cpuinfo/*: cpuinfo/cci.20231129`, and the Windows
+workflows use those profiles instead of an inline `ci` profile, so a cold
+cache resolves the same graph everywhere.
 
 
 ### Independent nanopositioner support (2026-09-15)
