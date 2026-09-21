@@ -9,6 +9,15 @@ CommandNotFound error per absent tool instead of a MISSING line (fixed with a
 remaining arguments, so PowerShell bound `-pr` to its own `-ProgressAction`
 (fixed: `Run` takes one string array). Both scripts now run end to end in that
 environment; TD-15 is narrowed to a real Windows host run.
+## 2026-09-21 — StartupDiscoveryCoordinator::stop() drains in-flight listeners (#431)
+
+TSan (sanitizer lane on #424) caught a heap-use-after-free in
+`startup_discovery_policy_test`: the nanopositioner "running" flag clears
+before the terminal outcome is delivered, the test returned on the flag, and
+the worker-thread listener appended to destroyed storage. `stop()` now waits
+(bounded) for actions in flight on other threads, never for itself; the test
+waits for delivery and a new block proves `stop()` returns only after a slow
+listener finished. See [[../services/DeviceDiscoveryService]].
 
 ## 2026-09-21 — Repository root cleanup
 
