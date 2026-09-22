@@ -885,7 +885,10 @@ if(NOT MIB_BUILD_BACKEND_ONLY AND NOT MIB_ENABLE_HARDWARE_SDKS)
     target_link_libraries(nanopositioner_callback_test PRIVATE mib_backend Qt6::Widgets Threads::Threads)
     add_test(NAME frontend.nanopositioner_callback COMMAND nanopositioner_callback_test)
     set_tests_properties(frontend.nanopositioner_callback PROPERTIES
-        LABELS "frontend;concurrency;safety" TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        # Use Qt's local compose input method: desktop IM plugins start DBus
+        # threads unrelated to this hardware-free callback lifetime test.
+        LABELS "frontend;concurrency;safety" TIMEOUT 60
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_IM_MODULE=compose")
 endif()
 
 # Uses only the unsupported-platform stub; never opens a physical device.

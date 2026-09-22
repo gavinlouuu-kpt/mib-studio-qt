@@ -39,16 +39,21 @@ No newly observed crash or Sentry status change is claimed.
 - TSan backend test passes with the existing suppression file and process-local
   `setarch x86_64 -R`; no new suppressions or global ASLR changes.
 
-## Outstanding verification blocker
+## UI TSan startup isolation verified (2026-09-22)
 
-The full Qt TSan test cannot reach its test body on this host: system Qt 6.4.2
-reports allocation/deletion synchronization in the `QDBusConnection` thread
-(`QCoreApplicationPrivate::sendPostedEvents`) during QApplication startup.
-The normal TSan launch first failed with `unexpected memory mapping`; the
-process-local ASLR workaround exposed the Qt startup report. Do not count
-this as a full UI TSan pass. An instrumented Qt runtime or evidence-backed
-startup isolation is needed before completing that requirement. Keep the PR
-in draft until this gate is satisfied; do not blindly retry the same setup.
+The prior desktop input-method startup path produced Qt/DBus TSan reports.
+Changing accessibility/GLib settings did not remove them. Selecting the local
+Qt compose input method (`QT_IM_MODULE=compose`) while retaining the offscreen
+platform lets the unchanged real-tab test and backend stress test pass under
+TSan with `halt_on_error=1` and **no suppressions**. CTest now sets that input
+method explicitly for this hardware-free test. No product runtime setting,
+callback assertion, stress iteration, or sanitizer check is disabled.
+
+Reproduction: `TSAN_OPTIONS=halt_on_error=1 setarch x86_64 -R ctest
+--test-dir build/callback-tsan -R '^(frontend.nanopositioner_callback|backend.autofocus_callback)$'
+--output-on-failure`. The process-local ASLR workaround remains host-specific.
+This validates callback lifetime and threading, not desktop input-method/DBus
+integration or physical hardware. The original UI TSan gate is now unblocked.
 
 The first TSan build also picked Homebrew fmt with system spdlog; using the
 system-only package exclusions from the Linux preset corrected compilation.
