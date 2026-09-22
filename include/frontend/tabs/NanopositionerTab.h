@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <memory>
 
 namespace backend { class AppBackend; }
 class QTimer;
@@ -39,7 +40,9 @@ private:
 	QString configPath() const;
 	void populateComPortList();
 
-	Ui::NanopositionerTab* ui;
+        struct StatusDelivery;
+        std::shared_ptr<StatusDelivery> statusDelivery_;
+        Ui::NanopositionerTab* ui;
 	backend::AppBackend& backend_;
 	QTimer* statusUpdateTimer_ = nullptr;
 	int configuredComPort_ = -1;

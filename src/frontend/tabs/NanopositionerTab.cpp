@@ -14,6 +14,7 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <mutex>
 #ifdef _WIN32
 #define NOMINMAX // Prevent Windows.h from defining min/max macros
 #include <windows.h>
@@ -28,6 +29,13 @@ using json = nlohmann::json;
 
 namespace frontend
 {
+
+// The callback owns this gate, never the tab. Destruction and queue admission
+// share its mutex; Qt removes admitted events when the receiver is destroyed.
+struct NanopositionerTab::StatusDelivery {
+    std::mutex mutex;
+    NanopositionerTab* target = nullptr;
+};
 
 	namespace
 	{
@@ -133,12 +141,20 @@ namespace frontend
 		connect(statusUpdateTimer_, &QTimer::timeout, this, &NanopositionerTab::onUpdateAutofocusStatus);
 		statusUpdateTimer_->start();
 
-		// Set status callback for autofocus service
-		backend_.autofocus().setStatusCallback([this](const std::string &message)
-											   {
-		if (ui->statusLabel) {
-			ui->statusLabel->setText(QString::fromStdString(message));
-		} });
+		statusDelivery_ = std::make_shared<StatusDelivery>();
+		statusDelivery_->target = this;
+		backend_.autofocus().setStatusCallback(
+		    [delivery = statusDelivery_](const std::string& message) {
+		        std::scoped_lock lock(delivery->mutex);
+		        if (auto* target = delivery->target) {
+		            QMetaObject::invokeMethod(
+		                target,
+		                [target, text = QString::fromStdString(message)] {
+		                    target->setNanopositionerStatus(text);
+		                },
+		                Qt::QueuedConnection);
+		        }
+		    });
 
 		// Auto-connect is managed by DeviceInitManager (runs probe in worker, connect on main thread).
 
@@ -147,6 +163,10 @@ namespace frontend
 	}
 
 	NanopositionerTab::~NanopositionerTab() {
+		{
+			std::scoped_lock lock(statusDelivery_->mutex);
+			statusDelivery_->target = nullptr;
+		}
 		delete ui;
 	}
 

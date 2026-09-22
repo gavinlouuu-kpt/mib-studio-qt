@@ -132,6 +132,18 @@ private:
     mutable std::mutex callbackMutex_;
     StatusCallback statusCallback_;
 
+    // Snapshot under the registration mutex, invoke outside it (callbacks may
+    // replace themselves). A snapshot can outlive replacement: receivers must
+    // guard their own lifetime rather than relying on unregistration alone.
+    void notifyStatus(const std::string& message) {
+        StatusCallback callback;
+        {
+            std::scoped_lock lock(callbackMutex_);
+            callback = statusCallback_;
+        }
+        if (callback) callback(message);
+    }
+
     // Last applied sequence for freshness tracking
     uint64_t lastAppliedSequence_{0};
 };

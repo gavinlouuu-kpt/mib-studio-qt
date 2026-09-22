@@ -877,3 +877,31 @@ set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;came
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+
+if(NOT MIB_BUILD_BACKEND_ONLY AND NOT MIB_ENABLE_HARDWARE_SDKS)
+    add_executable(nanopositioner_callback_test
+        frontend/nanopositioner_callback_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/frontend/tabs/NanopositionerTab.cpp
+        ${PROJECT_SOURCE_DIR}/include/frontend/tabs/NanopositionerTab.h
+        ${PROJECT_SOURCE_DIR}/resources/ui/NanopositionerTab.ui)
+    set_target_properties(nanopositioner_callback_test PROPERTIES
+        AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/resources/ui")
+    target_include_directories(nanopositioner_callback_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(nanopositioner_callback_test PRIVATE mib_backend Qt6::Widgets Threads::Threads)
+    add_test(NAME frontend.nanopositioner_callback COMMAND nanopositioner_callback_test)
+    set_tests_properties(frontend.nanopositioner_callback PROPERTIES
+        # Use Qt's local compose input method: desktop IM plugins start DBus
+        # threads unrelated to this hardware-free callback lifetime test.
+        LABELS "frontend;concurrency;safety" TIMEOUT 60
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_IM_MODULE=compose")
+endif()
+
+# Uses only the unsupported-platform stub; never opens a physical device.
+if(NOT MIB_ENABLE_HARDWARE_SDKS)
+    add_executable(autofocus_callback_test backend/autofocus_callback_test.cpp)
+    target_include_directories(autofocus_callback_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(autofocus_callback_test PRIVATE mib_backend Threads::Threads)
+    add_test(NAME backend.autofocus_callback COMMAND autofocus_callback_test)
+    set_tests_properties(backend.autofocus_callback PROPERTIES
+        LABELS "backend;concurrency;safety" TIMEOUT 30)
+endif()

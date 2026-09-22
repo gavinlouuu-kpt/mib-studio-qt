@@ -133,3 +133,5 @@ ui-status-stats.md
 ```
 
 **Up**: [[Recent-Work]] · [[../README|Vault home]]
+
+- [[../task/2026-09-14-shutdown-status-callback]] — #405 shutdown callback regression, lifetime gate, and sanitizer evidence/blocker.

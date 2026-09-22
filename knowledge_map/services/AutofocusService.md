@@ -7,7 +7,8 @@
 `src/backend/services/AutofocusService.stub.cpp`,
 `include/backend/services/AutofocusService.h`,
 `include/backend/services/AutofocusMath.h` (pure control math)
-**Tests:** `tests/backend/autofocus_math_test.cpp`
+**Tests:** `tests/backend/autofocus_math_test.cpp`,
+`tests/backend/autofocus_callback_test.cpp` (hardware-disabled callback stress)
 **Related:** [[ProcessingService]], [[../frontend/NanopositionerTab]],
 [[../domain/Glossary]] (ring ratio)
 
@@ -111,3 +112,16 @@ See `include/Coremor/` for the XMT_DLL_SER DLL shipped with the repo.
   compiled instead. It keeps the public API shape but `connect()`/probe
   operations are unsupported and return failure, which allows cloud/Linux
   builds to compile and exercise non-hardware features.
+
+## Status subscription synchronization (#405)
+
+Both SDK and stub status paths use `notifyStatus`: copy the callback under
+`callbackMutex_`, then invoke outside the mutex. Registration/replacement is
+synchronized with emitters and a callback can unregister itself. Replacement
+does **not** cancel snapshots already copied by another thread; receivers
+must guard their lifetime. [[../frontend/NanopositionerTab]] gates admission
+and queues status onto its GUI thread. This does not make concurrent hardware
+connect/disconnect supported.
+
+The Qt-free `backend.autofocus_callback` stress test races 10,000 emissions
+against 10,000 replacements and verifies callback self-unregistration.
