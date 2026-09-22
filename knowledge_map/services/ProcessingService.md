@@ -512,3 +512,13 @@ current/max queue depth, batch size, worker count, and running state. See
   not the whole ROI). It also uses row pointers instead of `cv::Mat::at<>`
   and skips the `clone()` for already-single-channel input. These were
   per-object allocator/CPU costs that scaled with objects-per-frame.
+
+## Offline focus benchmark (2026-09-22)
+
+The additive `benchmark_frame` Python API uses the native bundled kernel and
+science with an explicit subtract/absdiff choice. `makeDifferenceBenchmarkKernel`
+is offline-only; desktop defaults remain subtract. Native science accepts an
+optional aligned Laplacian score vector; legacy callers pay no convolution
+cost and keep their historical result fields. No production focus gate or
+autofocus change is introduced. See [[task/2026-09-22-focus-benchmark]] and
+[the runbook](../../docs/howto/focus-core-benchmark.md).

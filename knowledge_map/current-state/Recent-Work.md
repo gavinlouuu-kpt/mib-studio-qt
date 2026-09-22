@@ -2097,3 +2097,10 @@ passed. See [[../task/2026-09-14-one-click-illuminated-live]].
   ROI saved to MindVision JSON, bounded preview memory, and transactional mode
   switching. Rig acceptance measured 816x624 at about 400 fps and restored
   512x96 at (64,48) at about 998 fps, with generator OFF readback after each stop.
+
+## 2026-09-22 — Offline focus/core screening
+
+Added opt-in native subtract/absdiff evaluation and object-local Laplacian
+variance, deterministic HDF5-to-Parquet screening dataset preparation,
+provenance and comparison tables. Desktop/default contracts unchanged.
+Publication/validation status: [[task/2026-09-22-focus-benchmark]].
