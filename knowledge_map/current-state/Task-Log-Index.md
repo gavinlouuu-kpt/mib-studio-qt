@@ -145,3 +145,5 @@ ui-status-stats.md
 **Up**: [[Recent-Work]] · [[../README|Vault home]]
 
 - `task/2026-09-14-one-click-illuminated-live.md`
+
+- [[task/2026-09-22-focus-benchmark]] — native focus comparison and frozen NAS screening dataset.

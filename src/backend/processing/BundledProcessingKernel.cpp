@@ -75,16 +75,19 @@ std::string runtimeFingerprint() {
 
 class BundledProcessingKernel final : public IProcessingKernel {
 public:
-    BundledProcessingKernel() : identity_(bundledProcessingCoreIdentity()) {}
+    explicit BundledProcessingKernel(bool benchmarkAbsoluteDifference = false)
+        : identity_(bundledProcessingCoreIdentity()),
+          benchmarkAbsoluteDifference_(benchmarkAbsoluteDifference) {
+        if (benchmarkAbsoluteDifference_) {
+            identity_.source = "benchmark-absdiff";
+            identity_.buildId += "-benchmark-absdiff";
+        }
+    }
 
     const ProcessingCoreIdentity& identity() const noexcept override { return identity_; }
 
-    bool processMask(const cv::Mat& gray,
-                     const cv::Mat& background,
-                     const KernelConfig& config,
-                     const KernelRoi& roi,
-                     cv::Mat& outputMask,
-                     std::string* error) override {
+    bool processMask(const cv::Mat& gray, const cv::Mat& background, const KernelConfig& config,
+                     const KernelRoi& roi, cv::Mat& outputMask, std::string* error) override {
         try {
             if (!validateGray(gray, error)) return false;
             const cv::Rect region = normalizedRoi(gray, roi);
@@ -103,15 +106,18 @@ public:
                                  cv::Size(oddAtLeastOne(config.gaussianBlurSize),
                                           oddAtLeastOne(config.gaussianBlurSize)),
                                  0);
-                cv::subtract(blurredCurrent, blurredBackground, processingInput);
+                if (benchmarkAbsoluteDifference_) {
+                    cv::absdiff(blurredCurrent, blurredBackground, processingInput);
+                } else {
+                    cv::subtract(blurredCurrent, blurredBackground, processingInput);
+                }
             } else {
                 processingInput = blurredCurrent;
             }
 
             cv::Mat thresholded;
             cv::threshold(processingInput, thresholded,
-                          std::max(0, config.backgroundSubtractThreshold), 255,
-                          cv::THRESH_BINARY);
+                          std::max(0, config.backgroundSubtractThreshold), 255, cv::THRESH_BINARY);
             const int morphologySize = oddAtLeastOne(config.morphologyKernelSize);
             const cv::Mat morphologyKernel = cv::getStructuringElement(
                 cv::MORPH_CROSS, cv::Size(morphologySize, morphologySize));
@@ -132,12 +138,8 @@ public:
         }
     }
 
-    bool isEmpty(const cv::Mat& gray,
-                 const cv::Mat& background,
-                 const KernelConfig& config,
-                 const KernelRoi& roi,
-                 bool& outputIsEmpty,
-                 std::string* error) override {
+    bool isEmpty(const cv::Mat& gray, const cv::Mat& background, const KernelConfig& config,
+                 const KernelRoi& roi, bool& outputIsEmpty, std::string* error) override {
         try {
             if (!validateGray(gray, error)) {
                 outputIsEmpty = true;
@@ -161,9 +163,8 @@ public:
                 difference = blurredCurrent;
             }
             cv::Mat thresholded;
-            cv::threshold(difference, thresholded,
-                          std::max(0, config.backgroundSubtractThreshold), 255,
-                          cv::THRESH_BINARY);
+            cv::threshold(difference, thresholded, std::max(0, config.backgroundSubtractThreshold),
+                          255, cv::THRESH_BINARY);
             outputIsEmpty =
                 cv::countNonZero(thresholded) < std::max(0, config.emptyFramePixelThreshold);
             return true;
@@ -178,16 +179,17 @@ public:
 
 private:
     ProcessingCoreIdentity identity_;
+    bool benchmarkAbsoluteDifference_{false};
 };
 
 } // namespace
 
 bool ProcessingCoreIdentity::operator==(const ProcessingCoreIdentity& other) const {
     return version == other.version && contractVersion == other.contractVersion &&
-           engineAbiVersion == other.engineAbiVersion &&
-           artifactSha256 == other.artifactSha256 && releaseTag == other.releaseTag &&
-           manifestSha256 == other.manifestSha256 && source == other.source &&
-           buildId == other.buildId && runtimeFingerprint == other.runtimeFingerprint;
+           engineAbiVersion == other.engineAbiVersion && artifactSha256 == other.artifactSha256 &&
+           releaseTag == other.releaseTag && manifestSha256 == other.manifestSha256 &&
+           source == other.source && buildId == other.buildId &&
+           runtimeFingerprint == other.runtimeFingerprint;
 }
 
 ProcessingCoreIdentity bundledProcessingCoreIdentity() {
@@ -205,13 +207,15 @@ std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel() {
     return std::make_shared<BundledProcessingKernel>();
 }
 
+std::shared_ptr<IProcessingKernel> makeDifferenceBenchmarkKernel(bool absoluteDifference) {
+    return std::make_shared<BundledProcessingKernel>(absoluteDifference);
+}
+
 // Default science implementations: every kernel executes the shared bundled
 // pipeline unless it overrides these (ABI v2 dynamic cores will).
-bool IProcessingKernel::analyzeObjects(const cv::Mat& processedImage,
-                                       const cv::Rect& roi,
+bool IProcessingKernel::analyzeObjects(const cv::Mat& processedImage, const cv::Rect& roi,
                                        const services::ProcessingConfig& config,
-                                       const cv::Mat& originalImage,
-                                       double pixelToMicronFactor,
+                                       const cv::Mat& originalImage, double pixelToMicronFactor,
                                        const backend::EModulusLut* eModulusLut,
                                        std::vector<services::FilterResult>& results,
                                        std::string* error) {
@@ -228,11 +232,8 @@ bool IProcessingKernel::analyzeObjects(const cv::Mat& processedImage,
 
 bool IProcessingKernel::matchTrack(const std::vector<services::BatchTrack>& tracks,
                                    const std::vector<bool>& matchedThisFrame,
-                                   const services::FilterResult& detection,
-                                   uint64_t frameIndex,
-                                   int frameWidth,
-                                   int& matchedTrack,
-                                   std::string* error) {
+                                   const services::FilterResult& detection, uint64_t frameIndex,
+                                   int frameWidth, int& matchedTrack, std::string* error) {
     try {
         matchedTrack =
             science::findMatchingTrack(tracks, matchedThisFrame, detection, frameIndex, frameWidth);

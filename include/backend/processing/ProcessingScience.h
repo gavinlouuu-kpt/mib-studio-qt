@@ -42,14 +42,17 @@ services::BrightnessQuantiles calculateBrightnessQuantiles(const cv::Mat& origin
                                                            const cv::Mat& mask,
                                                            const cv::Rect& region = cv::Rect());
 
+// Gray8, unmasked convolution, ksize=1, CV_64F, REFLECT_101, population
+// variance over a filled contour. Invalid/degenerate/out-of-image contours
+// return NaN. One-pixel context contributes to derivatives, not statistics.
+double calculateLaplacianVariance(const cv::Mat& originalImage,
+                                  const std::vector<cv::Point>& contour);
+
 double calculateRingRatio(const std::vector<cv::Point>& innerContour,
                           const std::vector<cv::Point>& outerContour);
 
-cv::Mat makeObjectMask(const cv::Size& size,
-                       const std::vector<std::vector<cv::Point>>& contours,
-                       int contourIdx,
-                       int parentIdx,
-                       bool nested);
+cv::Mat makeObjectMask(const cv::Size& size, const std::vector<std::vector<cv::Point>>& contours,
+                       int contourIdx, int parentIdx, bool nested);
 
 bool contourTouchesRoiBorder(const std::vector<cv::Point>& contour, const cv::Rect& roi);
 
@@ -81,16 +84,13 @@ cv::Rect2d resultBbox(const services::FilterResult& result);
 // Full per-frame object analysis over an already-generated mask.
 // eModulusLut may be null (Young's modulus stays 0 and emodulus target
 // gating treats the lookup as unavailable, matching an unloaded LUT).
-std::vector<services::FilterResult> filterProcessedObjects(
-    const cv::Mat& processedImage,
-    const cv::Rect& roi,
-    const services::ProcessingConfig& config,
-    const cv::Mat& originalImage,
-    double pixelToMicronFactor,
-    const backend::EModulusLut* eModulusLut);
+std::vector<services::FilterResult>
+filterProcessedObjects(const cv::Mat& processedImage, const cv::Rect& roi,
+                       const services::ProcessingConfig& config, const cv::Mat& originalImage,
+                       double pixelToMicronFactor, const backend::EModulusLut* eModulusLut,
+                       std::vector<double>* laplacianVariances = nullptr);
 
-services::FilterResult filterProcessedImage(const cv::Mat& processedImage,
-                                            const cv::Rect& roi,
+services::FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
                                             const services::ProcessingConfig& config,
                                             const cv::Mat& originalImage,
                                             double pixelToMicronFactor,
@@ -100,8 +100,6 @@ services::FilterResult filterProcessedImage(const cv::Mat& processedImage,
 // the index of the best matching open track, or -1 for a new track.
 int findMatchingTrack(const std::vector<services::BatchTrack>& tracks,
                       const std::vector<bool>& matchedThisFrame,
-                      const services::FilterResult& detection,
-                      uint64_t frameIndex,
-                      int frameWidth);
+                      const services::FilterResult& detection, uint64_t frameIndex, int frameWidth);
 
 } // namespace backend::processing::science

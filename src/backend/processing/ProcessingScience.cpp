@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <climits>
 #include <limits>
 #include <memory>
 #include <tuple>
@@ -133,8 +134,34 @@ int findMatchingTrack(const std::vector<BatchTrack>& tracks,
     return bestTrack;
 }
 
+double calculateLaplacianVariance(const cv::Mat& originalImage,
+                                  const std::vector<cv::Point>& contour) {
+    const double unavailable = std::numeric_limits<double>::quiet_NaN();
+    if (originalImage.empty() || originalImage.type() != CV_8UC1 || contour.size() < 3) {
+        return unavailable;
+    }
+    const cv::Rect bounds(0, 0, originalImage.cols, originalImage.rows);
+    for (const auto& point : contour) {
+        if (!bounds.contains(point)) return unavailable;
+    }
+    if (cv::contourArea(contour) <= 0.0) return unavailable;
+    const cv::Rect box = cv::boundingRect(contour);
+    const cv::Rect context = cv::Rect(box.x - 1, box.y - 1, box.width + 2, box.height + 2) & bounds;
+    cv::Mat mask = cv::Mat::zeros(context.size(), CV_8UC1);
+    const std::vector<std::vector<cv::Point>> contours{contour};
+    cv::drawContours(mask, contours, 0, cv::Scalar(255), cv::FILLED, cv::LINE_8, cv::noArray(),
+                     INT_MAX, -context.tl());
+    if (cv::countNonZero(mask) < 2) return unavailable;
+    cv::Mat laplacian;
+    cv::Laplacian(originalImage(context), laplacian, CV_64F, 1, 1.0, 0.0,
+                  cv::BORDER_REFLECT_101 | cv::BORDER_ISOLATED);
+    cv::Scalar mean, deviation;
+    cv::meanStdDev(laplacian, mean, deviation, mask);
+    return deviation[0] * deviation[0];
+}
+
 double calculateRingRatio(const std::vector<cv::Point>& innerContour,
-                                             const std::vector<cv::Point>& outerContour) {
+                          const std::vector<cv::Point>& outerContour) {
     double innerArea = cv::contourArea(innerContour);
     double outerArea = cv::contourArea(outerContour);
     if (outerArea <= innerArea) return 0.0;
@@ -177,8 +204,8 @@ ContourAnalysis findContours(const cv::Mat& processedImage) {
 }
 
 services::BrightnessQuantiles calculateBrightnessQuantiles(const cv::Mat& originalImage,
-                                                                    const cv::Mat& mask,
-                                                                    const cv::Rect& region) {
+                                                           const cv::Mat& mask,
+                                                           const cv::Rect& region) {
     BrightnessQuantiles result;
     if (originalImage.empty() || mask.empty()) {
         return result;
@@ -229,9 +256,8 @@ services::BrightnessQuantiles calculateBrightnessQuantiles(const cv::Mat& origin
     return result;
 }
 
-cv::Mat makeObjectMask(const cv::Size& size,
-                                          const std::vector<std::vector<cv::Point>>& contours,
-                                          int contourIdx, int parentIdx, bool nested) {
+cv::Mat makeObjectMask(const cv::Size& size, const std::vector<std::vector<cv::Point>>& contours,
+                       int contourIdx, int parentIdx, bool nested) {
     cv::Mat mask(size, CV_8UC1, cv::Scalar(0));
     if (nested && parentIdx >= 0 && parentIdx < static_cast<int>(contours.size())) {
         cv::drawContours(mask, contours, parentIdx, cv::Scalar(255), cv::FILLED);
@@ -244,8 +270,7 @@ cv::Mat makeObjectMask(const cv::Size& size,
     return mask;
 }
 
-bool contourTouchesRoiBorder(const std::vector<cv::Point>& contour,
-                                                const cv::Rect& roi) {
+bool contourTouchesRoiBorder(const std::vector<cv::Point>& contour, const cv::Rect& roi) {
     constexpr int borderThreshold = 2;
     for (const auto& point : contour) {
         const int x = point.x - roi.x;
@@ -305,11 +330,12 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
 
 namespace {
 
-FilterResult evaluateInnerContourObject(
-    const ContourAnalysis& analysis, size_t innerIdx, int objectId, int objectCount,
-    const cv::Mat& processedImage, const cv::Rect& roi, const ProcessingConfig& config,
-    const cv::Mat& originalImage, double pixelToMicronFactor,
-    const backend::EModulusLut* eModulusLut) {
+FilterResult evaluateInnerContourObject(const ContourAnalysis& analysis, size_t innerIdx,
+                                        int objectId, int objectCount,
+                                        const cv::Mat& processedImage, const cv::Rect& roi,
+                                        const ProcessingConfig& config,
+                                        const cv::Mat& originalImage, double pixelToMicronFactor,
+                                        const backend::EModulusLut* eModulusLut) {
     FilterResult result{};
     // allContours is assigned once (shared) by filterProcessedObjects after all
     // objects are evaluated; hierarchy is no longer retained on the result.
@@ -404,11 +430,12 @@ FilterResult evaluateInnerContourObject(
     return result;
 }
 
-FilterResult evaluateOuterContourObject(
-    const ContourAnalysis& analysis, size_t contourIdx, int objectId, int objectCount,
-    const cv::Mat& processedImage, const cv::Rect& roi, const ProcessingConfig& config,
-    const cv::Mat& originalImage, double pixelToMicronFactor,
-    const backend::EModulusLut* eModulusLut) {
+FilterResult evaluateOuterContourObject(const ContourAnalysis& analysis, size_t contourIdx,
+                                        int objectId, int objectCount,
+                                        const cv::Mat& processedImage, const cv::Rect& roi,
+                                        const ProcessingConfig& config,
+                                        const cv::Mat& originalImage, double pixelToMicronFactor,
+                                        const backend::EModulusLut* eModulusLut) {
     FilterResult result{};
     // allContours is assigned once (shared) by filterProcessedObjects after all
     // objects are evaluated; hierarchy is no longer retained on the result.
@@ -488,13 +515,12 @@ FilterResult evaluateOuterContourObject(
 
 } // namespace
 
-std::vector<services::FilterResult> filterProcessedObjects(
-    const cv::Mat& processedImage,
-    const cv::Rect& roi,
-    const services::ProcessingConfig& config,
-    const cv::Mat& originalImage,
-    double pixelToMicronFactor,
-    const backend::EModulusLut* eModulusLut) {
+std::vector<services::FilterResult>
+filterProcessedObjects(const cv::Mat& processedImage, const cv::Rect& roi,
+                       const services::ProcessingConfig& config, const cv::Mat& originalImage,
+                       double pixelToMicronFactor, const backend::EModulusLut* eModulusLut,
+                       std::vector<double>* laplacianVariances) {
+    if (laplacianVariances) laplacianVariances->clear();
     const ContourAnalysis analysis = findContours(processedImage);
 
     // One shared copy of the frame's contours, referenced by every result (and
@@ -512,6 +538,9 @@ std::vector<services::FilterResult> filterProcessedObjects(
     }
 
     if (config.require_single_inner_contour && analysis.innerContours.empty()) {
+        if (laplacianVariances) {
+            laplacianVariances->push_back(std::numeric_limits<double>::quiet_NaN());
+        }
         return {std::move(emptyResult)};
     }
 
@@ -531,6 +560,10 @@ std::vector<services::FilterResult> filterProcessedObjects(
         results.reserve(objectOrder.size());
         const int objectCount = static_cast<int>(analysis.innerContours.size());
         for (size_t i = 0; i < objectOrder.size(); ++i) {
+            if (laplacianVariances) {
+                laplacianVariances->push_back(calculateLaplacianVariance(
+                    originalImage, analysis.innerContours[objectOrder[i]]));
+            }
             results.push_back(evaluateInnerContourObject(
                 analysis, objectOrder[i], static_cast<int>(i + 1), objectCount, processedImage, roi,
                 config, originalImage, pixelToMicronFactor, eModulusLut));
@@ -567,6 +600,10 @@ std::vector<services::FilterResult> filterProcessedObjects(
         results.reserve(topLevelContours.size());
         const int objectCount = static_cast<int>(topLevelContours.size());
         for (size_t i = 0; i < topLevelContours.size(); ++i) {
+            if (laplacianVariances) {
+                laplacianVariances->push_back(calculateLaplacianVariance(
+                    originalImage, analysis.filteredContours[topLevelContours[i]]));
+            }
             results.push_back(evaluateOuterContourObject(
                 analysis, topLevelContours[i], static_cast<int>(i + 1), objectCount, processedImage,
                 roi, config, originalImage, pixelToMicronFactor, eModulusLut));
@@ -577,11 +614,13 @@ std::vector<services::FilterResult> filterProcessedObjects(
         return results;
     }
 
+    if (laplacianVariances) {
+        laplacianVariances->push_back(std::numeric_limits<double>::quiet_NaN());
+    }
     return {std::move(emptyResult)};
 }
 
-services::FilterResult filterProcessedImage(const cv::Mat& processedImage,
-                                            const cv::Rect& roi,
+services::FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
                                             const services::ProcessingConfig& config,
                                             const cv::Mat& originalImage,
                                             double pixelToMicronFactor,

@@ -59,3 +59,12 @@ piezo nanopositioner to keep the cell in focus across the channel.
   masks + multi-image series against `scripts/gold_standard_dataset.json`.
 - `scripts/empty_frame_detection.py` — offline Python pipeline (Kedro +
   MLflow at `mlflow.yofo.bio`). Not part of the Qt app's runtime.
+
+## Experimental focus comparison
+
+Offline screening can evaluate raw-Gray8 object-local Laplacian variance
+with either subtract or absdiff masks. Convolve unmasked grayscale with
+one-pixel context; calculate population variance over the filled selected
+inner/top-level contour. No global focus threshold is implied. The historical
+ring metric is `sqrt(outer contour area - inner contour area)` in pixel-space,
+not physical radial thickness. See [[task/2026-09-22-focus-benchmark]].

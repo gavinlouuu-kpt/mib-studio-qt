@@ -125,3 +125,10 @@
   not in [[../data-model/FrameStore]]. Intentional discards, transport
   loss/underrun, and downstream processing drops are separate counters
   by contract.
+
+## Laplacian variance (experimental)
+
+Population variance of the raw Gray8 Laplacian response inside a filled
+detected-object contour, with convolution performed before masking. Sensitive
+to noise, contrast, support and focus; not an independently validated focus
+label. See [[task/2026-09-22-focus-benchmark]].

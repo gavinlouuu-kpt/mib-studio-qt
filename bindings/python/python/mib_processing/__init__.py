@@ -19,6 +19,9 @@ from __future__ import annotations
 
 from ._mib_processing import (
     CONTRACT_VERSION,
+    benchmark_frame,
+    laplacian_variance,
+    set_opencv_threads,
     EModulusLut,
     compute_processed_frame,
     config_from_dict,
@@ -40,6 +43,9 @@ DEFAULT_PROCESSING_CONFIG = config_from_dict({})
 
 __all__ = [
     "CONTRACT_VERSION",
+    "benchmark_frame",
+    "laplacian_variance",
+    "set_opencv_threads",
     "DEFAULT_PROCESSING_CONFIG",
     "EModulusLut",
     "compute_processed_frame",

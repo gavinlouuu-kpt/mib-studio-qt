@@ -51,17 +51,11 @@ public:
     virtual ~IProcessingKernel() = default;
 
     virtual const ProcessingCoreIdentity& identity() const noexcept = 0;
-    virtual bool processMask(const cv::Mat& gray,
-                             const cv::Mat& background,
-                             const KernelConfig& config,
-                             const KernelRoi& roi,
-                             cv::Mat& outputMask,
+    virtual bool processMask(const cv::Mat& gray, const cv::Mat& background,
+                             const KernelConfig& config, const KernelRoi& roi, cv::Mat& outputMask,
                              std::string* error = nullptr) = 0;
-    virtual bool isEmpty(const cv::Mat& gray,
-                         const cv::Mat& background,
-                         const KernelConfig& config,
-                         const KernelRoi& roi,
-                         bool& outputIsEmpty,
+    virtual bool isEmpty(const cv::Mat& gray, const cv::Mat& background, const KernelConfig& config,
+                         const KernelRoi& roi, bool& outputIsEmpty,
                          std::string* error = nullptr) = 0;
     virtual bool reset(std::string* error = nullptr) = 0;
 
@@ -71,24 +65,21 @@ public:
     // science (ProcessingScience). ABI v1 dynamic cores inherit them because
     // the C ABI transports only mask/empty decisions; an ABI v2 core
     // overrides them to own the full pipeline across the plugin boundary.
-    virtual bool analyzeObjects(const cv::Mat& processedImage,
-                                const cv::Rect& roi,
+    virtual bool analyzeObjects(const cv::Mat& processedImage, const cv::Rect& roi,
                                 const services::ProcessingConfig& config,
-                                const cv::Mat& originalImage,
-                                double pixelToMicronFactor,
+                                const cv::Mat& originalImage, double pixelToMicronFactor,
                                 const backend::EModulusLut* eModulusLut,
                                 std::vector<services::FilterResult>& results,
                                 std::string* error = nullptr);
     virtual bool matchTrack(const std::vector<services::BatchTrack>& tracks,
                             const std::vector<bool>& matchedThisFrame,
-                            const services::FilterResult& detection,
-                            uint64_t frameIndex,
-                            int frameWidth,
-                            int& matchedTrack,
-                            std::string* error = nullptr);
+                            const services::FilterResult& detection, uint64_t frameIndex,
+                            int frameWidth, int& matchedTrack, std::string* error = nullptr);
 };
 
 std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel();
+// Offline evaluation only; never selected implicitly by the desktop service.
+std::shared_ptr<IProcessingKernel> makeDifferenceBenchmarkKernel(bool absoluteDifference);
 ProcessingCoreIdentity bundledProcessingCoreIdentity();
 
 } // namespace backend::processing

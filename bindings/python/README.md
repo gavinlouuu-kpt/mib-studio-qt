@@ -99,3 +99,14 @@ The same runner accepts a bounded grayscale dataset directly from an HDF5
 recording with `--hdf5`, `--hdf5-dataset`, `--frame-offset`, and
 `--frame-limit`. See `docs/gold_standard_metrics.md` for the pinned
 `gavinlouuu/z_adjustment-data` real-corpus command and reference provenance.
+
+## Experimental offline focus comparison
+
+`benchmark_frame(image, background, config, difference="subtract",
+with_laplacian=True)` exposes native same-input evaluation; `difference` may
+also be `absdiff`. `laplacian_variance(image, contour_points)` exposes the
+shared native focus function. `set_opencv_threads(1)` explicitly selects
+single-threaded OpenCV for benchmark timing (process-global; do not call it
+concurrently with processing). None of these APIs replaces desktop defaults
+or changes the persisted processing contract. See
+[the benchmark runbook](../../docs/howto/focus-core-benchmark.md).

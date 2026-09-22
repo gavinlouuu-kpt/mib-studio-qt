@@ -7,8 +7,13 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <chrono>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
+
+#include "backend/processing/IProcessingKernel.h"
+#include "backend/processing/ProcessingScience.h"
 
 #include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/EModulusLut.h"
@@ -182,6 +187,78 @@ bool saveMasksToHdf5(const std::vector<py::dict>& frameDicts, const std::vector<
                                                            roi.w, roi.h, bg, useFrameTimestamps);
 }
 
+// Additive offline API: no desktop profile, result contract, or autofocus change.
+py::dict benchmarkFrame(const py::array& image, const py::array& background,
+                        const py::dict& configDict, const std::string& difference,
+                        bool withLaplacian) {
+    if (difference != "subtract" && difference != "absdiff") {
+        throw std::invalid_argument("difference must be subtract or absdiff");
+    }
+    const cv::Mat gray = numpyToGrayMat(image);
+    const cv::Mat bg = numpyToGrayMat(background);
+    if (gray.empty() || gray.size() != bg.size()) {
+        throw std::invalid_argument("nonempty image and matching background required");
+    }
+    const auto config = configFromDict(configDict);
+    const backend::processing::KernelConfig kernelConfig{
+        config.gaussian_blur_size, config.bg_subtract_threshold, config.morph_kernel_size,
+        config.morph_iterations, config.empty_frame_pixel_threshold};
+    auto kernel = backend::processing::makeDifferenceBenchmarkKernel(difference == "absdiff");
+    cv::Mat mask;
+    std::vector<backend::services::FilterResult> objects;
+    std::vector<double> scores;
+    double elapsedUs = 0.0;
+    {
+        py::gil_scoped_release release;
+        const auto start = std::chrono::steady_clock::now();
+        std::string error;
+        if (!kernel->processMask(gray, bg, kernelConfig, {}, mask, &error)) {
+            throw std::runtime_error(error);
+        }
+        objects = backend::processing::science::filterProcessedObjects(
+            mask, cv::Rect(0, 0, gray.cols, gray.rows), config, gray, 1.0, nullptr,
+            withLaplacian ? &scores : nullptr);
+        elapsedUs =
+            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start)
+                .count();
+    }
+    py::list rows;
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const auto& object = objects[i];
+        if (object.objectId < 0) continue; // not a detected object
+        ProcessedFrame frame;
+        frame.validation = object;
+        py::dict row = mib_processing_bindings::processedFrameToDict(frame, 1.0);
+        // These fields are not measured by this untracked, uncalibrated API.
+        for (const char* key :
+             {"area_um2", "index", "timestamp_ns", "track_id", "track_first_frame",
+              "track_last_frame", "track_observation_count", "youngs_modulus", "is_target_group"}) {
+            row.attr("pop")(key, py::none());
+        }
+        if (object.area <= 0.0) { // e.g. border early exit, not a measured zero
+            row["area"] = py::none();
+            row["deformability"] = py::none();
+            row["area_ratio"] = py::none();
+        }
+        row["bbox"] =
+            py::make_tuple(object.bboxX, object.bboxY, object.bboxWidth, object.bboxHeight);
+        if (object.innerContourCount == 0 || object.ringRatio <= 0.0) {
+            row["ring_ratio"] = py::none();
+        }
+        row["laplacian_variance"] =
+            withLaplacian && std::isfinite(scores[i]) ? py::cast(scores[i]) : py::none();
+        rows.append(row);
+    }
+    py::dict output;
+    output["objects"] = rows;
+    output["mask"] = matToNumpy(mask);
+    output["pipeline_us"] = elapsedUs;
+    output["core_build_id"] = kernel->identity().buildId;
+    output["opencv_version"] = CV_VERSION;
+    output["opencv_threads"] = cv::getNumThreads();
+    return output;
+}
+
 } // namespace
 
 PYBIND11_MODULE(_mib_processing, m) {
@@ -189,6 +266,21 @@ PYBIND11_MODULE(_mib_processing, m) {
               "(deformability-cytometry processing pipeline). See "
               "docs/gold_standard_metrics.md in mib-studio-qt for the "
               "field-name contract.";
+
+    m.def("benchmark_frame", &benchmarkFrame, py::arg("image"), py::arg("background"),
+          py::arg("config"), py::arg("difference") = "subtract", py::arg("with_laplacian") = true);
+    m.def("laplacian_variance",
+          [](const py::array& image, const std::vector<std::pair<int, int>>& points) {
+              std::vector<cv::Point> contour;
+              for (const auto& point : points)
+                  contour.emplace_back(point.first, point.second);
+              return backend::processing::science::calculateLaplacianVariance(numpyToGrayMat(image),
+                                                                              contour);
+          });
+    m.def("set_opencv_threads", [](int count) {
+        if (count < 1) throw std::invalid_argument("thread count must be positive");
+        cv::setNumThreads(count);
+    });
 
     m.def("process_batch", &processBatch, py::arg("frames"), py::arg("config"),
           py::arg("background") = py::none(), py::arg("roi") = py::make_tuple(0, 0, 0, 0),
