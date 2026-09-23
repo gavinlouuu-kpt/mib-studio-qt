@@ -45,6 +45,7 @@ import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
 import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
+import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
@@ -808,6 +809,9 @@ export default function App() {
     ready, running, experimentActive: expActive, selection: camSelection, append,
     refresh: refreshCameraState,
   });
+  const cameraDocumentContext={ready,running,experimentActive:expActive,selection:camSelection,append,refresh:refreshCameraState};
+  const scriptDocument=useCameraDocument(cameraDocumentContext,"js");
+  const mindvisionDocument=useCameraDocument(cameraDocumentContext,"json");
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
   const cores = useCoreManagement({ready,resume:resumedNative,active:expActive,append,onChanged:refreshConfig});
   const startExperimentReason = !ready || !cores.initialized
@@ -824,7 +828,7 @@ export default function App() {
 
   const reviewExport = useReviewExport(ready, append);
   const reanalysis = useReanalysis(ready);
-  const requestClose = useCloseGuard({ready, busy:reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:(text)=>{append(text);setShowLog(true);}});
+  const requestClose = useCloseGuard({ready, busy:scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:(text)=>{append(text);setShowLog(true);}});
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
@@ -1620,7 +1624,7 @@ export default function App() {
                           </div>
                         </>
                       )}
-                      {configTab === "script" && <CameraScriptControls model={cameraScript} />}
+                      {configTab === "script" && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
                     </div>
                   </>
                 )}

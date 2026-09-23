@@ -17,7 +17,7 @@ export function cameraScriptBlock(ctx: Pick<CameraScriptContext, "ready" | "runn
   if (ctx.experimentActive) return "Stop and finalize the experiment before changing camera settings.";
   if (ctx.running || ctx.selection?.running) return "Stop the camera before applying a script or resetting it.";
   if (!ctx.selection?.valid || !ctx.selection.configured || ctx.selection.mode !== CAMERA_SELECTION_MODES.Hardware)
-    return "Select an EGrabber hardware camera. MindVision uses its JSON configuration in Connect.";
+    return "Select an EGrabber hardware camera. MindVision uses the JSON editor below.";
   return "";
 }
 
@@ -77,6 +77,6 @@ export function CameraScriptControls({ model }: { model: ReturnType<typeof useCa
     </div>
     <p className="mono">{model.path || "No script selected"}</p>
     <p role="status">{model.busy ? "Camera operation in progress…" : model.message || model.reason}</p>
-    <p>Choose an existing EGrabber JavaScript file. Editing and saving script contents remain external.</p>
+    <p>Choose an existing EGrabber JavaScript file, or use the checked file editor below to edit and save.</p>
   </section>;
 }

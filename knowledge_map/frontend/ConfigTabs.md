@@ -231,3 +231,16 @@ invalid JSON edit is preserved rather than replaced; it must be corrected before
 saving. The Overview settings are runtime overrides, not a second saved profile.
 
 Tauri live JSON and quick processing drafts retain edits when profile/config refresh changes runtime settings. Both apply paths reject stale drafts until explicit confirmed reload/reconciliation; delayed apply acknowledgements cannot clear the conflict. The reload action checks and reloads both draft types.
+
+Tauri now has App-owned EGrabber JS and MindVision JSON file editors alongside
+camera actions. Browse/Reset/Save/Clear never actuate hardware; saves compare a
+SHA-256 disk revision, validate JSON object syntax, preserve file permissions and
+atomically replace only the explicitly selected file. Conflicts retain drafts.
+Apply requires a saved unchanged file and the same stopped matching camera;
+MindVision JSON routes through the existing shared camera configuration service.
+Native Tauri camera apply/reset endpoints also reject running capture or active
+experiment state under the bridge lock. Drafts and pending operations participate
+in window-close protection. File read/save is bounded to 4 MiB and matching .js
+or .json extensions. `cameraDocument.test.tsx` covers non-actuating editing,
+stale camera/file rejection and conflict retention; native camera-document tests
+cover invalid JSON and revision-checked persistence without hardware.

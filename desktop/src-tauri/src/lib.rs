@@ -17,6 +17,7 @@ mod event_transport;
 mod frame_packet;
 mod platform;
 mod config_document;
+mod camera_document;
 mod preview_buffer;
 pub mod updater;
 
@@ -1286,6 +1287,12 @@ fn select_mindvision_camera(
     config_path: String,
 ) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1 | 2 | 3) {
+        return Err("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+
     Ok(guard
         .pin_mut()
         .select_mindvision_camera(camera_index, &label, &config_path)
@@ -1296,6 +1303,12 @@ fn select_mindvision_camera(
 #[tauri::command]
 fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1 | 2 | 3) {
+        return Err("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+
     Ok(guard.pin_mut().apply_camera_script(&script_path).into())
 }
 
@@ -1303,6 +1316,12 @@ fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<Cm
 #[tauri::command]
 fn reset_hardware_camera(state: State<AppState>) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1 | 2 | 3) {
+        return Err("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+
     Ok(guard.pin_mut().reset_hardware_camera().into())
 }
 
@@ -1670,6 +1689,7 @@ pub fn run() {
             config_document::processing_core_command,
             config_document::profile_fetch_url,
             config_document::profile_command,
+            camera_document::camera_document,
             config_document::fetch_config_document,
             config_document::apply_config_document,
             experiment_start,
