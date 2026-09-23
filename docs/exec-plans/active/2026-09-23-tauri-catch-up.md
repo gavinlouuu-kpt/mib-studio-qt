@@ -1,6 +1,6 @@
 # Tauri catch-up integration
 
-Status: active
+Status: completed (scoped catch-up batch; migration cutover remains open)
 
 ## Goal
 
@@ -16,8 +16,8 @@ an assertion of production cutover readiness or hardware acceptance.
 - [x] Existing pump/autofocus APIs exposed with commissioning/lifecycle guards.
 - [x] Checked Qt-free processing-config persistence contract and Tauri adapter.
 - [x] Reuse HdfExportService for cancellable export/status through the bridge.
-- [ ] Integrate and execute frontend, contract, native backend/bridge checks.
-- [ ] Publish the updated branch with exact tested and unverified scope.
+- [x] Integrate and execute frontend, contract, native backend/bridge checks.
+- [x] Publish the updated branch with exact tested and unverified scope.
 
 ## Decision log
 
@@ -39,13 +39,15 @@ acceptance remain tracked by #372/#246 and the readiness assessment. Passing a
 build or process-alive smoke is not a native end-to-end workflow pass.
 
 
-## Executed integration checks (in progress)
+## Executed integration checks
 
-Frontend DOM/unit tests and TypeScript build pass. Five targeted native tests
+156 frontend DOM/unit tests and TypeScript/Vite production build pass. Five targeted native tests
 pass: checked configuration, facade boundary, experiment coordinator, shared
 HDF5 exporter and export facade. ABI generation, docs and screenshot checks
-pass. Rust toolchain download and native desktop/sanitizer checks are underway;
-no production-cutover or real-hardware result is claimed.
+pass. Native desktop compilation and all 16 desktop Rust tests pass locally
+and in Desktop CI at `9ec8e98`; the CI Xvfb process-alive smoke also passes.
+All 17 shared Rust/C++ bridge tests pass in CI at the same commit.
+No production-cutover or real-hardware result is claimed.
 
 Source fixes discovered during verification: export test registration before
 runner finalization; absence-aware metadata handling for valid-only recordings;
@@ -58,3 +60,8 @@ Native targeted ThreadSanitizer checks: 5/5 passed with `setarch x86_64 -R`
 this host). Shared bridge CI passed at `6239d10`. Monitoring chart placeholders
 were replaced with bounded raw-unit plots; packaging/full Qt comparison remains
 outside this batch.
+
+Published as draft [PR #450](https://github.com/gavinlouuu-kpt/mib-studio-qt/pull/450)
+on `dev/react-tauri`. Broader backend/sanitizer/platform PR jobs were still
+running when this verification record was finalized; their completion is not
+implied by the targeted results above.
