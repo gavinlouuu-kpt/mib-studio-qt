@@ -858,6 +858,7 @@ namespace backend::bridge
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
         std::string fetchPulseGeneratorStatusJson() const;
 
+        std::vector<uint8_t> renderReviewOverlayJson(const std::string& json) const;
         bool fetchReviewReanalysisPreviewJson(const std::string& json,BackendFrame& out) const;
         std::string fetchReviewChartsJson() const;
         BackendCommandResult submitReviewReanalysisJson(const std::string &json);

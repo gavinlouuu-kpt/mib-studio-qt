@@ -302,6 +302,22 @@ int main() {
         MIB_REQUIRE(failed.status==backend::recording::HdfExportStatus::Failed && failed.finalPath.empty(),"chart writer fault never publishes success");
         MIB_REQUIRE(hash(source)==originalHash,"chart fault preserves source");
     }
+    {
+        const json overlay{{"source_path",source.string()},{"valid",true},{"index",1},{"mode",3},{"roi",false}};
+        const auto bytes=facade.renderReviewOverlayJson(overlay.dump());
+        const auto image=cv::imdecode(bytes,cv::IMREAD_COLOR);
+        MIB_REQUIRE(image.rows==32 && image.cols==32,"saved-image overlay PNG roundtrip");
+        MIB_REQUIRE(image.at<cv::Vec3b>(10,10)[1]>image.at<cv::Vec3b>(10,10)[0],"valid mask overlay uses green classification");
+        auto invalidSeries=request;invalidSeries["series"]={{"start",5},{"end",2}};
+        MIB_REQUIRE(!facade.submitReviewExportJson(invalidSeries.dump()).ok,"reversed series range rejected");
+        const auto collision=dir/"late-output.h5";
+        regenerate={{"source_path",source.string()},{"output_path",collision.string()},{"dataset","all"}};
+        facade.setEventSink([&](const BackendEvent& event){if(auto op=std::get_if<OperationStatusEvent>(&event)){if(op->kind==BackendOperationKind::Reanalysis && op->state==BackendOperationState::Progress){std::ofstream existing(collision);existing<<"preserve concurrent output";}}});
+        const auto job=facade.submitReviewReanalysisJson(regenerate.dump());
+        MIB_REQUIRE(job.ok && terminal(facade,job.operationId,true)["state"]=="failed","late output collision not overwritten");
+        facade.setEventSink({});std::ifstream existing(collision);std::string contents;std::getline(existing,contents);
+        MIB_REQUIRE(contents=="preserve concurrent output","concurrent output bytes preserved");
+    }
     facade.shutdown();
     return mib::test::exitCode();
 }

@@ -9,6 +9,18 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cstring>
+#include <system_error>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__linux__)
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace backend::bridge {
 bool BackendFacade::fetchReviewReanalysisPreviewJson(const std::string& text,BackendFrame& out) const {
@@ -41,7 +53,7 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
     services::ProcessingService::Roi customRoi{0,0,0,0};
     bool overrideRoi=false;
     auto config=backend_.processing().getProcessingConfig();
-    std::uint64_t start=0, count=0;
+    std::uint64_t start=0, count=0,maxFrames=4096,maxInputBytes=268435456;
     try {
         const auto request=json::parse(text);
         kind=request.value("source_kind",std::string("hdf"));
@@ -71,6 +83,10 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
             return value.get<std::uint64_t>();
         };
         start=rangeValue("start");count=rangeValue("count");
+        if(request.contains("max_frames"))maxFrames=rangeValue("max_frames");
+        const auto mib=request.contains("max_input_mib")?rangeValue("max_input_mib"):256;
+        if(maxFrames==0 || maxFrames>1000000 || mib==0 || mib>16384 || mib>std::numeric_limits<size_t>::max()/1048576)throw std::runtime_error("Input budget must be 1–1000000 frames and 1–16384 MiB");
+        maxInputBytes=mib*1048576;
         clearBackground=request.value("clear_background",false);
         if(request.contains("background_index"))backgroundIndex=rangeValue("background_index");
         backgroundDataset=request.value("background_dataset",std::string("/valid_frames/images"));
@@ -92,7 +108,7 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
         reanalysisStatusJson_=json{{"state","running"},{"operation_id",std::to_string(id)},{"phase","loading"}}.dump();
     }
     try {
-        reanalysisThread_=std::thread([this,id,cancel,source,output,dataset,start,count,config,kind,synthetic,customRoi,overrideRoi,clearBackground,backgroundIndex,backgroundDataset] {
+        reanalysisThread_=std::thread([this,id,cancel,source,output,dataset,start,count,config,kind,synthetic,customRoi,overrideRoi,clearBackground,backgroundIndex,backgroundDataset,maxFrames,maxInputBytes] {
             std::filesystem::path partial;
             bool published=false;
             std::string error, warning, retained;
@@ -136,13 +152,13 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
                     } else collect(dataset,false);
                     if(start>=refs.size())throw std::runtime_error("Selected source range is empty");
                     const auto selected=count==0 ? refs.size()-start : count;
-                    if(selected>refs.size()-start || selected>4096)throw std::runtime_error("Select a smaller range (maximum 4096 frames)");
+                    if(selected>refs.size()-start || selected>maxFrames)throw std::runtime_error("Selected range exceeds configured frame budget");
                     uint64_t inputBytes=0;
                     for(size_t i=start;i<start+selected;++i) {
                         const auto& ref=refs[i];
                         if(ref.height<=0 || ref.width<=0 || ref.channels!=1)throw std::runtime_error("Source frames must be grayscale");
                         const uint64_t bytes=static_cast<uint64_t>(ref.height)*static_cast<uint64_t>(ref.width);
-                        if(bytes>268435456ULL-inputBytes)throw std::runtime_error("Select a smaller range (maximum 256 MiB input)");
+                        if(bytes>maxInputBytes-inputBytes)throw std::runtime_error("Selected range exceeds configured input memory budget");
                         inputBytes+=bytes;
                     }
                     uint64_t first=0,last=0;size_t valid=0,invalid=0;
@@ -158,7 +174,7 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
                     }
                 } else {
                     services::batch_masks::LoadOptions limits;
-                    limits.start=start;limits.count=count;limits.maxFrames=4096;limits.maxBytes=268435456;
+                    limits.start=start;limits.count=count;limits.maxFrames=maxFrames;limits.maxBytes=maxInputBytes;
                     limits.cancelled=[cancel]{return cancel->load(std::memory_order_acquire);};
                     std::vector<std::string> names, errors;
                     const bool loaded=kind=="folder" ? services::batch_masks::loadFromFolder(source,images,names,errors,limits) :
@@ -201,9 +217,19 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
                 if(!services::batch_masks::saveMasksToHdf5(frames,partial.string(),config,roi.x,roi.y,roi.w,roi.h,background,kind=="hdf",&usedCore))
                     throw std::runtime_error("Failed to save regenerated HDF");
                 checkCancel();
-                // Atomic no-clobber publication on the same filesystem: unlike rename,
-                // this cannot replace an output created after initial validation.
+                // Atomic no-clobber publication; supports NTFS/FAT on Windows and
+                // Linux renameat2 filesystems without requiring hard-link support.
+#ifdef _WIN32
+                if(!MoveFileExW(partial.wstring().c_str(),std::filesystem::path(output).wstring().c_str(),MOVEFILE_WRITE_THROUGH))
+                    throw std::system_error(static_cast<int>(GetLastError()),std::system_category(),"Publish regenerated output");
+#elif defined(__linux__)
+                if(syscall(SYS_renameat2,AT_FDCWD,partial.c_str(),AT_FDCWD,output.c_str(),RENAME_NOREPLACE)!=0) {
+                    if(errno!=ENOSYS && errno!=EINVAL)throw std::system_error(errno,std::generic_category(),"Publish regenerated output");
+                    std::filesystem::create_hard_link(partial,output);
+                }
+#else
                 std::filesystem::create_hard_link(partial,output);
+#endif
                 published=true;
             } catch(const std::exception& failure) {error=failure.what();}
             if(!partial.empty()) {

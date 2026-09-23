@@ -109,6 +109,7 @@ public:
     BridgeCommandResult pulse_generator_command(rust::Str json);
     rust::String pulse_generator_status();
 
+    rust::Vec<uint8_t> render_review_overlay(rust::Str json);
     BridgeFrame fetch_review_reanalysis_preview(rust::Str json);
     rust::String fetch_review_charts_json();
     BridgeCommandResult review_reanalysis_json(rust::Str json);

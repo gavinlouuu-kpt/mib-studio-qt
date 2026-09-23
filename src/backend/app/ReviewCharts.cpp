@@ -1,11 +1,49 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/AppBackend.h"
 #include "backend/recording/ReviewChartData.h"
+#include "backend/recording/ProcessingOverlay.h"
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 #include "backend/recording/Hdf5Service.h"
 #include <nlohmann/json.hpp>
 #include <array>
 #include <cmath>
 namespace backend::bridge {
+std::vector<uint8_t> BackendFacade::renderReviewOverlayJson(const std::string& text) const {
+    using nlohmann::json;
+    const auto request=json::parse(text);
+    const auto& value=request.at("index");
+    if(!value.is_number_integer() || value<0)throw std::invalid_argument("Image index must be nonnegative integer");
+    const auto index=value.get<size_t>();
+    const auto mode=request.value("mode",0);
+    if(mode<0 || mode>4)throw std::invalid_argument("Invalid overlay mode");
+    const bool valid=request.value("valid",true);
+    services::Hdf5Service reader;
+    if(!reader.loadFile(request.at("source_path").get<std::string>()))throw std::runtime_error("Cannot open overlay source");
+    const auto path=valid?"/valid_frames/images":"/invalid_frames/images";
+    size_t count=0;int height=0,width=0,channels=0;
+    if(!reader.getDatasetInfo(path,count,height,width,channels) || index>=count || height<=0 || width<=0 || channels!=1 || static_cast<uint64_t>(height)*width>64*1024*1024ULL)
+        throw std::runtime_error("Overlay source frame unavailable or exceeds 64 MiB");
+    cv::Mat image,mask;
+    if(!reader.readImageByIndex(path,index,image))throw std::runtime_error("Cannot read overlay source image");
+    if(mode && (!reader.readImageByIndex(valid?"/valid_frames/masks":"/invalid_frames/masks",index,mask) || mask.size()!=image.size()))
+        throw std::runtime_error("Matching saved mask unavailable");
+    std::vector<services::ProcessedFrame> rows;
+    services::FilterResult classification;
+    classification.isValid=valid;
+    const bool metadataOk=valid?reader.readValidMetadata(rows):reader.readInvalidMetadata(rows);
+    if(metadataOk && index<rows.size())classification=rows[index].validation;
+    auto rgb=recording::renderProcessingOverlay(image,mask,&classification,static_cast<recording::OverlayMode>(mode));
+    if(request.value("roi",false)) {
+        uint64_t first=0,last=0;size_t nvalid=0,ninvalid=0;services::ProcessingService::Roi roi;
+        if(reader.readExperimentInfo(first,last,nvalid,ninvalid,&roi) && roi.w>0 && roi.h>0)
+            cv::rectangle(rgb,cv::Rect(roi.x,roi.y,roi.w,roi.h)&cv::Rect(0,0,rgb.cols,rgb.rows),cv::Scalar(255,210,0),1);
+    }
+    cv::Mat bgr;cv::cvtColor(rgb,bgr,cv::COLOR_RGB2BGR);std::vector<uint8_t> bytes;
+    if(!cv::imencode(".png",bgr,bytes))throw std::runtime_error("Could not encode overlay image");
+    return bytes;
+}
+
 std::string BackendFacade::fetchReviewChartsJson() const {
     using nlohmann::json;
     try {

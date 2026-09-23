@@ -435,9 +435,10 @@ export const bridge = {
     invoke<ReviewMetricsPage>("fetch_review_metrics_page", { valid, offset, count }),
   fetchReviewImage: async (dataset: number, index: number | string | bigint) =>
     pullFrame("fetch_review_frame_packet", 3, { dataset, index: decimalU64(index) }),
+  renderReviewOverlay: async (request:{source_path:string;valid:boolean;index:number;mode:number;roi:boolean}) => new Uint8Array(await invoke<ArrayBuffer>("render_review_overlay",{json:JSON.stringify(request)})),
   fetchReanalysisPreview: (request:{source_kind:string;source_path:string;dataset:string;index:number}) => pullFrame("fetch_review_reanalysis_preview",3,{json:JSON.stringify(request)}),
   fetchReviewCharts: async (): Promise<ReviewChartSnapshot> => JSON.parse(await invoke<string>("fetch_review_charts_json")),
-  reviewReanalysis: (request: {source_path:string;output_path:string;dataset:string;start:number;count:number;source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown;background_index?:number;background_dataset?:string;clear_background?:boolean}) => invokeCommand("review_reanalysis_json", {json:JSON.stringify(request)}),
+  reviewReanalysis: (request: {source_path:string;output_path:string;dataset:string;start:number;count:number;source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown;max_frames?:number;max_input_mib?:number;background_index?:number;background_dataset?:string;clear_background?:boolean}) => invokeCommand("review_reanalysis_json", {json:JSON.stringify(request)}),
   reviewReanalysisStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_reanalysis_status_json")),
   reviewExport: (request: ReviewExportRequest) => invokeCommand("review_export_json", { json: JSON.stringify(request) }),
   reviewExportStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_export_status_json")),

@@ -416,7 +416,7 @@
         "/recorded_frames/images"
       ],
       "start": "nonnegative integer; default 0",
-      "count": "nonnegative integer; 0 selects remaining; at most 4096 frames and 256MiB input",
+      "count": "nonnegative integer; 0 selects remaining subject to input budgets",
       "source_kind": [
         "hdf",
         "folder",
@@ -427,7 +427,9 @@
       "image_processing": "optional local config.json image_processing object; never applies to live settings",
       "background_index": "optional nonnegative source frame index, loaded independently",
       "background_dataset": "HDF dataset for selected background",
-      "clear_background": "discard saved source background before optional selection/synthetic build"
+      "clear_background": "discard saved source background before optional selection/synthetic build",
+      "max_frames": "integer 1..1000000; default 4096",
+      "max_input_mib": "integer 1..16384; default 256; input pixels only, processing needs additional memory"
     },
     "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
   },
@@ -448,5 +450,6 @@
     ],
     "trust": "Existing portable cache/loader and shared Qt/Tauri compiled signer policy; selected index must match immutable manifest, ABI/contract/runtime/app bounds; never trust manifest-provided key alone.",
     "persistence": "Atomic selection write in activateProcessingKernel preCommit callback; startup re-verifies signature/hash, failure marks selection unavailable; explicit bundled recovery honors pins."
-  }
+  },
+  "render_review_overlay": "source_path/valid/index/mode(0..4)/roi -> PNG bytes; independent same-reader image/mask/classification; shared Qt ProcessingOverlay; 64MiB source frame limit"
 }

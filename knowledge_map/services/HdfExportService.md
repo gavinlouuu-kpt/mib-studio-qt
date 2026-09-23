@@ -124,3 +124,5 @@ failed chart writes never publish a successful output. Calibration/ring limits
 are explicit snapshots of current backend settings, matching Qt, not claimed to
 be recovered recording calibration. Fixed isoelastic reference conditions are
 labelled rather than automatically assumed to match the experiment.
+
+Tauri Review export options pass existing frame classes and inclusive series ranges to the shared service; fractional, negative and reversed ranges fail at the facade boundary.

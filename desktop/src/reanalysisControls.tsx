@@ -3,7 +3,7 @@ import {open,save} from "@tauri-apps/plugin-dialog";
 import {bridge,mono8ToImageData,type FramePacket,type ReviewMetadata} from "./bridge";
 import type {ReviewExportStatus} from "./reviewExport";
 
-type Options = {source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown;background_index?:number;background_dataset?:string;clear_background?:boolean};
+type Options = {source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown;max_frames?:number;max_input_mib?:number;background_index?:number;background_dataset?:string;clear_background?:boolean};
 type PreviewSpec={source_kind:string;source_path:string;dataset:string;index:number};
 
 // Owned at App scope so reconciliation and cancellation survive navigation.
@@ -12,6 +12,7 @@ export function useReanalysis(ready:boolean) {
   const [kind,setKind]=useState<"hdf"|"folder"|"avi">("hdf"),[external,setExternal]=useState("");
   const [synthetic,setSynthetic]=useState(true),[settings,setSettings]=useState(""),[roi,setRoi]=useState("");
   const [draftError,setDraftError]=useState("");
+  const [maxFrames,setMaxFrames]=useState("4096"),[maxInputMiB,setMaxInputMiB]=useState("256");
   const [previewIndex,setPreviewIndex]=useState("0"),[previewDataset,setPreviewDataset]=useState("/valid_frames/images");
   const [preview,setPreview]=useState<{spec:PreviewSpec;frame:FramePacket}|null>(null);
   const [background,setBackground]=useState<PreviewSpec|null>(null),[clearBackground,setClearBackground]=useState(false);
@@ -67,10 +68,10 @@ export function useReanalysis(ready:boolean) {
     try{if(!Number.isSafeInteger(spec.index) || spec.index<0)throw new Error("Preview index must be a nonnegative integer");const frame=await bridge.fetchReanalysisPreview(spec);if(!frame.valid)throw new Error("Cannot preview this source/index");setPreview({spec,frame});}
     catch(e){setDraftError(String(e));}finally{previewLock.current=false;setPreviewPending(false);}
   }
-  return {status,error,pending,start,cancel,loadPreview,previewPending,draft:{dataset,setDataset,start:startIndex,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef,previewIndex,setPreviewIndex,previewDataset,setPreviewDataset,preview,setPreview,background,setBackground,clearBackground,setClearBackground},busy:pending || status.state==="running"};
+  return {status,error,pending,start,cancel,loadPreview,previewPending,draft:{dataset,setDataset,start:startIndex,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef,previewIndex,setPreviewIndex,previewDataset,setPreviewDataset,preview,setPreview,background,setBackground,clearBackground,setClearBackground,maxFrames,setMaxFrames,maxInputMiB,setMaxInputMiB},busy:pending || status.state==="running"};
 }
 export function ReanalysisControls({model,metadata,blocked=false}:{model:ReturnType<typeof useReanalysis>;metadata:ReviewMetadata|null;blocked?:boolean}) {
-  const {dataset,setDataset,start,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef,previewIndex,setPreviewIndex,previewDataset,setPreviewDataset,preview,setPreview,background,setBackground,clearBackground,setClearBackground}=model.draft;
+  const {dataset,setDataset,start,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef,previewIndex,setPreviewIndex,previewDataset,setPreviewDataset,preview,setPreview,background,setBackground,clearBackground,setClearBackground,maxFrames,setMaxFrames,maxInputMiB,setMaxInputMiB}=model.draft;
   useEffect(()=>{const source=metadata?.file_path ?? "";if(sourceRef.current!==source){sourceRef.current=source;setDataset("all");setStart("0");setCount("0");setPreview(null);setBackground(null);setClearBackground(false);setPreviewDataset(metadata?.recording_file?"/recorded_frames/images":"/valid_frames/images");}},[metadata?.file_path,metadata?.recording_file]);
   const source=kind==="hdf"?metadata?.file_path ?? "":external;
   const previewSpec:PreviewSpec={source_kind:kind,source_path:source,dataset:previewDataset,index:Number(previewIndex)};
@@ -85,7 +86,8 @@ export function ReanalysisControls({model,metadata,blocked=false}:{model:ReturnT
   }
   async function run(){
     try {
-      const options:Options={source_kind:kind,synthetic_background:synthetic,clear_background:clearBackground};
+      if(!Number.isSafeInteger(Number(maxFrames)) || !Number.isSafeInteger(Number(maxInputMiB)) || Number(maxFrames)<1 || Number(maxFrames)>1000000 || Number(maxInputMiB)<1 || Number(maxInputMiB)>16384)throw new Error("Choose an integer input budget of 1–1000000 frames and 1–16384 MiB.");
+      const options:Options={source_kind:kind,synthetic_background:synthetic,clear_background:clearBackground,max_frames:Number(maxFrames),max_input_mib:Number(maxInputMiB)};
       if(background){if(background.source_kind!==kind || background.source_path!==source)throw new Error("Selected background belongs to another source; clear or reselect it.");options.background_index=background.index;options.background_dataset=background.dataset;}
       if(settings.trim())options.image_processing=JSON.parse(settings);
       if(roi.trim()) {
@@ -102,7 +104,7 @@ export function ReanalysisControls({model,metadata,blocked=false}:{model:ReturnT
     <label>Source kind <select value={kind} disabled={model.busy} onChange={e=>{setKind(e.target.value as typeof kind);setExternal("");}}><option value="hdf">Open HDF file</option><option value="folder">Image folder</option><option value="avi">AVI file</option></select></label>
     {kind!=="hdf" && <><button disabled={model.busy} onClick={()=>void choose()}>Choose source…</button><span>{external || "No source selected"}</span></>}
     {kind==="hdf" && <label>Source dataset <select value={dataset} onChange={e=>setDataset(e.target.value)} disabled={model.busy}><option value="all">Entire HDF (source order)</option><option value="/valid_frames/images">Valid frames</option><option value="/invalid_frames/images">Invalid frames</option><option value="/recorded_frames/images">Raw recording</option></select></label>}
-    <p>Start is zero-based; count 0 selects the remaining dataset. Maximum 4096 frames / 256 MiB input per job.</p>
+    <p>Start is zero-based; count 0 selects the remaining dataset. The default budget is 4096 frames / 256 MiB; increase the explicit job budget below for larger datasets.</p>
     <label>Start <input type="number" min="0" step="1" value={start} onChange={e=>setStart(e.target.value)} disabled={model.busy}/></label>
     <label>Count <input type="number" min="0" step="1" value={count} onChange={e=>setCount(e.target.value)} disabled={model.busy}/></label>
     <details><summary>Preview source, select background and draw ROI</summary>
@@ -117,6 +119,7 @@ export function ReanalysisControls({model,metadata,blocked=false}:{model:ReturnT
     </details>
     <label>ROI override (x,y,width,height; blank uses source/full-frame) <input value={roi} onChange={e=>setRoi(e.target.value)} disabled={model.busy}/></label>
     <label><input type="checkbox" checked={synthetic} onChange={e=>setSynthetic(e.target.checked)} disabled={model.busy}/>Build synthetic background when source has none</label>
+    <details><summary>Input memory/frame budget</summary><p>This budget covers decoded inputs; processing masks/results require additional memory.</p><label>Maximum frames <input type="number" min="1" max="1000000" value={maxFrames} onChange={e=>setMaxFrames(e.target.value)} disabled={model.busy}/></label><label>Input MiB <input type="number" min="1" max="16384" value={maxInputMiB} onChange={e=>setMaxInputMiB(e.target.value)} disabled={model.busy}/></label></details>
     <details><summary>Local processing-settings draft (does not change live settings)</summary><button disabled={model.busy} onClick={()=>void snapshot()}>Copy current settings</button><textarea aria-label="Reanalysis processing settings" value={settings} onChange={e=>setSettings(e.target.value)} disabled={model.busy}/></details>
     {draftError && <p role="alert">{draftError}</p>}
     <button disabled={(kind==="hdf"?!metadata?.file_open:!external) || model.busy || blocked} onClick={()=>void run()}>Regenerate into new HDF…</button>

@@ -5,6 +5,9 @@ import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 
 // App owns the hook: navigation cannot abandon status reconciliation/cancellation.
 export function useReviewExport(ready: boolean, append: (s:string)=>void) {
+  const [frames,setFrames]=useState<"valid"|"invalid"|"both">("both");
+  const [seriesEnabled,setSeriesEnabled]=useState(true),[seriesStart,setSeriesStart]=useState("0"),[seriesEnd,setSeriesEnd]=useState("");
+  const [isoelastic,setIsoelastic]=useState(true);
   const [status, setStatus] = useState<ReviewExportStatus>({state:"idle"});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -40,6 +43,8 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
     if (!ready || submitting.current || currentStatus.current.state === "running") return;
     submitting.current=true; setPending(true); setError("");
     try {
+      const start=Number(seriesStart),end=seriesEnd.trim()===""?undefined:Number(seriesEnd);
+      if(!Number.isSafeInteger(start) || start<0 || (end!==undefined && (!Number.isSafeInteger(end) || end<start)))throw new Error("Series range requires nonnegative integer start and end ≥ start.");
       const sources = batch ? await open({title:"Choose HDF files to export",multiple:true,filters:[{name:"HDF5",extensions:["h5","hdf5"]}]}) : undefined;
       if (batch && (!Array.isArray(sources) || !sources.length)) return;
       const picked = format === "metrics_csv" && !batch
@@ -48,7 +53,7 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
       if (typeof picked !== "string") return;
       const request: ReviewExportRequest = {
         output_root: format === "metrics_csv" && !batch ? picked.replace(/[/\\][^/\\]*$/, "") : picked,
-        format, frames:"both", ...(conversionFactor === undefined ? {} : {conversion_factor:conversionFactor}), keep_partial_on_failure:true,
+        format, frames, series:{enabled:seriesEnabled,start,...(end===undefined?{}:{end})},isoelastic_overlays:isoelastic, ...(conversionFactor === undefined ? {} : {conversion_factor:conversionFactor}), keep_partial_on_failure:true,
         ...(format === "metrics_csv" && !batch ? {explicit_destination:picked} : {}),
         ...(Array.isArray(sources) ? {source_paths:sources} : {}),
       };
@@ -74,7 +79,7 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
     } catch (e) { setError(String(e)); }
     finally { submitting.current=false; setPending(false); }
   }
-  return {status,pending,error:error || statusError,start,cancel,busy:pending || status.state==="running"};
+  return {status,pending,options:{frames,setFrames,seriesEnabled,setSeriesEnabled,seriesStart,setSeriesStart,seriesEnd,setSeriesEnd,isoelastic,setIsoelastic},error:error || statusError,start,cancel,busy:pending || status.state==="running"};
 }
 
 export function ExportStatus({model}:{model:ReturnType<typeof useReviewExport>}) {
@@ -92,4 +97,15 @@ export function ExportStatus({model}:{model:ReturnType<typeof useReviewExport>})
     {model.status.results && model.status.file_count !== 1 && <ul>{model.status.results.map((result,index)=><li key={index}>{result.source_path}: {result.state} {result.final_path || result.retained_partial_path || result.error}</li>)}</ul>}
     {model.status.warnings?.map((warning,index)=><p key={index}>{warning}</p>)}
   </section>;
+}
+
+export function ReviewExportOptions({model}:{model:ReturnType<typeof useReviewExport>}) {
+  const options=model.options;
+  return <details><summary>Export frame selection, series range and reference overlays</summary>
+    <label>Frame class <select disabled={model.busy} value={options.frames} onChange={e=>options.setFrames(e.target.value as typeof options.frames)}><option value="both">Valid and invalid</option><option value="valid">Valid only</option><option value="invalid">Invalid only</option></select></label>
+    <label><input type="checkbox" checked={options.seriesEnabled} disabled={model.busy} onChange={e=>options.setSeriesEnabled(e.target.checked)}/>Export stored series images</label>
+    <label>Series start (zero-based) <input type="number" min="0" step="1" value={options.seriesStart} disabled={model.busy} onChange={e=>options.setSeriesStart(e.target.value)}/></label>
+    <label>Series end (inclusive; blank = remaining) <input type="number" min="0" step="1" value={options.seriesEnd} disabled={model.busy} onChange={e=>options.setSeriesEnd(e.target.value)}/></label>
+    <label><input type="checkbox" checked={options.isoelastic} disabled={model.busy} onChange={e=>options.setIsoelastic(e.target.checked)}/>Include fixed-reference isoelastic curves in exported charts</label>
+  </details>;
 }

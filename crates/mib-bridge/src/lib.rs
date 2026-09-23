@@ -701,6 +701,7 @@ pub mod ffi {
         fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
 
+        fn render_review_overlay(self: Pin<&mut BackendBridge>, json: &str) -> Vec<u8>;
         fn fetch_review_reanalysis_preview(self: Pin<&mut BackendBridge>, json: &str) -> BridgeFrame;
         fn fetch_review_charts_json(self: Pin<&mut BackendBridge>) -> String;
         fn review_reanalysis_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;

@@ -48,8 +48,9 @@ import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
+import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
-import { ExportStatus, useReviewExport } from "./exportControls";
+import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -698,19 +699,25 @@ export default function App() {
     });
   }, []);
 
+  const metricsGeneration = useRef(0);
   const loadMetricsPage = useCallback(
-    async (valid: boolean, offset: number) => {
+    async (valid: boolean, offset: number, source = reviewMeta?.file_path) => {
+      const generation = ++metricsGeneration.current;
+      setMetricsPage(null);
       try {
+        const before = await bridge.fetchReviewMetadata();
+        if (!before.file_open || before.file_path !== source || generation !== metricsGeneration.current) return;
         const page = await bridge.fetchReviewMetricsPage(valid, offset, METRICS_PAGE_SIZE);
-        if (page.valid) {
+        const after = await bridge.fetchReviewMetadata();
+        if (page.valid && after.file_open && after.file_path === source && generation === metricsGeneration.current) {
           setMetricsPage(page);
           setMetricsOffset(offset);
         }
       } catch (e) {
-        append(`metrics page error: ${e}`);
+        if (generation === metricsGeneration.current) append(`metrics page error: ${e}`);
       }
     },
-    [append],
+    [append, reviewMeta?.file_path],
   );
 
   const drawReviewImage = useCallback((dataset: number, index: number) => {
@@ -720,6 +727,8 @@ export default function App() {
   const onSelectHdf = useCallback(async () => {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
+    ++metricsGeneration.current;
+    setMetricsPage(null);
     try {
       const res = await bridge.loadRecording(picked);
       if (!res.ok) { setReviewMeta(await bridge.fetchReviewMetadata()); return append(`load failed: ${res.message}`); }
@@ -731,7 +740,7 @@ export default function App() {
       setReviewMeta(meta);
       setReviewTab(meta.recording_file ? "raw" : "valid");
       setReviewImgIndex(0);
-      await loadMetricsPage(true, 0);
+      await loadMetricsPage(true, 0, picked);
       if (meta.recording_file) {
         await onScrub("0");
       } else if (meta.valid_images.present && meta.valid_images.count > 0) {
@@ -1771,7 +1780,7 @@ export default function App() {
                     const result = await bridge.closeReview();
                     if (!result.ok) return append(result.message);
                     framePulls.current.invalidate("review"); setReviewMeta(null); setMetricsPage(null);
-                    setReviewPath(""); setReviewing(false); setReviewIndex("0");
+                    ++metricsGeneration.current; setMetricsPage(null); setReviewPath(""); setReviewing(false); setReviewIndex("0");
                     const canvas = reviewCanvasRef.current; if (canvas) canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
                   }}>Close File</button>
                   <button
@@ -1799,7 +1808,7 @@ export default function App() {
                   </span>
                 </div>
                 <div className="subtabs" role="tablist" aria-label="Review views">
-                  <button className={reviewTab === "raw" ? "active" : ""} onClick={() => setReviewTab("raw")}>
+                  <button className={reviewTab === "raw" ? "active" : ""} onClick={() => { ++metricsGeneration.current; setMetricsPage(null); setReviewTab("raw"); }}>
                     Raw Frames
                   </button>
                   <button
@@ -1810,7 +1819,6 @@ export default function App() {
                       setReviewTab("valid");
                       setReviewImgIndex(0);
                       await loadMetricsPage(true, 0);
-                      await drawReviewImage(0, 0);
                     }}
                   >
                     Valid Frames
@@ -1823,7 +1831,6 @@ export default function App() {
                       setReviewTab("invalid");
                       setReviewImgIndex(0);
                       await loadMetricsPage(false, 0);
-                      await drawReviewImage(1, 0);
                     }}
                   >
                     Invalid Frames
@@ -1831,11 +1838,13 @@ export default function App() {
                   <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
                 </div>
                 <div className="subtab-body">
+                  <ReviewExportOptions model={reviewExport}/>
                   <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || !ready}/>
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
-                  <div className="review-split" hidden={reviewTab === "charts"}>
+                  <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
                     <div className="frames">
-                      <div className="canvas-wrap">
+                      {reviewMeta?.file_open && (reviewTab === "valid" || reviewTab === "invalid") && <SavedReviewImage metadata={reviewMeta} valid={reviewTab === "valid"} index={reviewImgIndex} fit={fitWindow}/>}
+                      <div className="canvas-wrap" style={{display:reviewTab === "raw" ? undefined : "none"}}>
                         {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
                         <canvas ref={reviewCanvasRef} className={fitWindow ? "fit" : ""} />
                       </div>
@@ -1872,7 +1881,6 @@ export default function App() {
                             onChange={async (e) => {
                               const idx = Number(e.target.value);
                               setReviewImgIndex(idx);
-                              await drawReviewImage(reviewTab === "valid" ? 0 : 1, idx);
                             }}
                             aria-label="Review image scrubber"
                           />
@@ -1899,8 +1907,12 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {(metricsPage?.rows ?? []).map((r) => (
-                            <tr key={`${r.frame_index}:${r.object_id}`}>
+                          {(metricsPage?.rows ?? []).map((r, rowIndex) => (
+                            <tr key={`${r.frame_index}:${r.object_id}`} tabIndex={0}
+                              aria-selected={reviewImgIndex === metricsOffset + rowIndex}
+                              onClick={() => setReviewImgIndex(metricsOffset + rowIndex)}
+                              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setReviewImgIndex(metricsOffset + rowIndex); } }}>
+
                               <td>{r.frame_index}</td>
                               <td>{r.object_id}</td>
                               <td>{r.track_id}</td>

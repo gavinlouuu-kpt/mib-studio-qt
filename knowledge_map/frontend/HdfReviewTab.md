@@ -181,3 +181,15 @@ ROI on the preview. A late response for another source/index is not offered as
 the current background. Source/background selections remain App-owned drafts;
 the native job reopens the selected background and stores its pixels in output.
 Preview reads are bounded to 64 MiB and never replace the live Review reader.
+
+Saved valid/invalid images now expose the same five Qt contour/mask modes and
+saved ROI using the shared backend `ProcessingOverlay` renderer. Each explicit
+source/index request renders image, mask and classification together. Frontend
+requests are serial/coalesced and stale source responses are discarded. Metric
+pages validate source before and after reads plus latest-request generation;
+clicking or keyboard-activating a row selects its saved-image dataset row.
+Export options expose valid/invalid/both frame classes, optional inclusive image
+series range and isoelastic TIFF overlays. Reanalysis input budgets are adjustable
+(default 4096 frames/256 MiB; at most one million frames/16 GiB input); result and
+processing memory are additional. Publication uses platform no-replace rename
+(or hard-link fallback), preserving a concurrently created destination.

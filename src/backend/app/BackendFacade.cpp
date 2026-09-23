@@ -1503,6 +1503,19 @@ namespace backend::bridge
                 throw std::invalid_argument("Unknown frame selection");
             request.frames = frames == "valid" ? HdfExportFrames::Valid :
                              frames == "invalid" ? HdfExportFrames::Invalid : HdfExportFrames::Both;
+            if(input.contains("series")) {
+                const auto& series=input.at("series");
+                request.series.exportSeries=series.value("enabled",true);
+                const auto index=[&](const char* name) {
+                    if(!series.at(name).is_number_integer() || series.at(name)<0)throw std::invalid_argument("Series indices must be nonnegative integers");
+                    return series.at(name).get<size_t>();
+                };
+                if(series.contains("start"))request.series.startInclusive=index("start");
+                if(series.contains("end")) {
+                    request.series.endInclusive=index("end");
+                    if(request.series.endInclusive<request.series.startInclusive)throw std::invalid_argument("Series end must not precede start");
+                }
+            }
             request.conversionFactor = input.value("conversion_factor", backend_.processing().getPixelToMicronFactor());
             if (!std::isfinite(request.conversionFactor) || request.conversionFactor <= 0)
                 throw std::invalid_argument("Conversion factor must be finite and positive");

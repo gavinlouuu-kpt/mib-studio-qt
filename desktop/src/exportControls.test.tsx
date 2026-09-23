@@ -84,3 +84,13 @@ it("an idle poll started before acceptance cannot unlock an accepted export",asy
   await act(async()=>{await model.start("all",undefined);});
   expect(bridge.reviewExport).toHaveBeenCalledOnce();
 });
+
+it("passes explicit frame and series options to the native exporter",async()=>{
+  await act(async()=>{model.options.setFrames("valid");model.options.setSeriesStart("2");model.options.setSeriesEnd("5");model.options.setIsoelastic(false);});
+  await act(async()=>model.start("all"));
+  expect(bridge.reviewExport).toHaveBeenCalledWith(expect.objectContaining({frames:"valid",series:{enabled:true,start:2,end:5},isoelastic_overlays:false}));
+});
+it("rejects reversed series ranges without starting an export",async()=>{
+  await act(async()=>{model.options.setSeriesStart("5");model.options.setSeriesEnd("2");});
+  await act(async()=>model.start("images"));expect(bridge.reviewExport).not.toHaveBeenCalled();
+});

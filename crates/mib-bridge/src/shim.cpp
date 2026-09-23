@@ -1141,6 +1141,12 @@ BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
 rust::String BackendBridge::pulse_generator_status() {
     return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
 }
+rust::Vec<uint8_t> BackendBridge::render_review_overlay(rust::Str json) {
+    rust::Vec<uint8_t> output;
+    try {for(const auto byte:impl_->facade.renderReviewOverlayJson(toStd(json)))output.push_back(byte);}catch(const std::exception&) {}
+    return output;
+}
+
 BridgeFrame BackendBridge::fetch_review_reanalysis_preview(rust::Str json) {
     backend::bridge::BackendFrame frame;
     if(!impl_->facade.fetchReviewReanalysisPreviewJson(toStd(json),frame))return BridgeFrame{};

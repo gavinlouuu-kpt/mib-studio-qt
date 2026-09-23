@@ -826,6 +826,14 @@ fn fetch_review_frame_packet(state: State<AppState>, dataset: u32, index: String
 }
 
 #[tauri::command]
+fn render_review_overlay(state: State<AppState>, json: String) -> Result<Response, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let bytes = guard.pin_mut().render_review_overlay(&json);
+    if bytes.is_empty() { return Err("Saved image/mask unavailable for this source/index".into()); }
+    Ok(Response::new(bytes))
+}
+
+#[tauri::command]
 fn fetch_review_reanalysis_preview(state: State<AppState>, json: String) -> Result<Response, String> {
     let frame = {
         let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
@@ -1681,6 +1689,7 @@ pub fn run() {
             review_image_bytes,
             review_export_csv,
             review_export_json,
+            render_review_overlay,
             fetch_review_charts_json,
             fetch_review_reanalysis_preview,
             review_reanalysis_json,

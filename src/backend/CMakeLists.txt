@@ -41,6 +41,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ProcessingOverlay.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/PipelineTimingRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
