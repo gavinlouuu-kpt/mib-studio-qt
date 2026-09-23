@@ -524,3 +524,9 @@ without changing default Qt behavior. Tauri's reanalysis job uses these loaders,
 `ProcessingService::processBatch` and `saveMasksToHdf5`; no science is implemented
 in React. Its local processing configuration and ROI are per-job snapshots,
 never changes to realtime configuration.
+
+Tauri now exposes existing finite background calibration through BackendFacade JSON
+commands/status. The adapter validates positive bounded integers before narrowing,
+serializes start against experiment lifecycle, and preserves service-owned frozen
+recipe, empty-frame rejection, cancellation and atomic publication semantics. u64
+operation/config/background generations are decimal strings at the webview boundary.

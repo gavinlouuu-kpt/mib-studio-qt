@@ -376,6 +376,8 @@ export const bridge = {
   shellLog: (level: string, message: string) =>
     invoke<void>("shell_log", { level, message }),
   // Autofocus / nanopositioner (schema v11, BE-8).
+  backgroundCalibrationCommand: (request: Record<string, unknown>) => invokeCommand("background_calibration_command", {json: JSON.stringify(request)}),
+  backgroundCalibrationStatus: () => invoke<BackgroundCalibrationStatus>("background_calibration_status"),
   startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),
   startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
   pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
@@ -515,3 +517,5 @@ export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned
 
 export interface StartupDiscoveryStatus {valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
 interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
+
+export interface BackgroundCalibrationStatus {valid: boolean; state: string; operation_generation: string; frozen_config_version: string; attempted: number; accepted: number; rejected_non_empty: number; rejected_processing_failed: number; published_background_generation: string; published_sha256: string; message: string}

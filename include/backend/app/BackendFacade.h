@@ -845,6 +845,8 @@ namespace backend::bridge
                                                 std::size_t byteLen);
         BackendCommandResult clearBackgroundImage();
 
+        BackendCommandResult backgroundCalibrationCommandJson(const std::string &json);
+        std::string fetchBackgroundCalibrationStatusJson() const;
         std::string runStartupDiscoveryJson(const std::string &action);
         std::string fetchStartupDiscoveryStatusJson() const;
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);

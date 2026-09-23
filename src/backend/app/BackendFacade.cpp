@@ -2464,4 +2464,40 @@ BackendCommandResult BackendFacade::closeReview() {
     });
     return result;
 }
+BackendCommandResult BackendFacade::backgroundCalibrationCommandJson(const std::string& text) {
+    const auto type = BackendCommandType::ProcessingSettings;
+    if (!initialized_) return {false, type, "Backend is not initialized"};
+    if (text.size() > 4096) return {false, type, "Calibration request too large"};
+    try {
+        const auto json = nlohmann::json::parse(text);
+        const auto action = json.at("action").get<std::string>();
+        if (action == "cancel") {backend_.processing().cancelBackgroundCalibration(); return {true, type, "Calibration cancellation requested"};}
+        if (action != "start") return {false, type, "Unknown calibration action"};
+        const auto accepted = json.at("required_accepted").get<std::int64_t>();
+        const auto attempts = json.at("max_attempts").get<std::int64_t>();
+        const auto timeout = json.at("timeout_ms").get<std::int64_t>();
+        if (accepted < 1 || accepted > 100000 || attempts < accepted || attempts > 1000000 || timeout < 1 || timeout > 600000)
+            return {false, type, "Calibration bounds invalid (accepted <= 100000, attempts <= 1000000, timeout <= 600000 ms)"};
+        services::ProcessingService::BackgroundCalibrationRequest request;
+        request.requiredAccepted = static_cast<std::uint32_t>(accepted);
+        request.maxAttempts = static_cast<std::uint32_t>(attempts);
+        request.timeoutMs = static_cast<std::uint64_t>(timeout);
+        BackendCommandResult result{false, type, "Experiment must be idle for background calibration"};
+        backend_.experiment().withIdleConfiguration([&] {
+            result.ok = backend_.processing().startBackgroundCalibration(request, &result.message);
+            if (result.ok) result.message = "Background calibration started; previous background remains active until success";
+        });
+        return result;
+    } catch (const std::exception& error) {return {false, type, error.what()};}
+}
+std::string BackendFacade::fetchBackgroundCalibrationStatusJson() const {
+    if (!initialized_) return R"({"valid":false})";
+    const auto status = backend_.processing().backgroundCalibrationStatus();
+    static constexpr const char* names[] = {"idle", "running", "succeeded", "failed_insufficient", "failed_timeout", "failed_processing", "cancelled"};
+    return nlohmann::json{{"valid", true}, {"state", names[static_cast<int>(status.state)]},
+        {"operation_generation", std::to_string(status.operationGeneration)}, {"frozen_config_version", std::to_string(status.frozenConfigVersion)},
+        {"attempted", status.attempted}, {"accepted", status.accepted}, {"rejected_non_empty", status.rejectedNonEmpty},
+        {"rejected_processing_failed", status.rejectedProcessingFailed}, {"published_background_generation", std::to_string(status.publishedBackgroundGeneration)},
+        {"published_sha256", status.publishedSha256}, {"message", status.message}}.dump();
+}
 }

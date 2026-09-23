@@ -1107,6 +1107,9 @@ BridgeFrame BackendBridge::fetch_review_image(std::uint32_t dataset, std::uint64
     return toBridgeFrame(frame);
 }
 
+BridgeCommandResult BackendBridge::background_calibration_command(rust::Str json) { return toBridgeResult(impl_->facade.backgroundCalibrationCommandJson(toStd(json))); }
+rust::String BackendBridge::background_calibration_status() { return rust::String(impl_->facade.fetchBackgroundCalibrationStatusJson()); }
+
 rust::String BackendBridge::startup_discovery_run(rust::Str action) { return rust::String(impl_->facade.runStartupDiscoveryJson(toStd(action))); }
 rust::String BackendBridge::startup_discovery_status() { return rust::String(impl_->facade.fetchStartupDiscoveryStatusJson()); }
 

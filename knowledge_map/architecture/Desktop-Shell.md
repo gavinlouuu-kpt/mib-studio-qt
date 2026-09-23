@@ -340,3 +340,12 @@ Review Close File now calls the shared facade rather than a disabled placeholder
 The facade rejects active recording/experiment and clears cached source identity;
 the shell clears review pixels/metrics only after successful closure. Startup
 selection completion refreshes the camera selection in the main shell.
+
+### Finite background calibration
+
+`BackgroundCalibrationControls` exposes the shared realtime calibration operation:
+required empty frames, maximum examined frames, finite timeout, progress/rejection
+counts, cancellation and published generation/SHA-256. An experiment must be Idle to
+start; cancellation remains possible later. Scheduling success is not publication,
+and a failed/cancelled candidate never replaces the previous background. Mount this
+component with `onPublished` refreshing processing/background state.

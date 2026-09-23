@@ -113,6 +113,10 @@ int main()
             return 2;
         }
 
+        if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":0,"max_attempts":200,"timeout_ms":5000})").ok) return 74;
+        if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":10,"max_attempts":5,"timeout_ms":5000})").ok) return 75;
+        if (!facade.backgroundCalibrationCommandJson(R"({"action":"cancel"})").ok) return 76;
+        if (facade.fetchBackgroundCalibrationStatusJson().find("\"valid\":true") == std::string::npos) return 77;
         // Invalid hardware requests must be rejected before any driver access.
         for (const auto* request : {R"({"action":"connect","port":"","address":1})",
                 R"({"action":"connect","port":"never-open","address":248})",
@@ -260,6 +264,7 @@ int main()
             return 23;
         }
         if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
+        if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":10,"max_attempts":200,"timeout_ms":5000})").ok) return 78;
         // Config transactions must not change the frozen run authority.
         const auto configPath = (dataDir / "checked-config.json").string();
         std::ofstream(configPath) << "{}";
