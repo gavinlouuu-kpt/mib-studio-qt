@@ -379,3 +379,11 @@ required SHA256 checksums, app version bounds and active processing-contract com
 before publishing; updates require the existing revision/profile identity and preserve
 the complete old directory under a hidden `.backup-*` path. An update never changes runtime
 settings, and an obsolete startup pointer consequently requires an explicit apply.
+
+### Packaged resource roots
+
+The Tauri shell passes its resolved read-only resource directory separately from the
+writable application data directory through `initialize_with_resources`. Bundles include
+the default configuration and isoelastic LUT resources; backend model/LUT lookup no
+longer assumes the application data directory is beside the executable. Legacy Qt
+initialization retains its existing data-parent fallback.

@@ -476,6 +476,15 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "capture a background (Set Background / calibration)"));
     }
 
+    if (backend_.processing().backgroundCalibrationStatus().state ==
+        services::ProcessingService::BackgroundCalibrationState::Running) {
+        r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Fail,
+                               "background calibration is still running",
+                               "wait for completion or cancel calibration before starting"));
+    } else {
+        r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Pass));
+    }
+
     // --- trigger / strobe --------------------------------------------------
     if (!c.triggerRequired) {
         r.gates.push_back(gate("trigger.output", GateStatus::NotRequired, "target-group sorting disabled"));

@@ -196,3 +196,7 @@ explicit realtime enable/start and disable/stop and serialize with the idle
 configuration gate. The headless lifecycle regression asserts an enabled,
 running consumer immediately after Start; native webview acceptance also checks
 nonzero persisted accounting.
+
+Readiness also blocks while bounded background calibration is running, preventing
+a later publication from replacing a background after experiment configuration
+is frozen. Cancellation/completion restores this gate.

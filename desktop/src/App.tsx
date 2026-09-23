@@ -883,7 +883,7 @@ export default function App() {
   // Warnings = unresolved attention items surfaced by preflight + quality.
   const warningsCount = preflight.failed + preflight.warning + quality.warn + quality.fail;
   const contextFacts: ContextBarFacts = {
-    profileName: "", // Experiment Profile management not bridged yet (UX-2 #306)
+    profileName: profiles.activeProfile?.profile_id || profiles.activeProfile?.name || "",
     cameraConfigured,
     cameraRunning: running,
     cameraLabel: camSelection?.label || (camSelection?.mode === 1 ? "Mock camera" : ""),

@@ -510,7 +510,7 @@ namespace backend
         // Initialize YOLO service - resolve model path relative to data directory
         // dataDir is typically {exeDir}/data, so we go up one level to get exeDir
         std::filesystem::path dataPath(dataDir);
-        std::filesystem::path exeDir = dataPath.parent_path();
+        std::filesystem::path exeDir = resourceRoot_.empty() ? dataPath.parent_path() : std::filesystem::path(resourceRoot_);
         std::filesystem::path modelPath = exeDir / "resources" / "models" / "yolo11n-seg.onnx";
         if (bootYolo)
         {

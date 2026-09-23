@@ -108,7 +108,8 @@ fn init(
         data_dir
     };
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().initialize(&dir))
+    let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().initialize_with_resources(&dir, &resources.to_string_lossy()))
 }
 
 #[tauri::command]

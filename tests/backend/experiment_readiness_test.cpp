@@ -599,6 +599,8 @@ int main()
         req.requiredAccepted = 5;
         req.maxAttempts = 50;
         MIB_REQUIRE(proc.startBackgroundCalibration(req), "start cancel calibration");
+        MIB_EXPECT(statusOf(coord.evaluateReadiness(out1), "processing.backgroundCalibration") == GateStatus::Fail,
+                   "pending calibration must block a frozen experiment start");
         pushEmpty();
         proc.cancelBackgroundCalibration();
         const auto st = proc.backgroundCalibrationStatus();

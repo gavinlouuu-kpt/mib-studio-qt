@@ -526,6 +526,7 @@ pub mod ffi {
         fn bridge_abi_version() -> u32;
 
         fn initialize(self: Pin<&mut BackendBridge>, data_dir: &str) -> bool;
+        fn initialize_with_resources(self: Pin<&mut BackendBridge>, data_dir: &str, resource_root: &str) -> bool;
         fn shutdown(self: Pin<&mut BackendBridge>);
         fn is_initialized(&self) -> bool;
 

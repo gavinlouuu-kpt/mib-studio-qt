@@ -784,7 +784,7 @@ namespace backend::bridge
         BackendFacade(const BackendFacade &) = delete;
         BackendFacade &operator=(const BackendFacade &) = delete;
 
-        bool initialize(const std::string &dataDir);
+        bool initialize(const std::string &dataDir, const std::string &resourceRoot = {});
         void shutdown();
         bool isInitialized() const;
 

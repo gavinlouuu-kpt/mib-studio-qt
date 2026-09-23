@@ -50,6 +50,7 @@ public:
     BackendBridge& operator=(const BackendBridge&) = delete;
 
     bool initialize(rust::Str data_dir);
+    bool initialize_with_resources(rust::Str data_dir, rust::Str resource_root);
     void shutdown();
     bool is_initialized() const;
 

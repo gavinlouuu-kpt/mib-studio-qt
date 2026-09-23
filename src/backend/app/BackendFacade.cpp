@@ -169,13 +169,14 @@ namespace backend::bridge
         backend_.setBackgroundCaptureCallback({});
     }
 
-    bool BackendFacade::initialize(const std::string &dataDir)
+    bool BackendFacade::initialize(const std::string &dataDir, const std::string &resourceRoot)
     {
         if (initialized_)
         {
             return true;
         }
 
+        if (!resourceRoot.empty()) backend_.setResourceRoot(resourceRoot);
         if (!backend_.initialize(dataDir))
         {
             emitEvent(BackendErrorEvent{

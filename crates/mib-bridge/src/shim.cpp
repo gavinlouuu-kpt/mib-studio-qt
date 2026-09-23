@@ -465,6 +465,13 @@ bool BackendBridge::initialize(rust::Str data_dir) {
     }
 }
 
+bool BackendBridge::initialize_with_resources(rust::Str data_dir, rust::Str resource_root) {
+    try {
+        if (!impl_->facade.initialize(toStd(data_dir), toStd(resource_root))) return false;
+        impl_->installSink(); return true;
+    } catch (...) { return false; }
+}
+
 void BackendBridge::shutdown() {
     try {
         impl_->facade.shutdown();
