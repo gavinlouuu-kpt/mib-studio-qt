@@ -517,3 +517,7 @@ publication, signing infrastructure and real-installer acceptance remain release
 ### Qt-free Conan graph
 
 The root Conan recipe defaults `with_qt=True` to preserve Qt builds. The Windows Tauri candidate explicitly supplies `-o '&:with_qt=False'`; backend libraries retain all existing version pins, while Qt and its Linux-only xkbcommon/Wayland overrides are omitted. `tools/test_conan_recipe.py`, run using the Python environment containing Conan 2, verifies the default and disabled graphs' direct requirements without network access. Full dependency resolution still needs the pinned recipes/binaries in cache or configured remotes.
+
+### Portable camera-document Save As
+
+Camera editors stage bounded validated content in a randomized `tempfile::NamedTempFile` in the destination directory, sync file data, then use `persist_noclobber` for Save As. The maintained tempfile implementation uses non-replacing `MoveFileExW` on Windows (including filesystems without hard links) and native no-replace rename where supported on Unix; unavailable safe publication remains an error rather than an overwrite fallback. Existing Save retains its revision recheck and file permissions before replacement. RAII removes staging files on failure. Tests cover exact Unicode/revision roundtrip, existing file/directory conflicts, concurrent creators, bounded input and legacy staging-name collisions. Removable-media hardware/mount testing is not claimed.

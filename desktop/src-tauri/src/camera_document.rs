@@ -35,10 +35,20 @@ fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<Cam
             if !creating && revision(&old)!=baseline{return Err("Camera file changed on disk; reload and reconcile your draft".into());}
             if text.len()>LIMIT{return Err("Camera document exceeds 4 MiB".into());}
             if kind=="json" && !serde_json::from_str::<serde_json::Value>(text).map_err(|e|e.to_string())?.is_object(){return Err("MindVision JSON must be an object".into());}
-            let temporary=path.with_extension(format!("{}.{}.tmp",kind,std::process::id()));
-            let mut f=fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|e|e.to_string())?;
-            let save=(||{f.write_all(text.as_bytes())?;f.sync_all()?;if !creating{fs::set_permissions(&temporary,fs::metadata(&path)?.permissions())?;}drop(f);if creating{fs::hard_link(&temporary,&path)?;fs::remove_file(&temporary)}else{if revision(&read(&path).map_err(std::io::Error::other)?)!=baseline{return Err(std::io::Error::other("Camera file changed during save"));}fs::rename(&temporary,&path)}})();
-            if let Err(error)=save{let _=fs::remove_file(&temporary);return Err(error.to_string());}
+            // Staging and destination share a filesystem. RAII removes the staging
+            // file on write/sync, revision-check or publication failure.
+            let mut temporary=tempfile::NamedTempFile::new_in(path.parent().ok_or("Missing parent folder")?).map_err(|e|e.to_string())?;
+            temporary.write_all(text.as_bytes()).map_err(|e|e.to_string())?;
+            temporary.as_file().sync_all().map_err(|e|e.to_string())?;
+            if creating {
+                // Native no-replace rename where supported (including Windows
+                // FAT/exFAT); never emulate this using an existence-check+rename.
+                temporary.persist_noclobber(&path).map_err(|e|e.to_string())?;
+            } else {
+                temporary.as_file().set_permissions(fs::metadata(&path).map_err(|e|e.to_string())?.permissions()).map_err(|e|e.to_string())?;
+                if revision(&read(&path)?)!=baseline{return Err("Camera file changed during save".into());}
+                temporary.persist(&path).map_err(|e|e.to_string())?;
+            }
             text.to_owned()
         },
         _=>return Err("Unsupported camera document action".into())
@@ -64,4 +74,64 @@ mod tests {
         let defaults=transact("default","","json","","").unwrap();assert!(defaults.path.is_empty());assert!(serde_json::from_str::<serde_json::Value>(&defaults.text).unwrap().is_object());
         fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn save_as_roundtrips_and_failed_publication_removes_staging() {
+        let dir=tempfile::tempdir().unwrap();
+        let path=dir.path().join("camera.json");
+        let text="{\"script\":\"unicode µ and precise 1.2345\"}";
+        let result=transact("create",path.to_str().unwrap(),"json","",text).unwrap();
+        assert_eq!(result.text,text);assert_eq!(result.revision,revision(text));
+        assert_eq!(fs::read_to_string(&path).unwrap(),text);
+        assert!(transact("create",path.to_str().unwrap(),"json","","{}").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(),text);
+        let directory=dir.path().join("directory.json");fs::create_dir(&directory).unwrap();
+        assert!(transact("create",directory.to_str().unwrap(),"json","","{}").is_err());
+        assert!(directory.is_dir());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(),2,"failed persistence cleans every temporary file");
+    }
+    #[test]
+    fn save_as_is_bounded_and_not_blocked_by_legacy_staging_name() {
+        let dir=tempfile::tempdir().unwrap();let path=dir.path().join("camera.js");
+        let old=path.with_extension(format!("js.{}.tmp",std::process::id()));
+        fs::write(&old,"stale unrelated draft").unwrap();
+        assert!(transact("create",path.to_str().unwrap(),"js","",&"x".repeat(LIMIT+1)).is_err());
+        assert!(!path.exists());assert_eq!(fs::read_dir(dir.path()).unwrap().count(),1);
+        transact("create",path.to_str().unwrap(),"js","","// new script").unwrap();
+        assert_eq!(fs::read_to_string(old).unwrap(),"stale unrelated draft");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(),2);
+    }
+    #[test]
+    fn simultaneous_save_as_has_exactly_one_winner_and_no_partial_file() {
+        // A mutex/barrier regression must fail finitely rather than hang CI.
+        let (_watchdog_stop, watchdog_wait)=std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move||{
+            if matches!(watchdog_wait.recv_timeout(std::time::Duration::from_secs(20)),Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+                eprintln!("Camera document concurrent-create watchdog expired");
+                std::process::abort();
+            }
+        });
+        let dir=tempfile::tempdir().unwrap();let path=dir.path().join("camera.json");
+        let barrier=std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles:Vec<_>=["{\"writer\":1}","{\"writer\":2}"].into_iter().map(|text|{
+            let barrier=barrier.clone();let path=path.clone();
+            std::thread::spawn(move||{barrier.wait();transact("create",path.to_str().unwrap(),"json","",text).is_ok()})
+        }).collect();
+        assert_eq!(handles.into_iter().map(|handle|usize::from(handle.join().unwrap())).sum::<usize>(),1);
+        let saved=fs::read_to_string(path).unwrap();
+        assert!(saved=="{\"writer\":1}" || saved=="{\"writer\":2}");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(),1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir=tempfile::tempdir().unwrap();let path=dir.path().join("camera.js");
+        fs::write(&path,"old").unwrap();
+        fs::set_permissions(&path,fs::Permissions::from_mode(0o640)).unwrap();
+        transact("save",path.to_str().unwrap(),"js",&revision("old"),"new").unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777,0o640);
+        assert_eq!(fs::read_to_string(path).unwrap(),"new");
+    }
+
 }
