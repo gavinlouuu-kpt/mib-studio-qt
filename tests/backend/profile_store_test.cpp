@@ -3,6 +3,7 @@
 #include "support/assert.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/processing/ProcessingCoreLoader.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 #include <nlohmann/json.hpp>
@@ -104,8 +105,61 @@ int main() {
     MIB_EXPECT(!rejected["ok"] &&
                    backend.processing().getProcessingConfig().area_threshold_min == 42,
                "later invalid calibration cannot partially apply processing");
+    auto selected = call({{"operation", "selection"}});
+    MIB_EXPECT(selected["selection"]["name"] == "runtime" &&
+                   selected["active_profile"]["name"] == "runtime",
+               "selected pointer and actual runtime provenance are independently retrievable");
+    backend.setLastConfigJson("{}");
+    backend.processing().setPixelToMicronFactor(1.0);
+    auto restored = call({{"operation", "restore"}});
+    MIB_EXPECT(restored["ok"] && restored["restored"] &&
+                   backend.processing().getPixelToMicronFactor() == 0.7,
+               "startup pointer restores unchanged settings without script execution");
+    std::ofstream(std::filesystem::path(base) / "runtime" / "config.json")
+        << R"({"pixel_to_micron_factor":0.9})";
+    auto staleRestore = call({{"operation", "restore"}});
+    MIB_EXPECT(!staleRestore["ok"] && backend.processing().getPixelToMicronFactor() == 0.7,
+               "startup refuses changed profile revision");
     const auto listed = call({{"operation", "list"}});
     MIB_EXPECT(listed["profiles"].size() == 4, "archives and malformed entries excluded");
+    const auto sha = [](const std::string& text) {
+        return backend::processing::processingCoreBytesSha256(
+            reinterpret_cast<const uint8_t*>(text.data()), text.size());
+    };
+    const std::string remote1 = R"({"config_schema_version":1,"pixel_to_micron_factor":0.5})";
+    J entry = {{"profile_id", "managed"},       {"revision", "r1"},
+               {"config_sha256", sha(remote1)}, {"app_min_version", "0.0.1"},
+               {"app_max_version", nullptr},    {"processing_contract_version", nullptr}};
+    J remote = {{"operation", "install_remote"},
+                {"name", "managed"},
+                {"entry", entry},
+                {"document_json", remote1},
+                {"script", nullptr}};
+    auto installed = call(remote);
+    MIB_REQUIRE(installed["ok"], installed.dump());
+    MIB_EXPECT(backend.processing().getPixelToMicronFactor() == 0.7,
+               "remote installation does not apply");
+    remote["baseline"] = installed["profile"]["revision"];
+    remote["document_json"] = "{}";
+    auto badChecksum = call(remote);
+    MIB_EXPECT(!badChecksum["ok"] &&
+                   call({{"operation", "read"}, {"name", "managed"}})["profile"]["revision"] ==
+                       installed["profile"]["revision"],
+               "checksum failure cannot modify existing profile");
+    remote["entry"]["config_sha256"] = sha("{}");
+    remote["entry"]["revision"] = "r2";
+    auto updated = call(remote);
+    MIB_REQUIRE(updated["ok"], updated.dump());
+    MIB_EXPECT(
+        std::filesystem::exists(std::filesystem::path(updated["backup_path"].get<std::string>()) /
+                                "config.json"),
+        "remote update keeps complete old directory backup");
+    MIB_EXPECT(!call(remote)["ok"], "stale update baseline rejected");
+    remote["name"] = "future";
+    remote["entry"]["app_min_version"] = "999999.0.0";
+    MIB_EXPECT(!call(remote)["ok"] &&
+                   !std::filesystem::exists(std::filesystem::path(base) / "future"),
+               "incompatible app version rejected before writing");
     backend.shutdown();
     return mib::test::exitCode();
 }

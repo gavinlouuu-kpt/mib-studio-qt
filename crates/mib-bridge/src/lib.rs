@@ -522,6 +522,7 @@ pub mod ffi {
 
         /// Schema version of the command/event contract (ADR 0003). Additive
         /// changes bump this.
+        fn profile_fetch_url(url: &str) -> String;
         fn bridge_abi_version() -> u32;
 
         fn initialize(self: Pin<&mut BackendBridge>, data_dir: &str) -> bool;

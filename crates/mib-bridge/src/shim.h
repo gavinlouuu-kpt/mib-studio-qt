@@ -160,6 +160,7 @@ private:
 };
 
 std::unique_ptr<BackendBridge> new_backend_bridge();
+rust::String profile_fetch_url(rust::Str url);
 std::uint32_t bridge_abi_version();
 
 } // namespace mib_bridge

@@ -392,12 +392,17 @@
       "duplicate",
       "rename",
       "archive",
-      "apply"
+      "apply",
+      "selection",
+      "restore",
+      "install_remote"
     ],
     "identity": "SHA256 over exact config.json, optional egrabberConfig.js and profile.meta.json bytes; baseline required for duplicate, rename, archive and apply",
     "persistence": "Create stages a complete new directory; existing names never overwrite. Archive renames to hidden recoverable directory. Caller selects base directory. Changes serialize with experiment idle guard; not a cross-process CAS.",
     "activation": "Stopped capture/realtime and disabled autofocus; validate all supported settings before mutation; processing/buffer/realtime/delivery/calibration/autofocus configuration/validated ROI only; no hardware connection or script execution",
-    "response": "ok, error?; profiles/warnings for list; profile for read/create/duplicate/rename; applied/message/profile_id/display_fps for apply; destination for archive; saved after create publication"
+    "response": "ok, error?; profiles/warnings for list; profile for read/create/duplicate/rename; applied/message/profile_id/display_fps for apply; destination for archive; saved after create publication",
+    "startup": "Successful apply persists .selection.json. Restore only exact aggregate revision; selection returns separate saved choice and actual runtime profile_selection provenance.",
+    "remote": "profile_fetch_url HTTP(S), no credentials or redirects, 4 MiB, finite timeout; asynchronous outside bridge mutex. install_remote verifies SHA256, app version and processing contract, requires baseline/identity for replacement, preserves hidden full-directory backup, never applies settings."
   },
   "review_reanalysis_json": {
     "request": {

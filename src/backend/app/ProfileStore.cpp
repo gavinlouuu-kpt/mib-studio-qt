@@ -15,6 +15,13 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <sstream>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <fcntl.h>
+#endif
 namespace backend::app {
 namespace {
 namespace fs = std::filesystem;
@@ -64,6 +71,7 @@ J snapshot(const fs::path& base, const std::string& name) {
         if (std::string(file) == "profile.meta.json" && exists) j["metadata"] = J::parse(bytes);
         if (std::string(file) == "egrabberConfig.js") j["script"] = exists ? J(bytes) : J(nullptr);
     }
+    j["profile_id"] = j.contains("metadata") ? j["metadata"].value("profile_id", name) : name;
     j["revision"] = processing::processingCoreBytesSha256(
         reinterpret_cast<const uint8_t*>(hashed.data()), hashed.size());
     return j;
@@ -81,31 +89,48 @@ int integer(const J& root, const char* key, int fallback, int low, int high) {
         throw std::runtime_error(std::string("Expected integer: ") + key);
     return static_cast<int>(number(root, key, fallback, low, high));
 }
+std::vector<unsigned> version(const std::string& text) {
+    std::vector<unsigned> parts;
+    std::istringstream in(text);
+    std::string part;
+    while (std::getline(in, part, '.')) {
+        if (part.empty() || part.size() > 9 ||
+            !std::all_of(part.begin(), part.end(), [](unsigned char c) { return std::isdigit(c); }))
+            throw std::runtime_error("Unsupported application version syntax");
+        parts.push_back(static_cast<unsigned>(std::stoul(part)));
+    }
+    if (parts.empty() || parts.size() > 4)
+        throw std::runtime_error("Unsupported application version syntax");
+    parts.resize(4);
+    return parts;
+}
+void compatibility(AppBackend& backend, const J& meta) {
+    if (!meta.is_object()) throw std::runtime_error("Profile metadata must be an object");
+    const int contract =
+        !meta.contains("processing_contract_version") ||
+                meta.at("processing_contract_version").is_null()
+            ? 0
+            : integer(meta, "processing_contract_version", 0, 0, std::numeric_limits<int>::max());
+    if (contract && static_cast<uint32_t>(contract) !=
+                        backend.processing().activeProcessingCoreIdentity().contractVersion)
+        throw std::runtime_error("Profile processing contract is incompatible with active core");
+    const auto current = version(MIB_STUDIO_QT_VERSION);
+    for (const auto* key : {"app_min_version", "app_max_version"})
+        if (meta.contains(key) && !meta.at(key).is_null()) {
+            const auto text = meta.at(key).get<std::string>();
+            if (text.empty()) continue;
+            const auto bound = version(text);
+            if ((std::string(key) == "app_min_version" && current < bound) ||
+                (std::string(key) == "app_max_version" && current > bound))
+                throw std::runtime_error("Profile is incompatible with this application version");
+        }
+}
 J apply(AppBackend& backend, const J& snapshot) {
     if (backend.capture().isRunning() || backend.autofocus().isEnabled() ||
         backend.processing().isRealtimeRunning())
         throw std::runtime_error(
             "Stop capture/realtime processing and disable autofocus before applying a profile");
-    if (snapshot.contains("metadata")) {
-        const auto& meta = snapshot.at("metadata");
-        if (!meta.is_object()) throw std::runtime_error("Profile metadata must be an object");
-        const int contract = !meta.contains("processing_contract_version") ||
-                                     meta.at("processing_contract_version").is_null()
-                                 ? 0
-                                 : integer(meta, "processing_contract_version", 0, 0,
-                                           std::numeric_limits<int>::max());
-        if (contract && static_cast<uint32_t>(contract) !=
-                            backend.processing().activeProcessingCoreIdentity().contractVersion)
-            throw std::runtime_error(
-                "Profile processing contract is incompatible with active processing core");
-        if ((meta.contains("app_min_version") && !meta.at("app_min_version").is_null() &&
-             !meta.at("app_min_version").get<std::string>().empty()) ||
-            (meta.contains("app_max_version") && !meta.at("app_max_version").is_null() &&
-             !meta.at("app_max_version").get<std::string>().empty()))
-            throw std::runtime_error(
-                "This profile declares app-version bounds; remote compatibility verification is "
-                "not implemented. Review and duplicate as local before applying.");
-    }
+    if (snapshot.contains("metadata")) compatibility(backend, snapshot.at("metadata"));
     const std::string bytes = snapshot.at("document_json");
     const auto root = J::parse(bytes);
     const auto schema = integer(root, "config_schema_version", 1, 1, 1);
@@ -221,6 +246,10 @@ J apply(AppBackend& backend, const J& snapshot) {
     for (const auto* key : {"ring_ratio_stale_ms", "require_new_sample_per_step",
                             "safe_shutdown_voltage", "focus_direction"})
         if (root.contains(key)) provenance[key] = root.at(key);
+    provenance["profile_selection"] = {{"name", snapshot.at("name")},
+                                       {"path", snapshot.at("path")},
+                                       {"revision", snapshot.at("revision")},
+                                       {"profile_id", snapshot.at("profile_id")}};
     const auto provenanceBytes = provenance.dump();
     // Every field is parsed/validated before mutation. Running realtime is refused,
     // so setters cannot restart worker threads. No hardware actuation is issued.
@@ -237,10 +266,10 @@ J apply(AppBackend& backend, const J& snapshot) {
     return {
         {"applied", true},
         {"display_fps", fps},
-        {"profile_id", snapshot.at("name")},
+        {"profile_id", snapshot.at("profile_id")},
         {"message",
          "Applied processing, buffer, realtime, delivery, calibration, autofocus configuration and "
-         "validated ROI. Camera script, discovery/connection and startup selection are separate."}};
+         "validated ROI. No camera script or device connection was executed."}};
 }
 void write(const fs::path& p, const std::string& bytes) {
     std::ofstream f(p, std::ios::binary | std::ios::trunc);
@@ -250,6 +279,37 @@ void write(const fs::path& p, const std::string& bytes) {
     f.close();
     if (!f) throw std::runtime_error("Profile close failed");
 }
+void selectionWrite(const fs::path& base, const J& value) {
+    // Selection is a single tiny atomic pointer, never partial profile bytes.
+    static std::atomic<unsigned long long> seq{0};
+    auto tmp = base / (".selection-tmp-" +
+                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                       "-" + std::to_string(++seq));
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() {
+            std::error_code e;
+            fs::remove(p, e);
+        }
+    } cleanup{tmp};
+    write(tmp, value.dump());
+#ifdef _WIN32
+    if (!MoveFileExW(tmp.c_str(), (base / ".selection.json").c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        throw std::runtime_error("Settings applied but startup selection persistence failed");
+#else
+    fs::rename(tmp, base / ".selection.json");
+#endif
+}
+J selectionRead(const fs::path& base) {
+    if (!fs::exists(base / ".selection.json")) return nullptr;
+    const auto value = J::parse(read(base / ".selection.json"));
+    if (!value.is_object() || !value.contains("name") || !value.contains("revision"))
+        throw std::runtime_error("Invalid saved profile selection");
+    if (value.at("name") == "") return nullptr;
+    return value;
+}
+
 } // namespace
 std::string profileStoreCommand(AppBackend& backend, const std::string& baseString,
                                 const std::string& request) {
@@ -263,7 +323,24 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
         const fs::path base = fs::absolute(baseString).lexically_normal();
         if (fs::is_symlink(fs::symlink_status(base)))
             throw std::runtime_error("Profile root cannot be a symlink");
-        if (op == "list") {
+        if (op == "selection") {
+            result["selection"] = selectionRead(base);
+            auto runtime =
+                J::parse(backend.getLastConfigJson().empty() ? "{}" : backend.getLastConfigJson());
+            result["active_profile"] = runtime.value("profile_selection", J(nullptr));
+        } else if (op == "restore") {
+            const auto selection = selectionRead(base);
+            if (selection.is_null()) {
+                result["restored"] = false;
+            } else {
+                const auto profile = snapshot(base, selection.at("name").get<std::string>());
+                if (profile.at("revision") != selection.at("revision"))
+                    throw std::runtime_error("Startup profile changed; review it before applying");
+                result.update(apply(backend, profile));
+                result["profile"] = profile;
+                result["restored"] = true;
+            }
+        } else if (op == "list") {
             result["profiles"] = J::array();
             result["warnings"] = J::array();
             if (fs::exists(base))
@@ -299,10 +376,15 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
                 if (q.value("baseline", "") != s.at("revision").get<std::string>())
                     throw std::runtime_error("Profile changed; reload before applying");
                 result.update(apply(backend, s));
-            } else if (op == "create" || op == "duplicate") {
+                selectionWrite(
+                    base, {{"name", name}, {"revision", s.at("revision")}, {"path", s.at("path")}});
+                result["selection_saved"] = true;
+            } else if (op == "create" || op == "duplicate" || op == "install_remote") {
                 fs::create_directories(base);
                 std::string document, script;
                 bool hasScript = false;
+                J metadata;
+                fs::path backup;
                 if (op == "duplicate") {
                     const auto s = snapshot(base, q.at("source").get<std::string>());
                     if (q.value("baseline", "") != s.at("revision").get<std::string>())
@@ -319,8 +401,54 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
                         hasScript = true;
                     }
                 }
+                if (op == "install_remote") {
+                    const auto entry = q.at("entry");
+                    compatibility(backend, entry);
+                    const auto identity = entry.at("profile_id").get<std::string>();
+                    if (identity.empty())
+                        throw std::runtime_error("Remote profile has no identity");
+                    const auto sha = [](const std::string& bytes) {
+                        return processing::processingCoreBytesSha256(
+                            reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+                    };
+                    auto expected = entry.at("config_sha256").get<std::string>();
+                    std::transform(expected.begin(), expected.end(), expected.begin(),
+                                   [](unsigned char c) { return std::tolower(c); });
+                    if (expected.size() != 64 || expected != sha(document))
+                        throw std::runtime_error(
+                            "Remote config SHA256 mismatch or missing checksum");
+                    if (hasScript) {
+                        auto scriptHash = entry.at("camera_script_sha256").get<std::string>();
+                        std::transform(scriptHash.begin(), scriptHash.end(), scriptHash.begin(),
+                                       [](unsigned char c) { return std::tolower(c); });
+                        if (scriptHash.size() != 64 || scriptHash != sha(script))
+                            throw std::runtime_error(
+                                "Remote script SHA256 mismatch or missing checksum");
+                    }
+                    metadata = entry;
+                    metadata["profile_meta_schema_version"] = 1;
+                    metadata["source"] = {{"type", "r2-public-catalog"},
+                                          {"channel", q.value("channel", "stable")},
+                                          {"catalog_url", q.value("catalog_url", "")}};
+                    metadata["config_sha256"] = sha(document);
+                    metadata["camera_script_sha256"] = hasScript ? sha(script) : "";
+                    if (fs::exists(base / name)) {
+                        const auto old = snapshot(base, name);
+                        if (q.value("baseline", "") != old.at("revision"))
+                            throw std::runtime_error(
+                                "Profile changed; reload before remote update");
+                        if (!old.contains("metadata") ||
+                            old["metadata"].value("profile_id", "") != identity)
+                            throw std::runtime_error(
+                                "Remote update identity differs; install under a new name");
+                        backup = base /
+                                 (".backup-" + name + "-" +
+                                  std::to_string(
+                                      std::chrono::system_clock::now().time_since_epoch().count()));
+                    }
+                }
                 if (script.size() > limit) throw std::runtime_error("Camera script exceeds 4 MiB");
-                if (fs::exists(base / name))
+                if (fs::exists(base / name) && backup.empty())
                     throw std::runtime_error("Profile already exists; choose a new name");
                 static std::atomic<unsigned long long> seq{0};
                 auto staging =
@@ -339,8 +467,19 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
                 } cleanup{staging};
                 write(staging / "config.json", document);
                 if (hasScript) write(staging / "egrabberConfig.js", script);
+                if (!metadata.is_null()) write(staging / "profile.meta.json", metadata.dump(2));
+                if (!backup.empty()) fs::rename(base / name, backup);
+                try {
+                    fs::rename(staging, base / name);
+                } catch (...) {
+                    if (!backup.empty()) {
+                        std::error_code ec;
+                        fs::rename(backup, base / name, ec);
+                    }
+                    throw;
+                }
+                if (!backup.empty()) result["backup_path"] = backup.string();
                 // New copies intentionally have no remote metadata: Qt will derive local identity.
-                fs::rename(staging, base / name);
                 result["saved"] = true;
                 result["profile"] = snapshot(base, name);
             } else if (op == "rename" || op == "archive") {
@@ -357,6 +496,16 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
                 if (fs::exists(base / destination))
                     throw std::runtime_error("Destination profile exists");
                 fs::rename(base / name, base / destination);
+                const auto selection = selectionRead(base);
+                if (!selection.is_null() && selection.at("name") == name) {
+                    if (op == "archive")
+                        selectionWrite(base, J{{"name", ""}, {"revision", ""}});
+                    else
+                        selectionWrite(base,
+                                       {{"name", destination},
+                                        {"revision", s.at("revision")},
+                                        {"path", (base / destination / "config.json").string()}});
+                }
                 result["destination"] = (base / destination).string();
                 if (op == "rename") result["profile"] = snapshot(base, destination);
             } else

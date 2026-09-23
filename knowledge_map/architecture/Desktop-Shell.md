@@ -308,13 +308,11 @@ Navigation retains drafts and pending commands; experiment-active operations are
 all supported settings before changing stopped runtime services: processing, buffers,
 realtime batches/mode, frame delivery, calibration, autofocus configuration, and ROI
 bounded to an available preview frame. No camera script is executed, device connected,
-or voltage actuated. Processing-contract metadata incompatibility fails closed; declared
-app-version bounds need catalog compatibility support and are currently refused (a
-reviewed local duplicate removes remote metadata). The saved processing editor remains
+or voltage actuated. Processing-contract metadata incompatibility fails closed; declared app-version bounds are checked against the compiled application version. The saved processing editor remains
 a separate checked persistence workflow and can open the selected profile's config.
 
-Remaining: remote catalog/diff/update workflow, startup-selected file restoration,
-profile ID propagation into experiment requests, and display-FPS presentation hookup.
+Remaining shell integration: profile ID propagation into experiment requests and
+display-FPS presentation hookup. Remote/startup workflows are described below.
 The profile apply reply returns `profile_id`/`display_fps` for those shell integrations;
 these are not falsely reported as backend-applied settings. Directory publication is
 atomic within the filesystem; revisions serialize this backend, not external Qt writes.
@@ -362,3 +360,22 @@ owned session. Desktop CI now runs this in addition to unit tests and launch smo
 Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
 The gate exposed and drove fixes for the disabled Start button and missing
 realtime processing consumer. It does not establish physical hardware timing.
+
+### Managed profiles and startup provenance
+
+`profile_command` now also supports `selection`, `restore` and `install_remote`.
+A successful explicit apply persists a small `.selection.json` pointer in the selected
+profiles folder; the App-owned hook restores it once after backend readiness, only when
+the config/script/metadata aggregate revision still matches. No scripts, device connects
+or hardware actuation are performed by restore. `selection` separately returns the saved
+startup choice and actual runtime `profile_selection` provenance; a saved choice alone
+is never evidence of application. External edits fail closed for explicit review/reapply.
+
+Catalog transport is bounded to 4 MiB/HTTP(S), has finite timeouts, no redirects or URL
+credentials, and runs outside the backend bridge mutex in Tauri's blocking pool.
+`profileCatalog.tsx` provides passive catalog checks, full config-field and camera-script
+diffs, explicit install/update and local-name selection. Backend installation verifies
+required SHA256 checksums, app version bounds and active processing-contract compatibility
+before publishing; updates require the existing revision/profile identity and preserve
+the complete old directory under a hidden `.backup-*` path. An update never changes runtime
+settings, and an obsolete startup pointer consequently requires an explicit apply.

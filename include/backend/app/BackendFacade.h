@@ -771,6 +771,7 @@ namespace backend::bridge
     class BackendFacade
     {
     public:
+        static std::string fetchProfileCatalogUrl(const std::string& url);
         std::string profileCommand(const std::string& base, const std::string& request);
         app::ConfigDocumentSnapshot fetchConfigDocument(const std::string& path) const;
         app::ProcessingConfigTransactionResult applyConfigDocument(const std::string& path, const std::string& baselineRevision, const std::string& patchJson);

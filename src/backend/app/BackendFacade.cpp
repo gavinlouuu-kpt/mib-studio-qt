@@ -1,5 +1,6 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ProfileStore.h"
+#include "backend/app/ProfileCatalog.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
 
@@ -2404,6 +2405,8 @@ std::string BackendFacade::fetchPulseGeneratorStatusJson() const {
         {"error", services::PulseGeneratorService::toString(status.lastError)}, {"port", config.portName},
         {"baud", config.serial.baudRate}, {"address", config.modbusAddress}, {"channels", channels}}.dump();
 }
+
+std::string BackendFacade::fetchProfileCatalogUrl(const std::string& url) { return app::fetchProfileUrl(url); }
 std::string BackendFacade::profileCommand(const std::string& base, const std::string& request) {
     if (!isInitialized()) return R"({"ok":false,"error":"Backend is not initialized"})";
     std::string result;

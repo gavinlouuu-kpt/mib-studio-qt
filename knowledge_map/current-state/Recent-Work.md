@@ -2264,3 +2264,8 @@ provenance. See the catch-up execution plan for verified vs pending gates.
   revisions and filesystem fault/stress coverage. Non-processing calibration/buffering/
   realtime/autofocus/ROI settings are validated before activation; remote/startup parity
   remains explicit in [[architecture/Desktop-Shell]].
+
+- 2026-09-23: Managed Tauri profile catalogs now offer passive checks, field/script diffs,
+  SHA256-verified installs/updates with complete backups, app/core compatibility gates,
+  and revision-pinned startup restoration. Runtime origin and saved startup choice are
+  separately retrievable; remote install never implicitly activates a profile.

@@ -31,3 +31,10 @@ pub fn profile_command(state: State<AppState>, base: String, request: String) ->
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().profile_command(&base, &request)).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn profile_fetch_url(url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        serde_json::from_str(&mib_bridge::ffi::profile_fetch_url(&url)).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}
