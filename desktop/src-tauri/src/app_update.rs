@@ -53,6 +53,40 @@ fn require_idle_locked(bridge:&mut cxx::UniquePtr<mib_bridge::ffi::BackendBridge
 fn idle(valid:bool,state:u32,capture:Option<bool>,recording:Option<bool>,jobs:&[serde_json::Value])->Result<(),String>{
  if !valid||![0,4].contains(&state)||capture!=Some(false)||recording!=Some(false)||jobs.iter().any(|j|!matches!(j["state"].as_str(),Some("idle"|"completed"|"cancelled"|"failed"|"succeeded"|"failed_insufficient"|"failed_timeout"|"failed_processing"))){return Err("Stop capture/recording and finish all experiments, exports, reanalysis and calibration before updating".into());}Ok(())
 }
+fn cache_files(root:&Path)->Result<Vec<(PathBuf,u64)>,String>{
+ if !root.exists(){return Ok(Vec::new());}
+ if !fs::symlink_metadata(root).map_err(|e|e.to_string())?.is_dir(){return Err("Installer cache is not a regular directory".into());}
+ let mut files=Vec::new();
+ for entry in fs::read_dir(root).map_err(|e|e.to_string())?{let entry=entry.map_err(|e|e.to_string())?;let metadata=fs::symlink_metadata(entry.path()).map_err(|e|e.to_string())?;if metadata.is_file(){files.push((entry.path(),metadata.len()));}}
+ Ok(files)
+}
+fn check_cache_budget(root:&Path,incoming:u64)->Result<(),String>{
+ let mut total=incoming;
+ for (_,size) in cache_files(root)?{total=total.checked_add(size).ok_or("Installer cache size overflow")?;}
+ if total>LIMIT{return Err("Installer cache would exceed 4 GiB. Close any external installers, then use Clear Installer Cache before verifying another package.".into());}Ok(())
+}
+fn owned_package(path:&Path)->bool{
+ let stem=path.file_stem().and_then(|x|x.to_str()).unwrap_or("");let ext=path.extension().and_then(|x|x.to_str()).unwrap_or("").to_ascii_lowercase();
+ stem.len()==64 && stem.bytes().all(|c|c.is_ascii_hexdigit()) && ["exe","msi","deb","rpm"].contains(&ext.as_str())
+}
+#[derive(Serialize)]
+pub struct CacheCleanup {removed:u64,failed:Vec<String>}
+fn clear_owned_cache(root:&Path)->Result<CacheCleanup,String>{clear_owned_cache_with(root,|path|fs::remove_file(path))}
+fn clear_owned_cache_with(root:&Path,mut remove:impl FnMut(&Path)->std::io::Result<()>)->Result<CacheCleanup,String>{
+ let mut result=CacheCleanup{removed:0,failed:Vec::new()};
+ for (path,_) in cache_files(root)?{if owned_package(&path){match remove(&path){Ok(())=>result.removed+=1,Err(e)=>result.failed.push(format!("{}: {}",path.file_name().unwrap_or_default().to_string_lossy(),e))}}}
+ Ok(result)
+}
+#[tauri::command]
+pub async fn clear_tauri_installer_cache(app:AppHandle,ui_idle:bool,confirmed:bool)->Result<CacheCleanup,String>{
+ if !ui_idle||!confirmed{return Err("Confirm external installers are closed and finish pending UI work before clearing the cache".into());}
+ tauri::async_runtime::spawn_blocking(move||{
+  require_idle(&app)?;let mut ticket=tickets().lock().map_err(|e|e.to_string())?;
+  let native=app.state::<AppState>();let mut bridge=native.bridge.lock().map_err(|e|e.to_string())?;require_idle_locked(&mut bridge)?;
+  *ticket=None;
+  clear_owned_cache(&app.path().app_cache_dir().map_err(|e|e.to_string())?.join("verified-app-installers"))
+ }).await.map_err(|e|e.to_string())?
+}
 fn copy_verified(source:&Path,destination:&Path,release:&Release)->Result<(),String>{
  let metadata=fs::symlink_metadata(source).map_err(|e|e.to_string())?;
  if !metadata.is_file()||metadata.len()!=release.installer_size_bytes{return Err("Installer must be a regular file with the published size".into());}
@@ -91,6 +125,7 @@ pub async fn verify_tauri_app_installer(app:AppHandle,token:String,path:String,u
  let extension=Path::new(https(&ticket.release.manifest.url)?.path()).extension().and_then(|x|x.to_str()).ok_or("Installer extension unavailable")?.to_owned();
  let destination=root.join(format!("{}.{extension}",ticket.token));
  if let Some(old)=ticket.staged.take(){let _=fs::remove_file(old);}
+ check_cache_budget(&root,ticket.release.installer_size_bytes)?;
  copy_verified(Path::new(&path),&destination,&ticket.release)?;if let Err(error)=require_idle(&app){let _=fs::remove_file(&destination);return Err(error);}ticket.staged=Some(destination);Ok(())
  }).await.map_err(|e|e.to_string())?
 }
@@ -111,6 +146,18 @@ pub async fn launch_tauri_app_installer(app:AppHandle,token:String,ui_idle:bool,
 mod tests {
  use super::*;
  fn fixture()->String{serde_json::json!({"version":"9.0.0","installer_url":"https://updates.yofo.bio/app.deb","installer_sha256":hex::encode(Sha256::digest(b"fixture")),"channel":"stable","artifact_family":"tauri","os":"linux","arch":"x86_64","installer_size_bytes":7}).to_string()}
+ #[test]fn cache_budget_and_cleanup_are_bounded_and_scoped(){
+  let root=std::env::temp_dir().join(format!("mib-cache-fixture-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));fs::create_dir(&root).unwrap();
+  let owned=root.join(format!("{}.deb","a".repeat(64)));fs::write(&owned,b"1234").unwrap();
+  let unrelated=root.join("operator-notes.txt");fs::write(&unrelated,b"12").unwrap();
+  let nested=root.join("nested");fs::create_dir(&nested).unwrap();fs::write(nested.join(format!("{}.exe","b".repeat(64))),b"keep").unwrap();
+  assert!(check_cache_budget(&root,LIMIT-6).is_ok());assert!(check_cache_budget(&root,LIMIT-5).is_err());
+  #[cfg(unix)]{std::os::unix::fs::symlink(&unrelated,root.join(format!("{}.rpm","c".repeat(64)))).unwrap();}
+  let blocked=clear_owned_cache_with(&root,|_|Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,"fixture locked installer"))).unwrap();assert_eq!(blocked.removed,0);assert_eq!(blocked.failed.len(),1);assert!(owned.exists());
+  let result=clear_owned_cache(&root).unwrap();assert_eq!(result.removed,1);assert!(result.failed.is_empty());assert!(unrelated.exists());assert!(nested.is_dir());assert!(!owned.exists());
+  #[cfg(unix)]assert!(fs::symlink_metadata(root.join(format!("{}.rpm","c".repeat(64)))).unwrap().file_type().is_symlink());
+  fs::remove_dir_all(root).unwrap();
+ }
  #[test]fn rejects_wrong_family_platform_version_and_transport(){let base:serde_json::Value=serde_json::from_str(&fixture()).unwrap();assert!(validate(&fixture(),"1.0.0","linux","x86_64").is_ok());for(key,value)in[("artifact_family","qt"),("os","windows"),("arch","aarch64"),("version","0.9.0"),("installer_url","http://updates.yofo.bio/app.deb"),("installer_url","https://attacker@updates.yofo.bio/app.deb")]{let mut invalid=base.clone();invalid[key]=value.into();assert!(validate(&invalid.to_string(),"1.0.0","linux","x86_64").is_err(),"{key}");}}
  #[test]fn installer_version_uses_the_shell_package_not_native_core_compatibility(){
   let installed=semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();

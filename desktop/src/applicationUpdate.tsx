@@ -7,10 +7,17 @@ export function ApplicationUpdateControls({channel,blocked,onBusy}:{channel:stri
  const [release,setRelease]=useState<Release|null>(null),[verified,setVerified]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
  const pending=useRef(false),latest=useRef({blocked,channel});latest.current={blocked,channel};
  useEffect(()=>{setRelease(null);setVerified(false);},[channel]);
- async function run(action:"check"|"verify"|"launch"){
+ async function run(action:"check"|"verify"|"launch"|"clear"){
   if(latest.current.blocked||pending.current)return;
   pending.current=true;setBusy(true);onBusy(true);setMessage("");const selectedChannel=channel;
   try{
+   if(action==="clear"){
+    if(!await confirm("Close all external installer windows/processes first. Clear this application's staged installer packages? Downloads outside its cache and unrelated files are preserved. You must check and verify again afterward.",{title:"Clear Installer Cache",kind:"warning"}))return;
+    if(latest.current.blocked)throw new Error("Finish pending work/save drafts before clearing installer cache");
+    setRelease(null);setVerified(false);
+    const result=await invoke<{removed:number;failed:string[]}>("clear_tauri_installer_cache",{uiIdle:true,confirmed:true});
+    setMessage(`Removed ${result.removed} staged installer(s).${result.failed.length?` Some files could not be removed (close installers and retry): ${result.failed.join("; ")}`:""}`);return;
+   }
    if(action==="check"){
     setRelease(null);setVerified(false);const result=await invoke<Release>("check_tauri_app_update",{channel});
     if(selectedChannel!==latest.current.channel)throw new Error("Channel changed; check the selected channel again");
@@ -34,6 +41,7 @@ export function ApplicationUpdateControls({channel,blocked,onBusy}:{channel:stri
  return <section aria-label="Application installer update"><h5>Application update</h5>
  <p>Only explicitly identified Tauri packages for this platform are accepted. Existing Qt installers are never launched.</p>
  <button disabled={blocked||busy} onClick={()=>void run("check")}>Check Tauri App Releases</button>
+ <button disabled={blocked||busy} onClick={()=>void run("clear")}>Clear Installer Cache…</button>
  {release&&<><p>Tauri {release.version} · {release.os}/{release.arch} · {release.installer_size_bytes} bytes</p>
  <button disabled={blocked||busy} onClick={()=>void openUrl(release.url).catch(e=>setMessage(String(e)))}>Download Tauri Installer</button>
  <button disabled={blocked||busy} onClick={()=>void run("verify")}>Verify Downloaded Installer…</button>

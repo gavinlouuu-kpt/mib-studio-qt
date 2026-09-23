@@ -139,3 +139,11 @@ and bundled recovery. Artifact download currently opens the HTTPS URL in the bro
 select the downloaded file for native verification. This is not silent automatic updating.
 
 Tauri application-installer freshness compares the feed against `AppHandle::package_info().version`, the installed shell package version. Backend/core compatibility identity remains independent and is not used as the installed application version. Native idle/finalization checks return only lifecycle authorization; they do not select or mutate either version.
+
+Verified app-installer staging has a 4 GiB aggregate regular-file budget before
+any new copy. Accepted launches leave their package in place for the external
+installer; there is no automatic age deletion. Clear Installer Cache requires
+explicit confirmation that external installers are closed and authoritative idle
+backend checks. It invalidates the update ticket, removes only top-level regular
+packages named by a 64-hex token plus exe/msi/deb/rpm extension, preserves symlinks,
+subdirectories and unrelated names, and reports locked/removal failures for retry.
