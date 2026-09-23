@@ -1,0 +1,1184 @@
+{
+  "schema_version": 1,
+  "manifest_id": "pz7035-standalone",
+  "reviewed": "2026-09-23",
+  "issues": {
+    "epic": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/441",
+    "e0": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/443",
+    "e1": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/445",
+    "e2": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/446",
+    "e3": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/447",
+    "e4": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/448",
+    "e5": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/449",
+    "feasibility_gate": "https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/423",
+    "board_contract": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/4",
+    "board_abi": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/5",
+    "board_bsp": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/6",
+    "board_integration": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/7",
+    "board_release": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/8"
+  },
+  "baseline": {
+    "application": {
+      "repository": "gavinlouuu-kpt/mib-studio-qt",
+      "ref": "develop",
+      "commit": "2fe02824de3a72114b7c7d5a3a2af46a6cc64b95",
+      "reviewed": "2026-09-23"
+    },
+    "board": {
+      "repository": "gavinlouuu-kpt/pz7035-imx426",
+      "ref": "main",
+      "commit": "3b782da75c358f7efd357936bd7026e36371e93d",
+      "reviewed": "2026-09-23"
+    }
+  },
+  "evidence_classes": [
+    "source-review",
+    "compilation",
+    "emulation",
+    "simulation",
+    "synthesis",
+    "target-software-test",
+    "physical-acceptance",
+    "vendor-documentation",
+    "unknown"
+  ],
+  "target": {
+    "soc": {
+      "family": "Zynq-7000",
+      "device": "XC7Z035",
+      "package": "FFG900",
+      "speed_grade": "-2",
+      "temperature_grade": "I",
+      "evidence": {
+        "class": "source-review",
+        "source": "pz7035-imx426 README (Puzhi PZ7035-FH, XC7Z035-2FFG900I) and docs/PZ7035_IMX426_BRINGUP.md at the pinned board commit",
+        "date": "2026-09-23"
+      }
+    },
+    "processing_system": {
+      "cpu": "Cortex-A9",
+      "isa": "armv7-a",
+      "address_bits": 32,
+      "cores": 2,
+      "linux_triplet": "arm-linux-gnueabihf",
+      "max_clock_mhz": {
+        "value": null,
+        "unit": "MHz",
+        "status": "unknown",
+        "derivation": "Read from AMD DS190 for the -2I part and the board's PS clock configuration (U10). Not asserted here."
+      },
+      "evidence": {
+        "class": "vendor-documentation",
+        "source": "AMD Zynq-7000 product table and UG585: XC7Z035 processing system is a dual-core Cortex-A9 (ARMv7-A, 32-bit); the board firmware is built with arm-none-eabi-gcc for that core"
+      }
+    },
+    "board": {
+      "vendor": "Puzhi",
+      "model": "PZ7035-FH",
+      "revision": null,
+      "carrier_or_som": null,
+      "evidence": {
+        "class": "source-review",
+        "source": "pz7035-imx426 README names the board; exact revision, SoM/carrier split and schematic identity are not recorded there (U1)",
+        "date": "2026-09-23"
+      }
+    },
+    "memory": {
+      "ps_ddr_bytes": {
+        "value": null,
+        "unit": "bytes",
+        "status": "unknown",
+        "derivation": "Fitted PS DDR is not exercised by the pinned board firmware (OCM + PL BRAM only). Owner: board PZ1/PZ3 (U2)."
+      },
+      "ps_ddr_type": null,
+      "ps_ddr_width_bits": {
+        "value": null,
+        "unit": "bits",
+        "status": "unknown"
+      },
+      "ocm_bytes": {
+        "value": 262144,
+        "unit": "bytes",
+        "status": "frozen",
+        "derivation": "Zynq-7000 on-chip memory is 256 KiB (UG585). The pinned bare-metal firmware runs from it."
+      },
+      "evidence": {
+        "class": "source-review",
+        "source": "pz7035-imx426 README and BRINGUP: 'ARM firmware runs in OCM, no DDR'; DDR size/type/width are unqualified",
+        "date": "2026-09-23"
+      }
+    },
+    "storage": [
+      {
+        "interface": "SD",
+        "media": null,
+        "capacity_bytes": {
+          "value": null,
+          "unit": "bytes",
+          "status": "unknown"
+        },
+        "role": "unknown",
+        "evidence": {
+          "class": "source-review",
+          "source": "pz7035-imx426 README lists SD as present but untouched by the current JTAG-only flow (U3)"
+        }
+      },
+      {
+        "interface": "QSPI",
+        "media": null,
+        "capacity_bytes": {
+          "value": null,
+          "unit": "bytes",
+          "status": "unknown"
+        },
+        "role": "unknown",
+        "evidence": {
+          "class": "source-review",
+          "source": "pz7035-imx426 README lists QSPI as present but untouched (U3)"
+        }
+      },
+      {
+        "interface": "eMMC",
+        "media": null,
+        "capacity_bytes": {
+          "value": null,
+          "unit": "bytes",
+          "status": "unknown"
+        },
+        "role": "unknown",
+        "evidence": {
+          "class": "source-review",
+          "source": "pz7035-imx426 README lists eMMC as present but untouched (U3)"
+        }
+      }
+    ],
+    "boot": {
+      "source": null,
+      "chain": null,
+      "evidence": {
+        "class": "source-review",
+        "source": "Current board flow is JTAG into PL SRAM + ARM OCM; configuration is volatile. Production boot source/chain (FSBL, U-Boot, kernel) is an open board item (U4)."
+      }
+    },
+    "runtime": {
+      "proposed": "arm-linux",
+      "status": "proposed",
+      "bare_metal": "The pinned bare-metal OCM firmware is a diagnostic/bring-up baseline only. The C++ service graph (threads, HDF5, SQLite, filesystem) is not claimed bare-metal or RTOS portable.",
+      "evidence": {
+        "class": "source-review",
+        "source": "Epic #441 target assumptions; board PZ1 selects the supported ARMv7 Linux/BSP route (U5)"
+      }
+    },
+    "toolchain": {
+      "vivado": "2026.1",
+      "firmware_compiler": "arm-none-eabi-gcc (bare-metal firmware only)",
+      "linux_bsp": null,
+      "kernel": null,
+      "device_tree": null,
+      "cross_compiler": null,
+      "sysroot": null,
+      "evidence": {
+        "class": "source-review",
+        "source": "Vivado 2026.1 and arm-none-eabi-gcc from pz7035-imx426 build scripts. Linux BSP, kernel, device tree, cross compiler and sysroot are E1/PZ3 inputs (U5)."
+      }
+    },
+    "display": {
+      "class": "7-inch 1024x600 capacitive-touch LCD, 50-pin parallel RGB",
+      "width_px": 1024,
+      "height_px": 600,
+      "interface": "parallel RGB, 50-pin",
+      "touch": {
+        "kind": "capacitive",
+        "controller": null,
+        "bus": null,
+        "reset_gpio": null,
+        "interrupt_gpio": null
+      },
+      "panel_timing": null,
+      "backlight": null,
+      "orientation": null,
+      "linux_drivers": null,
+      "evidence": {
+        "class": "source-review",
+        "source": "Display class carried from epic #441. Panel timings/voltage/pin assignment, backlight, touch controller identity/bus/GPIOs, orientation and matching Linux drivers are qualification inputs (U6, U7)."
+      }
+    },
+    "peripherals": [
+      {
+        "name": "IMX426 sensor (SLVS-EC, 8-lane GTX via FMC)",
+        "bus": "FMC/GTX -> PL",
+        "endpoint": null,
+        "required_for_standalone": true,
+        "arm_driver": null,
+        "evidence": {
+          "class": "physical-acceptance",
+          "source": "pz7035-imx426 README 2026-09-22: eight-lane GTX receive, SPI control, complete 816x624 12-bit frames at 8.59 fps over Ethernet; mask/ROI modes and sustained BER/CRC remain open"
+        }
+      },
+      {
+        "name": "Sort/trigger output and physical inhibit",
+        "bus": "PL GPIO",
+        "endpoint": null,
+        "required_for_standalone": true,
+        "arm_driver": null,
+        "evidence": {
+          "class": "unknown",
+          "source": "Pin, polarity, inhibit mechanism and watchdog path are board PZ1 inputs (U8)"
+        }
+      },
+      {
+        "name": "Touch controller",
+        "bus": "I2C (expected)",
+        "endpoint": null,
+        "required_for_standalone": true,
+        "arm_driver": null,
+        "evidence": {
+          "class": "unknown",
+          "source": "U7"
+        }
+      },
+      {
+        "name": "Syringe pump (Modbus RTU)",
+        "bus": "serial (RS-232/RS-485 via ISerialPort)",
+        "endpoint": null,
+        "required_for_standalone": true,
+        "arm_driver": "src/backend/services/SerialPortPosix.cpp + SyringePumpService (Qt-free, POSIX termios)",
+        "evidence": {
+          "class": "compilation",
+          "source": "Linux backend-only CI builds and tests the POSIX serial path (backend.syringe_pump_fake_serial, backend.serial_port_posix_loopback); the on-board UART/USB-serial endpoint is unknown (U9)"
+        }
+      },
+      {
+        "name": "Nanopositioner (OEABT protocol)",
+        "bus": "serial via ISerialPort",
+        "endpoint": null,
+        "required_for_standalone": true,
+        "arm_driver": "src/backend/nanopositioner/oeabt/* (clean-room protocol, Qt-free)",
+        "evidence": {
+          "class": "compilation",
+          "source": "oeabt_core/oeabt_serial build on Linux; backend.oeabt_protocol, backend.oeabt_serial_pty. Endpoint on the board is unknown (U9)"
+        }
+      },
+      {
+        "name": "Nanopositioner (Coremor SDK)",
+        "bus": "USB/serial via Windows-only SDK",
+        "endpoint": null,
+        "required_for_standalone": false,
+        "arm_driver": null,
+        "evidence": {
+          "class": "source-review",
+          "source": "cmake/MIBDependencies.cmake: MIB_HAS_COREMOR is WIN32-only. Not available on ARM Linux; OEABT is the ARM replacement."
+        }
+      },
+      {
+        "name": "Pulse generator (Modbus RTU)",
+        "bus": "serial via ISerialPort",
+        "endpoint": null,
+        "required_for_standalone": false,
+        "arm_driver": "src/backend/services/PulseGeneratorService.cpp",
+        "evidence": {
+          "class": "compilation",
+          "source": "Linux backend-only CI; explicit scan only, never at startup (ADR 0005)"
+        }
+      },
+      {
+        "name": "Ethernet (RTL8211F RGMII)",
+        "bus": "PS GEM",
+        "endpoint": "192.168.137.2/24 in the current bring-up flow",
+        "required_for_standalone": false,
+        "arm_driver": null,
+        "evidence": {
+          "class": "physical-acceptance",
+          "source": "pz7035-imx426 BRINGUP: PHY ID 001c:c916, 1000/full. Optional development/remote access only; the appliance must operate with it disconnected."
+        }
+      }
+    ],
+    "excluded_targets": [
+      "aarch64",
+      "arm64",
+      "ZynqMP",
+      "UltraScale+",
+      "Ultra96",
+      "A53",
+      "XRT",
+      "KU5P",
+      "MicroBlaze",
+      "GPU"
+    ]
+  },
+  "boundaries": {
+    "native_plugin_abi": {
+      "owner": "gavinlouuu-kpt/mib-studio-qt (include/backend/processing/ProcessingCoreAbi.h)",
+      "version_source": "MIB_PROCESSING_ENGINE_ABI_VERSION / MIB_PROCESSING_CONTRACT_VERSION",
+      "version": 1,
+      "status": "implemented",
+      "rule": "In-process CPU processing-core ABI only. Its pointer-bearing structs are never copied into an IPC or FPGA wire format; an ARM native core is a separate signed artifact (linux_armv7) and its fingerprint must match runtimeFingerprint()."
+    },
+    "local_application_ipc": {
+      "owner": "E2 #446",
+      "version_source": "to be defined by E2 (versioned handshake); reuses the semantics of crates/mib-bridge/contract/bridge-contract.json (abi_version 14) for enums, IDs and outcomes",
+      "version": null,
+      "status": "planned",
+      "rule": "Low-rate control/status only. Additive schema evolution, explicit incompatible-capability errors, 64-bit IDs encoded losslessly, bounded payloads; no native pointers, no FPGA register addresses."
+    },
+    "ps_pl_wire": {
+      "owner": "gavinlouuu-kpt/pz7035-imx426 PZ2 (issue 5)",
+      "version_source": "generated PS-PL interface definitions published by the board repository",
+      "version": null,
+      "status": "board-owned",
+      "rule": "High-rate result/DMA transport and register map. Shared application code consumes a pinned generated definition through the E3 execution-provider boundary and never includes board headers or register addresses."
+    }
+  },
+  "ownership": [
+    {
+      "operation": "Sensor ingress (IMX426 SLVS-EC receive, unpack, geometry)",
+      "owner": "PL",
+      "path": "pz7035-imx426 fpga/rtl/pz_* (board-owned)",
+      "data": "12-bit sensor lines -> PL pipeline; PS receives only results/bounded previews via the PS-PL wire",
+      "rate_or_deadline": "sensor rate; sustained 512x96 Mono8 at 5000 fps is a sizing target, not achieved evidence",
+      "failure_policy": "PL stops delivering; PS sees a stream-ended/transport fault and never synthesizes frames",
+      "test": "board PZ4 physical acceptance; MIB fake/replay provider tests (E3)",
+      "status": "partial",
+      "note": "816x624 12-bit at 8.59 fps over Ethernet is verified; 512x96 mask/ROI modes are not implemented on this port"
+    },
+    {
+      "operation": "Accepted high-rate science stages (segmentation/mask, per-object metrics admitted to PL)",
+      "owner": "PL",
+      "path": "board RTL/HLS selected by #423; algorithms reused from mib_processing / Ultra96 work, not their A53 timings",
+      "data": "compact per-object result records with validity flags",
+      "rate_or_deadline": "per-frame at sustained rate (budget sustained_frame_rate_fps)",
+      "failure_policy": "Missing PL capability is a readiness failure, never an unqualified ARM software fallback",
+      "test": "#423 WP3 offline comparison; PZ4 sustained-load qualification",
+      "status": "unresolved",
+      "note": "Stage selection is gated by #423 (U17); until then no per-frame ARM fallback is admitted."
+    },
+    {
+      "operation": "Physical trigger/sort scheduling and independent output inhibit",
+      "owner": "PL",
+      "path": "board PL timing block + hardware watchdog (PZ1/PZ4)",
+      "data": "trigger decisions from PL results; enable/inhibit from PS; heartbeat from PS",
+      "rate_or_deadline": "sensor_to_physical_output_deadline_us (unknown, U11)",
+      "failure_policy": "Lost PS heartbeat, crash, reboot or update -> outputs inhibited; no automatic re-arm",
+      "test": "PZ4 timing/jitter measurement; E5 fault fixtures",
+      "status": "planned"
+    },
+    {
+      "operation": "Tracking, target selection and gating",
+      "owner": "PS",
+      "path": "backend::processing (ProcessingScience/ProcessingService) - provisional",
+      "data": "PL result records in, gating decisions out over the PS-PL wire",
+      "rate_or_deadline": "must be measured on the A9 against the sensor-to-output deadline before admission (U12)",
+      "failure_policy": "If the measured A9 deadline is not met the stage moves to PL; no silent per-frame ARM processing is admitted",
+      "test": "E3 replay benchmark on target (planned)",
+      "status": "unresolved",
+      "note": "Provisional owner. Epic #441 requires explicit assignment after measurement; this row records the decision point, not a decision."
+    },
+    {
+      "operation": "Configuration validation and readback",
+      "owner": "PS",
+      "path": "backend::AppBackend / ProcessingService config + BackendFacade typed commands",
+      "data": "ProcessingConfig JSON (sha256 tracked), camera selection, ROI, background identity",
+      "rate_or_deadline": "operator-rate; edits invalidate readiness generation",
+      "failure_policy": "Invalid config is rejected with typed errors; readiness fails closed",
+      "test": "ctest:backend.facade_boundary",
+      "status": "implemented"
+    },
+    {
+      "operation": "Experiment readiness evaluation",
+      "owner": "PS",
+      "path": "backend::app::ExperimentCoordinator::evaluateReadiness",
+      "data": "generation-tagged ExperimentReadinessSnapshot with per-gate status; Unknown is never Pass",
+      "rate_or_deadline": "cheap; UI-timer rate",
+      "failure_policy": "Any Fail/Unavailable gate blocks Start; mock is explicit, never a fallback",
+      "test": "ctest:backend.experiment_readiness",
+      "status": "implemented"
+    },
+    {
+      "operation": "Run lifecycle: Start transaction, periodic flush, Stop & Save, finalization",
+      "owner": "PS",
+      "path": "backend::app::ExperimentCoordinator (worker thread) via BackendFacade",
+      "data": "frozen RunConfigurationSnapshot, ExperimentStatus transitions, terminal completion state",
+      "rate_or_deadline": "Stop -> terminal within cancellation_bound_ms",
+      "failure_policy": "Fatal save error -> Failed + finalized readable file; interrupted runs never labelled Complete",
+      "test": "ctest:integration.e2e_headless_experiment_smoke",
+      "status": "implemented",
+      "note": "No-UI baseline fixture added by E0; ctest:e2e.experiment_coordinator covers cancel/fatal paths"
+    },
+    {
+      "operation": "Host-SDK full-frame path (desktop and software reference)",
+      "owner": "PS",
+      "path": "CaptureService -> FrameStore -> ProcessingService (bundled/native core)",
+      "data": "raw host frames; conserved frame accounting",
+      "rate_or_deadline": "host camera rate; not the appliance's per-frame path",
+      "failure_policy": "Transport loss is accounted per delivery policy; never silent",
+      "test": "ctest:backend.kin6_mib_app_capture_proof",
+      "status": "implemented",
+      "note": "Remains distinct from the FPGA result-first path; the two must not be merged by synthesizing host frames"
+    },
+    {
+      "operation": "FPGA result ingestion (result-first execution provider)",
+      "owner": "PS",
+      "path": "E3 execution-provider boundary over the pinned PS-PL definition",
+      "data": "versioned result records + bounded preview crops; loss accounted explicitly",
+      "rate_or_deadline": "result burst capacity (unknown, U13); bounded queues in bytes",
+      "failure_policy": "Version/capability mismatch -> readiness failure; queue overflow -> declared policy per class (scientific records vs preview)",
+      "test": "E3 fake/replay tests first; board DMA/control on target",
+      "status": "planned"
+    },
+    {
+      "operation": "Persistence, accounting and provenance (HDF5)",
+      "owner": "PS",
+      "path": "Hdf5Service, RecordingAccounting, run_provenance JSON",
+      "data": "frames/results, experiment_info, accounting_* attributes, run snapshot + readiness JSON, core identity",
+      "rate_or_deadline": "bounded writer queue; storage_write_bytes_per_second (unknown, U14)",
+      "failure_policy": "Non-reconciling accounting -> failed, never complete; missing metrics are unavailable, not zeros",
+      "test": "ctest:recording.accounting",
+      "status": "implemented"
+    },
+    {
+      "operation": "Device discovery and startup selection policy",
+      "owner": "PS",
+      "path": "backend::discovery (ADR 0005); StartupDiscoveryCoordinator is shell-started",
+      "data": "bounded snapshots, identity strength, no actuation",
+      "rate_or_deadline": "startup and explicit refresh only",
+      "failure_policy": "Partial/failed/ambiguous snapshots never auto-select; boot never starts capture, motion, illumination or sorting",
+      "test": "ctest:backend.startup_discovery_policy",
+      "status": "implemented",
+      "note": "The appliance host must choose the startup policy explicitly (E2); MindVision/eGrabber providers are desktop-only"
+    },
+    {
+      "operation": "Ordered shutdown and hardware release",
+      "owner": "PS",
+      "path": "AppBackend::shutdown (coordinator -> discovery -> serial hardware)",
+      "data": "n/a",
+      "rate_or_deadline": "bounded; workers joined, never detached",
+      "failure_policy": "Active run is finalized before release; uninterruptible vendor calls are TD-10",
+      "test": "ctest:backend.hardware_shutdown",
+      "status": "implemented"
+    },
+    {
+      "operation": "Byte-budgeted memory ownership reporting",
+      "owner": "PS",
+      "path": "backend::diagnostics::MemoryBudget (#370)",
+      "data": "per-owner current/peak bytes and declared capacity; Unknown never reported as zero",
+      "rate_or_deadline": "n/a",
+      "failure_policy": "Over-budget owners evict under their declared policy and account evictions",
+      "test": "ctest:processing.memory_budget",
+      "status": "implemented"
+    },
+    {
+      "operation": "Controlling-client loss policy",
+      "owner": "PS",
+      "path": "E2 instrument host over ExperimentCoordinator::requestStop",
+      "data": "declared controller-loss condition -> controlled Stop & Save",
+      "rate_or_deadline": "fault_response_ms",
+      "failure_policy": "UI navigation/render pause is not controller loss; unattended continuation only for an explicitly validated method; reconnect never re-arms",
+      "test": "E2 disconnect/reconnect regression (planned)",
+      "status": "planned"
+    },
+    {
+      "operation": "PS/OS failure containment (watchdog, physical inhibit)",
+      "owner": "PL",
+      "path": "board hardware/PL watchdog (PZ1/PZ4) + E5 fault fixtures",
+      "data": "PS heartbeat; inhibit state",
+      "rate_or_deadline": "fault_response_ms (unknown until watchdog period is chosen, U8)",
+      "failure_policy": "Independent of the C++ process; no automatic re-arm after restart or update",
+      "test": "E5 fault/recovery evidence on target",
+      "status": "planned"
+    },
+    {
+      "operation": "Touch input, editor drafts, status and navigation",
+      "owner": "UI",
+      "path": "E4 thin 1024x600 client over the E2 local API",
+      "data": "drafts and commands only; the backend owns every accepted value",
+      "rate_or_deadline": "touch_response_ms",
+      "failure_policy": "UI restart or lost input never changes acquisition, finalization, readiness or safety",
+      "test": "E4 API-backed simulator; on-target workflow",
+      "status": "planned"
+    },
+    {
+      "operation": "Bounded preview and result presentation",
+      "owner": "UI",
+      "path": "E4 client consuming sampled preview + result pages from the PS",
+      "data": "immutable preview transactions (metadata + pixels together); result pages",
+      "rate_or_deadline": "preview_rate_hz_max; display replacement is not scientific loss",
+      "failure_policy": "A slow client is replaced/sampled, never pins capture or DMA buffers",
+      "test": "E4 combined-load budget on target",
+      "status": "planned"
+    },
+    {
+      "operation": "Export selection (export jobs themselves stay in the PS)",
+      "owner": "UI",
+      "path": "E4 client -> existing export jobs (HdfExportService/ReviewExport)",
+      "data": "selection and destination; job progress from the PS",
+      "rate_or_deadline": "operator-rate",
+      "failure_policy": "Export never requires Biowork/remote storage (#397)",
+      "test": "existing export tests (ctest:scripts.export_hdf5_paths) + E4 workflow",
+      "status": "partial"
+    },
+    {
+      "operation": "Diagnostics and logging",
+      "owner": "PS",
+      "path": "spdlog Logger, CrashStateMirror, PipelineTimingRecorder",
+      "data": "bounded local logs under data/; no remote upload required",
+      "rate_or_deadline": "n/a",
+      "failure_policy": "Sentry/minidump upload is optional and off by default on the appliance",
+      "test": "ctest:backend.lifecycle_smoke",
+      "status": "implemented"
+    }
+  ],
+  "budgets": {
+    "raw_sensor_bytes_per_second": {
+      "value": 245760000,
+      "unit": "bytes/s",
+      "status": "sizing-input",
+      "derivation": "512 * 96 * 1 byte (Mono8) * 5000 fps = 245,760,000 before copies, metadata or padding. Distinct from result records and sampled preview.",
+      "evidence": {
+        "class": "source-review",
+        "source": "epic #441 sizing input"
+      },
+      "overflow_policy": "Full raw retention is not promised; raw frames stay in PL unless a separate measured admission gate admits recording.",
+      "owner": "E0"
+    },
+    "sustained_frame_rate_fps": {
+      "value": 5000,
+      "unit": "frames/s",
+      "status": "sizing-input",
+      "derivation": "Target schedule. Board evidence is ten 4-frame U-Net bursts at a 5000 fps input schedule from SRAM, not sustained sensor-rate operation.",
+      "evidence": {
+        "class": "physical-acceptance",
+        "source": "pz7035-imx426 docs/PZ7035_UNET_BURST.md (short burst only)"
+      },
+      "overflow_policy": "Sustained rate versus finite burst length is declared per operating mode by PZ1; not sustained until PZ4 evidence.",
+      "owner": "PZ1/PZ4"
+    },
+    "object_density_max_per_frame": {
+      "value": null,
+      "unit": "objects/frame",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "#423 WP0 object-density envelope (U15)"
+      },
+      "overflow_policy": "Above the admitted density, results beyond capacity are flagged as loss in accounting, never silently dropped.",
+      "owner": "#423 WP0"
+    },
+    "sensor_to_physical_output_deadline_us": {
+      "value": null,
+      "unit": "us",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "#423 WP0 / PZ1 (U11)"
+      },
+      "overflow_policy": "A decision that misses the deadline is not actuated; the miss is counted.",
+      "owner": "#423 WP0 / PZ1"
+    },
+    "result_burst_capacity_records": {
+      "value": null,
+      "unit": "records",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "E3 with PZ2 record format (U13)"
+      },
+      "overflow_policy": "Required scientific records: bounded queue with counted loss (IncompleteLoss). Optional crops/previews: replacement.",
+      "owner": "E3"
+    },
+    "ps_address_bits": {
+      "value": 32,
+      "unit": "bits",
+      "status": "frozen",
+      "derivation": "Cortex-A9 ARMv7-A; no LPAE use is planned for the application.",
+      "evidence": {
+        "class": "vendor-documentation",
+        "source": "UG585"
+      },
+      "overflow_policy": "Stride/offset arithmetic uses 64-bit integers; file offsets are 64-bit (HDF5); no single mapping may exceed max_single_allocation_bytes.",
+      "owner": "E1"
+    },
+    "max_single_allocation_bytes": {
+      "value": 268435456,
+      "unit": "bytes",
+      "status": "proposed",
+      "derivation": "256 MiB: the largest contiguous allocation/mapping the runtime may request in a 32-bit process, leaving headroom for OpenCV/HDF5 heaps and fragmentation. Confirm against fitted DDR (U2) in E1.",
+      "evidence": {
+        "class": "source-review",
+        "source": "E0 proposal"
+      },
+      "overflow_policy": "Requests above the cap fail before allocation with a typed error; malformed lengths/strides are rejected before allocation.",
+      "owner": "E1"
+    },
+    "process_rss_budget_bytes": {
+      "value": null,
+      "unit": "bytes",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "depends on fitted DDR (U2) and DMA/CMA reservation (U16)"
+      },
+      "overflow_policy": "MemoryBudget owners evict under declared policy; the process never relies on swap.",
+      "owner": "E1"
+    },
+    "dma_cma_reservation_bytes": {
+      "value": null,
+      "unit": "bytes",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "board PZ3 (U16)"
+      },
+      "overflow_policy": "DMA descriptors beyond the reservation are refused; PL back-pressure policy is board-owned.",
+      "owner": "PZ3"
+    },
+    "frame_store_ring_frames": {
+      "value": 512,
+      "unit": "frames",
+      "status": "sizing-input",
+      "derivation": "FrameStore default capacity (include/backend/playback/FrameStore.h). At 512x96 Mono8 this is 25,165,824 bytes; the appliance value is set by E1 from process_rss_budget_bytes.",
+      "evidence": {
+        "class": "source-review",
+        "source": "FrameStore.h constructor default"
+      },
+      "overflow_policy": "Ring overwrite is counted (storeOverwritten) and reconciles as IncompleteLoss for a run.",
+      "owner": "E1"
+    },
+    "experiment_buffer_max_frames": {
+      "value": 1000,
+      "unit": "frames",
+      "status": "sizing-input",
+      "derivation": "ExperimentFrameBuffer::Policy default maxFrames (maxBytes 0 = no byte cap yet).",
+      "evidence": {
+        "class": "source-review",
+        "source": "include/backend/processing/ExperimentFrameBuffer.h"
+      },
+      "overflow_policy": "Eviction under declared policy is accounted as persistenceCancelledByPolicy; a byte budget must be set on the appliance.",
+      "owner": "E1"
+    },
+    "preview_rate_hz_max": {
+      "value": 10,
+      "unit": "Hz",
+      "status": "proposed",
+      "derivation": "Display replacement rate for the touch client; sampled from immutable preview transactions.",
+      "evidence": {
+        "class": "source-review",
+        "source": "E0 proposal"
+      },
+      "overflow_policy": "Newer preview replaces older; replacement is never counted as scientific loss.",
+      "owner": "E4"
+    },
+    "chart_history_max_points": {
+      "value": 10000,
+      "unit": "points",
+      "status": "proposed",
+      "evidence": {
+        "class": "source-review",
+        "source": "E0 proposal"
+      },
+      "overflow_policy": "Oldest points are dropped from the display history only; persisted results are unaffected.",
+      "owner": "E4",
+      "derivation": "Bounded display history for the touch client's charts; sized for a 1024x600 panel and the ARM heap, not for archival."
+    },
+    "touch_response_ms": {
+      "value": 100,
+      "unit": "ms",
+      "status": "proposed",
+      "evidence": {
+        "class": "source-review",
+        "source": "E0 proposal"
+      },
+      "overflow_policy": "Measured on target under combined load (E4); a miss is a UI defect, never a backend policy change.",
+      "owner": "E4",
+      "derivation": "Touch-down to visible acknowledgement on the thin client while a run is active."
+    },
+    "boot_to_ready_s": {
+      "value": 60,
+      "unit": "s",
+      "status": "proposed",
+      "derivation": "Power-on to readiness evaluation available, with no actuation.",
+      "evidence": {
+        "class": "source-review",
+        "source": "E0 proposal"
+      },
+      "overflow_policy": "n/a",
+      "owner": "E5"
+    },
+    "cancellation_bound_ms": {
+      "value": 10000,
+      "unit": "ms",
+      "status": "proposed",
+      "derivation": "Stop request to terminal status including drain, metadata, accounting and close for the admitted experiment_buffer_max_frames.",
+      "evidence": {
+        "class": "source-review",
+        "source": "ExperimentCoordinator finalization sequence; the no-UI fixture waits at most 30 s"
+      },
+      "overflow_policy": "Status and cancellation remain available during finalization.",
+      "owner": "E2"
+    },
+    "fault_response_ms": {
+      "value": null,
+      "unit": "ms",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "watchdog period is a board decision (U8)"
+      },
+      "overflow_policy": "Outputs inhibited by PL independent of the PS.",
+      "owner": "PZ1/E5"
+    },
+    "storage_write_bytes_per_second": {
+      "value": null,
+      "unit": "bytes/s",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "storage media unknown (U3, U14)"
+      },
+      "overflow_policy": "Writer queue is bounded; persistenceFailed/pendingAtStop are counted and the run is not Complete.",
+      "owner": "E5"
+    },
+    "full_raw_recording_admission": {
+      "value": null,
+      "unit": "bytes/s",
+      "status": "unknown",
+      "evidence": {
+        "class": "unknown",
+        "source": "requires a separate measured admission gate; not promised by #441"
+      },
+      "overflow_policy": "Not admitted until measured; no NAS bandwidth is assumed.",
+      "owner": "E5"
+    }
+  },
+  "reuse": [
+    {
+      "capability": "Qt-free backend, composition root and frontend-neutral facade",
+      "code": [
+        "src/backend/app/AppBackend.cpp",
+        "src/backend/app/BackendFacade.cpp",
+        "cmake/MIBDependencies.cmake (MIB_BUILD_BACKEND_ONLY)"
+      ],
+      "tests": [
+        "ctest:backend.facade_boundary",
+        "ctest:e2e.experiment_coordinator",
+        "ctest:backend.lifecycle_smoke"
+      ],
+      "evidence": {
+        "class": "compilation",
+        "source": "backend-ci.yml linux-backend-only lane (x86_64); no ARM build yet"
+      },
+      "gap": "No headless host process, local IPC or CLI; startup policy and LUT paths must be supplied by the host",
+      "owner": "E2 #446"
+    },
+    {
+      "capability": "Readiness transaction, run lifecycle, accounting, timestamp provenance, byte budgets (#371, #367-#370)",
+      "code": [
+        "src/backend/app/ExperimentCoordinator.cpp",
+        "include/backend/recording/RecordingAccounting.h",
+        "include/backend/diagnostics/MemoryBudget.h"
+      ],
+      "tests": [
+        "ctest:backend.experiment_readiness",
+        "ctest:recording.accounting",
+        "ctest:processing.memory_budget",
+        "ctest:integration.e2e_headless_experiment_smoke"
+      ],
+      "evidence": {
+        "class": "compilation",
+        "source": "Linux CI + sanitizer lane; desktop acceptance evidence under docs/evidence/2026-09-07-*"
+      },
+      "gap": "Controller-loss policy, exact-count admission terminator, byte cap on the experiment buffer for the appliance",
+      "owner": "E2 #446 (policy, terminator), E1 #445 (budgets)"
+    },
+    {
+      "capability": "Device discovery job service and startup selection policy (#419, ADR 0005)",
+      "code": [
+        "src/backend/discovery/*"
+      ],
+      "tests": [
+        "ctest:backend.startup_discovery_policy",
+        "ctest:backend.discovery_facade"
+      ],
+      "evidence": {
+        "class": "compilation",
+        "source": "Linux CI; hardware acceptance is TD-11"
+      },
+      "gap": "Appliance host must start the policy explicitly; camera providers are desktop SDK based and do not apply to the PL sensor",
+      "owner": "E2 #446 / E3 #447"
+    },
+    {
+      "capability": "Processing-core ABI, signing, provenance (#301/#394/#302)",
+      "code": [
+        "include/backend/processing/ProcessingCoreAbi.h",
+        "src/backend/processing/ProcessingCoreLoader.cpp",
+        "src/backend/processing/ProcessingCoreEd25519.cpp"
+      ],
+      "tests": [
+        "ctest:processing.core_loader"
+      ],
+      "evidence": {
+        "class": "compilation",
+        "source": "Linux x86_64 native core artifacts; no linux_armv7 artifact exists"
+      },
+      "gap": "ARM native core naming/fingerprint (src/backend/CMakeLists.txt maps only x86_64/aarch64 names) and Ed25519 verification on ARM",
+      "owner": "E1 #445"
+    },
+    {
+      "capability": "FPGA direct-DDR image pipeline and result-first boundary (#337, #349)",
+      "code": [
+        "docs/integration/ultra96-fpga-image-pipeline.md",
+        "docs/exec-plans/completed/2026-07-15-ultra96-direct-ddr.md"
+      ],
+      "tests": [],
+      "evidence": {
+        "class": "physical-acceptance",
+        "source": "171-frame exact match on the Ultra96 image"
+      },
+      "not_transferable": "A53/XRT/ZOCL/MPSoC addresses, 744 us two-buffer interval and CPU pinning are not XC7Z035 evidence",
+      "gap": "XC7Z035 interface/resource/timing fit and the PS-PL ABI",
+      "owner": "#423 + PZ2/PZ4"
+    },
+    {
+      "capability": "IMX426 acquisition and W8A8 U-Net short bursts on PZ7035",
+      "code": [
+        "pz7035-imx426 fpga/rtl/pz_*",
+        "pz7035-imx426 firmware/pz7035/"
+      ],
+      "tests": [
+        "pz7035-imx426 scripts/check_pz_stream.py"
+      ],
+      "evidence": {
+        "class": "physical-acceptance",
+        "source": "pz7035-imx426 README 2026-09-22: 100 consecutive complete frames at 8.59 fps; ten 4-frame bursts at a 5000 fps schedule"
+      },
+      "not_transferable": "Camera image and U-Net burst image are separate bitstreams; neither proves combined sustained operation",
+      "gap": "Combined image, mask/ROI modes, sustained BER/CRC, DDR path, Linux",
+      "owner": "PZ3/PZ4"
+    },
+    {
+      "capability": "HDF5 persistence, export and local-only operation (#397)",
+      "code": [
+        "src/backend/recording/Hdf5Service.cpp",
+        "src/backend/recording/HdfExportService.cpp"
+      ],
+      "tests": [
+        "ctest:recording.experiment_roundtrip",
+        "ctest:scripts.export_hdf5_paths"
+      ],
+      "evidence": {
+        "class": "compilation",
+        "source": "Linux CI; exporter soak evidence under docs/evidence/2026-09-07-exporter-soak"
+      },
+      "gap": "On-device storage media and write-bandwidth budget",
+      "owner": "E5 #449"
+    },
+    {
+      "capability": "Mock camera source and shared test support",
+      "code": [
+        "src/backend/camera/mock/MockCamera.cpp",
+        "tests/support/*"
+      ],
+      "tests": [
+        "ctest:integration.e2e_headless_experiment_smoke"
+      ],
+      "evidence": {
+        "class": "compilation",
+        "source": "Linux CI"
+      },
+      "gap": "No exact-count admission terminator: runs stop after >= N admitted frames by client request",
+      "owner": "E2 #446"
+    }
+  ],
+  "dependency_allowlist": {
+    "arm_runtime": [
+      {
+        "name": "libstdc++ / pthread (C++17)",
+        "reason": "service graph threads and containers",
+        "status": "required"
+      },
+      {
+        "name": "spdlog",
+        "reason": "all logging",
+        "status": "required"
+      },
+      {
+        "name": "OpenCV (core, imgproc, imgcodecs)",
+        "reason": "mib_processing science, mock/frame decode; measure footprint before any replacement",
+        "status": "measure-before-replacing"
+      },
+      {
+        "name": "HDF5 (C library)",
+        "reason": "experiment/recording persistence and provenance",
+        "status": "required"
+      },
+      {
+        "name": "SQLite3",
+        "reason": "SqliteService local state",
+        "status": "required"
+      },
+      {
+        "name": "OpenSSL libcrypto",
+        "reason": "Ed25519 native-core signature verification (fails closed when absent)",
+        "status": "required"
+      },
+      {
+        "name": "nlohmann_json",
+        "reason": "config/provenance JSON when found by CMake",
+        "status": "optional"
+      },
+      {
+        "name": "sentry-native",
+        "reason": "crash capture; remote upload must stay off by default on the appliance",
+        "status": "optional"
+      }
+    ],
+    "host_reference_tests": [
+      {
+        "name": "Python 3 (stdlib)",
+        "reason": "asset provisioning, conformance and manifest validators",
+        "status": "required"
+      },
+      {
+        "name": "MindVision SDK",
+        "reason": "desktop host-SDK camera path only",
+        "status": "optional"
+      },
+      {
+        "name": "ONNX Runtime",
+        "reason": "desktop YOLO only; never a hidden appliance dependency",
+        "status": "optional"
+      },
+      {
+        "name": "Qt 6",
+        "reason": "desktop shell and frontend tests only",
+        "status": "optional"
+      }
+    ],
+    "touchscreen": [
+      {
+        "name": "LVGL (lv_port_linux)",
+        "reason": "thin 1024x600 client prototype; renderer selected by measurement in E4",
+        "status": "candidate"
+      },
+      {
+        "name": "libinput / evdev",
+        "reason": "touch input",
+        "status": "candidate"
+      },
+      {
+        "name": "DRM/KMS or fbdev",
+        "reason": "display output for parallel RGB",
+        "status": "candidate"
+      }
+    ],
+    "forbidden_in_arm_runtime": [
+      "Qt6",
+      "Tauri / WebKit",
+      "Python interpreter",
+      "Node.js",
+      "MindVision SDK",
+      "EGrabber SDK",
+      "Coremor SDK",
+      "ONNX Runtime (unless the capability is enabled and measured)",
+      "Biowork / remote storage / cloud services",
+      "Boost or any framework adopted without measured need"
+    ]
+  },
+  "unknowns": [
+    {
+      "id": "U1",
+      "description": "Exact PZ7035-FH revision, SoM/carrier split and schematic identity",
+      "owner": "PZ1",
+      "blocks": [
+        "board-acceptance"
+      ],
+      "does_not_block": [
+        "host-contracts",
+        "no-ui-fixture",
+        "fake-provider-tests"
+      ]
+    },
+    {
+      "id": "U2",
+      "description": "Fitted PS DDR size, type and width",
+      "owner": "PZ1/PZ3",
+      "blocks": [
+        "process_rss_budget_bytes",
+        "board-acceptance"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U3",
+      "description": "Storage media, capacity and role for SD/QSPI/eMMC",
+      "owner": "PZ1/E5",
+      "blocks": [
+        "storage_write_bytes_per_second",
+        "offline-image"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U4",
+      "description": "Production boot source and chain (FSBL/U-Boot/kernel)",
+      "owner": "PZ3/E5",
+      "blocks": [
+        "offline-image"
+      ],
+      "does_not_block": [
+        "host-contracts",
+        "arm-build"
+      ]
+    },
+    {
+      "id": "U5",
+      "description": "Supported ARMv7 Linux BSP, kernel, device tree, cross compiler and sysroot",
+      "owner": "PZ3/E1",
+      "blocks": [
+        "arm-target-evidence"
+      ],
+      "does_not_block": [
+        "arm-emulation-build",
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U6",
+      "description": "Panel timings, voltage, pin assignment, backlight control, orientation and Linux display driver",
+      "owner": "PZ1/E4",
+      "blocks": [
+        "display-bring-up"
+      ],
+      "does_not_block": [
+        "api-backed-ui-simulator"
+      ]
+    },
+    {
+      "id": "U7",
+      "description": "Touch controller identity, bus, reset/interrupt GPIOs and driver",
+      "owner": "PZ1/E4",
+      "blocks": [
+        "touch-bring-up"
+      ],
+      "does_not_block": [
+        "api-backed-ui-simulator"
+      ]
+    },
+    {
+      "id": "U8",
+      "description": "Trigger/sort output pins, polarity, physical inhibit and watchdog mechanism/period",
+      "owner": "PZ1/PZ4",
+      "blocks": [
+        "fault_response_ms",
+        "safe-output-acceptance"
+      ],
+      "does_not_block": [
+        "e5-fault-fixtures"
+      ]
+    },
+    {
+      "id": "U9",
+      "description": "On-board serial/I2C/GPIO endpoints for pump, nanopositioner and pulse generator",
+      "owner": "PZ1",
+      "blocks": [
+        "peripheral-acceptance"
+      ],
+      "does_not_block": [
+        "fake-serial-tests"
+      ]
+    },
+    {
+      "id": "U10",
+      "description": "PS clock configuration for the -2I part",
+      "owner": "PZ1",
+      "blocks": [
+        "tracking-placement-measurement"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U11",
+      "description": "Sensor-to-physical-output deadline and tail limits",
+      "owner": "#423 WP0 / PZ1",
+      "blocks": [
+        "trigger-acceptance"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U12",
+      "description": "Measured A9 cost of tracking/target/gating versus the deadline (placement decision)",
+      "owner": "E3 / #423",
+      "blocks": [
+        "ownership-row: Tracking, target selection and gating"
+      ],
+      "does_not_block": [
+        "fake-provider-tests"
+      ]
+    },
+    {
+      "id": "U13",
+      "description": "Result record format, size and burst capacity",
+      "owner": "PZ2 / E3",
+      "blocks": [
+        "result_burst_capacity_records"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U14",
+      "description": "On-device storage write bandwidth",
+      "owner": "E5",
+      "blocks": [
+        "recording-policy"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U15",
+      "description": "Worst-case object density envelope",
+      "owner": "#423 WP0",
+      "blocks": [
+        "object_density_max_per_frame"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U16",
+      "description": "DMA/CMA reservation and shared DDR bandwidth split (PL, display, PS)",
+      "owner": "PZ3",
+      "blocks": [
+        "dma_cma_reservation_bytes",
+        "process_rss_budget_bytes"
+      ],
+      "does_not_block": [
+        "host-contracts"
+      ]
+    },
+    {
+      "id": "U17",
+      "description": "Selected scientific pipeline and which stages PL accepts",
+      "owner": "#423",
+      "blocks": [
+        "ownership-row: Accepted high-rate science stages (segmentation/mask, per-object metrics admitted to PL)"
+      ],
+      "does_not_block": [
+        "host-contracts",
+        "no-ui-fixture"
+      ]
+    }
+  ]
+}

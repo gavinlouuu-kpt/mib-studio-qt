@@ -1,5 +1,23 @@
 # Recent Work
 
+## 2026-09-23 — Embedded E0: Zynq-7035 target/ownership contract (#443, epic #441)
+
+First slice of the standalone-instrument epic, planning-plus-fixture only.
+ADR 0006 records the PZ7035-FH / XC7Z035 (Cortex-A9, ARMv7-A, 32-bit)
+target, the two-repository ownership with `pz7035-imx426`, the one-owner
+PS/PL/UI matrix and the three independently versioned boundaries (native
+plugin ABI, local IPC, PS–PL wire). `deploy/embedded/pz7035-target.json`
+is the machine-readable manifest (schema + stdlib validator
+`scripts/check_embedded_target.py`, CTest `scripts.embedded_target_manifest`,
+docs-ci step); every number carries a status and evidence class, 17 unknowns
+have owners, and excluded-target tokens (aarch64, Ultra96, KU5P, ...) are
+rejected inside the target section. `integration.e2e_headless_experiment_smoke`
+is the no-UI baseline over the real facade (readiness fails closed, stale
+generation refused, Start, ≥40 admitted frames, Stop, HDF5 reopen with
+matching provenance, reconciled accounting, `Complete`). `tests/support/wait.h`
+replaces per-test `waitFor` copies. No ARM build, firmware or hardware
+evidence is claimed. Task note: [[task/2026-09-23-embedded-e0-target-contract]].
+
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
 
 Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,

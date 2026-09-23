@@ -38,6 +38,11 @@ This folder hosts living documentation as we build functionality. Keep content c
 - Post-processing tools (export, reanalyse) — see [howto/tools.md](howto/tools.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)
+- Standalone Zynq-7035 instrument (epic #441): target/ownership/budget
+  manifest [`deploy/embedded/pz7035-target.json`](../deploy/embedded/pz7035-target.json)
+  (`python3 scripts/check_embedded_target.py`), decision
+  [decisions/0006](decisions/0006-standalone-zynq7035-target-and-ownership.md),
+  plan [exec-plans/active/2026-09-23-embedded-e0-target-contract.md](exec-plans/active/2026-09-23-embedded-e0-target-contract.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)
 - Agent map — see [../AGENTS.md](../AGENTS.md)
 

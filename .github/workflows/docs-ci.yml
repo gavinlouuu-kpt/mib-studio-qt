@@ -16,3 +16,5 @@ jobs:
         run: python3 scripts/check_docs.py
       - name: Check user-manual screenshots stay in sync with the harness
         run: python3 scripts/check_screenshots.py
+      - name: Validate the embedded target manifest (epic #441 E0)
+        run: python3 scripts/check_embedded_target.py

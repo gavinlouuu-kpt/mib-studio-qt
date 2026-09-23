@@ -568,6 +568,17 @@ mib_backend_test_link(e2e_device_discovery_lifecycle_test PRIVATE Threads::Threa
 add_test(NAME integration.e2e_device_discovery_lifecycle COMMAND $<TARGET_FILE:mib_backend_tests> e2e_device_discovery_lifecycle_test)
 set_tests_properties(integration.e2e_device_discovery_lifecycle PROPERTIES LABELS "integration;e2e;discovery" TIMEOUT 120)
 
+# Embedded E0 (#443, epic #441): the deterministic no-UI experiment baseline
+# the standalone instrument host (#446) must keep passing. Facade-driven mock
+# source -> readiness (fails closed, stale refused) -> Start -> >= N admitted
+# frames -> Stop -> real finalization -> HDF5 reopen with provenance,
+# conserved accounting and a truthful terminal outcome. No Qt, display or
+# network; runs in the linux-backend-only lane and the sanitizer lane.
+mib_add_backend_test_executable(e2e_headless_experiment_smoke_test integration/e2e_headless_experiment_smoke_test.cpp)
+mib_backend_test_link(e2e_headless_experiment_smoke_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_headless_experiment_smoke COMMAND $<TARGET_FILE:mib_backend_tests> e2e_headless_experiment_smoke_test)
+set_tests_properties(integration.e2e_headless_experiment_smoke PROPERTIES LABELS "integration;e2e;recording;hdf5;embedded" TIMEOUT 180)
+
 mib_add_backend_test_executable(e2e_live_view_latency_test integration/e2e_live_view_latency_test.cpp)
 mib_backend_test_link(e2e_live_view_latency_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_live_view_latency COMMAND $<TARGET_FILE:mib_backend_tests> e2e_live_view_latency_test)
@@ -883,6 +894,16 @@ if(Python3_Interpreter_FOUND)
         TIMEOUT 30
     )
 
+    # Embedded E0 (#443): the PZ7035 target/ownership/budget manifest stays
+    # schema-valid and free of AArch64/KU5P/Ultra96 assumptions.
+    add_test(
+        NAME scripts.embedded_target_manifest
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_embedded_target.py
+    )
+    set_tests_properties(scripts.embedded_target_manifest PROPERTIES
+        LABELS "scripts;contract;embedded"
+        TIMEOUT 30
+    )
     add_test(
         NAME scripts.contract_version_consistency
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_contract_version_consistency.py

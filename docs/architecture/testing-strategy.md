@@ -90,7 +90,8 @@ part of the change.
 `assert.h`, `watchdog.h` (RAII watchdog with `mark()` + `_Exit`), `tempdir.h`,
 `mock_pipeline.h` (AppBackend + mock camera fixture), `hdf5_roundtrip.h`
 (round-trip + fault-injection helpers), `frames.h` (synthetic + real-dir frame
-sources), `stats.h` (latency/percentile collectors).
+sources), `stats.h` (latency/percentile collectors), `wait.h` (bounded
+`waitFor(pred, timeoutMs)` polling; pair it with the watchdog).
 
 Design rationale and the prioritized rollout backlog:
 [`../superpowers/specs/2026-06-23-testing-framework-design.md`](../superpowers/specs/2026-06-23-testing-framework-design.md).

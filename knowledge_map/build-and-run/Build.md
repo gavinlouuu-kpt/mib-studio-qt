@@ -296,6 +296,10 @@ cmake --preset linux-backend-only
 cmake --build --preset linux-backend-only-build --target mib_backend mib_backend_smoke_test emodulus_lut_catalog_test
 ctest --preset linux-backend-only-test -L backend --output-on-failure
 
+# Standalone-instrument (epic #441) contract checks: no hardware, no network
+python3 scripts/check_embedded_target.py                      # deploy/embedded/pz7035-target.json vs schema + E0 rules
+ctest --preset linux-backend-only-test -R integration.e2e_headless_experiment_smoke --output-on-failure
+
 # Deploy Qt runtime (CMake auto-triggers post-build; can run manually)
 windeployqt.exe --release build/Release/mib_studio_qt.exe
 ```

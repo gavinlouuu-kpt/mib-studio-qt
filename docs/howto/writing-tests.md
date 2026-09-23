@@ -68,6 +68,7 @@ ctest --test-dir build -C Debug -R backend.my_thing -V
 #include "support/frames.h"     // ringFrame(), writeFrames()
 #include "support/stats.h"      // summarize(), percentile()
 #include "support/faultinject.h"// longPath(), makeReadOnly()
+#include "support/wait.h"     // waitFor(pred, timeoutMs) — bounded polling
 ```
 
 - `MIB_REQUIRE(cond, msg)` — fatal (`_Exit(1)`); `MIB_EXPECT(cond, msg)` —
