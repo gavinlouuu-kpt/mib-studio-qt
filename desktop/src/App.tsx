@@ -35,6 +35,7 @@ import {
   type OperatingMode,
 } from "./commissioning";
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
+import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
 import { ExportStatus, useReviewExport } from "./exportControls";
@@ -1659,18 +1660,7 @@ export default function App() {
                       </span>
                     </div>
                     <div className="config-grid" style={{ flex: 1 }}>
-                      <div className="config-group" title={PENDING.monitoring}>
-                        <h5>Deformability vs Area (µm²)</h5>
-                        <p className="pending-note">
-                          Chart rendering lands with UI-3 (#268); the bounded metric rows below are the live chart inputs.
-                        </p>
-                      </div>
-                      <div className="config-group" title={PENDING.monitoring}>
-                        <h5>Ring Width Distribution</h5>
-                        <p className="pending-note">
-                          Chart rendering lands with UI-3 (#268); ring-ratio inputs are in the metric rows below.
-                        </p>
-                      </div>
+                      <MonitoringCharts snapshot={monSnapshot} />
                       <div className="config-group" title={PENDING.config}>
                         <h5>Tune Params</h5>
                         <p className="pending-note">
@@ -1732,14 +1722,14 @@ export default function App() {
                   </button>
                   <button disabled title="Loading a new file replaces the current one">Close File</button>
                   <button
-                    onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron : undefined)}
+                    onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}
                     disabled={!reviewMeta?.file_open || reviewExport.busy}
                     title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
                   >
                     Export Metrics to CSV…
                   </button>
-                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron : undefined)}>Export All…</button>
-                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron : undefined)}>Export Images…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
                   <button disabled title={PENDING.review}>Batch Metrics…</button>
                   <button disabled title={PENDING.review}>Regenerate masks…</button>
                   <span className="legend">

@@ -51,3 +51,10 @@ Source fixes discovered during verification: export test registration before
 runner finalization; absence-aware metadata handling for valid-only recordings;
 unknown-key-preserving changed patches; runtime provenance includes only the
 processing fields actually applied, not unrelated sections from the saved file.
+
+
+Native targeted ThreadSanitizer checks: 5/5 passed with `setarch x86_64 -R`
+(per-process ASLR disabled; normal launch hit TSan unexpected-memory-mapping on
+this host). Shared bridge CI passed at `6239d10`. Monitoring chart placeholders
+were replaced with bounded raw-unit plots; packaging/full Qt comparison remains
+outside this batch.

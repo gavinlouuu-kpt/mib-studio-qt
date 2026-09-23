@@ -260,3 +260,10 @@ single-flight and status errors do not erase command failures. Conversion uses
 known current calibration or delegates to the backend's current factor; no
 fabricated UI fallback value is sent. Chart images/series range controls remain
 unexposed. Config and export controls have interaction tests, not just codec tests.
+
+
+Monitoring placeholders are now bounded SVG plots over existing snapshot rows:
+deformability vs raw pixel area and dimensionless ring-ratio histogram. They
+cap at 200 rows, discard non-finite values, retain negative/range extrema, and
+label ring ratio separately from physical ring width. No calibration, new metric
+computation, or identity-matched overlay is implied.
