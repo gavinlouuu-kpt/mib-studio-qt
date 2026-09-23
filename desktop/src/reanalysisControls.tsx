@@ -7,6 +7,11 @@ type Options = {source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;
 
 // Owned at App scope so reconciliation and cancellation survive navigation.
 export function useReanalysis(ready:boolean) {
+  const [dataset,setDataset]=useState("all"),[startIndex,setStart]=useState("0"),[count,setCount]=useState("0");
+  const [kind,setKind]=useState<"hdf"|"folder"|"avi">("hdf"),[external,setExternal]=useState("");
+  const [synthetic,setSynthetic]=useState(true),[settings,setSettings]=useState(""),[roi,setRoi]=useState("");
+  const [draftError,setDraftError]=useState("");
+  const sourceRef=useRef<string|null>(null);
   const [status,setStatus]=useState<ReviewExportStatus>({state:"idle"});
   const [pending,setPending]=useState(false);
   const [error,setError]=useState("");
@@ -50,14 +55,11 @@ export function useReanalysis(ready:boolean) {
     try {const result=await bridge.cancelOperation(current.current.operation_id);if(!result.ok)setError(result.message);}
     catch(e){setError(String(e));}finally{lock.current=false;setPending(false);}
   }
-  return {status,error,pending,start,cancel,busy:pending || status.state==="running"};
+  return {status,error,pending,start,cancel,draft:{dataset,setDataset,start:startIndex,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef},busy:pending || status.state==="running"};
 }
 export function ReanalysisControls({model,metadata,blocked=false}:{model:ReturnType<typeof useReanalysis>;metadata:ReviewMetadata|null;blocked?:boolean}) {
-  const [dataset,setDataset]=useState("all"),[start,setStart]=useState("0"),[count,setCount]=useState("0");
-  const [kind,setKind]=useState<"hdf"|"folder"|"avi">("hdf"),[external,setExternal]=useState("");
-  const [synthetic,setSynthetic]=useState(true),[settings,setSettings]=useState(""),[roi,setRoi]=useState("");
-  const [draftError,setDraftError]=useState("");
-  useEffect(()=>{setDataset("all");setStart("0");setCount("0");},[metadata?.file_path,metadata?.recording_file]);
+  const {dataset,setDataset,start,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef}=model.draft;
+  useEffect(()=>{const source=metadata?.file_path ?? "";if(sourceRef.current!==source){sourceRef.current=source;setDataset("all");setStart("0");setCount("0");}},[metadata?.file_path,metadata?.recording_file]);
   async function choose(){
     try {const value=await open({title:kind==="folder"?"Choose image folder":"Choose AVI",directory:kind==="folder",multiple:false,...(kind==="avi"?{filters:[{name:"AVI",extensions:["avi"]}]}:{})});if(typeof value==="string")setExternal(value);}
     catch(e){setDraftError(String(e));}

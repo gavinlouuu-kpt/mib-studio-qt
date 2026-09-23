@@ -160,3 +160,8 @@ also delegates to it. Folder/AVI decode errors fail explicitly rather than silen
 shifting frame identities. Loader budgets and cancellation are applied during reads.
 Interactive source previews/background-frame selection and graphical ROI editing
 remain distinct UI parity work.
+
+Accepted export jobs immediately own the frontend busy state. A status response
+started before submission is discarded, so a delayed old `idle` poll cannot
+unlock a duplicate export. Reanalysis range/ROI values are checked as integers
+at the native boundary, not silently truncated from JSON fractions.

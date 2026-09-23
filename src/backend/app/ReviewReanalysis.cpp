@@ -36,14 +36,23 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
         }
         if(request.contains("roi")) {
             const auto& roi=request.at("roi");
+            for(const auto* field:{"x","y","w","h"}) {
+                if(!roi.at(field).is_number_integer() || roi.at(field)<0 || roi.at(field)>std::numeric_limits<int>::max())throw std::runtime_error("ROI fields must be nonnegative 32-bit integers");
+            }
             customRoi={roi.at("x").get<int>(),roi.at("y").get<int>(),roi.at("w").get<int>(),roi.at("h").get<int>()};
             if(customRoi.x<0 || customRoi.y<0 || customRoi.w<=0 || customRoi.h<=0)throw std::runtime_error("ROI must have nonnegative origin and positive size");
             overrideRoi=true;
         }
         output=request.at("output_path").get<std::string>();
         dataset=request.value("dataset", std::string("/valid_frames/images"));
-        start=request.value("start", std::uint64_t{0});
-        count=request.value("count", std::uint64_t{0});
+        const auto rangeValue=[&](const char* name) {
+            if(!request.contains(name))return std::uint64_t{0};
+            const auto& value=request.at(name);
+            if(!value.is_number_integer() || (value.is_number_integer() && !value.is_number_unsigned() && value.get<int64_t>()<0))
+                throw std::runtime_error(std::string(name)+" must be a nonnegative integer");
+            return value.get<std::uint64_t>();
+        };
+        start=rangeValue("start");count=rangeValue("count");
         if (source.empty() || output.empty()) throw std::runtime_error("Source and output paths are required");
         if (dataset!="all" && dataset!="/valid_frames/images" && dataset!="/invalid_frames/images" && dataset!="/recorded_frames/images")
             throw std::runtime_error("Unsupported HDF dataset");

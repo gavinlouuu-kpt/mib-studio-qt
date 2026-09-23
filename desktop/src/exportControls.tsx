@@ -54,6 +54,9 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
       };
       const result = await bridge.reviewExport(request);
       if (!result.ok) throw new Error(result.message);
+      ++generation.current;
+      const accepted: ReviewExportStatus = {state:"running",operation_id:result.operation_id};
+      currentStatus.current=accepted;setStatus(accepted);
       append(`Export accepted (operation ${result.operation_id}); awaiting result.`);
       await refresh();
     } catch (e) { const message=String(e); setError(message); append(`Export: ${message}`); }

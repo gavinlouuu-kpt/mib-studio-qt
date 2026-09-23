@@ -169,6 +169,10 @@ int main() {
     const auto regeneratedPath=dir / "regenerated.h5";
     json regenerate{{"source_path",source.string()},{"output_path",regeneratedPath.string()},
         {"dataset","all"},{"start",0},{"count",0}};
+    auto invalidRange=regenerate;invalidRange["start"]=1.5;
+    MIB_REQUIRE(!facade.submitReviewReanalysisJson(invalidRange.dump()).ok,"fractional range rejected");
+    invalidRange["start"]=-1;
+    MIB_REQUIRE(!facade.submitReviewReanalysisJson(invalidRange.dump()).ok,"negative range rejected");
     auto regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
     MIB_REQUIRE(regeneration.ok,"reanalysis accepted");
     auto regenerationStatus=terminal(facade,regeneration.operationId,true);

@@ -72,3 +72,15 @@ it("cancelled batch selection submits nothing",async()=>{
   await act(async()=>{await model.start("all",undefined,true);});
   expect(bridge.reviewExport).not.toHaveBeenCalled();
 });
+
+it("an idle poll started before acceptance cannot unlock an accepted export",async()=>{
+  let complete!:(status:{state:"idle"})=>void;
+  vi.mocked(bridge.reviewExportStatus).mockReturnValueOnce(new Promise(resolve=>{complete=resolve;}));
+  await act(async()=>{await vi.advanceTimersByTimeAsync(500);});
+  await act(async()=>{await model.start("all",undefined);});
+  expect(model.status.state).toBe("running");
+  await act(async()=>{complete({state:"idle"});});
+  expect(model.status.state).toBe("running");
+  await act(async()=>{await model.start("all",undefined);});
+  expect(bridge.reviewExport).toHaveBeenCalledOnce();
+});
