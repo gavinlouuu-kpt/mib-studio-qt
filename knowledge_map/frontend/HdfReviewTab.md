@@ -152,5 +152,11 @@ processing settings are copied at submission; source ROI/background, frame
 identities and timestamps are preserved; active core provenance is written.
 Output publication cannot replace an existing file, including a file created
 while processing. Cancellation and terminal result survive tab navigation.
-Initial HDF ranges are bounded to 4096 frames / 256 MiB input; folder/AVI inputs,
-synthetic background and broader batch-dialog editing are follow-on parity work.
+Jobs accept entire-HDF source order, individual HDF datasets, image folders and
+AVI inputs. Ranges are bounded to 4096 frames / 256 MiB input. Optional local
+processing JSON and ROI override do not mutate live settings. Synthetic background
+uses the exact shared quiet-tile algorithm extracted from Qt BatchMaskDialog; Qt
+also delegates to it. Folder/AVI decode errors fail explicitly rather than silently
+shifting frame identities. Loader budgets and cancellation are applied during reads.
+Interactive source previews/background-frame selection and graphical ROI editing
+remain distinct UI parity work.

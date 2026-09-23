@@ -423,7 +423,7 @@ export const bridge = {
     invoke<ReviewMetricsPage>("fetch_review_metrics_page", { valid, offset, count }),
   fetchReviewImage: async (dataset: number, index: number | string | bigint) =>
     pullFrame("fetch_review_frame_packet", 3, { dataset, index: decimalU64(index) }),
-  reviewReanalysis: (request: {source_path:string;output_path:string;dataset:string;start:number;count:number}) => invokeCommand("review_reanalysis_json", {json:JSON.stringify(request)}),
+  reviewReanalysis: (request: {source_path:string;output_path:string;dataset:string;start:number;count:number;source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown}) => invokeCommand("review_reanalysis_json", {json:JSON.stringify(request)}),
   reviewReanalysisStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_reanalysis_status_json")),
   reviewExport: (request: ReviewExportRequest) => invokeCommand("review_export_json", { json: JSON.stringify(request) }),
   reviewExportStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_export_status_json")),

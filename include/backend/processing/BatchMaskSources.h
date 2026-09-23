@@ -1,6 +1,9 @@
 #pragma once
 
 #include <string>
+#include <functional>
+#include <limits>
+#include <cstddef>
 #include <vector>
 
 namespace cv { class Mat; }
@@ -16,6 +19,19 @@ class ProcessingService;
 } // namespace backend::services
 
 namespace backend::services::batch_masks {
+
+struct LoadOptions {
+    size_t start{0};
+    size_t count{0}; // zero selects the remaining source
+    size_t maxFrames{std::numeric_limits<size_t>::max()};
+    size_t maxBytes{std::numeric_limits<size_t>::max()};
+    std::function<bool()> cancelled;
+};
+
+// Shared Qt/Tauri synthetic background: quietest temporal tiles, unchanged
+// from BatchMaskDialog's original algorithm. Cancellation is checked per tile.
+cv::Mat buildSyntheticBackground(const std::vector<cv::Mat>& frames,
+                                 const std::function<bool()>& cancelled = {});
 
 // Load a contiguous range of images from an open Hdf5Service dataset.
 // `datasetPath` is typically one of:
@@ -34,7 +50,8 @@ bool loadFromHdf5(Hdf5Service& hdf5,
 bool loadFromFolder(const std::string& folderPath,
                     std::vector<cv::Mat>& outGray,
                     std::vector<std::string>& outFilenames,
-                    std::vector<std::string>& errors);
+                    std::vector<std::string>& errors,
+                    const LoadOptions& options = {});
 
 // Load all frames from an AVI file (written by FrameStore::saveFramesToAvi or
 // any AVI readable by cv::VideoCapture). Frames are decoded sequentially and
@@ -44,7 +61,8 @@ bool loadFromFolder(const std::string& folderPath,
 bool loadFromAvi(const std::string& aviPath,
                  std::vector<cv::Mat>& outGray,
                  std::vector<std::string>& outFilenames,
-                 std::vector<std::string>& errors);
+                 std::vector<std::string>& errors,
+                    const LoadOptions& options = {});
 
 // Write one mask PNG per processed frame into `outputDir`. Filenames are
 // `<basename>_mask.png` (basename taken from `filenames[i]` if provided,

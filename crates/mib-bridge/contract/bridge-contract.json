@@ -401,15 +401,24 @@
   },
   "review_reanalysis_json": {
     "request": {
-      "source_path": "existing HDF5 path",
+      "source_path": "existing HDF5, image folder or AVI path",
       "output_path": "new HDF5 path; never overwritten",
       "dataset": [
+        "all",
         "/valid_frames/images",
         "/invalid_frames/images",
         "/recorded_frames/images"
       ],
       "start": "nonnegative integer; default 0",
-      "count": "nonnegative integer; 0 selects remaining; at most 4096 frames and 256MiB input"
+      "count": "nonnegative integer; 0 selects remaining; at most 4096 frames and 256MiB input",
+      "source_kind": [
+        "hdf",
+        "folder",
+        "avi"
+      ],
+      "synthetic_background": "boolean; build shared quiet-tile background when no source background",
+      "roi": "optional {x,y,w,h}; positive size, nonnegative origin, source bounded",
+      "image_processing": "optional local config.json image_processing object; never applies to live settings"
     },
     "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
   }

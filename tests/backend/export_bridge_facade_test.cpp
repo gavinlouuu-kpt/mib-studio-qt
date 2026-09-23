@@ -8,6 +8,9 @@
 #include <atomic>
 #include <fstream>
 #include <thread>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/videoio.hpp>
+#include "backend/processing/BatchMaskSources.h"
 
 using namespace backend::bridge;
 using nlohmann::json;
@@ -165,7 +168,7 @@ int main() {
     MIB_REQUIRE(hash(source) == originalHash, "batch sources unchanged");
     const auto regeneratedPath=dir / "regenerated.h5";
     json regenerate{{"source_path",source.string()},{"output_path",regeneratedPath.string()},
-        {"dataset","/valid_frames/images"},{"start",0},{"count",0}};
+        {"dataset","all"},{"start",0},{"count",0}};
     auto regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
     MIB_REQUIRE(regeneration.ok,"reanalysis accepted");
     auto regenerationStatus=terminal(facade,regeneration.operationId,true);
@@ -205,6 +208,49 @@ int main() {
     MIB_REQUIRE(regeneration.ok,"write fault accepted asynchronously");
     MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="failed","write fault never success");
     MIB_REQUIRE(hash(source)==originalHash,"reanalysis source immutable");
+    const auto folder=dir / "source-images";
+    std::filesystem::create_directory(folder);
+    for(int i=0;i<4;++i) MIB_REQUIRE(cv::imwrite((folder/("frame"+std::to_string(i)+".png")).string(),cv::Mat(32,32,CV_8UC1,cv::Scalar(20+i))),"folder fixture");
+    regenerate["source_kind"]="folder";regenerate["source_path"]=folder.string();
+    regenerate["output_path"]=(dir / "folder-regenerated.h5").string();
+    regenerate["start"]=1;regenerate["count"]=2;regenerate["synthetic_background"]=true;
+    regenerate["roi"]={{"x",1},{"y",1},{"w",20},{"h",20}};
+    regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+    MIB_REQUIRE(regeneration.ok,"folder range reanalysis accepted");
+    MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="completed","folder range complete");
+    {
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile((dir / "folder-regenerated.h5").string()),"folder output readable");
+        cv::Mat background;MIB_REQUIRE(reader.readBackgroundImage(background),"synthetic background persisted");
+        uint64_t first=0,last=0;size_t valid=0,invalid=0;backend::services::ProcessingService::Roi roi;
+        MIB_REQUIRE(reader.readExperimentInfo(first,last,valid,invalid,&roi),"folder metadata readable");
+        MIB_REQUIRE(valid+invalid==2 && roi.x==1 && roi.w==20,"folder range and ROI applied");
+    }
+    const auto avi=dir / "source.avi";
+    {
+        cv::VideoWriter writer(avi.string(),cv::VideoWriter::fourcc('M','J','P','G'),30,cv::Size(32,32),false);
+        MIB_REQUIRE(writer.isOpened(),"AVI fixture codec available");
+        for(int i=0;i<4;++i)writer.write(cv::Mat(32,32,CV_8UC1,cv::Scalar(20+i)));
+    }
+    regenerate["source_kind"]="avi";regenerate["source_path"]=avi.string();regenerate["output_path"]=(dir / "avi-regenerated.h5").string();
+    regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+    MIB_REQUIRE(regeneration.ok,"AVI range accepted");
+    MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="completed","AVI range complete");
+    {
+        using namespace backend::services::batch_masks;
+        std::vector<cv::Mat> images;std::vector<std::string> names,errors;
+        LoadOptions budget;budget.maxFrames=1;
+        MIB_REQUIRE(!loadFromFolder(folder.string(),images,names,errors,budget),"folder limit rejects rather than truncates");
+        MIB_REQUIRE(!loadFromAvi(avi.string(),images,names,errors,budget),"AVI limit rejects rather than truncates");
+        budget.maxFrames=4;budget.maxBytes=1;
+        MIB_REQUIRE(!loadFromFolder(folder.string(),images,names,errors,budget),"folder memory cap");
+        budget.maxBytes=4096;budget.cancelled=[]{return true;};
+        MIB_REQUIRE(!loadFromAvi(avi.string(),images,names,errors,budget),"AVI load cancellation");
+        images=std::vector<cv::Mat>(10,cv::Mat(70,70,CV_8UC1,cv::Scalar(32)));
+        images.back()=cv::Mat(70,70,CV_8UC1,cv::Scalar(200));
+        const auto background=buildSyntheticBackground(images);
+        MIB_REQUIRE(cv::countNonZero(background!=32)==0,"synthetic quiet tiles reject moving outlier including edge tiles");
+    }
     facade.shutdown();
     return mib::test::exitCode();
 }

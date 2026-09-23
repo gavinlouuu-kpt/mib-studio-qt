@@ -512,3 +512,15 @@ current/max queue depth, batch size, worker count, and running state. See
   not the whole ROI). It also uses row pointers instead of `cv::Mat::at<>`
   and skips the `clone()` for already-single-channel input. These were
   per-object allocator/CPU costs that scaled with objects-per-frame.
+
+### Shared offline reanalysis inputs
+
+`BatchMaskSources::buildSyntheticBackground` now owns the unchanged quiet-tile
+background algorithm formerly in Qt BatchMaskDialog (64-pixel tiles; temporal
+neighbour difference; mean of the quietest 3–10 frames). Qt and facade reanalysis
+call the same implementation; facade cancellation is checked between tiles.
+Folder/AVI loaders accept optional range, byte/frame budgets and cancellation
+without changing default Qt behavior. Tauri's reanalysis job uses these loaders,
+`ProcessingService::processBatch` and `saveMasksToHdf5`; no science is implemented
+in React. Its local processing configuration and ROI are per-job snapshots,
+never changes to realtime configuration.

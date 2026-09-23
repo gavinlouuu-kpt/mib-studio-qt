@@ -31,3 +31,10 @@ it("does not publish a failed backend job as a successful save",async()=>{
   vi.mocked(bridge.reviewReanalysisStatus).mockResolvedValue({state:"failed",operation_id:"12",error:"Disk write failed"});
   await act(async()=>vi.advanceTimersByTimeAsync(500));expect(host.textContent).toContain("Disk write failed");expect(host.textContent).not.toContain("Output:");
 });
+
+it("accepts an independent image folder without replacing or requiring the open HDF reader",async()=>{
+  vi.mocked(bridge.fetchReviewMetadata).mockClear();
+  await act(async()=>model.start("/images","all",1,3,{source_kind:"folder",synthetic_background:true,roi:{x:0,y:0,w:10,h:10}}));
+  expect(bridge.fetchReviewMetadata).not.toHaveBeenCalled();
+  expect(bridge.reviewReanalysis).toHaveBeenCalledWith(expect.objectContaining({source_path:"/images",source_kind:"folder",start:1,count:3,synthetic_background:true}));
+});
