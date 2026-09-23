@@ -164,7 +164,7 @@ int main() {
     MIB_REQUIRE(facade.fetchReviewMetadata(review) && review.filePath == source.string(), "batch preserves current review");
     batch["source_paths"] = json::array();
     MIB_REQUIRE(!facade.submitReviewExportJson(batch.dump()).ok, "empty explicit batch rejected");
-    batch["source_paths"] = json::array({source.string()});
+    batch["source_paths"] = json::array({source.string(),source.string()});
     batch["explicit_destination"] = source.string();
     MIB_REQUIRE(!facade.submitReviewExportJson(batch.dump()).ok, "batch cannot target explicit shared destination");
     MIB_REQUIRE(hash(source) == originalHash, "batch sources unchanged");
@@ -317,6 +317,14 @@ int main() {
         MIB_REQUIRE(job.ok && terminal(facade,job.operationId,true)["state"]=="failed","late output collision not overwritten");
         facade.setEventSink({});std::ifstream existing(collision);std::string contents;std::getline(existing,contents);
         MIB_REQUIRE(contents=="preserve concurrent output","concurrent output bytes preserved");
+    }
+    {
+        const auto destination=dir/"pinned-source.csv";
+        const json pinned{{"source_paths",{source.string()}},{"output_root",dir.path().string()},{"explicit_destination",destination.string()},{"format","metrics_csv"}};
+        MIB_REQUIRE(facade.closeReview().ok,"close before explicitly pinned export");
+        const auto job=facade.submitReviewExportJson(pinned.dump());
+        MIB_REQUIRE(job.ok && terminal(facade,job.operationId)["state"]=="completed","single pinned source supports explicit CSV destination after review close");
+        MIB_REQUIRE(std::filesystem::exists(destination),"pinned CSV published");
     }
     facade.shutdown();
     return mib::test::exitCode();

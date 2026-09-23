@@ -203,3 +203,5 @@ to decoded Tauri PNG for all five overlay modes. This proves serialization and
 rendering equivalence for those saved-file paths, not hardware acquisition,
 interactive Qt/Tauri full-workflow acceptance, ROI stroke styling, or platform
 packaging. Native export/reanalysis lifecycle tests cover those workers separately.
+
+Tauri source open/close is serialized across native dialogs and backend reconciliation. Failed opens that leave no native file clear stale path/canvas/metrics. Single-file exports capture an explicit source before opening the destination dialog, so later source changes cannot retarget the export.

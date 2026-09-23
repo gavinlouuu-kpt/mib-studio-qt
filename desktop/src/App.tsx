@@ -449,7 +449,7 @@ export default function App() {
         acceptConfig(JSON.stringify(parsed, null, 2),discardDraft,generation);
         setBackgroundSet(Boolean(parsed.background_set));
         setAutoBackgroundEnabled(Boolean(parsed.image_processing?.auto_background_enabled));
-        acceptQuickConfig(JSON.stringify({enabled:Boolean(parsed.realtime_processing?.enabled),factor:String(parsed.pixel_to_micron ?? 1)}),false,quickToken);
+        acceptQuickConfig(JSON.stringify({enabled:Boolean(parsed.realtime_processing?.enabled),factor:String(parsed.pixel_to_micron ?? 1)}),discardDraft,quickToken);
         if (parsed.roi) {
           setRoiFields({
             x: String(parsed.roi.x ?? 0),
@@ -470,6 +470,7 @@ export default function App() {
   }, [ready, refreshConfig]);
 
   const onApplyConfigJson = useCallback(async () => {
+    if (!liveDraft.canApply()) return append("Runtime configuration changed. Reload and reconcile the preserved draft before applying.");
     try {
       const res = await bridge.applyProcessingConfigJson(configText);
       if (!res.ok) return append(`config apply failed: ${res.message}`);
@@ -479,7 +480,7 @@ export default function App() {
     } catch (e) {
       append(`config apply error: ${e}`);
     }
-  }, [configText, append, refreshConfig,configApplied]);
+  }, [configText, append, refreshConfig,configApplied,liveDraft.canApply]);
 
   const onApplyRoi = useCallback(async () => {
     try {
@@ -648,6 +649,7 @@ export default function App() {
   // ---- Processing settings (bridged subset of App config) ----
 
   const onApplyProcessing = useCallback(async () => {
+    if (!quickDraft.canApply()) return append("Runtime processing controls changed. Reload and reconcile the preserved draft before applying.");
     try {
       const factor = Number(pixelToMicron);
       if (!pixelToMicron.trim() || !Number.isFinite(factor) || factor <= 0) return append("processing failed: px→µm must be a finite positive number");
@@ -661,7 +663,7 @@ export default function App() {
     } catch (e) {
       append(`processing error: ${e}`);
     }
-  }, [procEnabled, pixelToMicron, append, quickDraft.text, quickApplied, refreshConfig]);
+  }, [procEnabled, pixelToMicron, append, quickDraft.text, quickDraft.canApply, quickApplied, refreshConfig]);
 
   // ---- Experiment lifecycle (backend-owned, BE-4) ----
 
@@ -735,14 +737,26 @@ export default function App() {
     framePulls.current.request("review", () => bridge.fetchReviewImage(dataset, index));
   }, []);
 
+  const reviewSourcePending=useRef(false);
+  const reviewSourceGeneration=useRef(0);
+  const [reviewSourceBusy,setReviewSourceBusy]=useState(false);
+  const clearReviewSource=useCallback(()=>{
+    framePulls.current.invalidate("review"); ++metricsGeneration.current;
+    setReviewMeta(null);setMetricsPage(null);setReviewPath("");setReviewing(false);setReviewIndex("0");setReviewImgIndex(0);
+    const canvas=reviewCanvasRef.current;if(canvas)canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
+  },[]);
   const onSelectHdf = useCallback(async () => {
+    if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
+    const sourceGeneration=++reviewSourceGeneration.current;
+    try {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
     ++metricsGeneration.current;
+    framePulls.current.invalidate("review");
     setMetricsPage(null);
-    try {
       const res = await bridge.loadRecording(picked);
-      if (!res.ok) { setReviewMeta(await bridge.fetchReviewMetadata()); return append(`load failed: ${res.message}`); }
+      if(sourceGeneration!==reviewSourceGeneration.current)return;
+      if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);return append(`load failed: ${res.message}`); }
       setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
@@ -759,9 +773,10 @@ export default function App() {
       }
     } catch (e) {
       append(`load error: ${e}`);
-    }
+      try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
+    } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage]);
+  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
 
   useEffect(()=>{
     if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;
@@ -809,7 +824,7 @@ export default function App() {
 
   const reviewExport = useReviewExport(ready, append);
   const reanalysis = useReanalysis(ready);
-  const requestClose = useCloseGuard({ready, busy:experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:configDirty || checkedConfig.dirty || profiles.dirty, report:append});
+  const requestClose = useCloseGuard({ready, busy:reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:append});
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
@@ -1537,10 +1552,10 @@ export default function App() {
                       {configTab === "app" && (
                         <>
                           <div className="toolbar">
-                            <button onClick={()=>{if(!configDirty||window.confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
+                            <button onClick={()=>{if((!configDirty&&!quickDraft.dirty)||window.confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
                               Reload
                             </button>
-                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
+                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
                               Apply
                             </button>
                             <span className="mono right" title="Active processing core identity (backend-owned trust)">
@@ -1589,10 +1604,11 @@ export default function App() {
                                     onChange={(e) => quickDraft.edit(JSON.stringify({enabled:procEnabled,factor:e.target.value}))}
                                   />
                                 </label>
-                                <button className="btn" onClick={onApplyProcessing} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+                                <button className="btn" onClick={onApplyProcessing} disabled={!ready || quickDraft.runtimeChanged} title={ready ? undefined : "Backend is not initialized"}>
                                   Apply
                                 </button>
                               </div>
+                              {quickDraft.runtimeChanged && <p role="status">Runtime processing controls changed; your edits are preserved. Use Reload above, then reconcile your changes.</p>}
                               {stats?.valid && (
                                 <p className="mono">
                                   algo {formatMetric(stats.algo_fps1s)} · valid {formatMetric(stats.valid_fps1s)} · invalid{" "}
@@ -1792,28 +1808,29 @@ export default function App() {
             {tab === "review" && (
               <>
                 <div className="toolbar">
-                  <button onClick={onSelectHdf} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+                  <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} title={ready ? undefined : "Backend is not initialized"}>
                     Select HDF File…
                   </button>
-                  <button disabled={!reviewMeta?.file_open || expActive || recording} onClick={async () => {
+                  <button disabled={!reviewMeta?.file_open || expActive || recording || reviewSourceBusy} onClick={async () => {
+                    if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);++reviewSourceGeneration.current;
+                    try {
                     const result = await bridge.closeReview();
                     if (!result.ok) return append(result.message);
-                    framePulls.current.invalidate("review"); setReviewMeta(null); setMetricsPage(null);
-                    ++metricsGeneration.current; setMetricsPage(null); setReviewPath(""); setReviewing(false); setReviewIndex("0");
-                    const canvas = reviewCanvasRef.current; if (canvas) canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
+                    clearReviewSource();
+                    }catch(e){append(`Close review failed: ${e}`);}finally{reviewSourcePending.current=false;setReviewSourceBusy(false);}
                   }}>Close File</button>
                   <button
                     onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}
-                    disabled={!reviewMeta?.file_open || reviewExport.busy}
+                    disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy}
                     title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
                   >
                     Export Metrics to CSV…
                   </button>
-                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
-                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
-                  <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy} onClick={() => void reviewExport.start("charts")}>Export Charts…</button>
-                  <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
-                  <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("charts")}>Export Charts…</button>
+                  <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
+                  <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
 
                   <span className="legend">
                     <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
@@ -1858,7 +1875,7 @@ export default function App() {
                 </div>
                 <div className="subtab-body">
                   <ReviewExportOptions model={reviewExport}/>
-                  <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || !ready}/>
+                  <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
                   <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
                     <div className="frames">

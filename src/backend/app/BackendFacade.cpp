@@ -1485,7 +1485,7 @@ namespace backend::bridge
                     throw std::invalid_argument("Batch requires 1 to 256 nonempty source paths");
             }
             request.explicitDestination = input.value("explicit_destination", std::string{});
-            if (!sources.empty() && !request.explicitDestination.empty())
+            if (sources.size() > 1 && !request.explicitDestination.empty())
                 throw std::invalid_argument("Batch exports use generated destinations, not an explicit destination");
             if (request.outputRoot.empty() && !request.explicitDestination.empty())
                 request.outputRoot = ".";

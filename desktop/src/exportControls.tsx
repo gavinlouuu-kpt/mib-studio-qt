@@ -46,7 +46,9 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
     try {
       const start=Number(seriesStart),end=seriesEnd.trim()===""?undefined:Number(seriesEnd);
       if(!Number.isSafeInteger(start) || start<0 || (end!==undefined && (!Number.isSafeInteger(end) || end<start)))throw new Error("Series range requires nonnegative integer start and end ≥ start.");
-      const sources = batch ? await open({title:"Choose HDF files to export",multiple:true,filters:[{name:"HDF5",extensions:["h5","hdf5"]}]}) : undefined;
+      const source = batch ? undefined : await bridge.fetchReviewMetadata();
+      if (!batch && (!source?.file_open || !source.file_path)) throw new Error("No review source is open.");
+      const sources = batch ? await open({title:"Choose HDF files to export",multiple:true,filters:[{name:"HDF5",extensions:["h5","hdf5"]}]}) : [source!.file_path];
       if (batch && (!Array.isArray(sources) || !sources.length)) return;
       const picked = format === "metrics_csv" && !batch
         ? await save({title:"Export metrics CSV",filters:[{name:"CSV",extensions:["csv"]}],defaultPath:"metrics.csv"})

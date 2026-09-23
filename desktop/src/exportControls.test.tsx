@@ -5,7 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { bridge } from "./bridge";
 import { useReviewExport, ExportStatus } from "./exportControls";
 import { open } from "@tauri-apps/plugin-dialog";
-vi.mock("./bridge",()=>({bridge:{reviewExport:vi.fn(),reviewExportStatus:vi.fn(),cancelOperation:vi.fn()}}));
+vi.mock("./bridge",()=>({bridge:{fetchReviewMetadata:vi.fn(),reviewExport:vi.fn(),reviewExportStatus:vi.fn(),cancelOperation:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-dialog",()=>({open:vi.fn(),save:vi.fn()}));
 Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});
 let root:Root,host:HTMLDivElement, model:ReturnType<typeof useReviewExport>, visible:boolean;
@@ -13,6 +13,7 @@ function Harness(){model=useReviewExport(true,vi.fn());return visible ? <ExportS
 const running={state:"running" as const,operation_id:"9007199254740993",phase:"valid_images",completed:"3",total:"12"};
 beforeEach(async()=>{
   vi.useFakeTimers();vi.resetAllMocks();visible=true;
+  vi.mocked(bridge.fetchReviewMetadata).mockResolvedValue({file_open:true,file_path:"/tmp/source-a.h5"} as never);
   vi.mocked(open).mockResolvedValue("/tmp/export");
   vi.mocked(bridge.reviewExportStatus).mockResolvedValue({state:"idle"});
   vi.mocked(bridge.reviewExport).mockResolvedValue({ok:true,operation_id:running.operation_id,message:"accepted"} as never);
@@ -103,3 +104,5 @@ it("reload reconciles an existing native export before allowing another submissi
  vi.mocked(bridge.reviewExportStatus).mockResolvedValue(running);
  await act(async()=>model.cancel());expect(bridge.cancelOperation).toHaveBeenCalledWith(running.operation_id);
 });
+
+it("pins the source before the destination picker can switch review files",async()=>{vi.mocked(open).mockImplementation(async()=>{vi.mocked(bridge.fetchReviewMetadata).mockResolvedValue({file_open:true,file_path:"/tmp/source-b.h5"} as never);return "/tmp/export";});await act(async()=>model.start("all"));expect(bridge.reviewExport).toHaveBeenCalledWith(expect.objectContaining({source_paths:["/tmp/source-a.h5"]}));});

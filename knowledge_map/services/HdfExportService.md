@@ -126,3 +126,5 @@ be recovered recording calibration. Fixed isoelastic reference conditions are
 labelled rather than automatically assumed to match the experiment.
 
 Tauri Review export options pass existing frame classes and inclusive series ranges to the shared service; fractional, negative and reversed ranges fail at the facade boundary.
+
+Explicit source lists may contain one source with an explicit CSV destination; lists with multiple sources must use generated destinations. This lets a dialog-pending single-file export retain its source independently of the current Review selection.

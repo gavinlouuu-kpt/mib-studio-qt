@@ -229,3 +229,5 @@ Custom saved profiles retain their values. Runtime sweep: `data/exposure-sweep/r
 Overview saves a selection. Other unsaved settings are retained. An unfinished,
 invalid JSON edit is preserved rather than replaced; it must be corrected before
 saving. The Overview settings are runtime overrides, not a second saved profile.
+
+Tauri live JSON and quick processing drafts retain edits when profile/config refresh changes runtime settings. Both apply paths reject stale drafts until explicit confirmed reload/reconciliation; delayed apply acknowledgements cannot clear the conflict. The reload action checks and reloads both draft types.

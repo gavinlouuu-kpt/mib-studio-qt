@@ -11,6 +11,7 @@ export function useLiveConfigDraft(){
   if((d.dirty&&!discard)||d.generation!==requestedGeneration){update({...d,runtimeChanged:d.runtimeChanged||text!==d.baseline});return false;}
   update({...d,text,baseline:text,dirty:false,runtimeChanged:false});return true;
  },[update]);
- const applied=useCallback((submitted:string)=>{const d=current.current;if(d.text===submitted)update({...d,dirty:false,runtimeChanged:false});},[update]);
- return {...state,edit,generation,acceptRemote,applied};
+ const canApply=useCallback(()=>!current.current.runtimeChanged,[]);
+ const applied=useCallback((submitted:string)=>{const d=current.current;if(d.text===submitted && !d.runtimeChanged)update({...d,baseline:submitted,dirty:false});},[update]);
+ return {...state,edit,generation,acceptRemote,applied,canApply};
 }
