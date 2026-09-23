@@ -57,7 +57,9 @@ jobs:
           assets: none
 
       - name: Verify smoke process cleanup
-        run: python3 desktop/scripts/test_xvfb_smoke.py
+        run: |
+          python3 desktop/scripts/test_xvfb_smoke.py
+          python3 tools/test_review_isoelastic_embedding.py
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

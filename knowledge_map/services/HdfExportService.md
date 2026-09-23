@@ -132,3 +132,6 @@ Explicit source lists may contain one source with an explicit CSV destination; l
 ### MSVC-safe shared review curve embedding
 
 The unchanged isoelastic reference is generated into separate bounded 4096-byte arrays, then assembled at runtime before the shared chart parser runs. It is not one large (or adjacent-concatenated) string literal, avoiding MSVC C2026. The CMake generator reads HEX so Windows/CRLF line endings and every source byte remain unchanged. `python tools/test_review_isoelastic_embedding.py` compiles the generated header and verifies the entire scientific resource byte-for-byte, plus a multi-chunk fixture with CRLF, quoting, backslashes and all 256 byte values. Native export/review tests still verify the parsed references are available without runtime working-directory assets.
+
+Both Linux and Windows desktop lanes compile the embedding byte-roundtrip fixture
+before the full application build, including MSVC on the Windows runner.

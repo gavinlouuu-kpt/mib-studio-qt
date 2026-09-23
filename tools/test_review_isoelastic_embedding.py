@@ -29,7 +29,8 @@ class ReviewIsoelasticEmbeddingTest(unittest.TestCase):
                 command = ['cl', '/nologo', '/std:c++17', '/EHsc', str(cpp), '/Fe:' + str(executable)]
             else:
                 command = [os.environ.get('CXX', 'c++'), '-std=c++17', str(cpp), '-o', str(executable)]
-            subprocess.run(command, cwd=work, check=True, capture_output=True)
+            compiled = subprocess.run(command, cwd=work, capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
             output = work / 'roundtrip.bin'
             subprocess.run([str(executable), str(output)], check=True)
             self.assertEqual(output.read_bytes(), payload)
