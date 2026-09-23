@@ -160,6 +160,7 @@ def main():
         assert export['state'] == 'completed', export
         assert Path(export['final_path']).exists(), export
         evidence['export'] = export
+        wait(lambda: 'Export: completed' in js('return document.body.innerText'), 'frontend export reconciliation')
         click('Close File')
         assert not invoke('fetch_review_metadata')['file_open']
         evidence['closed'] = True

@@ -412,3 +412,18 @@ The existing Rust manifest verifier recognizes both its `url`/`sha256` names and
 published `installer_url`/`installer_sha256` names. It does not launch Qt installers as
 Tauri updates. Tauri-specific package publication/installer launch/rollback remain release
 work; a successful manifest check is not proof of installable Tauri delivery.
+
+### Integrated close and delivery checks
+
+File→Exit and native window-close share an authoritative close guard. Pending saves,
+exports/reanalysis/calibration, raw recording and nonterminal experiments postpone
+closing; configuration/profile drafts require explicit discard. Idle capture stops
+before close. Closing never implicitly cancels a scientific run. Settings and Help
+menus route to implemented controls and the issue page rather than disabled stubs.
+The integrated bridge ABI is 17 (processed/source review packets and core management).
+
+`desktop/scripts/bundle-deb.py` packages an already-built custom-protocol binary,
+deriving native Debian dependencies with `dpkg-shlibdeps` (including OpenCV/HDF5,
+not just GTK/WebKit). Use `--debug` for development verification; release packaging
+requires the release binary. Build on each supported target distro; a local package
+is not evidence of Windows/macOS delivery or signed automatic update acceptance.

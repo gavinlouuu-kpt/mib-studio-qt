@@ -1,3 +1,5 @@
+import { useCloseGuard } from "./closeGuard";
+import { ProcessedPreview } from "./components/ProcessedPreview";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
 import { invoke } from "@tauri-apps/api/core";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
@@ -50,22 +52,6 @@ import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
 const SIDEBAR_KEY = "mib.sidebar.collapsed";
-
-// Standard reason strings for controls whose backend surface is not bridged
-// yet. Shown as tooltips — the control stays visible (Qt parity) but cannot
-// be activated, and never fakes backend or hardware state.
-const PENDING = {
-  discovery: "Device discovery is not bridged yet — backend issue BE-2 (#272)",
-  roi: "ROI editing is not bridged yet — backend issue BE-3 (#273)",
-  script: "Camera script/config apply is not bridged yet — BE-2 (#272) / BE-3 (#273)",
-  config: "App config / profiles are not bridged yet — backend issue BE-3 (#273)",
-  saveBuffer: "Preview buffer save is not bridged yet — UI-3 (#268)",
-  monitoring: "Monitoring data is not bridged yet — backend issue BE-5 (#275)",
-  review: "HDF5 metadata/metrics/export are not bridged yet — backend issue BE-6 (#276)",
-  autofocus: "Autofocus/nanopositioner control is not bridged yet — BE-8 (#278)",
-  platform: "Platform/shell services are not migrated yet — BE-9 (#279)",
-  background: "Background image control is not bridged yet — backend issue BE-3 (#273)",
-};
 
 const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Idle]: "Inactive",
@@ -757,14 +743,10 @@ export default function App() {
   const invalidFps = stats?.valid ? stats.invalid_fps1s : null;
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
+  const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
+    ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
-  const startExperimentReason = !ready
-    ? "Backend is not initialized"
-    : !running
-      ? "Camera must be running before starting an experiment"
-      : expActive
-        ? "Experiment is already running"
-        : experimentRequestBusy ? "Experiment start request pending" : undefined;
+
 
   const cameraScript = useCameraScript({
     ready, running, experimentActive: expActive, selection: camSelection, append,
@@ -772,10 +754,18 @@ export default function App() {
   });
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview);
   const cores = useCoreManagement({ready,active:expActive,append,onChanged:refreshConfig});
+  const startExperimentReason = !ready || !cores.initialized
+    ? "Backend is not initialized"
+    : !running
+      ? "Camera must be running before starting an experiment"
+      : expActive
+        ? "Experiment is already running"
+        : experimentRequestBusy ? "Experiment start request pending" : undefined;
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
   const profiles = useProfiles({ready:ready && cores.initialized, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   const reviewExport = useReviewExport(ready, append);
   const reanalysis = useReanalysis(ready);
+  const requestClose = useCloseGuard({ready, busy:experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:configDirty || checkedConfig.dirty || profiles.dirty, report:append});
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
@@ -839,7 +829,7 @@ export default function App() {
     autofocus: {
       valid: afStatus?.valid ?? false,
       connected: afStatus?.connected ?? false,
-      identity: afStatus?.valid ? `COM${afStatus.com_port}` : "",
+      identity: afStatus?.connected ? (afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}`) : "",
     },
     samplePump: {
       valid: samplePump?.valid ?? false,
@@ -981,15 +971,15 @@ export default function App() {
                   .catch((e) => append(`open data folder failed: ${e}`));
               },
             },
-            { label: "Exit", pending: PENDING.platform },
+            { label: "Exit", onClick: () => void requestClose() },
           ]}
         />
         <Menu
           label="Settings"
           items={[
-            { label: "Processing Settings…", pending: PENDING.config },
-            { label: "Pixel to Micron…", pending: PENDING.config },
-            { label: "Monitoring Settings…", pending: PENDING.monitoring },
+            { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
             { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           ]}
         />
@@ -1005,7 +995,7 @@ export default function App() {
                 );
               },
             },
-            { label: "Report a Problem…", pending: PENDING.platform },
+            { label: "Report a Problem…", onClick: () => void openUrl("https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/new/choose").catch(e => append(`Open issue page: ${e}`)) },
           ]}
         />
         <div className="menubar-spacer" />
@@ -1083,16 +1073,16 @@ export default function App() {
             <SideRow k="Flush Status:" v={expStatus?.flushing ? "Flushing" : "Idle"} />
             <SideRow k="Valid Images Saved:" v={expStatus?.valid ? expStatus.valid_saved : "Unavailable"} />
             <SideRow
-              k="Runtime:"
-              v="Unavailable (clock domain unverified)"
+              k="Elapsed (wall):"
+              v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}
             />
           </div>
           <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
             <h4>Nanopositioner Autofocus</h4>
             <SideRow
-              k="COM Port:"
-              v={afStatus?.valid ? `COM${afStatus.com_port}` : "—"}
-              cls={afStatus?.valid ? "" : "dim"}
+              k="Endpoint:"
+              v={afStatus?.connected ? (afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}`) : "Disconnected"}
+              cls={afStatus?.connected ? "" : "dim"}
             />
             <SideRow
               k="Voltage:"
@@ -1344,7 +1334,7 @@ export default function App() {
               <>
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
-                  <button disabled title="ROI overlay rendering lands with UI-2 (#267)">ROI Overlay: Off</button>
+
                   <label>
                     X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
                   </label>
@@ -1440,7 +1430,7 @@ export default function App() {
                       <canvas ref={previewCanvasRef} className={fitWindow ? "fit" : ""} />
                     </div>
                     <div className="toolbar" style={{ marginTop: 6 }}>
-                      <button disabled title={PENDING.monitoring}>Overlay: Both</button>
+
                       <span className="legend">
                         <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
@@ -1488,6 +1478,7 @@ export default function App() {
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
                     <PreviewBufferControls model={previewBuffer} />
+                    <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
                     <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
@@ -1700,10 +1691,11 @@ export default function App() {
                     </div>
                     <div className="config-grid" style={{ flex: 1 }}>
                       <MonitoringCharts snapshot={monSnapshot} />
-                      <div className="config-group" title={PENDING.config}>
-                        <h5>Tune Params</h5>
+                      <div className="config-group">
+                        <h5>Processing settings</h5>
+                        <button disabled={expActive} onClick={() => {setExpTab("preview");setConfigTab("app");}}>Edit processing configuration</button>
                         <p className="pending-note">
-                          Filter thresholds / target group / multi-image editing lands with the config round-trip — BE-3 (#273).
+                          Filter thresholds, target groups and multi-image settings use the checked processing configuration. Changes are locked during an experiment.
                         </p>
                       </div>
                     </div>
