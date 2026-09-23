@@ -859,12 +859,12 @@ export default function App() {
     samplePump: {
       valid: samplePump?.valid ?? false,
       connected: samplePump?.connected ?? false,
-      identity: samplePump?.valid ? `COM${samplePump.com_port}` : "",
+      identity: samplePump?.connected ? (samplePump.port_name || `COM${samplePump.com_port}`) : "",
     },
     sheathPump: {
       valid: sheathPump?.valid ?? false,
       connected: sheathPump?.connected ?? false,
-      identity: sheathPump?.valid ? `COM${sheathPump.com_port}` : "",
+      identity: sheathPump?.connected ? (sheathPump.port_name || `COM${sheathPump.com_port}`) : "",
     },
     trigger: { valid: trigStatus?.valid ?? false, cameraAttached: trigStatus?.camera_attached ?? false },
     // Authoritative storage/free-space status is not bridged yet (backend
