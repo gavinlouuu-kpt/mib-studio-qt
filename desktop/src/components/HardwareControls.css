@@ -1,0 +1,6 @@
+.hardware-controls { display: grid; gap: 1rem; }
+.hardware-controls fieldset { min-width: 0; border: 1px solid #64748b; border-radius: .4rem; padding: 1rem; }
+.hardware-fields, .hardware-actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: end; margin: .7rem 0; }
+.hardware-fields label { display: flex; flex-direction: column; gap: .25rem; }
+.hardware-fields input, .hardware-fields select { max-width: 12rem; }
+.hardware-controls [role="alert"] { color: #fca5a5; }
