@@ -110,7 +110,7 @@ void compatibility(AppBackend& backend, const J& meta) {
         !meta.contains("processing_contract_version") ||
                 meta.at("processing_contract_version").is_null()
             ? 0
-            : integer(meta, "processing_contract_version", 0, 0, std::numeric_limits<int>::max());
+            : integer(meta, "processing_contract_version", 0, 0, (std::numeric_limits<int>::max)());
     if (contract && static_cast<uint32_t>(contract) !=
                         backend.processing().activeProcessingCoreIdentity().contractVersion)
         throw std::runtime_error("Profile processing contract is incompatible with active core");

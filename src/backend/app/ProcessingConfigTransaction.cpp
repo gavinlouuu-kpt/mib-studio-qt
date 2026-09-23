@@ -36,8 +36,8 @@ void checkPatch(const Json& patch, const Json& schema) {
         if (it.value().is_number()) {
             const double value = it.value().get<double>();
             if (!std::isfinite(value) ||
-                (expected.is_number_integer() && (value < std::numeric_limits<int>::min() ||
-                                                  value > std::numeric_limits<int>::max())))
+                (expected.is_number_integer() && (value < (std::numeric_limits<int>::min)() ||
+                                                  value > (std::numeric_limits<int>::max)())))
                 throw std::runtime_error("processing value outside representable range: " +
                                          it.key());
         }
