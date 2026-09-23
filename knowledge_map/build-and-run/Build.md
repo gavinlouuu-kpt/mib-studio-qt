@@ -430,3 +430,7 @@ The smoke run uses disposable XDG state and mock-camera mode, never an operator
 profile or remembered hardware configuration.
 The alive timer starts inside Xvfb, after display startup; the regression delays
 display startup deliberately to prevent a false pass before the app launches.
+
+The Windows candidate saves successfully provisioned Conan dependencies before
+application compilation, so subsequent source/test failures do not discard the
+completed dependency cache. It never caches a failed dependency install.

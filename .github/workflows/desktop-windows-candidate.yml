@@ -42,7 +42,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: conan-cache
         with:
           path: ~/.conan2/p
           key: tauri-conan-${{ runner.os }}-msvc194-${{ hashFiles('conanfile.py', 'conan/profiles/windows-msvc194') }}
@@ -68,6 +69,12 @@ jobs:
           if ($LASTEXITCODE) { throw 'Conan dependency resolution failed' }
           python scripts/provision-assets.py --required-only
           if ($LASTEXITCODE) { throw 'Asset provisioning failed' }
+      - name: Save completed dependency cache before application checks
+        if: steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.conan2/p
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
       - name: Build SDK-free backend and export MSVC link manifest
         run: |
           cmake --preset windows-default -DMIB_BUILD_BACKEND_ONLY=ON -DBUILD_TESTING=ON -DMIB_ENABLE_HARDWARE_SDKS=OFF -DMIB_ENABLE_COREMOR=OFF -DMIB_ENABLE_MINDVISION=OFF -DMIB_ENABLE_WINDOWS_PACKAGING=OFF -DMIB_USE_SENTRY=OFF
