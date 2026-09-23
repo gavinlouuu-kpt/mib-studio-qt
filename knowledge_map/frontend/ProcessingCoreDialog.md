@@ -137,3 +137,5 @@ corrupt/missing selection; explicit bundled recovery remains subject to administ
 The shell presents registry/latest checks, downloaded-artifact verification/activation,
 and bundled recovery. Artifact download currently opens the HTTPS URL in the browser;
 select the downloaded file for native verification. This is not silent automatic updating.
+
+Tauri application-installer freshness compares the feed against `AppHandle::package_info().version`, the installed shell package version. Backend/core compatibility identity remains independent and is not used as the installed application version. Native idle/finalization checks return only lifecycle authorization; they do not select or mutate either version.
