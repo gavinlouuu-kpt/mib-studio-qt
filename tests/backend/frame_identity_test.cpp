@@ -51,10 +51,44 @@ int main() {
     MIB_EXPECT(files == 2, "exact requested range saved");
     const auto second = nlohmann::json::parse(facade.savePreviewBufferJson(request.dump()));
     MIB_EXPECT(second["ok"] == true && second["output_path"] != saved["output_path"], "no overwrite");
+    auto timestampRequest=request;
+    timestampRequest["range_mode"]="timestamp";
+    timestampRequest["first"]=std::to_string(latest);
+    timestampRequest["last"]=std::to_string(latest);
+    const auto timestampSave=nlohmann::json::parse(facade.savePreviewBufferJson(timestampRequest.dump()));
+    MIB_REQUIRE(timestampSave["ok"]==true,"timestamp subset saves");
+    size_t timestampFiles=0;
+    for(const auto& entry:std::filesystem::directory_iterator(timestampSave["output_path"].get<std::string>())){(void)entry;++timestampFiles;}
+    MIB_EXPECT(timestampFiles==1,"timestamp subset exact inclusive bounds");
+    auto invalid=request;invalid["first"]="18446744073709551616";
+    MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(invalid.dump()))["ok"]==false,"u64 overflow rejected");
+    invalid=request;invalid["generation"]="0";
+    MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(invalid.dump()))["ok"]==false,"stale ring epoch rejected");
+    auto background=nlohmann::json{{"action","background"},{"index",std::to_string(latest)},{"generation",range["generation"]}};
+    MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(background.dump()))["ok"]==true,"paused retained frame background");
+    const auto bg=backend.processing().getRealtimeBackgroundGray();
+    MIB_REQUIRE(!bg.empty(),"background published");
+    MIB_EXPECT(bg.at<uint8_t>(0,0)==latest%251,"background exact selected pixels");
+    auto filtered=request;filtered["filter_empty"]=true;
+    const auto filterResult=nlohmann::json::parse(facade.savePreviewBufferJson(filtered.dump()));
+    MIB_REQUIRE(filterResult["ok"]==true,"shared active-kernel empty filter executes");
+    size_t filteredFiles=0;
+    for(const auto& entry:std::filesystem::directory_iterator(filterResult["output_path"].get<std::string>())){(void)entry;++filteredFiles;}
+    MIB_EXPECT(filteredFiles==0,"uniform background frames omitted by active kernel");
+    background["index"]="0";
+    MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(background.dump()))["ok"]==false,"evicted background rejected");
     request["first"] = "0";
     MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(request.dump()))["ok"] == false, "evicted range rejected not clamped");
     request["output_root"] = (dir / "missing").string();
     MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(request.dump()))["ok"] == false, "missing destination fault");
+    nlohmann::json resize{{"action","resize"},{"capacity","1"}};
+    MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(resize.dump()))["ok"]==false,"destructive shrink requires explicit confirmation");
+    resize["confirm_clear"]=true;
+    MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(resize.dump()))["ok"]==true,"confirmed bounded resize");
+    const auto resized=nlohmann::json::parse(facade.fetchPreviewBufferJson());
+    MIB_EXPECT(resized["capacity"]=="1" && resized["available"]==false,"resize clears retained frames as documented");
+    resize["capacity"]="1000001";
+    MIB_EXPECT(nlohmann::json::parse(facade.savePreviewBufferJson(resize.dump()))["ok"]==false,"unbounded allocation rejected");
     facade.shutdown();
     return mib::test::exitCode();
 }

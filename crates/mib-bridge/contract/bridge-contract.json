@@ -379,10 +379,10 @@
     "notes": "No force overwrite; no startup-file selection changes; saved-only is not successful application."
   },
   "preview_buffer_json": {
-    "snapshot": "available:boolean; first,last,count:decimal-u64; capture_running,recording:boolean",
-    "save_request": "output_root existing directory; format tiff|avi; first,last decimal-u64; fps finite (0,1000]",
+    "snapshot": "available:boolean; first,last,count,capacity,generation,timestamp_first,timestamp_last:decimal-u64; timestamps_available,capture_running,recording:boolean",
+    "save_request": "action save(default)|resize|background; save: output_root existing directory, format tiff|avi, first,last decimal-u64, range_mode index(default)|timestamp(raw source units), filter_empty:boolean, fps finite (0,1000]; resize: capacity decimal-u64 1..1000000, confirm_clear:boolean; background: index decimal-u64 Mono8; optional generation decimal-u64 precondition",
     "save_result": "ok:boolean; output_path:string including retained partial path; error:string",
-    "guards": "idle experiment and stopped capture; exact retained range; unique destination directory; no overwrite; AVI has no per-frame timestamps"
+    "guards": "idle experiment and stopped capture; exact retained range and supplied ring generation; resize available-memory budget, shrink clearing requires confirmation; active-kernel empty filter; unique destination directory; no overwrite; AVI has no per-frame timestamps"
   },
   "local_profiles": {
     "entrypoint": "profile_command(base, request_json) -> JSON",

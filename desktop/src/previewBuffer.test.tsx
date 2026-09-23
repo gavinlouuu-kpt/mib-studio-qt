@@ -42,3 +42,28 @@ it("retains save ownership across navigation and reports partial output", async 
   await act(async () => {finish({ok:false, output_path:"/output/partial", error:"disk full"}); await pending;});
   expect(model.message).toContain("partial output: /output/partial"); expect(model.busy).toBe(false);
 });
+it("submits exact selected ranges and active-kernel filtering",async()=>{
+  await act(async()=>{model.setRangeMode("timestamp");model.setFirst("9007199254740993");model.setLast("9007199254740994");model.setFilterEmpty(true);});
+  vi.mocked(invoke).mockImplementation(async name=>name==="save_preview_buffer"?{ok:true,output_path:"/output/new",error:""}:{available:true,first:"9007199254740993",last:"9007199254740995",count:"3",capture_running:false});
+  await act(async()=>model.save());
+  const call=vi.mocked(invoke).mock.calls.find(([name])=>name==="save_preview_buffer");
+  expect(JSON.parse((call![1] as {request:string}).request)).toMatchObject({first:"9007199254740993",last:"9007199254740994",range_mode:"timestamp",filter_empty:true});
+});
+it("rejects malformed ranges before calling native save",async()=>{
+  await act(async()=>{model.setRangeMode("index");model.setFirst("1e3");model.setLast("2");});
+  await act(async()=>model.save());
+  expect(vi.mocked(invoke).mock.calls.some(([name])=>name==="save_preview_buffer")).toBe(false);
+});
+it("declining destructive resize leaves the buffer untouched",async()=>{
+  vi.spyOn(window,"confirm").mockReturnValue(false);
+  await act(async()=>model.setCapacity("1"));
+  await act(async()=>model.command("resize"));
+  expect(vi.mocked(invoke).mock.calls.some(([name])=>name==="save_preview_buffer")).toBe(false);
+  expect(model.busy).toBe(false);
+});
+it("background uses the exact paused selection rather than latest frame",async()=>{
+  await act(async()=>model.select("9007199254740993"));
+  await act(async()=>model.command("background"));
+  const call=vi.mocked(invoke).mock.calls.find(([name])=>name==="save_preview_buffer");
+  expect(JSON.parse((call![1] as {request:string}).request)).toMatchObject({action:"background",index:"9007199254740993"});
+});

@@ -2288,3 +2288,8 @@ provenance. See the catch-up execution plan for verified vs pending gates.
 ## 2026-09-23 — Tauri remembered hardware selection and named pump endpoints
 
 Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows pump transport UI/bridge gaps using existing services. See [[Desktop-Shell]] and [[Rust-Bridge]]. Malformed settings preserve prior preferences; startup jobs cannot be retargeted in flight. No real hardware was actuated.
+- 2026-09-23: Tauri preview buffer now supports exact-u64 inclusive index/source-timestamp
+  ranges, shared active-kernel empty filtering, bounded stopped/idle resizing (explicit
+  confirmation when frames are cleared), and background from a retained paused Mono8
+  frame. Ring generation preconditions reject stale selections; saves reserve new folders.
+  Linux RAM availability now uses MemAvailable for the shared resize budget check.

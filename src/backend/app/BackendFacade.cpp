@@ -2369,7 +2369,15 @@ namespace backend::bridge {
 std::string BackendFacade::fetchPreviewBufferJson() const {
     uint64_t first = 0, last = 0; size_t count = 0;
     const bool available = initialized_ && backend_.playback().queryRange(first, last, count);
-    return nlohmann::json{{"available", available}, {"first", std::to_string(first)},
+    playback::TimestampRange timestamps{};
+    playback::Frame frame;
+    const bool hasTimestamps = available && backend_.playback().getAvailableTimestampRange(timestamps);
+    const bool hasFrame = available && backend_.playback().fetchByIndex(last, frame);
+    return nlohmann::json{{"capacity", std::to_string(initialized_ ? backend_.playback().capacity() : 0)},
+        {"generation", std::to_string(hasFrame ? frame.storeGeneration : 0)},
+        {"timestamps_available",hasTimestamps}, {"timestamp_first",std::to_string(timestamps.start)},
+        {"timestamp_last",std::to_string(timestamps.end)},
+        {"available", available}, {"first", std::to_string(first)},
         {"last", std::to_string(last)}, {"count", std::to_string(count)},
         {"capture_running", initialized_ && backend_.capture().isRunning()},
         {"recording", initialized_ && backend_.isFrameRecording()}}.dump();
@@ -2381,7 +2389,9 @@ std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
         if (!initialized_) throw std::runtime_error("backend is not initialized");
         if (request.size() > 16384) throw std::runtime_error("buffer request exceeds limit");
         const auto input = json::parse(request);
-        const auto format = input.at("format").get<std::string>();
+        const auto action = input.value("action",std::string("save"));
+        if (action != "save" && action != "resize" && action != "background") throw std::runtime_error("unsupported buffer action");
+        const auto format = input.value("format",std::string("tiff"));
         if (format != "tiff" && format != "avi") throw std::runtime_error("format must be tiff or avi");
         const auto parseIndex = [](const json& v) {
             const auto text = v.get<std::string>();
@@ -2389,16 +2399,53 @@ std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
                 throw std::runtime_error("invalid frame index");
             return std::stoull(text);
         };
-        const auto first = parseIndex(input.at("first")), last = parseIndex(input.at("last"));
+        const auto first = action == "save" ? parseIndex(input.at("first")) : 0;
+        const auto last = action == "save" ? parseIndex(input.at("last")) : 0;
+        const auto mode = input.value("range_mode",std::string("index"));
+        if(mode != "index" && mode != "timestamp") throw std::runtime_error("invalid range mode");
+        const bool filterEmpty = input.value("filter_empty",false);
         const double fps = input.value("fps", 30.0);
         if (!std::isfinite(fps) || fps <= 0 || fps > 1000) throw std::runtime_error("invalid AVI playback fps");
-        const std::filesystem::path root(input.at("output_root").get<std::string>());
-        if (!std::filesystem::is_directory(root)) throw std::runtime_error("output root must be an existing directory");
+        const std::filesystem::path root(input.value("output_root",std::string()));
+        if (action == "save" && !std::filesystem::is_directory(root)) throw std::runtime_error("output root must be an existing directory");
         const bool idle = backend_.experiment().withIdleConfiguration([&] {
             if (backend_.capture().isRunning()) throw std::runtime_error("stop capture before saving a stable preview buffer");
             uint64_t earliest = 0, latest = 0; size_t count = 0;
-            if (!backend_.playback().queryRange(earliest, latest, count) || first > last || first < earliest || last > latest)
-                throw std::runtime_error("requested frames are no longer retained; refresh the buffer range");
+            const bool available = backend_.playback().queryRange(earliest, latest, count);
+            playback::Frame latestFrame;
+            if(input.contains("generation") && (!available || !backend_.playback().fetchByIndex(latest,latestFrame) || parseIndex(input.at("generation")) != latestFrame.storeGeneration))
+                throw std::runtime_error("buffer identity changed; refresh before applying this operation");
+            if(action == "resize") {
+                const auto capacity=parseIndex(input.at("capacity"));
+                if(capacity==0 || capacity>1000000) throw std::runtime_error("capacity must be 1..1000000 frames");
+                if(capacity<count && !input.value("confirm_clear",false)) throw std::runtime_error("shrinking below retained count clears all frames; explicit confirmation required");
+                const auto estimate=backend_.playback().estimateMemoryBytesForCapacity(capacity);
+                const auto ram=backend::Tools::getAvailableSystemRAMBytes();
+                if(ram==0 || estimate>ram/4*3) throw std::runtime_error("requested buffer exceeds available memory budget");
+                if(!backend_.playback().resize(capacity)) throw std::runtime_error("buffer resize failed");
+                result["ok"]=true; return;
+            }
+            if(!available) throw std::runtime_error("buffer is empty");
+            if(action == "background") {
+                playback::Frame frame;
+                if(!backend_.playback().fetchByIndex(parseIndex(input.at("index")),frame)) throw std::runtime_error("selected background frame is no longer retained");
+                if(frame.pixelFormat!=0x01080001 || frame.width==0 || frame.height==0 || frame.width>INT_MAX || frame.height>INT_MAX || frame.linePitch<frame.width || frame.height>frame.data.size()/frame.linePitch)
+                    throw std::runtime_error("background requires a valid Mono8 frame");
+                backend_.processing().setRealtimeBackgroundGray(cv::Mat(static_cast<int>(frame.height),static_cast<int>(frame.width),CV_8UC1,frame.data.data(),frame.linePitch).clone());
+                result["ok"]=true; return;
+            }
+            playback::TimestampRange timestamps{};
+            if(mode=="timestamp") {
+                if(!backend_.playback().getAvailableTimestampRange(timestamps) || first>last || first<timestamps.start || last>timestamps.end)
+                    throw std::runtime_error("requested timestamps are outside the retained range");
+            } else if(first>last || first<earliest || last>latest) throw std::runtime_error("requested frames are no longer retained; refresh the buffer range");
+            std::function<bool(const playback::Frame&)> filter;
+            if(filterEmpty) {
+                const auto config=backend_.processing().getProcessingConfig();
+                const auto roi=backend_.processing().getRealtimeRoi();
+                const auto bg=backend_.processing().getRealtimeBackgroundGrayShared();
+                filter=[&,config,roi,bg](const playback::Frame& frame){return backend_.processing().isFrameEmptyWithActiveKernel(frame,config,roi,bg);};
+            }
             std::filesystem::path output;
             for (unsigned i = 0; i < 10000; ++i) {
                 auto candidate = root / ("preview-buffer-" + std::to_string(i));
@@ -2410,8 +2457,8 @@ std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
             // Retain any partial output and report its path on failure. Never overwrite.
             result["output_path"] = output.string();
             const bool ok = format == "tiff"
-                ? backend_.playback().saveFramesToDisk(output.string(), first, last)
-                : backend_.playback().saveFramesToAvi((output / "frames.avi").string(), first, last, fps);
+                ? backend_.playback().saveFramesToDisk(output.string(), first, last, mode=="timestamp",filter)
+                : backend_.playback().saveFramesToAvi((output / "frames.avi").string(), first, last, mode=="timestamp",fps,filter);
             if (!ok) throw std::runtime_error("buffer save failed; partial output is retained");
             result["ok"] = true;
         });
