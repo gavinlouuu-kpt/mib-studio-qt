@@ -530,3 +530,21 @@ commands/status. The adapter validates positive bounded integers before narrowin
 serializes start against experiment lifecycle, and preserves service-owned frozen
 recipe, empty-frame rejection, cancellation and atomic publication semantics. u64
 operation/config/background generations are decimal strings at the webview boundary.
+
+### Coherent processed preview snapshots (2026-09-23)
+
+RealtimeSnapshot now optionally retains the exact immutable grayscale source alongside
+its mask, full-frame contours, effective ROI and primary-object bounds. Source retention
+is opt-in; default Qt/realtime workloads do not retain source pixels or hash recipes.
+Inline full-frame and async modes share existing frozen Mats; the ROI fast path transfers
+ownership of its already-copied input Frame rather than making another full-frame copy.
+The snapshot carries processing-session generation, FrameStore epoch, absolute index,
+source-native timestamp (unit explicitly unknown) and host monotonic microseconds.
+StartRealtime resets the snapshot and advances session generation.
+
+The preview recipe SHA-256 covers the exact copied processing parameters, requested ROI
+and background bytes. Async workers stamp their copied batch recipe into host-only
+ProcessedFrame metadata, including on runtime config refresh. This identity is **not**
+claimed to be complete calibration/LUT/core/run provenance. ProcessingCoreAbi layout and
+persisted HDF5 schemas are unchanged. Primary-target bounds describe only the selected
+snapshot object; contours may include other objects and are not all labelled targets.

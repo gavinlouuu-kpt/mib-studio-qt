@@ -303,3 +303,9 @@ the generator. Status preserves that ownership so manual controls cannot steal i
 caller before reporting running flags, selected state and bounded per-job errors. The
 status call is therefore also the startup event-pump tick, not a passive hardware read.
 Shutdown stops the coordinator and drains discovery workers before facade destruction.
+
+`set_processed_preview_enabled` opts into immutable source retention;
+`fetch_processed_preview` returns an atomic binary MIPO envelope (magic, LE u32 version,
+LE u32 JSON byte length, UTF-8 JSON, tightly packed Mono8 source, tightly packed mask).
+The TS decoder validates envelope/geometry/lengths/contour budgets and canonical exact
+u64 identities before drawing. It reports unavailable snapshots without stale bytes.

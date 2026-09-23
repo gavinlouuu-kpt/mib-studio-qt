@@ -2349,6 +2349,9 @@ BackendCommandResult BackendFacade::pulseGeneratorCommandJson(const std::string&
     try {
         const auto json = nlohmann::json::parse(text);
         const auto action = json.at("action").get<std::string>();
+        for (const auto* key : {"baud", "data_bits", "stop_bits", "address", "channel"})
+            if (json.contains(key) && !json.at(key).is_number_integer())
+                return {false, type, "Pulse-generator integer fields must not be fractional"};
         auto& pulse = backend_.pulseGenerator();
         BackendCommandResult result{false, type, "Pulse command failed"};
         auto apply = [&] {
@@ -2491,6 +2494,9 @@ BackendCommandResult BackendFacade::backgroundCalibrationCommandJson(const std::
         const auto action = json.at("action").get<std::string>();
         if (action == "cancel") {backend_.processing().cancelBackgroundCalibration(); return {true, type, "Calibration cancellation requested"};}
         if (action != "start") return {false, type, "Unknown calibration action"};
+        for (const auto* key : {"required_accepted", "max_attempts", "timeout_ms"})
+            if (!json.at(key).is_number_integer())
+                return {false, type, "Calibration counts and timeout must be integers"};
         const auto accepted = json.at("required_accepted").get<std::int64_t>();
         const auto attempts = json.at("max_attempts").get<std::int64_t>();
         const auto timeout = json.at("timeout_ms").get<std::int64_t>();
@@ -2519,3 +2525,68 @@ std::string BackendFacade::fetchBackgroundCalibrationStatusJson() const {
         {"published_sha256", status.publishedSha256}, {"message", status.message}}.dump();
 }
 }
+
+namespace backend::bridge {
+void BackendFacade::setProcessedPreviewEnabled(bool enabled) {
+    if (initialized_) backend_.processing().setProcessedPreviewEnabled(enabled);
+}
+std::vector<std::uint8_t> BackendFacade::fetchProcessedPreviewPacket() const {
+    using nlohmann::json;
+    services::ProcessingService::RealtimeSnapshot snap;
+    json meta{{"valid", false}, {"image_bytes", 0}, {"mask_bytes", 0}};
+    cv::Mat pixels, mask;
+    if (initialized_ && backend_.processing().getLatestSnapshot(snap) &&
+        !snap.originalImage.empty() && snap.originalImage.type() == CV_8UC1 &&
+        snap.mask.type() == CV_8UC1 && snap.mask.size() == snap.originalImage.size() &&
+        snap.originalImage.total() <= 32 * 1024 * 1024 && !snap.recipeSha256.empty()) {
+        pixels =
+            snap.originalImage.isContinuous() ? snap.originalImage : snap.originalImage.clone();
+        mask = snap.mask.isContinuous() ? snap.mask : snap.mask.clone();
+        json contours = json::array();
+        std::size_t remaining = 20000;
+        bool truncated = false;
+        for (const auto& contour : snap.contours) {
+            if (contours.size() >= 512 || contour.size() > remaining) {
+                truncated = true;
+                break;
+            }
+            json points = json::array();
+            for (const auto& point : contour)
+                points.push_back({point.x, point.y});
+            remaining -= contour.size();
+            contours.push_back(std::move(points));
+        }
+        meta = {{"valid", true},
+                {"image_bytes", pixels.total()},
+                {"mask_bytes", mask.total()},
+                {"width", pixels.cols},
+                {"height", pixels.rows},
+                {"source", "live_processing"},
+                {"frame_index", std::to_string(snap.index)},
+                {"source_timestamp", std::to_string(snap.sourceTimestamp)},
+                {"source_timestamp_unit", "source_native_unknown"},
+                {"host_timestamp_us", std::to_string(snap.hostTimestampUs)},
+                {"processing_session", std::to_string(snap.processingSession)},
+                {"store_generation", std::to_string(snap.storeGeneration)},
+                {"recipe_sha256", snap.recipeSha256},
+                {"recipe_scope", "processing_parameters_roi_background"},
+                {"roi", {snap.roi.x, snap.roi.y, snap.roi.w, snap.roi.h}},
+                {"contours", contours},
+                {"contours_truncated", truncated},
+                {"primary_bounds",
+                 {snap.primaryBounds.x, snap.primaryBounds.y, snap.primaryBounds.width,
+                  snap.primaryBounds.height}},
+                {"primary_object_valid", snap.validation.isValid},
+                {"primary_object_target", snap.validation.isTargetGroup}};
+    }
+    const auto text = meta.dump();
+    const auto count = static_cast<std::uint32_t>(text.size());
+    std::vector<std::uint8_t> packet{'M', 'I', 'P', 'O', 1, 0, 0, 0};
+    for (int i = 0; i < 4; ++i)
+        packet.push_back(static_cast<std::uint8_t>(count >> (8 * i)));
+    packet.insert(packet.end(), text.begin(), text.end());
+    if (!pixels.empty()) packet.insert(packet.end(), pixels.data, pixels.data + pixels.total());
+    if (!mask.empty()) packet.insert(packet.end(), mask.data, mask.data + mask.total());
+    return packet;
+}
+} // namespace backend::bridge

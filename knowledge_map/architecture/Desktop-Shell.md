@@ -387,3 +387,13 @@ writable application data directory through `initialize_with_resources`. Bundles
 the default configuration and isoelastic LUT resources; backend model/LUT lookup no
 longer assumes the application data directory is beside the executable. Legacy Qt
 initialization retains its existing data-parent fallback.
+### Atomic processed overlays
+
+`ProcessedPreview` is a separate coherent processed-frame viewer with ROI, mask,
+contours and explicitly primary-object target overlays. It fetches one bounded binary
+`MIPO` v1 envelope containing metadata plus grayscale source and mask bytes. It never
+pairs an independently fetched latest frame with independently fetched analytics.
+At most 32 MiB per image and 20,000 contour points/512 contours are delivered; contour
+truncation is displayed. Unknown timestamp units remain unknown. UI polls at 5 Hz with
+one request in flight, enables retention only while active and disables it on cleanup.
+Pass `ready` and `active` from the owning Preview page; only mount one consumer.

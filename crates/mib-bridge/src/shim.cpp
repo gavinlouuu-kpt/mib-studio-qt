@@ -1114,6 +1114,18 @@ BridgeFrame BackendBridge::fetch_review_image(std::uint32_t dataset, std::uint64
     return toBridgeFrame(frame);
 }
 
+void BackendBridge::set_processed_preview_enabled(bool enabled) {
+    impl_->facade.setProcessedPreviewEnabled(enabled);
+}
+rust::Vec<std::uint8_t> BackendBridge::fetch_processed_preview() {
+    const auto bytes = impl_->facade.fetchProcessedPreviewPacket();
+    rust::Vec<std::uint8_t> out;
+    out.reserve(bytes.size());
+    for (const auto byte : bytes)
+        out.push_back(byte);
+    return out;
+}
+
 BridgeCommandResult BackendBridge::background_calibration_command(rust::Str json) { return toBridgeResult(impl_->facade.backgroundCalibrationCommandJson(toStd(json))); }
 rust::String BackendBridge::background_calibration_status() { return rust::String(impl_->facade.fetchBackgroundCalibrationStatusJson()); }
 

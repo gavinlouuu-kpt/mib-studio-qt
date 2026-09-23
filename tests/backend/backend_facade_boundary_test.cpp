@@ -15,25 +15,45 @@
 #include <thread>
 #include <vector>
 
-namespace
-{
-    std::filesystem::path makeTempDir()
-    {
-        std::random_device rd;
-        std::mt19937_64 gen(rd());
-        std::uniform_int_distribution<unsigned long long> dist;
-        for (int attempt = 0; attempt < 100; ++attempt)
-        {
-            const auto path = std::filesystem::temp_directory_path() /
-                              ("mib_backend_facade_" + std::to_string(dist(gen)));
-            std::error_code ec;
-            if (std::filesystem::create_directories(path, ec))
-            {
-                return path;
-            }
-        }
-        throw std::runtime_error("failed to create temporary directory");
+namespace {
+class FakeTypedNanopositioner final : public backend::nanopositioner::INanopositionerBackend {
+public:
+    backend::nanopositioner::BackendKind kind() const override {
+        return backend::nanopositioner::BackendKind::Oeabt;
     }
+    bool connect(const backend::nanopositioner::Endpoint& value, std::string&) override {
+        endpoint = value.persistentId;
+        connected = true;
+        return true;
+    }
+    void disconnect() override { connected = false; }
+    bool isConnected() const override { return connected; }
+    bool readVoltage(double& value, std::string&) override {
+        value = 0.0;
+        return true;
+    }
+    bool setVoltage(double, std::string&) override { return true; }
+    std::optional<double> maximumVoltage() const override { return 100.0; }
+    std::string connectedEndpoint() const override { return endpoint; }
+
+private:
+    bool connected{false};
+    std::string endpoint;
+};
+std::filesystem::path makeTempDir() {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<unsigned long long> dist;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const auto path = std::filesystem::temp_directory_path() /
+                          ("mib_backend_facade_" + std::to_string(dist(gen)));
+        std::error_code ec;
+        if (std::filesystem::create_directories(path, ec)) {
+            return path;
+        }
+    }
+    throw std::runtime_error("failed to create temporary directory");
+}
 
     void setEnv(const char *name, const char *value)
     {
@@ -70,7 +90,7 @@ namespace
         }
         return false;
     }
-} // namespace
+    } // namespace
 
 int main()
 {
@@ -117,13 +137,19 @@ int main()
         if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":10,"max_attempts":5,"timeout_ms":5000})").ok) return 75;
         if (!facade.backgroundCalibrationCommandJson(R"({"action":"cancel"})").ok) return 76;
         if (facade.fetchBackgroundCalibrationStatusJson().find("\"valid\":true") == std::string::npos) return 77;
+        if (facade
+                .backgroundCalibrationCommandJson(
+                    R"({"action":"start","required_accepted":1.5,"max_attempts":200,"timeout_ms":5000})")
+                .ok)
+            return 79;
         // Invalid hardware requests must be rejected before any driver access.
         for (const auto* request : {R"({"action":"connect","port":"","address":1})",
-                R"({"action":"connect","port":"never-open","address":248})",
-                R"({"action":"frequency","channel":4,"value":1000})",
-                R"({"action":"frequency","channel":0,"value":399})",
-                R"({"action":"duty","channel":0,"value":101})",
-                R"({"action":"bogus","channel":0})", "not json"}) {
+                                    R"({"action":"connect","port":"never-open","address":248})",
+                                    R"({"action":"frequency","channel":4,"value":1000})",
+                                    R"({"action":"frequency","channel":0.5,"value":1000})",
+                                    R"({"action":"frequency","channel":0,"value":399})",
+                                    R"({"action":"duty","channel":0,"value":101})",
+                                    R"({"action":"bogus","channel":0})", "not json"}) {
             if (facade.pulseGeneratorCommandJson(request).ok) return 70;
         }
         if (facade.fetchPulseGeneratorStatusJson().find("\"connected\":false") == std::string::npos) return 71;
@@ -131,6 +157,25 @@ int main()
         badEndpoint.action = bridge::AutofocusCommandAction::Connect;
         badEndpoint.endpoint = backend::nanopositioner::Endpoint{};
         if (facade.dispatch(badEndpoint).ok) return 72;
+
+        if (!backend.autofocus().setBackendFactory([](backend::nanopositioner::BackendKind) {
+                return std::make_unique<FakeTypedNanopositioner>();
+            }))
+            return 80;
+        bridge::AutofocusCommand typedConnect;
+        typedConnect.action = bridge::AutofocusCommandAction::Connect;
+        backend::nanopositioner::Endpoint typedEndpoint;
+        typedEndpoint.backend = backend::nanopositioner::BackendKind::Oeabt;
+        typedEndpoint.persistentId = "fake-persistent-oeabt";
+        typedEndpoint.systemPath = "/dev/fake-oeabt";
+        typedConnect.endpoint = typedEndpoint;
+        if (!facade.dispatch(typedConnect).ok) return 81;
+        bridge::BackendAutofocusStatus typedStatus;
+        if (!facade.fetchAutofocusStatus(typedStatus) || typedStatus.backendName != "oeabt" ||
+            typedStatus.endpointId != "fake-persistent-oeabt")
+            return 82;
+        typedConnect.action = bridge::AutofocusCommandAction::Disconnect;
+        if (!facade.dispatch(typedConnect).ok) return 83;
 
         bridge::ProcessingSettingsCommand processingCommand;
         auto config = backend.processing().getProcessingConfig();
@@ -140,8 +185,7 @@ int main()
         processingCommand.realtimeEnabled = false;
         processingCommand.realtimeDropFrames = true;
         processingCommand.pixelToMicronFactor = 2.5;
-        if (!facade.dispatch(processingCommand).ok)
-        {
+        if (!facade.dispatch(processingCommand).ok) {
             std::cerr << "ProcessingSettingsCommand should apply through ProcessingService\n";
             return 3;
         }

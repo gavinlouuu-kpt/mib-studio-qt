@@ -384,6 +384,8 @@ export const bridge = {
   shellLog: (level: string, message: string) =>
     invoke<void>("shell_log", { level, message }),
   // Autofocus / nanopositioner (schema v11, BE-8).
+  setProcessedPreviewEnabled: (enabled: boolean) => invoke<void>("set_processed_preview_enabled", {enabled}),
+  fetchProcessedPreview: () => invoke<ArrayBuffer>("fetch_processed_preview"),
   backgroundCalibrationCommand: (request: Record<string, unknown>) => invokeCommand("background_calibration_command", {json: JSON.stringify(request)}),
   backgroundCalibrationStatus: () => invoke<BackgroundCalibrationStatus>("background_calibration_status"),
   startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),

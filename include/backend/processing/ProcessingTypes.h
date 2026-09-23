@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <opencv2/core.hpp>
@@ -95,6 +96,10 @@ struct FilterResult {
 // publication (frozen-Mats invariant): every consumer shares them by
 // refcount and never clones merely for lifetime (issue #370).
 struct ProcessedFrame {
+    // Host-only preview provenance, not ProcessingCoreAbi or persisted HDF schema.
+    uint64_t previewStoreGeneration{0};
+    std::string previewRecipeSha256;
+    cv::Rect previewRoi;
     uint64_t index{0};
     uint64_t timestampNs{0};
     // Host monotonic acquisition stamp carried from playback::Frame (0 if unknown).

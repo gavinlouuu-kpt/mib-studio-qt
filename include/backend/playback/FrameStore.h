@@ -15,6 +15,8 @@
 namespace backend::playback {
 
 struct Frame {
+    // Host-only identity epoch; resize renumbers indices and increments this.
+    uint64_t storeGeneration = 0;
     uint64_t width = 0;
     uint64_t height = 0;
     uint64_t pixelFormat = 0; // PFNC code from Euresys
@@ -229,6 +231,7 @@ private:
     // written for this index" races are caught by one comparison.
     static constexpr uint64_t kSlotEmpty = ~0ULL;
     std::vector<uint64_t> slotWriteIndices_;
+    std::uint64_t storeGeneration_{1};      // guarded by structureMutex_
     std::atomic<uint64_t> totalWritten_{0}; // reservation count
     std::atomic<uint64_t> committed_{0};    // publication count (<= totalWritten_)
     std::function<void(uint64_t)> commitHookForTests_;

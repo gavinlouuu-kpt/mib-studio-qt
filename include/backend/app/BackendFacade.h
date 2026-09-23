@@ -846,6 +846,8 @@ namespace backend::bridge
                                                 std::size_t byteLen);
         BackendCommandResult clearBackgroundImage();
 
+        void setProcessedPreviewEnabled(bool enabled);
+        std::vector<std::uint8_t> fetchProcessedPreviewPacket() const;
         BackendCommandResult backgroundCalibrationCommandJson(const std::string &json);
         std::string fetchBackgroundCalibrationStatusJson() const;
         std::string runStartupDiscoveryJson(const std::string &action);

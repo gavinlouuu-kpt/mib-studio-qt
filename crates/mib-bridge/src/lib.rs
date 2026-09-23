@@ -690,6 +690,8 @@ pub mod ffi {
         /// (schema v9, BE-6). Returns the job's operation_id; progress and the
         /// terminal state arrive as OperationStatus events. Partial outputs
         /// are removed on cancel/failure; the source file is opened read-only.
+        fn set_processed_preview_enabled(self: Pin<&mut BackendBridge>, enabled: bool);
+        fn fetch_processed_preview(self: Pin<&mut BackendBridge>) -> Vec<u8>;
         fn background_calibration_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn background_calibration_status(self: Pin<&mut BackendBridge>) -> String;
         fn startup_discovery_run(self: Pin<&mut BackendBridge>, action: &str) -> String;

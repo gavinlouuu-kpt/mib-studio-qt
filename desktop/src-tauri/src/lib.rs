@@ -411,6 +411,17 @@ struct AutofocusConfig {
 }
 
 #[tauri::command]
+fn set_processed_preview_enabled(state: State<AppState>, enabled: bool) -> Result<(), String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    guard.pin_mut().set_processed_preview_enabled(enabled); Ok(())
+}
+#[tauri::command]
+fn fetch_processed_preview(state: State<AppState>) -> Result<Response, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(Response::new(guard.pin_mut().fetch_processed_preview()))
+}
+
+#[tauri::command]
 fn background_calibration_command(state: State<AppState>, json: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().background_calibration_command(&json).into())
@@ -1634,6 +1645,8 @@ pub fn run() {
             experiment_cancel,
             fetch_experiment_status,
             fetch_experiment_readiness,
+            set_processed_preview_enabled,
+            fetch_processed_preview,
             background_calibration_command,
             background_calibration_status,
             startup_discovery_run,

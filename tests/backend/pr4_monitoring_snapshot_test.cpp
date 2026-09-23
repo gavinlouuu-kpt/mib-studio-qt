@@ -156,6 +156,7 @@ void testSnapshotReadable() {
     bool got = proc.getLatestSnapshot(snap);
     MIB_EXPECT(got, "getLatestSnapshot must return true after processing frames");
     if (got) {
+        MIB_EXPECT(snap.originalImage.empty(), "source-pixel retention is opt-in");
         MIB_EXPECT(!snap.mask.empty(),  "snapshot mask must not be empty");
         MIB_EXPECT(snap.mask.cols == kW, "snapshot mask width matches frame width");
         MIB_EXPECT(snap.mask.rows == kH, "snapshot mask height matches frame height");

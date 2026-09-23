@@ -2269,3 +2269,8 @@ provenance. See the catch-up execution plan for verified vs pending gates.
   SHA256-verified installs/updates with complete backups, app/core compatibility gates,
   and revision-pinned startup restoration. Runtime origin and saved startup choice are
   separately retrievable; remote install never implicitly activates a profile.
+- 2026-09-23: Atomic Tauri processed-preview packets now retain source pixels with
+  mask/ROI/contours/primary-target data, stamp processing and FrameStore epochs, and
+  fingerprint frozen processing parameters/ROI/background. Source retention is opt-in;
+  old packets remain immutable across config changes and store resize. Native inline
+  and async tests cover identity/pixel coherence; malformed webview packets are rejected.

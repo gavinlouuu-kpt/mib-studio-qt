@@ -100,6 +100,8 @@ public:
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);
     BridgeFrame fetch_review_image(std::uint32_t dataset, std::uint64_t index);
+    void set_processed_preview_enabled(bool enabled);
+    rust::Vec<std::uint8_t> fetch_processed_preview();
     BridgeCommandResult background_calibration_command(rust::Str json);
     rust::String background_calibration_status();
     rust::String startup_discovery_run(rust::Str action);

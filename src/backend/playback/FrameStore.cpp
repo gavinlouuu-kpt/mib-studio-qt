@@ -100,6 +100,7 @@ void FrameStore::pushFrame(const uint8_t* src, size_t size, uint64_t width, uint
         f.linePitch = linePitch;
         f.timestamp = timestamp;
         f.hostTimestampUs = hostTimestampUs;
+        f.storeGeneration = storeGeneration_;
         f.data.resize(size);
         std::copy_n(src, size, f.data.begin());
         noteSlotBytes(idx, f.data.capacity());
@@ -241,6 +242,7 @@ bool FrameStore::getByWriteIndexROI(uint64_t writeIndex, int roiX, int roiY, int
     out.height = static_cast<uint64_t>(clampedH);
     out.pixelFormat = src.pixelFormat;
     out.timestamp = src.timestamp;
+    out.storeGeneration = src.storeGeneration;
     out.hostTimestampUs = src.hostTimestampUs;
     out.linePitch = 0; // ROI will be contiguous
 
@@ -660,6 +662,7 @@ bool FrameStore::resize(size_t newCapacity) {
 
     // Create new ring buffer
     std::vector<Frame> newRing(newCapacity);
+    const std::uint64_t nextGeneration = storeGeneration_ + 1;
     std::vector<uint64_t> newSlotIndices(newCapacity, kSlotEmpty);
 
     if (newCapacity >= currentAvailable && w > 0) {
@@ -672,6 +675,7 @@ bool FrameStore::resize(size_t newCapacity) {
                 static_cast<size_t>(idx % capacity_.load(std::memory_order_acquire));
             if (ringIdx < ring_.size() && !ring_[ringIdx].data.empty()) {
                 newRing[preservedCount] = ring_[ringIdx];
+                newRing[preservedCount].storeGeneration = nextGeneration;
                 // Frames are renumbered 0..preservedCount-1 after a resize.
                 newSlotIndices[preservedCount] = static_cast<uint64_t>(preservedCount);
                 ++preservedCount;
@@ -701,6 +705,7 @@ bool FrameStore::resize(size_t newCapacity) {
     std::vector<std::mutex> newMutexes(newCapacity);
     slotMutexes_.swap(newMutexes);
 
+    storeGeneration_ = nextGeneration;
     ring_ = std::move(newRing);
     slotWriteIndices_ = std::move(newSlotIndices);
     // Re-account the retained allocations for the new ring (issue #370).
