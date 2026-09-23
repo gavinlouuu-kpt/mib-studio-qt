@@ -460,3 +460,10 @@ scatter plus valid-object ring-ratio and modulus histograms. It does not apply c
 calibration to retained historical rows. Live calibrated scatter/isoelastic parity needs
 per-row calibration provenance captured by every inline and batch processing path; the
 current Qt live scatter's use of the current factor is not authoritative for mixed epochs.
+## Windows nonpublishing candidate lane
+
+`.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
+
+`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources and the pinned YOLO model. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+
+Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.

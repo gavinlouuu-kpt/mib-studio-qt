@@ -2306,3 +2306,7 @@ Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows
   Ring histogram now includes positive finite valid-object ratios. Calibrated live area
   and isoelastic overlays remain gated on processing-time per-row calibration provenance:
   neither shell may safely rescale retained old rows using the current factor.
+
+## 2026-09-23 — Windows Tauri candidate closure
+
+Added a nonpublishing SDK-free Windows x64 build/test/portable-package lane, separate from Qt releases. Native dependency closure fails unresolved/conflicting DLLs; staging includes MSVC runtime and scientific resources. Hosted Windows validation remains required; no Windows or real-hardware run is claimed from Linux. See [[Desktop-Shell]].
