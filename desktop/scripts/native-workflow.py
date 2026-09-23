@@ -47,7 +47,7 @@ def main():
     env = dict(os.environ, XDG_DATA_HOME=str(root / 'app-data'), XDG_CONFIG_HOME=str(root / 'app-config'),
                MIB_CAMERA_MODE='mock', MIB_MOCK_CAMERA_DIR=str(frames), MIB_MOCK_CAMERA_INTERVAL_MS='10',
                MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL='file:///nonexistent/mib-lut-manifest.json',
-               WEBKIT_DISABLE_DMABUF_RENDERER='1')
+               WEBKIT_DISABLE_DMABUF_RENDERER='1', GSETTINGS_BACKEND='memory')
     port, native_port = free_port(), free_port()
     url = f'http://127.0.0.1:{port}'
     session = ''
@@ -92,6 +92,11 @@ def main():
             window = wait(find_dialog, 'native dialog ' + title)
             time.sleep(.5)  # GTK maps the dialog before its entry is realized on slow CI.
             subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
+            if text == 'Export All…':
+                # Fresh GTK sessions begin in Recent, where a location entry
+                # can remain a search with Open disabled. Enter Home first.
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'alt+Home'], check=True)
+                time.sleep(.5)
             subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+l'], check=True)
             subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True)
             subprocess.run(['xdotool', 'type', '--clearmodifiers', '--delay', '1', next_picker], check=True)
@@ -217,18 +222,22 @@ def main():
         assert not invoke('fetch_review_metadata')['file_open']
         evidence['closed'] = True
         (root / 'screenshot.png').write_bytes(base64.b64decode(request(f'/session/{session}/screenshot')))
+        native_window = subprocess.check_output(['xdotool', 'search', '--onlyvisible', '--name', '^MIB Studio$'], text=True).splitlines()[-1]
+        native_pid = int(subprocess.check_output(['xdotool', 'getwindowpid', native_window], text=True).strip())
         click('File')
         click('Exit')
         def window_closed():
+            # Querying WebDriver after its last window exits can block forever.
+            # Observe the real X11 window and owning native process instead.
+            visible = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^MIB Studio$'], capture_output=True)
+            if visible.returncode == 0:
+                return False
             try:
-                return not request(f'/session/{session}/window/handles')
-            except RuntimeError as error:
-                if any(code in str(error).lower() for code in ('invalid session id', 'no such window', 'session terminated without a reply')):
-                    # WebKit may terminate its session as the last window exits.
-                    # Independently verify the real native window disappeared.
-                    return subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^MIB Studio$'], capture_output=True).returncode == 1
-                raise
-        wait(window_closed, 'idle native window close')
+                return Path(f'/proc/{native_pid}/stat').read_text().rsplit(')', 1)[1].split()[0] == 'Z'
+            except FileNotFoundError:
+                return True
+        wait(window_closed, 'idle native window and process exit')
+        evidence['idle_exit_process_exited'] = True
         evidence['idle_exit_closed_window'] = True
         (root / 'evidence.json').write_text(json.dumps(evidence, indent=2))
         print('PASS: native production webview configure → capture → experiment → finalize → reopen → export → reanalyse → reopen regenerated → close')
@@ -246,7 +255,9 @@ def main():
                 pass
         raise
     finally:
-        if session:
+        # A successful Exit already destroyed the session; WebKit can hang a
+        # redundant DELETE until the HTTP timeout after the window is gone.
+        if session and not evidence.get('idle_exit_closed_window'):
             try:
                 request(f'/session/{session}', method='DELETE')
             except Exception:

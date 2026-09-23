@@ -416,3 +416,9 @@ remain errors.
 Native packaged acceptance also regenerates a new HDF through the real UI/save
 dialog, verifies the source file digest is unchanged, waits for the frontend
 terminal status, and reopens the regenerated output with processing-core identity.
+
+Fresh GTK Recent mode is explicitly left via Home before folder selection; the
+harness uses in-memory GSettings to avoid depending on an operator desktop.
+Idle Exit verifies both native-window disappearance and owning-process exit via
+X11/procfs, avoiding hung WebDriver requests after its last window closes. It
+also avoids deleting the terminated session; the driver process is cleaned up.
