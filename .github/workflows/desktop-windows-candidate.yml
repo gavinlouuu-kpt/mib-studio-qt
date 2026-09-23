@@ -105,6 +105,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Desktop build failed' }
           cargo test --manifest-path desktop/src-tauri/Cargo.toml --release --locked
           if ($LASTEXITCODE) { throw 'Desktop native tests failed' }
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --release --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE) { throw 'Desktop Clippy check failed' }
       - name: Package unsigned portable candidate with DLL closure
         run: ./desktop/scripts/package-windows-candidate.ps1
       - name: Smoke staged application without development DLL search paths

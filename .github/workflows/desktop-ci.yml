@@ -109,6 +109,7 @@ jobs:
           set -o pipefail
           cargo build --features custom-protocol
           cargo test --no-fail-fast
+          cargo clippy --all-targets -- -D warnings
 
       - name: Smoke-launch the GUI under Xvfb
         shell: bash
