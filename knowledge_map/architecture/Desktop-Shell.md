@@ -289,3 +289,8 @@ output enable/disable controls. Writes consume the shared commissioning arm; mou
 polling and discovery do not write. Disconnect does not stop a generator's physical
 pulse output, and the UI explains that distinction. Hardware acceptance remains a
 separate deferred bench run.
+
+Native workflow verification uses Tauri's supported tauri-driver/WebKitWebDriver
+protocol with embedded production assets (`custom-protocol` Cargo feature).
+A development-URL process-alive launch is not sufficient to verify the UI loads.
+The desktop-shell environment section includes the native WebDriver package.
