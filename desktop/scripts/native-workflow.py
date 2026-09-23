@@ -103,8 +103,16 @@ def main():
                 if not dialog:
                     break
                 subprocess.run(['xdotool', 'windowfocus', '--sync', dialog], check=True)
-                key = 'alt+s' if text == 'Export All…' else 'Return'
-                subprocess.run(['xdotool', 'key', '--clearmodifiers', key], check=True)
+                if text == 'Export All…':
+                    # GTK's location completion can consume Enter and mnemonics.
+                    # Click the actual bottom-right Open while preserving the
+                    # typed location, relative to this dialog (not the screen).
+                    # Escape would discard the location and select a stale folder.
+                    geometry = subprocess.check_output(['xdotool', 'getwindowgeometry', '--shell', dialog], text=True)
+                    bounds = dict(line.split('=', 1) for line in geometry.splitlines() if '=' in line)
+                    subprocess.run(['xdotool', 'mousemove', '--window', dialog, str(int(bounds['WIDTH']) - 55), str(int(bounds['HEIGHT']) - 25), 'click', '1'], check=True)
+                else:
+                    subprocess.run(['xdotool', 'key', '--clearmodifiers', 'Return'], check=True)
             wait(lambda: not find_dialog(), 'native dialog accepted: ' + title)
             next_picker = None
 
@@ -181,6 +189,7 @@ def main():
         export = wait(lambda: (lambda s: s if s.get('state') in ('completed', 'failed', 'cancelled') else None)(json.loads(invoke('review_export_status_json'))), 'export terminal')
         assert export['state'] == 'completed', export
         assert Path(export['final_path']).exists(), export
+        assert Path(export['final_path']).parent == root, export
         evidence['export'] = export
         wait(lambda: 'Export: completed' in js('return document.body.innerText'), 'frontend export reconciliation')
         click('Close File')
@@ -193,8 +202,10 @@ def main():
             try:
                 return not request(f'/session/{session}/window/handles')
             except RuntimeError as error:
-                if any(code in str(error).lower() for code in ('invalid session id', 'no such window')):
-                    return True
+                if any(code in str(error).lower() for code in ('invalid session id', 'no such window', 'session terminated without a reply')):
+                    # WebKit may terminate its session as the last window exits.
+                    # Independently verify the real native window disappeared.
+                    return subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^MIB Studio$'], capture_output=True).returncode == 1
                 raise
         wait(window_closed, 'idle native window close')
         evidence['idle_exit_closed_window'] = True

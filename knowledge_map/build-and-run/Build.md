@@ -396,3 +396,13 @@ truth only):
 - [[../task/2026-09-15-mindvision-overview-roi]] — MindVision overview test coverage
 - [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — `-lstdc++` cloud image fix
 - [[../task/2026-06-01-backend-only-build-test-mode]] — origin of `MIB_BUILD_BACKEND_ONLY`
+
+### Native GTK workflow acceptance
+
+The production-webview harness in `desktop/scripts/native-workflow.py` accepts
+the GTK folder picker with its real Open button while retaining the typed
+location. Escape discards that location and is not a valid acceptance action.
+The export gate asserts the exact selected destination parent, not just terminal
+success. Idle exit verifies native-window disappearance if WebKit closes its
+session before replying. Failure artifacts include the full X11 desktop so
+native dialogs are visible alongside webview screenshots.
