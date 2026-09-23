@@ -1,2 +1,9 @@
 #pragma once
-inline constexpr const char kReviewIsoelasticData[] = R"mibcurve(@MIB_REVIEW_ISOELASTIC_DATA@)mibcurve";
+#include <string>
+
+@MIB_REVIEW_ISOELASTIC_DECLARATIONS@
+inline std::string reviewIsoelasticData() {
+    std::string data;
+    data.reserve(@MIB_REVIEW_ISOELASTIC_SIZE@);
+@MIB_REVIEW_ISOELASTIC_APPENDS@    return data;
+}

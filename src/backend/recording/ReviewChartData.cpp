@@ -38,7 +38,7 @@ ReviewChartData makeReviewChartData(const std::vector<services::ProcessedFrame>&
 }
 const IsoelasticCurves& bundledIsoelasticCurves() {
     static const auto curves=[] {
-        IsoelasticCurves result;std::istringstream input(kReviewIsoelasticData);std::string line;
+        IsoelasticCurves result;std::istringstream input(reviewIsoelasticData());std::string line;
         while(std::getline(input,line)) {
             if(line.empty() || line.front()=='#')continue;
             double area,deform,modulus;std::istringstream fields(line);

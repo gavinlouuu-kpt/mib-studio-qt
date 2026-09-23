@@ -1,6 +1,9 @@
-file(READ "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt" MIB_REVIEW_ISOELASTIC_DATA)
-configure_file("${PROJECT_SOURCE_DIR}/cmake/templates/ReviewIsoelasticData.h.in"
-               "${CMAKE_CURRENT_BINARY_DIR}/generated/ReviewIsoelasticData.h" @ONLY)
+include("${PROJECT_SOURCE_DIR}/cmake/GenerateReviewIsoelastic.cmake")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt")
+mib_generate_review_isoelastic(
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/ReviewIsoelasticData.h")
 include(MIBLinkHelpers)
 
 # The Python wheel version is the processing-core release identity. Keep a
