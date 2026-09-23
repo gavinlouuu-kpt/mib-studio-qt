@@ -185,6 +185,17 @@ def main():
         assert not invoke('fetch_review_metadata')['file_open']
         evidence['closed'] = True
         (root / 'screenshot.png').write_bytes(base64.b64decode(request(f'/session/{session}/screenshot')))
+        click('File')
+        click('Exit')
+        def window_closed():
+            try:
+                return not request(f'/session/{session}/window/handles')
+            except RuntimeError as error:
+                if any(code in str(error).lower() for code in ('invalid session id', 'no such window')):
+                    return True
+                raise
+        wait(window_closed, 'idle native window close')
+        evidence['idle_exit_closed_window'] = True
         (root / 'evidence.json').write_text(json.dumps(evidence, indent=2))
         print('PASS: native production webview configure → capture → experiment → finalize → reopen → export → close')
     except BaseException:
