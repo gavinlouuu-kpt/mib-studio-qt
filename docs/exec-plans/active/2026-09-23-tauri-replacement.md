@@ -40,7 +40,7 @@ analysis pipeline in TypeScript/Rust.
 
 ## Integrated software evidence (2026-09-23)
 
-Published through `181097a` on `dev/react-tauri` / draft PR450; subsequent review
+Published through `5f3ecda` on `dev/react-tauri` / draft PR450; subsequent review
 fixes continue as small commits. Keep Qt until remaining software/release gates
 and the separately deferred hardware acceptance are satisfied.
 
@@ -60,9 +60,11 @@ and the separately deferred hardware acceptance are satisfied.
   output reopen/core identity, close review and successful idle Exit. Export asserts the exact chosen destination.
   No backend mocks. Hosted picker failure was reproduced and fixed in the harness;
   hosted rerun pending.
-- Linux debug `.deb` built with derived native dependencies; extracted package
-  performed capture/finalize/reopen/export outside the repository and loaded
-  bundled LUT. CI now repeats extracted-package acceptance. Windows SDK-free,
+- Linux debug and optimized release `.deb` built with derived native dependencies.
+  The optimized release passed capture/reload/finalize/reopen/export/reanalysis/
+  regenerated-output-reopen/exit outside the repository and loaded bundled LUT.
+  `ldd` found no missing libraries or Qt runtime dependencies. CI repeats extracted
+  package acceptance. Windows SDK-free,
   unsigned portable candidate build/smoke added; execution pending hosted CI.
 
 ## Correctness fixes discovered during integration
@@ -89,8 +91,8 @@ and the separately deferred hardware acceptance are satisfied.
 
 ## Remaining completion work
 
-- Final combined checks, Linux package replay, hosted CI and Windows candidate
-  result. Verified explicit installer launch is implemented and fixture-tested;
+- Hosted CI and Windows candidate result. Combined local checks and optimized
+  Linux package replay pass. Verified explicit installer launch is implemented and fixture-tested;
   a platform-specific Tauri feed and real installer acceptance remain release gates.
   Existing Qt installer feeds are rejected. No release/feed was published.
 - Hardware suite, SDK-equipped deployment and physical timing remain deferred by
