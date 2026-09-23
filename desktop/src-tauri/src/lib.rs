@@ -1308,7 +1308,7 @@ fn select_mindvision_camera(
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let selected = guard.pin_mut().fetch_camera_selection();
     let experiment = guard.pin_mut().fetch_experiment_status();
-    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1 | 2 | 3) {
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
         return Err("Stop capture and finalize the experiment before changing camera settings".into());
     }
 
@@ -1324,7 +1324,7 @@ fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<Cm
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let selected = guard.pin_mut().fetch_camera_selection();
     let experiment = guard.pin_mut().fetch_experiment_status();
-    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1 | 2 | 3) {
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
         return Err("Stop capture and finalize the experiment before changing camera settings".into());
     }
 
@@ -1337,7 +1337,7 @@ fn soft_trigger_camera(state: State<AppState>) -> Result<CmdResult, String> {
     let mut guard=state.bridge.lock().map_err(|e|e.to_string())?;
     let selected=guard.pin_mut().fetch_camera_selection();
     let experiment=guard.pin_mut().fetch_experiment_status();
-    if !selected.valid || !selected.configured || selected.mode != 3 || !selected.running || !experiment.valid || matches!(experiment.state,1|2|3) {
+    if !selected.valid || !selected.configured || selected.mode != 3 || !selected.running || !experiment.valid || matches!(experiment.state,1..=3) {
         return Err("Software trigger requires a running MindVision camera and an idle experiment".into());
     }
     Ok(guard.pin_mut().soft_trigger_camera().into())
@@ -1349,7 +1349,7 @@ fn reset_hardware_camera(state: State<AppState>) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let selected = guard.pin_mut().fetch_camera_selection();
     let experiment = guard.pin_mut().fetch_experiment_status();
-    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1 | 2 | 3) {
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
         return Err("Stop capture and finalize the experiment before changing camera settings".into());
     }
 
@@ -1534,6 +1534,7 @@ fn fetch_processing_stats(state: State<AppState>) -> Result<ProcessingStats, Str
     })
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::kind_name;
