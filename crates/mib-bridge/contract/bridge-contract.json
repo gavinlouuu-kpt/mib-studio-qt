@@ -398,5 +398,19 @@
     "persistence": "Create stages a complete new directory; existing names never overwrite. Archive renames to hidden recoverable directory. Caller selects base directory. Changes serialize with experiment idle guard; not a cross-process CAS.",
     "activation": "Stopped capture/realtime and disabled autofocus; validate all supported settings before mutation; processing/buffer/realtime/delivery/calibration/autofocus configuration/validated ROI only; no hardware connection or script execution",
     "response": "ok, error?; profiles/warnings for list; profile for read/create/duplicate/rename; applied/message/profile_id/display_fps for apply; destination for archive; saved after create publication"
+  },
+  "review_reanalysis_json": {
+    "request": {
+      "source_path": "existing HDF5 path",
+      "output_path": "new HDF5 path; never overwritten",
+      "dataset": [
+        "/valid_frames/images",
+        "/invalid_frames/images",
+        "/recorded_frames/images"
+      ],
+      "start": "nonnegative integer; default 0",
+      "count": "nonnegative integer; 0 selects remaining; at most 4096 frames and 256MiB input"
+    },
+    "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
   }
 }

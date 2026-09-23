@@ -41,6 +41,7 @@ import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
+import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
 import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, useReviewExport } from "./exportControls";
 import "./App.css";
@@ -769,6 +770,7 @@ export default function App() {
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
   const profiles = useProfiles({ready, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   const reviewExport = useReviewExport(ready, append);
+  const reanalysis = useReanalysis(ready);
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
@@ -1186,6 +1188,7 @@ export default function App() {
             </div>
           )}
 
+          <ReanalysisStatus model={reanalysis}/>
           <ExportStatus model={reviewExport} />
           <div className="tab-body">
             <div hidden={tab !== "connect"}>
@@ -1761,7 +1764,7 @@ export default function App() {
                   <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
                   <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
                   <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
-                  <button disabled title={PENDING.review}>Regenerate masks…</button>
+
                   <span className="legend">
                     <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                     <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
@@ -1806,6 +1809,7 @@ export default function App() {
                   <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
                 </div>
                 <div className="subtab-body">
+                  <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || !ready}/>
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
                   <div className="review-split" hidden={reviewTab === "charts"}>
                     <div className="frames">

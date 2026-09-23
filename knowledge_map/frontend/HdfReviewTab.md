@@ -144,3 +144,13 @@ Saved-file Charts fetch valid/invalid metadata in explicit 200-row pages, reject
 responses when the native file changes, and label raw pixel area and dimensionless
 ring ratio. These are subset plots, not whole-file calibrated statistics or
 isoelastic overlays; those Qt chart capabilities remain distinct parity work.
+
+Tauri's Regenerate masks control now starts a cancellable facade job for a saved
+HDF dataset/range. The shared processing service performs science and writes a
+new HDF using shared `BatchMaskSources`; the original is unchanged. Current
+processing settings are copied at submission; source ROI/background, frame
+identities and timestamps are preserved; active core provenance is written.
+Output publication cannot replace an existing file, including a file created
+while processing. Cancellation and terminal result survive tab navigation.
+Initial HDF ranges are bounded to 4096 frames / 256 MiB input; folder/AVI inputs,
+synthetic background and broader batch-dialog editing are follow-on parity work.

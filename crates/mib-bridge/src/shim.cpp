@@ -1114,6 +1114,14 @@ BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
 rust::String BackendBridge::pulse_generator_status() {
     return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
 }
+BridgeCommandResult BackendBridge::review_reanalysis_json(rust::Str json) {
+    try { return toBridgeResult(impl_->facade.submitReviewReanalysisJson(toStd(json))); }
+    catch (const std::exception& e) { return errorResult(e.what()); }
+    catch (...) { return errorResult("Reanalysis submission failed"); }
+}
+rust::String BackendBridge::review_reanalysis_status_json() {
+    return rust::String(impl_->facade.fetchReviewReanalysisStatusJson());
+}
 
 BridgeCommandResult BackendBridge::review_export_json(rust::Str json) {
     try { return toBridgeResult(impl_->facade.submitReviewExportJson(toStd(json))); }

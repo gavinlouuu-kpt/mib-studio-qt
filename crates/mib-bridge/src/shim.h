@@ -101,6 +101,9 @@ public:
     BridgeFrame fetch_review_image(std::uint32_t dataset, std::uint64_t index);
     BridgeCommandResult pulse_generator_command(rust::Str json);
     rust::String pulse_generator_status();
+
+    BridgeCommandResult review_reanalysis_json(rust::Str json);
+    rust::String review_reanalysis_status_json();
     BridgeCommandResult review_export_json(rust::Str json);
     rust::String review_export_status_json();
     BridgeCommandResult review_export_csv(rust::Str output_path);

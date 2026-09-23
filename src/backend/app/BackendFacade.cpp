@@ -234,6 +234,7 @@ namespace backend::bridge
         backend_.experiment().setStatusCallback({});
         cancelAllOperations("Backend shutdown");
         if (exportThread_.joinable()) exportThread_.join();
+        if (reanalysisThread_.joinable()) reanalysisThread_.join();
         // Review export jobs observe their (now set) cancel flags and clean
         // partial outputs; join them so no callback fires after destruction.
         {

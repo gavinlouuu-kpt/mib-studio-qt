@@ -846,6 +846,10 @@ namespace backend::bridge
 
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
         std::string fetchPulseGeneratorStatusJson() const;
+
+        BackendCommandResult submitReviewReanalysisJson(const std::string &json);
+        std::string fetchReviewReanalysisStatusJson() const;
+
         BackendCommandResult submitReviewExportJson(const std::string &json);
         std::string fetchReviewExportStatusJson() const;
 
@@ -930,6 +934,10 @@ namespace backend::bridge
         std::vector<std::thread> reviewJobThreads_;
         std::mutex reviewJobsMutex_;
         mutable std::mutex exportMutex_;
+        mutable std::mutex reanalysisMutex_;
+        bool reanalysisActive_{false};
+        std::thread reanalysisThread_;
+        std::string reanalysisStatusJson_{"{\"state\":\"idle\"}"};
         bool exportActive_{false};
         std::thread exportThread_;
         std::string exportStatusJson_{"{\"state\":\"idle\"}"};

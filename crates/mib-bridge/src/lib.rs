@@ -690,6 +690,9 @@ pub mod ffi {
         /// are removed on cancel/failure; the source file is opened read-only.
         fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
+
+        fn review_reanalysis_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
+        fn review_reanalysis_status_json(self: Pin<&mut BackendBridge>) -> String;
         fn review_export_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn review_export_status_json(self: Pin<&mut BackendBridge>) -> String;
 
