@@ -338,6 +338,7 @@ pub mod ffi {
         pub com_port: i32,
         pub baud_rate: i32,
         pub modbus_address: i32,
+        pub port_name: String,
         pub configured_flow_rate: f64,
         pub flow_rate_unit: i32,
         pub direction: u32,
@@ -623,6 +624,7 @@ pub mod ffi {
         /// Syringe pump commands (schema v10, BE-7). `pump` is a contract
         /// `pump_ids` value (0 Sample, 1 Sheath). Serial-port conflicts with
         /// the other pump or the autofocus controller are structured errors.
+        fn pump_connect_endpoint(self: Pin<&mut BackendBridge>, pump: u32, port_name: &str, baud_rate: i32, modbus_address: i32) -> BridgeCommandResult;
         fn pump_connect(
             self: Pin<&mut BackendBridge>,
             pump: u32,
@@ -696,6 +698,7 @@ pub mod ffi {
         fn fetch_processed_preview(self: Pin<&mut BackendBridge>) -> Vec<u8>;
         fn background_calibration_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn background_calibration_status(self: Pin<&mut BackendBridge>) -> String;
+        fn startup_discovery_set_preference(self: Pin<&mut BackendBridge>, json: &str) -> String;
         fn startup_discovery_run(self: Pin<&mut BackendBridge>, action: &str) -> String;
         fn startup_discovery_status(self: Pin<&mut BackendBridge>) -> String;
         fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;

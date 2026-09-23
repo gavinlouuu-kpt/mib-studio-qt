@@ -433,6 +433,12 @@ fn background_calibration_status(state: State<AppState>) -> Result<serde_json::V
 }
 
 #[tauri::command]
+fn startup_discovery_set_preference(state: State<AppState>, json: String) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().startup_discovery_set_preference(&json)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn startup_discovery_run(state: State<AppState>, action: String) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().startup_discovery_run(&action)).map_err(|e| e.to_string())
@@ -568,9 +574,16 @@ struct PumpStatus {
     com_port: i32,
     baud_rate: i32,
     modbus_address: i32,
+    port_name: String,
     configured_flow_rate: f64,
     flow_rate_unit: i32,
     direction: u32,
+}
+
+#[tauri::command]
+fn pump_connect_endpoint(state: State<AppState>, pump: u32, port_name: String, baud_rate: i32, modbus_address: i32) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().pump_connect_endpoint(pump, &port_name, baud_rate, modbus_address).into())
 }
 
 #[tauri::command]
@@ -665,6 +678,7 @@ fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<PumpStatus, St
         com_port: s.com_port,
         baud_rate: s.baud_rate,
         modbus_address: s.modbus_address,
+        port_name: s.port_name,
         configured_flow_rate: s.configured_flow_rate,
         flow_rate_unit: s.flow_rate_unit,
         direction: s.direction,
@@ -1659,6 +1673,7 @@ pub fn run() {
             fetch_processed_preview,
             background_calibration_command,
             background_calibration_status,
+            startup_discovery_set_preference,
             startup_discovery_run,
             startup_discovery_status,
             pulse_generator_command,
@@ -1671,6 +1686,7 @@ pub fn run() {
             autofocus_set_config,
             fetch_autofocus_status,
             fetch_autofocus_config,
+            pump_connect_endpoint,
             pump_connect,
             pump_disconnect,
             pump_set_flow_rate,

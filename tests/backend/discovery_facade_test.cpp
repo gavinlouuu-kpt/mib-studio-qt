@@ -100,8 +100,33 @@ int main()
     // not from the provider worker. Empty fake nanopositioner discovery cannot
     // open real serial hardware and must leave selection unchanged.
     {
+        const std::string preference =
+            R"({"backend":"oeabt","endpoint":"/dev/serial/by-id/fake","com_port":-1,"baud":57600,"address":7})";
+        const auto saved =
+            nlohmann::json::parse(facade.setStartupDiscoveryPreferenceJson(preference));
+        MIB_REQUIRE(saved.at("accepted").get<bool>(),
+                    "remembered preference accepted without connection");
+        MIB_EXPECT(
+            nlohmann::json::parse(facade.fetchStartupDiscoveryStatusJson()).at("preference") ==
+                nlohmann::json::parse(preference),
+            "preference roundtrip");
+        MIB_EXPECT(!nlohmann::json::parse(facade.setStartupDiscoveryPreferenceJson(
+                                              R"({"backend":"oeabt","baud":1.5})"))
+                        .at("accepted")
+                        .get<bool>(),
+                   "fractional serial settings rejected");
+        MIB_EXPECT(
+            nlohmann::json::parse(facade.fetchStartupDiscoveryStatusJson()).at("preference") ==
+                saved.at("preference"),
+            "invalid update preserves preference");
         auto* nano = new ScriptedProvider("nano", DeviceKind::Nanopositioner, "nano-test");
-        nano->result.complete = true;
+        auto receivedPreference = std::make_shared<std::atomic<bool>>(false);
+        nano->script = [receivedPreference](const DiscoveryRequest& request, const ProviderContext&) {
+            const auto& preferred = request.preferredNanopositioner;
+            receivedPreference->store(preferred && preferred->persistentId == "/dev/serial/by-id/fake" &&
+                preferred->backend == backend::nanopositioner::BackendKind::Oeabt && preferred->coremorBaudRate == 57600 && preferred->coremorAddress == 7);
+            ProviderResult result; result.complete = true; return result;
+        };
         service.registerProvider(std::unique_ptr<ScriptedProvider>(nano));
         auto timing = backend.startupDiscovery().timing();
         timing.cameraDelay = 0ms; timing.nanopositionerRetries = 0;
@@ -115,6 +140,7 @@ int main()
             }, 3000ms), "serialized startup completion drained");
             const auto status = nlohmann::json::parse(facade.fetchStartupDiscoveryStatusJson());
             MIB_EXPECT(!status.at("nanopositioner_connected").get<bool>(), "empty discovery never connects");
+            MIB_EXPECT(receivedPreference->load(), "native provider receives remembered identity and serial settings");
         }
     }
 

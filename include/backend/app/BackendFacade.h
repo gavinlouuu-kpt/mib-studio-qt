@@ -253,6 +253,7 @@ namespace backend::bridge
     struct PumpCommand
     {
         PumpCommandAction action{PumpCommandAction::PollStatus};
+        std::string portName; // nonempty uses existing system-port overload
         int pumpId{0}; // 0 Sample, 1 Sheath (contract pump_ids)
         int comPort{-1};
         int baudRate{115200};
@@ -733,6 +734,7 @@ namespace backend::bridge
         double maxFlowRate{0.0};
         bool stalled{false};
         int comPort{-1};
+        std::string portName;
         int baudRate{115200};
         int modbusAddress{1};
         double configuredFlowRate{0.0};
@@ -853,6 +855,7 @@ namespace backend::bridge
         std::vector<std::uint8_t> fetchProcessedPreviewPacket() const;
         BackendCommandResult backgroundCalibrationCommandJson(const std::string &json);
         std::string fetchBackgroundCalibrationStatusJson() const;
+        std::string setStartupDiscoveryPreferenceJson(const std::string& json);
         std::string runStartupDiscoveryJson(const std::string &action);
         std::string fetchStartupDiscoveryStatusJson() const;
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
@@ -928,6 +931,8 @@ namespace backend::bridge
         EventSink eventSink_;
         bool initialized_{false};
 
+        std::string startupPreferenceJson_{
+            R"({"backend":"auto","endpoint":"","com_port":-1,"baud":115200,"address":1})"};
         mutable std::mutex startupActionsMutex_;
         mutable std::vector<std::function<void()>> startupActions_;
 

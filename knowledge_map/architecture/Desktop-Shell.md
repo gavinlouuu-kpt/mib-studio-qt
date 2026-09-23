@@ -437,3 +437,9 @@ and refreshes the entire webview, requiring the same native experiment/output to
 remain active. Shell statistics polling is independent of a possibly stale UI draft
 of the realtime-enabled toggle. Raw MIBF v2 acquisition/store epochs require bridge
 ABI 18; processed preview recipe identity remains separately scoped.
+
+## Remembered discovery and named pump endpoints (2026-09-23)
+
+Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.
+
+Pump connections accept system serial names (including Linux paths), reusing the existing shared SerialBus string transport. Status exposes the actual port name; legacy Qt config edits preserve connected transport identity. Two pumps can share a bus at distinct slave addresses, while duplicate pump/pulse slave identities and autofocus port collisions are refused before connection writes. Legacy numeric COM bridge calls remain supported. Native fake-serial tests cover named endpoint roundtrip and shared-bus identity guards; real hardware acceptance remains deferred.

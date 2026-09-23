@@ -80,6 +80,8 @@ public:
     BridgeCommandResult autofocus_set_config(BridgeAutofocusConfig config);
     BridgeAutofocusStatus fetch_autofocus_status();
     BridgeAutofocusConfig fetch_autofocus_config();
+    BridgeCommandResult pump_connect_endpoint(std::uint32_t pump, rust::Str port_name,
+                                              std::int32_t baud_rate, std::int32_t modbus_address);
     BridgeCommandResult pump_connect(std::uint32_t pump, std::int32_t com_port,
                                      std::int32_t baud_rate, std::int32_t modbus_address);
     BridgeCommandResult pump_disconnect(std::uint32_t pump);
@@ -104,6 +106,7 @@ public:
     rust::Vec<std::uint8_t> fetch_processed_preview();
     BridgeCommandResult background_calibration_command(rust::Str json);
     rust::String background_calibration_status();
+    rust::String startup_discovery_set_preference(rust::Str json);
     rust::String startup_discovery_run(rust::Str action);
     rust::String startup_discovery_status();
     BridgeCommandResult pulse_generator_command(rust::Str json);

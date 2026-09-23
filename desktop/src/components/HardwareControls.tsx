@@ -16,9 +16,9 @@ const focusFields: Array<[keyof AutofocusConfig, string]> = [
   ['initial_voltage', 'Initial voltage (V)'], ['manual_voltage_step', 'Jog step (V)'],
   ['ring_ratio_stale_ms', 'Metric stale after (ms)'], ['min_samples_per_step', 'Minimum samples per step'], ['safe_shutdown_voltage', 'Shutdown voltage (V)'],
 ];
-function ConnectionFields({value, onChange, disabled}: {value: Connection; onChange: (v: Connection) => void; disabled: boolean}) {
-  return <div className="hardware-fields">{(['port', 'baud', 'address'] as const).map(key => <label key={key}>{ {port: 'COM port number', baud: 'Baud rate', address: 'Device address'}[key] }
-    <input type="number" value={value[key]} disabled={disabled} onChange={event => onChange({...value, [key]: event.target.value})} />
+function ConnectionFields({value, onChange, disabled, systemPort = false}: {value: Connection; onChange: (v: Connection) => void; disabled: boolean; systemPort?: boolean}) {
+  return <div className="hardware-fields">{(['port', 'baud', 'address'] as const).map(key => <label key={key}>{ {port: systemPort ? 'System serial port (COM3 or /dev/ttyUSB0)' : 'COM port number', baud: 'Baud rate', address: 'Device address'}[key] }
+    <input type={systemPort && key === 'port' ? 'text' : 'number'} value={value[key]} disabled={disabled} onChange={event => onChange({...value, [key]: event.target.value})} />
   </label>)}</div>;
 }
 function connectionArgs(value: Connection, addressMax: number, addressMin = 1): [number, number, number] {
@@ -89,7 +89,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
     <h2>Pumps and autofocus</h2>
     <StartupDiscoveryControls ready={ready} experimentActive={experimentActive} append={append} onSelectionChanged={onSelectionChanged} />
     <p>Manual run, purge, enable and jog require Service / Commissioning mode and arming. Stop and disable remain available during experiments.</p>
-    <p>Pump connections use numeric COM ports. Nanopositioners support CoreMOR and OEABT endpoint identities.</p>
+    <p>Pumps accept system serial endpoints; devices may share a bus at distinct Modbus addresses. Nanopositioners support CoreMOR and OEABT identities.</p>
     {gate('configure') && <p role="status">{gate('configure')}</p>}
     {error && <p role="alert">{error}</p>}{statusError && <p role="alert">Status unavailable: {statusError}</p>}
     {pumps.map((status, id) => {
@@ -98,10 +98,13 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
       const stopped = status?.run_status === 0;
       return <fieldset key={id}><legend>{id === 0 ? 'Sample pump' : 'Sheath pump'}</legend>
         <p>{status ? `${connected ? 'Connected' : 'Disconnected'} · ${['Stopped', 'Forward', 'Backward', 'Paused'][status.run_status] ?? `Unknown state ${status.run_status}`} · ${status.stalled ? 'STALLED' : 'No stall reported'}` : 'Status unknown'}</p>
-        {connected && status && <p>COM {status.com_port} · Address {status.modbus_address} · Configured rate {status.configured_flow_rate} ({status.flow_rate_unit === 100 ? 'µL/min' : status.flow_rate_unit === 103 ? 'mL/min' : `unit ${status.flow_rate_unit}`}) · Direction {status.direction === 0 ? 'Infuse' : status.direction === 1 ? 'Withdraw' : 'Unknown'} · Live rate {status.current_flow_rate} · Accumulated volume {status.accumulated_volume} (device units)</p>}
-        <ConnectionFields value={connections[id]} disabled={configureDisabled || connected} onChange={v => update(setConnections, connections, id, v)} />
+        {connected && status && <p>{status.port_name || `COM ${status.com_port}`} · Address {status.modbus_address} · Configured rate {status.configured_flow_rate} ({status.flow_rate_unit === 100 ? 'µL/min' : status.flow_rate_unit === 103 ? 'mL/min' : `unit ${status.flow_rate_unit}`}) · Direction {status.direction === 0 ? 'Infuse' : status.direction === 1 ? 'Withdraw' : 'Unknown'} · Live rate {status.current_flow_rate} · Accumulated volume {status.accumulated_volume} (device units)</p>}
+        <ConnectionFields systemPort value={connections[id]} disabled={configureDisabled || connected} onChange={v => update(setConnections, connections, id, v)} />
         <div className="hardware-actions">
-          <button disabled={configureDisabled || !status || connected} onClick={() => void run('Connect pump', 'configure', false, () => bridge.pumpConnect(id, ...connectionArgs(connections[id], 247)))}>Connect</button>
+          <button disabled={configureDisabled || !status || connected} onClick={() => void run('Connect pump', 'configure', false, () => {
+            const connection = connections[id]; const port = connection.port.trim(); if (!port) throw new Error('System serial port is required');
+            return bridge.pumpConnectEndpoint(id, /^\d+$/.test(port) ? `COM${port}` : port, numericInput(connection.baud, 'Baud rate', 1, 4000000, true), numericInput(connection.address, 'Address', 1, 247, true));
+          })}>Connect</button>
           <button disabled={configureDisabled || !connected} onClick={() => void run('Disconnect pump', 'configure', connected, () => bridge.pumpDisconnect(id))}>Disconnect</button>
           <button disabled={busy || !ready || !connected} onClick={() => void run('Poll pump', 'stop', connected, () => bridge.pumpPollStatus(id))}>Read device status</button>
         </div>

@@ -1643,32 +1643,41 @@ namespace backend::bridge
         {
         case PumpCommandAction::Connect:
         {
-            if (command.comPort < 0)
-            {
-                return fail("Invalid COM port");
-            }
+            if (command.portName.empty() && command.comPort < 0) return fail("Invalid COM port");
+            const auto port = command.portName.empty() ? "COM" + std::to_string(command.comPort)
+                                                       : command.portName;
+            if (port.size() > 512 || port.find('\0') != std::string::npos ||
+                port.find_first_not_of(" \t") == std::string::npos || command.baudRate < 1 ||
+                command.baudRate > 4000000)
+                return fail("Invalid pump serial endpoint");
             if (command.modbusAddress < 1 || command.modbusAddress > 247)
-            {
                 return fail("Invalid Modbus address (1-247)");
-            }
-            // Serial-port conflict rules (BE-7): the other pump and the
-            // autofocus controller must not share the port.
-            const auto otherId = pumpId == Pump::PumpId::Sample ? Pump::PumpId::Sheath
-                                                                : Pump::PumpId::Sample;
-            if (pumps.isConnected(otherId) && pumps.getComPort(otherId) == command.comPort)
-            {
-                return fail("COM port already in use by the other pump");
-            }
-            if (backend_.autofocus().isConnected() &&
-                backend_.autofocus().getComPort() == command.comPort)
-            {
-                return fail("COM port already in use by the autofocus controller");
-            }
-            if (!pumps.connect(pumpId, command.comPort, command.baudRate,
-                               static_cast<std::uint8_t>(command.modbusAddress)))
-            {
-                return fail("Pump connect failed (no Modbus response)");
-            }
+            using Bus = services::serialbus::SerialBusManager;
+            const auto otherId =
+                pumpId == Pump::PumpId::Sample ? Pump::PumpId::Sheath : Pump::PumpId::Sample;
+            const auto other = pumps.getConfig(otherId);
+            if (pumps.isConnected(otherId) && Bus::samePort(other.portName, port) &&
+                other.modbusAddress == command.modbusAddress)
+                return fail("Modbus address already claimed by the other pump on this bus");
+            auto& pulse = backend_.pulseGenerator();
+            const auto pulseConfig = pulse.getConfig();
+            if (pulse.isConnected() && Bus::samePort(pulseConfig.portName, port) &&
+                pulseConfig.modbusAddress == command.modbusAddress)
+                return fail("Modbus address already claimed by the acquisition pulse generator");
+            auto& autofocus = backend_.autofocus();
+            const auto autofocusPort =
+                autofocus.getBackendKind() == nanopositioner::BackendKind::Coremor
+                    ? "COM" + std::to_string(autofocus.getComPort())
+                    : autofocus.getEndpointId();
+            if (autofocus.isConnected() && Bus::samePort(autofocusPort, port))
+                return fail("Serial endpoint already in use by autofocus");
+            const bool connected =
+                command.portName.empty()
+                    ? pumps.connect(pumpId, command.comPort, command.baudRate,
+                                    static_cast<std::uint8_t>(command.modbusAddress))
+                    : pumps.connect(pumpId, port, command.baudRate,
+                                    static_cast<std::uint8_t>(command.modbusAddress));
+            if (!connected) return fail("Pump connect failed (no Modbus response)");
             return {true, BackendCommandType::Pump, "Pump connected"};
         }
         case PumpCommandAction::Disconnect:
@@ -1798,6 +1807,7 @@ namespace backend::bridge
         out.comPort = config.comPort;
         out.baudRate = config.baudRate;
         out.modbusAddress = config.modbusAddress;
+        out.portName = config.portName;
         out.configuredFlowRate = config.flowRate;
         out.flowRateUnit = config.flowRateUnit;
         out.direction = static_cast<int>(config.direction);
@@ -1837,8 +1847,13 @@ namespace backend::bridge
             for (int pumpId = 0; pumpId < Pump::PUMP_COUNT; ++pumpId)
             {
                 const auto id = static_cast<Pump::PumpId>(pumpId);
-                if (coremor && pumps.isConnected(id) && pumps.getComPort(id) == port)
-                {
+                if (pumps.isConnected(id) &&
+                    services::serialbus::SerialBusManager::samePort(
+                        pumps.getConfig(id).portName,
+                        coremor ? "COM" + std::to_string(port)
+                                : (!command.endpoint->systemPath.empty()
+                                       ? command.endpoint->systemPath
+                                       : command.endpoint->persistentId))) {
                     return fail("COM port already in use by a syringe pump");
                 }
             }
@@ -2432,6 +2447,17 @@ BackendCommandResult BackendFacade::pulseGeneratorCommandJson(const std::string&
                     (parity != "N" && parity != "E" && parity != "O") || address < 1 || address > 247) {
                     result.message = "Invalid pulse-generator serial endpoint"; return;
                 }
+                for (int id = 0; id < services::SyringePumpService::PUMP_COUNT; ++id) {
+                    const auto pumpId = static_cast<services::SyringePumpService::PumpId>(id);
+                    const auto pumpConfig = backend_.syringePump().getConfig(pumpId);
+                    if (backend_.syringePump().isConnected(pumpId) &&
+                        services::serialbus::SerialBusManager::samePort(pumpConfig.portName,
+                                                                        port) &&
+                        pumpConfig.modbusAddress == address) {
+                        result.message = "Modbus address already claimed by a syringe pump";
+                        return;
+                    }
+                }
                 settings.parity = parity[0];
                 if (pulse.isConnected()) { result.message = "Disconnect the current pulse generator first"; return; }
                 ok = pulse.connect(port, settings, static_cast<std::uint8_t>(address));
@@ -2488,6 +2514,58 @@ std::string BackendFacade::profileCommand(const std::string& base, const std::st
 }
 
 namespace backend::bridge {
+std::string BackendFacade::setStartupDiscoveryPreferenceJson(const std::string& text) {
+    using nlohmann::json;
+    const auto refused = [](const std::string& message) {
+        return json{{"accepted", false}, {"message", message}}.dump();
+    };
+    if (!initialized_) return refused("Backend is not initialized");
+    auto& startup = backend_.startupDiscovery();
+    if (startup.cameraStepRunning() || startup.nanopositionerStepRunning())
+        return refused("Wait for the current startup discovery before changing its preference");
+    if (text.size() > 4096) return refused("Startup preference too large");
+    try {
+        const auto value = json::parse(text);
+        const auto kind = nanopositioner::parseBackendKind(value.at("backend").get<std::string>());
+        if (!kind) return refused("Unknown nanopositioner backend");
+        const auto endpoint = value.at("endpoint").get<std::string>();
+        if (endpoint.size() > 512 || endpoint.find('\0') != std::string::npos)
+            return refused("Invalid endpoint identity");
+        for (const auto* name : {"com_port", "baud", "address"})
+            if (!value.at(name).is_number_integer())
+                return refused("Serial preferences must be integers");
+        const auto port = value.at("com_port").get<std::int64_t>();
+        const auto baud = value.at("baud").get<std::int64_t>();
+        const auto address = value.at("address").get<std::int64_t>();
+        if (port < -1 || port > 65535 || baud < 1 || baud > 4000000 || address < 0 ||
+            address > 255 || (*kind == nanopositioner::BackendKind::Coremor && port < 1))
+            return refused("Invalid nanopositioner serial preference");
+        nanopositioner::Endpoint preferred;
+        preferred.backend = *kind;
+        preferred.persistentId = endpoint;
+        preferred.systemPath = endpoint;
+        preferred.coremorPort = static_cast<int>(port);
+        preferred.coremorBaudRate = static_cast<int>(baud);
+        preferred.coremorAddress = static_cast<std::uint8_t>(address);
+        if (preferred.persistentId.empty() && port > 0)
+            preferred.persistentId = preferred.systemPath = "COM" + std::to_string(port);
+        startup.setPreferredNanopositionerHook(
+            [preferred] { return std::optional<nanopositioner::Endpoint>(preferred); });
+        const json canonical{{"backend", nanopositioner::backendKindName(*kind)},
+                             {"endpoint", preferred.persistentId},
+                             {"com_port", port},
+                             {"baud", baud},
+                             {"address", address}};
+        startupPreferenceJson_ = canonical.dump();
+        return json{{"accepted", true},
+                    {"message", "Startup preference applied; no connection was made"},
+                    {"preference", canonical}}
+            .dump();
+    } catch (const std::exception& error) {
+        return refused(error.what());
+    }
+}
+
 std::string BackendFacade::runStartupDiscoveryJson(const std::string& action) {
     using nlohmann::json;
     if (!initialized_) return json{{"accepted", false}, {"message", "Backend is not initialized"}}.dump();
@@ -2527,10 +2605,15 @@ std::string BackendFacade::fetchStartupDiscoveryStatusJson() const {
         }
         return value;
     };
-    return json{{"valid", true}, {"camera_running", startup.cameraStepRunning()},
-        {"nanopositioner_running", startup.nanopositionerStepRunning()},
-        {"camera_configured", backend_.isCameraConfigured()}, {"nanopositioner_connected", backend_.autofocus().isConnected()},
-        {"camera", job(startup.cameraJobId())}, {"nanopositioner", job(startup.nanopositionerJobId())}}.dump();
+    return json{{"valid", true},
+                {"camera_running", startup.cameraStepRunning()},
+                {"nanopositioner_running", startup.nanopositionerStepRunning()},
+                {"camera_configured", backend_.isCameraConfigured()},
+                {"nanopositioner_connected", backend_.autofocus().isConnected()},
+                {"preference", json::parse(startupPreferenceJson_)},
+                {"camera", job(startup.cameraJobId())},
+                {"nanopositioner", job(startup.nanopositionerJobId())}}
+        .dump();
 }
 }
 

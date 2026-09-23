@@ -2285,3 +2285,6 @@ provenance. See the catch-up execution plan for verified vs pending gates.
   config_version snapshots. Background refresh preserves edited JSON and quick-control
   drafts; positive finite calibration is required. Profile display_fps now paces live
   preview requests. Auto-background status reflects runtime config and routes to editing.
+## 2026-09-23 — Tauri remembered hardware selection and named pump endpoints
+
+Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows pump transport UI/bridge gaps using existing services. See [[Desktop-Shell]] and [[Rust-Bridge]]. Malformed settings preserve prior preferences; startup jobs cannot be retargeted in flight. No real hardware was actuated.

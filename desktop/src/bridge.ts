@@ -1,3 +1,4 @@
+import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
@@ -56,6 +57,7 @@ export interface PumpStatus {
   com_port: number;
   baud_rate: number;
   modbus_address: number;
+  port_name?: string;
   configured_flow_rate: number;
   flow_rate_unit: number;
   direction: number;
@@ -388,6 +390,7 @@ export const bridge = {
   fetchProcessedPreview: () => invoke<ArrayBuffer>("fetch_processed_preview"),
   backgroundCalibrationCommand: (request: Record<string, unknown>) => invokeCommand("background_calibration_command", {json: JSON.stringify(request)}),
   backgroundCalibrationStatus: () => invoke<BackgroundCalibrationStatus>("background_calibration_status"),
+  startupDiscoverySetPreference: (preference: StartupPreference) => invoke<{accepted: boolean; message: string; preference?: StartupPreference}>("startup_discovery_set_preference", {json: JSON.stringify(preference)}),
   startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),
   startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
   pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
@@ -405,6 +408,7 @@ export const bridge = {
   fetchAutofocusStatus: () => invoke<AutofocusStatus>("fetch_autofocus_status"),
   fetchAutofocusConfig: () => invoke<AutofocusConfig>("fetch_autofocus_config"),
   // Syringe pumps (schema v10, BE-7): pump 0 = Sample, 1 = Sheath.
+  pumpConnectEndpoint: (pump: number, portName: string, baudRate: number, modbusAddress: number) => invokeCommand("pump_connect_endpoint", {pump, portName, baudRate, modbusAddress}),
   pumpConnect: (pump: number, comPort: number, baudRate: number, modbusAddress: number) =>
     invokeCommand("pump_connect", { pump, comPort, baudRate, modbusAddress }),
   pumpDisconnect: (pump: number) => invokeCommand("pump_disconnect", { pump }),
@@ -528,7 +532,7 @@ export function mono8ToImageData(
 
 export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>}
 
-export interface StartupDiscoveryStatus {valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
+export interface StartupDiscoveryStatus {preference?: StartupPreference; valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
 interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
 
 export interface BackgroundCalibrationStatus {valid: boolean; state: string; operation_generation: string; frozen_config_version: string; attempted: number; accepted: number; rejected_non_empty: number; rejected_processing_failed: number; published_background_generation: string; published_sha256: string; message: string}

@@ -883,6 +883,20 @@ BridgeAutofocusConfig BackendBridge::fetch_autofocus_config() {
     return out;
 }
 
+BridgeCommandResult BackendBridge::pump_connect_endpoint(std::uint32_t pump, rust::Str port_name,
+                                                         std::int32_t baud_rate,
+                                                         std::int32_t modbus_address) {
+    try {
+        auto cmd = makePumpCommand(backend::bridge::PumpCommandAction::Connect, pump);
+        cmd.portName = toStd(port_name);
+        cmd.baudRate = baud_rate;
+        cmd.modbusAddress = modbus_address;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& error) {
+        return errorResult(error.what());
+    }
+}
+
 BridgeCommandResult BackendBridge::pump_connect(std::uint32_t pump, std::int32_t com_port,
                                                 std::int32_t baud_rate,
                                                 std::int32_t modbus_address) {
@@ -1026,6 +1040,7 @@ BridgePumpStatus BackendBridge::fetch_pump_status(std::uint32_t pump) {
     out.com_port = status.comPort;
     out.baud_rate = status.baudRate;
     out.modbus_address = status.modbusAddress;
+    out.port_name = status.portName;
     out.configured_flow_rate = status.configuredFlowRate;
     out.flow_rate_unit = status.flowRateUnit;
     out.direction = static_cast<std::uint32_t>(status.direction);
@@ -1130,6 +1145,10 @@ rust::Vec<std::uint8_t> BackendBridge::fetch_processed_preview() {
 
 BridgeCommandResult BackendBridge::background_calibration_command(rust::Str json) { return toBridgeResult(impl_->facade.backgroundCalibrationCommandJson(toStd(json))); }
 rust::String BackendBridge::background_calibration_status() { return rust::String(impl_->facade.fetchBackgroundCalibrationStatusJson()); }
+
+rust::String BackendBridge::startup_discovery_set_preference(rust::Str json) {
+    return rust::String(impl_->facade.setStartupDiscoveryPreferenceJson(toStd(json)));
+}
 
 rust::String BackendBridge::startup_discovery_run(rust::Str action) { return rust::String(impl_->facade.runStartupDiscoveryJson(toStd(action))); }
 rust::String BackendBridge::startup_discovery_status() { return rust::String(impl_->facade.fetchStartupDiscoveryStatusJson()); }
