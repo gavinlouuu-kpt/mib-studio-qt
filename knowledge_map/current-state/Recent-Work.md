@@ -2299,3 +2299,10 @@ Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows
   identities without replaying startup selections, even when idle. Review UI recovers its
   source, dataset, first-frame preview and metrics; export/reanalysis submissions remain
   blocked until authoritative operation status has been recovered.
+
+- 2026-09-23: Monitoring table now labels raw area as px², matching the native row
+  contract. Added bounded valid-object Young's modulus histogram from stored per-object
+  kPa results; unavailable/zero values are excluded, not shown as physical measurements.
+  Ring histogram now includes positive finite valid-object ratios. Calibrated live area
+  and isoelastic overlays remain gated on processing-time per-row calibration provenance:
+  neither shell may safely rescale retained old rows using the current factor.

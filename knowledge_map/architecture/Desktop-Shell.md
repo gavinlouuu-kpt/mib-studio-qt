@@ -453,3 +453,10 @@ read-only reconciliation path for retained sessions. Runtime flags, experiment s
 and review metadata must all resolve before readiness permits startup hooks. A reload
 never reapplies saved profile/core selections over current native state. Existing export
 and reanalysis jobs are polled by App-owned hooks; unknown initial status is busy, not idle.
+
+Monitoring scientific scope: `MonitoringRow.area` is raw px²; `youngs_modulus` is the
+stored kernel/LUT kPa result (zero means unavailable). Tauri renders a bounded raw-area
+scatter plus valid-object ring-ratio and modulus histograms. It does not apply current
+calibration to retained historical rows. Live calibrated scatter/isoelastic parity needs
+per-row calibration provenance captured by every inline and batch processing path; the
+current Qt live scatter's use of the current factor is not authoritative for mixed epochs.

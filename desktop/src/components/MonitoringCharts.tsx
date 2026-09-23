@@ -4,7 +4,8 @@ const LIMIT = 200;
 export function monitoringPlotData(rows: MonitoringRow[]) {
   const bounded = rows.slice(-LIMIT);
   const scatter = bounded.filter(r => Number.isFinite(r.area) && Number.isFinite(r.deformability));
-  const ratios = bounded.map(r=>r.ring_ratio).filter(Number.isFinite);
+  const ratios = bounded.filter(r=>r.valid).map(r=>r.ring_ratio).filter(v=>Number.isFinite(v)&&v>0);
+  const moduli = bounded.filter(r=>r.valid).map(r=>r.youngs_modulus).filter(v=>Number.isFinite(v)&&v>0);
   const extent = (values: number[]): [number,number] => {
     if (!values.length) return [0,1];
     const low=Math.min(...values),high=Math.max(...values);
@@ -13,7 +14,9 @@ export function monitoringPlotData(rows: MonitoringRow[]) {
   const x = extent(scatter.map(r=>r.area)), y=extent(scatter.map(r=>r.deformability)), range=extent(ratios);
   const bins=Array<number>(10).fill(0);
   for (const value of ratios) bins[Math.min(9,Math.max(0,Math.floor((value-range[0])/(range[1]-range[0])*10)))]++;
-  return {scatter,x,y,range,bins,ratioCount:ratios.length,omitted:rows.length-bounded.length,invalid:bounded.length-scatter.length};
+  const modulusRange=extent(moduli),modulusBins=Array<number>(10).fill(0);
+  for(const value of moduli)modulusBins[Math.min(9,Math.max(0,Math.floor((value-modulusRange[0])/(modulusRange[1]-modulusRange[0])*10)))]++;
+  return {scatter,x,y,range,bins,ratioCount:ratios.length,modulusRange,modulusBins,modulusCount:moduli.length,omitted:rows.length-bounded.length,invalid:bounded.length-scatter.length};
 }
 const compact = (value:number)=>Number(value.toPrecision(4)).toString();
 export function MonitoringCharts({snapshot}:{snapshot:MonitoringSnapshot|null}) {
@@ -48,7 +51,19 @@ export function MonitoringCharts({snapshot}:{snapshot:MonitoringSnapshot|null}) 
         <text x="345" y="185" textAnchor="end" fontSize="11" fill="currentColor">{compact(data.range[1])}</text>
         <text x="195" y="205" textAnchor="middle" fontSize="11" fill="currentColor">Ring ratio</text>
       </svg>}
-      <p>{data.ratioCount} finite samples. This is ring ratio, not a physical ring-width measurement.</p>
+      <p>{data.ratioCount} valid-object positive finite samples. This is ring ratio, not a physical ring-width measurement.</p>
+    </div>
+    <div className="config-group">
+      <h5>Young’s modulus distribution (kPa)</h5>
+      {!snapshot?.valid||!data.modulusCount?<p>No positive finite modulus measurements available for valid objects.</p>:<svg viewBox="0 0 390 210" role="img" aria-label={`Young's modulus histogram, ${data.modulusCount} valid-object samples, ten bins`}>
+        <path d="M45 25V165H350" fill="none" stroke="currentColor"/>
+        {data.modulusBins.map((count,index)=><rect key={index} x={46+index*30} y={165-count/Math.max(1,...data.modulusBins)*135} width="28" height={count/Math.max(1,...data.modulusBins)*135} fill="#4ade80"><title>Bin {index+1}: {count} samples</title></rect>)}
+        <text x="40" y="36" textAnchor="end" fontSize="11" fill="currentColor">{Math.max(1,...data.modulusBins)}</text>
+        <text x="45" y="185" fontSize="11" fill="currentColor">{compact(data.modulusRange[0])}</text>
+        <text x="345" y="185" textAnchor="end" fontSize="11" fill="currentColor">{compact(data.modulusRange[1])}</text>
+        <text x="195" y="205" textAnchor="middle" fontSize="11" fill="currentColor">Young’s modulus (kPa)</text>
+      </svg>}
+      <p>Stored per-object LUT result; no recalculation with current calibration. Zero/unavailable and non-finite values excluded. Live area remains raw pixels until processing-time calibration provenance is available; isoelastic overlays are not applied to raw pixel coordinates.</p>
     </div>
   </>;
 }

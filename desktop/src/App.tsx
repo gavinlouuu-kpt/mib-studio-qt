@@ -1768,7 +1768,7 @@ export default function App() {
                             <th>Track</th>
                             <th>Valid</th>
                             <th>Target</th>
-                            <th>Area (µm²)</th>
+                            <th>Area (raw px²)</th>
                             <th>Deformability</th>
                             <th>Ring ratio</th>
                             <th>E (kPa)</th>
@@ -1785,7 +1785,7 @@ export default function App() {
                               <td>{r.area.toFixed(1)}</td>
                               <td>{r.deformability.toFixed(3)}</td>
                               <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
                             </tr>
                           ))}
                           {(monSnapshot?.rows?.length ?? 0) === 0 && (
@@ -1955,7 +1955,7 @@ export default function App() {
                               <td>{r.area.toFixed(1)}</td>
                               <td>{r.deformability.toFixed(3)}</td>
                               <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
                             </tr>
                           ))}
                           {(metricsPage?.rows?.length ?? 0) === 0 && (
