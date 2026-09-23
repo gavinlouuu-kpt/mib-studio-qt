@@ -14,6 +14,8 @@ on:
       - 'tools/gen_bridge_link_manifest.py'
       - 'tools/test_gen_bridge_link_manifest.py'
       - 'tools/test_review_isoelastic_embedding.py'
+      - 'scripts/release/publish-tauri-update.py'
+      - 'tests/tools/test_publish_tauri_update.py'
       - '.github/workflows/desktop-windows-candidate.yml'
 permissions:
   contents: read
