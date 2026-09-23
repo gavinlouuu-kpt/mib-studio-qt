@@ -10,7 +10,9 @@ import unittest
 class LinkManifestXmlTest(unittest.TestCase):
     def test_escaped_defines_and_paths_roundtrip_without_entity_fragments(self):
         with tempfile.TemporaryDirectory() as root:
-            build = Path(root)
+            # Windows temp paths may use an 8.3 alias; the generator resolves
+            # paths to their canonical long spelling before publishing them.
+            build = Path(root).resolve()
             (build / 'tests').mkdir()
             (build / 'src/backend').mkdir(parents=True)
             (build / 'vendor & deps/lib').mkdir(parents=True)

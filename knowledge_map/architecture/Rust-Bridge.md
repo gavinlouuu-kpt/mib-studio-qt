@@ -322,3 +322,6 @@ The VS link-manifest reader decodes XML entities before splitting MSBuild semico
 
 The Windows candidate CI runs the portable escaped-XML manifest regression before
 provisioning native dependencies.
+
+Windows regression fixtures canonicalize temporary paths before comparison,
+matching the generator when RUNNER~1 and runneradmin name the same directory.
