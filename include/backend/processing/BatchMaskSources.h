@@ -33,6 +33,10 @@ struct LoadOptions {
 cv::Mat buildSyntheticBackground(const std::vector<cv::Mat>& frames,
                                  const std::function<bool()>& cancelled = {});
 
+// Load one source frame without changing any live reader or processing state.
+bool loadPreview(const std::string& kind,const std::string& path,const std::string& dataset,
+                 size_t index,cv::Mat& image);
+
 // Load a contiguous range of images from an open Hdf5Service dataset.
 // `datasetPath` is typically one of:
 //   "/valid_frames/images", "/invalid_frames/images", "/recorded_frames/images"

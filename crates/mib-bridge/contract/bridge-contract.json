@@ -332,7 +332,8 @@
       "format": [
         "metrics_csv",
         "images",
-        "all"
+        "all",
+        "charts"
       ],
       "frames": [
         "valid",
@@ -423,8 +424,18 @@
       ],
       "synthetic_background": "boolean; build shared quiet-tile background when no source background",
       "roi": "optional {x,y,w,h}; positive size, nonnegative origin, source bounded",
-      "image_processing": "optional local config.json image_processing object; never applies to live settings"
+      "image_processing": "optional local config.json image_processing object; never applies to live settings",
+      "background_index": "optional nonnegative source frame index, loaded independently",
+      "background_dataset": "HDF dataset for selected background",
+      "clear_background": "discard saved source background before optional selection/synthetic build"
     },
     "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
-  }
+  },
+  "review_charts_json": {
+    "description": "all valid-file metrics; 128x128 density conserves every finite calibrated point; histogram exact; shared Qt math",
+    "counters": "decimal strings",
+    "calibration": "current backend pixel_to_micron, same as Qt; reference conditions labelled",
+    "curves": "bundled existing scaled_isoelastic_data_6.16-4.24 table"
+  },
+  "review_reanalysis_preview": "source_kind/source_path/dataset/index -> atomic Mono8 frame packet, independent reader, 64MiB frame limit"
 }

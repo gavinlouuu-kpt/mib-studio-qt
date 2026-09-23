@@ -815,6 +815,21 @@ fn fetch_review_frame_packet(state: State<AppState>, dataset: u32, index: String
 }
 
 #[tauri::command]
+fn fetch_review_reanalysis_preview(state: State<AppState>, json: String) -> Result<Response, String> {
+    let frame = {
+        let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+        guard.pin_mut().fetch_review_reanalysis_preview(&json)
+    };
+    frame_packet::encode(frame, 3).map(Response::new)
+}
+
+#[tauri::command]
+fn fetch_review_charts_json(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_review_charts_json())
+}
+
+#[tauri::command]
 fn review_reanalysis_json(state: State<AppState>, json: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().review_reanalysis_json(&json).into())
@@ -1651,6 +1666,8 @@ pub fn run() {
             review_image_bytes,
             review_export_csv,
             review_export_json,
+            fetch_review_charts_json,
+            fetch_review_reanalysis_preview,
             review_reanalysis_json,
             review_reanalysis_status_json,
             review_export_status_json,

@@ -697,6 +697,8 @@ pub mod ffi {
         fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
 
+        fn fetch_review_reanalysis_preview(self: Pin<&mut BackendBridge>, json: &str) -> BridgeFrame;
+        fn fetch_review_charts_json(self: Pin<&mut BackendBridge>) -> String;
         fn review_reanalysis_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn review_reanalysis_status_json(self: Pin<&mut BackendBridge>) -> String;
         fn review_export_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;

@@ -1,3 +1,6 @@
+file(READ "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt" MIB_REVIEW_ISOELASTIC_DATA)
+configure_file("${PROJECT_SOURCE_DIR}/cmake/templates/ReviewIsoelasticData.h.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/generated/ReviewIsoelasticData.h" @ONLY)
 include(MIBLinkHelpers)
 
 # The Python wheel version is the processing-core release identity. Keep a
@@ -37,6 +40,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/PipelineTimingRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
@@ -57,6 +61,7 @@ set_target_properties(mib_processing PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+target_include_directories(mib_processing PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(mib_processing PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
@@ -222,6 +227,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileCatalog.cpp

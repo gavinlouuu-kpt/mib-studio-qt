@@ -106,3 +106,21 @@ later files; any failure prevents aggregate success. Cancellation retains alread
 published outputs and stops the remaining chain. The active Review source is
 unchanged. Regression coverage includes a failed middle source, duplicate source
 names and source immutability, in addition to repeated cancel/reopen cycles.
+
+### Shared full-data Review charts
+
+`ReviewChartData` extracts Qt's area calibration (`area * pixelToMicron²`),
+valid-object filtering, 0.5-wide edge-clamped ring-ratio histogram and isoelastic
+reference curves into a Qt-free helper. Both Qt Review and Tauri snapshots use
+it. The repository's existing isoelastic table is embedded at build time, so
+installed chart behavior does not depend on a developer working directory.
+`fetchReviewChartsJson` uses all valid metrics from an independent source reader;
+its 128×128 density cells conserve every finite point (not a sampled page), and
+histogram bins retain exact full-file counts. Counters are decimal strings.
+
+Tauri `all` and `charts` jobs render 1200×1200 TIFFs using that same helper inside
+the transactional export worker. Chart-only jobs export no source-frame images;
+failed chart writes never publish a successful output. Calibration/ring limits
+are explicit snapshots of current backend settings, matching Qt, not claimed to
+be recovered recording calibration. Fixed isoelastic reference conditions are
+labelled rather than automatically assumed to match the experiment.

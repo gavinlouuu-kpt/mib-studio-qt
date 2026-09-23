@@ -96,6 +96,14 @@ export interface ReviewMetadata {
   file_path: string;
 }
 
+export interface ReviewChartSnapshot {
+  valid:boolean;error?:string;source_path:string;pixel_to_micron:number;
+  rows:string;finite_points:string;excluded_nonfinite:string;histogram_samples:string;
+  area_range:[number,number];deform_range:[number,number];ring_range:[number,number];
+  resolution:number;density:[number,number,string][];histogram:string[];
+  curves:{modulus:number;points:[number,number][]}[];curve_source:string;
+}
+
 /** One page of review metrics (schema v9, BE-6). */
 export interface ReviewMetricsPage {
   valid: boolean;
@@ -425,7 +433,9 @@ export const bridge = {
     invoke<ReviewMetricsPage>("fetch_review_metrics_page", { valid, offset, count }),
   fetchReviewImage: async (dataset: number, index: number | string | bigint) =>
     pullFrame("fetch_review_frame_packet", 3, { dataset, index: decimalU64(index) }),
-  reviewReanalysis: (request: {source_path:string;output_path:string;dataset:string;start:number;count:number;source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown}) => invokeCommand("review_reanalysis_json", {json:JSON.stringify(request)}),
+  fetchReanalysisPreview: (request:{source_kind:string;source_path:string;dataset:string;index:number}) => pullFrame("fetch_review_reanalysis_preview",3,{json:JSON.stringify(request)}),
+  fetchReviewCharts: async (): Promise<ReviewChartSnapshot> => JSON.parse(await invoke<string>("fetch_review_charts_json")),
+  reviewReanalysis: (request: {source_path:string;output_path:string;dataset:string;start:number;count:number;source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown;background_index?:number;background_dataset?:string;clear_background?:boolean}) => invokeCommand("review_reanalysis_json", {json:JSON.stringify(request)}),
   reviewReanalysisStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_reanalysis_status_json")),
   reviewExport: (request: ReviewExportRequest) => invokeCommand("review_export_json", { json: JSON.stringify(request) }),
   reviewExportStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_export_status_json")),

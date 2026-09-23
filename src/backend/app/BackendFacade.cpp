@@ -1441,10 +1441,14 @@ namespace backend::bridge
             if (request.outputRoot.empty() && !request.explicitDestination.empty())
                 request.outputRoot = ".";
             const auto format = input.value("format", std::string{"all"});
-            if (format != "metrics_csv" && format != "images" && format != "all")
+            if (format != "metrics_csv" && format != "images" && format != "all" && format != "charts")
                 throw std::invalid_argument("Unknown export format");
             request.format = format == "metrics_csv" ? HdfExportFormat::MetricsCsv :
-                             format == "images" ? HdfExportFormat::Images : HdfExportFormat::All;
+                             format == "images" ? HdfExportFormat::Images : format == "charts" ? HdfExportFormat::Charts : HdfExportFormat::All;
+            request.generateReviewCharts=true;
+            const auto chartConfig=backend_.processing().getProcessingConfig();
+            request.chartRingMin=chartConfig.ring_ratio_min;request.chartRingMax=chartConfig.ring_ratio_max;
+            request.chartIsoelasticOverlays=input.value("isoelastic_overlays",true);
             const auto frames = input.value("frames", std::string{"both"});
             if (frames != "valid" && frames != "invalid" && frames != "both")
                 throw std::invalid_argument("Unknown frame selection");

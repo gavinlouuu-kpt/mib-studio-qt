@@ -11,6 +11,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/videoio.hpp>
 #include "backend/processing/BatchMaskSources.h"
+#include "backend/recording/ReviewChartData.h"
+#include "backend/recording/HdfExportService.h"
 
 using namespace backend::bridge;
 using nlohmann::json;
@@ -254,6 +256,51 @@ int main() {
         images.back()=cv::Mat(70,70,CV_8UC1,cv::Scalar(200));
         const auto background=buildSyntheticBackground(images);
         MIB_REQUIRE(cv::countNonZero(background!=32)==0,"synthetic quiet tiles reject moving outlier including edge tiles");
+    }
+    {
+        BackendFrame preview;
+        MIB_REQUIRE(facade.fetchReviewReanalysisPreviewJson(json{{"source_path",folder.string()},{"source_kind","folder"},{"index",1}}.dump(),preview),"independent folder preview");
+        MIB_REQUIRE(preview.width==32 && preview.height==32 && preview.data.front()==21,"preview pixels belong to requested frame");
+        MIB_REQUIRE(!facade.fetchReviewReanalysisPreviewJson(json{{"source_path",source.string()},{"source_kind","hdf"},{"dataset","/valid_frames/images"},{"index",99}}.dump(),preview),"out-of-range preview rejected");
+        regenerate["source_kind"]="folder";regenerate["source_path"]=folder.string();regenerate["output_path"]=(dir/"selected-background.h5").string();
+        regenerate["background_index"]=2;regenerate["synthetic_background"]=false;
+        const auto selected=facade.submitReviewReanalysisJson(regenerate.dump());
+        MIB_REQUIRE(selected.ok && terminal(facade,selected.operationId,true)["state"]=="completed","selected source background accepted");
+        backend::services::Hdf5Service reader;cv::Mat background;
+        MIB_REQUIRE(reader.loadFile((dir/"selected-background.h5").string()) && reader.readBackgroundImage(background),"selected background persisted");
+        MIB_REQUIRE(cv::countNonZero(background!=22)==0,"selected background pixels roundtrip");
+    }
+    const auto chartSnapshot=json::parse(facade.fetchReviewChartsJson());
+    MIB_REQUIRE(chartSnapshot["valid"]==true && chartSnapshot["finite_points"]=="24","chart snapshot covers full source");
+    uint64_t densityCount=0;for(const auto& cell:chartSnapshot["density"])densityCount+=std::stoull(cell[2].get<std::string>());
+    MIB_REQUIRE(densityCount==24,"density conserves all objects");
+    MIB_REQUIRE(!chartSnapshot["curves"].empty(),"bundled isoelastic references available without cwd assets");
+    auto charts=request;charts["format"]="charts";
+    const auto chartJob=facade.submitReviewExportJson(charts.dump());
+    MIB_REQUIRE(chartJob.ok,"chart export accepted");
+    const auto chartResult=terminal(facade,chartJob.operationId);
+    MIB_REQUIRE(chartResult["state"]=="completed" && chartResult["images_exported"]=="0","charts-only exports no frame images");
+    const auto chartPath=std::filesystem::path(chartResult["final_path"].get<std::string>());
+    const auto raster=cv::imread((chartPath/"scatter_plot.tiff").string());
+    MIB_REQUIRE(raster.rows==1200 && raster.cols==1200,"publication-size TIFF chart roundtrip");
+    MIB_REQUIRE(std::filesystem::exists(chartPath/"histogram.tiff"),"histogram TIFF published");
+    {
+        std::vector<backend::services::ProcessedFrame> rows(350);
+        for(auto& frame:rows){frame.validation.isValid=true;frame.validation.area=100;frame.validation.deformability=0.2;frame.validation.ringRatio=1.25;}
+        rows[0].validation.ringRatio=100;rows[1].validation.ringRatio=0.1;
+        const auto data=backend::recording::makeReviewChartData(rows,0.5,1,2);
+        MIB_REQUIRE(data.points.size()==350 && data.points.front().first==25,"all rows use squared calibration");
+        MIB_REQUIRE(data.bins[0]==349 && data.bins[1]==1,"Qt-equivalent edge-clamped histogram conserves counts");
+    }
+    {
+        backend::recording::HdfExportRequest request;
+        request.sourcePath=source.string();request.outputRoot=dir.path().string();
+        request.format=backend::recording::HdfExportFormat::Charts;request.generateReviewCharts=true;
+        backend::recording::HdfExportService writer;
+        writer.setImageWriterForTests([](const auto&,const auto&){return false;});
+        const auto failed=writer.run(request,{});
+        MIB_REQUIRE(failed.status==backend::recording::HdfExportStatus::Failed && failed.finalPath.empty(),"chart writer fault never publishes success");
+        MIB_REQUIRE(hash(source)==originalHash,"chart fault preserves source");
     }
     facade.shutdown();
     return mib::test::exitCode();

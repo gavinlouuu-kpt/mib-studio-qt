@@ -165,3 +165,19 @@ Accepted export jobs immediately own the frontend busy state. A status response
 started before submission is discarded, so a delayed old `idle` poll cannot
 unlock a duplicate export. Reanalysis range/ROI values are checked as integers
 at the native boundary, not silently truncated from JSON fractions.
+
+The initial 200-row Tauri plots have now been superseded by whole-file backend
+aggregates: all finite valid objects contribute to bounded density cells and
+exact histogram bins. Qt and Tauri share `ReviewChartData` for calibrated point
+preparation, histogram math and embedded isoelastic reference curves. The Review
+view can toggle reference overlays and refresh after calibration changes;
+Export Charts and Export All write 1200-square TIFFs from the same full data.
+Reanalysis source/ROI/settings drafts are App-hook-owned and survive navigation.
+
+Reanalysis now also previews a selected HDF dataset, folder or AVI frame through
+an independent-reader atomic frame packet. The operator can select that exact
+source frame as background, clear/restore the source background, or drag a local
+ROI on the preview. A late response for another source/index is not offered as
+the current background. Source/background selections remain App-owned drafts;
+the native job reopens the selected background and stores its pixels in output.
+Preview reads are bounded to 64 MiB and never replace the live Review reader.

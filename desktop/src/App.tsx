@@ -1772,6 +1772,7 @@ export default function App() {
                   </button>
                   <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
                   <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy} onClick={() => void reviewExport.start("charts")}>Export Charts…</button>
                   <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
                   <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
 

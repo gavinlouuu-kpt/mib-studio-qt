@@ -8,8 +8,24 @@
 #include <filesystem>
 #include <stdexcept>
 #include <algorithm>
+#include <cstring>
 
 namespace backend::bridge {
+bool BackendFacade::fetchReviewReanalysisPreviewJson(const std::string& text,BackendFrame& out) const {
+    try {
+        const auto request=nlohmann::json::parse(text);
+        const auto& value=request.at("index");
+        if(!value.is_number_integer() || value<0)return false;
+        const auto index=value.get<uint64_t>();
+        cv::Mat image;
+        if(!services::batch_masks::loadPreview(request.value("source_kind",std::string("hdf")),request.at("source_path").get<std::string>(),request.value("dataset",std::string("/valid_frames/images")),index,image))return false;
+        out={};out.frameIndex=index;out.width=image.cols;out.height=image.rows;out.strideBytes=image.cols;
+        out.data.resize(image.total());
+        for(int row=0;row<image.rows;++row)std::memcpy(out.data.data()+static_cast<size_t>(row)*image.cols,image.ptr(row),image.cols);
+        return true;
+    }catch(const std::exception&){return false;}
+}
+
 std::string BackendFacade::fetchReviewReanalysisStatusJson() const {
     std::scoped_lock lock(reanalysisMutex_);
     return reanalysisStatusJson_;
@@ -19,7 +35,9 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
     using nlohmann::json;
     if (!initialized_) return {false, BackendCommandType::Review, "Backend not initialized"};
     std::string source, output, dataset, kind;
-    bool synthetic=false;
+    bool synthetic=false,clearBackground=false;
+    std::optional<uint64_t> backgroundIndex;
+    std::string backgroundDataset;
     services::ProcessingService::Roi customRoi{0,0,0,0};
     bool overrideRoi=false;
     auto config=backend_.processing().getProcessingConfig();
@@ -53,6 +71,9 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
             return value.get<std::uint64_t>();
         };
         start=rangeValue("start");count=rangeValue("count");
+        clearBackground=request.value("clear_background",false);
+        if(request.contains("background_index"))backgroundIndex=rangeValue("background_index");
+        backgroundDataset=request.value("background_dataset",std::string("/valid_frames/images"));
         if (source.empty() || output.empty()) throw std::runtime_error("Source and output paths are required");
         if (dataset!="all" && dataset!="/valid_frames/images" && dataset!="/invalid_frames/images" && dataset!="/recorded_frames/images")
             throw std::runtime_error("Unsupported HDF dataset");
@@ -71,7 +92,7 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
         reanalysisStatusJson_=json{{"state","running"},{"operation_id",std::to_string(id)},{"phase","loading"}}.dump();
     }
     try {
-        reanalysisThread_=std::thread([this,id,cancel,source,output,dataset,start,count,config,kind,synthetic,customRoi,overrideRoi] {
+        reanalysisThread_=std::thread([this,id,cancel,source,output,dataset,start,count,config,kind,synthetic,customRoi,overrideRoi,clearBackground,backgroundIndex,backgroundDataset] {
             std::filesystem::path partial;
             bool published=false;
             std::string error, warning, retained;
@@ -149,6 +170,9 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
                 if(overrideRoi)roi=customRoi;
                 if(roi.w>0 && (roi.x>images.front().cols-roi.w || roi.y>images.front().rows-roi.h))
                     throw std::runtime_error("ROI exceeds source image dimensions");
+                if(clearBackground)background.release();
+                if(backgroundIndex && !services::batch_masks::loadPreview(kind,source,backgroundDataset,*backgroundIndex,background))throw std::runtime_error("Selected background frame could not be loaded");
+                if(!background.empty() && background.size()!=images.front().size())throw std::runtime_error("Background dimensions do not match the selected source range");
                 if(synthetic && background.empty())background=services::batch_masks::buildSyntheticBackground(images,[cancel]{return cancel->load(std::memory_order_acquire);});
                 const auto selected=images.size();
                 processing::ProcessingCoreIdentity usedCore;

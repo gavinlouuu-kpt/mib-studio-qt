@@ -279,6 +279,21 @@ bool loadFromAvi(const std::string& aviPath,
     return true;
 }
 
+bool loadPreview(const std::string& kind,const std::string& path,const std::string& dataset,size_t index,cv::Mat& image) {
+    constexpr size_t maxBytes=64*1024*1024;
+    if(kind=="hdf") {
+        if(dataset!="/valid_frames/images" && dataset!="/invalid_frames/images" && dataset!="/recorded_frames/images")return false;
+        Hdf5Service reader;size_t count=0;int height=0,width=0,channels=0;
+        if(!reader.loadFile(path) || !reader.getDatasetInfo(dataset,count,height,width,channels) || index>=count || height<=0 || width<=0 || channels!=1 || static_cast<uint64_t>(height)*width>maxBytes)return false;
+        return reader.readImageByIndex(dataset,index,image);
+    }
+    LoadOptions limits;limits.start=index;limits.count=1;limits.maxFrames=1;limits.maxBytes=maxBytes;
+    std::vector<cv::Mat> frames;std::vector<std::string> names,errors;
+    const bool ok=kind=="folder" ? loadFromFolder(path,frames,names,errors,limits) : kind=="avi" ? loadFromAvi(path,frames,names,errors,limits) : false;
+    if(!ok || !errors.empty() || frames.size()!=1)return false;
+    image=std::move(frames.front());return true;
+}
+
 size_t saveMaskImages(const std::vector<ProcessedFrame>& frames,
                       const std::string& outputDir,
                       const std::vector<std::string>& filenames) {

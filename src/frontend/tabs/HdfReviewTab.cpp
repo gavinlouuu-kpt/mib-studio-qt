@@ -1,3 +1,4 @@
+#include "backend/recording/ReviewChartData.h"
 #include "frontend/tabs/HdfReviewTab.h"
 #include "ui_HdfReviewTab.h"
 
@@ -2208,70 +2209,16 @@ void HdfReviewTab::updateCharts() {
 }
 
 void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::ProcessedFrame>& validFrames) {
-    if (!scatterSeries_ || !scatterXAxis_ || !scatterYAxis_) {
-        return;
-    }
-
+    if (!scatterSeries_ || !scatterXAxis_ || !scatterYAxis_) return;
     scatterSeries_->clear();
-
-    if (validFrames.empty()) {
-        scatterXAxis_->setRange(0, 1000);
-        scatterYAxis_->setRange(0, 1);
-        return;
-    }
-
-    // Get conversion factor from backend (pixels to microns)
-    const double conversionFactor = backend_.processing().getPixelToMicronFactor();
-    // Area conversion: pixels² to microns² = pixels² * (microns/pixel)²
-    const double areaConversionFactor = conversionFactor * conversionFactor;
-
-    // Collect points
-    std::vector<std::pair<double, double>> points;
-    double minArea = std::numeric_limits<double>::max();
-    double maxArea = std::numeric_limits<double>::lowest();
-    double minDeform = std::numeric_limits<double>::max();
-    double maxDeform = std::numeric_limits<double>::lowest();
-
-    for (const auto& frame : validFrames) {
-        if (frame.validation.isValid) {
-            // Convert area from pixels² to microns²
-            double areaPixels = frame.validation.area;
-            double areaMicrons = areaPixels * areaConversionFactor;
-            double deform = frame.validation.deformability;
-            points.push_back({areaMicrons, deform});
-
-            minArea = std::min(minArea, areaMicrons);
-            maxArea = std::max(maxArea, areaMicrons);
-            minDeform = std::min(minDeform, deform);
-            maxDeform = std::max(maxDeform, deform);
-        }
-    }
-
-    if (points.empty()) {
-        scatterXAxis_->setRange(0, 1000);
-        scatterYAxis_->setRange(0, 1);
-        return;
-    }
-
-    // Add scatter points
-    for (const auto& p : points) {
-        scatterSeries_->append(p.first, p.second);
-    }
-
-    // Set axis ranges with padding
-    if (minArea < maxArea) {
-        double areaPadding = (maxArea - minArea) * 0.1;
-        scatterXAxis_->setRange(minArea - areaPadding, maxArea + areaPadding);
-    } else {
-        scatterXAxis_->setRange(0, 1000);
-    }
-
-    if (minDeform < maxDeform) {
-        double deformPadding = (maxDeform - minDeform) * 0.1;
-        scatterYAxis_->setRange(minDeform - deformPadding, maxDeform + deformPadding);
-    } else {
-        scatterYAxis_->setRange(0, 1);
-    }
+    const auto cfg=backend_.processing().getProcessingConfig();
+    try {
+        const auto data=backend::recording::makeReviewChartData(validFrames,
+            backend_.processing().getPixelToMicronFactor(),cfg.ring_ratio_min,cfg.ring_ratio_max);
+        for(const auto& [area,deform]:data.points)scatterSeries_->append(area,deform);
+        scatterXAxis_->setRange(data.areaMin,data.areaMax);
+        scatterYAxis_->setRange(data.deformMin,data.deformMax);
+    } catch(const std::exception& error) {SPDLOG_WARN("Review scatter unavailable: {}",error.what());}
 }
 
 void HdfReviewTab::generateHistogram(const std::vector<backend::services::ProcessedFrame>& validFrames) {
@@ -2301,13 +2248,11 @@ void HdfReviewTab::generateHistogram(const std::vector<backend::services::Proces
     }
 #endif
 
-    // Collect ring ratio values from valid frames
-    std::vector<double> ringRatios;
-    for (const auto& frame : validFrames) {
-        if (frame.validation.isValid && frame.validation.ringRatio > 0.0) {
-            ringRatios.push_back(frame.validation.ringRatio);
-        }
-    }
+    backend::recording::ReviewChartData shared;
+    try { shared=backend::recording::makeReviewChartData(validFrames,
+        backend_.processing().getPixelToMicronFactor(),HISTOGRAM_MIN,HISTOGRAM_MAX); }
+    catch(const std::exception& error) {SPDLOG_WARN("Review histogram unavailable: {}",error.what());return;}
+    const auto& ringRatios=shared.ringRatios;
 
     // If no data, show empty histogram with fixed range
     if (ringRatios.empty()) {
@@ -2338,17 +2283,9 @@ void HdfReviewTab::generateHistogram(const std::vector<backend::services::Proces
         return;
     }
 
-    // Count values in each bin
-    std::vector<int> binCounts(HISTOGRAM_BINS, 0);
-    for (double val : ringRatios) {
-        double clampedVal = std::clamp(val, HISTOGRAM_MIN, HISTOGRAM_MAX);
-        int binIndex = static_cast<int>((clampedVal - HISTOGRAM_MIN) / HISTOGRAM_BIN_WIDTH);
-        if (binIndex >= HISTOGRAM_BINS) {
-            binIndex = HISTOGRAM_BINS - 1;
-        }
-        binIndex = std::clamp(binIndex, 0, HISTOGRAM_BINS - 1);
-        binCounts[binIndex]++;
-    }
+    std::vector<int> binCounts;
+    binCounts.reserve(shared.bins.size());
+    for(const auto count:shared.bins)binCounts.push_back(static_cast<int>(std::min<uint64_t>(count,std::numeric_limits<int>::max())));
 
     int maxCount = 0;
     for (int count : binCounts) {
@@ -2449,60 +2386,7 @@ void HdfReviewTab::loadIsoelasticCurves() {
     }
     isoelasticCurves_.clear();
     
-    // Find the isoelastic curve data file
-    QString appDir = QCoreApplication::applicationDirPath();
-    QString filePath = QDir(appDir).absoluteFilePath("../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt");
-    
-    // Try alternative path if file doesn't exist
-    if (!QFile::exists(filePath)) {
-        filePath = QDir(appDir).absoluteFilePath("resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt");
-    }
-    
-    // Try source directory path for development
-    if (!QFile::exists(filePath)) {
-        filePath = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt");
-    }
-
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        SPDLOG_WARN("Failed to open isoelastic curve file: {}", filePath.toStdString());
-        return;
-    }
-
-    // Group data points by emodulus value
-    std::map<double, std::vector<std::pair<double, double>>> curvesByModulus;
-
-    QTextStream in(&file);
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        
-        // Skip empty lines and comments
-        if (line.isEmpty() || line.startsWith('#')) {
-            continue;
-        }
-
-        // Parse tab-separated values: area_um, deform, emodulus
-        QStringList parts = line.split('\t', Qt::SkipEmptyParts);
-        if (parts.size() < 3) {
-            continue;
-        }
-
-        bool ok1, ok2, ok3;
-        double areaUm = parts[0].toDouble(&ok1);
-        double deform = parts[1].toDouble(&ok2);
-        double emodulus = parts[2].toDouble(&ok3);
-
-        if (ok1 && ok2 && ok3) {
-            curvesByModulus[emodulus].push_back({areaUm, deform});
-        }
-    }
-
-    file.close();
-
-    if (curvesByModulus.empty()) {
-        SPDLOG_WARN("No isoelastic curve data found in file: {}", filePath.toStdString());
-        return;
-    }
+    const auto& curvesByModulus=backend::recording::bundledIsoelasticCurves();
 
     // Create QLineSeries for each modulus value (in reverse order for legend)
     for (auto it = curvesByModulus.rbegin(); it != curvesByModulus.rend(); ++it) {
@@ -2528,7 +2412,7 @@ void HdfReviewTab::loadIsoelasticCurves() {
     scatterPlotChart_->legend()->setVisible(true);
     scatterPlotChart_->legend()->setAlignment(Qt::AlignRight);
     
-    SPDLOG_INFO("Loaded {} isoelastic curves from {}", curvesByModulus.size(), filePath.toStdString());
+    SPDLOG_INFO("Loaded {} bundled isoelastic curves", curvesByModulus.size());
 }
 
 } // namespace frontend

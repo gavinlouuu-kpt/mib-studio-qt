@@ -3,7 +3,7 @@ export interface ReviewExportRequest {
   output_root: string;
   /** Optional independent batch sources; does not replace the open review file. */
   source_paths?: string[];
-  format: "metrics_csv" | "images" | "all";
+  format: "metrics_csv" | "images" | "all" | "charts";
   frames?: "valid" | "invalid" | "both";
   conversion_factor?: number;
   keep_partial_on_failure?: boolean;

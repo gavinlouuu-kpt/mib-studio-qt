@@ -107,6 +107,8 @@ public:
     BridgeCommandResult pulse_generator_command(rust::Str json);
     rust::String pulse_generator_status();
 
+    BridgeFrame fetch_review_reanalysis_preview(rust::Str json);
+    rust::String fetch_review_charts_json();
     BridgeCommandResult review_reanalysis_json(rust::Str json);
     rust::String review_reanalysis_status_json();
     BridgeCommandResult review_export_json(rust::Str json);

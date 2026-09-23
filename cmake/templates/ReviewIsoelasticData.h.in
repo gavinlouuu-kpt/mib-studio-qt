@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr const char kReviewIsoelasticData[] = R"mibcurve(@MIB_REVIEW_ISOELASTIC_DATA@)mibcurve";

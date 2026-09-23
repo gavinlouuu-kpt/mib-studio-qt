@@ -25,7 +25,7 @@
 
 namespace backend::recording {
 
-enum class HdfExportFormat { MetricsCsv, Images, All };
+enum class HdfExportFormat { MetricsCsv, Images, All, Charts };
 enum class HdfExportFrames { Valid, Invalid, Both };
 enum class HdfExportPhase {
     Validating, Metadata, Metrics, ValidImages, SeriesImages, InvalidImages, Charts, Committing, Cleanup
@@ -52,6 +52,10 @@ struct HdfExportRequest {
     // Chart TIFFs rendered by the caller on its own thread (name -> BGR image),
     // written into the export folder for All jobs (e.g. "scatter_plot.tiff").
     std::map<std::string, cv::Mat> supplementalImages;
+    bool generateReviewCharts{false};
+    double chartRingMin{0.0};
+    double chartRingMax{10.0};
+    bool chartIsoelasticOverlays{true};
     // Retain ".partial-<job>" output (with a failure manifest) instead of
     // deleting it when the job does not complete.
     bool keepPartialOnFailure{false};
