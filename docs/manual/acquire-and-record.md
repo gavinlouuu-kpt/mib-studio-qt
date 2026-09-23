@@ -66,6 +66,16 @@ backend's reason in the status bar and offers **Start Live View** again.
 - Live histograms (area, deformability, brightness) and scatter plots
   (e.g. deformability vs. area) over the most recent frames, with
   scroll-to-zoom.
+- **Density (KDE)** in the top row colours every point of the
+  deformability-vs-area scatter by how crowded its neighbourhood is: light
+  blue for isolated cells, dark blue for the core of the population, the
+  same pseudocolour view as a cytometry dot plot. The estimate is recomputed
+  every 2 s (adjustable) in the background, so the chart never stalls;
+  cells that arrived since the last estimate show in the lightest shade
+  until the next one. While the toggle is on, target-group cells are drawn
+  as squares instead of circles so they remain identifiable. Hover the
+  toggle to see how many points the last estimate covered and how long it
+  took. The setting is remembered between sessions.
 - Live totals: valid count, invalid count, algorithm FPS, valid FPS.
 - Charts accumulate only while the tab is visible, and they are a live
   preview — they are not saved with the experiment.
@@ -112,8 +122,11 @@ multi-image capture.
 
 ![Monitoring Settings dialog](images/dialog-monitoring-settings.png)
 
-**Settings ▸ Monitoring Settings** — chart bin counts, axis ranges, and
-refresh rate for the Monitoring page.
+**Settings ▸ Monitoring Settings** — the Monitoring page's fixed axis
+ranges, histogram bin width, and the two density (KDE) controls: the
+*bandwidth factor* (1 = automatic per-axis bandwidth; above 1 smooths the
+colouring, below 1 shows finer structure) and the *update interval* between
+density estimates.
 
 ![Pixel to Micron Conversion dialog](images/dialog-pixel-to-micron.png)
 

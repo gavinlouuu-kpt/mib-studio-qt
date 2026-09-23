@@ -1,0 +1,304 @@
+// monitoring_kde_density_test
+//
+// ExperimentMonitoringTab scatter density (KDE) colouring (offscreen, mock
+// backend, frames injected directly into the rolling buffer):
+//  - off by default: no per-point colours, timer idle, defaults persisted-free;
+//  - enabling colours every point at once (sparse end of the ramp), starts the
+//    periodic timer and launches the estimate on a worker thread; when it
+//    lands, crowded points are darker than isolated ones and the densest
+//    point wears the top of the ramp; the target group keeps a distinct
+//    marker shape;
+//  - points that arrive after an estimate are drawn with the sparse colour
+//    until the next estimate, which then colours them;
+//  - an unchanged buffer does not relaunch the job; a large buffer is
+//    computed asynchronously (the call returns with the job in flight);
+//  - hide stops the timer, show restarts it; disabling clears the colours and
+//    restores the marker shape;
+//  - the three settings persist through QSettings and a fresh tab and the
+//    Monitoring Settings dialog read them back; the dialog applies them.
+
+#include "backend/app/AppBackend.h"
+#include "backend/processing/ProcessingService.h"
+#include "backend/processing/ProcessingTypes.h"
+#include "frontend/dialogs/MonitoringSettingsDialog.h"
+#include "frontend/tabs/ExperimentMonitoringTab.h"
+#include "frontend/tabs/MonitoringDensity.h"
+#include "frontend/utils/ApplicationSettings.h"
+
+#include "support/assert.h"
+#include "support/tempdir.h"
+#include "support/watchdog.h"
+
+#include <QApplication>
+#include <QCheckBox>
+#include <QColor>
+#include <QCoreApplication>
+#include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QScatterSeries>
+#include <QSettings>
+#include <QSpinBox>
+#include <QStyleFactory>
+#include <QXYSeries>
+
+#include <algorithm>
+#include <cstdio>
+#include <functional>
+#include <random>
+#include <vector>
+
+namespace {
+
+void settle(int rounds = 4) {
+    for (int i = 0; i < rounds; ++i) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QCoreApplication::sendPostedEvents(nullptr, 0);
+    }
+}
+
+bool waitFor(const std::function<bool()>& pred, int timeoutMs) {
+    QElapsedTimer clock;
+    clock.start();
+    while (!pred() && clock.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QCoreApplication::sendPostedEvents(nullptr, 0);
+    }
+    return pred();
+}
+
+backend::services::ProcessedFrame frame(uint64_t index, double areaPx, double deform,
+                                        bool target = false) {
+    backend::services::ProcessedFrame f;
+    f.index = index;
+    f.validation.isValid = true;
+    f.validation.isTargetGroup = target;
+    f.validation.area = areaPx;
+    f.validation.deformability = deform;
+    return f;
+}
+
+QColor pointColor(const QScatterSeries* s, int i) {
+    return s->pointConfiguration(i).value(QXYSeries::PointConfiguration::Color).value<QColor>();
+}
+
+QColor rampColor(double t) {
+    const auto rgb = frontend::monitoring::densityRampColor(t);
+    return QColor(rgb.r, rgb.g, rgb.b);
+}
+
+} // namespace
+
+int main(int argc, char* argv[]) {
+    qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+    qputenv("MIB_DISABLED_SERVICES",
+            QByteArrayLiteral("auto_update,autofocus,trigger,yolo,syringe_pump"));
+    qputenv("MIB_CAMERA_MODE", QByteArrayLiteral("mock"));
+    qputenv("MIB_STUDIO_PROCESSING_CORE_BASE_URL",
+            QByteArrayLiteral("http://invalid-registry.example"));
+    qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL",
+            QByteArrayLiteral("file:///nonexistent/mib-lut-manifest.json"));
+    if (!qEnvironmentVariableIsSet("MIB_MOCK_CAMERA_DIR"))
+        qputenv("MIB_MOCK_CAMERA_DIR", QByteArrayLiteral("data/mock_frames"));
+    mib::test::Watchdog wd(120);
+    QApplication app(argc, argv);
+    QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    mib::test::TempDir td("monitoring_kde");
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       QString::fromStdString((td.path() / "settings").string()));
+    QString err;
+    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init");
+    backend::AppBackend backend;
+    MIB_REQUIRE(backend.initialize((td.path() / "data").string()), "backend init");
+
+    std::mt19937 rng(20260923);
+    std::normal_distribution<double> clusterArea(300.0, 12.0), clusterDeform(0.05, 0.008);
+    std::uniform_real_distribution<double> farArea(700.0, 1000.0), farDeform(0.5, 0.95);
+
+    // Frames 0..299: a tight cluster (frame 0 at its centre); 300..329: isolated
+    // outliers; 330..334: target-group members inside the cluster.
+    std::vector<backend::services::ProcessedFrame> frames;
+    frames.push_back(frame(0, 300.0, 0.05));
+    for (uint64_t i = 1; i < 300; ++i)
+        frames.push_back(frame(i, clusterArea(rng), clusterDeform(rng)));
+    for (uint64_t i = 300; i < 330; ++i)
+        frames.push_back(frame(i, farArea(rng), farDeform(rng)));
+    for (uint64_t i = 330; i < 335; ++i)
+        frames.push_back(frame(i, clusterArea(rng), clusterDeform(rng), true));
+
+    {
+        frontend::ExperimentMonitoringTab tab(backend);
+        tab.resize(1100, 760);
+        tab.show();
+        settle(4);
+        QScatterSeries* scatter = tab.scatterSeriesForTests();
+        QScatterSeries* target = tab.targetGroupSeriesForTests();
+        MIB_REQUIRE(scatter && target, "series exposed");
+
+        // ---- 1. defaults --------------------------------------------------------
+        wd.mark("defaults");
+        MIB_EXPECT(!tab.kdeEnabled() && !tab.kdeToggle()->isChecked(), "KDE off by default");
+        MIB_EXPECT(!tab.kdeTimerActive() && !tab.kdeJobInFlight(), "no timer, no job while off");
+        MIB_EXPECT(tab.kdeBandwidthFactor() ==
+                           frontend::ExperimentMonitoringTab::kKdeBandwidthFactorDefault &&
+                       tab.kdeIntervalMs() ==
+                           frontend::ExperimentMonitoringTab::kKdeIntervalMsDefault,
+                   "default factor and interval");
+        tab.injectMonitoringFramesForTests(frames);
+        settle(2);
+        MIB_EXPECT(scatter->count() == 330 && target->count() == 5,
+                   "frames plotted into both series");
+        MIB_EXPECT(scatter->pointsConfiguration().isEmpty() &&
+                       target->pointsConfiguration().isEmpty(),
+                   "off: no per-point colours");
+        MIB_EXPECT(target->markerShape() == QScatterSeries::MarkerShapeCircle,
+                   "off: default marker shape");
+
+        // ---- 2. enable: immediate sparse colouring, async estimate --------------
+        wd.mark("enable");
+        tab.kdeToggle()->setChecked(true);
+        settle(1);
+        MIB_EXPECT(tab.kdeEnabled() && tab.kdeTimerActive(),
+                   "toggle enables and starts the periodic timer");
+        MIB_EXPECT(scatter->pointsConfiguration().size() == scatter->count() &&
+                       target->pointsConfiguration().size() == target->count(),
+                   "every point configured as soon as KDE is on");
+        MIB_EXPECT(target->markerShape() == QScatterSeries::MarkerShapeRectangle,
+                   "target group keeps its identity by shape");
+        MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() >= 1; }, 15000),
+                    "first estimate lands");
+        MIB_EXPECT(!tab.kdeJobInFlight(), "job released after completion");
+        settle(1);
+        {
+            // Series index i <-> frame i for the non-target frames (append order).
+            std::vector<int> clusterLightness, outlierLightness;
+            for (int i = 0; i < 300; ++i)
+                clusterLightness.push_back(pointColor(scatter, i).lightness());
+            for (int i = 300; i < 330; ++i)
+                outlierLightness.push_back(pointColor(scatter, i).lightness());
+            std::sort(clusterLightness.begin(), clusterLightness.end());
+            const int clusterMedian = clusterLightness[clusterLightness.size() / 2];
+            const int outlierMin =
+                *std::min_element(outlierLightness.begin(), outlierLightness.end());
+            MIB_EXPECT(clusterMedian < outlierMin, "crowded points are darker than isolated ones");
+            bool topOfRamp = false;
+            for (int i = 0; i < scatter->count(); ++i)
+                topOfRamp = topOfRamp || pointColor(scatter, i) == rampColor(1.0);
+            MIB_EXPECT(topOfRamp, "the densest point wears the top of the ramp");
+            MIB_EXPECT(pointColor(target, 0).lightness() < outlierMin,
+                       "target-group members inside the cluster are dense too");
+        }
+
+        // ---- 3. late points: sparse until the next estimate ----------------------
+        wd.mark("late");
+        std::vector<backend::services::ProcessedFrame> late;
+        for (uint64_t i = 335; i < 340; ++i)
+            late.push_back(frame(i, clusterArea(rng), clusterDeform(rng)));
+        tab.injectMonitoringFramesForTests(late);
+        settle(1);
+        MIB_EXPECT(scatter->count() == 335 && scatter->pointsConfiguration().size() == 335,
+                   "late points are plotted and configured");
+        bool lateSparse = true;
+        for (int i = 330; i < 335; ++i)
+            lateSparse = lateSparse && pointColor(scatter, i) == rampColor(0.0);
+        MIB_EXPECT(lateSparse, "late points wear the sparse colour until re-estimated");
+        const uint64_t before = tab.kdeGeneration();
+        tab.requestKdeUpdate();
+        MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > before; }, 15000),
+                    "second estimate lands");
+        settle(1);
+        bool lateDense = true;
+        for (int i = 330; i < 335; ++i)
+            lateDense =
+                lateDense && pointColor(scatter, i).lightness() < rampColor(0.0).lightness();
+        MIB_EXPECT(lateDense, "late cluster points are coloured by the next estimate");
+
+        // ---- 4. unchanged buffer: no relaunch; large buffer: asynchronous -------
+        wd.mark("fingerprint");
+        const uint64_t gen = tab.kdeGeneration();
+        tab.requestKdeUpdate();
+        MIB_EXPECT(!tab.kdeJobInFlight(), "unchanged buffer does not relaunch the estimate");
+        settle(2);
+        MIB_EXPECT(tab.kdeGeneration() == gen, "no new generation for an unchanged buffer");
+        std::vector<backend::services::ProcessedFrame> many;
+        for (uint64_t i = 1000; i < 2500; ++i)
+            many.push_back(
+                frame(i, clusterArea(rng) + (i % 7) * 40.0, clusterDeform(rng) + (i % 5) * 0.05));
+        tab.injectMonitoringFramesForTests(many);
+        settle(1);
+        MIB_EXPECT(scatter->count() + target->count() == 1000,
+                   "rolling buffer capped at 1000 points");
+        tab.requestKdeUpdate();
+        MIB_EXPECT(tab.kdeJobInFlight(),
+                   "a 1000-point estimate returns immediately with the job in flight");
+        MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > gen; }, 15000),
+                    "large estimate lands");
+        MIB_EXPECT(scatter->pointsConfiguration().size() == scatter->count(),
+                   "all 1000 points coloured");
+
+        // ---- 5. hide / show, disable --------------------------------------------
+        wd.mark("visibility");
+        tab.hide();
+        settle(2);
+        MIB_EXPECT(!tab.kdeTimerActive(), "hidden tab stops the KDE timer");
+        tab.show();
+        settle(2);
+        MIB_EXPECT(tab.kdeTimerActive(), "shown tab restarts the KDE timer");
+        tab.kdeToggle()->setChecked(false);
+        settle(2);
+        MIB_EXPECT(!tab.kdeEnabled() && !tab.kdeTimerActive(), "toggle off stops the timer");
+        MIB_EXPECT(scatter->pointsConfiguration().isEmpty() &&
+                       target->pointsConfiguration().isEmpty(),
+                   "off: colours cleared");
+        MIB_EXPECT(target->markerShape() == QScatterSeries::MarkerShapeCircle,
+                   "off: marker shape restored");
+
+        // ---- 6. settings persist ------------------------------------------------
+        wd.mark("persist");
+        tab.setKdeBandwidthFactor(1.5);
+        tab.setKdeIntervalMs(3000);
+        tab.setKdeIntervalMs(10); // below the floor: clamped, not accepted verbatim
+        MIB_EXPECT(tab.kdeIntervalMs() == frontend::ExperimentMonitoringTab::kKdeIntervalMsMin,
+                   "interval clamped to its floor");
+        tab.setKdeIntervalMs(3000);
+        tab.setKdeBandwidthFactor(99.0);
+        MIB_EXPECT(tab.kdeBandwidthFactor() ==
+                       frontend::ExperimentMonitoringTab::kKdeBandwidthFactorMax,
+                   "factor clamped to its ceiling");
+        tab.setKdeBandwidthFactor(1.5);
+        tab.setKdeEnabled(true);
+        settle(1);
+        {
+            MonitoringSettingsDialog dlg(&tab);
+            auto* factorSpin = dlg.findChild<QDoubleSpinBox*>(QStringLiteral("kdeBandwidthSpin"));
+            auto* intervalSpin = dlg.findChild<QSpinBox*>(QStringLiteral("kdeIntervalSpin"));
+            MIB_REQUIRE(factorSpin && intervalSpin, "dialog exposes the KDE controls");
+            MIB_EXPECT(factorSpin->value() == 1.5 && intervalSpin->value() == 3000,
+                       "dialog reads the tab's KDE settings");
+            MIB_EXPECT(dlg.findChild<QSpinBox*>(QStringLiteral("kdeGridResolutionSpin")) == nullptr,
+                       "grid resolution control retired");
+        }
+        tab.close();
+        settle(2);
+    }
+    {
+        frontend::ExperimentMonitoringTab again(backend);
+        MIB_EXPECT(again.kdeEnabled() && again.kdeToggle()->isChecked(),
+                   "enabled state restored from settings");
+        MIB_EXPECT(again.kdeBandwidthFactor() == 1.5 && again.kdeIntervalMs() == 3000,
+                   "factor and interval restored from settings");
+        MIB_EXPECT(!again.kdeTimerActive(), "restored but hidden: timer idle");
+        again.show();
+        settle(2);
+        MIB_EXPECT(again.kdeTimerActive(), "restored and shown: timer runs");
+        MIB_EXPECT(again.targetGroupSeriesForTests()->markerShape() ==
+                       QScatterSeries::MarkerShapeRectangle,
+                   "restored: target marker shape applied");
+        again.close();
+        settle(2);
+    }
+
+    backend.shutdown();
+    return mib::test::exitCode();
+}

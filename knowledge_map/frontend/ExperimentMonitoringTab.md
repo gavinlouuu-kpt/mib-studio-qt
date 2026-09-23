@@ -4,7 +4,9 @@
 > brightness) + scatter plots (deformability-vs-area, etc.).
 
 **Source:** `src/frontend/tabs/ExperimentMonitoringTab.cpp`,
-`include/frontend/tabs/ExperimentMonitoringTab.h`
+`include/frontend/tabs/ExperimentMonitoringTab.h`,
+`include/frontend/tabs/MonitoringDensity.h` (KDE kernel + colour ramp),
+`include/frontend/tabs/MonitoringRoiCrop.h`
 **Related:** [[../services/ProcessingService]] (monitoring rings),
 [[../frontend/System-Utilities]] (`ZoomableChartView`),
 [[Dialogs]] (`MonitoringSettingsDialog`)
@@ -36,6 +38,51 @@
     `hideEvent`. Intended for oscilloscope/sorter bring-up without
     needing live target-group classifications. See
     [[../services/TriggerService]].
+
+## Scatter density (KDE) colouring
+
+The **Density (KDE)** checkbox in the top row (`kdeToggleCheck`) colours every
+valid point of the Deformability-vs-Area scatter by its normalised local
+population density, the pseudocolour dot plot used in flow / deformability
+cytometry, so an operator can see where the population sits even when
+markers overlap.
+
+- **Kernel** — `include/frontend/tabs/MonitoringDensity.h` (Qt-free,
+  header-only, same pattern as `MonitoringRoiCrop.h`): Gaussian KDE evaluated
+  at every sample with a **per-axis Silverman bandwidth** (`sigma_axis ·
+  n^(-1/6)` × user factor), normalised so the densest sample is 1. Per-axis
+  is not optional: area spans hundreds of µm² while deformability spans
+  0..1; one isotropic bandwidth in raw units merges populations that differ
+  only in deformability (the old, never-called `computeKDE` grid did exactly
+  that and used a 1-D normalisation — it was removed). `densityRampColor(t)`
+  is the sequential single-hue ramp (blue, light → dark; the light end still
+  clears 2:1 on the white chart). Guard: `frontend.monitoring_density`
+  (invariants, per-axis separation with an isotropic control, degenerate
+  and non-finite input, order invariance, ratio-gated quadratic cost).
+- **Periodic, off the GUI thread** — `kdeTimer_` (default 2 s,
+  `kKdeIntervalMs*`) calls `requestKdeUpdate()`, which snapshots the rolling
+  buffer into value types and runs the kernel via `QtConcurrent::run` +
+  `QFutureWatcher<KdeResult>` (the frontend's established async idiom, see
+  [[HdfReviewTab]]). One job at a time; an unchanged buffer (fingerprint =
+  count, first/last frame index, factor, µm conversion) is skipped; the
+  destructor drains an in-flight job; a result arriving after the toggle
+  went off is dropped. 1000 points cost ~3 ms on a desktop core.
+- **Cheap refresh** — `updateScatterplot` (every 500 ms) only records the
+  frame index behind each series point (`scatterPointFrames_`,
+  `targetPointFrames_`) and re-applies the last density map through
+  `QXYSeries::setPointsConfiguration` (per-point `Color`, quantised 65-entry
+  LUT). Points that arrived after the last estimate wear the sparse end of
+  the ramp until the next tick. While on, the target-group series switches
+  to a **rectangle marker** so it stays identifiable without its blue; off
+  restores circles and clears all per-point configuration — the chart looks
+  exactly as before.
+- **Settings** — `MonitoringSettingsDialog` exposes *KDE bandwidth factor*
+  (0.2–5, default 1) and *KDE update interval* (500–60000 ms); the toggle,
+  factor and interval persist in `QSettings` under `Monitoring/Kde*` with a
+  version guard (`Monitoring/KdeVersion`), like `Preview/*`. Test hooks:
+  `kdeToggle()`, `requestKdeUpdate()`, `kdeJobInFlight()`,
+  `kdeTimerActive()`, `kdeGeneration()`, `scatterSeriesForTests()`,
+  `injectMonitoringFramesForTests()`. Guard: `frontend.monitoring_kde_density`.
 
 ## Tune panel (issue #364)
 
@@ -106,6 +153,15 @@ exposed subset of `ProcessingConfig`, owned by the pure
   → empty crop). Guard: `frontend.monitoring_roi_crop`.
 - Histograms are computed client-side from the monitoring rings — not
   persisted.
+- **Never run the density estimate on the GUI thread and never hold
+  backend state across it.** `requestKdeUpdate()` copies indices and
+  (area, deformability) pairs into the lambda; the worker touches no widget,
+  no `ProcessedFrame` and no service. Apply results only in
+  `onKdeJobFinished()` (GUI thread) and only if the toggle is still on.
+- `updateScatterplot` clears and re-appends the series every 500 ms, which
+  also drops Qt's per-point configuration — that is why the density colours
+  are re-applied from `kdeDensityByIndex_` on every refresh instead of being
+  set once.
 - `loadCurrentConfig()` refreshes the histogram ring-ratio defaults as well
   as the tune panel baseline, so config reloads keep the visible chart
   range aligned with the saved thresholds. Never write tune values to the

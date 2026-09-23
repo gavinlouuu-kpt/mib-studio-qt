@@ -22,49 +22,58 @@
      <item row="0" column="0">
       <widget class="QLabel" name="kdeBandwidthLabel">
        <property name="text">
-        <string>KDE Bandwidth</string>
+        <string>KDE bandwidth factor</string>
        </property>
       </widget>
      </item>
      <item row="0" column="1">
       <widget class="QDoubleSpinBox" name="kdeBandwidthSpin">
        <property name="minimum">
-        <double>1.000000000000000</double>
+        <double>0.200000000000000</double>
        </property>
        <property name="maximum">
-        <double>1000.000000000000000</double>
+        <double>5.000000000000000</double>
        </property>
        <property name="singleStep">
-        <double>10.000000000000000</double>
+        <double>0.100000000000000</double>
        </property>
        <property name="decimals">
-        <number>1</number>
+        <number>2</number>
+       </property>
+       <property name="value">
+        <double>1.000000000000000</double>
        </property>
        <property name="toolTip">
-        <string>KDE bandwidth parameter (higher = smoother, lower = more detailed)</string>
+        <string>Multiplies the automatic per-axis (Silverman) bandwidth of the scatter density colouring: above 1 = smoother, below 1 = more detail</string>
        </property>
       </widget>
      </item>
      <item row="1" column="0">
-      <widget class="QLabel" name="kdeGridResolutionLabel">
+      <widget class="QLabel" name="kdeIntervalLabel">
        <property name="text">
-        <string>KDE Grid Resolution</string>
+        <string>KDE update interval</string>
        </property>
       </widget>
      </item>
      <item row="1" column="1">
-      <widget class="QSpinBox" name="kdeGridResolutionSpin">
+      <widget class="QSpinBox" name="kdeIntervalSpin">
+       <property name="suffix">
+        <string> ms</string>
+       </property>
        <property name="minimum">
-        <number>10</number>
+        <number>500</number>
        </property>
        <property name="maximum">
-        <number>200</number>
+        <number>60000</number>
        </property>
        <property name="singleStep">
-        <number>10</number>
+        <number>500</number>
+       </property>
+       <property name="value">
+        <number>2000</number>
        </property>
        <property name="toolTip">
-        <string>Grid resolution for KDE heat map (higher = more detailed but slower)</string>
+        <string>How often the scatter density (KDE) is recomputed while the Density (KDE) toggle is on</string>
        </property>
       </widget>
      </item>

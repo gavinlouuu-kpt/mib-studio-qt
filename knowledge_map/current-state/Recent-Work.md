@@ -1,5 +1,24 @@
 # Recent Work
 
+## 2026-09-23 — Monitoring scatter density (KDE) colouring
+
+The Monitoring tab's deformability-vs-area scatter can now be coloured by
+local population density (**Density (KDE)** toggle in the top row): a
+Gaussian KDE with a per-axis Silverman bandwidth, evaluated at every sample
+by the Qt-free `MonitoringDensity.h` kernel on the Qt thread pool
+(`QtConcurrent` + `QFutureWatcher`, one job at a time, unchanged buffers
+skipped) on its own periodic timer (default 2 s), and re-applied to the
+series through per-point `QXYSeries` configuration on the ordinary 500 ms
+refresh. Target-group points keep their identity by marker shape while the
+mode is on. The never-called isotropic `computeKDE` grid and the grid
+resolution setting were removed; the settings dialog now exposes a bandwidth
+factor and the update interval, and toggle/factor/interval persist in
+`QSettings`. Guards: `frontend.monitoring_density` (kernel invariants,
+per-axis separation, ratio-gated cost) and `frontend.monitoring_kde_density`
+(offscreen widget: toggle, asynchronous estimate, late points, hide/show,
+persistence, dialog). See [[../frontend/ExperimentMonitoringTab]] and
+[[../task/2026-09-23-monitoring-kde-density]].
+
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
 
 Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,

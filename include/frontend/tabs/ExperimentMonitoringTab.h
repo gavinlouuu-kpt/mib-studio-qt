@@ -4,8 +4,10 @@
 
 #include <QWidget>
 #include <QImage>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <unordered_map>
 #include <vector>
 
 namespace cv { class Mat; }
@@ -13,6 +15,7 @@ namespace backend { class AppBackend; }
 namespace backend::services { struct ProcessedFrame; struct FilterResult; }
 
 class QTimer;
+template <typename T> class QFutureWatcher;
 class QChartView;
 namespace frontend { class ZoomableChartView; }
 class QScatterSeries;
@@ -48,11 +51,44 @@ public:
     explicit ExperimentMonitoringTab(backend::AppBackend& backend, QWidget* parent = nullptr);
     ~ExperimentMonitoringTab() override;
     
-    // Settings accessors
-    double getKdeBandwidth() const { return kdeBandwidth_; }
-    int getKdeGridResolution() const { return kdeGridResolution_; }
-    void setKdeBandwidth(double bandwidth);
-    void setKdeGridResolution(int resolution);
+    // Scatter density (KDE) colouring. While enabled, every valid point in the
+    // Deformability-vs-Area scatter is coloured by its normalised population
+    // density; the estimate is recomputed periodically on a worker thread
+    // (QtConcurrent) from a snapshot of the rolling buffer and never blocks
+    // the 500 ms chart refresh, which only re-applies the last result. The
+    // three settings persist in QSettings (Monitoring/Kde*).
+    struct KdeResult {
+        std::vector<uint64_t> frameIndices;
+        std::vector<double> density; // normalised [0, 1], parallel to frameIndices
+        double bandwidthX{0.0};      // µm²
+        double bandwidthY{0.0};      // deformability
+        int computeMs{0};
+    };
+    static constexpr double kKdeBandwidthFactorMin = 0.2;
+    static constexpr double kKdeBandwidthFactorMax = 5.0;
+    static constexpr double kKdeBandwidthFactorDefault = 1.0;
+    static constexpr int kKdeIntervalMsMin = 500;
+    static constexpr int kKdeIntervalMsMax = 60000;
+    static constexpr int kKdeIntervalMsDefault = 2000;
+    bool kdeEnabled() const { return kdeEnabled_; }
+    void setKdeEnabled(bool enabled);
+    double kdeBandwidthFactor() const { return kdeBandwidthFactor_; }
+    void setKdeBandwidthFactor(double factor);
+    int kdeIntervalMs() const { return kdeIntervalMs_; }
+    void setKdeIntervalMs(int ms);
+    // Compute now (what the periodic timer does); a no-op while disabled, while
+    // a job is already running, or when the buffer is unchanged since the last
+    // completed estimate.
+    void requestKdeUpdate();
+    bool kdeJobInFlight() const { return kdeWatcher_ != nullptr; }
+    bool kdeTimerActive() const;
+    uint64_t kdeGeneration() const { return kdeGeneration_; } // completed estimates
+    QCheckBox* kdeToggle() const;
+    QScatterSeries* scatterSeriesForTests() const { return scatterSeries_; }
+    QScatterSeries* targetGroupSeriesForTests() const { return targetGroupSeries_; }
+    // Append frames to the rolling buffer as if they had been polled from the
+    // backend and redraw (tests drive the charts without a running pipeline).
+    void injectMonitoringFramesForTests(const std::vector<backend::services::ProcessedFrame>& frames);
 
     // Fixed chart axis ranges (user-definable via Monitoring Settings)
     double getScatterXMin() const { return scatterXMin_; }
@@ -143,8 +179,12 @@ private:
     QImage matToQImage(const cv::Mat& mat) const;
     void clearGrid(QGridLayout* grid);
     QImage createOverlayImage(const cv::Mat& original, const cv::Mat& mask, const backend::services::FilterResult* validation = nullptr) const;
-    std::vector<std::vector<double>> computeKDE(const std::vector<std::pair<double, double>>& points,
-                                                 int gridX, int gridY, double bandwidth) const;
+    // KDE colouring (see the public block above).
+    void onKdeJobFinished();
+    void applyKdeColors();
+    void setKdeModeVisuals(bool on);
+    void loadKdePreferences();
+    void saveKdePreferences();
 
     Ui::ExperimentMonitoringTab* ui;
     backend::AppBackend& backend_;
@@ -185,9 +225,31 @@ private:
     bool showValidOverlay_ = false;
     bool showInvalidOverlay_ = false;
     
-    // KDE settings
-    double kdeBandwidth_ = 50.0;
-    int kdeGridResolution_ = 50;
+    // KDE colouring state
+    bool kdeEnabled_ = false;
+    double kdeBandwidthFactor_ = kKdeBandwidthFactorDefault;
+    int kdeIntervalMs_ = kKdeIntervalMsDefault;
+    QTimer* kdeTimer_ = nullptr;
+    QFutureWatcher<KdeResult>* kdeWatcher_ = nullptr;
+    std::unordered_map<uint64_t, double> kdeDensityByIndex_; // last completed estimate
+    uint64_t kdeGeneration_ = 0;
+    struct KdeFingerprint {
+        std::size_t count{0};
+        uint64_t firstIndex{0};
+        uint64_t lastIndex{0};
+        double bandwidthFactor{0.0};
+        double areaConversion{0.0};
+        bool operator==(const KdeFingerprint& o) const
+        {
+            return count == o.count && firstIndex == o.firstIndex && lastIndex == o.lastIndex
+                   && bandwidthFactor == o.bandwidthFactor && areaConversion == o.areaConversion;
+        }
+    };
+    KdeFingerprint kdeFingerprint_; // input of the last launched estimate
+    // Frame index behind each series point, in append order (rebuilt by
+    // updateScatterplot) so the density map can be applied per point.
+    std::vector<uint64_t> scatterPointFrames_;
+    std::vector<uint64_t> targetPointFrames_;
 
     // Fixed chart axis ranges (user-definable)
     double scatterXMin_ = 0.0;

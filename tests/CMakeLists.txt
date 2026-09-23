@@ -190,6 +190,12 @@ mib_add_backend_test_executable(monitoring_roi_crop_test frontend/monitoring_roi
 add_test(NAME frontend.monitoring_roi_crop COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_roi_crop_test)
 set_tests_properties(frontend.monitoring_roi_crop PROPERTIES LABELS "frontend;safety" TIMEOUT 30)
 
+# Monitoring scatter density (KDE): invariants, per-axis bandwidth, degenerate
+# input, colour ramp and a ratio-gated cost budget (no Qt).
+mib_add_backend_test_executable(monitoring_density_test frontend/monitoring_density_test.cpp)
+add_test(NAME frontend.monitoring_density COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_test)
+set_tests_properties(frontend.monitoring_density PROPERTIES LABELS "frontend;monitoring;performance" TIMEOUT 60)
+
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
 set_tests_properties(backend.pr4_monitoring_snapshot PROPERTIES LABELS "backend;processing;monitoring" TIMEOUT 30)

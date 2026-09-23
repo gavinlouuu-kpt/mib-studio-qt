@@ -12,8 +12,8 @@ MonitoringSettingsDialog::MonitoringSettingsDialog(frontend::ExperimentMonitorin
 
     // Load current values
     if (monitoringTab_) {
-        ui->kdeBandwidthSpin->setValue(monitoringTab_->getKdeBandwidth());
-        ui->kdeGridResolutionSpin->setValue(monitoringTab_->getKdeGridResolution());
+        ui->kdeBandwidthSpin->setValue(monitoringTab_->kdeBandwidthFactor());
+        ui->kdeIntervalSpin->setValue(monitoringTab_->kdeIntervalMs());
         ui->scatterXMinSpin->setValue(monitoringTab_->getScatterXMin());
         ui->scatterXMaxSpin->setValue(monitoringTab_->getScatterXMax());
         ui->scatterYMinSpin->setValue(monitoringTab_->getScatterYMin());
@@ -23,8 +23,8 @@ MonitoringSettingsDialog::MonitoringSettingsDialog(frontend::ExperimentMonitorin
         ui->histogramYMaxSpin->setValue(monitoringTab_->getHistogramYMax());
         ui->histogramBinWidthSpin->setValue(monitoringTab_->getHistogramBinWidth());
     } else {
-        ui->kdeBandwidthSpin->setValue(50.0);
-        ui->kdeGridResolutionSpin->setValue(50);
+        ui->kdeBandwidthSpin->setValue(frontend::ExperimentMonitoringTab::kKdeBandwidthFactorDefault);
+        ui->kdeIntervalSpin->setValue(frontend::ExperimentMonitoringTab::kKdeIntervalMsDefault);
         ui->scatterXMinSpin->setValue(0.0);
         ui->scatterXMaxSpin->setValue(1000.0);
         ui->scatterYMinSpin->setValue(0.0);
@@ -55,16 +55,16 @@ void MonitoringSettingsDialog::onOk() {
 
 void MonitoringSettingsDialog::applySettings() {
     if (monitoringTab_) {
-        monitoringTab_->setKdeBandwidth(ui->kdeBandwidthSpin->value());
-        monitoringTab_->setKdeGridResolution(ui->kdeGridResolutionSpin->value());
+        monitoringTab_->setKdeBandwidthFactor(ui->kdeBandwidthSpin->value());
+        monitoringTab_->setKdeIntervalMs(ui->kdeIntervalSpin->value());
         monitoringTab_->setScatterXRange(ui->scatterXMinSpin->value(), ui->scatterXMaxSpin->value());
         monitoringTab_->setScatterYRange(ui->scatterYMinSpin->value(), ui->scatterYMaxSpin->value());
         monitoringTab_->setHistogramXRange(ui->histogramXMinSpin->value(), ui->histogramXMaxSpin->value());
         monitoringTab_->setHistogramYMax(ui->histogramYMaxSpin->value());
         monitoringTab_->setHistogramBinWidth(ui->histogramBinWidthSpin->value());
         monitoringTab_->refreshCharts();
-        SPDLOG_INFO("Monitoring settings applied: KDE bandwidth={}, grid resolution={}, scatter X=[{},{}] Y=[{},{}], histogram X=[{},{}] Y max={} binWidth={}",
-                    ui->kdeBandwidthSpin->value(), ui->kdeGridResolutionSpin->value(),
+        SPDLOG_INFO("Monitoring settings applied: KDE bandwidth factor={}, interval={} ms, scatter X=[{},{}] Y=[{},{}], histogram X=[{},{}] Y max={} binWidth={}",
+                    ui->kdeBandwidthSpin->value(), ui->kdeIntervalSpin->value(),
                     ui->scatterXMinSpin->value(), ui->scatterXMaxSpin->value(),
                     ui->scatterYMinSpin->value(), ui->scatterYMaxSpin->value(),
                     ui->histogramXMinSpin->value(), ui->histogramXMaxSpin->value(),

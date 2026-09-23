@@ -36,6 +36,7 @@ timeout, avoiding the unbounded `FlushFileBuffers` wait. See
 | Syringe pump poll | [[../services/SyringePumpService]] per pump | serial (Modbus RTU) | UI-driven status polls |
 | Frame-recording | `AppBackend` `frameRecordingThread_` | FrameStore | Only active in recording mode; drains non-empty frames into HDF5 |
 | Discovery workers | [[../services/DeviceDiscoveryService]] (one per job, ≤ 4) | provider enumeration / probe, retry-delay CV | Camera SDK enumeration, nanopositioner identity probes, pulse-generator FC03 scans; cooperative cancel between steps; joined at `shutdownDiscovery()` |
+| Qt global thread pool (`QtConcurrent::run`) | frontend, per job | — | Short value-typed jobs owned by a widget through a `QFutureWatcher`: HDF export ([[../frontend/HdfReviewTab]]) and the periodic scatter density (KDE) estimate of [[../frontend/ExperimentMonitoringTab]] (≤ 1000 points, ms-scale, one at a time, drained in the widget destructor). Never touches services or widgets; results are applied on the GUI thread. |
 
 ## Sync primitives
 

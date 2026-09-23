@@ -1,7 +1,13 @@
 #include "frontend/tabs/ExperimentMonitoringTab.h"
+#include "frontend/tabs/MonitoringDensity.h"
 #include "frontend/tabs/MonitoringRoiCrop.h"
 #include "ui_ExperimentMonitoringTab.h"
 
+#include <QElapsedTimer>
+#include <QFutureWatcher>
+#include <QSettings>
+#include <QXYSeries>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QTimer>
 #include <QLabel>
 #include <QPixmap>
@@ -124,6 +130,33 @@ std::vector<InvalidReason> getInvalidReasons(
     return reasons;
 }
 
+// QSettings keys for the scatter density (KDE) preferences. The version guard
+// lets a future change of semantics fall back to defaults instead of reading
+// stale values (same pattern as PreviewPage's layout preference).
+constexpr const char* kKdeKeyVersion = "Monitoring/KdeVersion";
+constexpr const char* kKdeKeyEnabled = "Monitoring/KdeEnabled";
+constexpr const char* kKdeKeyBandwidthFactor = "Monitoring/KdeBandwidthFactor";
+constexpr const char* kKdeKeyIntervalMs = "Monitoring/KdeIntervalMs";
+constexpr int kKdePreferenceVersion = 1;
+
+// Colour for a normalised density, quantised so the 500 ms refresh builds no
+// QColor per point.
+const QColor& kdeColorFor(double density)
+{
+    static const std::vector<QColor> lut = [] {
+        std::vector<QColor> c;
+        c.reserve(65);
+        for (int i = 0; i <= 64; ++i) {
+            const auto rgb = frontend::monitoring::densityRampColor(i / 64.0);
+            c.emplace_back(rgb.r, rgb.g, rgb.b);
+        }
+        return c;
+    }();
+    if (!std::isfinite(density)) return lut.front();
+    const int idx = std::clamp(static_cast<int>(std::lround(density * 64.0)), 0, 64);
+    return lut[static_cast<std::size_t>(idx)];
+}
+
 } // anonymous namespace
 
 namespace frontend
@@ -177,6 +210,19 @@ namespace frontend
         updateTimer_ = new QTimer(this);
         updateTimer_->setInterval(UPDATE_INTERVAL_MS);
         connect(updateTimer_, &QTimer::timeout, this, &ExperimentMonitoringTab::onUpdate);
+
+        // Scatter density (KDE): its own, slower timer; the estimate runs on a
+        // worker thread and the result is applied on the next refresh.
+        loadKdePreferences();
+        kdeTimer_ = new QTimer(this);
+        kdeTimer_->setInterval(kdeIntervalMs_);
+        connect(kdeTimer_, &QTimer::timeout, this, &ExperimentMonitoringTab::requestKdeUpdate);
+        connect(ui->kdeToggleCheck, &QCheckBox::toggled, this, &ExperimentMonitoringTab::setKdeEnabled);
+        {
+            QSignalBlocker blocker(ui->kdeToggleCheck);
+            ui->kdeToggleCheck->setChecked(kdeEnabled_);
+        }
+        setKdeModeVisuals(kdeEnabled_);
     }
 
     void ExperimentMonitoringTab::updateRoiDisplay(int offsetX, int offsetY, int width, int height) {
@@ -185,6 +231,13 @@ namespace frontend
     }
 
     ExperimentMonitoringTab::~ExperimentMonitoringTab() {
+        // A density estimate may still be running on the thread pool: it owns
+        // its input by value, so just make sure it cannot call back into us.
+        if (kdeWatcher_) {
+            kdeWatcher_->disconnect(this);
+            kdeWatcher_->waitForFinished();
+            kdeWatcher_ = nullptr;
+        }
         // Cleanup isoelastic curve line series
         for (QLineSeries* series : isoelasticCurves_)
         {
@@ -764,6 +817,11 @@ namespace frontend
         // Enable monitoring accumulation only while this tab is visible —
         // ProcessingService skips the per-object frame copies when inactive.
         backend_.processing().setMonitoringActive(true);
+        if (kdeEnabled_ && kdeTimer_ && !kdeTimer_->isActive())
+        {
+            kdeTimer_->start();
+            requestKdeUpdate();
+        }
         // Refresh tune panel with current config when tab becomes visible
         loadCurrentConfig();
     }
@@ -774,6 +832,10 @@ namespace frontend
         if (updateTimer_ && updateTimer_->isActive())
         {
             updateTimer_->stop();
+        }
+        if (kdeTimer_ && kdeTimer_->isActive())
+        {
+            kdeTimer_->stop();
         }
         // Stop monitoring accumulation while hidden (no consumer polling)
         backend_.processing().setMonitoringActive(false);
@@ -789,10 +851,16 @@ namespace frontend
     {
         scatterSeries_->clear();
         targetGroupSeries_->clear();
+        scatterPointFrames_.clear();
+        targetPointFrames_.clear();
 
         const double conversionFactor = backend_.processing().getPixelToMicronFactor();
         const double areaConversionFactor = conversionFactor * conversionFactor;
 
+        // Batch the points: one append per series instead of one signal per point.
+        QList<QPointF> scatterPoints;
+        QList<QPointF> targetPoints;
+        scatterPoints.reserve(static_cast<qsizetype>(validFrames.size()));
         for (const auto &frame : validFrames)
         {
             if (frame.validation.isValid)
@@ -800,11 +868,19 @@ namespace frontend
                 double areaMicrons = frame.validation.area * areaConversionFactor;
                 double deform = frame.validation.deformability;
                 if (frame.validation.isTargetGroup) {
-                    targetGroupSeries_->append(areaMicrons, deform);
+                    targetPoints.append(QPointF(areaMicrons, deform));
+                    targetPointFrames_.push_back(frame.index);
                 } else {
-                    scatterSeries_->append(areaMicrons, deform);
+                    scatterPoints.append(QPointF(areaMicrons, deform));
+                    scatterPointFrames_.push_back(frame.index);
                 }
             }
+        }
+        scatterSeries_->append(scatterPoints);
+        targetGroupSeries_->append(targetPoints);
+        if (kdeEnabled_)
+        {
+            applyKdeColors();
         }
 
         if (!scatterplotView_->isUserZoomed()) {
@@ -1215,6 +1291,8 @@ namespace frontend
             recentInvalidFrames_.clear();
             lastValidFrameIndex_ = 0;
             lastInvalidFrameIndex_ = 0;
+            kdeDensityByIndex_.clear();
+            kdeFingerprint_ = KdeFingerprint{};
             // Update displays
             updateScatterplot(recentValidFrames_);
             updateHistogram(recentValidFrames_);
@@ -1325,87 +1403,227 @@ namespace frontend
         return img.copy();
     }
 
-    std::vector<std::vector<double>> ExperimentMonitoringTab::computeKDE(const std::vector<std::pair<double, double>> &points,
-                                                                         int gridX, int gridY, double bandwidth) const
+    // ------------------------------------------------------------------
+    // Scatter density (KDE) colouring
+    // ------------------------------------------------------------------
+
+    bool ExperimentMonitoringTab::kdeTimerActive() const
     {
-        if (points.empty() || bandwidth <= 0.0)
+        return kdeTimer_ && kdeTimer_->isActive();
+    }
+
+    QCheckBox* ExperimentMonitoringTab::kdeToggle() const
+    {
+        return ui->kdeToggleCheck;
+    }
+
+    void ExperimentMonitoringTab::injectMonitoringFramesForTests(const std::vector<backend::services::ProcessedFrame>& frames)
+    {
+        recentValidFrames_.insert(recentValidFrames_.end(), frames.begin(), frames.end());
+        if (recentValidFrames_.size() > MAX_RECENT_FRAMES)
         {
-            return std::vector<std::vector<double>>(gridY, std::vector<double>(gridX, 0.0));
+            const size_t excess = recentValidFrames_.size() - MAX_RECENT_FRAMES;
+            recentValidFrames_.erase(recentValidFrames_.begin(), recentValidFrames_.begin() + excess);
         }
-
-        // Find data range
-        double minX = std::numeric_limits<double>::max();
-        double maxX = std::numeric_limits<double>::lowest();
-        double minY = std::numeric_limits<double>::max();
-        double maxY = std::numeric_limits<double>::lowest();
-
-        for (const auto &p : points)
+        for (const auto& frame : frames)
         {
-            minX = std::min(minX, p.first);
-            maxX = std::max(maxX, p.first);
-            minY = std::min(minY, p.second);
-            maxY = std::max(maxY, p.second);
+            lastValidFrameIndex_ = std::max(lastValidFrameIndex_, frame.index);
         }
+        refreshCharts();
+    }
 
-        if (minX >= maxX || minY >= maxY)
+    void ExperimentMonitoringTab::loadKdePreferences()
+    {
+        QSettings s;
+        kdeEnabled_ = false;
+        kdeBandwidthFactor_ = kKdeBandwidthFactorDefault;
+        kdeIntervalMs_ = kKdeIntervalMsDefault;
+        if (s.value(QLatin1String(kKdeKeyVersion), 0).toInt() != kKdePreferenceVersion) return; // missing/obsolete: defaults
+        kdeEnabled_ = s.value(QLatin1String(kKdeKeyEnabled), false).toBool();
+        bool ok = false;
+        const double factor = s.value(QLatin1String(kKdeKeyBandwidthFactor)).toDouble(&ok);
+        if (ok && std::isfinite(factor))
         {
-            return std::vector<std::vector<double>>(gridY, std::vector<double>(gridX, 0.0));
+            kdeBandwidthFactor_ = std::clamp(factor, kKdeBandwidthFactorMin, kKdeBandwidthFactorMax);
         }
-
-        // Add padding
-        double rangeX = maxX - minX;
-        double rangeY = maxY - minY;
-        minX -= rangeX * 0.1;
-        maxX += rangeX * 0.1;
-        minY -= rangeY * 0.1;
-        maxY += rangeY * 0.1;
-
-        // Initialize density grid
-        std::vector<std::vector<double>> density(gridY, std::vector<double>(gridX, 0.0));
-
-        double stepX = (maxX - minX) / gridX;
-        double stepY = (maxY - minY) / gridY;
-
-        // Compute KDE using Gaussian kernel
-        const double sqrt2pi = std::sqrt(2.0 * M_PI);
-        const double bandwidth2 = bandwidth * bandwidth;
-
-        for (int gy = 0; gy < gridY; ++gy)
+        const int interval = s.value(QLatin1String(kKdeKeyIntervalMs)).toInt(&ok);
+        if (ok)
         {
-            double gridYVal = minY + (gy + 0.5) * stepY;
-            for (int gx = 0; gx < gridX; ++gx)
+            kdeIntervalMs_ = std::clamp(interval, kKdeIntervalMsMin, kKdeIntervalMsMax);
+        }
+    }
+
+    void ExperimentMonitoringTab::saveKdePreferences()
+    {
+        QSettings s;
+        s.setValue(QLatin1String(kKdeKeyVersion), kKdePreferenceVersion);
+        s.setValue(QLatin1String(kKdeKeyEnabled), kdeEnabled_);
+        s.setValue(QLatin1String(kKdeKeyBandwidthFactor), kdeBandwidthFactor_);
+        s.setValue(QLatin1String(kKdeKeyIntervalMs), kdeIntervalMs_);
+    }
+
+    void ExperimentMonitoringTab::setKdeEnabled(bool enabled)
+    {
+        {
+            QSignalBlocker blocker(ui->kdeToggleCheck);
+            ui->kdeToggleCheck->setChecked(enabled);
+        }
+        if (kdeEnabled_ == enabled) return;
+        kdeEnabled_ = enabled;
+        if (enabled)
+        {
+            setKdeModeVisuals(true);
+            if (kdeTimer_ && isVisible() && !kdeTimer_->isActive()) kdeTimer_->start();
+            updateScatterplot(recentValidFrames_); // sparse colouring until the first estimate lands
+            requestKdeUpdate();
+        }
+        else
+        {
+            if (kdeTimer_) kdeTimer_->stop();
+            kdeDensityByIndex_.clear();
+            kdeFingerprint_ = KdeFingerprint{};
+            setKdeModeVisuals(false);
+            ui->kdeToggleCheck->setToolTip(tr("Colour scatter points by local population density (Gaussian KDE, recomputed periodically)"));
+        }
+        saveKdePreferences();
+        SPDLOG_INFO("Monitoring scatter density (KDE) {}", enabled ? "enabled" : "disabled");
+    }
+
+    void ExperimentMonitoringTab::setKdeBandwidthFactor(double factor)
+    {
+        if (!std::isfinite(factor)) return;
+        factor = std::clamp(factor, kKdeBandwidthFactorMin, kKdeBandwidthFactorMax);
+        if (factor == kdeBandwidthFactor_) return;
+        kdeBandwidthFactor_ = factor;
+        saveKdePreferences();
+        if (kdeEnabled_) requestKdeUpdate();
+    }
+
+    void ExperimentMonitoringTab::setKdeIntervalMs(int ms)
+    {
+        ms = std::clamp(ms, kKdeIntervalMsMin, kKdeIntervalMsMax);
+        if (ms == kdeIntervalMs_) return;
+        kdeIntervalMs_ = ms;
+        if (kdeTimer_) kdeTimer_->setInterval(ms);
+        saveKdePreferences();
+    }
+
+    void ExperimentMonitoringTab::setKdeModeVisuals(bool on)
+    {
+        if (!scatterSeries_ || !targetGroupSeries_) return;
+        if (on)
+        {
+            // Both series take the density colour, so the target group keeps
+            // its identity through the marker shape instead of its colour.
+            targetGroupSeries_->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
+        }
+        else
+        {
+            scatterSeries_->clearPointsConfiguration();
+            targetGroupSeries_->clearPointsConfiguration();
+            targetGroupSeries_->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+        }
+    }
+
+    void ExperimentMonitoringTab::applyKdeColors()
+    {
+        if (!scatterSeries_ || !targetGroupSeries_) return;
+        using PointConfiguration = QXYSeries::PointConfiguration;
+        const auto build = [this](const std::vector<uint64_t>& frames) {
+            QHash<int, QHash<PointConfiguration, QVariant>> configuration;
+            configuration.reserve(static_cast<qsizetype>(frames.size()));
+            for (std::size_t i = 0; i < frames.size(); ++i)
             {
-                double gridXVal = minX + (gx + 0.5) * stepX;
-
-                double sum = 0.0;
-                for (const auto &p : points)
-                {
-                    double dx = p.first - gridXVal;
-                    double dy = p.second - gridYVal;
-                    double dist2 = dx * dx + dy * dy;
-                    // Gaussian kernel
-                    sum += std::exp(-dist2 / (2.0 * bandwidth2)) / (sqrt2pi * bandwidth);
-                }
-                density[gy][gx] = sum / points.size();
+                double density = 0.0; // unknown (arrived after the last estimate): sparse end of the ramp
+                const auto it = kdeDensityByIndex_.find(frames[i]);
+                if (it != kdeDensityByIndex_.end()) density = it->second;
+                QHash<PointConfiguration, QVariant> conf;
+                conf.insert(PointConfiguration::Color, kdeColorFor(density));
+                configuration.insert(static_cast<int>(i), conf);
             }
+            return configuration;
+        };
+        scatterSeries_->setPointsConfiguration(build(scatterPointFrames_));
+        targetGroupSeries_->setPointsConfiguration(build(targetPointFrames_));
+    }
+
+    void ExperimentMonitoringTab::requestKdeUpdate()
+    {
+        if (!kdeEnabled_ || kdeWatcher_) return;
+
+        const double conversionFactor = backend_.processing().getPixelToMicronFactor();
+        const double areaConversionFactor = conversionFactor * conversionFactor;
+        std::vector<uint64_t> indices;
+        std::vector<monitoring::DensityPoint> points;
+        indices.reserve(recentValidFrames_.size());
+        points.reserve(recentValidFrames_.size());
+        for (const auto& frame : recentValidFrames_)
+        {
+            if (!frame.validation.isValid) continue;
+            indices.push_back(frame.index);
+            points.push_back({frame.validation.area * areaConversionFactor, frame.validation.deformability});
         }
+        if (points.empty())
+        {
+            kdeFingerprint_ = KdeFingerprint{};
+            if (!kdeDensityByIndex_.empty())
+            {
+                kdeDensityByIndex_.clear();
+                applyKdeColors();
+            }
+            return;
+        }
+        // The rolling buffer only grows at the back and trims at the front, so
+        // (count, first, last) identifies the window; skip an unchanged one.
+        const KdeFingerprint fingerprint{points.size(), indices.front(), indices.back(), kdeBandwidthFactor_, areaConversionFactor};
+        if (fingerprint == kdeFingerprint_) return;
+        kdeFingerprint_ = fingerprint;
 
-        return density;
+        const double factor = kdeBandwidthFactor_;
+        auto* watcher = new QFutureWatcher<KdeResult>(this);
+        kdeWatcher_ = watcher;
+        connect(watcher, &QFutureWatcher<KdeResult>::finished, this, &ExperimentMonitoringTab::onKdeJobFinished);
+        watcher->setFuture(QtConcurrent::run([indices = std::move(indices), points = std::move(points), factor]() {
+            QElapsedTimer clock;
+            clock.start();
+            KdeResult result;
+            const auto bandwidth = monitoring::silvermanBandwidth(points, factor);
+            result.density = monitoring::gaussianKdeAtPoints(points, bandwidth);
+            result.frameIndices = std::move(indices);
+            result.bandwidthX = bandwidth.x;
+            result.bandwidthY = bandwidth.y;
+            result.computeMs = static_cast<int>(clock.elapsed());
+            return result;
+        }));
     }
 
-    void ExperimentMonitoringTab::setKdeBandwidth(double bandwidth)
+    void ExperimentMonitoringTab::onKdeJobFinished()
     {
-        kdeBandwidth_ = bandwidth;
-        // Trigger update to refresh scatterplot
-        updateScatterplot(recentValidFrames_);
+        auto* watcher = kdeWatcher_;
+        kdeWatcher_ = nullptr;
+        if (!watcher) return;
+        const KdeResult result = watcher->result();
+        watcher->deleteLater();
+        if (!kdeEnabled_) return; // switched off while the estimate was running
+
+        kdeDensityByIndex_.clear();
+        kdeDensityByIndex_.reserve(result.frameIndices.size());
+        for (std::size_t i = 0; i < result.frameIndices.size() && i < result.density.size(); ++i)
+        {
+            kdeDensityByIndex_[result.frameIndices[i]] = result.density[i];
+        }
+        ++kdeGeneration_;
+        applyKdeColors();
+        ui->kdeToggleCheck->setToolTip(tr("Density (KDE) over %1 points; bandwidth %2 μm² × %3; computed in %4 ms; refreshed every %5 s")
+                                           .arg(result.frameIndices.size())
+                                           .arg(result.bandwidthX, 0, 'f', 1)
+                                           .arg(result.bandwidthY, 0, 'f', 4)
+                                           .arg(result.computeMs)
+                                           .arg(kdeIntervalMs_ / 1000.0, 0, 'g', 3));
+        SPDLOG_DEBUG("Monitoring KDE: {} points, bandwidth ({:.2f} um^2, {:.4f}), {} ms", result.frameIndices.size(),
+                     result.bandwidthX, result.bandwidthY, result.computeMs);
     }
 
-    void ExperimentMonitoringTab::setKdeGridResolution(int resolution)
-    {
-        kdeGridResolution_ = resolution;
-        // Trigger update to refresh scatterplot
-        updateScatterplot(recentValidFrames_);
-    }
 
     void ExperimentMonitoringTab::setScatterXRange(double minVal, double maxVal)
     {
