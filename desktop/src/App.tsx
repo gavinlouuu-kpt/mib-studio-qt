@@ -42,6 +42,8 @@ import {
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
+import { useLiveConfigDraft } from "./liveConfigDraft";
+import { previewIntervalMs } from "./previewPacing";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
@@ -164,8 +166,12 @@ export default function App() {
   const [recPath, setRecPath] = useState("");
 
   // Processing (bridge schema v3).
-  const [procEnabled, setProcEnabled] = useState(false);
-  const [pixelToMicron, setPixelToMicron] = useState("1.0");
+  const quickDraft = useLiveConfigDraft();
+  const {acceptRemote: acceptQuickConfig, generation: quickGeneration, applied: quickApplied} = quickDraft;
+  const quickValues = quickDraft.text ? JSON.parse(quickDraft.text) : {enabled:false,factor:"1.0"};
+  const procEnabled = Boolean(quickValues.enabled);
+  const pixelToMicron = String(quickValues.factor);
+  const [autoBackgroundEnabled,setAutoBackgroundEnabled] = useState(false);
   const [stats, setStats] = useState<ProcessingStats | null>(null);
 
   // Experiment (bridge schema v5, BE-4 — backend-owned lifecycle).
@@ -188,8 +194,9 @@ export default function App() {
   const [sheathPump, setSheathPump] = useState<PumpStatus | null>(null);
 
   // Processing config / ROI / background / core identity (schema v8, BE-3).
-  const [configText, setConfigText] = useState("");
-  const [configDirty, setConfigDirty] = useState(false);
+  const liveDraft=useLiveConfigDraft();
+  const {text:configText,dirty:configDirty,acceptRemote:acceptConfig,applied:configApplied,generation:configGeneration}=liveDraft;
+  const [previewFpsLimit,setPreviewFpsLimit]=useState(30);
   const [coreStatus, setCoreStatus] = useState<ProcessingCoreStatus | null>(null);
   const [backgroundSet, setBackgroundSet] = useState(false);
   const [roiFields, setRoiFields] = useState({ x: "0", y: "0", w: "0", h: "0" });
@@ -420,16 +427,17 @@ export default function App() {
 
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
-  const refreshConfig = useCallback(async () => {
+  const refreshConfig = useCallback(async (discardDraft=false) => {
+    const generation=configGeneration();
+    const quickToken=quickGeneration();
     try {
       const doc = await bridge.fetchProcessingConfigJson();
       if (doc.valid) {
         const parsed = JSON.parse(doc.json);
-        setConfigText(JSON.stringify(parsed, null, 2));
-        setConfigDirty(false);
+        acceptConfig(JSON.stringify(parsed, null, 2),discardDraft,generation);
         setBackgroundSet(Boolean(parsed.background_set));
-        if (typeof parsed.realtime_processing?.enabled === "boolean") setProcEnabled(parsed.realtime_processing.enabled);
-        if (typeof parsed.pixel_to_micron === "number") setPixelToMicron(String(parsed.pixel_to_micron));
+        setAutoBackgroundEnabled(Boolean(parsed.image_processing?.auto_background_enabled));
+        acceptQuickConfig(JSON.stringify({enabled:Boolean(parsed.realtime_processing?.enabled),factor:String(parsed.pixel_to_micron ?? 1)}),false,quickToken);
         if (parsed.roi) {
           setRoiFields({
             x: String(parsed.roi.x ?? 0),
@@ -443,7 +451,7 @@ export default function App() {
     } catch (e) {
       append(`config fetch error: ${e}`);
     }
-  }, [append]);
+  }, [append,acceptConfig,configGeneration,acceptQuickConfig,quickGeneration]);
 
   useEffect(() => {
     if (ready) void refreshConfig();
@@ -454,11 +462,12 @@ export default function App() {
       const res = await bridge.applyProcessingConfigJson(configText);
       if (!res.ok) return append(`config apply failed: ${res.message}`);
       append("processing config applied");
+      configApplied(configText);
       await refreshConfig();
     } catch (e) {
       append(`config apply error: ${e}`);
     }
-  }, [configText, append, refreshConfig]);
+  }, [configText, append, refreshConfig,configApplied]);
 
   const onApplyRoi = useCallback(async () => {
     try {
@@ -566,9 +575,9 @@ export default function App() {
     if (!ready || !running) return;
     previewLoopRef.current = window.setInterval(() => {
       if (previewFollowing.current) framePulls.current.request("live", bridge.fetchFrame, false);
-    }, 1000 / 30);
+    }, previewIntervalMs(previewFpsLimit));
     return stopLoop;
-  }, [ready, running, stopLoop]);
+  }, [ready, running, stopLoop, previewFpsLimit]);
 
   const onStartCamera = useCallback(async () => {
     try {
@@ -628,15 +637,19 @@ export default function App() {
 
   const onApplyProcessing = useCallback(async () => {
     try {
-      const factor = Number(pixelToMicron) || 1.0;
+      const factor = Number(pixelToMicron);
+      if (!pixelToMicron.trim() || !Number.isFinite(factor) || factor <= 0) return append("processing failed: px→µm must be a finite positive number");
+      const submitted=quickDraft.text;
       const res = await bridge.applyProcessing(procEnabled, factor);
       if (!res.ok) return append(`processing failed: ${res.message}`);
       append(`processing ${procEnabled ? "enabled" : "disabled"} (px→µm ${factor})`);
+      quickApplied(submitted);
+      await refreshConfig();
       setStats(await bridge.fetchProcessingStats());
     } catch (e) {
       append(`processing error: ${e}`);
     }
-  }, [procEnabled, pixelToMicron, append]);
+  }, [procEnabled, pixelToMicron, append, quickDraft.text, quickApplied, refreshConfig]);
 
   // ---- Experiment lifecycle (backend-owned, BE-4) ----
 
@@ -763,6 +776,9 @@ export default function App() {
         : experimentRequestBusy ? "Experiment start request pending" : undefined;
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
   const profiles = useProfiles({ready:ready && cores.initialized, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
+  useEffect(()=>{const fps=profiles.activeProfile?.display_fps;if(typeof fps==="number"&&Number.isFinite(fps))setPreviewFpsLimit(Math.min(240,Math.max(1,fps)));},[profiles.activeProfile]);
+
+
   const reviewExport = useReviewExport(ready, append);
   const reanalysis = useReanalysis(ready);
   const requestClose = useCloseGuard({ready, busy:experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:configDirty || checkedConfig.dirty || profiles.dirty, report:append});
@@ -1458,9 +1474,9 @@ export default function App() {
                       >
                         Clear Background
                       </button>
-                      <label title="Auto background is configured via auto_background_* in the App config">
-                        <input type="checkbox" disabled checked={false} /> Auto
-                      </label>
+                      <button onClick={()=>{setConfigTab("app");}} title="Edit image_processing.auto_background_* in the configuration below">
+                        Auto background: {autoBackgroundEnabled ? "on" : "off"} · configure
+                      </button>
                       <button
                         onClick={async () => {
                           setRoiFields({ x: "0", y: "0", w: "0", h: "0" });
@@ -1493,7 +1509,7 @@ export default function App() {
                       {configTab === "app" && (
                         <>
                           <div className="toolbar">
-                            <button onClick={refreshConfig} disabled={!ready} title="Reload the live config from the backend">
+                            <button onClick={()=>{if(!configDirty||window.confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
                               Reload
                             </button>
                             <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
@@ -1512,13 +1528,13 @@ export default function App() {
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
                               <h5>Live config document (merge-applied on Apply)</h5>
+                              {liveDraft.runtimeChanged&&configDirty&&<p role="status">Runtime configuration changed; your draft is preserved. Reload and reconcile before applying a stale snapshot.</p>}
                               <textarea
                                 className="script-editor"
                                 style={{ minHeight: 160 }}
                                 value={configText}
                                 onChange={(e) => {
-                                  setConfigText(e.target.value);
-                                  setConfigDirty(true);
+                                  liveDraft.edit(e.target.value);
                                 }}
                                 aria-label="Processing configuration JSON"
                               />
@@ -1530,7 +1546,7 @@ export default function App() {
                                   <input
                                     type="checkbox"
                                     checked={procEnabled}
-                                    onChange={(e) => setProcEnabled(e.target.checked)}
+                                    onChange={(e) => quickDraft.edit(JSON.stringify({enabled:e.target.checked,factor:pixelToMicron}))}
                                   />{" "}
                                   realtime processing
                                 </label>
@@ -1542,7 +1558,7 @@ export default function App() {
                                     type="text"
                                     style={{ width: 70 }}
                                     value={pixelToMicron}
-                                    onChange={(e) => setPixelToMicron(e.target.value)}
+                                    onChange={(e) => quickDraft.edit(JSON.stringify({enabled:procEnabled,factor:e.target.value}))}
                                   />
                                 </label>
                                 <button className="btn" onClick={onApplyProcessing} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>

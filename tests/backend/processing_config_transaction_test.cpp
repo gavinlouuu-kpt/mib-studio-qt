@@ -13,6 +13,27 @@ int main() {
     backend::AppBackend backend;
     backend::bridge::BackendFacade facade(backend);
     MIB_REQUIRE(facade.initialize(temp.path().string()), "initialize backend");
+    // Regression: the live JSON editor used to ignore enabled and mutate
+    // processing before discovering an invalid later calibration field.
+    backend.processing().setRealtimeEnabled(true);
+    backend::bridge::ProcessingSettingsCommand live;
+    live.configJson = R"({"realtime_processing":{"enabled":false}})";
+    MIB_EXPECT(facade.dispatch(live).ok && !backend.processing().isRealtimeEnabled(),
+               "live JSON honors realtime enabled");
+    const auto before = backend.processing().getProcessingConfig().area_threshold_min;
+    live.configJson =
+        R"({"image_processing":{"area_threshold_min":12345},"pixel_to_micron":"invalid"})";
+    bool threw = false;
+    bool accepted = false;
+    try {
+        accepted = facade.dispatch(live).ok;
+    } catch (...) {
+        threw = true;
+    }
+    MIB_EXPECT(!threw && !accepted,
+               "malformed full document returns rejection rather than throwing");
+    MIB_EXPECT(backend.processing().getProcessingConfig().area_threshold_min == before,
+               "late validation error leaves all processing settings unchanged");
     backend.setLastConfigJson(R"({"camera":{"identity":"actual-camera"},"roi":{"x":17}})");
     const auto path = (temp / "config.json").string();
     std::ofstream(path)

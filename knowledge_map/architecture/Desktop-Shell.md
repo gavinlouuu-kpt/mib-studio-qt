@@ -427,3 +427,7 @@ deriving native Debian dependencies with `dpkg-shlibdeps` (including OpenCV/HDF5
 not just GTK/WebKit). Use `--debug` for development verification; release packaging
 requires the release binary. Build on each supported target distro; a local package
 is not evidence of Windows/macOS delivery or signed automatic update acceptance.
+Live processing config refreshes preserve dirty drafts and detect changed runtime state;
+explicit reload cannot overwrite edits entered during a pending fetch. JSON submissions
+validate all fields before mutation and reject stale config_version snapshots. Profile
+selection provenance includes display_fps, which controls the live frame request cadence.

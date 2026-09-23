@@ -2279,3 +2279,9 @@ provenance. See the catch-up execution plan for verified vs pending gates.
   restore and bundled recovery reuse the shared cache/loader/signature verifiers. Qt now
   shares the compiled trust-policy wrapper. Read-only app release checks are available;
   Tauri package publication and installer/rollback remain explicit release gates.
+
+- 2026-09-23: Live configuration now validates the entire JSON/typed candidate before
+  mutating processing state, honors realtime enabled/drop flags, and rejects stale
+  config_version snapshots. Background refresh preserves edited JSON and quick-control
+  drafts; positive finite calibration is required. Profile display_fps now paces live
+  preview requests. Auto-background status reflects runtime config and routes to editing.

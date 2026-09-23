@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { ProfileCatalogPanel, useProfileCatalog } from "./profileCatalog";
 import { configDocument } from "./configDocument";
-export interface Profile { name:string; path:string; revision:string; document_json?:string; script?:string|null; profile_id?:string }
+export interface Profile { name:string; path:string; revision:string; document_json?:string; script?:string|null; profile_id?:string;display_fps?:number }
 export interface ProfileReply { ok:boolean; error?:string; profiles?:Profile[]; profile?:Profile; destination?:string; warnings?:string[]; applied?:boolean; message?:string; display_fps?:number; profile_id?:string; active_profile?:Profile|null; selection?:Profile|null; restored?:boolean }
 export const profileCommand = (base:string, request:object) => invoke<ProfileReply>("profile_command",{base,request:JSON.stringify(request)});
 export function useProfiles({ready,active,append,onOpen,onApplied}:{ready:boolean;active:boolean;append:(s:string)=>void;onOpen:(path:string)=>Promise<void>;onApplied?:()=>Promise<void>}) {

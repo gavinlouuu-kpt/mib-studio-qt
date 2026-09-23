@@ -733,111 +733,157 @@ namespace backend::bridge
         return {false, BackendCommandType::Recording, "Unknown recording command"};
     }
 
-    BackendCommandResult BackendFacade::handleProcessingSettingsCommand(const ProcessingSettingsCommand &command)
-    {
+    BackendCommandResult
+    BackendFacade::handleProcessingSettingsCommand(const ProcessingSettingsCommand& command) {
         BackendCommandResult result{false, BackendCommandType::ProcessingSettings, "Processing settings are locked during an experiment"};
         backend_.experiment().withIdleConfiguration([&] {
             result = [&]() -> BackendCommandResult {
 
-        auto &processing = backend_.processing();
-        if (command.configJson)
-        {
-            // Merge-apply (BE-3): parse against the current config so absent
-            // keys keep their values; a malformed document fails the whole
-            // command without touching state.
-            nlohmann::json doc;
-            try
-            {
-                doc = nlohmann::json::parse(*command.configJson);
-            }
-            catch (const nlohmann::json::exception &e)
-            {
-                const std::string message = std::string("Invalid config JSON: ") + e.what();
-                emitEvent(BackendErrorEvent{BackendErrorSource::ConfigCore,
-                                            BackendCommandType::ProcessingSettings, message});
-                return {false, BackendCommandType::ProcessingSettings, message};
-            }
-
-            services::ProcessingConfig merged = processing.getProcessingConfig();
-            std::string error;
-            const auto image = doc.contains("image_processing") ? doc["image_processing"] : doc;
-            if (!processing::config_json::fromJson(image, merged, &error))
-            {
-                emitEvent(BackendErrorEvent{BackendErrorSource::ConfigCore,
-                                            BackendCommandType::ProcessingSettings, error});
-                return {false, BackendCommandType::ProcessingSettings, error};
-            }
-            processing.setProcessingConfig(merged);
-
-            if (const auto rt = doc.find("realtime_processing"); rt != doc.end())
-            {
-                if (const auto mode = rt->find("mode"); mode != rt->end() && mode->is_string())
-                {
-                    processing.setRealtimeProcessingMode(
-                        mode->get<std::string>() == "async_batch"
-                            ? services::ProcessingService::RealtimeProcessingMode::AsyncBatch
-                            : services::ProcessingService::RealtimeProcessingMode::Inline);
+        auto& processing = backend_.processing();
+        auto merged = processing.getProcessingConfig();
+        auto mode = processing.getRealtimeProcessingMode();
+        auto batch = processing.getRealtimeBatchSettings();
+        auto roi = processing.getRealtimeRoi();
+        bool enabled = processing.isRealtimeEnabled(), drop = processing.getRealtimeDropFrames();
+        double factor = processing.getPixelToMicronFactor();
+        size_t flush = processing.getFlushInterval();
+        bool touchesImage = command.config.has_value(), touchesRoi = command.roi.has_value();
+        std::string provenance;
+        try {
+            const auto integer = [](const nlohmann::json& value, const char* name, int low,
+                                    int high) {
+                if (!value.is_number_integer())
+                    throw std::runtime_error(std::string("Expected integer: ") + name);
+                const auto number = value.get<double>();
+                if (number < low || number > high)
+                    throw std::runtime_error(std::string("Out of range: ") + name);
+                return static_cast<int>(number);
+            };
+            if (command.configJson) {
+                if (command.configJson->size() > 4 * 1024 * 1024)
+                    throw std::runtime_error("Processing config exceeds 4 MiB");
+                const auto doc = nlohmann::json::parse(*command.configJson);
+                if (!doc.is_object())
+                    throw std::runtime_error("Processing config root must be an object");
+                if (doc.contains("config_version")) {
+                    const auto& revision = doc.at("config_version");
+                    if (!revision.is_number_integer() || revision.get<double>() < 0 ||
+                        revision.get<uint64_t>() != processing.getConfigVersion())
+                        throw std::runtime_error(
+                            "Live configuration changed; reload and reconcile the draft");
                 }
-                auto batch = processing.getRealtimeBatchSettings();
-                if (const auto v = rt->find("batch_size"); v != rt->end())
-                    batch.batchSize = v->get<std::size_t>();
-                if (const auto v = rt->find("max_queued_frames"); v != rt->end())
-                    batch.maxQueuedFrames = v->get<std::size_t>();
-                if (const auto v = rt->find("worker_count"); v != rt->end())
-                    batch.workerCount = v->get<std::size_t>();
-                if (const auto v = rt->find("max_batch_delay_ms"); v != rt->end())
-                    batch.maxBatchDelayMs = v->get<int>();
-                processing.setRealtimeBatchSettings(batch);
-                if (const auto v = rt->find("drop_frames"); v != rt->end())
-                    processing.setRealtimeDropFrames(v->get<bool>());
+                merged = app::validatedProcessingConfig(
+                    nlohmann::json{{"image_processing", doc.contains("image_processing")
+                                                            ? doc.at("image_processing")
+                                                            : doc}}
+                        .dump(),
+                    merged);
+                touchesImage = true;
+                if (doc.contains("realtime_processing")) {
+                    const auto& rt = doc.at("realtime_processing");
+                    if (!rt.is_object())
+                        throw std::runtime_error("realtime_processing must be an object");
+                    if (rt.contains("mode")) {
+                        const auto text = rt.at("mode").get<std::string>();
+                        if (text == "inline")
+                            mode = services::ProcessingService::RealtimeProcessingMode::Inline;
+                        else if (text == "async_batch" || text == "batch" || text == "kin6")
+                            mode = services::ProcessingService::RealtimeProcessingMode::AsyncBatch;
+                        else
+                            throw std::runtime_error("Unknown realtime mode");
+                    }
+                    if (rt.contains("enabled")) enabled = rt.at("enabled").get<bool>();
+                    if (rt.contains("drop_frames")) drop = rt.at("drop_frames").get<bool>();
+                    if (rt.contains("batch_size"))
+                        batch.batchSize = integer(rt.at("batch_size"), "batch_size", 1, 1000000);
+                    if (rt.contains("max_queued_frames"))
+                        batch.maxQueuedFrames =
+                            integer(rt.at("max_queued_frames"), "max_queued_frames", 1, 10000000);
+                    if (rt.contains("worker_count"))
+                        batch.workerCount = integer(rt.at("worker_count"), "worker_count", 1, 256);
+                    if (rt.contains("max_batch_delay_ms"))
+                        batch.maxBatchDelayMs =
+                            integer(rt.at("max_batch_delay_ms"), "max_batch_delay_ms", 1, 60000);
+                }
+                if (doc.contains("flush_interval"))
+                    flush = integer(doc.at("flush_interval"), "flush_interval", 1, 10000000);
+                if (doc.contains("pixel_to_micron"))
+                    factor = doc.at("pixel_to_micron").get<double>();
+                if (doc.contains("roi")) {
+                    const auto& r = doc.at("roi");
+                    if (!r.is_object()) throw std::runtime_error("roi must be an object");
+                    roi = {integer(r.value("x", nlohmann::json(0)), "roi.x", 0, 1000000),
+                           integer(r.value("y", nlohmann::json(0)), "roi.y", 0, 1000000),
+                           integer(r.value("w", nlohmann::json(0)), "roi.w", 0, 1000000),
+                           integer(r.value("h", nlohmann::json(0)), "roi.h", 0, 1000000)};
+                    touchesRoi = true;
+                }
             }
-            if (const auto v = doc.find("flush_interval"); v != doc.end())
-                processing.setFlushInterval(v->get<std::size_t>());
-            if (const auto v = doc.find("pixel_to_micron"); v != doc.end())
-                processing.setPixelToMicronFactor(v->get<double>());
-            if (const auto roi = doc.find("roi"); roi != doc.end() && roi->is_object())
-            {
-                services::ProcessingService::Roi r{};
-                r.x = roi->value("x", 0);
-                r.y = roi->value("y", 0);
-                r.w = roi->value("w", 0);
-                r.h = roi->value("h", 0);
-                processing.setRealtimeRoi(r);
-            }
+            if (command.config)
+                merged = app::validatedProcessingConfig(
+                    nlohmann::json{
+                        {"image_processing", processing::config_json::toJson(*command.config)}}
+                        .dump(),
+                    merged);
+            if (command.roi) roi = *command.roi;
+            if (command.realtimeEnabled) enabled = *command.realtimeEnabled;
+            if (command.realtimeDropFrames) drop = *command.realtimeDropFrames;
+            if (command.realtimeProcessingMode) mode = *command.realtimeProcessingMode;
+            if (command.realtimeBatchSettings) batch = *command.realtimeBatchSettings;
+            if (command.pixelToMicronFactor) factor = *command.pixelToMicronFactor;
+            if (command.flushInterval) flush = *command.flushInterval;
+            if (!std::isfinite(factor) || factor <= 0 || factor > 1e12)
+                throw std::runtime_error("pixel_to_micron must be finite and positive");
+            if (!flush || flush > 10000000) throw std::runtime_error("Invalid flush interval");
+            if (!batch.batchSize || batch.batchSize > 1000000 ||
+                batch.maxQueuedFrames < batch.batchSize || batch.maxQueuedFrames > 10000000 ||
+                !batch.workerCount || batch.workerCount > 256 || batch.maxBatchDelayMs < 1 ||
+                batch.maxBatchDelayMs > 60000)
+                throw std::runtime_error("Invalid realtime batch settings");
+            if (roi.x < 0 || roi.y < 0 || roi.w < 0 || roi.h < 0 || roi.x > 1000000 ||
+                roi.y > 1000000 || roi.w > 1000000 || roi.h > 1000000 ||
+                (roi.w == 0) != (roi.h == 0))
+                throw std::runtime_error("Invalid ROI geometry");
+            if (mode != services::ProcessingService::RealtimeProcessingMode::Inline &&
+                mode != services::ProcessingService::RealtimeProcessingMode::AsyncBatch)
+                throw std::runtime_error("Invalid realtime mode");
+            auto runtime = nlohmann::json::parse(
+                backend_.getLastConfigJson().empty() ? "{}" : backend_.getLastConfigJson());
+            if (!runtime.is_object())
+                throw std::runtime_error(
+                    "Current runtime configuration provenance must be an object");
+            runtime["image_processing"] = processing::config_json::toJson(merged);
+            runtime["pixel_to_micron_factor"] = factor;
+            runtime["buffer_threshold"] = flush;
+            runtime["realtime_processing"] = {
+                {"enabled", enabled},
+                {"drop_frames", drop},
+                {"mode", mode == services::ProcessingService::RealtimeProcessingMode::Inline
+                             ? "inline"
+                             : "async_batch"},
+                {"batch_size", batch.batchSize},
+                {"max_queued_frames", batch.maxQueuedFrames},
+                {"worker_count", batch.workerCount},
+                {"max_batch_delay_ms", batch.maxBatchDelayMs}};
+            runtime["roi"] = {{"x", roi.x}, {"y", roi.y}, {"w", roi.w}, {"h", roi.h}};
+            provenance = runtime.dump();
+        } catch (const std::exception& e) {
+            const std::string message =
+                std::string("Invalid processing configuration: ") + e.what();
+            emitEvent(BackendErrorEvent{BackendErrorSource::ConfigCore,
+                                        BackendCommandType::ProcessingSettings, message});
+            return {false, BackendCommandType::ProcessingSettings, message};
         }
-        if (command.config)
-        {
-            processing.setProcessingConfig(*command.config);
-        }
-        if (command.roi)
-        {
-            processing.setRealtimeRoi(*command.roi);
-        }
-        if (command.realtimeEnabled)
-        {
-            processing.setRealtimeEnabled(*command.realtimeEnabled);
-
-        }
-        if (command.realtimeDropFrames)
-        {
-            processing.setRealtimeDropFrames(*command.realtimeDropFrames);
-        }
-        if (command.realtimeProcessingMode)
-        {
-            processing.setRealtimeProcessingMode(*command.realtimeProcessingMode);
-        }
-        if (command.realtimeBatchSettings)
-        {
-            processing.setRealtimeBatchSettings(*command.realtimeBatchSettings);
-        }
-        if (command.pixelToMicronFactor)
-        {
-            processing.setPixelToMicronFactor(*command.pixelToMicronFactor);
-        }
-        if (command.flushInterval)
-        {
-            processing.setFlushInterval(*command.flushInterval);
-        }
+        // No setter is reached until the entire JSON and typed candidate is valid.
+        if (touchesImage) processing.setProcessingConfig(merged);
+        if (touchesRoi) processing.setRealtimeRoi(roi);
+        processing.setRealtimeBatchSettings(batch);
+        processing.setRealtimeProcessingMode(mode);
+        processing.setRealtimeEnabled(enabled);
+        processing.setRealtimeDropFrames(drop);
+        processing.setPixelToMicronFactor(factor);
+        processing.setFlushInterval(flush);
+        backend_.setLastConfigJson(provenance);
 
         if (processing.isRealtimeEnabled()) processing.startRealtime(backend_.getFrameStore());
         else processing.stopRealtime();

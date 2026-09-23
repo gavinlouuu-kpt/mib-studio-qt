@@ -143,11 +143,15 @@ J apply(AppBackend& backend, const J& snapshot) {
                              processing.getMaxBufferedBytes() / (1024.0 * 1024.0), 0, 1048576);
     const double factor =
         number(root, "pixel_to_micron_factor", processing.getPixelToMicronFactor(), 1e-12, 1e12);
+    bool realtimeEnabled = processing.isRealtimeEnabled(),
+         dropFrames = processing.getRealtimeDropFrames();
     auto batch = processing.getRealtimeBatchSettings();
     auto mode = processing.getRealtimeProcessingMode();
     if (root.contains("realtime_processing")) {
         const auto& rp = root.at("realtime_processing");
         if (!rp.is_object()) throw std::runtime_error("realtime_processing must be an object");
+        if (rp.contains("enabled")) realtimeEnabled = rp.at("enabled").get<bool>();
+        if (rp.contains("drop_frames")) dropFrames = rp.at("drop_frames").get<bool>();
         batch.batchSize = integer(rp, "batch_size", batch.batchSize, 1, 1000000);
         batch.maxQueuedFrames =
             integer(rp, "max_queued_frames", batch.maxQueuedFrames, 1, 10000000);
@@ -226,6 +230,8 @@ J apply(AppBackend& backend, const J& snapshot) {
     provenance["experiment_buffer_max_mb"] = mb;
     provenance["pixel_to_micron_factor"] = factor;
     provenance["realtime_processing"] = {
+        {"enabled", realtimeEnabled},
+        {"drop_frames", dropFrames},
         {"mode", mode == services::ProcessingService::RealtimeProcessingMode::Inline
                      ? "inline"
                      : "async_batch"},
@@ -249,15 +255,18 @@ J apply(AppBackend& backend, const J& snapshot) {
     provenance["profile_selection"] = {{"name", snapshot.at("name")},
                                        {"path", snapshot.at("path")},
                                        {"revision", snapshot.at("revision")},
-                                       {"profile_id", snapshot.at("profile_id")}};
+                                       {"profile_id", snapshot.at("profile_id")},
+                                       {"display_fps", fps}};
     const auto provenanceBytes = provenance.dump();
     // Every field is parsed/validated before mutation. Running realtime is refused,
     // so setters cannot restart worker threads. No hardware actuation is issued.
     processing.setProcessingConfig(config);
     processing.setFlushInterval(flush);
     processing.setMaxBufferedBytes(static_cast<uint64_t>(mb * 1024.0 * 1024.0));
+    processing.setRealtimeDropFrames(dropFrames);
     processing.setRealtimeBatchSettings(batch);
     processing.setRealtimeProcessingMode(mode);
+    processing.setRealtimeEnabled(realtimeEnabled);
     processing.setPixelToMicronFactor(factor);
     processing.setRealtimeRoi(roi);
     backend.capture().setConfig(capture);
