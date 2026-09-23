@@ -26,6 +26,7 @@ project file or its link line cannot be found.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -37,6 +38,13 @@ REFERENCE_PROJECT = "tests/mib_backend_smoke_test.vcxproj"
 # OpenCV, spdlog, Qt Core, ...) that the bridge shim needs to compile the
 # backend's public headers; the test project only sees the public subset.
 LIBRARY_PROJECT = "src/backend/mib_backend.vcxproj"
+
+
+def xml_list(text: str) -> list[str]:
+    # Entity terminators are not MSBuild list separators. Decode before
+    # splitting, otherwise &quot; corrupts /D macros and &amp; corrupts paths.
+    return [value.strip() for value in html.unescape(text).split(";")
+            if value.strip() and not value.strip().startswith("%")]
 
 
 def main() -> int:
@@ -67,7 +75,7 @@ def main() -> int:
         m = re.search(rf"<{tag}>(.*?)</{tag}>", seg, re.S)
         if not m:
             return []
-        return [x.strip() for x in m.group(1).split(";") if x.strip() and not x.strip().startswith("%")]
+        return xml_list(m.group(1))
 
     project_dir = project.parent
     lib_dirs: list[str] = []
@@ -93,7 +101,7 @@ def main() -> int:
     def compile_settings(seg_text: str, base: Path):
         def its(tag):
             m = re.search(rf"<{tag}>(.*?)</{tag}>", seg_text, re.S)
-            return [x.strip() for x in m.group(1).split(";") if m and x.strip() and not x.strip().startswith("%")] if m else []
+            return xml_list(m.group(1)) if m else []
         incs = []
         for d in its("AdditionalIncludeDirectories") + its("ExternalIncludeDirectories"):
             pp = Path(d)
@@ -123,7 +131,7 @@ def main() -> int:
         for cond, body in re.findall(r'<AdditionalIncludeDirectories(?: Condition="([^"]*)")?>(.*?)</AdditionalIncludeDirectories>', lib_text, re.S):
             if cond and args.config not in cond:
                 continue
-            for d in body.split(";"):
+            for d in xml_list(body):
                 d = d.strip()
                 if not d or d.startswith("%"):
                     continue

@@ -315,3 +315,7 @@ u64 identities before drawing. It reports unavailable snapshots without stale by
 Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.
 
 Pump connections accept system serial names (including Linux paths), reusing the existing shared SerialBus string transport. Status exposes the actual port name; legacy Qt config edits preserve connected transport identity. Two pumps can share a bus at distinct slave addresses, while duplicate pump/pulse slave identities and autofocus port collisions are refused before connection writes. Legacy numeric COM bridge calls remain supported. Native fake-serial tests cover named endpoint roundtrip and shared-bus identity guards; real hardware acceptance remains deferred.
+
+### Windows manifest XML decoding
+
+The VS link-manifest reader decodes XML entities before splitting MSBuild semicolon lists, including per-source include paths. This preserves quoted version/signer macros and ampersands in dependency paths instead of turning entity terminators into invalid linker/compiler arguments. Portable CLI regression: `python3 tools/test_gen_bridge_link_manifest.py` exercises dependency paths, compile macros, inherited-list filtering and Release-only include selection without requiring Windows.
