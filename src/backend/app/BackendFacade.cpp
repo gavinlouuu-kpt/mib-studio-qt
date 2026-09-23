@@ -2749,6 +2749,7 @@ std::vector<std::uint8_t> BackendFacade::fetchProcessedPreviewPacket() const {
             remaining -= contour.size();
             contours.push_back(std::move(points));
         }
+        const auto currentCapture = backend_.capture().lifecycleSnapshot();
         meta = {{"valid", true},
                 {"image_bytes", pixels.total()},
                 {"mask_bytes", mask.total()},
@@ -2761,6 +2762,10 @@ std::vector<std::uint8_t> BackendFacade::fetchProcessedPreviewPacket() const {
                 {"host_timestamp_us", std::to_string(snap.hostTimestampUs)},
                 {"processing_session", std::to_string(snap.processingSession)},
                 {"store_generation", std::to_string(snap.storeGeneration)},
+                {"capture_session", std::to_string(snap.captureSession)},
+                {"capture_stale",
+                 snap.captureSession != 0 && (snap.captureSession != currentCapture.generation ||
+                                              !currentCapture.isActive())},
                 {"recipe_sha256", snap.recipeSha256},
                 {"recipe_scope", "processing_parameters_roi_background"},
                 {"roi", {snap.roi.x, snap.roi.y, snap.roi.w, snap.roi.h}},

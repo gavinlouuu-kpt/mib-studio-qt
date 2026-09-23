@@ -496,6 +496,7 @@ bool ProcessingService::getLatestSnapshot(RealtimeSnapshot& out) {
     out.hostTimestampUs = snap->hostTimestampUs;
     out.processingSession = snap->processingSession;
     out.storeGeneration = snap->storeGeneration;
+    out.captureSession = snap->captureSession;
     out.recipeSha256 = snap->recipeSha256;
     out.roi = snap->roi;
     out.primaryBounds = snap->primaryBounds;
@@ -1455,7 +1456,7 @@ void ProcessingService::stopBatchPipeline() {
 
 bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index,
                                           uint64_t timestampNs, uint64_t hostTimestampUs,
-                                          uint64_t storeGeneration) {
+                                          uint64_t storeGeneration, uint64_t captureSession) {
     if (!batchRunning_.load(std::memory_order_acquire) || grayImage.empty()) {
         return false;
     }
@@ -1489,8 +1490,8 @@ bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t ind
             return false;
         }
 
-        batchQueue_.push(QueuedBatchFrame{storeGeneration, std::move(gray), index, timestampNs,
-                                          hostTimestampUs});
+        batchQueue_.push(QueuedBatchFrame{storeGeneration, captureSession, std::move(gray), index,
+                                          timestampNs, hostTimestampUs});
         batchQueueBytes_.add(frameBytes, 1);
         batchFramesAccepted_.fetch_add(1, std::memory_order_relaxed);
 
@@ -1519,7 +1520,7 @@ bool ProcessingService::enqueueBatchFrame(const backend::playback::Frame& frame,
         return false;
     }
     return enqueueBatchFrame(gray, index, frame.timestamp, frame.hostTimestampUs,
-                             frame.storeGeneration);
+                             frame.storeGeneration, frame.captureSession);
 }
 
 ProcessingService::BatchPipelineStats ProcessingService::getBatchPipelineStats() const {
@@ -1601,6 +1602,7 @@ void ProcessingService::batchWorkerLoop() {
                                           config.roi, item.index, item.timestampNs);
                 base.hostTimestampUs = item.hostTimestampUs;
                 base.previewStoreGeneration = item.storeGeneration;
+                base.previewCaptureSession = item.captureSession;
                 base.previewRecipeSha256 = config.previewRecipeSha256;
                 base.previewRoi = cv::Rect(config.roi.x, config.roi.y, config.roi.w, config.roi.h);
                 if (base.originalImage.empty() || base.processedImage.empty()) {
@@ -1639,6 +1641,7 @@ void ProcessingService::batchWorkerLoop() {
                     objectFrame.timestampNs = base.timestampNs;
                     objectFrame.hostTimestampUs = base.hostTimestampUs;
                     objectFrame.previewStoreGeneration = base.previewStoreGeneration;
+                    objectFrame.previewCaptureSession = base.previewCaptureSession;
                     objectFrame.previewRecipeSha256 = base.previewRecipeSha256;
                     objectFrame.previewRoi = cvRoi;
                     objectFrame.originalImage = base.originalImage;   // shared, read-only (issue #370)
@@ -2180,6 +2183,7 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
         newSnap->hostTimestampUs = frame.hostTimestampUs;
         newSnap->processingSession = processingSession_.load();
         newSnap->storeGeneration = frame.previewStoreGeneration;
+        newSnap->captureSession = frame.previewCaptureSession;
         newSnap->recipeSha256 = frame.previewRecipeSha256;
         newSnap->roi = {frame.previewRoi.x, frame.previewRoi.y, frame.previewRoi.width,
                         frame.previewRoi.height};
@@ -3084,6 +3088,7 @@ void ProcessingService::realtimeInlineLoop() {
                     newSnap->hostTimestampUs = f.hostTimestampUs;
                     newSnap->processingSession = processingSession_.load();
                     newSnap->storeGeneration = f.storeGeneration;
+                    newSnap->captureSession = f.captureSession;
                     newSnap->recipeSha256 = rtCachedRecipe;
                     newSnap->roi = roi;
                     newSnap->mask = std::move(fullMaskSnapshot);
@@ -3422,6 +3427,7 @@ void ProcessingService::realtimeInlineLoop() {
                     newSnap->hostTimestampUs = f.hostTimestampUs;
                     newSnap->processingSession = processingSession_.load();
                     newSnap->storeGeneration = f.storeGeneration;
+                    newSnap->captureSession = f.captureSession;
                     newSnap->recipeSha256 = rtCachedRecipe;
                     newSnap->roi = roi;
                     newSnap->mask = mask; // shallow refcount share (mask not modified after this)
@@ -3964,6 +3970,7 @@ void ProcessingService::realtimeInlineLoop() {
                     newSnap->hostTimestampUs = f.hostTimestampUs;
                     newSnap->processingSession = processingSession_.load();
                     newSnap->storeGeneration = f.storeGeneration;
+                    newSnap->captureSession = f.captureSession;
                     newSnap->recipeSha256 = rtCachedRecipe;
                     newSnap->roi = roi;
                     newSnap->mask = mask; // shallow refcount share (mask not modified after this)

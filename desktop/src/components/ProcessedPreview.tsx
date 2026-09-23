@@ -42,7 +42,8 @@ export function ProcessedPreview({ready, active = true}: {ready: boolean; active
     <label><input type="checkbox" checked={contours} onChange={e => setContours(e.target.checked)} />Contours</label>
     {error && <p role="alert">{error}</p>}
     {!meta && <p>Waiting for a processed frame with retained source pixels.</p>}
-    {meta && <p>Session {meta.processing_session} / store {meta.store_generation} / frame {meta.frame_index} · primary object {meta.primary_object_target ? 'TARGET' : meta.primary_object_valid ? 'valid' : 'invalid'}{meta.contours_truncated ? ' · contour display truncated' : ''}<br />Recipe {meta.recipe_sha256}</p>}
+    {meta?.capture_stale && <p role="status">Retained frame from a stopped or previous capture session.</p>}
+    {meta && <p>Capture {meta.capture_session} / processing {meta.processing_session} / store {meta.store_generation} / frame {meta.frame_index} · primary object {meta.primary_object_target ? 'TARGET' : meta.primary_object_valid ? 'valid' : 'invalid'}{meta.contours_truncated ? ' · contour display truncated' : ''}<br />Recipe {meta.recipe_sha256}</p>}
     <canvas ref={canvas} style={{maxWidth: '100%', imageRendering: 'pixelated'}} />
   </fieldset>;
 }

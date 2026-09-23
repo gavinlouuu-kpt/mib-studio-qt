@@ -97,7 +97,7 @@ struct FilterResult {
 // refcount and never clones merely for lifetime (issue #370).
 struct ProcessedFrame {
     // Host-only preview provenance, not ProcessingCoreAbi or persisted HDF schema.
-    uint64_t previewStoreGeneration{0};
+    uint64_t previewStoreGeneration{0}, previewCaptureSession{0};
     std::string previewRecipeSha256;
     cv::Rect previewRoi;
     uint64_t index{0};

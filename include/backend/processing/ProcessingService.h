@@ -66,7 +66,7 @@ public:
         std::shared_ptr<const backend::playback::Frame>
             sourceFrame; // owns ROI fast-path pixels without another copy
         uint64_t sourceTimestamp{0}, hostTimestampUs{0};
-        uint64_t processingSession{0}, storeGeneration{0};
+        uint64_t processingSession{0}, storeGeneration{0}, captureSession{0};
         std::string recipeSha256;
         cv::Rect2d primaryBounds;
         Roi roi;
@@ -472,7 +472,7 @@ public:
     bool startBatchPipeline(BatchPipelineConfig config, BatchResultCallback callback);
     void stopBatchPipeline();
     bool enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs = 0,
-                           uint64_t hostTimestampUs = 0, uint64_t storeGeneration = 0);
+                           uint64_t hostTimestampUs = 0, uint64_t storeGeneration = 0, uint64_t captureSession = 0);
     bool enqueueBatchFrame(const backend::playback::Frame& frame, uint64_t index);
     BatchPipelineStats getBatchPipelineStats() const;
 
@@ -499,7 +499,7 @@ private:
     };
 
     struct QueuedBatchFrame {
-        uint64_t storeGeneration{0};
+        uint64_t storeGeneration{0}, captureSession{0};
         cv::Mat gray;
         uint64_t index{0};
         uint64_t timestampNs{0};

@@ -62,7 +62,7 @@ int main() {
             cv::circle(image, {32, 32}, 12, cv::Scalar(220), -1);
             image.at<std::uint8_t>(0, 0) = static_cast<std::uint8_t>(index % 10);
             store->pushFrame(image.data, image.total(), 64, 64, 64, 0x01080001, 1000 + index,
-                             2000 + index);
+                             2000 + index, 9007199254740993ULL);
         };
         std::vector<std::uint8_t> frozen;
         nlohmann::json first;
@@ -75,6 +75,10 @@ int main() {
             if (first.at("valid").get<bool>()) break;
         }
         MIB_REQUIRE(first.at("valid").get<bool>(), "processed packet arrives");
+        MIB_EXPECT(first.at("capture_session") == "9007199254740993",
+                   "original capture generation survives inline and async processing exactly");
+        MIB_EXPECT(first.at("capture_stale").get<bool>(),
+                   "retained frame not falsely attributed to current capture session");
         const auto index = std::stoull(first.at("frame_index").get<std::string>());
         MIB_EXPECT(frozen[offset] == index % 10, "pixels match same source index");
         MIB_EXPECT(first.at("source_timestamp") == std::to_string(1000 + index),

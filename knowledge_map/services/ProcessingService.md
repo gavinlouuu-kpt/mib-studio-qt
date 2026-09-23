@@ -548,3 +548,5 @@ ProcessedFrame metadata, including on runtime config refresh. This identity is *
 claimed to be complete calibration/LUT/core/run provenance. ProcessingCoreAbi layout and
 persisted HDF5 schemas are unchanged. Primary-target bounds describe only the selected
 snapshot object; contours may include other objects and are not all labelled targets.
+
+Processed preview capture-session identity is copied from the immutable input frame through inline and async batch host metadata, independently of processing-session/store epochs. It is never sampled from a newer live capture session; the UI labels both generations. Portable core ABI and recorded HDF5 layout are unchanged.
