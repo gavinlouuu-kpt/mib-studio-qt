@@ -40,12 +40,12 @@ analysis pipeline in TypeScript/Rust.
 
 ## Integrated software evidence (2026-09-23)
 
-Published through `5f3ecda` on `dev/react-tauri` / draft PR450; subsequent review
+Published through `e107689` on `dev/react-tauri` / draft PR450; subsequent review
 fixes continue as small commits. Keep Qt until remaining software/release gates
 and the separately deferred hardware acceptance are satisfied.
 
-- 256 frontend tests and production build passed at the latest integrated batch.
-- 23 Rust/Tauri native tests, 12 targeted backend tests and 21 targeted TSan
+- 258 frontend tests and production build passed at the latest integrated batch.
+- 25 Rust/Tauri native tests, 12 targeted backend tests and 21 targeted TSan
   tests passed (including source identity, config faults, export, profile/core,
   startup policy, serial fake bus and capture/FrameStore stress).
 - Full SDK-free non-network/non-hardware CTest sweep: 114 passed and one optional
@@ -58,8 +58,9 @@ and the separately deferred hardware acceptance are satisfied.
   refused active-run Exit, complete webview reload preserving the same run,
   finalization/conserved nonzero persistence, HDF reopen, shared export, mask regeneration with unchanged source digest, regenerated
   output reopen/core identity, close review and successful idle Exit. Export asserts the exact chosen destination.
-  No backend mocks. Hosted picker failure was reproduced and fixed in the harness;
-  hosted rerun pending.
+  No backend mocks. Hosted picker and smoke-process cleanup failures were reproduced
+  and fixed. Desktop CI passed at `e107689` (run 35826548498), including native
+  workflow and extracted-package replay. Backend and Bridge CI passed too.
 - Linux debug and optimized release `.deb` built with derived native dependencies.
   The optimized release passed capture/reload/finalize/reopen/export/reanalysis/
   regenerated-output-reopen/exit outside the repository and loaded bundled LUT.
@@ -88,10 +89,14 @@ and the separately deferred hardware acceptance are satisfied.
   failed output/accounting.
 - Application installers require canonical platform-specific Tauri manifests,
   streamed SHA256 verification, expiry/refetch checks and explicit idle-state launch.
+  Version comparisons use the installed Tauri package, not the independent native
+  core compatibility version. Staging is capped at 4 GiB; explicit guarded cleanup
+  preserves unrelated files and reports locked packages without launching anything.
 
 ## Remaining completion work
 
-- Hosted CI and Windows candidate result. Combined local checks and optimized
+- Windows candidate result (MSVC byte-exact resource regression passed; build
+  remains in progress). Combined local checks and optimized
   Linux package replay pass. Verified explicit installer launch is implemented and fixture-tested;
   a platform-specific Tauri feed and real installer acceptance remain release gates.
   Existing Qt installer feeds are rejected. No release/feed was published.
