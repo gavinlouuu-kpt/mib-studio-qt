@@ -2,18 +2,21 @@
 
 ## Verdict and scope
 
-**Continue migration; do not remove Qt yet.** The reusable backend and transport
-are substantially implemented, but operator workflow parity, several public
-contracts, native workflow acceptance and release delivery remain incomplete.
-This is a source/CI assessment, not hardware or native-webview acceptance.
+**Software parity is now substantially complete; do not remove Qt yet.** The
+operator workflows and public contracts called out in the original assessment
+have since been implemented on `dev/react-tauri` and exercised through the
+native mock workflow. The remaining blockers are delivery evidence (Windows,
+installer/release feed and platform packaging) plus the deliberately deferred
+SDK-equipped and physical hardware acceptance. This document is retained as a
+dated assessment, with the current state recorded below.
 
-Assessed freshly fetched `origin/develop` at `2fe0282`, in an isolated worktree.
-`origin/dev/react-tauri` (`5c7918c`, July 21) is an ancestor, 252 commits behind;
-it is not the correct starting point for renewed implementation. The original
-checkout (`feat/ultra96-direct-ddr`) contains unrelated uncommitted work and
-was preserved. Unmerged feature branches and that dirty work are not included
-in the readiness verdict. Issue #372 defines the newer integration gates;
-the July migration matrix is stale and cannot establish current coverage.
+The original assessment was against freshly fetched `origin/develop` at
+`2fe0282` and correctly found the Tauri branch behind it. The implementation
+continued on `dev/react-tauri`; its current state and evidence are tracked in
+`docs/exec-plans/active/2026-09-23-tauri-replacement.md`. The original checkout
+(`feat/ultra96-direct-ddr`) contains unrelated uncommitted work and remains
+preserved. Issue #372 defines the integration gates; the July migration matrix
+and the gap list below are historical, not current blockers.
 
 ## Implemented foundations
 
@@ -27,76 +30,52 @@ the July migration matrix is stale and cannot establish current coverage.
 - Asynchronous discovery APIs, pump/autofocus command surfaces, platform paths,
   preferences and shell logging. API availability is not UI completion.
 
-## Concrete gaps
+## Historical gaps — closed on `dev/react-tauri`
 
 ### Existing bridge, missing operator controls
 
-`desktop/src/App.tsx` still disables camera-script Reset/Save/Apply/Browse
-(lines 1353–1364 and 1547–1555), although `bridge.ts` exposes
-`applyCameraScript` and `resetHardwareCamera` (lines 456–458).
-Pump connect/configuration/run/purge APIs and autofocus connect/jog/config APIs
-exist (bridge.ts 374–409), but App.tsx has no corresponding action calls;
-status/preflight displays do not replace those controls.
+Camera script/MindVision JSON editing, checked Save As, pump/autofocus controls,
+typed nanopositioner endpoints and pulse-generator controls are now wired with
+guarded operation states. The controls remain disabled only when their current
+backend safety gate is not satisfied.
 
-ROI overlay (1302), preview buffer save/scrub (1452–1458), profile management
-(1480–1485), monitoring charts (1692–1704), Review charts (1812), and review
-Export All/Batch Metrics/Regenerate Masks (1768–1770) remain absent/disabled.
-Some missing workflows need backend expansion as well as UI work. Disabled
-tooltips still say “not bridged” even where bridge methods now exist.
+Preview pause/scrub/save, coherent processed overlays, profiles, full-data
+monitoring/review charts, batch metrics, shared exports, reanalysis and mask
+regeneration are implemented. Native acceptance covers the primary capture →
+finalize → reopen → export path and the packaged Linux reanalysis path.
 
-### Missing or insufficient public contracts
+### Historical contract gaps — closed on `dev/react-tauri`
 
-- **Configuration:** React applies merged processing JSON, not a checked
-  persistent transaction with baseline revision, external-edit conflict,
-  saved/applied/readback outcomes. Profiles and the newer Qt configuration
-  workflow cannot be replaced by the current JSON editor.
-- **Frame identity:** `desktop/src-tauri/src/frame_packet.rs:34` explicitly
-  leaves source/session/config identities zero and timestamp clock/validity
-  unknown. Atomic pixels+metadata is fixed; authoritative overlay/source
-  identity and time semantics are not complete.
-- **Recovery:** experiment terminal status is queryable, but the broader
-  session/watermark snapshot and retained operation outcomes described in
-  handoff gaps G1/G4/G5 are not delivered as a general facade recovery API.
-- **Export:** `BackendFacade.cpp:1393` implements the legacy CSV worker.
-  The reusable `HdfExportService` has no corresponding facade job binding
-  for the full export workflow/progress/cancel/partial-output contract.
-- **New hardware:** autofocus facade Connect still accepts a numeric COM port
-  and calls the legacy connection overload (BackendFacade.cpp:1673), rather
-  than the backend's newer typed nanopositioner Endpoint/vendor contract.
-  Pulse-generator configuration/control is not exposed by bridge.ts. Existing
-  backend illuminated-capture orchestration must be reused, not recreated.
-- **Startup:** tech debt TD-13 records that Tauri does not start the startup
-  discovery coordinator; enabling it needs correct bridge-mutex execution.
+Checked configuration transactions preserve drafts and reject stale revisions;
+frame packets carry acquisition/store epochs and processed previews retain
+source/recipe identity; recovery reconciles retained native state; exports use
+the shared cancellable service; typed hardware and startup discovery paths are
+bridged. These claims are software-tested only until SDK-equipped hardware
+acceptance is run.
 
-### Remaining acceptance and release gates
+## Current remaining acceptance and release gates
 
-- M2 recovery, M3 integrated workspace/drafts/layout, and M4 actual native
-  configure → readiness → start → stop/finalize → reopen → export remain
-  unaccepted in the integration plan. Issue #372 and migration epic #246 are open.
-- Monitoring still toggles with view visibility and uses asynchronous interval
-  polling (App.tsx:370). Backend accounting is separate: this is not evidence
-  that hiding the view loses recordings. Hidden/stalled-view independence and
-  bounded poll ownership still need the specified end-to-end proof.
-- No same-backend, fixed-fixture Qt/Tauri scientific/config/accounting comparison
-  was established by this assessment. Qt bench evidence is not Tauri evidence.
-- The GUI smoke script checks process survival only; it does not click through
-  a production webview workflow or verify resulting HDF5 files.
-- `tauri.conf.json` has `bundle.active: false`; Updates is disabled in App.tsx.
-  Updater manifest/hash helpers exist, but do not establish an installed-app
-  update/rollback workflow. Native platform acceptance and measured cutover
-  performance budgets are still required; the July budget table remains TBD.
+- Windows SDK-free candidate build, smoke and runtime closure are still a
+  hosted result to be confirmed for the current revision.
+- A platform-specific signed Tauri feed, real installer acceptance and rollback
+  evidence remain release gates. No feed or release has been published.
+- SDK-equipped deployment, hardware timing and the full hardware suite remain
+  explicitly deferred; mock, fake-serial and SDK-free checks do not establish
+  those claims.
+- Performance budgets and long-run hardware stability still require the later
+  joint acceptance run.
 
 ## Verification executed
 
 - `npm ci --no-audit --no-fund`: succeeded.
-- `npm test`: **124 passed, 11 files**.
+- `npm test`: **258 passed, 37 files** on the integrated branch.
 - `npm run build`: TypeScript and Vite production build passed.
 - `python3 scripts/gen_bridge_contract.py --check`: passed.
 - `python3 scripts/check_docs.py`: passed before this assessment was added.
-- Latest queried develop Desktop CI: success at `eba55c6`,
-  https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/35576575394
-- Latest queried develop Bridge CI: success at `eba55c6`,
-  https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/35576575381
+- Integrated branch native workflow, packaging and backend/bridge checks are
+  recorded in `docs/exec-plans/active/2026-09-23-tauri-replacement.md` and the
+  draft PR #450. The current `60cd6c8` Desktop CI run is green; the remaining
+  hosted checks are still in progress.
 
 CI is evidence for its exact commit and configured checks, not a newly executed
 native build of `2fe0282`. No hardware was actuated, native GUI launched, or
@@ -104,17 +83,13 @@ full CTest/Cargo suite rerun locally in this assessment.
 
 ## Recommended completion order
 
-1. Use current develop and replace stale parity statements with a tracked
-   inventory: backend service → facade → Rust → Tauri → React → acceptance.
-2. Close configuration transactions, identity/recovery and shared-export
-   contracts; extend typed endpoint/pulse-generator APIs for current hardware.
-3. Wire existing camera/pump/autofocus APIs and finish the required controls,
-   retaining one shared backend implementation and explicit operation states.
-4. Prove the real native mock workflow and failure/close/cancel cases; compare
-   Qt and Tauri on the exact same backend/config/admitted frame fixture.
-5. Complete native platform, layout/resource/performance, packaging and updater
-   acceptance before authorizing Qt removal. Hardware timing acceptance uses
-   oscilloscope measurements, not SDK/UI state alone.
+1. Finish hosted Windows and release-package verification for the integrated
+   branch.
+2. Establish a signed, platform-specific Tauri feed and test installer update
+   and rollback in a disposable environment.
+3. Run the deferred SDK-equipped and physical hardware suite, including timing
+   measurements and long-run stability, then compare against Qt on the same
+   hardware/configuration.
 
 References: [integration issue](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/372),
 [migration epic](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/246),
