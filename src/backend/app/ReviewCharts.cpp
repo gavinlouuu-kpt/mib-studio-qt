@@ -44,6 +44,16 @@ std::vector<uint8_t> BackendFacade::renderReviewOverlayJson(const std::string& t
     return bytes;
 }
 
+std::string BackendFacade::fetchMonitoringChartReferenceJson() const {
+    using nlohmann::json;
+    static const auto payload=[] {
+        json curves=json::array();
+        for(const auto& [modulus,points]:recording::bundledIsoelasticCurves())
+            curves.push_back({{"modulus",modulus},{"points",points}});
+        return json{{"curves",curves},{"curve_source","Bundled scaled_isoelastic_data_6.16-4.24; channel width 30 um, flow rate 0.25, fluid viscosity 4.24"}}.dump();
+    }();
+    return payload;
+}
 std::string BackendFacade::fetchReviewChartsJson() const {
     using nlohmann::json;
     try {

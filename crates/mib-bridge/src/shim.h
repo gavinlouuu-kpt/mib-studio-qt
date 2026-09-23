@@ -115,6 +115,7 @@ public:
     rust::Vec<uint8_t> render_review_overlay(rust::Str json);
     BridgeFrame fetch_review_reanalysis_preview(rust::Str json);
     rust::String fetch_review_charts_json();
+    rust::String fetch_monitoring_chart_reference();
     BridgeCommandResult review_reanalysis_json(rust::Str json);
     rust::String review_reanalysis_status_json();
     BridgeCommandResult review_export_json(rust::Str json);

@@ -89,6 +89,9 @@ struct FilterResult {
     // experiment copies, all reference one allocation instead of duplicating
     // every contour point N times. Null when no contours were extracted.
     std::shared_ptr<const std::vector<std::vector<cv::Point>>> allContours;
+    // Host-only analysis provenance; not ProcessingCoreAbi or persisted HDF schema.
+    // Exact calibration passed to analyzeObjects for this result; 0 = unknown.
+    double analysisPixelToMicronFactor{0.0};
 };
 
 // One analysed frame (or one object of a frame — several ProcessedFrames can

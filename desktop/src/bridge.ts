@@ -285,6 +285,7 @@ export interface MonitoringRow {
   area_ratio: number;
   ring_ratio: number;
   youngs_modulus: number;
+  pixel_to_micron?: number; // exact analysis-time factor; absent/0 = unknown
 }
 
 /** Bounded monitoring snapshot (bridge schema v6, BE-5). Evicted rows are

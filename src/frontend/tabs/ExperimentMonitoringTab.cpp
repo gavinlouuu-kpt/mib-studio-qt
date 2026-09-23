@@ -790,14 +790,13 @@ namespace frontend
         scatterSeries_->clear();
         targetGroupSeries_->clear();
 
-        const double conversionFactor = backend_.processing().getPixelToMicronFactor();
-        const double areaConversionFactor = conversionFactor * conversionFactor;
-
         for (const auto &frame : validFrames)
         {
             if (frame.validation.isValid)
             {
-                double areaMicrons = frame.validation.area * areaConversionFactor;
+                const double factor=frame.validation.analysisPixelToMicronFactor;
+                if(!std::isfinite(factor)||factor<=0)continue; // Unknown historical calibration.
+                double areaMicrons = frame.validation.area * factor * factor;
                 double deform = frame.validation.deformability;
                 if (frame.validation.isTargetGroup) {
                     targetGroupSeries_->append(areaMicrons, deform);

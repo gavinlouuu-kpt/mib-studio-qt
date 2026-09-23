@@ -1,7 +1,7 @@
 import { expect,it } from "vitest";
 import type { MonitoringRow } from "../bridge";
 import { monitoringPlotData } from "./MonitoringCharts";
-const row=(area:number,deformability:number,ring_ratio:number)=>({area,deformability,ring_ratio,valid:true} as MonitoringRow);
+const row=(area:number,deformability:number,ring_ratio:number)=>({area,deformability,ring_ratio,valid:true,pixel_to_micron:1} as MonitoringRow);
 it("bounds chart input and does not fabricate missing measurements",()=>{
   const data=monitoringPlotData(Array.from({length:300},(_,i)=>row(i,1,Number.NaN)));
   expect(data.scatter).toHaveLength(200);expect(data.scatter[0].area).toBe(100);
@@ -22,4 +22,9 @@ it("filters non-finite coordinate pairs independently from histogram samples",()
 it("uses stored modulus only for valid objects and excludes unavailable values",()=>{
  const input=[{...row(100,0.2,3),youngs_modulus:2},{...row(100,0.2,3),youngs_modulus:6},{...row(100,0.2,3),youngs_modulus:100,valid:false},{...row(100,0.2,3),youngs_modulus:0},{...row(100,0.2,3),youngs_modulus:NaN}];
  const data=monitoringPlotData(input);expect(data.modulusRange).toEqual([2,6]);expect(data.modulusCount).toBe(2);expect(data.modulusBins[0]).toBe(1);expect(data.modulusBins[9]).toBe(1);expect(data.scatter.every(r=>r.area===100)).toBe(true);
+});
+
+it("keeps mixed calibration epochs in physical units without using current settings",()=>{
+ const rows=[{...row(100,0.2,2),pixel_to_micron:0.5},{...row(100,0.2,2),pixel_to_micron:2},{...row(100,0.2,2),pixel_to_micron:0}];
+ const data=monitoringPlotData(rows);expect(data.scatter.map(r=>r.area)).toEqual([25,400]);expect(data.uncalibrated).toBe(1);expect(rows[0].area).toBe(100);
 });

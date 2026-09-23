@@ -820,6 +820,7 @@ fn fetch_review_metrics_page(
                 area_ratio: r.area_ratio,
                 ring_ratio: r.ring_ratio,
                 youngs_modulus: r.youngs_modulus,
+                pixel_to_micron: r.pixel_to_micron,
             })
             .collect(),
     })
@@ -856,6 +857,11 @@ fn fetch_review_reanalysis_preview(state: State<AppState>, json: String) -> Resu
     frame_packet::encode(frame, 3).map(Response::new)
 }
 
+#[tauri::command]
+fn fetch_monitoring_chart_reference(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_monitoring_chart_reference())
+}
 #[tauri::command]
 fn fetch_review_charts_json(state: State<AppState>) -> Result<String, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
@@ -1317,6 +1323,7 @@ struct MonitoringRow {
     area_ratio: f64,
     ring_ratio: f64,
     youngs_modulus: f64,
+    pixel_to_micron: f64,
 }
 
 /// Bounded monitoring snapshot for the webview (schema v6, BE-5).
@@ -1396,6 +1403,7 @@ fn fetch_monitoring_snapshot(
                 area_ratio: r.area_ratio,
                 ring_ratio: r.ring_ratio,
                 youngs_modulus: r.youngs_modulus,
+                pixel_to_micron: r.pixel_to_micron,
             })
             .collect(),
     })
@@ -1707,6 +1715,7 @@ pub fn run() {
             review_export_json,
             render_review_overlay,
             fetch_review_charts_json,
+            fetch_monitoring_chart_reference,
             fetch_review_reanalysis_preview,
             review_reanalysis_json,
             review_reanalysis_status_json,

@@ -503,6 +503,7 @@ namespace backend::bridge
         double areaRatio{0.0};
         double ringRatio{0.0};
         double youngsModulus{0.0};
+        double pixelToMicronFactor{0.0};
     };
 
     // Bounded monitoring snapshot (BE-5). Totals/appended counts make ring
@@ -864,6 +865,7 @@ namespace backend::bridge
         std::vector<uint8_t> renderReviewOverlayJson(const std::string& json) const;
         bool fetchReviewReanalysisPreviewJson(const std::string& json,BackendFrame& out) const;
         std::string fetchReviewChartsJson() const;
+        std::string fetchMonitoringChartReferenceJson() const;
         BackendCommandResult submitReviewReanalysisJson(const std::string &json);
         std::string fetchReviewReanalysisStatusJson() const;
 

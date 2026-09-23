@@ -720,6 +720,7 @@ BridgeMonitoringRow toMonitoringRow(const backend::bridge::MonitoringObjectRow& 
     r.area_ratio = row.areaRatio;
     r.ring_ratio = row.ringRatio;
     r.youngs_modulus = row.youngsModulus;
+    r.pixel_to_micron = row.pixelToMicronFactor;
     return r;
 }
 
@@ -1172,6 +1173,7 @@ BridgeFrame BackendBridge::fetch_review_reanalysis_preview(rust::Str json) {
     return toBridgeFrame(frame);
 }
 
+rust::String BackendBridge::fetch_monitoring_chart_reference() {return rust::String(impl_->facade.fetchMonitoringChartReferenceJson());}
 rust::String BackendBridge::fetch_review_charts_json() {return rust::String(impl_->facade.fetchReviewChartsJson());}
 
 BridgeCommandResult BackendBridge::review_reanalysis_json(rust::Str json) {
@@ -1571,6 +1573,7 @@ BridgeMonitoringSnapshot BackendBridge::fetch_monitoring_snapshot(std::uint64_t 
         r.area_ratio = row.areaRatio;
         r.ring_ratio = row.ringRatio;
         r.youngs_modulus = row.youngsModulus;
+    r.pixel_to_micron = row.pixelToMicronFactor;
         out.rows.push_back(std::move(r));
     }
     return out;

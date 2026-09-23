@@ -456,6 +456,7 @@ pub mod ffi {
         pub area_ratio: f64,
         pub ring_ratio: f64,
         pub youngs_modulus: f64,
+        pub pixel_to_micron: f64,
     }
 
     /// Bounded monitoring snapshot (schema v6, BE-5). Evictions are
@@ -707,6 +708,7 @@ pub mod ffi {
         fn render_review_overlay(self: Pin<&mut BackendBridge>, json: &str) -> Vec<u8>;
         fn fetch_review_reanalysis_preview(self: Pin<&mut BackendBridge>, json: &str) -> BridgeFrame;
         fn fetch_review_charts_json(self: Pin<&mut BackendBridge>) -> String;
+        fn fetch_monitoring_chart_reference(self: Pin<&mut BackendBridge>) -> String;
         fn review_reanalysis_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn review_reanalysis_status_json(self: Pin<&mut BackendBridge>) -> String;
         fn review_export_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;

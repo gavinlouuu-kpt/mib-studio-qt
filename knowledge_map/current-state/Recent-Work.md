@@ -2313,3 +2313,9 @@ Added a nonpublishing SDK-free Windows x64 build/test/portable-package lane, sep
 - 2026-09-23: Reload reconciliation rejects active writer handles as review sources.
   Native review metadata now requires an actual loaded review path before inspecting
   shared HDF datasets; shell additionally excludes active raw/experiment writers.
+
+- 2026-09-23: Closed live monitoring calibration gap: shared host object-analysis stamps
+  each result with the exact kernel input factor, retained by inline/batch monitoring.
+  Qt and Tauri now plot mixed historical epochs correctly without current-factor rescaling.
+  Added optional shared bundled isoelastic references with explicit physical conditions;
+  unknown calibration rows remain excluded. Processing-core C ABI/HDF schema unchanged.

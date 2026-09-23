@@ -471,3 +471,10 @@ Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, P
 The close guard also queries native initialization while shell boot/recovery is still
 pending; a temporarily false React `ready` flag cannot bypass protection for an
 existing run. A refused close reveals the log so the reason is visible immediately.
+stored kernel/LUT kPa result (zero means unavailable). The host stamps each FilterResult
+with the exact pixel-to-micron factor passed to kernel object analysis, across inline and
+batch paths. Tauri and Qt live scatter use this per-row factor, never current calibration;
+unknown-factor rows are omitted from calibrated scatter. Tauri also renders valid-object
+ring-ratio and modulus histograms. Optional isoelastic reference curves reuse the bundled
+Qt/review resource and label channel/flow/viscosity conditions, not inferred hardware state.
+The calibration stamp is host-only, not a ProcessingCore C ABI or persisted HDF change.

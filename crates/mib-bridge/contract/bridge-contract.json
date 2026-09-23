@@ -451,5 +451,12 @@
     "trust": "Existing portable cache/loader and shared Qt/Tauri compiled signer policy; selected index must match immutable manifest, ABI/contract/runtime/app bounds; never trust manifest-provided key alone.",
     "persistence": "Atomic selection write in activateProcessingKernel preCommit callback; startup re-verifies signature/hash, failure marks selection unavailable; explicit bundled recovery honors pins."
   },
-  "render_review_overlay": "source_path/valid/index/mode(0..4)/roi -> PNG bytes; independent same-reader image/mask/classification; shared Qt ProcessingOverlay; 64MiB source frame limit"
+  "render_review_overlay": "source_path/valid/index/mode(0..4)/roi -> PNG bytes; independent same-reader image/mask/classification; shared Qt ProcessingOverlay; 64MiB source frame limit",
+  "monitoring_science": {
+    "row_area": "raw px^2",
+    "row_pixel_to_micron": "exact factor passed to analyzeObjects for this row;0=unknown;host-only,not persisted HDF",
+    "row_youngs_modulus": "stored kernel LUT kPa result;zero unavailable",
+    "calibrated_plot": "valid finite rows with known positive analysis-time factor;never rescale old rows by current config",
+    "reference_command": "fetch_monitoring_chart_reference -> JSON curves [{modulus,points}],curve_source;shared bundled review/Qt resource;explicit reference conditions"
+  }
 }

@@ -63,12 +63,14 @@ void runAndCheck(const char* label,
                  bool monitoringOn,
                  size_t* outMonValidCount,
                  size_t* outMonInvalidCount,
-                 size_t* outSnapshots)
+                 size_t* outSnapshots,
+                 PS::RealtimeProcessingMode mode=PS::RealtimeProcessingMode::Inline)
 {
     auto store = std::make_shared<FrameStore>(2000);
     PS proc;
     proc.setProcessingConfig(lenient());
-    proc.setRealtimeProcessingMode(PS::RealtimeProcessingMode::Inline);
+    proc.setRealtimeProcessingMode(mode);
+    proc.setPixelToMicronFactor(0.5);
     proc.setRealtimeDropFrames(true);
     proc.setMonitoringActive(monitoringOn);
     proc.start(1);
@@ -90,6 +92,12 @@ void runAndCheck(const char* label,
     proc.stopRealtime();
     proc.stop();
 
+    // A later calibration change must never relabel already analysed rows.
+    proc.setPixelToMicronFactor(2.0);
+    for(const auto& frame:proc.getMonitoringValidFrames())
+        MIB_EXPECT(frame.validation.analysisPixelToMicronFactor==0.5,"valid monitoring row retains exact analysis-time calibration");
+    for(const auto& frame:proc.getMonitoringInvalidFrames())
+        MIB_EXPECT(frame.validation.analysisPixelToMicronFactor==0.5,"invalid monitoring row retains exact analysis-time calibration");
     // Count what accumulated
     *outMonValidCount   = proc.getMonitoringValidFrames().size();
     *outMonInvalidCount = proc.getMonitoringInvalidFrames().size();
@@ -180,6 +188,18 @@ void testSnapshotReadable() {
 int main() {
     testMonitoringGating();
     testSnapshotReadable();
+    size_t valid=0,invalid=0,snapshots=0;
+    runAndCheck("batch calibration",true,&valid,&invalid,&snapshots,PS::RealtimeProcessingMode::AsyncBatch);
+    MIB_EXPECT(valid+invalid>0,"batch monitoring exercises stamped calibration");
+    PS process;
+    cv::Mat blob(kH,kW,CV_8UC1,cv::Scalar(0));cv::circle(blob,{64,64},20,cv::Scalar(220),-1);
+    process.setPixelToMicronFactor(0.25);
+    const auto first=process.processBatch({blob},lenient());
+    process.setPixelToMicronFactor(2.0);
+    const auto second=process.processBatch({blob},lenient());
+    MIB_REQUIRE(!first.empty()&&!second.empty(),"batch rows available");
+    MIB_EXPECT(first.front().validation.analysisPixelToMicronFactor==0.25,"old batch result retains old calibration");
+    MIB_EXPECT(second.front().validation.analysisPixelToMicronFactor==2.0,"new batch result uses new calibration");
 
     if (mib::test::failureCount() == 0) {
         std::printf("All PR4 monitoring/snapshot invariant tests passed\n");

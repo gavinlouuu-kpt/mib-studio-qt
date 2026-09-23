@@ -520,6 +520,9 @@ fn monitoring_and_trigger_contract() {
     assert!(!bridge.pin_mut().trigger_set_pulse_duration(0).ok);
     assert!(!bridge.pin_mut().trigger_periodic_start(0).ok);
 
+    let reference: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_chart_reference()).unwrap();
+    assert!(!reference["curves"].as_array().unwrap().is_empty());
+    assert!(reference["curve_source"].as_str().unwrap().contains("30 um"));
     // Monitoring enable/disable/clear round-trip.
     assert!(bridge.pin_mut().monitoring_set_active(true).ok);
     let snap = bridge.pin_mut().fetch_monitoring_snapshot(50);

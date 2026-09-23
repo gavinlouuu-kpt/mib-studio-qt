@@ -1172,6 +1172,7 @@ namespace backend::bridge
             row.areaRatio = v.areaRatio;
             row.ringRatio = v.ringRatio;
             row.youngsModulus = v.youngsModulus;
+            row.pixelToMicronFactor = v.analysisPixelToMicronFactor;
             out.rows.push_back(row);
             out.latestTimestampNs = std::max(out.latestTimestampNs, frame.timestampNs);
         };
@@ -1302,6 +1303,7 @@ namespace backend::bridge
             row.areaRatio = v.areaRatio;
             row.ringRatio = v.ringRatio;
             row.youngsModulus = v.youngsModulus;
+            row.pixelToMicronFactor = v.analysisPixelToMicronFactor;
             return row;
         }
     } // namespace

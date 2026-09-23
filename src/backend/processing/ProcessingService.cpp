@@ -1874,6 +1874,9 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
         SPDLOG_ERROR("filterProcessedObjects: kernel object analysis failed: {}", error);
         return {};
     }
+    // Stamp at the shared host analysis boundary, using the exact value passed
+    // to the kernel (not another atomic read at publication/render time).
+    for (auto& result : results) result.analysisPixelToMicronFactor = pixelToMicronFactor;
     return results;
 }
 

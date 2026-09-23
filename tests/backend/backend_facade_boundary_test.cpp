@@ -2,6 +2,7 @@
 #include "backend/app/BackendFacade.h"
 
 #include <opencv2/core.hpp>
+#include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 
 #include <cstdlib>
@@ -127,6 +128,9 @@ int main()
             events.push_back(event);
         });
 
+        const auto reference=nlohmann::json::parse(facade.fetchMonitoringChartReferenceJson());
+        if(!reference.at("curves").is_array()||reference.at("curves").empty()||reference.at("curve_source").get<std::string>().empty())
+            throw std::runtime_error("Monitoring curves must reuse bounded bundled scientific reference");
         if (!facade.initialize(dataDir.string()) || !facade.isInitialized())
         {
             std::cerr << "BackendFacade should initialize AppBackend explicitly\n";
