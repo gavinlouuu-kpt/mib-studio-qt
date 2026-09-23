@@ -102,7 +102,11 @@ def main():
                 dialog = find_dialog()
                 if not dialog:
                     break
-                subprocess.run(['xdotool', 'windowfocus', '--sync', dialog], check=True)
+                focused = subprocess.run(['xdotool', 'windowfocus', '--sync', dialog], capture_output=True)
+                if focused.returncode:
+                    if not find_dialog():
+                        break  # GTK accepted/unmapped between search and focus.
+                    raise RuntimeError(focused.stderr.decode())
                 if text == 'Export All…':
                     # GTK's location completion can consume Enter and mnemonics.
                     # Click the actual bottom-right Open while preserving the

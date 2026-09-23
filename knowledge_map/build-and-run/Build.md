@@ -406,3 +406,9 @@ The export gate asserts the exact selected destination parent, not just terminal
 success. Idle exit verifies native-window disappearance if WebKit closes its
 session before replying. Failure artifacts include the full X11 desktop so
 native dialogs are visible alongside webview screenshots.
+
+Windows Tauri candidate staging resolves model files with the same manifest root
+and `<kind>s/<id>/<file>` layout as the provisioner/CMake, honors `MIB_ASSETS_DIR`,
+and checks the declared SHA256 before packaging. The GTK harness tolerates only
+confirmed dialog unmapping between window search and focus; other X11 failures
+remain errors.
