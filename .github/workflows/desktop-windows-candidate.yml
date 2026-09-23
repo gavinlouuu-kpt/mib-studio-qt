@@ -46,6 +46,7 @@ jobs:
         with:
           path: ~/.conan2/p
           key: tauri-conan-${{ runner.os }}-msvc194-${{ hashFiles('conanfile.py', 'conan/profiles/windows-msvc194') }}
+          restore-keys: tauri-conan-${{ runner.os }}-msvc194-
       - name: Validate packaging script syntax
         run: |
           $tokens = $null; $errors = $null
@@ -59,9 +60,11 @@ jobs:
         run: |
           python -m pip install -r env/requirements-build.txt
           if ($LASTEXITCODE) { throw 'Build tools installation failed' }
+          python tools/test_conan_recipe.py
+          if ($LASTEXITCODE) { throw 'Conan recipe regression failed' }
           conan profile detect --force
           if ($LASTEXITCODE) { throw 'Conan detection failed' }
-          conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194
+          conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194 -o '&:with_qt=False'
           if ($LASTEXITCODE) { throw 'Conan dependency resolution failed' }
           python scripts/provision-assets.py --required-only
           if ($LASTEXITCODE) { throw 'Asset provisioning failed' }

@@ -513,3 +513,7 @@ reanalysis, calibration, pending UI work and unsaved drafts must be inactive. La
 the native command mutex across the final idle check and opener request. The app never
 automatically exits; opener acceptance is not reported as completed installation. Feed
 publication, signing infrastructure and real-installer acceptance remain release tasks.
+
+### Qt-free Conan graph
+
+The root Conan recipe defaults `with_qt=True` to preserve Qt builds. The Windows Tauri candidate explicitly supplies `-o '&:with_qt=False'`; backend libraries retain all existing version pins, while Qt and its Linux-only xkbcommon/Wayland overrides are omitted. `tools/test_conan_recipe.py`, run using the Python environment containing Conan 2, verifies the default and disabled graphs' direct requirements without network access. Full dependency resolution still needs the pinned recipes/binaries in cache or configured remotes.
