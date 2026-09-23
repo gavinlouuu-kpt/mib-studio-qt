@@ -3,10 +3,11 @@ import { bridge, type AutofocusConfig, type AutofocusStatus, type PumpStatus, ty
 import { DEFAULT_MODE, type OperatingMode } from '../commissioning';
 import { HardwareCommandOwner, hardwareGate, numericInput, validateFocusConfig } from './hardwareControlModel';
 import './HardwareControls.css';
+import {StartupDiscoveryControls} from './StartupDiscoveryControls';
 import {EndpointDiscovery} from './EndpointDiscovery';
 import {PulseGeneratorControls} from './PulseGeneratorControls';
 
-type Props = { ready: boolean; experimentActive: boolean; append: (message: string) => void; mode?: OperatingMode; armed?: boolean; onDisarm: () => void };
+type Props = { ready: boolean; experimentActive: boolean; append: (message: string) => void; mode?: OperatingMode; armed?: boolean; onDisarm: () => void; onSelectionChanged?: () => void };
 type Connection = { port: string; baud: string; address: string };
 const initialConnection = (): Connection => ({port: '', baud: '115200', address: '1'});
 const focusFields: Array<[keyof AutofocusConfig, string]> = [
@@ -24,7 +25,7 @@ function connectionArgs(value: Connection, addressMax: number, addressMin = 1): 
   return [numericInput(value.port, 'COM port', 1, 65535, true), numericInput(value.baud, 'Baud rate', 1, 4000000, true), numericInput(value.address, 'Address', addressMin, addressMax, true)];
 }
 
-export function HardwareControls({ready, experimentActive, append, mode = DEFAULT_MODE, armed = false, onDisarm}: Props) {
+export function HardwareControls({ready, experimentActive, append, mode = DEFAULT_MODE, armed = false, onDisarm, onSelectionChanged}: Props) {
   const [pumps, setPumps] = useState<Array<PumpStatus | null>>([null, null]);
   const [focusBackend, setFocusBackend] = useState('coremor');
   const [focusEndpoint, setFocusEndpoint] = useState('');
@@ -86,6 +87,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
   const unitSelect = (value: number, onChange: (value: number) => void, rate: boolean) => <select value={value} disabled={configureDisabled} onChange={e => onChange(Number(e.target.value))}><option value={100}>{rate ? 'µL/min' : 'µL'}</option><option value={103}>{rate ? 'mL/min' : 'mL'}</option></select>;
   return <section className="hardware-controls" aria-label="Pump and autofocus controls">
     <h2>Pumps and autofocus</h2>
+    <StartupDiscoveryControls ready={ready} experimentActive={experimentActive} append={append} onSelectionChanged={onSelectionChanged} />
     <p>Manual run, purge, enable and jog require Service / Commissioning mode and arming. Stop and disable remain available during experiments.</p>
     <p>Pump connections use numeric COM ports. Nanopositioners support CoreMOR and OEABT endpoint identities.</p>
     {gate('configure') && <p role="status">{gate('configure')}</p>}

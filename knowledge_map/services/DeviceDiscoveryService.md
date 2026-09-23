@@ -164,3 +164,12 @@ depth), so hooks/listeners may call `stop()`. A detached executor
 (`setExecutor({})`) runs actions inline instead of throwing. Tests must wait
 for outcome *delivery*, not the running flag, and declare listener storage
 before the coordinator.
+
+### Tauri startup adapter (2026-09-23)
+
+BackendFacade exposes startup schedule/status methods over the existing coordinator.
+The Tauri executor queues provider completion actions for serialized bridge polling;
+AppBackend applies camera selection or nanopositioner connection only while the
+experiment coordinator holds Idle and capture is still stopped. The desktop preference
+is explicit opt-in; a scheduled job is not reported as a successful connection. Facade
+tests repeatedly drain empty fake-provider jobs without accessing real hardware.

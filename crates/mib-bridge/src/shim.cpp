@@ -1107,6 +1107,9 @@ BridgeFrame BackendBridge::fetch_review_image(std::uint32_t dataset, std::uint64
     return toBridgeFrame(frame);
 }
 
+rust::String BackendBridge::startup_discovery_run(rust::Str action) { return rust::String(impl_->facade.runStartupDiscoveryJson(toStd(action))); }
+rust::String BackendBridge::startup_discovery_status() { return rust::String(impl_->facade.fetchStartupDiscoveryStatusJson()); }
+
 BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
     try { return toBridgeResult(impl_->facade.pulseGeneratorCommandJson(toStd(json))); }
     catch (const std::exception& e) { return errorResult(e.what()); }

@@ -844,6 +844,8 @@ namespace backend::bridge
                                                 std::size_t byteLen);
         BackendCommandResult clearBackgroundImage();
 
+        std::string runStartupDiscoveryJson(const std::string &action);
+        std::string fetchStartupDiscoveryStatusJson() const;
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
         std::string fetchPulseGeneratorStatusJson() const;
 
@@ -913,6 +915,9 @@ namespace backend::bridge
         mutable std::mutex eventSinkMutex_;
         EventSink eventSink_;
         bool initialized_{false};
+
+        mutable std::mutex startupActionsMutex_;
+        mutable std::vector<std::function<void()>> startupActions_;
 
         mutable std::mutex operationsMutex_;
         std::unordered_map<std::uint64_t, ActiveOperation> activeOperations_;

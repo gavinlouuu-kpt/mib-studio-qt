@@ -375,6 +375,8 @@ export const bridge = {
   shellLog: (level: string, message: string) =>
     invoke<void>("shell_log", { level, message }),
   // Autofocus / nanopositioner (schema v11, BE-8).
+  startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),
+  startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
   pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
   pulseGeneratorStatus: () => invoke<PulseGeneratorStatus>("pulse_generator_status"),
   autofocusConnectEndpoint: (backend: string, endpoint: string, comPort: number, baudRate: number, deviceAddress: number) =>
@@ -509,3 +511,6 @@ export function mono8ToImageData(
 }
 
 export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>}
+
+export interface StartupDiscoveryStatus {valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
+interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}

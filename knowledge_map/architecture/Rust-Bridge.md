@@ -297,3 +297,9 @@ validate serial settings, address, channel and numeric ranges before driver acce
 Configuration/output-on serialize against experiment Start with `withIdleConfiguration`;
 output-off remains possible while an experiment runs unless coordinated live view owns
 the generator. Status preserves that ownership so manual controls cannot steal it.
+
+`startup_discovery_run(start|camera|nanopositioner)` schedules the shared startup policy;
+`startup_discovery_status` drains its queued completion actions on the serialized bridge
+caller before reporting running flags, selected state and bounded per-job errors. The
+status call is therefore also the startup event-pump tick, not a passive hardware read.
+Shutdown stops the coordinator and drains discovery workers before facade destruction.

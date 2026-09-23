@@ -404,6 +404,17 @@ struct AutofocusConfig {
 }
 
 #[tauri::command]
+fn startup_discovery_run(state: State<AppState>, action: String) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().startup_discovery_run(&action)).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn startup_discovery_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().startup_discovery_status()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn pulse_generator_command(state: State<AppState>, json: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().pulse_generator_command(&json).into())
@@ -1587,6 +1598,8 @@ pub fn run() {
             experiment_cancel,
             fetch_experiment_status,
             fetch_experiment_readiness,
+            startup_discovery_run,
+            startup_discovery_status,
             pulse_generator_command,
             pulse_generator_status,
             autofocus_connect_endpoint,

@@ -259,6 +259,7 @@ int main()
             facade.shutdown();
             return 23;
         }
+        if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
         // Config transactions must not change the frozen run authority.
         const auto configPath = (dataDir / "checked-config.json").string();
         std::ofstream(configPath) << "{}";

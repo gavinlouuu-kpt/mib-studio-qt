@@ -324,3 +324,14 @@ button left from pre-ABI-13 scaffolding. Start now selects an output path, fetch
 authoritative backend readiness, displays blocking gates, and invokes the shared
 backend Start transaction (which rechecks readiness). A synchronous pending owner
 prevents duplicate chooser/start requests; Starting joins Active/Stopping guards.
+
+Startup discovery is now available through an explicit auto-select/retry panel and a
+persisted opt-in preference for subsequent startup sessions (off by default). Scheduling
+acceptance is distinct from camera-configured/nanopositioner-connected completion.
+`onSelectionChanged` refreshes shell-owned camera state when startup results change it.
+
+The Tauri facade installs a queued startup executor: discovery workers enqueue bounded
+job callbacks, and serialized status polling drains them on the bridge caller. This
+matches Qt's UI executor ownership instead of mutating camera selection on a provider
+worker. AppBackend rechecks idle experiment/capture state at actual selection/connection,
+not merely when the scan starts. Empty/ambiguous/incomplete results retain manual choice.

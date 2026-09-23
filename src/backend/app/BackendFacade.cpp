@@ -2402,3 +2402,50 @@ std::string BackendFacade::profileCommand(const std::string& base, const std::st
     return result;
 }
 }
+
+namespace backend::bridge {
+std::string BackendFacade::runStartupDiscoveryJson(const std::string& action) {
+    using nlohmann::json;
+    if (!initialized_) return json{{"accepted", false}, {"message", "Backend is not initialized"}}.dump();
+    if (backend_.experiment().state() != app::ExperimentRunState::Idle || backend_.capture().isRunning())
+        return json{{"accepted", false}, {"message", "Stop capture and return the experiment to Idle before auto-selection"}}.dump();
+    auto& startup = backend_.startupDiscovery();
+    if (startup.isStopped() || startup.cameraStepRunning() || startup.nanopositionerStepRunning())
+        return json{{"accepted", false}, {"message", "Startup discovery is stopped or already running"}}.dump();
+    // Match Qt's queued executor: workers publish actions, the serialized
+    // bridge caller drains them. Camera selection fields are shell-thread-owned.
+    startup.setExecutor([this](std::function<void()> action) {
+        std::lock_guard<std::mutex> lock(startupActionsMutex_);
+        startupActions_.push_back(std::move(action));
+    });
+    bool accepted = false;
+    if (action == "start") { startup.start(); accepted = true; }
+    else if (action == "camera") accepted = startup.runCameraStep();
+    else if (action == "nanopositioner") accepted = startup.runNanopositionerStep();
+    else return json{{"accepted", false}, {"message", "Unknown startup action"}}.dump();
+    return json{{"accepted", accepted}, {"message", accepted ? "Auto-selection scheduled; completion is reported separately" : "Selection is already configured or action was refused"}}.dump();
+}
+std::string BackendFacade::fetchStartupDiscoveryStatusJson() const {
+    using nlohmann::json;
+    if (!initialized_) return json{{"valid", false}}.dump();
+    std::vector<std::function<void()>> actions;
+    { std::lock_guard<std::mutex> lock(startupActionsMutex_); actions.swap(startupActions_); }
+    for (auto& action : actions) action();
+    auto& startup = backend_.startupDiscovery();
+    auto job = [&](std::uint64_t id) {
+        json value{{"job_id", std::to_string(id)}, {"errors", json::array()}};
+        if (id) {
+            const auto snap = backend_.deviceDiscovery().discoverySnapshot(id);
+            value["state"] = static_cast<int>(snap.state);
+            value["complete"] = snap.complete;
+            value["candidate_count"] = snap.candidates.size();
+            for (const auto& error : snap.errors) value["errors"].push_back(error.message);
+        }
+        return value;
+    };
+    return json{{"valid", true}, {"camera_running", startup.cameraStepRunning()},
+        {"nanopositioner_running", startup.nanopositionerStepRunning()},
+        {"camera_configured", backend_.isCameraConfigured()}, {"nanopositioner_connected", backend_.autofocus().isConnected()},
+        {"camera", job(startup.cameraJobId())}, {"nanopositioner", job(startup.nanopositionerJobId())}}.dump();
+}
+}
