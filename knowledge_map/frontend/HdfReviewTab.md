@@ -193,3 +193,13 @@ series range and isoelastic TIFF overlays. Reanalysis input budgets are adjustab
 (default 4096 frames/256 MiB; at most one million frames/16 GiB input); result and
 processing memory are additional. Publication uses platform no-replace rename
 (or hard-link fallback), preserving a concurrently created destination.
+
+`frontend.review_parity` is a no-hardware, same-backend HDF fixture equivalence
+check. It creates three saved valid frames with ring masks and known metrics,
+loads them through the facade, compares whole-file calibrated chart axes and
+histogram bins to the shared Qt chart preparation, verifies density conservation
+and bundled curve groups, and compares every RGB pixel from Qt QImage rendering
+to decoded Tauri PNG for all five overlay modes. This proves serialization and
+rendering equivalence for those saved-file paths, not hardware acquisition,
+interactive Qt/Tauri full-workflow acceptance, ROI stroke styling, or platform
+packaging. Native export/reanalysis lifecycle tests cover those workers separately.
