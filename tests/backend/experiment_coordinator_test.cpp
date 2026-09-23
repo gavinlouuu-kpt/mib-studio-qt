@@ -234,6 +234,10 @@ int main()
             return 6;
         }
 
+        if (!backendApp.processing().isRealtimeRunning() || !backendApp.processing().isRealtimeEnabled()) {
+            std::cerr << "Start must own a running enabled processing pipeline, not produce an empty shell-only run\n";
+            return 30;
+        }
         // Double start fails without desynchronizing.
         if (startViaFacade(facade, exp1).ok)
         {

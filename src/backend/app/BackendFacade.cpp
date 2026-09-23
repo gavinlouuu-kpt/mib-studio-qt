@@ -730,6 +730,10 @@ namespace backend::bridge
 
     BackendCommandResult BackendFacade::handleProcessingSettingsCommand(const ProcessingSettingsCommand &command)
     {
+        BackendCommandResult result{false, BackendCommandType::ProcessingSettings, "Processing settings are locked during an experiment"};
+        backend_.experiment().withIdleConfiguration([&] {
+            result = [&]() -> BackendCommandResult {
+
         auto &processing = backend_.processing();
         if (command.configJson)
         {
@@ -807,6 +811,7 @@ namespace backend::bridge
         if (command.realtimeEnabled)
         {
             processing.setRealtimeEnabled(*command.realtimeEnabled);
+
         }
         if (command.realtimeDropFrames)
         {
@@ -829,6 +834,8 @@ namespace backend::bridge
             processing.setFlushInterval(*command.flushInterval);
         }
 
+        if (processing.isRealtimeEnabled()) processing.startRealtime(backend_.getFrameStore());
+        else processing.stopRealtime();
         emitEvent(ProcessingResultEvent{
             0,
             0,
@@ -838,6 +845,9 @@ namespace backend::bridge
             {},
         });
         return {true, BackendCommandType::ProcessingSettings, "Processing settings applied"};
+            }();
+        });
+        return result;
     }
 
     BackendCommandResult BackendFacade::handleRecordingLoadCommand(const RecordingLoadCommand &command)

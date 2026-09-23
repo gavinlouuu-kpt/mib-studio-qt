@@ -1,3 +1,4 @@
+import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
 import { invoke } from "@tauri-apps/api/core";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
@@ -440,6 +441,8 @@ export default function App() {
         setConfigText(JSON.stringify(parsed, null, 2));
         setConfigDirty(false);
         setBackgroundSet(Boolean(parsed.background_set));
+        if (typeof parsed.realtime_processing?.enabled === "boolean") setProcEnabled(parsed.realtime_processing.enabled);
+        if (typeof parsed.pixel_to_micron === "number") setPixelToMicron(String(parsed.pixel_to_micron));
         if (parsed.roi) {
           setRoiFields({
             x: String(parsed.roi.x ?? 0),
@@ -1483,6 +1486,7 @@ export default function App() {
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
                     <PreviewBufferControls model={previewBuffer} />
+                    <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>

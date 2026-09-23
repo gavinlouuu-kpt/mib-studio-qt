@@ -102,7 +102,7 @@ jobs:
           MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
         run: |
           set -o pipefail
-          cargo build
+          cargo build --features custom-protocol
           cargo test --no-fail-fast
 
       - name: Smoke-launch the GUI under Xvfb
@@ -111,3 +111,22 @@ jobs:
           set -o pipefail
           ./desktop/scripts/xvfb-smoke.sh \
             desktop/src-tauri/target/debug/mib-studio-desktop 10
+
+      - name: Install native WebDriver adapter
+        run: cargo install tauri-driver --version 2.0.6 --locked
+
+      - name: Native production webview experiment-to-export acceptance
+        env:
+          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu/hdf5/serial
+        run: |
+          xvfb-run -a python3 desktop/scripts/native-workflow.py \
+            desktop/src-tauri/target/debug/mib-studio-desktop \
+            --artifacts build/native-workflow-ci
+
+      - name: Preserve native workflow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-webview-workflow
+          path: build/native-workflow-ci
+          if-no-files-found: ignore

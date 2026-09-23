@@ -186,3 +186,13 @@ across the HDF5 open + provenance write, which is why a second caller gets
 Readiness includes a failing `camera.mode` gate while MindVision Overview is
 selected. Experiments require the Experiment acquisition mode, preventing a
 full-sensor preview session from being recorded as an experimental ROI session.
+
+### Shell-independent processing ownership (2026-09-23)
+
+Start enables and starts the shared realtime consumer after persistence setup.
+It no longer relies on a Qt tab activation side effect: otherwise a Tauri run
+could finalize an empty file as complete. The facade's settings commands own
+explicit realtime enable/start and disable/stop and serialize with the idle
+configuration gate. The headless lifecycle regression asserts an enabled,
+running consumer immediately after Start; native webview acceptance also checks
+nonzero persisted accounting.

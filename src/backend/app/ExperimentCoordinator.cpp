@@ -691,6 +691,10 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // 6-7. Acquire processing ownership and enter Active.
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
     proc.startExperiment();
+    // The shared lifecycle must own a live consumer. Qt previously started it
+    // from a visible tab; a headless/Tauri Start otherwise finalized zero work.
+    proc.setRealtimeEnabled(true);
+    proc.startRealtime(backend_.getFrameStore());
     activeRun_ = run;
     lastRun_ = run;
     stopRequested_ = cancelRequested_ = fatalRequested_ = false;

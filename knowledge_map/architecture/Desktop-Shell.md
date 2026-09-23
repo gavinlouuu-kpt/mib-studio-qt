@@ -349,3 +349,16 @@ counts, cancellation and published generation/SHA-256. An experiment must be Idl
 start; cancellation remains possible later. Scheduling success is not publication,
 and a failed/cancelled candidate never replaces the previous background. Mount this
 component with `onPublished` refreshing processing/background state.
+
+### Native acceptance gate
+
+`desktop/scripts/native-workflow.py` runs the embedded-assets application under
+Tauri WebDriver + Xvfb, configures mock frames using React controls, uses actual
+GTK file dialogs (xdotool), starts an experiment, navigates away, stops/finalizes,
+reopens HDF5, exports through the shared service and closes review. Backend IPC
+is never mocked. It requires nonzero conserved persistence and published export
+outputs, saves screenshot/status evidence, isolates app data and cleans up its
+owned session. Desktop CI now runs this in addition to unit tests and launch smoke.
+Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
+The gate exposed and drove fixes for the disabled Start button and missing
+realtime processing consumer. It does not establish physical hardware timing.
