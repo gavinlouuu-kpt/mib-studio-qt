@@ -31,16 +31,15 @@ export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/usr/lib/x86_64-linux-gnu/hdf5/seri
 # Offline: avoid the network LUT-manifest fetch at backend startup.
 export MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL="${MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL:-file:///nonexistent/mib-lut-manifest.json}"
 
-# GNU timeout owns a process group: terminate the wrapper, application and
-# descendants together. Killing only xvfb-run leaves the executable mapped,
-# which prevents the subsequent Tauri bundle patch (ETXTBSY).
+# Start the display before the alive timer. GNU timeout then owns the app
+# process group, terminating the application and descendants together. The
+# xvfb-run wrapper reaps that command and cleans up its display normally.
 set +e
-timeout --signal=TERM --kill-after=5s "${ALIVE}s" \
-  xvfb-run -a --server-args="-screen 0 1024x768x24" \
+xvfb-run -a --server-args="-screen 0 1024x768x24" \
   env WEBKIT_DISABLE_DMABUF_RENDERER=1 \
       WEBKIT_DISABLE_COMPOSITING_MODE=1 \
       LIBGL_ALWAYS_SOFTWARE=1 \
-  "$BIN" >"$LOG" 2>&1
+  timeout --signal=TERM --kill-after=5s "${ALIVE}s" "$BIN" >"$LOG" 2>&1
 STATUS=$?
 set -e
 

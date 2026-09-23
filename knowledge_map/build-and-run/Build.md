@@ -428,3 +428,5 @@ GNU timeout, not only the xvfb-run wrapper. A real-child regression reproduces
 and prevents orphan applications holding the executable open during bundling.
 The smoke run uses disposable XDG state and mock-camera mode, never an operator
 profile or remembered hardware configuration.
+The alive timer starts inside Xvfb, after display startup; the regression delays
+display startup deliberately to prevent a false pass before the app launches.

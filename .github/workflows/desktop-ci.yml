@@ -56,6 +56,9 @@ jobs:
           mindvision: "false"
           assets: none
 
+      - name: Verify smoke process cleanup
+        run: python3 desktop/scripts/test_xvfb_smoke.py
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -104,9 +107,6 @@ jobs:
           set -o pipefail
           cargo build --features custom-protocol
           cargo test --no-fail-fast
-
-      - name: Verify smoke process cleanup
-        run: python3 desktop/scripts/test_xvfb_smoke.py
 
       - name: Smoke-launch the GUI under Xvfb
         shell: bash
