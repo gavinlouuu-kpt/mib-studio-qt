@@ -16,7 +16,7 @@ export function useCloseGuard(options: {ready:boolean; busy:boolean; dirty:boole
     try {
       if(latest.current.busy)throw new Error("Finish or cancel pending work before closing.");
       if(latest.current.dirty && !await confirm("Discard unsaved configuration/profile drafts and close?",{title:"Unsaved changes",kind:"warning"}))return;
-      if(latest.current.ready) {
+      if(latest.current.ready || await bridge.isInitialized()) {
         const [experiment,preview,exportJob,reanalysis,calibration]=await Promise.all([
           bridge.fetchExperimentStatus(),invoke<{capture_running:boolean;recording:boolean}>("fetch_preview_buffer"),
           bridge.reviewExportStatus(),bridge.reviewReanalysisStatus(),bridge.backgroundCalibrationStatus(),

@@ -824,7 +824,7 @@ export default function App() {
 
   const reviewExport = useReviewExport(ready, append);
   const reanalysis = useReanalysis(ready);
-  const requestClose = useCloseGuard({ready, busy:reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:append});
+  const requestClose = useCloseGuard({ready, busy:reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:(text)=>{append(text);setShowLog(true);}});
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"

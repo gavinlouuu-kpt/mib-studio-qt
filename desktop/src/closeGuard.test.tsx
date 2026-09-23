@@ -10,13 +10,13 @@ const native=vi.hoisted(()=>({close:vi.fn(),onCloseRequested:vi.fn()}));
 vi.mock('@tauri-apps/api/window',()=>({getCurrentWindow:()=>native}));
 vi.mock('@tauri-apps/api/core',()=>({invoke:vi.fn()}));
 vi.mock('@tauri-apps/plugin-dialog',()=>({confirm:vi.fn()}));
-vi.mock('./bridge',()=>({bridge:{fetchExperimentStatus:vi.fn(),reviewExportStatus:vi.fn(),reviewReanalysisStatus:vi.fn(),backgroundCalibrationStatus:vi.fn(),stopCapture:vi.fn()}}));
+vi.mock('./bridge',()=>({bridge:{isInitialized:vi.fn(),fetchExperimentStatus:vi.fn(),reviewExportStatus:vi.fn(),reviewReanalysisStatus:vi.fn(),backgroundCalibrationStatus:vi.fn(),stopCapture:vi.fn()}}));
 Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});
-let root:Root,host:HTMLDivElement,close:()=>Promise<void>,dirty=false,busy=false;
+let root:Root,host:HTMLDivElement,close:()=>Promise<void>,dirty=false,busy=false,ready=true;
 const report=vi.fn();
-function Harness(){close=useCloseGuard({ready:true,dirty,busy,report});return null;}
+function Harness(){close=useCloseGuard({ready,dirty,busy,report});return null;}
 beforeEach(async()=>{
- vi.resetAllMocks();dirty=false;busy=false;native.onCloseRequested.mockResolvedValue(()=>{});
+ vi.resetAllMocks();dirty=false;busy=false;ready=true;native.onCloseRequested.mockResolvedValue(()=>{});
  vi.mocked(bridge.fetchExperimentStatus).mockResolvedValue({valid:true,state:0} as never);
  vi.mocked(invoke).mockResolvedValue({capture_running:false,recording:false});
  vi.mocked(bridge.reviewExportStatus).mockResolvedValue({state:'idle'});
@@ -43,4 +43,10 @@ it('dirty discard refusal preserves window, idle capture stops only after accept
 it('in-flight saves and raw recording block closing',async()=>{
  busy=true;await act(async()=>root.render(<Harness/>));await act(async()=>close());expect(native.close).not.toHaveBeenCalled();
  busy=false;await act(async()=>root.render(<Harness/>));vi.mocked(invoke).mockResolvedValue({capture_running:true,recording:true});await act(async()=>close());expect(native.close).not.toHaveBeenCalled();expect(bridge.stopCapture).not.toHaveBeenCalled();
+});
+
+it('early reload cannot bypass native active-run checks before shell readiness',async()=>{
+ ready=false;await act(async()=>root.render(<Harness/>));vi.mocked(bridge.isInitialized).mockResolvedValue(true);
+ vi.mocked(bridge.fetchExperimentStatus).mockResolvedValue({valid:true,state:2} as never);
+ await act(async()=>close());expect(native.close).not.toHaveBeenCalled();expect(report).toHaveBeenCalledWith(expect.stringContaining('finalization'));
 });
