@@ -581,6 +581,19 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         result.message = "experiment coordinator is shut down";
         return result;
     }
+    // Issue #451: claim the shared HDF5 writer before changing anything
+    // (realtime mode, files, accounting). Manual frame recording holds the
+    // same claim, so the two can never interleave on one Hdf5Service. The
+    // lease is released on every early return below and, for a started run,
+    // at the end of finalization after the file is closed.
+    auto claim = backend_.persistenceOwnership().tryAcquire(PersistenceOwner::Experiment, "experiment start");
+    if (!claim.granted) {
+        result.outcome = ExperimentStartOutcome::Busy;
+        result.message = claim.message;
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
+    PersistenceLease lease(backend_.persistenceOwnership(), PersistenceOwner::Experiment, claim.runId);
 
     // Multi-image series capture requires inline realtime processing. Switch
     // before the evaluation so the frozen snapshot records the mode the run
@@ -693,6 +706,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     proc.startExperiment();
     activeRun_ = run;
     lastRun_ = run;
+    persistenceLease_ = std::move(lease);
     stopRequested_ = cancelRequested_ = fatalRequested_ = false;
     fatalMessage_.clear();
     if (!worker_.joinable()) {
@@ -967,6 +981,8 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     status_.captureGeneration = run.captureGeneration;
     status_.outputPath = run.outputPath;
     status_.startWallClockNs = run.startWallClockNs;
+    // The file is closed: hand the HDF5 writer back (issue #451).
+    persistenceLease_.release();
     SPDLOG_INFO("ExperimentCoordinator: run {} finalized in {:.3f} ms (state={}, ok={})",
                 run.startGeneration, sinceMs(tBegin), toString(state_), status_.finalizationOk);
     publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");

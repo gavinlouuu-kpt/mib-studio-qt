@@ -15,6 +15,7 @@
 #pragma once
 
 #include "backend/app/ExperimentReadiness.h"
+#include "backend/app/PersistenceOwnership.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -158,6 +159,8 @@ private:
     bool fatalRequested_{false};
     std::string fatalMessage_;
     std::optional<RunConfigurationSnapshot> lastRun_;
+    // Writer claim held from Start until finalization closed the file.
+    PersistenceLease persistenceLease_;
     // Multi-image series runs force inline realtime processing; restored on
     // finalize (moved here from the Qt window).
     bool restoreRealtimeMode_{false};

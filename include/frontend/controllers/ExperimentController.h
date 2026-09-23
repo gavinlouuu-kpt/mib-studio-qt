@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include "backend/app/PersistenceOwnership.h"
+
 namespace backend { class AppBackend; }
 
 namespace frontend
@@ -46,6 +48,8 @@ namespace frontend
         uint64_t startTimeNs_ = 0;
         uint64_t endTimeNs_ = 0;
         std::string hdf5FilePath_;
+        // Shared HDF5 writer claim held from start until the file is closed.
+        backend::app::PersistenceLease persistenceLease_;
     };
 
 } // namespace frontend

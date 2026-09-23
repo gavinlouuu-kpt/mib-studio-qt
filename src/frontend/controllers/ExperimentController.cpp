@@ -45,6 +45,19 @@ namespace frontend
             return false;
         }
 
+        // Issue #451: claim the shared HDF5 writer before opening anything, so
+        // this path can never replace a coordinator run or a manual recording.
+        auto claim = backend_.persistenceOwnership().tryAcquire(
+            backend::app::PersistenceOwner::Experiment, "legacy experiment start");
+        if (!claim.granted)
+        {
+            if (errorMsg)
+                *errorMsg = QString::fromStdString(claim.message);
+            return false;
+        }
+        persistenceLease_ = backend::app::PersistenceLease(
+            backend_.persistenceOwnership(), backend::app::PersistenceOwner::Experiment, claim.runId);
+
         state_ = State::Starting;
         emit stateChanged(state_);
 
@@ -63,6 +76,7 @@ namespace frontend
         auto &hdf5 = backend_.hdf5();
         if (!hdf5.openFile(hdf5Path))
         {
+            persistenceLease_.release();
             state_ = State::Idle;
             emit stateChanged(state_);
             if (errorMsg)
@@ -189,6 +203,7 @@ namespace frontend
 
         processing.endExperiment();
         backend_.processing().resetRealtimeMetrics();
+        persistenceLease_.release();
 
         state_ = State::Idle;
         emit stateChanged(state_);

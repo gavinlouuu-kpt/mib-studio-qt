@@ -10,6 +10,7 @@
 #include "backend/app/BackgroundFrame.h"
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
+#include "backend/app/PersistenceOwnership.h"
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/recording/RecordingAccounting.h"
 
@@ -184,10 +185,22 @@ namespace backend
         // fake serial-port factory here.
         services::serialbus::SerialBusManager& serialBus();
 
+        // Single-owner admission for the shared HDF5 writer (issue #451):
+        // an experiment run and manual frame recording are mutually
+        // exclusive; the first to claim it owns it until its file is closed.
+        app::PersistenceOwnership& persistenceOwnership();
+
         // Frame recording mode: record non-empty frames directly to HDF5 (images + metadata only, no contour processing)
-        // Returns false if recording cannot start (e.g., capture not running, file error)
-        bool startFrameRecording(const std::string& hdf5FilePath);
+        // Returns false if recording cannot start (e.g., an experiment owns
+        // the HDF5 writer, capture not running, file error); `errorOut`
+        // receives an actionable, path-free reason. A rejected start changes
+        // nothing: no file is created, truncated or closed.
+        bool startFrameRecording(const std::string& hdf5FilePath, std::string* errorOut = nullptr);
         void stopFrameRecording();
+        // Why a manual recording start would be rejected right now (empty when
+        // it is admissible as far as writer ownership goes). For UI enablement
+        // only: startFrameRecording() re-checks atomically.
+        std::string frameRecordingBlockedReason() const;
         bool isFrameRecording() const;
         uint64_t frameRecordingCount() const;     // Frames written so far
         uint64_t frameRecordingFiltered() const;   // Empty frames skipped
@@ -233,6 +246,9 @@ namespace backend
         void dumpPipelineTimingIfEnabled();
 
         FatalSaveErrorCallback fatalSaveErrorCb_;
+        // Declared before every owner (coordinator, recording thread) so it
+        // outlives their releases during teardown.
+        app::PersistenceOwnership persistenceOwnership_;
 
         std::unique_ptr<services::SqliteService> sqliteService_;
         std::unique_ptr<services::Hdf5Service> hdf5Service_;
@@ -287,6 +303,8 @@ namespace backend
         std::string pipelineTimingDir_;
 
         // Frame recording state
+        // Serializes start/stop (UI thread and bridge callers).
+        std::mutex frameRecordingControlMutex_;
         std::unique_ptr<std::thread> frameRecordingThread_;
         std::atomic<bool> frameRecordingRunning_{false};
         std::atomic<uint64_t> frameRecordingWritten_{0};

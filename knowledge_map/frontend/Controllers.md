@@ -55,6 +55,10 @@ machine and the HDF5 file path for the current run.
 - `startExperiment(hdf5FilePath, errorMsg)`,
   `stopExperiment(errorMsg)`
 - `startTimeNs()`, `endTimeNs()` accessors for metadata
+- Legacy: compiled but not instantiated (the run lifecycle is owned by
+  [[../architecture/ExperimentCoordinator]]). It still claims the shared
+  HDF5 writer (`AppBackend::persistenceOwnership()`, issue #451) from start
+  until its file is closed, so it can never replace another owner's file.
 - Signals: `stateChanged(State)`,
   `experimentStarted(startTimeNs)`,
   `experimentStopped(endTimeNs, validFrames, invalidFrames)`,

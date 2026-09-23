@@ -572,8 +572,10 @@ void PlaybackPanel::onTick()
     }
     prevCaptureRunning_ = running;
 
-    // Update recording status display periodically
-    if (backend_.isFrameRecording()) {
+    // Update recording status display periodically; while idle, refresh only
+    // when the experiment conflict (issue #451) enables/disables the button.
+    if (backend_.isFrameRecording() ||
+        recordBtn_->isEnabled() != backend_.frameRecordingBlockedReason().empty()) {
         updateRecordingUI();
     }
 
@@ -950,6 +952,13 @@ void PlaybackPanel::onToggleRecording()
         updateRecordingUI();
         return;
     }
+    // Issue #451: an experiment owns the HDF5 writer; explain instead of
+    // prompting for a path (the button is normally disabled already).
+    if (const std::string blocked = backend_.frameRecordingBlockedReason(); !blocked.empty()) {
+        QMessageBox::information(this, tr("Recording Unavailable"), QString::fromStdString(blocked));
+        updateRecordingUI();
+        return;
+    }
 
     // Prompt user for HDF5 file path
     QString defaultDir;
@@ -972,10 +981,23 @@ void PlaybackPanel::onToggleRecording()
 
     if (filePath.isEmpty()) return;
 
+    // Issue #451: the modal picker can stay open while an experiment starts.
+    // Re-check before calling the backend (which also enforces this
+    // atomically and never closes an experiment's file).
+    const std::string blocked = backend_.frameRecordingBlockedReason();
+    if (!blocked.empty()) {
+        QMessageBox::warning(this, tr("Recording Not Started"), QString::fromStdString(blocked));
+        updateRecordingUI();
+        return;
+    }
+
     const std::string path = filePath.toStdString();
-    if (!backend_.startFrameRecording(path)) {
+    std::string error;
+    if (!backend_.startFrameRecording(path, &error)) {
         QMessageBox::warning(this, tr("Recording Error"),
-                             tr("Failed to start frame recording. Check that the camera is running."));
+                             error.empty() ? tr("Failed to start frame recording.")
+                                           : QString::fromStdString(error));
+        updateRecordingUI();
         return;
     }
     updateRecordingUI();
@@ -985,6 +1007,7 @@ void PlaybackPanel::updateRecordingUI()
 {
     const bool recording = backend_.isFrameRecording();
     if (recording) {
+        recordBtn_->setEnabled(true);
         recordBtn_->setText("Stop Rec");
         recordBtn_->setStyleSheet("color: red; font-weight: bold;");
         recordBtn_->setToolTip("Stop recording");
@@ -995,7 +1018,13 @@ void PlaybackPanel::updateRecordingUI()
     } else {
         recordBtn_->setText("Record");
         recordBtn_->setStyleSheet("");
-        recordBtn_->setToolTip("Record non-empty frames to HDF5 (images + metadata only, no contour processing)");
+        // Issue #451: disabled with the reason while an experiment (or a
+        // recording still saving) owns the HDF5 writer.
+        const std::string blocked = backend_.frameRecordingBlockedReason();
+        recordBtn_->setEnabled(blocked.empty());
+        recordBtn_->setToolTip(blocked.empty()
+            ? QStringLiteral("Record non-empty frames to HDF5 (images + metadata only, no contour processing)")
+            : QString::fromStdString(blocked));
         recordStatusLabel_->setText("");
     }
 }

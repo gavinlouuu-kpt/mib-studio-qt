@@ -665,6 +665,7 @@ namespace backend::bridge
         switch (command.action)
         {
         case RecordingCommandAction::StartFrameRecording:
+        {
             emitEvent(RecordingStatusEvent{
                 RecordingState::Starting,
                 command.filePath,
@@ -674,8 +675,14 @@ namespace backend::bridge
                 0,
                 0,
             });
-            if (!backend_.startFrameRecording(command.filePath))
+            std::string startError;
+            if (!backend_.startFrameRecording(command.filePath, &startError))
             {
+                // Issue #451: surface the actionable reason (e.g. an
+                // experiment owns the HDF5 writer), not a generic failure.
+                const std::string message = startError.empty()
+                                                ? std::string("Frame recording start failed")
+                                                : "Frame recording start failed: " + startError;
                 emitEvent(RecordingStatusEvent{
                     RecordingState::Error,
                     command.filePath,
@@ -687,8 +694,8 @@ namespace backend::bridge
                 });
                 emitEvent(BackendErrorEvent{BackendErrorSource::Recording,
                                             BackendCommandType::Recording,
-                                            "Frame recording start failed"});
-                return {false, BackendCommandType::Recording, "Frame recording start failed"};
+                                            message});
+                return {false, BackendCommandType::Recording, message};
             }
             emitEvent(RecordingStatusEvent{
                 RecordingState::Recording,
@@ -700,6 +707,7 @@ namespace backend::bridge
                 0,
             });
             return {true, BackendCommandType::Recording, "Frame recording started"};
+        }
         case RecordingCommandAction::StopFrameRecording:
             backend_.stopFrameRecording();
             emitEvent(RecordingStatusEvent{
@@ -849,6 +857,22 @@ namespace backend::bridge
         // load can move off-thread without a contract change.
         const std::uint64_t operationId =
             beginOperation(BackendOperationKind::RecordingLoad, nullptr, command.filePath);
+
+        // Issue #451: the reviewed file shares the one Hdf5Service with the
+        // experiment and recording writers. Claim it for the duration of the
+        // replace so a load can never close a file a writer still owns.
+        auto claim = backend_.persistenceOwnership().tryAcquire(app::PersistenceOwner::ReviewLoad,
+                                                                "review file load");
+        if (!claim.granted)
+        {
+            emitEvent(BackendErrorEvent{BackendErrorSource::Recording,
+                                        BackendCommandType::RecordingLoad,
+                                        claim.message});
+            finishOperation(operationId, BackendOperationState::Failed, claim.message);
+            return {false, BackendCommandType::RecordingLoad, claim.message, operationId};
+        }
+        app::PersistenceLease reviewLease(backend_.persistenceOwnership(), app::PersistenceOwner::ReviewLoad,
+                                          claim.runId);
 
         auto &hdf5 = backend_.hdf5();
         // Loading replaces the currently reviewed file (Qt parity: selecting

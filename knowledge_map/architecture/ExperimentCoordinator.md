@@ -14,7 +14,9 @@
 `include/backend/app/ExperimentCoordinator.h`,
 `include/backend/app/ExperimentReadiness.h` (Qt-free types + JSON serializers)
 **Tests:** `tests/backend/experiment_readiness_test.cpp`
-(`backend.experiment_readiness`, normal + TSan)
+(`backend.experiment_readiness`, normal + TSan),
+`tests/backend/experiment_recording_exclusion_test.cpp`
+(`e2e.experiment_recording_exclusion`, writer ownership vs manual recording)
 **Related:** [[AppBackend]], [[../services/CaptureService]],
 [[../services/ProcessingService]], [[../services/Hdf5Service]],
 [[../data-model/HDF5-Storage]], [[../frontend/MainWindow]]
@@ -37,7 +39,12 @@
 - `start(ExperimentStartRequest{outputPath, readinessGeneration, profileId,
   acknowledgeLatestFrameDrops})` is the serialized Start transaction:
   1. `try_lock` — a concurrent transaction gets `Busy`; a run in progress
-     gets `AlreadyActive`.
+     gets `AlreadyActive`. Then claim the shared HDF5 writer
+     (`AppBackend::persistenceOwnership()`, issue #451): while manual frame
+     recording (or a review load) holds it, `Busy` with the actionable
+     conflict message and nothing has changed. The claim (`persistenceLease_`)
+     is released on every failed-start return and at the end of finalization,
+     after the file is closed.
   2. Re-evaluate now; `readinessGeneration` mismatch → `StaleReadiness`
      (reconnect, config/background/core/ROI/output change, new fault since
      the presented preflight). Not ready → `NotReady`. LatestFrame without
@@ -105,7 +112,8 @@ append only, never renumber.
    remainder counts, processing config, ROI, background, core identity);
    `writeRunAccounting(experimentAccountingSnapshot())`;
    `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`.
-6. `closeFile()`.
+6. `closeFile()`; the HDF5 writer claim is released once the terminal state
+   is written (issue #451).
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled
    accounting (`Failed` for a fatal save error), `finalizationOk=false` if

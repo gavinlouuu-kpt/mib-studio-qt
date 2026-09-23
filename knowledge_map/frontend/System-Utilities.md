@@ -127,6 +127,13 @@
     itself: `onToggleCapture()` emits `captureToggleRequested()`, which
     [[MainWindow]] routes through its `CameraController` so the experiment
     guard and duplicate-command protection apply to every route (issue #360).
+  - The **Record** button (manual raw-frame recording) is disabled, with
+    `AppBackend::frameRecordingBlockedReason()` as its tooltip, while an
+    experiment (or a recording still saving) owns the HDF5 writer
+    (issue #451). `onToggleRecording()` re-checks after the modal file
+    picker returns and shows the backend's actionable
+    `startFrameRecording(path, &error)` reason on rejection. The UI check is
+    a convenience only — the backend admission is authoritative.
   - Presentation is a bounded pull: `onTick` reads the latest frame /
     snapshot at the configured `display_fps`, so no UI queue can grow behind
     a slow display. `displayFramesPresented()` / `displayFramesSkipped()`

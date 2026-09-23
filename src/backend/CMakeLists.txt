@@ -222,6 +222,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/PersistenceOwnership.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h

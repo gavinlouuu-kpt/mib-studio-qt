@@ -234,12 +234,47 @@ from the mock. `experiment()` exposes the coordinator (created in
 - `setMindVisionCameraSelection()` preserves the selected camera state even
   when the SDK is unavailable so the UI/backend selection remains explicit.
 
+## HDF5 writer ownership (issue #451)
+
+There is one `Hdf5Service`, so an experiment run and manual frame recording
+are **mutually exclusive**. `persistenceOwnership()` returns the single-owner
+admission (`include/backend/app/PersistenceOwnership.h`):
+`tryAcquire(owner, operation)` claims the writer atomically under one mutex
+(no check-then-act) and returns a monotonic run id, or a rejection naming the
+current holder with an actionable, path-free message; `release(owner, runId)`
+frees only the matching claim, so a stale release never frees a newer owner.
+`PersistenceLease` is the move-only RAII form.
+
+| Owner | Claimed | Released |
+|---|---|---|
+| `Experiment` ([[ExperimentCoordinator]]) | first step of `start()`, before the realtime-mode switch or any file | every failed-start return; after finalization closed the file |
+| `FrameRecording` | first step of `startFrameRecording()` | when the recording thread ends, after `closeFile()` (normal stop or fatal save error) |
+| `ReviewLoad` (bridge `RecordingLoadCommand`) | around the close+load of the reviewed file | when the load returns |
+
+A conflicting start is rejected **before** it changes files, processing
+configuration, accounting, capture or worker ownership; the running owner's
+file is never closed and a same-path request cannot truncate it. The member
+is declared before every owner so it outlives their releases at teardown.
+Every grant, rejection and release logs and leaves a `persistence`
+breadcrumb (requester, operation, owner, result, run id; no paths).
+Concurrent modes would need isolated writers and resource budgets and are a
+separate feature. Test: `tests/backend/experiment_recording_exclusion_test.cpp`
+(`e2e.experiment_recording_exclusion`).
+
 ## Frame recording mode
 
 Separate from experiments: record non-empty raw frames directly to HDF5 with
 no contour processing.
 
-- `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`
+- `startFrameRecording(hdf5Path, errorOut = nullptr)`, `stopFrameRecording()`,
+  `isFrameRecording()`, `frameRecordingBlockedReason()` (UI enablement; empty
+  when admissible). Start/stop are serialized by
+  `frameRecordingControlMutex_`. Start first claims the HDF5 writer (see
+  above) and returns false with an actionable `errorOut` when an experiment
+  owns it. With the claim granted, an open file can only be one loaded for
+  review, and that one is closed before the recording file opens. A recording
+  thread that ended by itself (fatal save error) is reaped at the next start
+  instead of having its joinable handle overwritten.
 - Counters: `frameRecordingCount()`, `frameRecordingFiltered()`
 - Uses a dedicated `frameRecordingThread_`. Empty frames are dropped via
   `ProcessingService::isFrameEmptyWithActiveKernel` after the

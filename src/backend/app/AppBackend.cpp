@@ -1361,24 +1361,57 @@ namespace backend
             || mockCameraConfigured_;
     }
 
-    bool AppBackend::startFrameRecording(const std::string& hdf5FilePath) {
-        if (frameRecordingRunning_.load()) {
-            SPDLOG_WARN("Frame recording already in progress");
+    app::PersistenceOwnership &AppBackend::persistenceOwnership() { return persistenceOwnership_; }
+
+    std::string AppBackend::frameRecordingBlockedReason() const {
+        const auto owner = persistenceOwnership_.snapshot().owner;
+        if (owner == app::PersistenceOwner::None) return {};
+        return app::PersistenceOwnership::conflictMessage(app::PersistenceOwner::FrameRecording, owner);
+    }
+
+    bool AppBackend::startFrameRecording(const std::string& hdf5FilePath, std::string* errorOut) {
+        auto reject = [&](const std::string& why) {
+            if (errorOut) *errorOut = why;
             return false;
+        };
+        std::lock_guard<std::mutex> control(frameRecordingControlMutex_);
+
+        // Issue #451: claim the shared HDF5 writer FIRST, atomically, before
+        // touching files, processing configuration, accounting or capture.
+        // An active experiment (Starting/Active/Stopping) holds the claim
+        // until its file is closed, so this rejects without side effects and
+        // the run keeps writing to its own file.
+        auto claim = persistenceOwnership_.tryAcquire(app::PersistenceOwner::FrameRecording,
+                                                      "frame recording start");
+        if (!claim.granted) {
+            SPDLOG_WARN("Cannot start frame recording: {}", claim.message);
+            return reject(claim.message);
         }
+        app::PersistenceLease lease(persistenceOwnership_, app::PersistenceOwner::FrameRecording,
+                                    claim.runId);
+
+        // A previous recording whose writer thread ended on its own (fatal
+        // save error) is finished: it released the claim as its last act.
+        // Reap it so the new thread handle never replaces a joinable one.
+        if (frameRecordingThread_ && frameRecordingThread_->joinable()) {
+            frameRecordingThread_->join();
+        }
+        frameRecordingThread_.reset();
+
         if (!captureService_ || !captureService_->isRunning()) {
             SPDLOG_ERROR("Cannot start frame recording: camera not running");
-            return false;
+            return reject("The camera is not running. Start Live View before recording.");
         }
         if (!processingService_ || !processingService_->isProcessingCorePinSatisfied()) {
             SPDLOG_ERROR("Cannot start frame recording: selected processing core is unavailable");
-            return false;
+            return reject("The selected processing core is unavailable.");
         }
 
-        // Open HDF5 file for recording
         auto& hdf5 = *hdf5Service_;
         if (hdf5.isFileOpen()) {
-            SPDLOG_WARN("HDF5 file already open, closing before recording");
+            // Every writer holds the claim while its file is open, so with the
+            // claim granted an open file can only be one loaded for review.
+            SPDLOG_INFO("Closing the file loaded for review before recording");
             hdf5.closeFile();
         }
 
@@ -1390,11 +1423,11 @@ namespace backend
 
         if (!hdf5.openFile(path)) {
             SPDLOG_ERROR("Failed to open HDF5 file for recording: {}", path);
-            return false;
+            return reject("Could not create the recording file. Check the destination and permissions.");
         }
         if (!hdf5.initializeRecordingDatasets()) {
             hdf5.closeFile();
-            return false;
+            return reject("Could not initialize the recording datasets.");
         }
         auto processingCoreLease = processingService_->acquireProcessingCoreOperation();
 
@@ -1420,8 +1453,11 @@ namespace backend
             "frame recording started", path);
 
         // Launch recording thread
+        // The writer claim moves into the thread and is released when the
+        // lambda is destroyed, i.e. after the thread closed the file.
         frameRecordingThread_ = std::make_unique<std::thread>(
-            [this, processingCoreLease = std::move(processingCoreLease)]() mutable {
+            [this, processingCoreLease = std::move(processingCoreLease),
+             lease = std::move(lease)]() mutable {
             SPDLOG_INFO("Frame recording thread started");
 
             const uint64_t startTimeNs = static_cast<uint64_t>(
@@ -1667,6 +1703,7 @@ namespace backend
     }
 
     void AppBackend::stopFrameRecording() {
+        std::lock_guard<std::mutex> control(frameRecordingControlMutex_);
         if (!frameRecordingRunning_.load() &&
             (!frameRecordingThread_ || !frameRecordingThread_->joinable())) return;
 

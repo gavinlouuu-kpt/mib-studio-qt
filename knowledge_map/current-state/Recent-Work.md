@@ -1,5 +1,28 @@
 # Recent Work
 
+## 2026-09-23 — Manual recording can no longer replace an experiment's HDF5 file (#451)
+
+`AppBackend::startFrameRecording` closed whatever `Hdf5Service` file was open
+— including an active experiment's — and opened the recording destination in
+its place, while `ExperimentCoordinator` kept flushing and finalizing through
+the same service. New single-owner admission
+(`app::PersistenceOwnership`, see [[architecture/AppBackend]]) makes the two
+mutually exclusive in both directions: the claim is taken atomically before
+any side effect and released only after the owner's file is closed. The
+bridge review-load path claims it too (it also closed the shared file). The
+facade and the Qt Record button surface an actionable reason; the button is
+disabled during an experiment and re-checked after the file picker. Regression:
+`e2e.experiment_recording_exclusion` (fails on the pre-fix code: the rejected
+recording was admitted). A mock probe on the pre-fix code also showed the
+silent half of the loss: after the swap the experiment finalized as
+`complete`/`finalizationOk` while writing none of its metadata, because
+finalization only writes when the service still has a file open. With
+frames buffered, the periodic flush would also have written experiment
+frames into the recording file from a second writer thread (inferred from
+source, not reproduced; the crash mechanism remains unconfirmed). Also fixed: a recording thread that ended on a fatal
+save error was left joinable and the next start overwrote its handle
+(`std::terminate`).
+
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
 
 Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,

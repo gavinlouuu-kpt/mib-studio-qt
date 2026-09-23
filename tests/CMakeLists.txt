@@ -288,6 +288,14 @@ mib_add_backend_test_executable(experiment_coordinator_test backend/experiment_c
 add_test(NAME e2e.experiment_coordinator COMMAND $<TARGET_FILE:mib_backend_tests> experiment_coordinator_test)
 set_tests_properties(e2e.experiment_coordinator PROPERTIES LABELS "backend;bridge;e2e" TIMEOUT 180)
 
+# Issue #451: an experiment and manual frame recording share one Hdf5Service;
+# single-owner admission must reject the conflicting start in both directions
+# (Qt/AppBackend and bridge callers) without touching the owner's file.
+mib_add_backend_test_executable(experiment_recording_exclusion_test backend/experiment_recording_exclusion_test.cpp)
+mib_backend_test_link(experiment_recording_exclusion_test PRIVATE Threads::Threads)
+add_test(NAME e2e.experiment_recording_exclusion COMMAND $<TARGET_FILE:mib_backend_tests> experiment_recording_exclusion_test)
+set_tests_properties(e2e.experiment_recording_exclusion PROPERTIES LABELS "backend;bridge;e2e;recording;safety" TIMEOUT 180)
+
 mib_add_backend_test_executable(mindvision_selection_state_test backend/mindvision_selection_state_test.cpp)
 add_test(NAME backend.mindvision_selection_state COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_selection_state_test)
 set_tests_properties(backend.mindvision_selection_state PROPERTIES LABELS "backend;camera")
