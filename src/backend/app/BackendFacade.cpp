@@ -1323,6 +1323,9 @@ namespace backend::bridge
             std::scoped_lock lock(reviewMutex_);
             out.filePath = loadedRecordingPath_;
         }
+        // The shared HDF handle may belong to a live writer, not a review source.
+        // Only loadRecording publishes this path; do not inspect writer datasets.
+        if (out.filePath.empty()) { out.fileOpen = false; return true; }
         out.recordingFile = hdf5.isRecordingFile();
 
         if (out.recordingFile)

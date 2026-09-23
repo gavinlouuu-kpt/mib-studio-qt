@@ -2310,3 +2310,6 @@ Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows
 ## 2026-09-23 — Windows Tauri candidate closure
 
 Added a nonpublishing SDK-free Windows x64 build/test/portable-package lane, separate from Qt releases. Native dependency closure fails unresolved/conflicting DLLs; staging includes MSVC runtime and scientific resources. Hosted Windows validation remains required; no Windows or real-hardware run is claimed from Linux. See [[Desktop-Shell]].
+- 2026-09-23: Reload reconciliation rejects active writer handles as review sources.
+  Native review metadata now requires an actual loaded review path before inspecting
+  shared HDF datasets; shell additionally excludes active raw/experiment writers.
