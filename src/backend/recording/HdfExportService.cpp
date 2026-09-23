@@ -206,6 +206,9 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         } else {
             finalPath = nextAvailableName(request.outputRoot, base + "_metrics.csv", base + "_metrics_", ".csv");
         }
+        if (fs::equivalent(request.sourcePath, finalPath, ec))
+            throw Failed{"export destination must not replace the source recording"};
+        ec.clear();
         // An explicit *file* destination (chosen through a save dialog that
         // already confirmed overwrite) is replaced atomically at commit; an
         // existing folder is never merged into.

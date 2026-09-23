@@ -39,7 +39,8 @@
   `<base>` or `<base>_<max suffix + 1>` — cost does not grow with the number
   of previous exports. An explicit destination is honoured; an existing
   *file* destination (already confirmed by a save dialog) is replaced
-  atomically at commit, an existing folder is refused.
+  atomically at commit, an existing folder is refused. A destination equivalent
+  to the source recording (including symlinks/hardlinks) is always rejected.
 - Charts are not rendered here: the caller passes `supplementalImages`
   (name → BGR `cv::Mat`) captured on its own thread; the job writes them for
   `All` exports.

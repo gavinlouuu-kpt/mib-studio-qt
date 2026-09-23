@@ -55,6 +55,11 @@ int main() {
         writer.closeFile();
     }
     const auto originalHash = hash(source);
+#ifdef _WIN32
+    _putenv_s("MIB_CAMERA_MODE", "mock");
+#else
+    setenv("MIB_CAMERA_MODE", "mock", 1);
+#endif
     backend::AppBackend backend;
     BackendFacade facade(backend);
     MIB_REQUIRE(facade.initialize(dir.path().string()), "initialize");
@@ -94,6 +99,35 @@ int main() {
         MIB_REQUIRE(status["images_exported"] == "24", "all images exported");
         MIB_REQUIRE(hash(source) == originalHash, "source immutable");
     }
+    // Retained cancellation must advertise a visibly partial directory/manifest.
+    facade.setEventSink([&](const BackendEvent& event) {
+        if (auto op = std::get_if<OperationStatusEvent>(&event)) {
+            if (op->kind == BackendOperationKind::Export &&
+                op->state == BackendOperationState::Progress &&
+                json::parse(facade.fetchReviewExportStatusJson()).value("phase", "") == "metadata")
+                facade.requestOperationCancel(op->operationId);
+        }
+    });
+    auto retainedRequest = request;
+    retainedRequest["keep_partial_on_failure"] = true;
+    auto retainedStart = facade.submitReviewExportJson(retainedRequest.dump());
+    MIB_REQUIRE(retainedStart.ok, "retained cancel accepted");
+    auto retained = terminal(facade, retainedStart.operationId);
+    MIB_REQUIRE(retained["state"] == "cancelled", "retained cancellation terminal");
+    auto partial = std::filesystem::path(retained["retained_partial_path"].get<std::string>());
+    MIB_REQUIRE(partial.filename().string().find(".partial-") != std::string::npos,
+                "partial clearly named");
+    MIB_REQUIRE(std::filesystem::exists(partial / "export-failure.json"),
+                "failure manifest retained");
+    facade.setEventSink({});
+    auto overwrite = request;
+    overwrite["format"] = "metrics_csv";
+    overwrite["explicit_destination"] = source.string();
+    auto overwriteStart = facade.submitReviewExportJson(overwrite.dump());
+    MIB_REQUIRE(overwriteStart.ok, "source overwrite checked by worker");
+    MIB_REQUIRE(terminal(facade, overwriteStart.operationId)["state"] == "failed",
+                "source overwrite refused");
+    MIB_REQUIRE(hash(source) == originalHash, "source protected from explicit overwrite");
     auto bad = request;
     bad["output_root"] = source.string(); // file, not directory: deterministic I/O fault
     auto started = facade.submitReviewExportJson(bad.dump());
