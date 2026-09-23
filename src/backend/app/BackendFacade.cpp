@@ -501,7 +501,10 @@ namespace backend::bridge
         }
 
         playback::Frame frame;
-        if (!backend_.playback().fetchLatest(frame))
+        // Fetch exactly the committed identity queried above. Capture can advance
+        // between these calls; eviction is an explicit empty response, never
+        // newer pixels labelled with an older index.
+        if (!backend_.playback().fetchByIndex(latest, frame))
         {
             return false;
         }
@@ -836,16 +839,11 @@ namespace backend::bridge
 
     BackendCommandResult BackendFacade::handleRecordingLoadCommand(const RecordingLoadCommand &command)
     {
-        // The review file cannot replace the HDF5 handle underneath an
-        // active experiment (they share the service).
-        if (backend_.experiment().state() == app::ExperimentRunState::Active)
-        {
-            const std::string message = "Cannot load a recording while an experiment is active";
-            emitEvent(BackendErrorEvent{BackendErrorSource::Review,
-                                        BackendCommandType::RecordingLoad, message});
-            return {false, BackendCommandType::RecordingLoad, message};
-        }
-
+        BackendCommandResult result{false, BackendCommandType::RecordingLoad, "Experiment must be idle before loading review data"};
+        backend_.experiment().withIdleConfiguration([&] {
+            result = [&]() -> BackendCommandResult {
+                if (backend_.isFrameRecording())
+                    return {false, BackendCommandType::RecordingLoad, "Stop raw recording before loading review data"};
         // Tracked as an operation (BE-1): synchronous today, but the shell
         // already correlates Started/terminal events by operationId so the
         // load can move off-thread without a contract change.
@@ -853,6 +851,12 @@ namespace backend::bridge
             beginOperation(BackendOperationKind::RecordingLoad, nullptr, command.filePath);
 
         auto &hdf5 = backend_.hdf5();
+        // Clear identities before replacing the handle, including a failed open.
+        {
+            std::scoped_lock lock(reviewMutex_);
+            loadedRecordingPath_.clear(); reviewMetricsLoaded_ = false;
+            reviewValidMeta_.clear(); reviewInvalidMeta_.clear();
+        }
         // Loading replaces the currently reviewed file (Qt parity: selecting
         // a new HDF file closes the previous one).
         if (hdf5.isFileOpen())
@@ -929,6 +933,9 @@ namespace backend::bridge
         }
         finishOperation(operationId, BackendOperationState::Completed, command.filePath);
         return {true, BackendCommandType::RecordingLoad, "Recording loaded", operationId};
+            }();
+        });
+        return result;
     }
 
     BackendCommandResult BackendFacade::handleOperationCommand(const OperationCommand &command)
@@ -2221,4 +2228,60 @@ namespace backend::bridge
 namespace backend::bridge {
 app::ConfigDocumentSnapshot BackendFacade::fetchConfigDocument(const std::string& path) const { return app::readConfigDocument(path); }
 app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const std::string& path, const std::string& baseline, const std::string& patch) { if (!isInitialized()) { app::ProcessingConfigTransactionResult r; r.error = "backend is not initialized"; return r; } return app::applyProcessingConfigTransaction(backend_, path, baseline, patch); }
+}
+
+namespace backend::bridge {
+std::string BackendFacade::fetchPreviewBufferJson() const {
+    uint64_t first = 0, last = 0; size_t count = 0;
+    const bool available = initialized_ && backend_.playback().queryRange(first, last, count);
+    return nlohmann::json{{"available", available}, {"first", std::to_string(first)},
+        {"last", std::to_string(last)}, {"count", std::to_string(count)},
+        {"capture_running", initialized_ && backend_.capture().isRunning()},
+        {"recording", initialized_ && backend_.isFrameRecording()}}.dump();
+}
+std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
+    using nlohmann::json;
+    json result{{"ok", false}, {"output_path", ""}, {"error", ""}};
+    try {
+        if (!initialized_) throw std::runtime_error("backend is not initialized");
+        if (request.size() > 16384) throw std::runtime_error("buffer request exceeds limit");
+        const auto input = json::parse(request);
+        const auto format = input.at("format").get<std::string>();
+        if (format != "tiff" && format != "avi") throw std::runtime_error("format must be tiff or avi");
+        const auto parseIndex = [](const json& v) {
+            const auto text = v.get<std::string>();
+            if (text.empty() || text.size() > 20 || text.find_first_not_of("0123456789") != std::string::npos)
+                throw std::runtime_error("invalid frame index");
+            return std::stoull(text);
+        };
+        const auto first = parseIndex(input.at("first")), last = parseIndex(input.at("last"));
+        const double fps = input.value("fps", 30.0);
+        if (!std::isfinite(fps) || fps <= 0 || fps > 1000) throw std::runtime_error("invalid AVI playback fps");
+        const std::filesystem::path root(input.at("output_root").get<std::string>());
+        if (!std::filesystem::is_directory(root)) throw std::runtime_error("output root must be an existing directory");
+        const bool idle = backend_.experiment().withIdleConfiguration([&] {
+            if (backend_.capture().isRunning()) throw std::runtime_error("stop capture before saving a stable preview buffer");
+            uint64_t earliest = 0, latest = 0; size_t count = 0;
+            if (!backend_.playback().queryRange(earliest, latest, count) || first > last || first < earliest || last > latest)
+                throw std::runtime_error("requested frames are no longer retained; refresh the buffer range");
+            std::filesystem::path output;
+            for (unsigned i = 0; i < 10000; ++i) {
+                auto candidate = root / ("preview-buffer-" + std::to_string(i));
+                std::error_code ec;
+                if (std::filesystem::create_directory(candidate, ec)) { output = candidate; break; }
+                if (ec) throw std::runtime_error("cannot reserve output directory: " + ec.message());
+            }
+            if (output.empty()) throw std::runtime_error("cannot reserve a unique output directory");
+            // Retain any partial output and report its path on failure. Never overwrite.
+            result["output_path"] = output.string();
+            const bool ok = format == "tiff"
+                ? backend_.playback().saveFramesToDisk(output.string(), first, last)
+                : backend_.playback().saveFramesToAvi((output / "frames.avi").string(), first, last, fps);
+            if (!ok) throw std::runtime_error("buffer save failed; partial output is retained");
+            result["ok"] = true;
+        });
+        if (!idle) throw std::runtime_error("experiment must be idle before buffer save");
+    } catch (const std::exception& e) { result["error"] = e.what(); }
+    return result.dump();
+}
 }

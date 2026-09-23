@@ -1655,6 +1655,11 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // fetch_device_discovery, cancel_device_discovery) and the discovery contract
 // groups (#419, ADR 0005). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 15; }
+std::uint32_t bridge_abi_version() { return 16; }
 
 } // namespace mib_bridge
+
+namespace mib_bridge {
+rust::String BackendBridge::fetch_preview_buffer() { return rust::String(impl_->facade.fetchPreviewBufferJson()); }
+rust::String BackendBridge::save_preview_buffer(rust::Str request) { return rust::String(impl_->facade.savePreviewBufferJson(std::string(request))); }
+}

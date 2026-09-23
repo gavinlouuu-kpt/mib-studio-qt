@@ -981,5 +981,9 @@ mib_add_backend_test_executable(export_bridge_facade_test backend/export_bridge_
 add_test(NAME backend.export_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> export_bridge_facade_test)
 set_tests_properties(backend.export_bridge_facade PROPERTIES LABELS "backend;bridge;recording;stress" TIMEOUT 45)
 
+mib_add_backend_test_executable(frame_identity_test backend/frame_identity_test.cpp)
+add_test(NAME backend.frame_identity COMMAND $<TARGET_FILE:mib_backend_tests> frame_identity_test)
+set_tests_properties(backend.frame_identity PROPERTIES LABELS "backend;bridge;stress;invariant" TIMEOUT 45)
+
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)

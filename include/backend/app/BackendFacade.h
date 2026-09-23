@@ -785,6 +785,8 @@ namespace backend::bridge
         void setEventSink(EventSink sink);
         BackendCommandResult dispatch(const BackendCommand &command);
 
+        std::string fetchPreviewBufferJson() const;
+        std::string savePreviewBufferJson(const std::string& request);
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;
         bool fetchProcessingStats(BackendProcessingStats &out) const;

@@ -183,6 +183,12 @@ int main()
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
 
+    bridge::RecordingLoadCommand forbiddenLoad;
+    forbiddenLoad.filePath = recordingPath.string();
+    if (facade.dispatch(forbiddenLoad).ok || !backend.isFrameRecording()) {
+        std::cerr << "Review load must not replace an active raw writer\n";
+        facade.shutdown(); return 29;
+    }
     bridge::RecordingCommand stopRecording;
     stopRecording.action = bridge::RecordingCommandAction::StopFrameRecording;
     stopRecording.filePath = recordingPath.string();

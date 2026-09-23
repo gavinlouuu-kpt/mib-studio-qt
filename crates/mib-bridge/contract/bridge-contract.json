@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 15,
+  "abi_version": 16,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -373,5 +373,11 @@
       "conflict"
     ],
     "notes": "No force overwrite; no startup-file selection changes; saved-only is not successful application."
+  },
+  "preview_buffer_json": {
+    "snapshot": "available:boolean; first,last,count:decimal-u64; capture_running,recording:boolean",
+    "save_request": "output_root existing directory; format tiff|avi; first,last decimal-u64; fps finite (0,1000]",
+    "save_result": "ok:boolean; output_path:string including retained partial path; error:string",
+    "guards": "idle experiment and stopped capture; exact retained range; unique destination directory; no overwrite; AVI has no per-frame timestamps"
   }
 }

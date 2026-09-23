@@ -279,3 +279,7 @@ point delegates to the same HdfExportService. Terminal status is retained for
 reconciliation even if operation events are missed. Full general resnapshot,
 frame source/session/config identities and native cross-shell acceptance remain
 open; this addition does not close #372/#246.
+
+ABI 16 adds preview-buffer range/save JSON. Latest-frame facade pulls now fetch
+the exact queried committed index, never a later frame under an earlier label;
+concurrent frame-identity stress regression covers index/timestamp/pixel agreement.

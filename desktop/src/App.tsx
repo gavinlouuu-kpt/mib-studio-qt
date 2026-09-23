@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
@@ -218,7 +220,6 @@ export default function App() {
   const liveCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const reviewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const loopRef = useRef<number | null>(null);
   const previewLoopRef = useRef<number | null>(null);
   const framePulls = useRef(new FramePullScheduler());
   const tickBusy = useRef(false);
@@ -350,6 +351,8 @@ export default function App() {
     try {
       // State/fault notifications do not wait behind pixel decode/rendering.
       applyEvents(await bridge.pollEvents());
+      const runtime = await invoke<{capture_running: boolean; recording: boolean}>("fetch_preview_buffer");
+      setRunning(runtime.capture_running); setRecording(runtime.recording);
       if (procEnabledRef.current) setStats(await bridge.fetchProcessingStats());
       setExpStatus(await bridge.fetchExperimentStatus());
       setAfStatus(await bridge.fetchAutofocusStatus());
@@ -364,13 +367,18 @@ export default function App() {
       window.clearInterval(previewLoopRef.current);
       previewLoopRef.current = null;
     }
-    if (loopRef.current !== null) {
-      window.clearInterval(loopRef.current);
-      loopRef.current = null;
-    }
+
   }, []);
 
   useEffect(() => () => stopLoop(), [stopLoop]);
+  // State reconciliation belongs to the shell, not a capture button/view.
+  // Remains active after stop/finalization and recovers after webview reload.
+  useEffect(() => {
+    if (!ready) return;
+    void tick();
+    const timer = window.setInterval(() => void tick(), 500);
+    return () => window.clearInterval(timer);
+  }, [ready, tick]);
 
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
   // image clones run only while the Monitoring view is actually shown.
@@ -379,15 +387,18 @@ export default function App() {
     if (!ready) return;
     bridge.monitoringSetActive(monitoringVisible).catch(() => {});
     if (!monitoringVisible) return;
+    let polling = false, disposed = false;
     const id = window.setInterval(async () => {
+      if (polling) return; polling = true;
       try {
-        setMonSnapshot(await bridge.fetchMonitoringSnapshot(200));
-        setTrigStatus(await bridge.fetchTriggerStatus());
+        const snapshot = await bridge.fetchMonitoringSnapshot(200);
+        const trigger = await bridge.fetchTriggerStatus();
+        if (!disposed) { setMonSnapshot(snapshot); setTrigStatus(trigger); }
       } catch {
         /* backend gone — next tick will surface it */
-      }
+      } finally { polling = false; }
     }, 500);
-    return () => window.clearInterval(id);
+    return () => { disposed = true; window.clearInterval(id); };
   }, [monitoringVisible, ready]);
 
   const toggleSidebar = useCallback(() => {
@@ -552,6 +563,21 @@ export default function App() {
     }
   }, [pickedDevice, discovery, append, refreshCameraState]);
 
+  const previewFollowing = useRef(true);
+  const seekPreview = useCallback((index: string | null) => {
+    previewFollowing.current = index === null;
+    framePulls.current.invalidate("live");
+    framePulls.current.request("live", index === null ? bridge.fetchFrame : () => bridge.fetchFrameByIndex(index));
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !running) return;
+    previewLoopRef.current = window.setInterval(() => {
+      if (previewFollowing.current) framePulls.current.request("live", bridge.fetchFrame, false);
+    }, 1000 / 30);
+    return stopLoop;
+  }, [ready, running, stopLoop]);
+
   const onStartCamera = useCallback(async () => {
     try {
       setReviewing(false);
@@ -559,11 +585,7 @@ export default function App() {
       if (!res.ok) return append(`start failed: ${res.message}`);
       setRunning(true);
       append("capture started");
-      stopLoop();
-      loopRef.current = window.setInterval(tick, 200);
-      previewLoopRef.current = window.setInterval(() => {
-        framePulls.current.request("live", bridge.fetchFrame, false);
-      }, 1000 / 30);
+
       // Parity with Qt: a successful start lands the operator on Overview.
       setTab((t) => (t === "connect" ? "overview" : t));
     } catch (e) {
@@ -572,13 +594,14 @@ export default function App() {
   }, [tick, append, stopLoop]);
 
   const onStopCamera = useCallback(async () => {
-    stopLoop();
     try {
       if (recording) {
-        await bridge.stopRecording();
+        const stopped = await bridge.stopRecording();
+        if (!stopped.ok) return append(`stop recording failed: ${stopped.message}`);
         setRecording(false);
       }
-      await bridge.stopCapture();
+      const stopped = await bridge.stopCapture();
+      if (!stopped.ok) return append(`stop capture failed: ${stopped.message}`);
       setRunning(false);
       append("capture stopped");
     } catch (e) {
@@ -599,7 +622,8 @@ export default function App() {
         setRecording(true);
         append(`recording → ${picked}`);
       } else {
-        await bridge.stopRecording();
+        const stopped = await bridge.stopRecording();
+        if (!stopped.ok) return append(`stop recording failed: ${stopped.message}`);
         setRecording(false);
         append("recording stopped");
       }
@@ -653,9 +677,7 @@ export default function App() {
     const idx = decimalU64(input);
     setReviewIndex(idx);
     framePulls.current.request("review", async () => {
-      const result = await bridge.seekIndex(idx);
-      if (!result.ok) throw new Error(result.message);
-      return bridge.fetchFrameByIndex(idx);
+      return bridge.fetchReviewImage(2, idx);
     });
   }, []);
 
@@ -681,12 +703,10 @@ export default function App() {
   const onSelectHdf = useCallback(async () => {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
-    stopLoop();
-    setRunning(false);
-    setReviewPath(picked);
     try {
       const res = await bridge.loadRecording(picked);
-      if (!res.ok) return append(`load failed: ${res.message}`);
+      if (!res.ok) { setReviewMeta(await bridge.fetchReviewMetadata()); return append(`load failed: ${res.message}`); }
+      setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
       applyEvents(await bridge.pollEvents());
@@ -696,7 +716,7 @@ export default function App() {
       setReviewImgIndex(0);
       await loadMetricsPage(true, 0);
       if (meta.recording_file) {
-        await onScrub(range.earliest);
+        await onScrub("0");
       } else if (meta.valid_images.present && meta.valid_images.count > 0) {
         await drawReviewImage(0, 0);
       }
@@ -732,6 +752,7 @@ export default function App() {
     ready, running, experimentActive: expActive, selection: camSelection, append,
     refresh: refreshCameraState,
   });
+  const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview);
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
   const reviewExport = useReviewExport(ready, append);
   const cameraConfigured = camSelection?.configured ?? false;
@@ -1437,13 +1458,13 @@ export default function App() {
                       >
                         Clear ROI
                       </button>
-                      <button disabled title={PENDING.saveBuffer}>Save Buffer</button>
+
                       <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
                       </button>
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
-                    <input type="range" className="scrub" disabled title={PENDING.saveBuffer} aria-label="Preview buffer scrub (not bridged)" />
+                    <PreviewBufferControls model={previewBuffer} />
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>
@@ -1782,21 +1803,20 @@ export default function App() {
                         {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
                         <canvas ref={reviewCanvasRef} className={fitWindow ? "fit" : ""} />
                       </div>
-                      {reviewing && reviewTab === "raw" && BigInt(range.count) > 0n && (
+                      {reviewing && reviewTab === "raw" && (reviewMeta?.recorded_images.count ?? 0) > 0 && (
                         <>
                           <input
                             type="range"
                             className="scrub"
-                            min={range.earliest}
-                            max={range.latest}
+                            min={0}
+                            max={Math.max(0, (reviewMeta?.recorded_images.count ?? 0) - 1)}
                             value={reviewIndex}
                             onChange={(e) => onScrub(e.target.value)}
-                            disabled={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
-                            title={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
+                            title="Choose recorded frame"
                             aria-label="Frame scrubber"
                           />
                           <span className="mono">
-                            frame {reviewIndex} of [{range.earliest}…{range.latest}] ({range.count} available)
+                            frame {reviewIndex} of {reviewMeta?.recorded_images.count ?? 0} recorded frames
                           </span>
                         </>
                       )}

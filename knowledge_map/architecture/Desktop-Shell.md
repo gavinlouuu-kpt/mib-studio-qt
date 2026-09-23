@@ -267,3 +267,13 @@ deformability vs raw pixel area and dimensionless ring-ratio histogram. They
 cap at 200 rows, discard non-finite values, retain negative/range extrema, and
 label ring ratio separately from physical ring width. No calibration, new metric
 computation, or identity-matched overlay is implied.
+
+## Software replacement follow-up (2026-09-23)
+
+Preview pause/scrub uses exact decimal frame identities and the bounded pull
+scheduler. Preview TIFF/AVI buffer export delegates to PlaybackService through
+the facade, requires stopped capture and idle experiment, rejects evicted ranges
+rather than silently clamping, reserves a new destination and reports retained
+partial output. AVI explicitly cannot preserve per-frame timestamps. Navigation
+retains the save owner. Shell status reconciliation continues independently of
+capture buttons and monitoring requests are single-flight with stale-view guards.

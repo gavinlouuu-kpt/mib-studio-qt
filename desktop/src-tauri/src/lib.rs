@@ -17,6 +17,7 @@ mod event_transport;
 mod frame_packet;
 mod platform;
 mod config_document;
+mod preview_buffer;
 pub mod updater;
 
 struct AppState {
@@ -1542,6 +1543,8 @@ pub fn run() {
             platform::get_preferences,
             platform::set_preferences,
             platform::shell_log,
+            preview_buffer::fetch_preview_buffer,
+            preview_buffer::save_preview_buffer,
             config_document::fetch_config_document,
             config_document::apply_config_document,
             experiment_start,

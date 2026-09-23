@@ -2247,3 +2247,9 @@ and shared HDF5 export/progress/cancel on current develop. Bumped bridge ABI to
 15. Native integration caught/fixed a runner-registration gap and valid-only
 export failure; config review prevented applying unrelated disk fields to runtime
 provenance. See the catch-up execution plan for verified vs pending gates.
+
+- 2026-09-23: Tauri software replacement follow-up: preview pause/scrub and
+  guarded non-overwriting buffer export, independent status reconciliation,
+  bounded monitoring polling. Fixed concurrent latest-frame identity and raw
+  review incorrectly reading the live ring instead of the HDF dataset. Review
+  load now holds the idle lifecycle gate and rejects active raw recording.
