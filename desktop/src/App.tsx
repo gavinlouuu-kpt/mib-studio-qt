@@ -774,7 +774,7 @@ export default function App() {
     ready, running, experimentActive: expActive, selection: camSelection, append,
     refresh: refreshCameraState,
   });
-  const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview);
+  const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
   const cores = useCoreManagement({ready,active:expActive,append,onChanged:refreshConfig});
   const startExperimentReason = !ready || !cores.initialized
     ? "Backend is not initialized"

@@ -443,3 +443,8 @@ ABI 18; processed preview recipe identity remains separately scoped.
 Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.
 
 Pump connections accept system serial names (including Linux paths), reusing the existing shared SerialBus string transport. Status exposes the actual port name; legacy Qt config edits preserve connected transport identity. Two pumps can share a bus at distinct slave addresses, while duplicate pump/pulse slave identities and autofocus port collisions are refused before connection writes. Legacy numeric COM bridge calls remain supported. Native fake-serial tests cover named endpoint roundtrip and shared-bus identity guards; real hardware acceptance remains deferred.
+
+CI also builds and extracts the Linux development `.deb` and runs the same native
+workflow from its packaged path, retaining package and evidence artifacts. File-dialog
+acceptance waits for actual GTK dialog closure: a slower hosted runner exposed that
+a fixed 300 ms folder-navigation delay could leave the export chooser pending.

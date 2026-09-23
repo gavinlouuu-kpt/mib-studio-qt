@@ -89,14 +89,22 @@ def main():
                 result = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', title], capture_output=True, text=True)
                 return result.stdout.splitlines()[-1] if result.returncode == 0 and result.stdout.strip() else None
             window = wait(find_dialog, 'native dialog ' + title)
+            time.sleep(.5)  # GTK maps the dialog before its entry is realized on slow CI.
             subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
             subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+l'], check=True)
             subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True)
             subprocess.run(['xdotool', 'type', '--clearmodifiers', '--delay', '1', next_picker], check=True)
             subprocess.run(['xdotool', 'key', '--clearmodifiers', 'Return'], check=True)
-            time.sleep(.3)
-            if find_dialog():
+            # Directory choosers navigate first, then accept. Wait for actual
+            # unmapping rather than assuming one fixed 300ms delay was enough.
+            for _ in range(12):
+                time.sleep(.5)
+                dialog = find_dialog()
+                if not dialog:
+                    break
+                subprocess.run(['xdotool', 'windowfocus', '--sync', dialog], check=True)
                 subprocess.run(['xdotool', 'key', '--clearmodifiers', 'Return'], check=True)
+            wait(lambda: not find_dialog(), 'native dialog accepted: ' + title)
             next_picker = None
 
     def stage(prefix):
