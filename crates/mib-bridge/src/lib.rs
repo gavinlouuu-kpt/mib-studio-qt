@@ -295,6 +295,8 @@ pub mod ffi {
         pub enabled: bool,
         pub current_voltage: f64,
         pub com_port: i32,
+        pub backend_name: String,
+        pub endpoint_id: String,
         pub average_ring_ratio: f64,
         pub median_ring_ratio: f64,
         pub last_ring_ratio_update_us: u64,
@@ -594,6 +596,7 @@ pub mod ffi {
         /// Autofocus / nanopositioner commands (schema v11, BE-8). On
         /// platforms without the Coremor SDK, connect fails with a structured
         /// message and every other command stays safe.
+        fn autofocus_connect_endpoint(self: Pin<&mut BackendBridge>, backend: &str, endpoint: &str, com_port: i32, baud_rate: i32, device_address: i32) -> BridgeCommandResult;
         fn autofocus_connect(
             self: Pin<&mut BackendBridge>,
             com_port: i32,
@@ -685,6 +688,8 @@ pub mod ffi {
         /// (schema v9, BE-6). Returns the job's operation_id; progress and the
         /// terminal state arrive as OperationStatus events. Partial outputs
         /// are removed on cancel/failure; the source file is opened read-only.
+        fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
+        fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
         fn review_export_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn review_export_status_json(self: Pin<&mut BackendBridge>) -> String;
 

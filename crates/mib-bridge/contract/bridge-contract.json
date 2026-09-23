@@ -24,7 +24,8 @@
     "Trigger": 8,
     "Review": 9,
     "Pump": 10,
-    "Autofocus": 11
+    "Autofocus": 11,
+    "PulseGenerator": 12
   },
   "review_image_datasets": {
     "ValidImage": 0,

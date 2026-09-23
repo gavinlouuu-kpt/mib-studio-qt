@@ -44,6 +44,7 @@ namespace backend::bridge
         Review = 9,
         Pump = 10,
         Autofocus = 11,
+        PulseGenerator = 12,
     };
 
     enum class CameraCommandAction
@@ -282,6 +283,7 @@ namespace backend::bridge
     struct AutofocusCommand
     {
         AutofocusCommandAction action{AutofocusCommandAction::SetEnabled};
+        std::optional<nanopositioner::Endpoint> endpoint;
         int comPort{-1};
         int baudRate{115200};
         int deviceAddress{1};
@@ -745,6 +747,8 @@ namespace backend::bridge
         bool enabled{false};
         double currentVoltage{0.0};
         int comPort{-1};
+        std::string backendName;
+        std::string endpointId;
         double averageRingRatio{0.0};
         double medianRingRatio{0.0};
         std::uint64_t lastRingRatioUpdateUs{0};
@@ -839,6 +843,8 @@ namespace backend::bridge
                                                 std::size_t byteLen);
         BackendCommandResult clearBackgroundImage();
 
+        BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
+        std::string fetchPulseGeneratorStatusJson() const;
         BackendCommandResult submitReviewExportJson(const std::string &json);
         std::string fetchReviewExportStatusJson() const;
 

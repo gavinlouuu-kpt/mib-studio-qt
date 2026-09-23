@@ -24,6 +24,7 @@
 #include "backend/services/CaptureService.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
+#include "backend/services/PulseGeneratorService.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1705,7 +1706,12 @@ namespace backend::bridge
         {
         case AutofocusCommandAction::Connect:
         {
-            if (command.comPort < 0)
+            if (command.endpoint && (command.endpoint->backend == nanopositioner::BackendKind::Auto ||
+                command.endpoint->persistentId.empty()))
+                return fail("An explicit backend and endpoint identity are required");
+            const bool coremor = !command.endpoint || command.endpoint->backend == nanopositioner::BackendKind::Coremor;
+            const int port = command.endpoint ? command.endpoint->coremorPort : command.comPort;
+            if (coremor && port < 0)
             {
                 return fail("Invalid COM port");
             }
@@ -1720,13 +1726,14 @@ namespace backend::bridge
             for (int pumpId = 0; pumpId < Pump::PUMP_COUNT; ++pumpId)
             {
                 const auto id = static_cast<Pump::PumpId>(pumpId);
-                if (pumps.isConnected(id) && pumps.getComPort(id) == command.comPort)
+                if (coremor && pumps.isConnected(id) && pumps.getComPort(id) == port)
                 {
                     return fail("COM port already in use by a syringe pump");
                 }
             }
-            if (!autofocus.connect(command.comPort, command.baudRate,
-                                   static_cast<unsigned char>(command.deviceAddress)))
+            if (!(command.endpoint ? autofocus.connect(*command.endpoint) :
+                  autofocus.connect(command.comPort, command.baudRate,
+                                   static_cast<unsigned char>(command.deviceAddress))))
             {
                 return fail("Autofocus controller connect failed");
             }
@@ -1782,6 +1789,8 @@ namespace backend::bridge
         out.enabled = autofocus.isEnabled();
         out.currentVoltage = autofocus.getCurrentVoltage();
         out.comPort = autofocus.getComPort();
+        out.backendName = nanopositioner::backendKindName(autofocus.getBackendKind());
+        out.endpointId = autofocus.getEndpointId();
         out.averageRingRatio = autofocus.getAverageRingRatio();
         out.medianRingRatio = autofocus.getMedianRingRatio();
         out.lastRingRatioUpdateUs = autofocus.getLastRingRatioUpdateUs();
@@ -2283,5 +2292,73 @@ std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
         if (!idle) throw std::runtime_error("experiment must be idle before buffer save");
     } catch (const std::exception& e) { result["error"] = e.what(); }
     return result.dump();
+}
+BackendCommandResult BackendFacade::pulseGeneratorCommandJson(const std::string& text) {
+    const auto type = BackendCommandType::PulseGenerator;
+    if (!initialized_) return {false, type, "Backend is not initialized"};
+    if (text.size() > 4096) return {false, type, "Pulse command is too large"};
+    try {
+        const auto json = nlohmann::json::parse(text);
+        const auto action = json.at("action").get<std::string>();
+        auto& pulse = backend_.pulseGenerator();
+        BackendCommandResult result{false, type, "Pulse command failed"};
+        auto apply = [&] {
+            if (pulse.liveViewOwned()) { result.message = "Pulse generator is owned by coordinated live view"; return; }
+            bool ok = false;
+            if (action == "connect") {
+                const auto port = json.at("port").get<std::string>();
+                services::SerialSettings settings;
+                settings.baudRate = json.value("baud", 9600);
+                settings.dataBits = json.value("data_bits", 8);
+                settings.stopBits = json.value("stop_bits", 1);
+                const auto parity = json.value("parity", std::string("N"));
+                const int address = json.value("address", 1);
+                if (port.empty() || port.size() > 512 || settings.baudRate <= 0 || settings.baudRate > 4000000 ||
+                    settings.dataBits < 5 || settings.dataBits > 8 || settings.stopBits < 1 || settings.stopBits > 2 ||
+                    (parity != "N" && parity != "E" && parity != "O") || address < 1 || address > 247) {
+                    result.message = "Invalid pulse-generator serial endpoint"; return;
+                }
+                settings.parity = parity[0];
+                if (pulse.isConnected()) { result.message = "Disconnect the current pulse generator first"; return; }
+                ok = pulse.connect(port, settings, static_cast<std::uint8_t>(address));
+            } else if (action == "disconnect") {
+                pulse.disconnect(); ok = !pulse.isConnected();
+            } else {
+                const int channel = json.at("channel").get<int>();
+                if (channel < 0 || channel >= services::PulseGeneratorService::CHANNEL_COUNT) {
+                    result.message = "Invalid pulse channel"; return;
+                }
+                if (action == "frequency" || action == "duty") {
+                    const double value = json.at("value").get<double>();
+                    const double minimum = action == "frequency" ? 400.0 : 0.0;
+                    const double maximum = action == "frequency" ? 40000.0 : 100.0;
+                    if (!std::isfinite(value) || value < minimum || value > maximum) {
+                        result.message = "Pulse value is outside the supported range"; return;
+                    }
+                    ok = action == "frequency" ? pulse.setFrequency(channel, value) : pulse.setDutyCycle(channel, value);
+                } else if (action == "enable") ok = pulse.setOutputEnabled(channel, json.at("enabled").get<bool>());
+                else { result.message = "Unknown pulse action"; return; }
+            }
+            result.ok = ok;
+            result.message = ok ? "Pulse-generator command completed" : services::PulseGeneratorService::toString(pulse.lastError());
+        };
+        // Serialize configuration/actuation against experiment Start. Output-off
+        // remains available unless coordinated live view owns the generator.
+        const bool stop = action == "enable" && !json.at("enabled").get<bool>();
+        if (stop) apply();
+        else if (!backend_.experiment().withIdleConfiguration(apply)) result.message = "Experiment must be idle";
+        return result;
+    } catch (const std::exception& e) { return {false, type, e.what()}; }
+}
+std::string BackendFacade::fetchPulseGeneratorStatusJson() const {
+    if (!initialized_) return R"({"valid":false})";
+    auto& pulse = backend_.pulseGenerator();
+    const auto status = pulse.getStatus();
+    const auto config = pulse.getConfig();
+    nlohmann::json channels = nlohmann::json::array();
+    for (const auto& channel : status.channels) channels.push_back({{"frequency_hz", channel.frequencyHz}, {"duty_percent", channel.dutyPercent}, {"output_enabled", channel.outputEnabled}});
+    return nlohmann::json{{"valid", true}, {"connected", status.connected}, {"owned", pulse.liveViewOwned()},
+        {"error", services::PulseGeneratorService::toString(status.lastError)}, {"port", config.portName},
+        {"baud", config.serial.baudRate}, {"address", config.modbusAddress}, {"channels", channels}}.dump();
 }
 }

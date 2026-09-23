@@ -277,3 +277,15 @@ rather than silently clamping, reserves a new destination and reports retained
 partial output. AVI explicitly cannot preserve per-frame timestamps. Navigation
 retains the save owner. Shell status reconciliation continues independently of
 capture buttons and monitoring requests are single-flight with stale-view guards.
+
+### Hardware endpoint parity (2026-09-23)
+
+Connect now supports typed OEABT endpoint IDs alongside CoreMOR connections and
+read-only asynchronous nanopositioner discovery. Selecting a discovered endpoint only
+fills the draft; connection still requires an explicit command. Incomplete/ambiguous
+results are never auto-adopted. The acquisition pulse generator has system-port and
+Modbus-address selection, exact-address scoped discovery, channel frequency/duty and
+output enable/disable controls. Writes consume the shared commissioning arm; mounting,
+polling and discovery do not write. Disconnect does not stop a generator's physical
+pulse output, and the UI explains that distinction. Hardware acceptance remains a
+separate deferred bench run.

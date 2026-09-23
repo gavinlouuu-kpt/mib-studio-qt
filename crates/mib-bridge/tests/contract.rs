@@ -81,6 +81,16 @@ fn autofocus_commands_and_config_roundtrip() {
     assert_eq!(status.last_ring_ratio_update_us, 0);
     assert_eq!(status.ring_ratio_age_us, 0);
 
+    // New typed endpoint validation never probes a device on malformed input.
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("auto", "x", -1, 115200, 1).ok);
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("oeabt", "", -1, 115200, 1).ok);
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("unknown", "x", -1, 115200, 1).ok);
+    let pulse: serde_json::Value = serde_json::from_str(&bridge.pin_mut().pulse_generator_status()).unwrap();
+    assert_eq!(pulse["valid"], true);
+    assert_eq!(pulse["connected"], false);
+    for request in [r#"{"action":"connect","port":"","address":1}"#, r#"{"action":"frequency","channel":0,"value":0}"#, r#"{"action":"duty","channel":5,"value":50}"#] {
+        assert!(!bridge.pin_mut().pulse_generator_command(request).ok);
+    }
     // Structured parameter errors and safe failure without hardware.
     assert!(!bridge.pin_mut().autofocus_connect(-1, 115200, 1).ok);
     assert!(!bridge.pin_mut().autofocus_connect(3, 115200, 999).ok);

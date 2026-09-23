@@ -3,6 +3,8 @@ import { bridge, type AutofocusConfig, type AutofocusStatus, type PumpStatus, ty
 import { DEFAULT_MODE, type OperatingMode } from '../commissioning';
 import { HardwareCommandOwner, hardwareGate, numericInput, validateFocusConfig } from './hardwareControlModel';
 import './HardwareControls.css';
+import {EndpointDiscovery} from './EndpointDiscovery';
+import {PulseGeneratorControls} from './PulseGeneratorControls';
 
 type Props = { ready: boolean; experimentActive: boolean; append: (message: string) => void; mode?: OperatingMode; armed?: boolean; onDisarm: () => void };
 type Connection = { port: string; baud: string; address: string };
@@ -24,6 +26,8 @@ function connectionArgs(value: Connection, addressMax: number, addressMin = 1): 
 
 export function HardwareControls({ready, experimentActive, append, mode = DEFAULT_MODE, armed = false, onDisarm}: Props) {
   const [pumps, setPumps] = useState<Array<PumpStatus | null>>([null, null]);
+  const [focusBackend, setFocusBackend] = useState('coremor');
+  const [focusEndpoint, setFocusEndpoint] = useState('');
   const [focus, setFocus] = useState<AutofocusStatus | null>(null);
   const [config, setConfig] = useState<AutofocusConfig | null>(null);
   const [connections, setConnections] = useState([initialConnection(), initialConnection(), initialConnection()]);
@@ -83,7 +87,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
   return <section className="hardware-controls" aria-label="Pump and autofocus controls">
     <h2>Pumps and autofocus</h2>
     <p>Manual run, purge, enable and jog require Service / Commissioning mode and arming. Stop and disable remain available during experiments.</p>
-    <p>Connections currently use numeric COM ports. Typed endpoint discovery is not available through this bridge.</p>
+    <p>Pump connections use numeric COM ports. Nanopositioners support CoreMOR and OEABT endpoint identities.</p>
     {gate('configure') && <p role="status">{gate('configure')}</p>}
     {error && <p role="alert">{error}</p>}{statusError && <p role="alert">Status unavailable: {statusError}</p>}
     {pumps.map((status, id) => {
@@ -119,11 +123,18 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
       </fieldset>;
     })}
     <fieldset><legend>Autofocus / nanopositioner</legend>
-      <p>{focus ? `${focus.connected ? 'Connected' : 'Disconnected'} · ${focus.enabled ? 'Enabled' : 'Disabled'} · ${focus.current_voltage} V` : 'Status unknown'}</p>
+      <p>{focus ? `${focus.connected ? 'Connected' : 'Disconnected'} · ${focus.enabled ? 'Enabled' : 'Disabled'} · ${focus.current_voltage} V · ${focus.backend_name ?? ""} ${focus.endpoint_id ?? ""}` : 'Status unknown'}</p>
       {focus && <p>Ring ratio: {focus.average_ring_ratio} average / {focus.median_ring_ratio} median · {focus.last_ring_ratio_update_us === 0 ? 'No focus sample received' : `Sample age ${(focus.ring_ratio_age_us / 1000).toFixed(0)} ms${config && focus.ring_ratio_age_us > config.ring_ratio_stale_ms * 1000 ? ' (stale)' : ''}`}</p>}
-      <ConnectionFields value={connections[2]} disabled={configureDisabled || !!focus?.connected} onChange={v => update(setConnections, connections, 2, v)} />
+      <EndpointDiscovery disabled={configureDisabled || !!focus?.connected} request={() => ({kinds: [2], origin: 'tauri-nanopositioner-picker'})} onSelect={device => {
+        const oeabt = device.claimed_by.some(vendor => /oeabt/i.test(vendor));
+        setFocusBackend(oeabt ? 'oeabt' : 'coremor'); setFocusEndpoint(device.persistent_id || device.system_path);
+        if (!oeabt) { const port = /(?:COM)([0-9]+)$/i.exec(device.system_path)?.[1]; if (port) update(setConnections, connections, 2, {...connections[2], port, address: String(device.bus_address)}); }
+      }} />
+      <label>Nanopositioner backend<select value={focusBackend} disabled={configureDisabled || !!focus?.connected} onChange={e => setFocusBackend(e.target.value)}><option value="coremor">CoreMOR serial</option><option value="oeabt">OEABT USB</option></select></label>
+      {focusBackend === 'oeabt' && <label>OEABT endpoint identity<input value={focusEndpoint} disabled={configureDisabled || !!focus?.connected} onChange={e => setFocusEndpoint(e.target.value)} placeholder="Exact discovered endpoint ID" /></label>}
+      {focusBackend === 'coremor' && <ConnectionFields value={connections[2]} disabled={configureDisabled || !!focus?.connected} onChange={v => update(setConnections, connections, 2, v)} />}
       <div className="hardware-actions">
-        <button disabled={configureDisabled || !focus || focus.connected} onClick={() => void run('Connect autofocus', 'configure', false, () => bridge.autofocusConnect(...connectionArgs(connections[2], 255, 0)))}>Connect autofocus</button>
+        <button disabled={configureDisabled || !focus || focus.connected} onClick={() => void run('Connect autofocus', 'configure', false, () => focusBackend === 'coremor' ? bridge.autofocusConnect(...connectionArgs(connections[2], 255, 0)) : bridge.autofocusConnectEndpoint(focusBackend, focusEndpoint.trim(), -1, 115200, 1))}>Connect autofocus</button>
         <button disabled={configureDisabled || !focus?.connected} onClick={() => void run('Disconnect autofocus', 'configure', true, bridge.autofocusDisconnect)}>Disconnect autofocus</button>
         <button disabled={busy || !!gate('actuate', !!focus?.connected) || !!focus?.enabled} onClick={() => void run('Enable autofocus', 'actuate', !!focus?.connected, () => bridge.autofocusSetEnabled(true))}>Enable autofocus</button>
         <button disabled={busy || !ready} onClick={() => void run('Disable autofocus', 'stop', !!focus?.connected, () => bridge.autofocusSetEnabled(false))}>Disable autofocus</button>
@@ -135,5 +146,6 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
         {(['require_new_sample_per_step', 'focus_direction'] as const).map(key => <label key={key}><input type="checkbox" disabled={configureDisabled || !focus || focus.enabled} checked={config[key]} onChange={e => setConfig({...config, [key]: e.target.checked})} />{key === 'focus_direction' ? 'Positive focus direction' : 'Require new sample per step'}</label>)}
       </div><button disabled={configureDisabled || !focus || focus.enabled} onClick={() => void run('Apply autofocus configuration', 'configure', !!focus?.connected, () => { validateFocusConfig(config); return bridge.autofocusSetConfig(config); })}>Apply autofocus configuration</button><p>Applies to the running backend; persistence across restarts is not provided by this command.</p></details>}
     </fieldset>
+    <PulseGeneratorControls ready={ready} experimentActive={experimentActive} mode={mode} armed={armed} onDisarm={onDisarm} append={append} />
   </section>;
 }

@@ -728,6 +728,27 @@ backend::bridge::PumpCommand makePumpCommand(backend::bridge::PumpCommandAction 
 
 } // namespace
 
+BridgeCommandResult BackendBridge::autofocus_connect_endpoint(rust::Str backend, rust::Str endpoint,
+    std::int32_t com_port, std::int32_t baud_rate, std::int32_t device_address) {
+    try {
+        const auto kind = backend::nanopositioner::parseBackendKind(std::string(backend));
+        if (!kind || *kind == backend::nanopositioner::BackendKind::Auto || endpoint.empty() ||
+            device_address < 0 || device_address > 255 || baud_rate <= 0)
+            return errorResult("Invalid typed nanopositioner endpoint");
+        backend::bridge::AutofocusCommand cmd;
+        cmd.action = backend::bridge::AutofocusCommandAction::Connect;
+        backend::nanopositioner::Endpoint target;
+        target.backend = *kind;
+        target.persistentId = std::string(endpoint);
+        target.systemPath = target.persistentId;
+        target.coremorPort = com_port;
+        target.coremorBaudRate = baud_rate;
+        target.coremorAddress = static_cast<std::uint8_t>(device_address);
+        cmd.endpoint = target;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(e.what()); }
+}
+
 BridgeCommandResult BackendBridge::autofocus_connect(std::int32_t com_port,
                                                      std::int32_t baud_rate,
                                                      std::int32_t device_address) {
@@ -820,6 +841,8 @@ BridgeAutofocusStatus BackendBridge::fetch_autofocus_status() {
     out.enabled = status.enabled;
     out.current_voltage = status.currentVoltage;
     out.com_port = status.comPort;
+    out.backend_name = status.backendName;
+    out.endpoint_id = status.endpointId;
     out.average_ring_ratio = status.averageRingRatio;
     out.median_ring_ratio = status.medianRingRatio;
     out.last_ring_ratio_update_us = status.lastRingRatioUpdateUs;
@@ -1082,6 +1105,14 @@ BridgeFrame BackendBridge::fetch_review_image(std::uint32_t dataset, std::uint64
         return BridgeFrame{};
     }
     return toBridgeFrame(frame);
+}
+
+BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
+    try { return toBridgeResult(impl_->facade.pulseGeneratorCommandJson(toStd(json))); }
+    catch (const std::exception& e) { return errorResult(e.what()); }
+}
+rust::String BackendBridge::pulse_generator_status() {
+    return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
 }
 
 BridgeCommandResult BackendBridge::review_export_json(rust::Str json) {

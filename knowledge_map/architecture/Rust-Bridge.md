@@ -283,3 +283,17 @@ open; this addition does not close #372/#246.
 ABI 16 adds preview-buffer range/save JSON. Latest-frame facade pulls now fetch
 the exact queried committed index, never a later frame under an earlier label;
 concurrent frame-identity stress regression covers index/timestamp/pixel agreement.
+
+### Typed hardware and acquisition pulse controls (2026-09-23)
+
+The additive `autofocus_connect_endpoint` command preserves an explicit OEABT/CoreMOR
+backend and persistent endpoint ID; status carries the actual connected backend and
+endpoint. Legacy numeric COM commands remain compatible. The facade rejects missing
+identity and ambiguous `auto` connections before opening a driver.
+
+`pulse_generator_command` and `pulse_generator_status` route through BackendFacade
+and the existing PulseGeneratorService, not a second serial implementation. Commands
+validate serial settings, address, channel and numeric ranges before driver access.
+Configuration/output-on serialize against experiment Start with `withIdleConfiguration`;
+output-off remains possible while an experiment runs unless coordinated live view owns
+the generator. Status preserves that ownership so manual controls cannot steal it.

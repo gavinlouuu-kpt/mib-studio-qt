@@ -376,6 +376,8 @@ struct AutofocusStatus {
     enabled: bool,
     current_voltage: f64,
     com_port: i32,
+    backend_name: String,
+    endpoint_id: String,
     average_ring_ratio: f64,
     median_ring_ratio: f64,
     last_ring_ratio_update_us: u64,
@@ -399,6 +401,24 @@ struct AutofocusConfig {
     min_samples_per_step: i32,
     safe_shutdown_voltage: f64,
     focus_direction: bool,
+}
+
+#[tauri::command]
+fn pulse_generator_command(state: State<AppState>, json: String) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().pulse_generator_command(&json).into())
+}
+#[tauri::command]
+fn pulse_generator_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().pulse_generator_status()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn autofocus_connect_endpoint(state: State<AppState>, backend: String, endpoint: String,
+    com_port: i32, baud_rate: i32, device_address: i32) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().autofocus_connect_endpoint(&backend, &endpoint, com_port, baud_rate, device_address).into())
 }
 
 #[tauri::command]
@@ -463,6 +483,8 @@ fn fetch_autofocus_status(state: State<AppState>) -> Result<AutofocusStatus, Str
         enabled: s.enabled,
         current_voltage: s.current_voltage,
         com_port: s.com_port,
+        backend_name: s.backend_name,
+        endpoint_id: s.endpoint_id,
         average_ring_ratio: s.average_ring_ratio,
         median_ring_ratio: s.median_ring_ratio,
         last_ring_ratio_update_us: s.last_ring_ratio_update_us,
@@ -1552,6 +1574,9 @@ pub fn run() {
             experiment_cancel,
             fetch_experiment_status,
             fetch_experiment_readiness,
+            pulse_generator_command,
+            pulse_generator_status,
+            autofocus_connect_endpoint,
             autofocus_connect,
             autofocus_disconnect,
             autofocus_set_enabled,

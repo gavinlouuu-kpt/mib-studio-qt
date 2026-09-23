@@ -2253,3 +2253,8 @@ provenance. See the catch-up execution plan for verified vs pending gates.
   bounded monitoring polling. Fixed concurrent latest-frame identity and raw
   review incorrectly reading the live ring instead of the HDF dataset. Review
   load now holds the idle lifecycle gate and rejects active raw recording.
+
+- 2026-09-23: Tauri hardware parity adds explicit OEABT/CoreMOR endpoint connection,
+  connected identity status, read-only endpoint pickers and guarded acquisition
+  pulse-generator control through the existing backend service. Native malformed-input
+  checks and operator interaction tests cover no-write-on-mount, ownership and stop paths.

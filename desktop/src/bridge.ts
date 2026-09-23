@@ -16,6 +16,8 @@ export interface AutofocusStatus {
   enabled: boolean;
   current_voltage: number;
   com_port: number;
+  backend_name?: string;
+  endpoint_id?: string;
   average_ring_ratio: number;
   median_ring_ratio: number;
   last_ring_ratio_update_us: number;
@@ -373,6 +375,10 @@ export const bridge = {
   shellLog: (level: string, message: string) =>
     invoke<void>("shell_log", { level, message }),
   // Autofocus / nanopositioner (schema v11, BE-8).
+  pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
+  pulseGeneratorStatus: () => invoke<PulseGeneratorStatus>("pulse_generator_status"),
+  autofocusConnectEndpoint: (backend: string, endpoint: string, comPort: number, baudRate: number, deviceAddress: number) =>
+    invokeCommand("autofocus_connect_endpoint", { backend, endpoint, comPort, baudRate, deviceAddress }),
   autofocusConnect: (comPort: number, baudRate: number, deviceAddress: number) =>
     invokeCommand("autofocus_connect", { comPort, baudRate, deviceAddress }),
   autofocusDisconnect: () => invokeCommand("autofocus_disconnect"),
@@ -499,3 +505,5 @@ export function mono8ToImageData(
   }
   return new ImageData(rgba, width, height);
 }
+
+export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>}

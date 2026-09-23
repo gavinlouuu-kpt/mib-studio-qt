@@ -113,6 +113,21 @@ int main()
             return 2;
         }
 
+        // Invalid hardware requests must be rejected before any driver access.
+        for (const auto* request : {R"({"action":"connect","port":"","address":1})",
+                R"({"action":"connect","port":"never-open","address":248})",
+                R"({"action":"frequency","channel":4,"value":1000})",
+                R"({"action":"frequency","channel":0,"value":399})",
+                R"({"action":"duty","channel":0,"value":101})",
+                R"({"action":"bogus","channel":0})", "not json"}) {
+            if (facade.pulseGeneratorCommandJson(request).ok) return 70;
+        }
+        if (facade.fetchPulseGeneratorStatusJson().find("\"connected\":false") == std::string::npos) return 71;
+        bridge::AutofocusCommand badEndpoint;
+        badEndpoint.action = bridge::AutofocusCommandAction::Connect;
+        badEndpoint.endpoint = backend::nanopositioner::Endpoint{};
+        if (facade.dispatch(badEndpoint).ok) return 72;
+
         bridge::ProcessingSettingsCommand processingCommand;
         auto config = backend.processing().getProcessingConfig();
         config.empty_frame_pixel_threshold = 12;

@@ -70,6 +70,7 @@ public:
     BridgeCommandResult experiment_cancel();
     BridgeExperimentStatus fetch_experiment_status();
     BridgeExperimentReadiness fetch_experiment_readiness(rust::Str output_path);
+    BridgeCommandResult autofocus_connect_endpoint(rust::Str backend, rust::Str endpoint, std::int32_t com_port, std::int32_t baud_rate, std::int32_t device_address);
     BridgeCommandResult autofocus_connect(std::int32_t com_port, std::int32_t baud_rate,
                                           std::int32_t device_address);
     BridgeCommandResult autofocus_disconnect();
@@ -98,6 +99,8 @@ public:
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);
     BridgeFrame fetch_review_image(std::uint32_t dataset, std::uint64_t index);
+    BridgeCommandResult pulse_generator_command(rust::Str json);
+    rust::String pulse_generator_status();
     BridgeCommandResult review_export_json(rust::Str json);
     rust::String review_export_status_json();
     BridgeCommandResult review_export_csv(rust::Str output_path);

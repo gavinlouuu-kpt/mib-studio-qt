@@ -36,6 +36,7 @@ export const COMMAND_TYPES = {
   Review: 9,
   Pump: 10,
   Autofocus: 11,
+  PulseGenerator: 12,
 } as const;
 
 export const CAMERA_TYPES = {
