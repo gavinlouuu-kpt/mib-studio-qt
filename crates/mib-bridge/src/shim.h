@@ -96,6 +96,8 @@ public:
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);
     BridgeFrame fetch_review_image(std::uint32_t dataset, std::uint64_t index);
+    BridgeCommandResult review_export_json(rust::Str json);
+    rust::String review_export_status_json();
     BridgeCommandResult review_export_csv(rust::Str output_path);
     BridgeConfigDocument fetch_processing_config_json();
     BridgeCommandResult apply_processing_config_json(rust::Str json);

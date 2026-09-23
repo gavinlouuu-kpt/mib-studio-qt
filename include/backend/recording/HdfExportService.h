@@ -93,6 +93,7 @@ struct HdfExportResult {
 class HdfExportCancelToken {
 public:
     HdfExportCancelToken() : flag_(std::make_shared<std::atomic<bool>>(false)) {}
+    explicit HdfExportCancelToken(std::shared_ptr<std::atomic<bool>> flag) : flag_(std::move(flag)) {}
     void cancel() { flag_->store(true, std::memory_order_release); }
     bool cancelled() const { return flag_->load(std::memory_order_acquire); }
 private:

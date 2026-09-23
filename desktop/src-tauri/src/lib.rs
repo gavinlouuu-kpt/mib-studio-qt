@@ -761,6 +761,18 @@ fn fetch_review_frame_packet(state: State<AppState>, dataset: u32, index: String
     frame_packet::encode(frame, 3).map(Response::new)
 }
 
+#[tauri::command]
+fn review_export_json(state: State<AppState>, json: String) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_json(&json).into())
+}
+
+#[tauri::command]
+fn review_export_status_json(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_status_json())
+}
+
 /// Start a cancellable metrics CSV export job for the loaded file.
 #[tauri::command]
 fn review_export_csv(state: State<AppState>, output_path: String) -> Result<CmdResult, String> {
@@ -1558,6 +1570,8 @@ pub fn run() {
             fetch_review_image,
             review_image_bytes,
             review_export_csv,
+            review_export_json,
+            review_export_status_json,
             fetch_processing_config_json,
             apply_processing_config_json,
             set_processing_roi,

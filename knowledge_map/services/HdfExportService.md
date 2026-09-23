@@ -24,7 +24,8 @@
   through `readImageByIndex` / `readSeriesImagesByIndex` (one frame
   resident at a time); handles experiment files (`/valid_frames`,
   `/invalid_frames`, series) and recording files (`/recorded_frames`,
-  `frame_` prefix, no metrics/charts).
+  `frame_` prefix, no metrics/charts in All mode; explicit MetricsCsv requests
+  export frame metadata through the same CSV writer).
 - Output is **transactional**: writes into
   `.<final-name>.partial-<job-id>` (file for `MetricsCsv`, directory for
   `Images`/`All`) next to the destination and publishes it with a rename
@@ -59,3 +60,27 @@ re-dispatches to its UI thread.
   test asserts the global count returns to baseline after every job.
 - The bridge work in #276 should consume this API rather than re-implement
   export logic in the UI layer.
+
+## Tauri facade binding (2026-09-23)
+
+`BackendFacade::submitReviewExportJson` starts one owned export worker over
+this service. Busy submissions are rejected; completed workers are reaped
+before replacement. `fetchReviewExportStatusJson` retains the latest job's
+progress/terminal snapshot so event loss or view navigation does not hide
+its outcome. Operation IDs/counters are decimal strings at the JSON seam.
+`requestOperationCancel` shares the service's atomic cancellation token;
+shutdown joins the worker before teardown and publishes terminal operation
+status only after service cleanup. Terminal results include published final
+path, retained partial path, errors, warnings and image/metrics counts.
+
+Tauri commands `review_export_json` / `review_export_status_json` back the
+TypeScript `bridge.reviewExport` / `reviewExportStatus` helpers. The legacy
+`review_export_csv` command now uses the same engine with an explicit CSV
+destination. No second exporter remains in the facade. Chart image payloads
+and series subrange selection are not yet exposed in this bridge request;
+All uses the service's default full-series selection without UI charts.
+
+`backend.export_bridge_facade` guards repeated cancellation/reopen/export,
+busy rejection, source hash immutability, output-parent faults, and retained
+terminal recovery under a watchdog. Rust review contract tests verify CSV
+round-trip and retained status. Run the backend stress/TSan lane before cutover.

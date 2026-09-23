@@ -667,6 +667,9 @@ pub mod ffi {
         /// (schema v9, BE-6). Returns the job's operation_id; progress and the
         /// terminal state arrive as OperationStatus events. Partial outputs
         /// are removed on cancel/failure; the source file is opened read-only.
+        fn review_export_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
+        fn review_export_status_json(self: Pin<&mut BackendBridge>) -> String;
+
         fn review_export_csv(self: Pin<&mut BackendBridge>, output_path: &str)
             -> BridgeCommandResult;
 

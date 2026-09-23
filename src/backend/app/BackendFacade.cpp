@@ -8,11 +8,12 @@
 #include "backend/app/BackgroundFrame.h"
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/processing/ProcessingConfigJson.h"
-#include "backend/recording/ReviewExport.h"
+#include "backend/recording/HdfExportService.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cstring>
+#include <cmath>
 #include <thread>
 #include "backend/playback/FrameStore.h"
 #include "backend/playback/PlaybackService.h"
@@ -230,6 +231,7 @@ namespace backend::bridge
         backend_.experiment().shutdown();
         backend_.experiment().setStatusCallback({});
         cancelAllOperations("Backend shutdown");
+        if (exportThread_.joinable()) exportThread_.join();
         // Review export jobs observe their (now set) cancel flags and clean
         // partial outputs; join them so no callback fires after destruction.
         {
@@ -1390,90 +1392,114 @@ namespace backend::bridge
         return true;
     }
 
+    std::string BackendFacade::fetchReviewExportStatusJson() const
+    {
+        std::scoped_lock lock(exportMutex_);
+        return exportStatusJson_;
+    }
+
+    BackendCommandResult BackendFacade::submitReviewExportJson(const std::string &json)
+    {
+        using namespace backend::recording;
+        if (!initialized_) return {false, BackendCommandType::Review, "Backend not initialized"};
+        HdfExportRequest request;
+        try {
+            const auto input = nlohmann::json::parse(json);
+            request.outputRoot = input.at("output_root").get<std::string>();
+            request.explicitDestination = input.value("explicit_destination", std::string{});
+            if (request.outputRoot.empty() && !request.explicitDestination.empty())
+                request.outputRoot = ".";
+            const auto format = input.value("format", std::string{"all"});
+            if (format != "metrics_csv" && format != "images" && format != "all")
+                throw std::invalid_argument("Unknown export format");
+            request.format = format == "metrics_csv" ? HdfExportFormat::MetricsCsv :
+                             format == "images" ? HdfExportFormat::Images : HdfExportFormat::All;
+            const auto frames = input.value("frames", std::string{"both"});
+            if (frames != "valid" && frames != "invalid" && frames != "both")
+                throw std::invalid_argument("Unknown frame selection");
+            request.frames = frames == "valid" ? HdfExportFrames::Valid :
+                             frames == "invalid" ? HdfExportFrames::Invalid : HdfExportFrames::Both;
+            request.conversionFactor = input.value("conversion_factor", backend_.processing().getPixelToMicronFactor());
+            if (!std::isfinite(request.conversionFactor) || request.conversionFactor <= 0)
+                throw std::invalid_argument("Conversion factor must be finite and positive");
+            request.keepPartialOnFailure = input.value("keep_partial_on_failure", false);
+            if (request.outputRoot.empty() && request.explicitDestination.empty())
+                throw std::invalid_argument("Export destination is empty");
+        } catch (const std::exception &e) {
+            return {false, BackendCommandType::Review, e.what()};
+        }
+        {
+            std::scoped_lock lock(reviewMutex_);
+            request.sourcePath = loadedRecordingPath_;
+        }
+        if (request.sourcePath.empty())
+            return {false, BackendCommandType::Review, "No recording loaded to export"};
+        {
+            std::scoped_lock lock(exportMutex_);
+            if (exportActive_) return {false, BackendCommandType::Review, "An export is already active"};
+            exportActive_ = true;
+        }
+        // Reap completed exports before creating another worker: bounded thread storage.
+        if (exportThread_.joinable()) exportThread_.join();
+        CancelFlag cancelFlag;
+        const auto operationId = beginOperation(BackendOperationKind::Export, &cancelFlag, request.sourcePath);
+        {
+            std::scoped_lock lock(exportMutex_);
+            exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                {"state", "running"}, {"phase", "validating"}, {"completed", "0"}, {"total", "0"}}.dump();
+        }
+        try {
+            exportThread_ = std::thread([this, operationId, cancelFlag, request]() {
+                HdfExportService service;
+                const auto result = service.run(request, HdfExportCancelToken(cancelFlag),
+                    [this, operationId](const HdfExportProgress &progress) {
+                        {
+                            std::scoped_lock lock(exportMutex_);
+                            exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                                {"job_id", progress.jobId}, {"state", "running"}, {"phase", toString(progress.phase)},
+                                {"completed", std::to_string(progress.completed)}, {"total", std::to_string(progress.total)},
+                                {"current_output", progress.currentOutput}}.dump();
+                        }
+                        reportOperationProgress(operationId, progress.completed, progress.total);
+                    });
+                {
+                    std::scoped_lock lock(exportMutex_);
+                    exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                        {"job_id", result.jobId}, {"state", toString(result.status)},
+                        {"final_path", result.finalPath}, {"retained_partial_path", result.retainedPartialPath},
+                        {"images_exported", std::to_string(result.imagesExported)},
+                        {"images_failed", std::to_string(result.imagesFailed)}, {"metrics_written", result.metricsWritten},
+                        {"warnings", result.warnings}, {"error", result.error}}.dump();
+                }
+                finishOperation(operationId, result.completed() ? BackendOperationState::Completed :
+                    result.status == HdfExportStatus::Cancelled ? BackendOperationState::Cancelled : BackendOperationState::Failed,
+                    result.completed() ? result.finalPath : result.error);
+                std::scoped_lock lock(exportMutex_);
+                exportActive_ = false;
+            });
+        } catch (const std::exception &e) {
+            {
+                std::scoped_lock lock(exportMutex_);
+                exportActive_ = false;
+                exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                    {"state", "failed"}, {"error", e.what()}}.dump();
+            }
+            finishOperation(operationId, BackendOperationState::Failed, e.what());
+            return {false, BackendCommandType::Review, e.what(), operationId};
+        }
+        return {true, BackendCommandType::Review, "Export started", operationId};
+    }
+
     BackendCommandResult BackendFacade::handleReviewCommand(const ReviewCommand &command)
     {
         switch (command.action)
         {
         case ReviewCommandAction::ExportMetricsCsv:
         {
-            std::string sourcePath;
-            {
-                std::scoped_lock lock(reviewMutex_);
-                sourcePath = loadedRecordingPath_;
-            }
-            if (sourcePath.empty())
-            {
-                const std::string message = "No recording loaded to export";
-                emitEvent(BackendErrorEvent{BackendErrorSource::Export,
-                                            BackendCommandType::Review, message});
-                return {false, BackendCommandType::Review, message};
-            }
-            if (command.outputPath.empty())
-            {
-                return {false, BackendCommandType::Review, "Export output path is empty"};
-            }
-
-            CancelFlag cancelFlag;
-            const std::uint64_t operationId =
-                beginOperation(BackendOperationKind::Export, &cancelFlag, command.outputPath);
-            const double pixelToMicron = backend_.processing().getPixelToMicronFactor();
-            const std::string outputPath = command.outputPath;
-
-            // The job opens its own read-only reader so it never races the
-            // interactive review reads, and the source file stays intact.
-            std::thread worker([this, operationId, cancelFlag, sourcePath, outputPath,
-                                pixelToMicron]() {
-                services::Hdf5Service reader;
-                std::vector<services::ProcessedFrame> valid;
-                std::vector<services::ProcessedFrame> invalid;
-                if (!reader.loadFile(sourcePath))
-                {
-                    finishOperation(operationId, BackendOperationState::Failed,
-                                    "Failed to open source recording: " + sourcePath);
-                    return;
-                }
-                if (reader.isRecordingFile())
-                {
-                    reader.readRecordingMetadata(valid);
-                }
-                else
-                {
-                    reader.readValidMetadata(valid);
-                    reader.readInvalidMetadata(invalid);
-                }
-                reader.closeFile();
-
-                std::string error;
-                const bool ok = review::writeMetricsCsv(
-                    outputPath, valid, invalid, pixelToMicron, &error,
-                    [this, operationId, &cancelFlag](std::uint64_t done, std::uint64_t total) {
-                        if (cancelFlag->load(std::memory_order_relaxed))
-                        {
-                            return false;
-                        }
-                        reportOperationProgress(operationId, done, total);
-                        return true;
-                    });
-                if (ok)
-                {
-                    finishOperation(operationId, BackendOperationState::Completed, outputPath);
-                }
-                else if (cancelFlag->load(std::memory_order_relaxed))
-                {
-                    finishOperation(operationId, BackendOperationState::Cancelled, error);
-                }
-                else
-                {
-                    emitEvent(BackendErrorEvent{BackendErrorSource::Export,
-                                                BackendCommandType::Review, error});
-                    finishOperation(operationId, BackendOperationState::Failed, error);
-                }
-            });
-            {
-                std::scoped_lock lock(reviewJobsMutex_);
-                reviewJobThreads_.push_back(std::move(worker));
-            }
-            return {true, BackendCommandType::Review, "Metrics CSV export started", operationId};
+            return submitReviewExportJson(nlohmann::json{
+                {"format", "metrics_csv"}, {"output_root", std::filesystem::path(command.outputPath).parent_path().string()},
+                {"explicit_destination", command.outputPath},
+                {"conversion_factor", backend_.processing().getPixelToMicronFactor()}}.dump());
         }
         }
         return {false, BackendCommandType::Review, "Unknown review command"};
@@ -2162,11 +2188,15 @@ namespace backend::bridge
         {
             std::scoped_lock lock(operationsMutex_);
             drained.assign(activeOperations_.begin(), activeOperations_.end());
-            activeOperations_.clear();
+            for (auto it = activeOperations_.begin(); it != activeOperations_.end();) {
+                if (it->second.kind == BackendOperationKind::Export) ++it;
+                else it = activeOperations_.erase(it);
+            }
         }
         for (auto &[operationId, op] : drained)
         {
             op.cancelRequested->store(true, std::memory_order_relaxed);
+            if (op.kind == BackendOperationKind::Export) continue; // worker publishes only after cleanup
             emitEvent(OperationStatusEvent{operationId, op.kind,
                                            BackendOperationState::Cancelled, 0, 0, reason});
         }

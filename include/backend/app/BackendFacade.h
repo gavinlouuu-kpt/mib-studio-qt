@@ -833,6 +833,9 @@ namespace backend::bridge
                                                 std::size_t byteLen);
         BackendCommandResult clearBackgroundImage();
 
+        BackendCommandResult submitReviewExportJson(const std::string &json);
+        std::string fetchReviewExportStatusJson() const;
+
         // ---- Operation tracking (BE-1, ADR 0004) ----
         // Long-running actions register here so they get a correlatable ID,
         // Started/Progress/terminal events, and a cancel flag the runner must
@@ -913,6 +916,10 @@ namespace backend::bridge
         // Export jobs run detached; joined at shutdown.
         std::vector<std::thread> reviewJobThreads_;
         std::mutex reviewJobsMutex_;
+        mutable std::mutex exportMutex_;
+        bool exportActive_{false};
+        std::thread exportThread_;
+        std::string exportStatusJson_{"{\"state\":\"idle\"}"};
     };
 
 } // namespace backend::bridge

@@ -975,3 +975,7 @@ set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;came
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+
+mib_add_backend_test_executable(export_bridge_facade_test backend/export_bridge_facade_test.cpp)
+add_test(NAME backend.export_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> export_bridge_facade_test)
+set_tests_properties(backend.export_bridge_facade PROPERTIES LABELS "backend;bridge;recording;stress" TIMEOUT 45)

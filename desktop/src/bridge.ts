@@ -1,3 +1,4 @@
+import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
 import { invoke } from "@tauri-apps/api/core";
@@ -413,6 +414,8 @@ export const bridge = {
     invoke<ReviewMetricsPage>("fetch_review_metrics_page", { valid, offset, count }),
   fetchReviewImage: async (dataset: number, index: number | string | bigint) =>
     pullFrame("fetch_review_frame_packet", 3, { dataset, index: decimalU64(index) }),
+  reviewExport: (request: ReviewExportRequest) => invokeCommand("review_export_json", { json: JSON.stringify(request) }),
+  reviewExportStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_export_status_json")),
   reviewExportCsv: (outputPath: string) =>
     invokeCommand("review_export_csv", { outputPath }),
   // Processing config / ROI / background / core identity (schema v8, BE-3).

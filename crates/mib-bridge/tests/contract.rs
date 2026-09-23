@@ -260,14 +260,18 @@ fn review_metadata_pages_images_and_export_job() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(completed, "export did not complete");
+    let retained: serde_json::Value = serde_json::from_str(&bridge.pin_mut().review_export_status_json()).unwrap();
+    assert_eq!(retained["state"], "completed");
+    assert_eq!(retained["operation_id"], export.operation_id.to_string());
+    assert_eq!(retained["final_path"], csv_path.to_string_lossy().as_ref());
     let csv = std::fs::read_to_string(&csv_path).unwrap();
     assert!(csv.starts_with("Frame Type,Index,Timestamp,Object Id"));
     assert!(csv.lines().count() as u64 >= meta.total_valid, "missing CSV rows");
 
     // Failure path cleans partial outputs: unwritable directory fails the
     // job and leaves no file behind.
-    let bad_path = "/nonexistent-dir/mib_export.csv";
-    let bad = bridge.pin_mut().review_export_csv(bad_path);
+    let bad_path = csv_path.join("mib_export.csv"); // existing file cannot be a parent
+    let bad = bridge.pin_mut().review_export_csv(&bad_path.to_string_lossy());
     assert!(bad.ok, "job starts, then fails asynchronously");
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut failed = false;
@@ -283,7 +287,7 @@ fn review_metadata_pages_images_and_export_job() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(failed, "bad-path export did not report Failed");
-    assert!(!std::path::Path::new(bad_path).exists());
+    assert!(!bad_path.exists());
     // Source recording is intact after the failed job.
     assert!(bridge.pin_mut().load_recording(&rec_path.to_string_lossy()).ok);
 

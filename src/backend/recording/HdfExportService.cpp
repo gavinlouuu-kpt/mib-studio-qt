@@ -251,7 +251,8 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         }
         const int seriesDigits = std::max<int>(2, static_cast<int>(std::to_string(std::max<size_t>(seriesCount, 1)).size()));
 
-        const bool writeMetrics = !result.recordingMode && request.format != HdfExportFormat::Images;
+        const bool writeMetrics = request.format == HdfExportFormat::MetricsCsv ||
+                                  (!result.recordingMode && request.format == HdfExportFormat::All);
         totalUnits = (writeMetrics ? 1 : 0) + (folderJob ? valid.size() + invalid.size() : 0) +
                      (hasSeries ? std::min(seriesRecords, valid.size()) * (seriesEnd - seriesStart + 1) : 0) +
                      (folderJob && request.format == HdfExportFormat::All ? request.supplementalImages.size() : 0);

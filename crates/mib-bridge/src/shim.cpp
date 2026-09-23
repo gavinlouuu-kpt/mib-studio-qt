@@ -1084,6 +1084,16 @@ BridgeFrame BackendBridge::fetch_review_image(std::uint32_t dataset, std::uint64
     return toBridgeFrame(frame);
 }
 
+BridgeCommandResult BackendBridge::review_export_json(rust::Str json) {
+    try { return toBridgeResult(impl_->facade.submitReviewExportJson(toStd(json))); }
+    catch (const std::exception& e) { return errorResult(e.what()); }
+    catch (...) { return errorResult("Export submission failed"); }
+}
+
+rust::String BackendBridge::review_export_status_json() {
+    return rust::String(impl_->facade.fetchReviewExportStatusJson());
+}
+
 BridgeCommandResult BackendBridge::review_export_csv(rust::Str output_path) {
     try {
         backend::bridge::ReviewCommand cmd;
