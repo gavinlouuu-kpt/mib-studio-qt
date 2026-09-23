@@ -94,3 +94,15 @@ hard/symbolic links) is refused. React owns status polling across navigation,
 keeps cancel available in a persistent status panel, and distinguishes accepted
 cancellation from authoritative cancelled/completed/failed results and retained
 partial output. Native facade tests exercise repeated cancel/reopen/export cycles.
+
+### Facade batch chain
+
+`submitReviewExportJson` accepts optional `source_paths` (1–256 nonempty paths).
+One owned worker runs the existing service serially, with one cancellation ID
+and independently opened readers. `explicit_destination` is rejected for batch
+requests; generated names are resolved per job. Status retains each attempted
+source's terminal state and final/partial path. A failed source does not suppress
+later files; any failure prevents aggregate success. Cancellation retains already
+published outputs and stops the remaining chain. The active Review source is
+unchanged. Regression coverage includes a failed middle source, duplicate source
+names and source immutability, in addition to repeated cancel/reopen cycles.

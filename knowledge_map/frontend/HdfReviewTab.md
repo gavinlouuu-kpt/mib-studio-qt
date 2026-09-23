@@ -130,3 +130,17 @@ recorded (legacy file)" rather than implying completeness.
   to display them.
 - See tasks `review_hdf_thumbnail_spacer_crash.md` and
   `fix_hdfreviewtab_linker_error.md` for historical fixes.
+
+## Tauri review parity (2026-09-23)
+
+The React Review view exposes Batch Metrics and Batch Export All through the
+same transactional facade exporter. A request holds 1–256 independent HDF paths;
+its native worker survives tab navigation, continues after individual file
+failures, stops between files on cancellation, and retains per-file published or
+partial paths. The open review reader is not replaced. Generated names avoid
+collisions, including duplicate basenames in one batch.
+
+Saved-file Charts fetch valid/invalid metadata in explicit 200-row pages, reject
+responses when the native file changes, and label raw pixel area and dimensionless
+ring ratio. These are subset plots, not whole-file calibrated statistics or
+isoelastic overlays; those Qt chart capabilities remain distinct parity work.

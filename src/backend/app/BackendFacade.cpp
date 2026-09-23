@@ -1411,10 +1411,19 @@ namespace backend::bridge
         using namespace backend::recording;
         if (!initialized_) return {false, BackendCommandType::Review, "Backend not initialized"};
         HdfExportRequest request;
+        std::vector<std::string> sources;
         try {
             const auto input = nlohmann::json::parse(json);
             request.outputRoot = input.at("output_root").get<std::string>();
+            if (input.contains("source_paths")) {
+                sources = input.at("source_paths").get<std::vector<std::string>>();
+                if (sources.empty() || sources.size() > 256 ||
+                    std::any_of(sources.begin(), sources.end(), [](const auto& p) { return p.empty(); }))
+                    throw std::invalid_argument("Batch requires 1 to 256 nonempty source paths");
+            }
             request.explicitDestination = input.value("explicit_destination", std::string{});
+            if (!sources.empty() && !request.explicitDestination.empty())
+                throw std::invalid_argument("Batch exports use generated destinations, not an explicit destination");
             if (request.outputRoot.empty() && !request.explicitDestination.empty())
                 request.outputRoot = ".";
             const auto format = input.value("format", std::string{"all"});
@@ -1440,8 +1449,12 @@ namespace backend::bridge
             std::scoped_lock lock(reviewMutex_);
             request.sourcePath = loadedRecordingPath_;
         }
-        if (request.sourcePath.empty())
-            return {false, BackendCommandType::Review, "No recording loaded to export"};
+        if (sources.empty()) {
+            if (request.sourcePath.empty())
+                return {false, BackendCommandType::Review, "No recording loaded to export"};
+            sources.push_back(request.sourcePath);
+        }
+        request.sourcePath = sources.front();
         {
             std::scoped_lock lock(exportMutex_);
             if (exportActive_) return {false, BackendCommandType::Review, "An export is already active"};
@@ -1457,31 +1470,49 @@ namespace backend::bridge
                 {"state", "running"}, {"phase", "validating"}, {"completed", "0"}, {"total", "0"}}.dump();
         }
         try {
-            exportThread_ = std::thread([this, operationId, cancelFlag, request]() {
+            exportThread_ = std::thread([this, operationId, cancelFlag, request, sources]() mutable {
                 HdfExportService service;
-                const auto result = service.run(request, HdfExportCancelToken(cancelFlag),
-                    [this, operationId](const HdfExportProgress &progress) {
-                        {
-                            std::scoped_lock lock(exportMutex_);
-                            exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
-                                {"job_id", progress.jobId}, {"state", "running"}, {"phase", toString(progress.phase)},
-                                {"completed", std::to_string(progress.completed)}, {"total", std::to_string(progress.total)},
-                                {"current_output", progress.currentOutput}}.dump();
-                        }
-                        reportOperationProgress(operationId, progress.completed, progress.total);
-                    });
+                nlohmann::json results = nlohmann::json::array();
+                bool failed = false;
+                HdfExportResult result;
+                for (size_t index = 0; index < sources.size(); ++index) {
+                    if (cancelFlag->load(std::memory_order_acquire)) break;
+                    request.sourcePath = sources[index];
+                    result = service.run(request, HdfExportCancelToken(cancelFlag),
+                        [this, operationId, index, &sources, &results](const HdfExportProgress &progress) {
+                            {
+                                std::scoped_lock lock(exportMutex_);
+                                exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                                    {"job_id", progress.jobId}, {"state", "running"}, {"phase", toString(progress.phase)},
+                                    {"completed", std::to_string(progress.completed)}, {"total", std::to_string(progress.total)},
+                                    {"source_path", sources[index]}, {"file_index", index + 1}, {"file_count", sources.size()},
+                                    {"results", results}, {"current_output", progress.currentOutput}}.dump();
+                            }
+                            reportOperationProgress(operationId, progress.completed, progress.total);
+                        });
+                    failed = failed || result.status == HdfExportStatus::Failed;
+                    results.push_back(nlohmann::json{{"source_path", request.sourcePath}, {"state", toString(result.status)},
+                        {"final_path", result.finalPath}, {"retained_partial_path", result.retainedPartialPath},
+                        {"error", result.error}});
+                    if (result.status == HdfExportStatus::Cancelled) break;
+                }
+                // A cancellation accepted after a commit cannot undo that commit. If
+                // every file completed, report completion; otherwise retain each outcome.
+                const bool cancelled = results.size() < sources.size() || result.status == HdfExportStatus::Cancelled;
+                const auto state = cancelled ? BackendOperationState::Cancelled : failed ? BackendOperationState::Failed : BackendOperationState::Completed;
+                const auto error = cancelled ? std::string("Batch cancelled; completed files remain published") :
+                    failed ? std::string("One or more exports failed; see per-file results") : std::string{};
                 {
                     std::scoped_lock lock(exportMutex_);
                     exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
-                        {"job_id", result.jobId}, {"state", toString(result.status)},
+                        {"job_id", result.jobId}, {"state", cancelled ? "cancelled" : failed ? "failed" : "completed"},
                         {"final_path", result.finalPath}, {"retained_partial_path", result.retainedPartialPath},
                         {"images_exported", std::to_string(result.imagesExported)},
                         {"images_failed", std::to_string(result.imagesFailed)}, {"metrics_written", result.metricsWritten},
-                        {"warnings", result.warnings}, {"error", result.error}}.dump();
+                        {"file_count", sources.size()}, {"results", results},
+                        {"warnings", result.warnings}, {"error", sources.size() == 1 ? result.error : error}}.dump();
                 }
-                finishOperation(operationId, result.completed() ? BackendOperationState::Completed :
-                    result.status == HdfExportStatus::Cancelled ? BackendOperationState::Cancelled : BackendOperationState::Failed,
-                    result.completed() ? result.finalPath : result.error);
+                finishOperation(operationId, state, state == BackendOperationState::Completed ? result.finalPath : error);
                 std::scoped_lock lock(exportMutex_);
                 exportActive_ = false;
             });

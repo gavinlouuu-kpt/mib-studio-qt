@@ -40,6 +40,7 @@ import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
+import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, useReviewExport } from "./exportControls";
 import "./App.css";
 
@@ -1751,7 +1752,8 @@ export default function App() {
                   </button>
                   <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
                   <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
-                  <button disabled title={PENDING.review}>Batch Metrics…</button>
+                  <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
+                  <button disabled={!ready || reviewExport.busy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
                   <button disabled title={PENDING.review}>Regenerate masks…</button>
                   <span className="legend">
                     <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
@@ -1794,10 +1796,11 @@ export default function App() {
                   >
                     Invalid Frames
                   </button>
-                  <button disabled title="Chart rendering lands with UI-4 (#269)">Charts</button>
+                  <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
                 </div>
                 <div className="subtab-body">
-                  <div className="review-split">
+                  {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
+                  <div className="review-split" hidden={reviewTab === "charts"}>
                     <div className="frames">
                       <div className="canvas-wrap">
                         {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}

@@ -341,7 +341,8 @@
       ],
       "conversion_factor": "positive finite number; optional",
       "keep_partial_on_failure": "boolean; optional",
-      "explicit_destination": "string; optional"
+      "explicit_destination": "string; optional",
+      "source_paths": "optional 1..256 source paths; independent readers; forbids explicit_destination"
     },
     "status": {
       "state": [
@@ -355,7 +356,8 @@
       "completed": "decimal-string u64, progress only",
       "total": "decimal-string u64, progress only",
       "final_path": "published output, completed only",
-      "retained_partial_path": "visible partial output with failure manifest, terminal only"
+      "retained_partial_path": "visible partial output with failure manifest, terminal only",
+      "results": "per-file source_path/state/final_path/retained_partial_path/error for all attempted files; batch continues on failure and stops on cancellation"
     },
     "retention": "latest export snapshot retained until next accepted submit",
     "concurrency": "one active export; busy submit rejected; cancel through operation_cancel; terminal after cleanup"

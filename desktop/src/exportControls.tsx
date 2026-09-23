@@ -36,18 +36,21 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
     void poll();
     return () => { stopped=true; ++generation.current; clearTimeout(timer); };
   }, [ready]);
-  async function start(format: ReviewExportRequest["format"], conversionFactor?: number) {
+  async function start(format: ReviewExportRequest["format"], conversionFactor?: number, batch = false) {
     if (!ready || submitting.current || currentStatus.current.state === "running") return;
     submitting.current=true; setPending(true); setError("");
     try {
-      const picked = format === "metrics_csv"
+      const sources = batch ? await open({title:"Choose HDF files to export",multiple:true,filters:[{name:"HDF5",extensions:["h5","hdf5"]}]}) : undefined;
+      if (batch && (!Array.isArray(sources) || !sources.length)) return;
+      const picked = format === "metrics_csv" && !batch
         ? await save({title:"Export metrics CSV",filters:[{name:"CSV",extensions:["csv"]}],defaultPath:"metrics.csv"})
         : await open({title:"Choose export parent folder",directory:true,multiple:false});
       if (typeof picked !== "string") return;
       const request: ReviewExportRequest = {
-        output_root: format === "metrics_csv" ? picked.replace(/[/\\][^/\\]*$/, "") : picked,
+        output_root: format === "metrics_csv" && !batch ? picked.replace(/[/\\][^/\\]*$/, "") : picked,
         format, frames:"both", ...(conversionFactor === undefined ? {} : {conversion_factor:conversionFactor}), keep_partial_on_failure:true,
-        ...(format === "metrics_csv" ? {explicit_destination:picked} : {}),
+        ...(format === "metrics_csv" && !batch ? {explicit_destination:picked} : {}),
+        ...(Array.isArray(sources) ? {source_paths:sources} : {}),
       };
       const result = await bridge.reviewExport(request);
       if (!result.ok) throw new Error(result.message);
@@ -75,6 +78,7 @@ export function ExportStatus({model}:{model:ReturnType<typeof useReviewExport>})
   if (model.status.state === "idle" && !model.pending && !model.error) return null;
   return <section aria-label="Export status" className="quality-panel">
     <p role="status">Export: {model.pending ? "request pending" : model.status.state}
+      {model.status.file_count && model.status.file_count > 1 ? ` · file ${model.status.file_index ?? model.status.results?.length ?? 0}/${model.status.file_count}` : ""}
       {model.status.phase ? ` · ${model.status.phase}` : ""}
       {model.status.completed !== undefined ? ` · ${model.status.completed}/${model.status.total ?? "unknown"}` : ""}
     </p>
@@ -82,6 +86,7 @@ export function ExportStatus({model}:{model:ReturnType<typeof useReviewExport>})
     {model.status.final_path && <p className="mono">Output: {model.status.final_path}</p>}
     {model.status.retained_partial_path && <p className="mono">Incomplete output retained: {model.status.retained_partial_path}</p>}
     {(model.error || model.status.error) && <p role="alert">{model.error || model.status.error}</p>}
+    {model.status.results && model.status.file_count !== 1 && <ul>{model.status.results.map((result,index)=><li key={index}>{result.source_path}: {result.state} {result.final_path || result.retained_partial_path || result.error}</li>)}</ul>}
     {model.status.warnings?.map((warning,index)=><p key={index}>{warning}</p>)}
   </section>;
 }

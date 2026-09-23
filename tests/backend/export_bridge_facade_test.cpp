@@ -139,6 +139,28 @@ int main() {
     MIB_REQUIRE(json::parse(facade.fetchReviewExportStatusJson()) == failed,
                 "terminal survives missed events");
     MIB_REQUIRE(hash(source) == originalHash, "fault source immutable");
+    // Batch sources use independent readers; failures do not drop later files
+    // or alter the currently loaded review source.
+    auto batch = request;
+    batch["format"] = "metrics_csv";
+    batch["source_paths"] = json::array({source.string(), (dir / "missing.h5").string(), source.string()});
+    auto batchStart = facade.submitReviewExportJson(batch.dump());
+    MIB_REQUIRE(batchStart.ok, "batch accepted");
+    auto batchResult = terminal(facade, batchStart.operationId);
+    MIB_REQUIRE(batchResult["state"] == "failed", "partial batch is not success");
+    MIB_REQUIRE(batchResult["results"].size() == 3, "all noncancelled files attempted");
+    MIB_REQUIRE(batchResult["results"][0]["state"] == "completed", "first succeeds");
+    MIB_REQUIRE(batchResult["results"][1]["state"] == "failed", "missing source reported");
+    MIB_REQUIRE(batchResult["results"][2]["state"] == "completed", "later source still attempted");
+    MIB_REQUIRE(batchResult["results"][0]["final_path"] != batchResult["results"][2]["final_path"], "duplicate names distinct");
+    BackendReviewMetadata review;
+    MIB_REQUIRE(facade.fetchReviewMetadata(review) && review.filePath == source.string(), "batch preserves current review");
+    batch["source_paths"] = json::array();
+    MIB_REQUIRE(!facade.submitReviewExportJson(batch.dump()).ok, "empty explicit batch rejected");
+    batch["source_paths"] = json::array({source.string()});
+    batch["explicit_destination"] = source.string();
+    MIB_REQUIRE(!facade.submitReviewExportJson(batch.dump()).ok, "batch cannot target explicit shared destination");
+    MIB_REQUIRE(hash(source) == originalHash, "batch sources unchanged");
     facade.shutdown();
     return mib::test::exitCode();
 }

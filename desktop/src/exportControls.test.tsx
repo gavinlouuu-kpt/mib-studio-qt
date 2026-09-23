@@ -60,3 +60,15 @@ it("never overlaps status polls under a slow native response",async()=>{
   expect(bridge.reviewExportStatus).toHaveBeenCalledOnce();
   await act(async()=>{finish(running);});
 });
+
+it("submits batch sources once without replacing the open review file",async()=>{
+  vi.mocked(open).mockResolvedValueOnce(["/data/a.h5","/data/b.h5"]).mockResolvedValueOnce("/tmp/out");
+  await act(async()=>{await model.start("metrics_csv",undefined,true);});
+  expect(bridge.reviewExport).toHaveBeenCalledWith(expect.objectContaining({source_paths:["/data/a.h5","/data/b.h5"],output_root:"/tmp/out",format:"metrics_csv"}));
+  expect(vi.mocked(bridge.reviewExport).mock.calls[0][0]).not.toHaveProperty("explicit_destination");
+});
+it("cancelled batch selection submits nothing",async()=>{
+  vi.mocked(open).mockResolvedValueOnce(null);
+  await act(async()=>{await model.start("all",undefined,true);});
+  expect(bridge.reviewExport).not.toHaveBeenCalled();
+});
