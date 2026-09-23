@@ -132,6 +132,17 @@ void save(const std::filesystem::path& path, const std::string& bytes, bool& sav
 #endif
 }
 } // namespace
+services::ProcessingConfig validatedProcessingConfig(const std::string& document, services::ProcessingConfig current) {
+    const auto root=Json::parse(document);
+    if (!root.is_object()) throw std::runtime_error("Configuration root must be an object");
+    if (root.contains("image_processing")) {
+        checkDocument(root.at("image_processing"),processing::config_json::toJson(current));
+        std::string error;
+        if(!processing::config_json::fromJson(root.at("image_processing"),current,&error)) throw std::runtime_error(error);
+    }
+    validate(current);
+    return current;
+}
 ConfigDocumentSnapshot readConfigDocument(const std::string& path) {
     ConfigDocumentSnapshot r;
     r.path = path;

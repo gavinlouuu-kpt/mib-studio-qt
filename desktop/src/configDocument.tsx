@@ -34,7 +34,7 @@ export function useConfigDocument({ ready, active, append, refresh }: { ready: b
   const [error, setError] = useState("");
   const pending = useRef(false);
   const blocked = !ready || active || busy;
-  const run = async (action: "open" | "reload" | "apply") => {
+  const run = async (action: "open" | "reload" | "apply", selectedPath?:string) => {
     if (!ready || active || pending.current) return;
     if (action !== "apply" && dirty && !window.confirm("Discard unsaved config edits and reload?")) return;
     pending.current = true; setBusy(true); setError("");
@@ -56,7 +56,7 @@ export function useConfigDocument({ ready, active, append, refresh }: { ready: b
         }
         return;
       }
-      const path = action === "reload" ? doc?.path : await open({multiple:false, filters:[{name:"Application configuration",extensions:["json"]}]});
+      const path = action === "reload" ? doc?.path : selectedPath ?? await open({multiple:false, filters:[{name:"Application configuration",extensions:["json"]}]});
       if (typeof path !== "string") return;
       const loaded = await configDocument.read(path);
       if (!loaded.ok) throw new Error(loaded.error);

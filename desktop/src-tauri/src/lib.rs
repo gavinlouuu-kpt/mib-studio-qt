@@ -1567,6 +1567,8 @@ pub fn run() {
             platform::shell_log,
             preview_buffer::fetch_preview_buffer,
             preview_buffer::save_preview_buffer,
+
+            config_document::profile_command,
             config_document::fetch_config_document,
             config_document::apply_config_document,
             experiment_start,

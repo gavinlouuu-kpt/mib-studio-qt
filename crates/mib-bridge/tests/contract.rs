@@ -1135,3 +1135,24 @@ fn checked_config_document_roundtrip_and_conflict() {
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(data_dir);
 }
+
+#[test]
+#[serial]
+fn local_profiles_roundtrip_and_conflict() {
+    let data_dir = std::env::temp_dir().join(format!("mib_profile_contract_{}",std::process::id()));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.as_path().to_string_lossy()));
+    let base = data_dir.as_path().join("profiles").to_string_lossy().to_string();
+    let create = r#"{"operation":"create","name":"test","document_json":"{\"pixel_to_micron_factor\":0.5}"}"#;
+    let saved: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base, create)).unwrap();
+    assert_eq!(saved["ok"], true);
+    let read: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"read","name":"test"}"#)).unwrap();
+    assert_eq!(read["profile"]["document_json"], "{\"pixel_to_micron_factor\":0.5}");
+    let stale: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"archive","name":"test","baseline":"stale"}"#)).unwrap();
+    assert_eq!(stale["ok"],false);
+    assert!(data_dir.as_path().join("profiles/test/config.json").exists());
+    bridge.pin_mut().shutdown();
+    std::fs::remove_dir_all(data_dir).unwrap();
+}

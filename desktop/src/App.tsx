@@ -39,6 +39,7 @@ import {
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
+import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
 import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, useReviewExport } from "./exportControls";
@@ -55,7 +56,6 @@ const PENDING = {
   roi: "ROI editing is not bridged yet — backend issue BE-3 (#273)",
   script: "Camera script/config apply is not bridged yet — BE-2 (#272) / BE-3 (#273)",
   config: "App config / profiles are not bridged yet — backend issue BE-3 (#273)",
-  profiles: "Profile management is not bridged yet — BE-3 (#273) follow-up",
   saveBuffer: "Preview buffer save is not bridged yet — UI-3 (#268)",
   monitoring: "Monitoring data is not bridged yet — backend issue BE-5 (#275)",
   review: "HDF5 metadata/metrics/export are not bridged yet — backend issue BE-6 (#276)",
@@ -755,6 +755,7 @@ export default function App() {
   });
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview);
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
+  const profiles = useProfiles({ready, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   const reviewExport = useReviewExport(ready, append);
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
@@ -1485,14 +1486,6 @@ export default function App() {
                             <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
                               Apply
                             </button>
-                            <label>
-                              Profile:{" "}
-                              <select disabled title={PENDING.profiles}>
-                                <option>&lt;no prof&gt;</option>
-                              </select>
-                            </label>
-                            <button disabled title={PENDING.profiles}>Save Profile</button>
-                            <button disabled title={PENDING.profiles}>Show Diff</button>
                             <span className="mono right" title="Active processing core identity (backend-owned trust)">
                               core {coreStatus?.valid ? `v${coreStatus.active_version} (${coreStatus.source})` : "—"}
                               {coreStatus?.valid && !coreStatus.pin_satisfied
@@ -1500,6 +1493,7 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
+                          <ProfilesPanel model={profiles} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>

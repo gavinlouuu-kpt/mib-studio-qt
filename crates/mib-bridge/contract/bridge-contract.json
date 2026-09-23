@@ -382,5 +382,21 @@
     "save_request": "output_root existing directory; format tiff|avi; first,last decimal-u64; fps finite (0,1000]",
     "save_result": "ok:boolean; output_path:string including retained partial path; error:string",
     "guards": "idle experiment and stopped capture; exact retained range; unique destination directory; no overwrite; AVI has no per-frame timestamps"
+  },
+  "local_profiles": {
+    "entrypoint": "profile_command(base, request_json) -> JSON",
+    "operations": [
+      "list",
+      "read",
+      "create",
+      "duplicate",
+      "rename",
+      "archive",
+      "apply"
+    ],
+    "identity": "SHA256 over exact config.json, optional egrabberConfig.js and profile.meta.json bytes; baseline required for duplicate, rename, archive and apply",
+    "persistence": "Create stages a complete new directory; existing names never overwrite. Archive renames to hidden recoverable directory. Caller selects base directory. Changes serialize with experiment idle guard; not a cross-process CAS.",
+    "activation": "Stopped capture/realtime and disabled autofocus; validate all supported settings before mutation; processing/buffer/realtime/delivery/calibration/autofocus configuration/validated ROI only; no hardware connection or script execution",
+    "response": "ok, error?; profiles/warnings for list; profile for read/create/duplicate/rename; applied/message/profile_id/display_fps for apply; destination for archive; saved after create publication"
   }
 }

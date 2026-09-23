@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include "backend/processing/ProcessingTypes.h"
 namespace backend {
 class AppBackend;
 }
@@ -12,6 +13,7 @@ struct ProcessingConfigTransactionResult {
     bool saved{false}, applied{false}, verified{false}, conflict{false};
     std::string revision, error;
 };
+services::ProcessingConfig validatedProcessingConfig(const std::string& document, services::ProcessingConfig current);
 // Required baseline is SHA256 of raw document bytes. No force overwrite.
 // Only image_processing patches; unrelated/unknown document keys survive.
 // Like ConfigDocumentStore this is not a cross-process compare-and-swap.

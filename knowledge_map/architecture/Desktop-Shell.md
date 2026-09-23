@@ -294,3 +294,27 @@ Native workflow verification uses Tauri's supported tauri-driver/WebKitWebDriver
 protocol with embedded production assets (`custom-protocol` Cargo feature).
 A development-URL process-alive launch is not sufficient to verify the UI loads.
 The desktop-shell environment section includes the native WebDriver package.
+
+### Local profiles and checked activation (2026-09-23)
+
+The Experiment configuration page now hosts an App-owned local profile draft/library
+(`desktop/src/profiles.tsx`). Choose a Qt-compatible profiles directory; import a JSON
+document, preserve/edit optional `egrabberConfig.js`, save as new, duplicate, rename,
+or recoverably archive. Unknown config bytes survive copies. Mutations use a baseline
+hash over config, optional script and metadata. Existing names are never overwritten.
+Navigation retains drafts and pending commands; experiment-active operations are refused.
+
+`BackendFacade::profileCommand` owns the portable `app/ProfileStore` path. Apply validates
+all supported settings before changing stopped runtime services: processing, buffers,
+realtime batches/mode, frame delivery, calibration, autofocus configuration, and ROI
+bounded to an available preview frame. No camera script is executed, device connected,
+or voltage actuated. Processing-contract metadata incompatibility fails closed; declared
+app-version bounds need catalog compatibility support and are currently refused (a
+reviewed local duplicate removes remote metadata). The saved processing editor remains
+a separate checked persistence workflow and can open the selected profile's config.
+
+Remaining: remote catalog/diff/update workflow, startup-selected file restoration,
+profile ID propagation into experiment requests, and display-FPS presentation hookup.
+The profile apply reply returns `profile_id`/`display_fps` for those shell integrations;
+these are not falsely reported as backend-applied settings. Directory publication is
+atomic within the filesystem; revisions serialize this backend, not external Qt writes.

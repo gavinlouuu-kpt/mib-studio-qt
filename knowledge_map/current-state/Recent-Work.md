@@ -2258,3 +2258,9 @@ provenance. See the catch-up execution plan for verified vs pending gates.
   connected identity status, read-only endpoint pickers and guarded acquisition
   pulse-generator control through the existing backend service. Native malformed-input
   checks and operator interaction tests cover no-write-on-mount, ownership and stop paths.
+
+- 2026-09-23: Tauri local profile library and portable checked activation added. Qt-layout
+  JSON/script profiles support save-new/copy/rename/recoverable archive with aggregate
+  revisions and filesystem fault/stress coverage. Non-processing calibration/buffering/
+  realtime/autofocus/ROI settings are validated before activation; remote/startup parity
+  remains explicit in [[architecture/Desktop-Shell]].

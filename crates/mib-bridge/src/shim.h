@@ -105,6 +105,7 @@ public:
     rust::String review_export_status_json();
     BridgeCommandResult review_export_csv(rust::Str output_path);
     BridgeConfigDocument fetch_processing_config_json();
+    rust::String profile_command(rust::Str base, rust::Str request);
     BridgeCheckedConfigDocument fetch_config_document(rust::Str path);
     BridgeConfigTransactionResult apply_config_document(rust::Str path, rust::Str baseline, rust::Str patch);
     BridgeCommandResult apply_processing_config_json(rust::Str json);

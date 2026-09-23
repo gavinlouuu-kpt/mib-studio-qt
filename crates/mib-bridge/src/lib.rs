@@ -698,6 +698,7 @@ pub mod ffi {
 
         /// Pull the full processing configuration document (schema v8, BE-3).
         fn fetch_processing_config_json(self: Pin<&mut BackendBridge>) -> BridgeConfigDocument;
+        fn profile_command(self: Pin<&mut BackendBridge>, base: &str, request: &str) -> String;
         fn fetch_config_document(self: Pin<&mut BackendBridge>, path: &str) -> BridgeCheckedConfigDocument;
         fn apply_config_document(self: Pin<&mut BackendBridge>, path: &str, baseline: &str, patch: &str) -> BridgeConfigTransactionResult;
 

@@ -1138,6 +1138,10 @@ BridgeCommandResult BackendBridge::review_export_csv(rust::Str output_path) {
     }
 }
 
+rust::String BackendBridge::profile_command(rust::Str base, rust::Str request) {
+    return rust::String(impl_->facade.profileCommand(toStd(base), toStd(request)));
+}
+
 BridgeCheckedConfigDocument BackendBridge::fetch_config_document(rust::Str path) {
     BridgeCheckedConfigDocument out{};
     try {

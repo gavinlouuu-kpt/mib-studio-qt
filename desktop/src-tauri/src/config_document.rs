@@ -24,3 +24,10 @@ pub fn apply_config_document(state: State<AppState>, path: String, baseline: Str
     let r = guard.pin_mut().apply_config_document(&path, &baseline, &patch);
     Ok(ConfigTransactionResult { saved: r.saved, applied: r.applied, verified: r.verified, conflict: r.conflict, revision: r.revision, error: r.error })
 }
+
+#[tauri::command]
+pub fn profile_command(state: State<AppState>, base: String, request: String) -> Result<serde_json::Value, String> {
+    if request.len() > 8 * 1024 * 1024 + 4096 { return Err("Profile request too large".into()); }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().profile_command(&base, &request)).map_err(|e| e.to_string())
+}
