@@ -145,6 +145,7 @@ public:
 
     rust::Vec<BridgeEvent> poll_events();
     std::uint64_t queue_overflow_total() const;
+    BridgeCommandResult close_review();
     rust::String fetch_preview_buffer();
     rust::String save_preview_buffer(rust::Str request);
     BridgeFrame fetch_latest_frame();

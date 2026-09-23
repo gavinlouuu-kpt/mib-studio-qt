@@ -1709,3 +1709,5 @@ namespace mib_bridge {
 rust::String BackendBridge::fetch_preview_buffer() { return rust::String(impl_->facade.fetchPreviewBufferJson()); }
 rust::String BackendBridge::save_preview_buffer(rust::Str request) { return rust::String(impl_->facade.savePreviewBufferJson(std::string(request))); }
 }
+
+namespace mib_bridge { BridgeCommandResult BackendBridge::close_review() { return toBridgeResult(impl_->facade.closeReview()); } }

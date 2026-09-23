@@ -200,7 +200,7 @@ int main()
 
     bridge::RecordingLoadCommand forbiddenLoad;
     forbiddenLoad.filePath = recordingPath.string();
-    if (facade.dispatch(forbiddenLoad).ok || !backend.isFrameRecording()) {
+    if (facade.dispatch(forbiddenLoad).ok || facade.closeReview().ok || !backend.isFrameRecording()) {
         std::cerr << "Review load must not replace an active raw writer\n";
         facade.shutdown(); return 29;
     }

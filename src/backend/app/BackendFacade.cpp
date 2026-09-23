@@ -2449,3 +2449,19 @@ std::string BackendFacade::fetchStartupDiscoveryStatusJson() const {
         {"camera", job(startup.cameraJobId())}, {"nanopositioner", job(startup.nanopositionerJobId())}}.dump();
 }
 }
+
+namespace backend::bridge {
+BackendCommandResult BackendFacade::closeReview() {
+    BackendCommandResult result{false, BackendCommandType::RecordingLoad, "Experiment must be idle before closing review data"};
+    if (!initialized_) return {false, BackendCommandType::RecordingLoad, "Backend is not initialized"};
+    backend_.experiment().withIdleConfiguration([&] {
+        if (backend_.isFrameRecording()) { result.message = "Stop raw recording before closing review data"; return; }
+        backend_.hdf5().closeFile();
+        std::scoped_lock lock(reviewMutex_);
+        loadedRecordingPath_.clear(); reviewMetricsLoaded_ = false;
+        reviewValidMeta_.clear(); reviewInvalidMeta_.clear();
+        result = {true, BackendCommandType::RecordingLoad, "Review file closed"};
+    });
+    return result;
+}
+}

@@ -1193,7 +1193,7 @@ export default function App() {
           <div className="tab-body">
             <div hidden={tab !== "connect"}>
               <HardwareControls ready={ready} experimentActive={expActive} append={append}
-                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} />
+                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
             </div>
             {/* ---- Connect ---- */}
             {tab === "connect" && (
@@ -1752,7 +1752,13 @@ export default function App() {
                   <button onClick={onSelectHdf} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
                     Select HDF File…
                   </button>
-                  <button disabled title="Loading a new file replaces the current one">Close File</button>
+                  <button disabled={!reviewMeta?.file_open || expActive || recording} onClick={async () => {
+                    const result = await bridge.closeReview();
+                    if (!result.ok) return append(result.message);
+                    framePulls.current.invalidate("review"); setReviewMeta(null); setMetricsPage(null);
+                    setReviewPath(""); setReviewing(false); setReviewIndex("0");
+                    const canvas = reviewCanvasRef.current; if (canvas) canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
+                  }}>Close File</button>
                   <button
                     onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}
                     disabled={!reviewMeta?.file_open || reviewExport.busy}

@@ -335,3 +335,8 @@ job callbacks, and serialized status polling drains them on the bridge caller. T
 matches Qt's UI executor ownership instead of mutating camera selection on a provider
 worker. AppBackend rechecks idle experiment/capture state at actual selection/connection,
 not merely when the scan starts. Empty/ambiguous/incomplete results retain manual choice.
+
+Review Close File now calls the shared facade rather than a disabled placeholder.
+The facade rejects active recording/experiment and clears cached source identity;
+the shell clears review pixels/metrics only after successful closure. Startup
+selection completion refreshes the camera selection in the main shell.

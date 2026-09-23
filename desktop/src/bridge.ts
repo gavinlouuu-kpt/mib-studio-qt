@@ -339,6 +339,7 @@ export const bridge = {
   // Recording + review (bridge schema v2).
   startRecording: (filePath: string) => invokeCommand("start_recording", { filePath }),
   stopRecording: () => invokeCommand("stop_recording"),
+  closeReview: () => sourceMutation("close_review"),
   loadRecording: (filePath: string) => sourceMutation("load_recording", { filePath }),
   seekIndex: (frameIndex: number | string | bigint) => invokeCommand("seek_index", { frameIndex: decimalU64(frameIndex) }),
   fetchFrameByIndex: async (frameIndex: number | string | bigint) =>

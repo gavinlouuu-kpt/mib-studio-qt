@@ -168,6 +168,12 @@ fn stop_recording(state: State<AppState>) -> Result<CmdResult, String> {
 }
 
 #[tauri::command]
+fn close_review(state: State<AppState>) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().close_review().into())
+}
+
+#[tauri::command]
 fn load_recording(state: State<AppState>, file_path: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().load_recording(&file_path).into())
@@ -1577,6 +1583,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             load_recording,
+            close_review,
             seek_index,
             fetch_frame_by_index,
             apply_processing,

@@ -828,6 +828,7 @@ pub mod ffi {
         fn queue_overflow_total(&self) -> u64;
 
         /// Pull the latest frame's metadata + pixel bytes (one copy).
+        fn close_review(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn fetch_preview_buffer(self: Pin<&mut BackendBridge>) -> String;
         fn save_preview_buffer(self: Pin<&mut BackendBridge>, request: &str) -> String;
         fn fetch_latest_frame(self: Pin<&mut BackendBridge>) -> BridgeFrame;
