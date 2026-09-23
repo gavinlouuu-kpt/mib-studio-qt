@@ -226,3 +226,13 @@ completion / gate-status values; `bridge.ts` exposes
 `fetchExperimentReadiness`. Guards: `eventAdapter.test.ts` (golden decode
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
+
+## September 23 catch-up: camera setup
+
+`desktop/src/cameraScript.tsx` wires the existing EGrabber script apply/reset
+commands. Script selection and pending ownership live in App across navigation;
+a native picker selects an existing `.js` file without applying it. Apply and
+Reset require a stopped, configured EGrabber camera and no active experiment,
+then re-read selection to reject stale capture/device state. Script text editing
+is external; MindVision uses the Connect JSON path. DOM regressions cover stale
+selection, duplicate commands, errors and disabled setup states.

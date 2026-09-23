@@ -2227,3 +2227,11 @@ passed. See [[../task/2026-09-14-one-click-illuminated-live]].
   ROI saved to MindVision JSON, bounded preview memory, and transactional mode
   switching. Rig acceptance measured 816x624 at about 400 fps and restored
   512x96 at (64,48) at about 998 fps, with generator OFF readback after each stop.
+
+
+## 2026-09-23 — Tauri catch-up started
+
+Fast-forwarded the migration branch onto develop and inventoried remaining
+cutover gaps. Wired existing EGrabber script selection/apply/reset controls with
+DOM regressions. Parallel config-persistence, shared-export and hardware-control
+work is tracked in `docs/exec-plans/active/2026-09-23-tauri-catch-up.md`.

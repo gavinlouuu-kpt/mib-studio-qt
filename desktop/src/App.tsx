@@ -34,6 +34,7 @@ import {
   DEFAULT_MODE,
   type OperatingMode,
 } from "./commissioning";
+import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -738,8 +739,12 @@ export default function App() {
         ? "Experiment is already running"
         : "Authoritative readiness is unavailable in this backend revision";
 
+  const cameraScript = useCameraScript({
+    ready, running, experimentActive: expActive, selection: camSelection, append,
+    refresh: refreshCameraState,
+  });
   const cameraConfigured = camSelection?.configured ?? false;
-  const startCameraReason = !ready
+  const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
     : !cameraConfigured
       ? "No camera configured — select a device in the Connect tab"
@@ -1208,7 +1213,7 @@ export default function App() {
                     <button onClick={refreshCameraState} disabled={!ready}>Refresh</button>
                     <button
                       onClick={onConnectPicked}
-                      disabled={!ready || !pickedDevice}
+                      disabled={!ready || !pickedDevice || cameraScript.busy || running || expActive}
                       title={pickedDevice ? undefined : "Pick a device first"}
                     >
                       Connect
@@ -1349,21 +1354,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="toolbar" style={{ marginTop: 6 }}>
-                  <button disabled title={PENDING.script}>Reset</button>
-                  <button disabled title={PENDING.script}>Save</button>
-                  <button disabled title={PENDING.script}>Apply to Camera</button>
-                  <button disabled title={PENDING.script}>Browse…</button>
-                  <button disabled title={PENDING.script}>Clear</button>
-                  <span className="path-label right">camera script: not bridged (BE-2 #272)</span>
-                </div>
-                <textarea
-                  className="script-editor"
-                  disabled
-                  title={PENDING.script}
-                  value={"// Camera script editing is not bridged yet — BE-2 (#272)."}
-                  readOnly
-                />
+                <CameraScriptControls model={cameraScript} />
                 <p className="mono">
                   {lastMeta
                     ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`
@@ -1541,22 +1532,7 @@ export default function App() {
                           </div>
                         </>
                       )}
-                      {configTab === "script" && (
-                        <>
-                          <div className="toolbar">
-                            <button disabled title={PENDING.script}>Reset</button>
-                            <button disabled title={PENDING.script}>Save</button>
-                            <button disabled title={PENDING.script}>Apply to Camera</button>
-                          </div>
-                          <textarea
-                            className="script-editor"
-                            disabled
-                            title={PENDING.script}
-                            value={"// Camera script editing is not bridged yet — BE-2 (#272)."}
-                            readOnly
-                          />
-                        </>
-                      )}
+                      {configTab === "script" && <CameraScriptControls model={cameraScript} />}
                     </div>
                   </>
                 )}
