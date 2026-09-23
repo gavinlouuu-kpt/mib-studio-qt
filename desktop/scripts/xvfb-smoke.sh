@@ -18,26 +18,34 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 LOG="$(mktemp)"
-trap 'rm -f "$LOG"' EXIT
+SMOKE_PROFILE="$(mktemp -d)"
+trap 'rm -f "$LOG"; rm -rf "$SMOKE_PROFILE"' EXIT
+# Never restore an operator profile or remembered hardware during a smoke test.
+export XDG_CONFIG_HOME="$SMOKE_PROFILE/config"
+export XDG_DATA_HOME="$SMOKE_PROFILE/data"
+export MIB_CAMERA_MODE=mock
+export GSETTINGS_BACKEND=memory
 
 # HDF5 shared libs live in a versioned subdir on Ubuntu.
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/usr/lib/x86_64-linux-gnu/hdf5/serial"
 # Offline: avoid the network LUT-manifest fetch at backend startup.
 export MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL="${MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL:-file:///nonexistent/mib-lut-manifest.json}"
 
-xvfb-run -a --server-args="-screen 0 1024x768x24" \
+# GNU timeout owns a process group: terminate the wrapper, application and
+# descendants together. Killing only xvfb-run leaves the executable mapped,
+# which prevents the subsequent Tauri bundle patch (ETXTBSY).
+set +e
+timeout --signal=TERM --kill-after=5s "${ALIVE}s" \
+  xvfb-run -a --server-args="-screen 0 1024x768x24" \
   env WEBKIT_DISABLE_DMABUF_RENDERER=1 \
       WEBKIT_DISABLE_COMPOSITING_MODE=1 \
       LIBGL_ALWAYS_SOFTWARE=1 \
-  "$BIN" >"$LOG" 2>&1 &
-PID=$!
+  "$BIN" >"$LOG" 2>&1
+STATUS=$?
+set -e
 
-sleep "$ALIVE"
-
-if kill -0 "$PID" 2>/dev/null; then
-  echo "smoke: OK — GUI alive after ${ALIVE}s (window + webview initialized)"
-  kill "$PID" 2>/dev/null || true
-  wait "$PID" 2>/dev/null || true
+if [[ "$STATUS" -eq 124 ]]; then
+  echo "smoke: OK — GUI alive after ${ALIVE}s (owned process group stopped)"
   exit 0
 fi
 

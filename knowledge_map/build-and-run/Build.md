@@ -422,3 +422,9 @@ harness uses in-memory GSettings to avoid depending on an operator desktop.
 Idle Exit verifies both native-window disappearance and owning-process exit via
 X11/procfs, avoiding hung WebDriver requests after its last window closes. It
 also avoids deleting the terminated session; the driver process is cleaned up.
+
+The Xvfb smoke script bounds and terminates its entire owned process group via
+GNU timeout, not only the xvfb-run wrapper. A real-child regression reproduces
+and prevents orphan applications holding the executable open during bundling.
+The smoke run uses disposable XDG state and mock-camera mode, never an operator
+profile or remembered hardware configuration.
