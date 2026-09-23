@@ -431,3 +431,9 @@ Live processing config refreshes preserve dirty drafts and detect changed runtim
 explicit reload cannot overwrite edits entered during a pending fetch. JSON submissions
 validate all fields before mutation and reject stale config_version snapshots. Profile
 selection provenance includes display_fps, which controls the live frame request cadence.
+
+The native acceptance harness additionally requests File→Exit during an active run
+and refreshes the entire webview, requiring the same native experiment/output to
+remain active. Shell statistics polling is independent of a possibly stale UI draft
+of the realtime-enabled toggle. Raw MIBF v2 acquisition/store epochs require bridge
+ABI 18; processed preview recipe identity remains separately scoped.

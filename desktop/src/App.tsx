@@ -350,7 +350,7 @@ export default function App() {
       applyEvents(await bridge.pollEvents());
       const runtime = await invoke<{capture_running: boolean; recording: boolean}>("fetch_preview_buffer");
       setRunning(runtime.capture_running); setRecording(runtime.recording);
-      if (procEnabledRef.current) setStats(await bridge.fetchProcessingStats());
+      setStats(await bridge.fetchProcessingStats());
       setExpStatus(await bridge.fetchExperimentStatus());
       setAfStatus(await bridge.fetchAutofocusStatus());
     } catch (e) {

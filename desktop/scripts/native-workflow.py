@@ -135,6 +135,18 @@ def main():
         picker(output)
         click('Start Experiment')
         wait(lambda: invoke('fetch_experiment_status')['state'] == 2, 'experiment active')
+        active_before = invoke('fetch_experiment_status')
+        # A native close request must not discard an active experiment.
+        click('File')
+        click('Exit')
+        time.sleep(.3)
+        assert invoke('fetch_experiment_status')['state'] == 2
+        # Reconstruct the entire webview while native work remains active.
+        request(f'/session/{session}/refresh', {})
+        wait(lambda: 'backend: ready' in js('return document.body.innerText'), 'webview recovery')
+        recovered = invoke('fetch_experiment_status')
+        assert recovered['state'] == 2 and recovered['output_path'] == active_before['output_path'], recovered
+        evidence['reload_recovered_active_run'] = True
         # Navigation must not stop backend work or lose operation ownership.
         stage('Camera & Alignment')
         time.sleep(4)
