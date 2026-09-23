@@ -52,6 +52,7 @@ libgtk-3-dev
 libsoup-3.0-dev
 libjavascriptcoregtk-4.1-dev
 webkit2gtk-driver
+imagemagick  # Native dialog failure screenshots (root X11 window, not only webview).
 xdotool
 xvfb
 

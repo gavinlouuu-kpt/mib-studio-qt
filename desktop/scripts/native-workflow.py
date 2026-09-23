@@ -103,7 +103,8 @@ def main():
                 if not dialog:
                     break
                 subprocess.run(['xdotool', 'windowfocus', '--sync', dialog], check=True)
-                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'Return'], check=True)
+                key = 'alt+s' if text == 'Export All…' else 'Return'
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', key], check=True)
             wait(lambda: not find_dialog(), 'native dialog accepted: ' + title)
             next_picker = None
 
@@ -201,6 +202,10 @@ def main():
         print('PASS: native production webview configure → capture → experiment → finalize → reopen → export → close')
     except BaseException:
         if session:
+            try:
+                subprocess.run(['import', '-window', 'root', str(root / 'failure-desktop.png')], timeout=10, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             try:
                 js('document.querySelector(".log-toggle")?.click()')
                 (root / 'failure-body.txt').write_text(js('return document.body.innerText'))

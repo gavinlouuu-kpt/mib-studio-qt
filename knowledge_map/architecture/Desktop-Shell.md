@@ -484,3 +484,12 @@ The calibration stamp is host-only, not a ProcessingCore C ABI or persisted HDF 
 A persistent recovery panel displays failed experiment output path, exact committed/admitted/failed counters and terminal error. Matching Qt's explicit acknowledgment, the operator must review a checkbox before clearing the readiness fault. The coordinator compares the displayed run generation, monotonic fault occurrence revision, fault code and message under its lifecycle mutex and refuses active/flushing/replaced or already-cleared faults. Acknowledgment does not alter the recorded failed outcome, repair/delete its file or automatically restart. Start readiness is still evaluated again.
 
 Capture lifecycle polling exposes exact capture/failure generations, retained failure details and authoritative camera-ready state. Explicit retry reuses the existing configured-camera Start path; it is blocked during experiment finalization/recording, never retries automatically, and does not equate accepted start with a ready device. Configuration review remains available. These panels persist across stage tabs; no hardware execution is required by their tests.
+
+ABI 19 adds analysis-time monitoring calibration/reference curves and explicit
+fault-revision recovery/capture-lifecycle status. The full non-network/non-hardware
+115-test CTest selection now passes (one optional exporter soak skipped) after
+installing declared Python build requirements into an isolated verification venv.
+Hosted folder chooser acceptance uses GTK's Select mnemonic rather than assuming
+Return accepts a directory; failures also capture the full X11 desktop for diagnosis.
+Windows candidate runs are not cancelled mid-Conan build by each branch push; the
+latest queued candidate can reuse the completed dependency cache.
