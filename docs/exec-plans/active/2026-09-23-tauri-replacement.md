@@ -98,7 +98,9 @@ and the separately deferred hardware acceptance are satisfied.
 - Windows candidate result (MSVC byte-exact resource regression passed; build
   remains in progress). Combined local checks and optimized
   Linux package replay pass. Verified explicit installer launch is implemented and fixture-tested;
-  a platform-specific Tauri feed and real installer acceptance remain release gates.
+  the platform-specific Tauri manifest publisher is now implemented and
+  regression-tested in dry-run mode, but no feed has been published and real
+  installer acceptance remains a release gate.
   Existing Qt installer feeds are rejected. No release/feed was published.
 - Hardware suite, SDK-equipped deployment and physical timing remain deferred by
   Gavin; mock, fake-serial and SDK-free tests do not establish those claims.
