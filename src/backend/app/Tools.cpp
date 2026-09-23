@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <cwchar>
 #include <iterator>
+#include <fstream>
+#include <limits>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -82,6 +84,16 @@ uint64_t Tools::getAvailableSystemRAMBytes() {
     memStatus.dwLength = sizeof(MEMORYSTATUSEX);
     if (GlobalMemoryStatusEx(&memStatus)) {
         return static_cast<uint64_t>(memStatus.ullAvailPhys);
+    }
+    return 0;
+#elif defined(__linux__)
+    std::ifstream input("/proc/meminfo");
+    std::string key, unit;
+    uint64_t kib=0;
+    while(input >> key >> kib >> unit) {
+        if(key=="MemAvailable:" && unit=="kB" && kib<=std::numeric_limits<uint64_t>::max()/1024)
+            return kib*1024;
+        input.ignore(std::numeric_limits<std::streamsize>::max(),'\n');
     }
     return 0;
 #else

@@ -205,3 +205,16 @@ this is safe because every hot-path op acquires the shared structural lock
 - Portable manylinux builds may use fmt 6 through the distribution spdlog;
   exception logging passes `cv::Exception::func/file` as C strings so both
   that older formatter and current Conan builds compile identically.
+
+Frame copies now carry a host-only `storeGeneration`. Successful resize increments the
+epoch and restamps retained frames because their indices are renumbered; push and ROI
+reads preserve that epoch under the existing structural/slot locks. Consumers combine
+store epoch with their processing-session generation and frame index, rather than
+assuming indices remain globally unique after resize. This field is not a camera
+hardware timestamp or an HDF5 schema change.
+
+Raw camera frames now carry the host-only CaptureService generation stamped at
+publication alongside the FrameStore resize epoch. Copies and ROI extraction retain
+both. Indexed/latest bridge packets expose these exact uint64 identities (MIBF v2),
+so a frame from an earlier capture cannot be mistaken for the current camera session.
+Non-camera producers use generation zero; raw frames do not claim a processing recipe.

@@ -15,10 +15,94 @@
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
+#include <stdexcept>
 
 namespace fs = std::filesystem;
 
 namespace backend::services::batch_masks {
+
+cv::Mat buildSyntheticBackground(const std::vector<cv::Mat>& grayImages, const std::function<bool()>& cancelled) {
+    if (grayImages.empty() || grayImages.front().empty()) return {};
+
+    const int rows = grayImages.front().rows;
+    const int cols = grayImages.front().cols;
+    std::vector<cv::Mat> frames;
+    frames.reserve(grayImages.size());
+    for (const auto& image : grayImages) {
+        if (image.empty() || image.rows != rows || image.cols != cols) continue;
+        if (image.type() == CV_8UC1) {
+            frames.push_back(image);
+        } else if (image.channels() == 3) {
+            cv::Mat gray;
+            cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+            frames.push_back(std::move(gray));
+        } else if (image.channels() == 4) {
+            cv::Mat gray;
+            cv::cvtColor(image, gray, cv::COLOR_BGRA2GRAY);
+            frames.push_back(std::move(gray));
+        } else {
+            cv::Mat gray;
+            image.convertTo(gray, CV_8UC1);
+            frames.push_back(std::move(gray));
+        }
+    }
+
+    if (frames.empty()) return {};
+    if (frames.size() == 1) return frames.front().clone();
+
+    const int tileSize = 64;
+    const size_t keepCount = std::min<size_t>(
+        std::max<size_t>(3, frames.size() / 10),
+        std::min<size_t>(10, frames.size()));
+    cv::Mat background(rows, cols, CV_8UC1, cv::Scalar(0));
+
+    for (int y = 0; y < rows; y += tileSize) {
+        const int h = std::min(tileSize, rows - y);
+        for (int x = 0; x < cols; x += tileSize) {
+            if (cancelled && cancelled()) throw std::runtime_error("Synthetic background cancelled");
+            const int w = std::min(tileSize, cols - x);
+            const cv::Rect tile(x, y, w, h);
+
+            std::vector<std::pair<double, size_t>> ranked;
+            ranked.reserve(frames.size());
+            for (size_t i = 0; i < frames.size(); ++i) {
+                double score = 0.0;
+                int comparisons = 0;
+                if (i > 0) {
+                    cv::Mat diff;
+                    cv::absdiff(frames[i](tile), frames[i - 1](tile), diff);
+                    score += cv::mean(diff)[0];
+                    ++comparisons;
+                }
+                if (i + 1 < frames.size()) {
+                    cv::Mat diff;
+                    cv::absdiff(frames[i](tile), frames[i + 1](tile), diff);
+                    score += cv::mean(diff)[0];
+                    ++comparisons;
+                }
+                ranked.emplace_back(score / std::max(1, comparisons), i);
+            }
+
+            std::partial_sort(
+                ranked.begin(), ranked.begin() + static_cast<std::ptrdiff_t>(keepCount), ranked.end(),
+                [](const auto& a, const auto& b) { return a.first < b.first; });
+
+            cv::Mat accum(h, w, CV_32FC1, cv::Scalar(0));
+            for (size_t i = 0; i < keepCount; ++i) {
+                cv::Mat tileFloat;
+                frames[ranked[i].second](tile).convertTo(tileFloat, CV_32FC1);
+                accum += tileFloat;
+            }
+            accum /= static_cast<double>(keepCount);
+            accum.convertTo(background(tile), CV_8UC1);
+        }
+    }
+
+    SPDLOG_INFO("BatchMaskSources: built synthetic background from {} frames (tile={} keep={})",
+                frames.size(), tileSize, keepCount);
+    return background;
+}
+
 
 bool loadFromHdf5(Hdf5Service& hdf5,
                   const std::string& datasetPath,
@@ -61,7 +145,7 @@ static bool isSupportedImageExt(const std::string& ext) {
 bool loadFromFolder(const std::string& folderPath,
                     std::vector<cv::Mat>& outGray,
                     std::vector<std::string>& outFilenames,
-                    std::vector<std::string>& errors) {
+                    std::vector<std::string>& errors, const LoadOptions& options) {
     outGray.clear();
     outFilenames.clear();
     errors.clear();
@@ -83,15 +167,27 @@ bool loadFromFolder(const std::string& folderPath,
     std::sort(paths.begin(), paths.end(),
               [](const fs::path& a, const fs::path& b) { return a.filename() < b.filename(); });
 
-    outGray.reserve(paths.size());
-    outFilenames.reserve(paths.size());
-    for (const auto& p : paths) {
+    if (paths.empty() && options.start==0 && options.count==0) return true;
+    if (options.start >= paths.size()) { errors.push_back("Source range is empty"); return false; }
+    const size_t selected = options.count ? options.count : paths.size()-options.start;
+    if (selected > paths.size()-options.start || selected > options.maxFrames) {
+        errors.push_back("Source range exceeds frame limit"); return false;
+    }
+    outGray.reserve(selected);
+    outFilenames.reserve(selected);
+    size_t bytes = 0;
+    for (size_t index=options.start;index<options.start+selected;++index) {
+        if (options.cancelled && options.cancelled()) { errors.push_back("Loading cancelled"); return false; }
+        const auto& p=paths[index];
         cv::Mat m = cv::imread(p.string(), cv::IMREAD_GRAYSCALE);
         if (m.empty()) {
             errors.push_back("Failed to read: " + p.string());
             SPDLOG_WARN("loadFromFolder: failed to read {}", p.string());
             continue;
         }
+        const size_t imageBytes=m.total()*m.elemSize();
+        if (imageBytes>options.maxBytes-bytes) { errors.push_back("Source range exceeds memory limit"); return false; }
+        bytes+=imageBytes;
         outGray.push_back(std::move(m));
         outFilenames.push_back(p.filename().string());
     }
@@ -103,7 +199,7 @@ bool loadFromFolder(const std::string& folderPath,
 bool loadFromAvi(const std::string& aviPath,
                  std::vector<cv::Mat>& outGray,
                  std::vector<std::string>& outFilenames,
-                 std::vector<std::string>& errors) {
+                 std::vector<std::string>& errors, const LoadOptions& options) {
     outGray.clear();
     outFilenames.clear();
     errors.clear();
@@ -124,14 +220,18 @@ bool loadFromAvi(const std::string& aviPath,
 
     const int hintedCount = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
     if (hintedCount > 0) {
-        outGray.reserve(static_cast<size_t>(hintedCount));
-        outFilenames.reserve(static_cast<size_t>(hintedCount));
+        outGray.reserve(std::min(static_cast<size_t>(hintedCount), options.maxFrames));
+        outFilenames.reserve(std::min(static_cast<size_t>(hintedCount), options.maxFrames));
     }
 
-    size_t idx = 0;
+    size_t idx = 0, bytes = 0;
     cv::Mat frame;
     while (true) {
+        if (options.cancelled && options.cancelled()) { errors.push_back("Loading cancelled"); return false; }
+        if (options.count && outGray.size()>=options.count) break;
         if (!cap.read(frame) || frame.empty()) break;
+        if (idx<options.start) { ++idx; continue; }
+        if (outGray.size()>=options.maxFrames) { errors.push_back("Source range exceeds frame limit"); return false; }
 
         cv::Mat gray;
         if (frame.channels() == 1) {
@@ -157,6 +257,9 @@ bool loadFromAvi(const std::string& aviPath,
 
         std::ostringstream oss;
         oss << "frame_" << std::setw(5) << std::setfill('0') << idx;
+        const size_t imageBytes=gray.total()*gray.elemSize();
+        if (imageBytes>options.maxBytes-bytes) { errors.push_back("Source range exceeds memory limit"); return false; }
+        bytes+=imageBytes;
         outGray.push_back(std::move(gray));
         outFilenames.push_back(oss.str());
         ++idx;
@@ -164,6 +267,7 @@ bool loadFromAvi(const std::string& aviPath,
 
     cap.release();
 
+    if (options.count && outGray.size()!=options.count) {errors.push_back("Source range exceeds decoded frames");return false;}
     if (outGray.empty()) {
         errors.push_back("No frames decoded from: " + aviPath);
         SPDLOG_WARN("loadFromAvi: decoded 0 frames from {}", aviPath);
@@ -173,6 +277,21 @@ bool loadFromAvi(const std::string& aviPath,
     SPDLOG_INFO("loadFromAvi: loaded {} frames from {} ({} errors)",
                 outGray.size(), aviPath, errors.size());
     return true;
+}
+
+bool loadPreview(const std::string& kind,const std::string& path,const std::string& dataset,size_t index,cv::Mat& image) {
+    constexpr size_t maxBytes=64*1024*1024;
+    if(kind=="hdf") {
+        if(dataset!="/valid_frames/images" && dataset!="/invalid_frames/images" && dataset!="/recorded_frames/images")return false;
+        Hdf5Service reader;size_t count=0;int height=0,width=0,channels=0;
+        if(!reader.loadFile(path) || !reader.getDatasetInfo(dataset,count,height,width,channels) || index>=count || height<=0 || width<=0 || channels!=1 || static_cast<uint64_t>(height)*width>maxBytes)return false;
+        return reader.readImageByIndex(dataset,index,image);
+    }
+    LoadOptions limits;limits.start=index;limits.count=1;limits.maxFrames=1;limits.maxBytes=maxBytes;
+    std::vector<cv::Mat> frames;std::vector<std::string> names,errors;
+    const bool ok=kind=="folder" ? loadFromFolder(path,frames,names,errors,limits) : kind=="avi" ? loadFromAvi(path,frames,names,errors,limits) : false;
+    if(!ok || !errors.empty() || frames.size()!=1)return false;
+    image=std::move(frames.front());return true;
 }
 
 size_t saveMaskImages(const std::vector<ProcessedFrame>& frames,

@@ -1,10 +1,13 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/app/ExperimentCoordinator.h"
 
 #include <opencv2/core.hpp>
+#include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 
 #include <cstdlib>
+#include <fstream>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -14,25 +17,45 @@
 #include <thread>
 #include <vector>
 
-namespace
-{
-    std::filesystem::path makeTempDir()
-    {
-        std::random_device rd;
-        std::mt19937_64 gen(rd());
-        std::uniform_int_distribution<unsigned long long> dist;
-        for (int attempt = 0; attempt < 100; ++attempt)
-        {
-            const auto path = std::filesystem::temp_directory_path() /
-                              ("mib_backend_facade_" + std::to_string(dist(gen)));
-            std::error_code ec;
-            if (std::filesystem::create_directories(path, ec))
-            {
-                return path;
-            }
-        }
-        throw std::runtime_error("failed to create temporary directory");
+namespace {
+class FakeTypedNanopositioner final : public backend::nanopositioner::INanopositionerBackend {
+public:
+    backend::nanopositioner::BackendKind kind() const override {
+        return backend::nanopositioner::BackendKind::Oeabt;
     }
+    bool connect(const backend::nanopositioner::Endpoint& value, std::string&) override {
+        endpoint = value.persistentId;
+        connected = true;
+        return true;
+    }
+    void disconnect() override { connected = false; }
+    bool isConnected() const override { return connected; }
+    bool readVoltage(double& value, std::string&) override {
+        value = 0.0;
+        return true;
+    }
+    bool setVoltage(double, std::string&) override { return true; }
+    std::optional<double> maximumVoltage() const override { return 100.0; }
+    std::string connectedEndpoint() const override { return endpoint; }
+
+private:
+    bool connected{false};
+    std::string endpoint;
+};
+std::filesystem::path makeTempDir() {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<unsigned long long> dist;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const auto path = std::filesystem::temp_directory_path() /
+                          ("mib_backend_facade_" + std::to_string(dist(gen)));
+        std::error_code ec;
+        if (std::filesystem::create_directories(path, ec)) {
+            return path;
+        }
+    }
+    throw std::runtime_error("failed to create temporary directory");
+}
 
     void setEnv(const char *name, const char *value)
     {
@@ -69,7 +92,7 @@ namespace
         }
         return false;
     }
-} // namespace
+    } // namespace
 
 int main()
 {
@@ -106,11 +129,77 @@ int main()
             events.push_back(event);
         });
 
+        const auto reference=nlohmann::json::parse(facade.fetchMonitoringChartReferenceJson());
+        if(!reference.at("curves").is_array()||reference.at("curves").empty()||reference.at("curve_source").get<std::string>().empty())
+            throw std::runtime_error("Monitoring curves must reuse bounded bundled scientific reference");
         if (!facade.initialize(dataDir.string()) || !facade.isInitialized())
         {
             std::cerr << "BackendFacade should initialize AppBackend explicitly\n";
             return 2;
         }
+
+        backend.experiment().reportUnresolvedFault("test.operator", "injected retained fault");
+        if (facade
+                .acknowledgeExperimentFault(0, backend.experiment().status().faultRevision,
+                                            "test.operator", "injected retained fault", false)
+                .ok)
+            return 91;
+        if (!backend.experiment().hasUnresolvedFault()) return 92;
+        if (!facade
+                 .acknowledgeExperimentFault(0, backend.experiment().status().faultRevision,
+                                             "test.operator", "injected retained fault", true)
+                 .ok)
+            return 93;
+        if (facade.fetchCaptureLifecycleJson().find("\"generation\":\"0\"") == std::string::npos)
+            return 94;
+        {
+            std::lock_guard<std::mutex> lock(eventsMutex);
+            events.clear();
+        }
+
+        if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":0,"max_attempts":200,"timeout_ms":5000})").ok) return 74;
+        if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":10,"max_attempts":5,"timeout_ms":5000})").ok) return 75;
+        if (!facade.backgroundCalibrationCommandJson(R"({"action":"cancel"})").ok) return 76;
+        if (facade.fetchBackgroundCalibrationStatusJson().find("\"valid\":true") == std::string::npos) return 77;
+        if (facade
+                .backgroundCalibrationCommandJson(
+                    R"({"action":"start","required_accepted":1.5,"max_attempts":200,"timeout_ms":5000})")
+                .ok)
+            return 79;
+        // Invalid hardware requests must be rejected before any driver access.
+        for (const auto* request : {R"({"action":"connect","port":"","address":1})",
+                                    R"({"action":"connect","port":"never-open","address":248})",
+                                    R"({"action":"frequency","channel":4,"value":1000})",
+                                    R"({"action":"frequency","channel":0.5,"value":1000})",
+                                    R"({"action":"frequency","channel":0,"value":399})",
+                                    R"({"action":"duty","channel":0,"value":101})",
+                                    R"({"action":"bogus","channel":0})", "not json"}) {
+            if (facade.pulseGeneratorCommandJson(request).ok) return 70;
+        }
+        if (facade.fetchPulseGeneratorStatusJson().find("\"connected\":false") == std::string::npos) return 71;
+        bridge::AutofocusCommand badEndpoint;
+        badEndpoint.action = bridge::AutofocusCommandAction::Connect;
+        badEndpoint.endpoint = backend::nanopositioner::Endpoint{};
+        if (facade.dispatch(badEndpoint).ok) return 72;
+
+        if (!backend.autofocus().setBackendFactory([](backend::nanopositioner::BackendKind) {
+                return std::make_unique<FakeTypedNanopositioner>();
+            }))
+            return 80;
+        bridge::AutofocusCommand typedConnect;
+        typedConnect.action = bridge::AutofocusCommandAction::Connect;
+        backend::nanopositioner::Endpoint typedEndpoint;
+        typedEndpoint.backend = backend::nanopositioner::BackendKind::Oeabt;
+        typedEndpoint.persistentId = "fake-persistent-oeabt";
+        typedEndpoint.systemPath = "/dev/fake-oeabt";
+        typedConnect.endpoint = typedEndpoint;
+        if (!facade.dispatch(typedConnect).ok) return 81;
+        bridge::BackendAutofocusStatus typedStatus;
+        if (!facade.fetchAutofocusStatus(typedStatus) || typedStatus.backendName != "oeabt" ||
+            typedStatus.endpointId != "fake-persistent-oeabt")
+            return 82;
+        typedConnect.action = bridge::AutofocusCommandAction::Disconnect;
+        if (!facade.dispatch(typedConnect).ok) return 83;
 
         bridge::ProcessingSettingsCommand processingCommand;
         auto config = backend.processing().getProcessingConfig();
@@ -120,8 +209,7 @@ int main()
         processingCommand.realtimeEnabled = false;
         processingCommand.realtimeDropFrames = true;
         processingCommand.pixelToMicronFactor = 2.5;
-        if (!facade.dispatch(processingCommand).ok)
-        {
+        if (!facade.dispatch(processingCommand).ok) {
             std::cerr << "ProcessingSettingsCommand should apply through ProcessingService\n";
             return 3;
         }
@@ -182,6 +270,12 @@ int main()
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
 
+    bridge::RecordingLoadCommand forbiddenLoad;
+    forbiddenLoad.filePath = recordingPath.string();
+    if (facade.dispatch(forbiddenLoad).ok || facade.closeReview().ok || !backend.isFrameRecording()) {
+        std::cerr << "Review load must not replace an active raw writer\n";
+        facade.shutdown(); return 29;
+    }
     bridge::RecordingCommand stopRecording;
     stopRecording.action = bridge::RecordingCommandAction::StopFrameRecording;
     stopRecording.filePath = recordingPath.string();
@@ -237,6 +331,21 @@ int main()
             facade.shutdown();
             return 23;
         }
+        if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
+        if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":10,"max_attempts":200,"timeout_ms":5000})").ok) return 78;
+        // Config transactions must not change the frozen run authority.
+        const auto configPath = (dataDir / "checked-config.json").string();
+        std::ofstream(configPath) << "{}";
+        const auto baseline = facade.fetchConfigDocument(configPath);
+        const auto checked = facade.applyConfigDocument(configPath, baseline.revision,
+            R"({"image_processing":{"area_threshold_min":42}})");
+        if (checked.saved || checked.applied || checked.error.empty() ||
+            facade.fetchConfigDocument(configPath).revision != baseline.revision)
+        {
+            std::cerr << "active experiment must reject config transactions without writing\n";
+            return 31;
+        }
+
         // A second Start while Active is a typed AlreadyActive, never a second run.
         const auto again = facade.dispatch(start);
         if (again.ok || !again.experimentStartOutcome ||

@@ -1,0 +1,133 @@
+name: Windows Tauri candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev/react-tauri]
+    paths:
+      - 'desktop/**'
+      - 'crates/mib-bridge/**'
+      - 'src/backend/**'
+      - 'include/backend/**'
+      - 'cmake/**'
+      - 'conanfile.py'
+      - 'conan/profiles/windows-msvc194'
+      - 'tools/gen_bridge_link_manifest.py'
+      - 'tools/test_gen_bridge_link_manifest.py'
+      - 'tools/test_review_isoelastic_embedding.py'
+      - 'scripts/release/publish-tauri-update.py'
+      - 'tests/tools/test_publish_tauri_update.py'
+      - '.github/workflows/desktop-windows-candidate.yml'
+permissions:
+  contents: read
+concurrency:
+  group: windows-tauri-candidate-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      MIB_CAMERA_MODE: mock
+      MIB_DISABLED_SERVICES: yolo,auto_update
+      MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: file:///nonexistent/mib-lut-manifest.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: actions/cache/restore@v4
+        id: conan-cache
+        with:
+          path: ~/.conan2/p
+          key: tauri-conan-${{ runner.os }}-msvc194-${{ hashFiles('conanfile.py', 'conan/profiles/windows-msvc194') }}
+          restore-keys: tauri-conan-${{ runner.os }}-msvc194-
+      - name: Validate packaging script syntax
+        run: |
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'desktop/scripts/package-windows-candidate.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+      - name: Verify Windows link-manifest XML parsing
+        run: |
+          python tools/test_gen_bridge_link_manifest.py
+          if ($LASTEXITCODE) { throw 'Link-manifest regression failed' }
+          python tools/test_review_isoelastic_embedding.py
+          if ($LASTEXITCODE) { throw 'Embedded scientific resource regression failed' }
+          python tests/tools/test_publish_tauri_update.py
+          if ($LASTEXITCODE) { throw 'Tauri update publisher regression failed' }
+      - name: Install pinned-profile dependencies and public model
+        run: |
+          python -m pip install -r env/requirements-build.txt
+          if ($LASTEXITCODE) { throw 'Build tools installation failed' }
+          python tools/test_conan_recipe.py
+          if ($LASTEXITCODE) { throw 'Conan recipe regression failed' }
+          conan profile detect --force
+          if ($LASTEXITCODE) { throw 'Conan detection failed' }
+          conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194 -o '&:with_qt=False'
+          if ($LASTEXITCODE) { throw 'Conan dependency resolution failed' }
+          python scripts/provision-assets.py --required-only
+          if ($LASTEXITCODE) { throw 'Asset provisioning failed' }
+      - name: Save completed dependency cache before application checks
+        if: steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.conan2/p
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+      - name: Build SDK-free backend and export MSVC link manifest
+        run: |
+          cmake --preset windows-default -DMIB_BUILD_BACKEND_ONLY=ON -DBUILD_TESTING=ON -DMIB_ENABLE_HARDWARE_SDKS=OFF -DMIB_ENABLE_COREMOR=OFF -DMIB_ENABLE_MINDVISION=OFF -DMIB_ENABLE_WINDOWS_PACKAGING=OFF -DMIB_USE_SENTRY=OFF
+          if ($LASTEXITCODE) { throw 'Backend configure failed' }
+          cmake --build build --config Release --target mib_backend mib_processing mib_backend_smoke_test --parallel 4
+          if ($LASTEXITCODE) { throw 'Backend build failed' }
+          python tools/gen_bridge_link_manifest.py --build-dir build --config Release
+          if ($LASTEXITCODE) { throw 'Bridge link manifest failed' }
+          $manifest = Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json
+          $manifest.runtime_dirs | ForEach-Object { $_ >> $env:GITHUB_PATH }
+          "MIB_BRIDGE_LINK_MANIFEST=$PWD/build/mib-bridge-link-manifest.json" >> $env:GITHUB_ENV
+      - name: Frontend and native bridge checks
+        run: |
+          python scripts/gen_bridge_contract.py --check
+          if ($LASTEXITCODE) { throw 'Contract drift' }
+          npm --prefix desktop ci
+          if ($LASTEXITCODE) { throw 'npm install failed' }
+          npm --prefix desktop test
+          if ($LASTEXITCODE) { throw 'Frontend tests failed' }
+          npm --prefix desktop run build
+          if ($LASTEXITCODE) { throw 'Frontend build failed' }
+          cargo test --manifest-path crates/mib-bridge/Cargo.toml --release --locked --test contract
+          if ($LASTEXITCODE) { throw 'Bridge tests failed' }
+          cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --locked --features custom-protocol
+          if ($LASTEXITCODE) { throw 'Desktop build failed' }
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml --release --locked
+          if ($LASTEXITCODE) { throw 'Desktop native tests failed' }
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --release --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE) { throw 'Desktop Clippy check failed' }
+      - name: Package unsigned portable candidate with DLL closure
+        run: ./desktop/scripts/package-windows-candidate.ps1
+      - name: Smoke staged application without development DLL search paths
+        run: |
+          $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'mib-tauri-smoke-local'
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'mib-tauri-smoke-roaming'
+          $exe = (Resolve-Path 'build/tauri-windows-candidate/mib-studio-desktop.exe').Path
+          $process = Start-Process $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          try {
+            Start-Sleep -Seconds 10
+            if ($process.HasExited) { throw "Candidate exited during smoke: $($process.ExitCode)" }
+          } finally {
+            if (!$process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-sdk-free-windows-tauri-${{ github.sha }}
+          path: build/tauri-windows-candidate.zip
+          if-no-files-found: error

@@ -2227,3 +2227,106 @@ passed. See [[../task/2026-09-14-one-click-illuminated-live]].
   ROI saved to MindVision JSON, bounded preview memory, and transactional mode
   switching. Rig acceptance measured 816x624 at about 400 fps and restored
   512x96 at (64,48) at about 998 fps, with generator OFF readback after each stop.
+
+
+## 2026-09-23 — Tauri catch-up started
+
+Fast-forwarded the migration branch onto develop and inventoried remaining
+cutover gaps. Wired existing EGrabber script selection/apply/reset controls with
+DOM regressions. Parallel config-persistence, shared-export and hardware-control
+work is tracked in `docs/exec-plans/active/2026-09-23-tauri-catch-up.md`.
+- 2026-09-23: Added the bounded Qt-free checked processing-document seam for
+  Tauri integration, with lifecycle exclusion and explicit persistence outcomes
+  ([[task/2026-09-23-tauri-config-transactions]]). Full Qt watcher migration remains open.
+
+
+### Tauri catch-up integration outcomes
+
+Integrated pump/autofocus controls, checked processing-only config save/apply,
+and shared HDF5 export/progress/cancel on current develop. Bumped bridge ABI to
+15. Native integration caught/fixed a runner-registration gap and valid-only
+export failure; config review prevented applying unrelated disk fields to runtime
+provenance. See the catch-up execution plan for verified vs pending gates.
+
+- 2026-09-23: Tauri software replacement follow-up: preview pause/scrub and
+  guarded non-overwriting buffer export, independent status reconciliation,
+  bounded monitoring polling. Fixed concurrent latest-frame identity and raw
+  review incorrectly reading the live ring instead of the HDF dataset. Review
+  load now holds the idle lifecycle gate and rejects active raw recording.
+
+- 2026-09-23: Tauri hardware parity adds explicit OEABT/CoreMOR endpoint connection,
+  connected identity status, read-only endpoint pickers and guarded acquisition
+  pulse-generator control through the existing backend service. Native malformed-input
+  checks and operator interaction tests cover no-write-on-mount, ownership and stop paths.
+
+- 2026-09-23: Tauri local profile library and portable checked activation added. Qt-layout
+  JSON/script profiles support save-new/copy/rename/recoverable archive with aggregate
+  revisions and filesystem fault/stress coverage. Non-processing calibration/buffering/
+  realtime/autofocus/ROI settings are validated before activation; remote/startup parity
+  remains explicit in [[architecture/Desktop-Shell]].
+
+- 2026-09-23: Managed Tauri profile catalogs now offer passive checks, field/script diffs,
+  SHA256-verified installs/updates with complete backups, app/core compatibility gates,
+  and revision-pinned startup restoration. Runtime origin and saved startup choice are
+  separately retrievable; remote install never implicitly activates a profile.
+- 2026-09-23: Atomic Tauri processed-preview packets now retain source pixels with
+  mask/ROI/contours/primary-target data, stamp processing and FrameStore epochs, and
+  fingerprint frozen processing parameters/ROI/background. Source retention is opt-in;
+  old packets remain immutable across config changes and store resize. Native inline
+  and async tests cover identity/pixel coherence; malformed webview packets are rejected.
+
+- 2026-09-23: Tauri processing-core registry, signed local-artifact activation, persisted
+  restore and bundled recovery reuse the shared cache/loader/signature verifiers. Qt now
+  shares the compiled trust-policy wrapper. Read-only app release checks are available;
+  Tauri package publication and installer/rollback remain explicit release gates.
+
+- 2026-09-23: Live configuration now validates the entire JSON/typed candidate before
+  mutating processing state, honors realtime enabled/drop flags, and rejects stale
+  config_version snapshots. Background refresh preserves edited JSON and quick-control
+  drafts; positive finite calibration is required. Profile display_fps now paces live
+  preview requests. Auto-background status reflects runtime config and routes to editing.
+## 2026-09-23 — Tauri remembered hardware selection and named pump endpoints
+
+Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows pump transport UI/bridge gaps using existing services. See [[Desktop-Shell]] and [[Rust-Bridge]]. Malformed settings preserve prior preferences; startup jobs cannot be retargeted in flight. No real hardware was actuated.
+- 2026-09-23: Tauri preview buffer now supports exact-u64 inclusive index/source-timestamp
+  ranges, shared active-kernel empty filtering, bounded stopped/idle resizing (explicit
+  confirmation when frames are cleared), and background from a retained paused Mono8
+  frame. Ring generation preconditions reject stale selections; saves reserve new folders.
+  Linux RAM availability now uses MemAvailable for the shared resize budget check.
+
+- 2026-09-23: Webview reload now reconciles capture/raw recording, experiment and open
+  review metadata before publishing readiness. Retained native sessions read profile/core
+  identities without replaying startup selections, even when idle. Review UI recovers its
+  source, dataset, first-frame preview and metrics; export/reanalysis submissions remain
+  blocked until authoritative operation status has been recovered.
+
+- 2026-09-23: Monitoring table now labels raw area as px², matching the native row
+  contract. Added bounded valid-object Young's modulus histogram from stored per-object
+  kPa results; unavailable/zero values are excluded, not shown as physical measurements.
+  Ring histogram now includes positive finite valid-object ratios. Calibrated live area
+  and isoelastic overlays remain gated on processing-time per-row calibration provenance:
+  neither shell may safely rescale retained old rows using the current factor.
+
+## 2026-09-23 — Windows Tauri candidate closure
+
+Added a nonpublishing SDK-free Windows x64 build/test/portable-package lane, separate from Qt releases. Native dependency closure fails unresolved/conflicting DLLs; staging includes MSVC runtime and scientific resources. Hosted Windows validation remains required; no Windows or real-hardware run is claimed from Linux. See [[Desktop-Shell]].
+- 2026-09-23: Reload reconciliation rejects active writer handles as review sources.
+  Native review metadata now requires an actual loaded review path before inspecting
+  shared HDF datasets; shell additionally excludes active raw/experiment writers.
+
+- 2026-09-23: Closed live monitoring calibration gap: shared host object-analysis stamps
+  each result with the exact kernel input factor, retained by inline/batch monitoring.
+  Qt and Tauri now plot mixed historical epochs correctly without current-factor rescaling.
+  Added optional shared bundled isoelastic references with explicit physical conditions;
+  unknown calibration rows remain excluded. Processing-core C ABI/HDF schema unchanged.
+## 2026-09-23 — Explicit Tauri experiment/camera recovery
+
+Closed Qt's fault acknowledgment parity gap with compare-and-acknowledge backend guarding and explicit operator review. Retained failed output/error/accounting remains visible after acknowledgment; camera errors have persistent authoritative status and explicit retry/configuration actions. Fake/mock-only regression tests cover refusal, stale confirmation, retained file outcome and reconnect gating. See [[Desktop-Shell]].
+
+- 2026-09-23: Added user-operated Tauri app installer workflow using the existing
+  HTTPS manifest/SHA256 contract. Canonical platform-specific Tauri feeds must identify
+  artifact_family=tauri, exact OS/architecture, newer SemVer, size and digest. Downloads
+  open in the browser; local packages are streamed into private verified staging and
+  manifests/digests rechecked before explicit native installer launch. Active native work,
+  pending UI operations and dirty drafts block installation. No installer was launched,
+  release published, or signing keys changed during implementation/tests.

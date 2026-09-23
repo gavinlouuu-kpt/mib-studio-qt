@@ -169,6 +169,7 @@ bool SyringePumpService::connect(PumpId id, const std::string& portName, int bau
 
     std::scoped_lock lock(pump.mutex);
 
+    pump.config.portName = portName;
     pump.config.comPort = -1; // unknown unless the int overload fills it in
     pump.config.baudRate = baudRate;
     pump.config.modbusAddress = modbusAddress;
@@ -423,6 +424,7 @@ void SyringePumpService::setConfig(PumpId id, const PumpConfig& config) {
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
     pump.config = config;
+    if (pump.bus) pump.config.portName = pump.bus->portName();
 }
 
 int SyringePumpService::getComPort(PumpId id) const {

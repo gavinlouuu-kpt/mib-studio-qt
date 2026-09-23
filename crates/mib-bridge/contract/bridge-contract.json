@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 14,
+  "abi_version": 19,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -24,7 +24,8 @@
     "Trigger": 8,
     "Review": 9,
     "Pump": 10,
-    "Autofocus": 11
+    "Autofocus": 11,
+    "PulseGenerator": 12
   },
   "review_image_datasets": {
     "ValidImage": 0,
@@ -187,14 +188,14 @@
     "Error": 5
   },
   "frame_packet": {
-    "version": 1,
+    "version": 2,
     "header_bytes": 96,
     "byte_order": "little",
     "max_payload_bytes": 33554432,
     "max_pixels": 16777216,
     "max_dimension": 8192,
     "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
-    "identity_semantics": "source/session/config unavailable; reserved u64 slots zero",
+    "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities.",
     "pull_kinds": {
       "latest": 1,
       "indexed": 2,
@@ -214,9 +215,9 @@
       "pixel_format": 48,
       "stride_bytes": 56,
       "payload_bytes": 64,
-      "session_id_reserved": 72,
       "config_revision_reserved": 80,
-      "source_id_reserved": 88
+      "capture_session": 72,
+      "store_generation": 88
     }
   },
   "json_transport": {
@@ -324,5 +325,139 @@
     "legacy_slots": "validSaved = persistence committed; invalidSaved = 0 (split no longer tracked); droppedValid = persistence pending (admitted - committed - failed); droppedInvalid = persistence failed",
     "typed_fields": "startGeneration/persistence*/completion/terminal/finalizationOk are exact; completion is a run_completion_states value, Unknown until terminal",
     "snapshot": "fetch_experiment_status carries the full status (generations, fault code/message, completion reason); fetch_experiment_readiness carries the gate list with readiness_gate_statuses values and the generation a Start must present"
-  }
+  },
+  "review_export_json": {
+    "request": {
+      "output_root": "string",
+      "format": [
+        "metrics_csv",
+        "images",
+        "all",
+        "charts"
+      ],
+      "frames": [
+        "valid",
+        "invalid",
+        "both"
+      ],
+      "conversion_factor": "positive finite number; optional",
+      "keep_partial_on_failure": "boolean; optional",
+      "explicit_destination": "string; optional",
+      "source_paths": "optional 1..256 source paths; independent readers; forbids explicit_destination"
+    },
+    "status": {
+      "state": [
+        "idle",
+        "running",
+        "completed",
+        "cancelled",
+        "failed"
+      ],
+      "operation_id": "decimal-string u64",
+      "completed": "decimal-string u64, progress only",
+      "total": "decimal-string u64, progress only",
+      "final_path": "published output, completed only",
+      "retained_partial_path": "visible partial output with failure manifest, terminal only",
+      "results": "per-file source_path/state/final_path/retained_partial_path/error for all attempted files; batch continues on failure and stops on cancellation"
+    },
+    "retention": "latest export snapshot retained until next accepted submit",
+    "concurrency": "one active export; busy submit rejected; cancel through operation_cancel; terminal after cleanup"
+  },
+  "checked_config_document": {
+    "read": "path -> ok/path/revision/document_json/error",
+    "apply": "path + required SHA256 baseline + image_processing-only JSON patch",
+    "limits": {
+      "document_bytes": 4194304,
+      "patch_bytes": 65536
+    },
+    "outcomes": [
+      "saved",
+      "applied",
+      "verified",
+      "conflict"
+    ],
+    "notes": "No force overwrite; no startup-file selection changes; saved-only is not successful application."
+  },
+  "preview_buffer_json": {
+    "snapshot": "available:boolean; first,last,count,capacity,generation,timestamp_first,timestamp_last:decimal-u64; timestamps_available,capture_running,recording:boolean",
+    "save_request": "action save(default)|resize|background; save: output_root existing directory, format tiff|avi, first,last decimal-u64, range_mode index(default)|timestamp(raw source units), filter_empty:boolean, fps finite (0,1000]; resize: capacity decimal-u64 1..1000000, confirm_clear:boolean; background: index decimal-u64 Mono8; optional generation decimal-u64 precondition",
+    "save_result": "ok:boolean; output_path:string including retained partial path; error:string",
+    "guards": "idle experiment and stopped capture; exact retained range and supplied ring generation; resize available-memory budget, shrink clearing requires confirmation; active-kernel empty filter; unique destination directory; no overwrite; AVI has no per-frame timestamps"
+  },
+  "local_profiles": {
+    "entrypoint": "profile_command(base, request_json) -> JSON",
+    "operations": [
+      "list",
+      "read",
+      "create",
+      "duplicate",
+      "rename",
+      "archive",
+      "apply",
+      "selection",
+      "restore",
+      "install_remote"
+    ],
+    "identity": "SHA256 over exact config.json, optional egrabberConfig.js and profile.meta.json bytes; baseline required for duplicate, rename, archive and apply",
+    "persistence": "Create stages a complete new directory; existing names never overwrite. Archive renames to hidden recoverable directory. Caller selects base directory. Changes serialize with experiment idle guard; not a cross-process CAS.",
+    "activation": "Stopped capture/realtime and disabled autofocus; validate all supported settings before mutation; processing/buffer/realtime/delivery/calibration/autofocus configuration/validated ROI only; no hardware connection or script execution",
+    "response": "ok, error?; profiles/warnings for list; profile for read/create/duplicate/rename; applied/message/profile_id/display_fps for apply; destination for archive; saved after create publication",
+    "startup": "Successful apply persists .selection.json. Restore only exact aggregate revision; selection returns separate saved choice and actual runtime profile_selection provenance.",
+    "remote": "profile_fetch_url HTTP(S), no credentials or redirects, 4 MiB, finite timeout; asynchronous outside bridge mutex. install_remote verifies SHA256, app version and processing contract, requires baseline/identity for replacement, preserves hidden full-directory backup, never applies settings."
+  },
+  "review_reanalysis_json": {
+    "request": {
+      "source_path": "existing HDF5, image folder or AVI path",
+      "output_path": "new HDF5 path; never overwritten",
+      "dataset": [
+        "all",
+        "/valid_frames/images",
+        "/invalid_frames/images",
+        "/recorded_frames/images"
+      ],
+      "start": "nonnegative integer; default 0",
+      "count": "nonnegative integer; 0 selects remaining subject to input budgets",
+      "source_kind": [
+        "hdf",
+        "folder",
+        "avi"
+      ],
+      "synthetic_background": "boolean; build shared quiet-tile background when no source background",
+      "roi": "optional {x,y,w,h}; positive size, nonnegative origin, source bounded",
+      "image_processing": "optional local config.json image_processing object; never applies to live settings",
+      "background_index": "optional nonnegative source frame index, loaded independently",
+      "background_dataset": "HDF dataset for selected background",
+      "clear_background": "discard saved source background before optional selection/synthetic build",
+      "max_frames": "integer 1..1000000; default 4096",
+      "max_input_mib": "integer 1..16384; default 256; input pixels only, processing needs additional memory"
+    },
+    "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
+  },
+  "review_charts_json": {
+    "description": "all valid-file metrics; 128x128 density conserves every finite calibrated point; histogram exact; shared Qt math",
+    "counters": "decimal strings",
+    "calibration": "current backend pixel_to_micron, same as Qt; reference conditions labelled",
+    "curves": "bundled existing scaled_isoelastic_data_6.16-4.24 table"
+  },
+  "review_reanalysis_preview": "source_kind/source_path/dataset/index -> atomic Mono8 frame packet, independent reader, 64MiB frame limit",
+  "processing_core_management": {
+    "entrypoint": "processing_core_command(cache_root, request_json) -> JSON",
+    "operations": [
+      "info",
+      "restore",
+      "bundled",
+      "activate_local"
+    ],
+    "trust": "Existing portable cache/loader and shared Qt/Tauri compiled signer policy; selected index must match immutable manifest, ABI/contract/runtime/app bounds; never trust manifest-provided key alone.",
+    "persistence": "Atomic selection write in activateProcessingKernel preCommit callback; startup re-verifies signature/hash, failure marks selection unavailable; explicit bundled recovery honors pins."
+  },
+  "render_review_overlay": "source_path/valid/index/mode(0..4)/roi -> PNG bytes; independent same-reader image/mask/classification; shared Qt ProcessingOverlay; 64MiB source frame limit",
+  "monitoring_science": {
+    "row_area": "raw px^2",
+    "row_pixel_to_micron": "exact factor passed to analyzeObjects for this row;0=unknown;host-only,not persisted HDF",
+    "row_youngs_modulus": "stored kernel LUT kPa result;zero unavailable",
+    "calibrated_plot": "valid finite rows with known positive analysis-time factor;never rescale old rows by current config",
+    "reference_command": "fetch_monitoring_chart_reference -> JSON curves [{modulus,points}],curve_source;shared bundled review/Qt resource;explicit reference conditions"
+  },
+  "soft_trigger_camera": "Explicit MindVision camera software exposure trigger; shell requires armed Service mode, native command requires running MindVision camera and idle experiment; no automatic invocation"
 }

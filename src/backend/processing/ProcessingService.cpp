@@ -1,6 +1,8 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingScience.h"
+#include "backend/processing/ProcessingConfigJson.h"
+#include <nlohmann/json.hpp>
 #include "backend/recording/Hdf5Service.h"
 #include "backend/diagnostics/CrashStateMirror.h"
 #include "backend/diagnostics/PipelineTimingRecorder.h"
@@ -31,6 +33,23 @@
 namespace backend::services {
 
 namespace {
+
+std::string previewRecipeSha256(const ProcessingConfig& config, const ProcessingService::Roi& roi,
+                                const cv::Mat& background) {
+    std::string backgroundHash;
+    if (!background.empty()) {
+        const auto contiguous = background.isContinuous() ? background : background.clone();
+        backgroundHash = backend::processing::processingCoreBytesSha256(
+            contiguous.data, contiguous.total() * contiguous.elemSize());
+    }
+    const auto recipe = nlohmann::json{
+        {"processing", backend::processing::config_json::toJson(config)},
+        {"roi", {roi.x, roi.y, roi.w, roi.h}},
+        {"background_sha256",
+         backgroundHash}}.dump();
+    return backend::processing::processingCoreBytesSha256(
+        reinterpret_cast<const uint8_t*>(recipe.data()), recipe.size());
+}
 
 size_t defaultMaxBufferedFrames(size_t flushInterval) {
     constexpr size_t kMinBufferedFrames = 1000;
@@ -188,6 +207,11 @@ void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameSt
         if (rtRunning_.load()) return;
     }
     rtStore_ = std::move(store);
+    processingSession_.fetch_add(1);
+    {
+        std::scoped_lock snapshotLock(snapshotMutex_);
+        latestSnapshot_.reset();
+    }
     rtRunning_.store(true);
     consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
     lastAutoBackgroundFrame_.store(0, std::memory_order_relaxed);
@@ -454,6 +478,11 @@ uint64_t ProcessingService::getConfigVersion() const {
     return configVersion_.load(std::memory_order_acquire);
 }
 
+void ProcessingService::setProcessedPreviewEnabled(bool enabled) {
+    processedPreviewEnabled_.store(enabled);
+    if (enabled) refreshRealtimeBatchPipelineConfig();
+}
+
 bool ProcessingService::getLatestSnapshot(RealtimeSnapshot& out) {
     std::shared_ptr<const RealtimeSnapshot> snap;
     {
@@ -461,6 +490,16 @@ bool ProcessingService::getLatestSnapshot(RealtimeSnapshot& out) {
         snap = latestSnapshot_; // O(1) pointer copy inside lock
     }
     if (!snap || (snap->mask.empty() && snap->contours.empty())) return false;
+    out.sourceFrame = snap->sourceFrame;
+    out.originalImage = snap->originalImage;
+    out.sourceTimestamp = snap->sourceTimestamp;
+    out.hostTimestampUs = snap->hostTimestampUs;
+    out.processingSession = snap->processingSession;
+    out.storeGeneration = snap->storeGeneration;
+    out.captureSession = snap->captureSession;
+    out.recipeSha256 = snap->recipeSha256;
+    out.roi = snap->roi;
+    out.primaryBounds = snap->primaryBounds;
     out.index = snap->index;
     out.mask = snap->mask; // shallow refcount share (read-only consumers)
     out.contours = snap->contours;
@@ -1416,7 +1455,8 @@ void ProcessingService::stopBatchPipeline() {
 }
 
 bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index,
-                                          uint64_t timestampNs, uint64_t hostTimestampUs) {
+                                          uint64_t timestampNs, uint64_t hostTimestampUs,
+                                          uint64_t storeGeneration, uint64_t captureSession) {
     if (!batchRunning_.load(std::memory_order_acquire) || grayImage.empty()) {
         return false;
     }
@@ -1450,7 +1490,8 @@ bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t ind
             return false;
         }
 
-        batchQueue_.push(QueuedBatchFrame{std::move(gray), index, timestampNs, hostTimestampUs});
+        batchQueue_.push(QueuedBatchFrame{storeGeneration, captureSession, std::move(gray), index,
+                                          timestampNs, hostTimestampUs});
         batchQueueBytes_.add(frameBytes, 1);
         batchFramesAccepted_.fetch_add(1, std::memory_order_relaxed);
 
@@ -1478,7 +1519,8 @@ bool ProcessingService::enqueueBatchFrame(const backend::playback::Frame& frame,
     if (gray.empty()) {
         return false;
     }
-    return enqueueBatchFrame(gray, index, frame.timestamp, frame.hostTimestampUs);
+    return enqueueBatchFrame(gray, index, frame.timestamp, frame.hostTimestampUs,
+                             frame.storeGeneration, frame.captureSession);
 }
 
 ProcessingService::BatchPipelineStats ProcessingService::getBatchPipelineStats() const {
@@ -1559,6 +1601,10 @@ void ProcessingService::batchWorkerLoop() {
                     computeProcessedFrame(item.gray, config.background, config.processing,
                                           config.roi, item.index, item.timestampNs);
                 base.hostTimestampUs = item.hostTimestampUs;
+                base.previewStoreGeneration = item.storeGeneration;
+                base.previewCaptureSession = item.captureSession;
+                base.previewRecipeSha256 = config.previewRecipeSha256;
+                base.previewRoi = cv::Rect(config.roi.x, config.roi.y, config.roi.w, config.roi.h);
                 if (base.originalImage.empty() || base.processedImage.empty()) {
                     results.emplace_back(std::move(base));
                     continue;
@@ -1594,6 +1640,10 @@ void ProcessingService::batchWorkerLoop() {
                     objectFrame.index = base.index;
                     objectFrame.timestampNs = base.timestampNs;
                     objectFrame.hostTimestampUs = base.hostTimestampUs;
+                    objectFrame.previewStoreGeneration = base.previewStoreGeneration;
+                    objectFrame.previewCaptureSession = base.previewCaptureSession;
+                    objectFrame.previewRecipeSha256 = base.previewRecipeSha256;
+                    objectFrame.previewRoi = cvRoi;
                     objectFrame.originalImage = base.originalImage;   // shared, read-only (issue #370)
                     objectFrame.processedImage = base.processedImage; // shared, read-only
                     objectFrame.validation = std::move(validation);
@@ -1824,6 +1874,9 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
         SPDLOG_ERROR("filterProcessedObjects: kernel object analysis failed: {}", error);
         return {};
     }
+    // Stamp at the shared host analysis boundary, using the exact value passed
+    // to the kernel (not another atomic read at publication/render time).
+    for (auto& result : results) result.analysisPixelToMicronFactor = pixelToMicronFactor;
     return results;
 }
 
@@ -1878,6 +1931,9 @@ ProcessingService::BatchPipelineConfig ProcessingService::makeRealtimeBatchPipel
             config.background = rtBgGray_->clone();
         }
     }
+    if (processedPreviewEnabled_.load())
+        config.previewRecipeSha256 =
+            previewRecipeSha256(config.processing, config.roi, config.background);
     return config;
 }
 
@@ -1898,6 +1954,7 @@ void ProcessingService::refreshRealtimeBatchPipelineConfig() {
     batchConfig_.processing = fresh.processing;
     batchConfig_.background = std::move(fresh.background);
     batchConfig_.roi = fresh.roi;
+    batchConfig_.previewRecipeSha256 = std::move(fresh.previewRecipeSha256);
 }
 
 TargetGroupEvent ProcessingService::selectTargetGroupTriggerOwner(
@@ -2124,10 +2181,21 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
     {
         auto newSnap = std::make_shared<RealtimeSnapshot>();
         newSnap->index = frameIndex;
+        if (processedPreviewEnabled_.load()) newSnap->originalImage = frame.originalImage;
+        newSnap->sourceTimestamp = frame.timestampNs;
+        newSnap->hostTimestampUs = frame.hostTimestampUs;
+        newSnap->processingSession = processingSession_.load();
+        newSnap->storeGeneration = frame.previewStoreGeneration;
+        newSnap->captureSession = frame.previewCaptureSession;
+        newSnap->recipeSha256 = frame.previewRecipeSha256;
+        newSnap->roi = {frame.previewRoi.x, frame.previewRoi.y, frame.previewRoi.width,
+                        frame.previewRoi.height};
         newSnap->mask = frame.processedImage; // shallow refcount share (frozen-mats invariant)
         newSnap->contours = validation.allContours ? *validation.allContours
                                                    : std::vector<std::vector<cv::Point>>{};
         newSnap->validation = validation;
+        newSnap->primaryBounds = {validation.bboxX, validation.bboxY, validation.bboxWidth,
+                                  validation.bboxHeight};
         std::scoped_lock snapshotLk(snapshotMutex_);
         latestSnapshot_ = std::move(newSnap); // O(1) pointer swap inside lock
     }
@@ -2469,11 +2537,13 @@ void ProcessingService::realtimeInlineLoop() {
     Roi rtCachedRoi{};
     std::shared_ptr<cv::Mat> rtCachedBg;
     ProcessingConfig rtCachedConfig;
+    std::string rtCachedRecipe;
 
     while (rtRunning_.load()) {
         // Refresh config/roi/background only when something changed
         const uint64_t curRtConfigVer = configVersion_.load(std::memory_order_acquire);
-        if (curRtConfigVer != lastRtConfigVer) {
+        if (curRtConfigVer != lastRtConfigVer ||
+            (processedPreviewEnabled_.load() && rtCachedRecipe.empty())) {
             {
                 std::scoped_lock lk(rtMutex_);
                 rtCachedRoi = rtRoi_;
@@ -2483,6 +2553,10 @@ void ProcessingService::realtimeInlineLoop() {
                 std::scoped_lock lk(configMutex_);
                 rtCachedConfig = processingConfig_;
             }
+            rtCachedRecipe = processedPreviewEnabled_.load()
+                                 ? previewRecipeSha256(rtCachedConfig, rtCachedRoi,
+                                                       rtCachedBg ? *rtCachedBg : cv::Mat{})
+                                 : std::string{};
             lastRtConfigVer = curRtConfigVer;
         }
         if (!rtStore_) {
@@ -3005,9 +3079,26 @@ void ProcessingService::realtimeInlineLoop() {
                     }
                     auto newSnap = std::make_shared<RealtimeSnapshot>();
                     newSnap->index = idx;
+                    if (processedPreviewEnabled_.load()) {
+                        auto owner = std::make_shared<backend::playback::Frame>(std::move(f));
+                        const auto pitch = owner->linePitch ? owner->linePitch : owner->width;
+                        newSnap->originalImage =
+                            cv::Mat(static_cast<int>(owner->height), static_cast<int>(owner->width),
+                                    CV_8UC1, owner->data.data(), pitch);
+                        newSnap->sourceFrame = std::move(owner);
+                    }
+                    newSnap->sourceTimestamp = f.timestamp;
+                    newSnap->hostTimestampUs = f.hostTimestampUs;
+                    newSnap->processingSession = processingSession_.load();
+                    newSnap->storeGeneration = f.storeGeneration;
+                    newSnap->captureSession = f.captureSession;
+                    newSnap->recipeSha256 = rtCachedRecipe;
+                    newSnap->roi = roi;
                     newSnap->mask = std::move(fullMaskSnapshot);
                     newSnap->contours = std::move(contours);
                     newSnap->validation = validation;
+                    newSnap->primaryBounds = {validation.bboxX + roi.x, validation.bboxY + roi.y,
+                                              validation.bboxWidth, validation.bboxHeight};
                     std::scoped_lock lk(snapshotMutex_);
                     latestSnapshot_ = std::move(newSnap); // O(1) pointer swap inside lock
                 }
@@ -3334,9 +3425,19 @@ void ProcessingService::realtimeInlineLoop() {
                 {
                     auto newSnap = std::make_shared<RealtimeSnapshot>();
                     newSnap->index = idx;
+                    if (processedPreviewEnabled_.load()) newSnap->originalImage = gray;
+                    newSnap->sourceTimestamp = f.timestamp;
+                    newSnap->hostTimestampUs = f.hostTimestampUs;
+                    newSnap->processingSession = processingSession_.load();
+                    newSnap->storeGeneration = f.storeGeneration;
+                    newSnap->captureSession = f.captureSession;
+                    newSnap->recipeSha256 = rtCachedRecipe;
+                    newSnap->roi = roi;
                     newSnap->mask = mask; // shallow refcount share (mask not modified after this)
                     newSnap->contours = std::move(contours);
                     newSnap->validation = validation;
+                    newSnap->primaryBounds = {validation.bboxX, validation.bboxY,
+                                              validation.bboxWidth, validation.bboxHeight};
                     std::scoped_lock lk(snapshotMutex_);
                     latestSnapshot_ = std::move(newSnap); // O(1) pointer swap inside lock
                 }
@@ -3867,9 +3968,19 @@ void ProcessingService::realtimeInlineLoop() {
                 {
                     auto newSnap = std::make_shared<RealtimeSnapshot>();
                     newSnap->index = idx;
+                    if (processedPreviewEnabled_.load()) newSnap->originalImage = gray;
+                    newSnap->sourceTimestamp = f.timestamp;
+                    newSnap->hostTimestampUs = f.hostTimestampUs;
+                    newSnap->processingSession = processingSession_.load();
+                    newSnap->storeGeneration = f.storeGeneration;
+                    newSnap->captureSession = f.captureSession;
+                    newSnap->recipeSha256 = rtCachedRecipe;
+                    newSnap->roi = roi;
                     newSnap->mask = mask; // shallow refcount share (mask not modified after this)
                     newSnap->contours = std::move(contours);
                     newSnap->validation = validation;
+                    newSnap->primaryBounds = {validation.bboxX + roi.x, validation.bboxY + roi.y,
+                                              validation.bboxWidth, validation.bboxHeight};
                     std::scoped_lock lk(snapshotMutex_);
                     latestSnapshot_ = std::move(newSnap); // O(1) pointer swap inside lock
                 }

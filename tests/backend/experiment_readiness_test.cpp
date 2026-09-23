@@ -474,6 +474,12 @@ int main()
         req.outputPath = out;
         req.readinessGeneration = r.generation;
         MIB_REQUIRE(coordinator.start(req).started(), "start");
+        coordinator.reportUnresolvedFault("test.active", "active run fault");
+        const auto activeFault = coordinator.status();
+        std::string activeAckError;
+        MIB_EXPECT(!coordinator.acknowledgeFault(activeFault.startGeneration, activeFault.faultRevision,
+                       activeFault.faultCode, activeFault.faultMessage, activeAckError),
+                   "active experiment fault cannot be acknowledged before finalization");
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         coordinator.onFatalSaveError("injected writer failure");
         MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)),
@@ -488,8 +494,33 @@ int main()
         MIB_EXPECT(coordinator.hasUnresolvedFault(), "fault latched for the next preflight");
         MIB_EXPECT(!coordinator.evaluateReadiness(out).ready, "readiness blocked while the fault is latched");
         MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::NotActive, "NotActive when Failed");
-        coordinator.clearUnresolvedFault();
-        MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "Idle once the fault is cleared");
+        std::string acknowledgmentError;
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration + 1, s.faultRevision,
+                                                 s.faultCode, s.faultMessage, acknowledgmentError),
+                   "stale run cannot acknowledge current fault");
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration, s.faultRevision, s.faultCode,
+                                                 "stale message", acknowledgmentError),
+                   "changed fault requires review again");
+        MIB_EXPECT(coordinator.hasUnresolvedFault(),
+                   "rejected acknowledgment preserves readiness blocker");
+        coordinator.reportUnresolvedFault(s.faultCode, s.faultMessage);
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration, s.faultRevision, s.faultCode,
+                                                 s.faultMessage, acknowledgmentError),
+                   "same text repeated fault cannot be cleared by stale acknowledgment");
+        const auto repeated = coordinator.status();
+        MIB_REQUIRE(coordinator.acknowledgeFault(repeated.startGeneration, repeated.faultRevision,
+                                                 repeated.faultCode, repeated.faultMessage,
+                                                 acknowledgmentError),
+                    "explicit matching new fault acknowledged");
+        const auto acknowledged = coordinator.status();
+        MIB_EXPECT(acknowledged.state == backend::app::ExperimentRunState::Idle,
+                   "Idle once fault is acknowledged");
+        MIB_EXPECT(acknowledged.outputPath == out && !acknowledged.finalizationOk &&
+                       acknowledged.completion == backend::recording::RunCompletionState::Failed,
+                   "acknowledgment preserves failed file outcome");
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration, s.faultRevision, s.faultCode,
+                                                 s.faultMessage, acknowledgmentError),
+                   "duplicate acknowledgment rejected");
         backend::services::Hdf5Service reader;
         MIB_EXPECT(reader.loadFile(out), "failed run's file is readable");
         reader.closeFile();
@@ -599,6 +630,8 @@ int main()
         req.requiredAccepted = 5;
         req.maxAttempts = 50;
         MIB_REQUIRE(proc.startBackgroundCalibration(req), "start cancel calibration");
+        MIB_EXPECT(statusOf(coord.evaluateReadiness(out1), "processing.backgroundCalibration") == GateStatus::Fail,
+                   "pending calibration must block a frozen experiment start");
         pushEmpty();
         proc.cancelBackgroundCalibration();
         const auto st = proc.backgroundCalibrationStatus();

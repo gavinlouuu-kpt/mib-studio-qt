@@ -256,3 +256,72 @@ no-CMake path validates all four archives, and Cargo watches the OEABT archives
 for relinking. Windows uses the CMake-generated dependency manifest and marks
 the OEABT libraries as static. Missing these dependencies produces undefined
 SerialTransport/ControllerSession and platform serial symbols in bridge CI.
+
+## Checked processing document seam
+
+`BackendFacade::fetchConfigDocument` / `applyConfigDocument` provide required
+SHA256 baselines and separate saved/applied/verified/conflict outcomes for
+image-processing patches; see [[task/2026-09-23-tauri-config-transactions]].
+
+
+## ABI 15: checked config and shared exports
+
+Additive `fetch_config_document` and `apply_config_document` carry typed
+snapshot/result structs (required SHA256 baseline; 4 MiB documents, 64 KiB
+image_processing-only patches). Outcomes saved/applied/verified/conflict are
+independent. The facade owns lifecycle serialization and durable replacement.
+Only effective processing fields update runtime provenance: selecting a saved
+file does not claim its other device/ROI settings were applied.
+
+Shared exporter request/status JSON is carried through the cxx/Tauri bridge;
+operation identity and counters remain decimal strings. The previous CSV entry
+point delegates to the same HdfExportService. Terminal status is retained for
+reconciliation even if operation events are missed. Full general resnapshot,
+frame source/session/config identities and native cross-shell acceptance remain
+open; this addition does not close #372/#246.
+
+ABI 16 adds preview-buffer range/save JSON. Latest-frame facade pulls now fetch
+the exact queried committed index, never a later frame under an earlier label;
+concurrent frame-identity stress regression covers index/timestamp/pixel agreement.
+
+### Typed hardware and acquisition pulse controls (2026-09-23)
+
+The additive `autofocus_connect_endpoint` command preserves an explicit OEABT/CoreMOR
+backend and persistent endpoint ID; status carries the actual connected backend and
+endpoint. Legacy numeric COM commands remain compatible. The facade rejects missing
+identity and ambiguous `auto` connections before opening a driver.
+
+`pulse_generator_command` and `pulse_generator_status` route through BackendFacade
+and the existing PulseGeneratorService, not a second serial implementation. Commands
+validate serial settings, address, channel and numeric ranges before driver access.
+Configuration/output-on serialize against experiment Start with `withIdleConfiguration`;
+output-off remains possible while an experiment runs unless coordinated live view owns
+the generator. Status preserves that ownership so manual controls cannot steal it.
+
+`startup_discovery_run(start|camera|nanopositioner)` schedules the shared startup policy;
+`startup_discovery_status` drains its queued completion actions on the serialized bridge
+caller before reporting running flags, selected state and bounded per-job errors. The
+status call is therefore also the startup event-pump tick, not a passive hardware read.
+Shutdown stops the coordinator and drains discovery workers before facade destruction.
+
+`set_processed_preview_enabled` opts into immutable source retention;
+`fetch_processed_preview` returns an atomic binary MIPO envelope (magic, LE u32 version,
+LE u32 JSON byte length, UTF-8 JSON, tightly packed Mono8 source, tightly packed mask).
+The TS decoder validates envelope/geometry/lengths/contour budgets and canonical exact
+u64 identities before drawing. It reports unavailable snapshots without stale bytes.
+
+## Remembered discovery and named pump endpoints (2026-09-23)
+
+Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.
+
+Pump connections accept system serial names (including Linux paths), reusing the existing shared SerialBus string transport. Status exposes the actual port name; legacy Qt config edits preserve connected transport identity. Two pumps can share a bus at distinct slave addresses, while duplicate pump/pulse slave identities and autofocus port collisions are refused before connection writes. Legacy numeric COM bridge calls remain supported. Native fake-serial tests cover named endpoint roundtrip and shared-bus identity guards; real hardware acceptance remains deferred.
+
+### Windows manifest XML decoding
+
+The VS link-manifest reader decodes XML entities before splitting MSBuild semicolon lists, including per-source include paths. This preserves quoted version/signer macros and ampersands in dependency paths instead of turning entity terminators into invalid linker/compiler arguments. Portable CLI regression: `python3 tools/test_gen_bridge_link_manifest.py` exercises dependency paths, compile macros, inherited-list filtering and Release-only include selection without requiring Windows.
+
+The Windows candidate CI runs the portable escaped-XML manifest regression before
+provisioning native dependencies.
+
+Windows regression fixtures canonicalize temporary paths before comparison,
+matching the generator when RUNNER~1 and runneradmin name the same directory.

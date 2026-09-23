@@ -2540,6 +2540,19 @@ namespace backend::services {
         return true;
     }
 
+    std::optional<bool> Hdf5Service::metadataDatasetPresent(bool valid) const
+    {
+        if (!isFileOpen()) return std::nullopt;
+        const char* group = valid ? "/valid_frames" : "/invalid_frames";
+        const htri_t groupExists = H5Lexists(impl_->fileId_, group, H5P_DEFAULT);
+        if (groupExists < 0) return std::nullopt;
+        if (groupExists == 0) return false;
+        const std::string path = std::string(group) + "/metadata";
+        const htri_t exists = H5Lexists(impl_->fileId_, path.c_str(), H5P_DEFAULT);
+        if (exists < 0) return std::nullopt;
+        return exists > 0;
+    }
+
     bool Hdf5Service::readValidMetadata(std::vector<ProcessedFrame>& frames)
     {
         if (!isFileOpen())

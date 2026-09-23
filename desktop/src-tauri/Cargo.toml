@@ -24,7 +24,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Updater manifest verification — SHA-256 must fail closed (BE-9, #279).
 sha2 = "0.10"
+semver = "1"
 hex = "0.4"
+# Same-filesystem no-clobber publication uses native rename support on Windows/Linux.
+tempfile = "3.27.0"
 cxx = "1"
 mib-bridge = { path = "../../crates/mib-bridge" }
 
@@ -35,3 +38,7 @@ mib-bridge = { path = "../../crates/mib-bridge" }
 [lib]
 name = "mib_studio_desktop_lib"
 crate-type = ["rlib"]
+
+[features]
+# Production assets must be embedded; ordinary cargo builds otherwise use devUrl.
+custom-protocol = ["tauri/custom-protocol"]

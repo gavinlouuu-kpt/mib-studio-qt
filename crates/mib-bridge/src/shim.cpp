@@ -172,6 +172,8 @@ BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     BridgeFrame out{};
     out.valid = true;
     out.frame_index = frame.frameIndex;
+    out.capture_session = frame.captureSession;
+    out.store_generation = frame.storeGeneration;
     out.timestamp_ns = frame.timestampNs;
     out.width = frame.width;
     out.height = frame.height;
@@ -465,6 +467,13 @@ bool BackendBridge::initialize(rust::Str data_dir) {
     }
 }
 
+bool BackendBridge::initialize_with_resources(rust::Str data_dir, rust::Str resource_root) {
+    try {
+        if (!impl_->facade.initialize(toStd(data_dir), toStd(resource_root))) return false;
+        impl_->installSink(); return true;
+    } catch (...) { return false; }
+}
+
 void BackendBridge::shutdown() {
     try {
         impl_->facade.shutdown();
@@ -658,6 +667,24 @@ BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path) {
     }
 }
 
+rust::String BackendBridge::fetch_capture_lifecycle() {
+    return rust::String(impl_->facade.fetchCaptureLifecycleJson());
+}
+
+BridgeCommandResult BackendBridge::experiment_acknowledge_fault(std::uint64_t expected_run,
+                                                                std::uint64_t fault_revision,
+                                                                rust::Str code, rust::Str message,
+                                                                bool confirmed) {
+    try {
+        return toBridgeResult(impl_->facade.acknowledgeExperimentFault(
+            expected_run, fault_revision, toStd(code), toStd(message), confirmed));
+    } catch (const std::exception& error) {
+        return errorResult(error.what());
+    } catch (...) {
+        return errorResult("Fault acknowledgment failed");
+    }
+}
+
 BridgeCommandResult BackendBridge::experiment_stop() {
     try {
         backend::bridge::ExperimentCommand cmd;
@@ -711,6 +738,7 @@ BridgeMonitoringRow toMonitoringRow(const backend::bridge::MonitoringObjectRow& 
     r.area_ratio = row.areaRatio;
     r.ring_ratio = row.ringRatio;
     r.youngs_modulus = row.youngsModulus;
+    r.pixel_to_micron = row.pixelToMicronFactor;
     return r;
 }
 
@@ -727,6 +755,27 @@ backend::bridge::PumpCommand makePumpCommand(backend::bridge::PumpCommandAction 
 }
 
 } // namespace
+
+BridgeCommandResult BackendBridge::autofocus_connect_endpoint(rust::Str backend, rust::Str endpoint,
+    std::int32_t com_port, std::int32_t baud_rate, std::int32_t device_address) {
+    try {
+        const auto kind = backend::nanopositioner::parseBackendKind(std::string(backend));
+        if (!kind || *kind == backend::nanopositioner::BackendKind::Auto || endpoint.empty() ||
+            device_address < 0 || device_address > 255 || baud_rate <= 0)
+            return errorResult("Invalid typed nanopositioner endpoint");
+        backend::bridge::AutofocusCommand cmd;
+        cmd.action = backend::bridge::AutofocusCommandAction::Connect;
+        backend::nanopositioner::Endpoint target;
+        target.backend = *kind;
+        target.persistentId = std::string(endpoint);
+        target.systemPath = target.persistentId;
+        target.coremorPort = com_port;
+        target.coremorBaudRate = baud_rate;
+        target.coremorAddress = static_cast<std::uint8_t>(device_address);
+        cmd.endpoint = target;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(e.what()); }
+}
 
 BridgeCommandResult BackendBridge::autofocus_connect(std::int32_t com_port,
                                                      std::int32_t baud_rate,
@@ -820,6 +869,8 @@ BridgeAutofocusStatus BackendBridge::fetch_autofocus_status() {
     out.enabled = status.enabled;
     out.current_voltage = status.currentVoltage;
     out.com_port = status.comPort;
+    out.backend_name = status.backendName;
+    out.endpoint_id = status.endpointId;
     out.average_ring_ratio = status.averageRingRatio;
     out.median_ring_ratio = status.medianRingRatio;
     out.last_ring_ratio_update_us = status.lastRingRatioUpdateUs;
@@ -849,6 +900,20 @@ BridgeAutofocusConfig BackendBridge::fetch_autofocus_config() {
     out.safe_shutdown_voltage = config.safeShutdownVoltage;
     out.focus_direction = config.focusDirection;
     return out;
+}
+
+BridgeCommandResult BackendBridge::pump_connect_endpoint(std::uint32_t pump, rust::Str port_name,
+                                                         std::int32_t baud_rate,
+                                                         std::int32_t modbus_address) {
+    try {
+        auto cmd = makePumpCommand(backend::bridge::PumpCommandAction::Connect, pump);
+        cmd.portName = toStd(port_name);
+        cmd.baudRate = baud_rate;
+        cmd.modbusAddress = modbus_address;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& error) {
+        return errorResult(error.what());
+    }
 }
 
 BridgeCommandResult BackendBridge::pump_connect(std::uint32_t pump, std::int32_t com_port,
@@ -994,6 +1059,7 @@ BridgePumpStatus BackendBridge::fetch_pump_status(std::uint32_t pump) {
     out.com_port = status.comPort;
     out.baud_rate = status.baudRate;
     out.modbus_address = status.modbusAddress;
+    out.port_name = status.portName;
     out.configured_flow_rate = status.configuredFlowRate;
     out.flow_rate_unit = status.flowRateUnit;
     out.direction = static_cast<std::uint32_t>(status.direction);
@@ -1084,6 +1150,69 @@ BridgeFrame BackendBridge::fetch_review_image(std::uint32_t dataset, std::uint64
     return toBridgeFrame(frame);
 }
 
+void BackendBridge::set_processed_preview_enabled(bool enabled) {
+    impl_->facade.setProcessedPreviewEnabled(enabled);
+}
+rust::Vec<std::uint8_t> BackendBridge::fetch_processed_preview() {
+    const auto bytes = impl_->facade.fetchProcessedPreviewPacket();
+    rust::Vec<std::uint8_t> out;
+    out.reserve(bytes.size());
+    for (const auto byte : bytes)
+        out.push_back(byte);
+    return out;
+}
+
+BridgeCommandResult BackendBridge::background_calibration_command(rust::Str json) { return toBridgeResult(impl_->facade.backgroundCalibrationCommandJson(toStd(json))); }
+rust::String BackendBridge::background_calibration_status() { return rust::String(impl_->facade.fetchBackgroundCalibrationStatusJson()); }
+
+rust::String BackendBridge::startup_discovery_set_preference(rust::Str json) {
+    return rust::String(impl_->facade.setStartupDiscoveryPreferenceJson(toStd(json)));
+}
+
+rust::String BackendBridge::startup_discovery_run(rust::Str action) { return rust::String(impl_->facade.runStartupDiscoveryJson(toStd(action))); }
+rust::String BackendBridge::startup_discovery_status() { return rust::String(impl_->facade.fetchStartupDiscoveryStatusJson()); }
+
+BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
+    try { return toBridgeResult(impl_->facade.pulseGeneratorCommandJson(toStd(json))); }
+    catch (const std::exception& e) { return errorResult(e.what()); }
+}
+rust::String BackendBridge::pulse_generator_status() {
+    return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
+}
+rust::Vec<uint8_t> BackendBridge::render_review_overlay(rust::Str json) {
+    rust::Vec<uint8_t> output;
+    try {for(const auto byte:impl_->facade.renderReviewOverlayJson(toStd(json)))output.push_back(byte);}catch(const std::exception&) {}
+    return output;
+}
+
+BridgeFrame BackendBridge::fetch_review_reanalysis_preview(rust::Str json) {
+    backend::bridge::BackendFrame frame;
+    if(!impl_->facade.fetchReviewReanalysisPreviewJson(toStd(json),frame))return BridgeFrame{};
+    return toBridgeFrame(frame);
+}
+
+rust::String BackendBridge::fetch_monitoring_chart_reference() {return rust::String(impl_->facade.fetchMonitoringChartReferenceJson());}
+rust::String BackendBridge::fetch_review_charts_json() {return rust::String(impl_->facade.fetchReviewChartsJson());}
+
+BridgeCommandResult BackendBridge::review_reanalysis_json(rust::Str json) {
+    try { return toBridgeResult(impl_->facade.submitReviewReanalysisJson(toStd(json))); }
+    catch (const std::exception& e) { return errorResult(e.what()); }
+    catch (...) { return errorResult("Reanalysis submission failed"); }
+}
+rust::String BackendBridge::review_reanalysis_status_json() {
+    return rust::String(impl_->facade.fetchReviewReanalysisStatusJson());
+}
+
+BridgeCommandResult BackendBridge::review_export_json(rust::Str json) {
+    try { return toBridgeResult(impl_->facade.submitReviewExportJson(toStd(json))); }
+    catch (const std::exception& e) { return errorResult(e.what()); }
+    catch (...) { return errorResult("Export submission failed"); }
+}
+
+rust::String BackendBridge::review_export_status_json() {
+    return rust::String(impl_->facade.fetchReviewExportStatusJson());
+}
+
 BridgeCommandResult BackendBridge::review_export_csv(rust::Str output_path) {
     try {
         backend::bridge::ReviewCommand cmd;
@@ -1095,6 +1224,37 @@ BridgeCommandResult BackendBridge::review_export_csv(rust::Str output_path) {
     } catch (...) {
         return errorResult("review_export_csv: unknown error");
     }
+}
+
+rust::String BackendBridge::processing_core_command(rust::Str cache_root, rust::Str request) { return rust::String(impl_->facade.processingCoreCommand(toStd(cache_root),toStd(request))); }
+
+rust::String BackendBridge::profile_command(rust::Str base, rust::Str request) {
+    return rust::String(impl_->facade.profileCommand(toStd(base), toStd(request)));
+}
+
+BridgeCheckedConfigDocument BackendBridge::fetch_config_document(rust::Str path) {
+    BridgeCheckedConfigDocument out{};
+    try {
+        const auto doc = impl_->facade.fetchConfigDocument(toStd(path));
+        out.ok = doc.ok;
+        out.path = rust::String(doc.path);
+        out.revision = rust::String(doc.revision);
+        out.document_json = rust::String(doc.documentJson);
+        out.error = rust::String(doc.error);
+    } catch (const std::exception& e) { out.error = rust::String(e.what()); }
+      catch (...) { out.error = rust::String("config read failed"); }
+    return out;
+}
+
+BridgeConfigTransactionResult BackendBridge::apply_config_document(rust::Str path, rust::Str baseline, rust::Str patch) {
+    BridgeConfigTransactionResult out{};
+    try {
+        const auto r = impl_->facade.applyConfigDocument(toStd(path), toStd(baseline), toStd(patch));
+        out.saved = r.saved; out.applied = r.applied; out.verified = r.verified; out.conflict = r.conflict;
+        out.revision = rust::String(r.revision); out.error = rust::String(r.error);
+    } catch (const std::exception& e) { out.error = rust::String(e.what()); }
+      catch (...) { out.error = rust::String("config transaction failed"); }
+    return out;
 }
 
 BridgeConfigDocument BackendBridge::fetch_processing_config_json() {
@@ -1363,6 +1523,15 @@ BridgeCommandResult BackendBridge::apply_camera_script(rust::Str script_path) {
     }
 }
 
+BridgeCommandResult BackendBridge::soft_trigger_camera() {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::SoftTriggerCamera;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(e.what()); }
+    catch (...) { return errorResult("Software camera trigger failed"); }
+}
+
 BridgeCommandResult BackendBridge::reset_hardware_camera() {
     try {
         backend::bridge::CameraCommand cmd;
@@ -1431,6 +1600,7 @@ BridgeMonitoringSnapshot BackendBridge::fetch_monitoring_snapshot(std::uint64_t 
         r.area_ratio = row.areaRatio;
         r.ring_ratio = row.ringRatio;
         r.youngs_modulus = row.youngsModulus;
+    r.pixel_to_micron = row.pixelToMicronFactor;
         out.rows.push_back(std::move(r));
     }
     return out;
@@ -1538,6 +1708,7 @@ BridgeExperimentStatus BackendBridge::fetch_experiment_status() {
     out.finalization_ok = status.finalizationOk;
     out.completion = static_cast<std::uint32_t>(status.completion);
     out.completion_reason = rust::String(status.completionReason);
+    out.fault_revision = status.faultRevision;
     out.fault_code = rust::String(status.faultCode);
     out.fault_message = rust::String(status.faultMessage);
     return out;
@@ -1620,6 +1791,15 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // fetch_device_discovery, cancel_device_discovery) and the discovery contract
 // groups (#419, ADR 0005). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 14; }
+rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
+
+std::uint32_t bridge_abi_version() { return 19; }
 
 } // namespace mib_bridge
+
+namespace mib_bridge {
+rust::String BackendBridge::fetch_preview_buffer() { return rust::String(impl_->facade.fetchPreviewBufferJson()); }
+rust::String BackendBridge::save_preview_buffer(rust::Str request) { return rust::String(impl_->facade.savePreviewBufferJson(std::string(request))); }
+}
+
+namespace mib_bridge { BridgeCommandResult BackendBridge::close_review() { return toBridgeResult(impl_->facade.closeReview()); } }

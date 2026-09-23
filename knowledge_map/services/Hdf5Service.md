@@ -205,3 +205,12 @@ the library under a running thread. Guard: `recording.hdf5_exit_teardown`
 property, it did not reproduce the crash). Evidence:
 `docs/evidence/2026-09-08-crash-dump-review.md`.
 
+
+
+## Metadata presence for transactional exports
+
+`metadataDatasetPresent(valid)` distinguishes absent lazily-created valid/invalid
+metadata from HDF5 query errors. It returns nullopt on unavailable/error, false
+for an absent group/dataset, true for a present link (which must still decode).
+The shared exporter skips absent groups, but does not suppress malformed metadata
+read failures. A valid-only facade fixture caught this regression before the fix.

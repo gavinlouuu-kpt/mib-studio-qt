@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/ProcessingConfigTransaction.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
@@ -43,6 +44,7 @@ namespace backend::bridge
         Review = 9,
         Pump = 10,
         Autofocus = 11,
+        PulseGenerator = 12,
     };
 
     enum class CameraCommandAction
@@ -251,6 +253,7 @@ namespace backend::bridge
     struct PumpCommand
     {
         PumpCommandAction action{PumpCommandAction::PollStatus};
+        std::string portName; // nonempty uses existing system-port overload
         int pumpId{0}; // 0 Sample, 1 Sheath (contract pump_ids)
         int comPort{-1};
         int baudRate{115200};
@@ -281,6 +284,7 @@ namespace backend::bridge
     struct AutofocusCommand
     {
         AutofocusCommandAction action{AutofocusCommandAction::SetEnabled};
+        std::optional<nanopositioner::Endpoint> endpoint;
         int comPort{-1};
         int baudRate{115200};
         int deviceAddress{1};
@@ -458,6 +462,8 @@ namespace backend::bridge
 
     struct BackendFrame
     {
+        std::uint64_t captureSession{0};
+        std::uint64_t storeGeneration{0};
         std::uint64_t frameIndex{0};
         std::uint64_t timestampNs{0};
         std::uint64_t width{0};
@@ -497,6 +503,7 @@ namespace backend::bridge
         double areaRatio{0.0};
         double ringRatio{0.0};
         double youngsModulus{0.0};
+        double pixelToMicronFactor{0.0};
     };
 
     // Bounded monitoring snapshot (BE-5). Totals/appended counts make ring
@@ -728,6 +735,7 @@ namespace backend::bridge
         double maxFlowRate{0.0};
         bool stalled{false};
         int comPort{-1};
+        std::string portName;
         int baudRate{115200};
         int modbusAddress{1};
         double configuredFlowRate{0.0};
@@ -744,6 +752,8 @@ namespace backend::bridge
         bool enabled{false};
         double currentVoltage{0.0};
         int comPort{-1};
+        std::string backendName;
+        std::string endpointId;
         double averageRingRatio{0.0};
         double medianRingRatio{0.0};
         std::uint64_t lastRingRatioUpdateUs{0};
@@ -766,6 +776,12 @@ namespace backend::bridge
     class BackendFacade
     {
     public:
+        std::string processingCoreCommand(const std::string& cacheRoot, const std::string& request);
+        static std::string fetchProfileCatalogUrl(const std::string& url);
+        std::string profileCommand(const std::string& base, const std::string& request);
+        app::ConfigDocumentSnapshot fetchConfigDocument(const std::string& path) const;
+        app::ProcessingConfigTransactionResult applyConfigDocument(const std::string& path, const std::string& baselineRevision, const std::string& patchJson);
+
         using EventSink = std::function<void(const BackendEvent &)>;
 
         explicit BackendFacade(AppBackend &backend);
@@ -774,13 +790,16 @@ namespace backend::bridge
         BackendFacade(const BackendFacade &) = delete;
         BackendFacade &operator=(const BackendFacade &) = delete;
 
-        bool initialize(const std::string &dataDir);
+        bool initialize(const std::string &dataDir, const std::string &resourceRoot = {});
         void shutdown();
         bool isInitialized() const;
 
         void setEventSink(EventSink sink);
         BackendCommandResult dispatch(const BackendCommand &command);
 
+        BackendCommandResult closeReview();
+        std::string fetchPreviewBufferJson() const;
+        std::string savePreviewBufferJson(const std::string& request);
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;
         bool fetchProcessingStats(BackendProcessingStats &out) const;
@@ -833,6 +852,26 @@ namespace backend::bridge
                                                 std::size_t byteLen);
         BackendCommandResult clearBackgroundImage();
 
+        void setProcessedPreviewEnabled(bool enabled);
+        std::vector<std::uint8_t> fetchProcessedPreviewPacket() const;
+        BackendCommandResult backgroundCalibrationCommandJson(const std::string &json);
+        std::string fetchBackgroundCalibrationStatusJson() const;
+        std::string setStartupDiscoveryPreferenceJson(const std::string& json);
+        std::string runStartupDiscoveryJson(const std::string &action);
+        std::string fetchStartupDiscoveryStatusJson() const;
+        BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
+        std::string fetchPulseGeneratorStatusJson() const;
+
+        std::vector<uint8_t> renderReviewOverlayJson(const std::string& json) const;
+        bool fetchReviewReanalysisPreviewJson(const std::string& json,BackendFrame& out) const;
+        std::string fetchReviewChartsJson() const;
+        std::string fetchMonitoringChartReferenceJson() const;
+        BackendCommandResult submitReviewReanalysisJson(const std::string &json);
+        std::string fetchReviewReanalysisStatusJson() const;
+
+        BackendCommandResult submitReviewExportJson(const std::string &json);
+        std::string fetchReviewExportStatusJson() const;
+
         // ---- Operation tracking (BE-1, ADR 0004) ----
         // Long-running actions register here so they get a correlatable ID,
         // Started/Progress/terminal events, and a cancel flag the runner must
@@ -860,6 +899,11 @@ namespace backend::bridge
         bool fetchExperimentReadiness(app::ExperimentReadinessSnapshot &out,
                                       const std::string &outputPath = {},
                                       const std::string &profileId = {}) const;
+        std::string fetchCaptureLifecycleJson() const;
+        BackendCommandResult acknowledgeExperimentFault(std::uint64_t expectedRun,
+                                                        std::uint64_t faultRevision,
+                                                        const std::string& code,
+                                                        const std::string& message, bool confirmed);
         bool fetchExperimentStatus(app::ExperimentStatus &out) const;
 
     private:
@@ -894,6 +938,11 @@ namespace backend::bridge
         EventSink eventSink_;
         bool initialized_{false};
 
+        std::string startupPreferenceJson_{
+            R"({"backend":"auto","endpoint":"","com_port":-1,"baud":115200,"address":1})"};
+        mutable std::mutex startupActionsMutex_;
+        mutable std::vector<std::function<void()>> startupActions_;
+
         mutable std::mutex operationsMutex_;
         std::unordered_map<std::uint64_t, ActiveOperation> activeOperations_;
         std::atomic<std::uint64_t> nextOperationId_{1};
@@ -913,6 +962,14 @@ namespace backend::bridge
         // Export jobs run detached; joined at shutdown.
         std::vector<std::thread> reviewJobThreads_;
         std::mutex reviewJobsMutex_;
+        mutable std::mutex exportMutex_;
+        mutable std::mutex reanalysisMutex_;
+        bool reanalysisActive_{false};
+        std::thread reanalysisThread_;
+        std::string reanalysisStatusJson_{"{\"state\":\"idle\"}"};
+        bool exportActive_{false};
+        std::thread exportThread_;
+        std::string exportStatusJson_{"{\"state\":\"idle\"}"};
     };
 
 } // namespace backend::bridge

@@ -512,3 +512,41 @@ current/max queue depth, batch size, worker count, and running state. See
   not the whole ROI). It also uses row pointers instead of `cv::Mat::at<>`
   and skips the `clone()` for already-single-channel input. These were
   per-object allocator/CPU costs that scaled with objects-per-frame.
+
+### Shared offline reanalysis inputs
+
+`BatchMaskSources::buildSyntheticBackground` now owns the unchanged quiet-tile
+background algorithm formerly in Qt BatchMaskDialog (64-pixel tiles; temporal
+neighbour difference; mean of the quietest 3–10 frames). Qt and facade reanalysis
+call the same implementation; facade cancellation is checked between tiles.
+Folder/AVI loaders accept optional range, byte/frame budgets and cancellation
+without changing default Qt behavior. Tauri's reanalysis job uses these loaders,
+`ProcessingService::processBatch` and `saveMasksToHdf5`; no science is implemented
+in React. Its local processing configuration and ROI are per-job snapshots,
+never changes to realtime configuration.
+
+Tauri now exposes existing finite background calibration through BackendFacade JSON
+commands/status. The adapter validates positive bounded integers before narrowing,
+serializes start against experiment lifecycle, and preserves service-owned frozen
+recipe, empty-frame rejection, cancellation and atomic publication semantics. u64
+operation/config/background generations are decimal strings at the webview boundary.
+
+### Coherent processed preview snapshots (2026-09-23)
+
+RealtimeSnapshot now optionally retains the exact immutable grayscale source alongside
+its mask, full-frame contours, effective ROI and primary-object bounds. Source retention
+is opt-in; default Qt/realtime workloads do not retain source pixels or hash recipes.
+Inline full-frame and async modes share existing frozen Mats; the ROI fast path transfers
+ownership of its already-copied input Frame rather than making another full-frame copy.
+The snapshot carries processing-session generation, FrameStore epoch, absolute index,
+source-native timestamp (unit explicitly unknown) and host monotonic microseconds.
+StartRealtime resets the snapshot and advances session generation.
+
+The preview recipe SHA-256 covers the exact copied processing parameters, requested ROI
+and background bytes. Async workers stamp their copied batch recipe into host-only
+ProcessedFrame metadata, including on runtime config refresh. This identity is **not**
+claimed to be complete calibration/LUT/core/run provenance. ProcessingCoreAbi layout and
+persisted HDF5 schemas are unchanged. Primary-target bounds describe only the selected
+snapshot object; contours may include other objects and are not all labelled targets.
+
+Processed preview capture-session identity is copied from the immutable input frame through inline and async batch host metadata, independently of processing-session/store epochs. It is never sampled from a newer live capture session; the UI labels both generations. Portable core ABI and recorded HDF5 layout are unchanged.

@@ -396,3 +396,41 @@ truth only):
 - [[../task/2026-09-15-mindvision-overview-roi]] — MindVision overview test coverage
 - [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — `-lstdc++` cloud image fix
 - [[../task/2026-06-01-backend-only-build-test-mode]] — origin of `MIB_BUILD_BACKEND_ONLY`
+
+### Native GTK workflow acceptance
+
+The production-webview harness in `desktop/scripts/native-workflow.py` accepts
+the GTK folder picker with its real Open button while retaining the typed
+location. Escape discards that location and is not a valid acceptance action.
+The export gate asserts the exact selected destination parent, not just terminal
+success. Idle exit verifies native-window disappearance if WebKit closes its
+session before replying. Failure artifacts include the full X11 desktop so
+native dialogs are visible alongside webview screenshots.
+
+Windows Tauri candidate staging resolves model files with the same manifest root
+and `<kind>s/<id>/<file>` layout as the provisioner/CMake, honors `MIB_ASSETS_DIR`,
+and checks the declared SHA256 before packaging. The GTK harness tolerates only
+confirmed dialog unmapping between window search and focus; other X11 failures
+remain errors.
+
+Native packaged acceptance also regenerates a new HDF through the real UI/save
+dialog, verifies the source file digest is unchanged, waits for the frontend
+terminal status, and reopens the regenerated output with processing-core identity.
+
+Fresh GTK Recent mode is explicitly left via Home before folder selection; the
+harness uses in-memory GSettings to avoid depending on an operator desktop.
+Idle Exit verifies both native-window disappearance and owning-process exit via
+X11/procfs, avoiding hung WebDriver requests after its last window closes. It
+also avoids deleting the terminated session; the driver process is cleaned up.
+
+The Xvfb smoke script bounds and terminates its entire owned process group via
+GNU timeout, not only the xvfb-run wrapper. A real-child regression reproduces
+and prevents orphan applications holding the executable open during bundling.
+The smoke run uses disposable XDG state and mock-camera mode, never an operator
+profile or remembered hardware configuration.
+The alive timer starts inside Xvfb, after display startup; the regression delays
+display startup deliberately to prevent a false pass before the app launches.
+
+The Windows candidate saves successfully provisioned Conan dependencies before
+application compilation, so subsequent source/test failures do not discard the
+completed dependency cache. It never caches a failed dependency install.

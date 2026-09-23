@@ -130,3 +130,78 @@ recorded (legacy file)" rather than implying completeness.
   to display them.
 - See tasks `review_hdf_thumbnail_spacer_crash.md` and
   `fix_hdfreviewtab_linker_error.md` for historical fixes.
+
+## Tauri review parity (2026-09-23)
+
+The React Review view exposes Batch Metrics and Batch Export All through the
+same transactional facade exporter. A request holds 1–256 independent HDF paths;
+its native worker survives tab navigation, continues after individual file
+failures, stops between files on cancellation, and retains per-file published or
+partial paths. The open review reader is not replaced. Generated names avoid
+collisions, including duplicate basenames in one batch.
+
+Saved-file Charts fetch valid/invalid metadata in explicit 200-row pages, reject
+responses when the native file changes, and label raw pixel area and dimensionless
+ring ratio. These are subset plots, not whole-file calibrated statistics or
+isoelastic overlays; those Qt chart capabilities remain distinct parity work.
+
+Tauri's Regenerate masks control now starts a cancellable facade job for a saved
+HDF dataset/range. The shared processing service performs science and writes a
+new HDF using shared `BatchMaskSources`; the original is unchanged. Current
+processing settings are copied at submission; source ROI/background, frame
+identities and timestamps are preserved; active core provenance is written.
+Output publication cannot replace an existing file, including a file created
+while processing. Cancellation and terminal result survive tab navigation.
+Jobs accept entire-HDF source order, individual HDF datasets, image folders and
+AVI inputs. Ranges are bounded to 4096 frames / 256 MiB input. Optional local
+processing JSON and ROI override do not mutate live settings. Synthetic background
+uses the exact shared quiet-tile algorithm extracted from Qt BatchMaskDialog; Qt
+also delegates to it. Folder/AVI decode errors fail explicitly rather than silently
+shifting frame identities. Loader budgets and cancellation are applied during reads.
+Interactive source previews/background-frame selection and graphical ROI editing
+remain distinct UI parity work.
+
+Accepted export jobs immediately own the frontend busy state. A status response
+started before submission is discarded, so a delayed old `idle` poll cannot
+unlock a duplicate export. Reanalysis range/ROI values are checked as integers
+at the native boundary, not silently truncated from JSON fractions.
+
+The initial 200-row Tauri plots have now been superseded by whole-file backend
+aggregates: all finite valid objects contribute to bounded density cells and
+exact histogram bins. Qt and Tauri share `ReviewChartData` for calibrated point
+preparation, histogram math and embedded isoelastic reference curves. The Review
+view can toggle reference overlays and refresh after calibration changes;
+Export Charts and Export All write 1200-square TIFFs from the same full data.
+Reanalysis source/ROI/settings drafts are App-hook-owned and survive navigation.
+
+Reanalysis now also previews a selected HDF dataset, folder or AVI frame through
+an independent-reader atomic frame packet. The operator can select that exact
+source frame as background, clear/restore the source background, or drag a local
+ROI on the preview. A late response for another source/index is not offered as
+the current background. Source/background selections remain App-owned drafts;
+the native job reopens the selected background and stores its pixels in output.
+Preview reads are bounded to 64 MiB and never replace the live Review reader.
+
+Saved valid/invalid images now expose the same five Qt contour/mask modes and
+saved ROI using the shared backend `ProcessingOverlay` renderer. Each explicit
+source/index request renders image, mask and classification together. Frontend
+requests are serial/coalesced and stale source responses are discarded. Metric
+pages validate source before and after reads plus latest-request generation;
+clicking or keyboard-activating a row selects its saved-image dataset row.
+Export options expose valid/invalid/both frame classes, optional inclusive image
+series range and isoelastic TIFF overlays. Reanalysis input budgets are adjustable
+(default 4096 frames/256 MiB; at most one million frames/16 GiB input); result and
+processing memory are additional. Publication uses platform no-replace rename
+(or hard-link fallback), preserving a concurrently created destination.
+
+`frontend.review_parity` is a no-hardware, same-backend HDF fixture equivalence
+check. It creates three saved valid frames with ring masks and known metrics,
+loads them through the facade, compares whole-file calibrated chart axes and
+histogram bins to the shared Qt chart preparation, verifies density conservation
+and bundled curve groups, and compares every RGB pixel from Qt QImage rendering
+to decoded Tauri PNG for all five overlay modes. This proves serialization and
+rendering equivalence for those saved-file paths, not hardware acquisition,
+interactive Qt/Tauri full-workflow acceptance, ROI stroke styling, or platform
+packaging. Native export/reanalysis lifecycle tests cover those workers separately.
+
+Tauri source open/close is serialized across native dialogs and backend reconciliation. Failed opens that leave no native file clear stale path/canvas/metrics. Single-file exports capture an explicit source before opening the destination dialog, so later source changes cannot retarget the export.

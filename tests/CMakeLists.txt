@@ -277,6 +277,22 @@ mib_backend_test_link(memory_budget_bench PRIVATE Threads::Threads)
 add_test(NAME performance.memory_budget COMMAND $<TARGET_FILE:mib_backend_tests> memory_budget_bench)
 set_tests_properties(performance.memory_budget PROPERTIES LABELS "performance;memory" TIMEOUT 600)
 
+mib_add_backend_test_executable(core_management_test backend/core_management_test.cpp)
+add_test(NAME backend.core_management COMMAND $<TARGET_FILE:mib_backend_tests> core_management_test)
+set_tests_properties(backend.core_management PROPERTIES LABELS "backend;roundtrip;fault-injection;stress" TIMEOUT 60)
+
+mib_add_backend_test_executable(profile_catalog_test backend/profile_catalog_test.cpp)
+add_test(NAME backend.profile_catalog COMMAND $<TARGET_FILE:mib_backend_tests> profile_catalog_test)
+set_tests_properties(backend.profile_catalog PROPERTIES LABELS "backend;fault-injection;stress" TIMEOUT 60)
+
+mib_add_backend_test_executable(profile_store_test backend/profile_store_test.cpp)
+add_test(NAME backend.profile_store COMMAND $<TARGET_FILE:mib_backend_tests> profile_store_test)
+set_tests_properties(backend.profile_store PROPERTIES LABELS "backend;roundtrip;fault-injection;stress" TIMEOUT 60)
+
+mib_add_backend_test_executable(processing_config_transaction_test backend/processing_config_transaction_test.cpp)
+add_test(NAME backend.processing_config_transaction COMMAND $<TARGET_FILE:mib_backend_tests> processing_config_transaction_test)
+set_tests_properties(backend.processing_config_transaction PROPERTIES LABELS "backend;roundtrip;fault-injection;stress" TIMEOUT 60)
+
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:mib_backend_tests> backend_facade_boundary_test)
 set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")
@@ -972,6 +988,17 @@ mib_add_backend_test_executable(hw_discovery_reentry_test hardware/hw_discovery_
 mib_backend_test_link(hw_discovery_reentry_test PRIVATE Threads::Threads)
 add_test(NAME hardware.discovery_reentry COMMAND $<TARGET_FILE:mib_backend_tests> hw_discovery_reentry_test)
 set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;camera" SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+mib_add_backend_test_executable(export_bridge_facade_test backend/export_bridge_facade_test.cpp)
+add_test(NAME backend.export_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> export_bridge_facade_test)
+set_tests_properties(backend.export_bridge_facade PROPERTIES LABELS "backend;bridge;recording;stress" TIMEOUT 45)
+
+mib_add_backend_test_executable(frame_identity_test backend/frame_identity_test.cpp)
+add_test(NAME backend.frame_identity COMMAND $<TARGET_FILE:mib_backend_tests> frame_identity_test)
+set_tests_properties(backend.frame_identity PROPERTIES LABELS "backend;bridge;stress;invariant" TIMEOUT 45)
+mib_add_backend_test_executable(processed_preview_packet_test backend/processed_preview_packet_test.cpp)
+add_test(NAME backend.processed_preview_packet COMMAND $<TARGET_FILE:mib_backend_tests> processed_preview_packet_test)
+set_tests_properties(backend.processed_preview_packet PROPERTIES LABELS "backend;bridge;processing;concurrency" TIMEOUT 45)
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)

@@ -1,3 +1,4 @@
+#include "backend/app/ProcessingCoreTrust.h"
 #include "frontend/dialogs/ProcessingCoreDialog.h"
 
 #include "backend/app/AppBackend.h"
@@ -130,61 +131,12 @@ bool isHostCompatible(const processingcorecatalog::NativePluginEntry& plugin) {
 
 std::function<bool(const std::filesystem::path&, std::string&)> trustVerifier(
     const processingcorecatalog::NativePluginEntry& plugin) {
-#if !defined(NDEBUG)
-    if (qEnvironmentVariableIntValue("MIB_STUDIO_ALLOW_UNSIGNED_PROCESSING_CORE") == 1) {
-        return [](const std::filesystem::path&, std::string&) { return true; };
-    }
-#endif
-    if (!plugin.signingRequired) {
-        return [](const std::filesystem::path&, std::string& error) {
-            error = "processing-core manifest does not require an artifact signature";
-            return false;
-        };
-    }
-    const std::string signingScheme = plugin.signingScheme.toStdString();
-#if defined(_WIN32)
-    if (plugin.signingScheme != QStringLiteral("authenticode")) {
-        return [signingScheme](const std::filesystem::path&, std::string& error) {
-            error = "unsupported Windows processing-core trust scheme: " + signingScheme;
-            return false;
-        };
-    }
-    std::string approved = MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256;
-#if !defined(NDEBUG)
-    const QString debugOverride =
-        qEnvironmentVariable("MIB_STUDIO_PROCESSING_CORE_SIGNER_SPKI_SHA256").trimmed();
-    if (!debugOverride.isEmpty()) approved = debugOverride.toStdString();
-#endif
-    return [approved](const std::filesystem::path& path, std::string& error) {
-        return backend::processing::verifyProcessingCoreAuthenticode(path, approved, error);
-    };
-#elif defined(__linux__)
-    if (plugin.signingScheme != QStringLiteral("ed25519")) {
-        return [signingScheme](const std::filesystem::path&, std::string& error) {
-            error = "unsupported Linux processing-core trust scheme: " + signingScheme;
-            return false;
-        };
-    }
-    backend::processing::ProcessingCoreDetachedSignature signature;
-    signature.publicKeySpkiDerBase64 = plugin.signingPublicKeySpkiBase64.toStdString();
-    signature.signatureBase64 = plugin.signingSignatureBase64.toStdString();
-    std::string approved = MIB_PROCESSING_CORE_ED25519_SPKI_SHA256;
-#if !defined(NDEBUG)
-    const QString debugOverride =
-        qEnvironmentVariable("MIB_STUDIO_PROCESSING_CORE_ED25519_SPKI_SHA256").trimmed();
-    if (!debugOverride.isEmpty()) approved = debugOverride.toStdString();
-#endif
-    return [signature, approved](const std::filesystem::path& path, std::string& error) {
-        return backend::processing::verifyProcessingCoreEd25519(path, signature, approved,
-                                                                error);
-    };
-#else
-    return [signingScheme](const std::filesystem::path&, std::string& error) {
-        error = "processing-core trust scheme '" + signingScheme +
-                "' is not implemented for this host platform";
-        return false;
-    };
-#endif
+    backend::app::ProcessingCoreSignaturePolicy policy;
+    policy.required=plugin.signingRequired;
+    policy.scheme=plugin.signingScheme.toStdString();
+    policy.publicKeySpkiBase64=plugin.signingPublicKeySpkiBase64.toStdString();
+    policy.signatureBase64=plugin.signingSignatureBase64.toStdString();
+    return backend::app::processingCoreTrustVerifier(policy);
 }
 
 backend::processing::ProcessingCoreLoadRequirements loadRequirements(

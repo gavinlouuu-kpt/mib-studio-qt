@@ -372,20 +372,26 @@ namespace backend
             return autofocusService_ && autofocusService_->isConnected();
         };
         hooks.selectCamera = [this](const discovery::DiscoveredDevice &device) {
-            if (!device.camera) return false;
-            const auto &cam = *device.camera;
-            if (cam.cameraType == services::CameraType::MindVision)
-            {
-                setMindVisionCameraSelection(cam.cameraIndex, cam.label);
-            }
-            else
-            {
-                setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
-            }
-            return true;
+            if (!device.camera || !experimentCoordinator_) return false;
+            bool selected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || isCameraConfigured()) return;
+                const auto &cam = *device.camera;
+                if (cam.cameraType == services::CameraType::MindVision)
+                    setMindVisionCameraSelection(cam.cameraIndex, cam.label);
+                else setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
+                selected = true;
+            });
+            return selected;
         };
         hooks.connectNanopositioner = [this](const nanopositioner::Endpoint &endpoint) {
-            return autofocusService_ && autofocusService_->connect(endpoint);
+            if (!experimentCoordinator_) return false;
+            bool connected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || !autofocusService_ || autofocusService_->isConnected()) return;
+                connected = autofocusService_->connect(endpoint);
+            });
+            return connected;
         };
         startupDiscovery_ =
             std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
@@ -504,7 +510,7 @@ namespace backend
         // Initialize YOLO service - resolve model path relative to data directory
         // dataDir is typically {exeDir}/data, so we go up one level to get exeDir
         std::filesystem::path dataPath(dataDir);
-        std::filesystem::path exeDir = dataPath.parent_path();
+        std::filesystem::path exeDir = resourceRoot_.empty() ? dataPath.parent_path() : std::filesystem::path(resourceRoot_);
         std::filesystem::path modelPath = exeDir / "resources" / "models" / "yolo11n-seg.onnx";
         if (bootYolo)
         {

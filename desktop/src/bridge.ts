@@ -1,3 +1,5 @@
+import type { StartupPreference } from './startupPreference';
+import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
 import { invoke } from "@tauri-apps/api/core";
@@ -15,6 +17,8 @@ export interface AutofocusStatus {
   enabled: boolean;
   current_voltage: number;
   com_port: number;
+  backend_name?: string;
+  endpoint_id?: string;
   average_ring_ratio: number;
   median_ring_ratio: number;
   last_ring_ratio_update_us: number;
@@ -53,6 +57,7 @@ export interface PumpStatus {
   com_port: number;
   baud_rate: number;
   modbus_address: number;
+  port_name?: string;
   configured_flow_rate: number;
   flow_rate_unit: number;
   direction: number;
@@ -91,6 +96,14 @@ export interface ReviewMetadata {
   invalid_masks: ReviewDatasetInfo;
   recorded_images: ReviewDatasetInfo;
   file_path: string;
+}
+
+export interface ReviewChartSnapshot {
+  valid:boolean;error?:string;source_path:string;pixel_to_micron:number;
+  rows:string;finite_points:string;excluded_nonfinite:string;histogram_samples:string;
+  area_range:[number,number];deform_range:[number,number];ring_range:[number,number];
+  resolution:number;density:[number,number,string][];histogram:string[];
+  curves:{modulus:number;points:[number,number][]}[];curve_source:string;
 }
 
 /** One page of review metrics (schema v9, BE-6). */
@@ -272,6 +285,7 @@ export interface MonitoringRow {
   area_ratio: number;
   ring_ratio: number;
   youngs_modulus: number;
+  pixel_to_micron?: number; // exact analysis-time factor; absent/0 = unknown
 }
 
 /** Bounded monitoring snapshot (bridge schema v6, BE-5). Evicted rows are
@@ -336,6 +350,7 @@ export const bridge = {
   // Recording + review (bridge schema v2).
   startRecording: (filePath: string) => invokeCommand("start_recording", { filePath }),
   stopRecording: () => invokeCommand("stop_recording"),
+  closeReview: () => sourceMutation("close_review"),
   loadRecording: (filePath: string) => sourceMutation("load_recording", { filePath }),
   seekIndex: (frameIndex: number | string | bigint) => invokeCommand("seek_index", { frameIndex: decimalU64(frameIndex) }),
   fetchFrameByIndex: async (frameIndex: number | string | bigint) =>
@@ -353,6 +368,8 @@ export const bridge = {
   experimentStart: (outputPath: string) =>
     invokeCommand("experiment_start", { outputPath }),
   experimentStop: () => invokeCommand("experiment_stop"),
+  fetchCaptureLifecycle: () => invoke<CaptureLifecycle>("fetch_capture_lifecycle"),
+  experimentAcknowledgeFault: (expectedRun: string, faultRevision: string, code: string, message: string, confirmed: boolean) => invokeCommand("experiment_acknowledge_fault", {expectedRun, faultRevision, code, message, confirmed}),
   experimentCancel: () => invokeCommand("experiment_cancel"),
   fetchExperimentStatus: async () => decodeExperimentStatus(await invoke<unknown>("fetch_experiment_status")),
   // ABI 13: gate list + the generation a Start must present (the bridge's
@@ -372,6 +389,17 @@ export const bridge = {
   shellLog: (level: string, message: string) =>
     invoke<void>("shell_log", { level, message }),
   // Autofocus / nanopositioner (schema v11, BE-8).
+  setProcessedPreviewEnabled: (enabled: boolean) => invoke<void>("set_processed_preview_enabled", {enabled}),
+  fetchProcessedPreview: () => invoke<ArrayBuffer>("fetch_processed_preview"),
+  backgroundCalibrationCommand: (request: Record<string, unknown>) => invokeCommand("background_calibration_command", {json: JSON.stringify(request)}),
+  backgroundCalibrationStatus: () => invoke<BackgroundCalibrationStatus>("background_calibration_status"),
+  startupDiscoverySetPreference: (preference: StartupPreference) => invoke<{accepted: boolean; message: string; preference?: StartupPreference}>("startup_discovery_set_preference", {json: JSON.stringify(preference)}),
+  startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),
+  startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
+  pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
+  pulseGeneratorStatus: () => invoke<PulseGeneratorStatus>("pulse_generator_status"),
+  autofocusConnectEndpoint: (backend: string, endpoint: string, comPort: number, baudRate: number, deviceAddress: number) =>
+    invokeCommand("autofocus_connect_endpoint", { backend, endpoint, comPort, baudRate, deviceAddress }),
   autofocusConnect: (comPort: number, baudRate: number, deviceAddress: number) =>
     invokeCommand("autofocus_connect", { comPort, baudRate, deviceAddress }),
   autofocusDisconnect: () => invokeCommand("autofocus_disconnect"),
@@ -383,6 +411,7 @@ export const bridge = {
   fetchAutofocusStatus: () => invoke<AutofocusStatus>("fetch_autofocus_status"),
   fetchAutofocusConfig: () => invoke<AutofocusConfig>("fetch_autofocus_config"),
   // Syringe pumps (schema v10, BE-7): pump 0 = Sample, 1 = Sheath.
+  pumpConnectEndpoint: (pump: number, portName: string, baudRate: number, modbusAddress: number) => invokeCommand("pump_connect_endpoint", {pump, portName, baudRate, modbusAddress}),
   pumpConnect: (pump: number, comPort: number, baudRate: number, modbusAddress: number) =>
     invokeCommand("pump_connect", { pump, comPort, baudRate, modbusAddress }),
   pumpDisconnect: (pump: number) => invokeCommand("pump_disconnect", { pump }),
@@ -413,6 +442,13 @@ export const bridge = {
     invoke<ReviewMetricsPage>("fetch_review_metrics_page", { valid, offset, count }),
   fetchReviewImage: async (dataset: number, index: number | string | bigint) =>
     pullFrame("fetch_review_frame_packet", 3, { dataset, index: decimalU64(index) }),
+  renderReviewOverlay: async (request:{source_path:string;valid:boolean;index:number;mode:number;roi:boolean}) => new Uint8Array(await invoke<ArrayBuffer>("render_review_overlay",{json:JSON.stringify(request)})),
+  fetchReanalysisPreview: (request:{source_kind:string;source_path:string;dataset:string;index:number}) => pullFrame("fetch_review_reanalysis_preview",3,{json:JSON.stringify(request)}),
+  fetchReviewCharts: async (): Promise<ReviewChartSnapshot> => JSON.parse(await invoke<string>("fetch_review_charts_json")),
+  reviewReanalysis: (request: {source_path:string;output_path:string;dataset:string;start:number;count:number;source_kind?:"hdf"|"folder"|"avi";synthetic_background?:boolean;roi?:{x:number;y:number;w:number;h:number};image_processing?:unknown;max_frames?:number;max_input_mib?:number;background_index?:number;background_dataset?:string;clear_background?:boolean}) => invokeCommand("review_reanalysis_json", {json:JSON.stringify(request)}),
+  reviewReanalysisStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_reanalysis_status_json")),
+  reviewExport: (request: ReviewExportRequest) => invokeCommand("review_export_json", { json: JSON.stringify(request) }),
+  reviewExportStatus: async (): Promise<ReviewExportStatus> => JSON.parse(await invoke<string>("review_export_status_json")),
   reviewExportCsv: (outputPath: string) =>
     invokeCommand("review_export_csv", { outputPath }),
   // Processing config / ROI / background / core identity (schema v8, BE-3).
@@ -496,3 +532,12 @@ export function mono8ToImageData(
   }
   return new ImageData(rgba, width, height);
 }
+
+export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>}
+
+export interface StartupDiscoveryStatus {preference?: StartupPreference; valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
+interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
+
+export interface BackgroundCalibrationStatus {valid: boolean; state: string; operation_generation: string; frozen_config_version: string; attempted: number; accepted: number; rejected_non_empty: number; rejected_processing_failed: number; published_background_generation: string; published_sha256: string; message: string}
+
+export interface CaptureLifecycle {valid: boolean; state: string; generation: string; camera_ready: boolean; failure: string; message: string; failure_generation: string}

@@ -92,6 +92,11 @@ public:
     // readiness until cleared.
     void reportUnresolvedFault(const std::string& code, const std::string& message);
     void clearUnresolvedFault();
+    bool acknowledgeFault(uint64_t expectedRun, uint64_t expectedFaultRevision,
+                          const std::string& expectedCode, const std::string& expectedMessage,
+                          std::string& error);
+    // Runs a non-reentrant config transaction while Start is excluded.
+    bool withIdleConfiguration(const std::function<void()>& transaction);
     bool hasUnresolvedFault() const;
 
 private:
@@ -143,6 +148,7 @@ private:
     std::string buildId_;
     std::string os_;
     bool faultActive_{false};
+    uint64_t faultRevision_{0};
     std::string faultCode_;
     std::string faultMessage_;
     // Terminal/lifecycle fields that outlive activeRun_ (reset on start).

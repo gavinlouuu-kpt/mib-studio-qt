@@ -16,7 +16,11 @@ use tauri::{Manager, State};
 mod event_transport;
 mod frame_packet;
 mod platform;
+mod config_document;
+mod camera_document;
+mod preview_buffer;
 pub mod updater;
+mod app_update;
 
 struct AppState {
     bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
@@ -106,7 +110,8 @@ fn init(
         data_dir
     };
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().initialize(&dir))
+    let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().initialize_with_resources(&dir, &resources.to_string_lossy()))
 }
 
 #[tauri::command]
@@ -163,6 +168,12 @@ fn start_recording(state: State<AppState>, file_path: String) -> Result<CmdResul
 fn stop_recording(state: State<AppState>) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().stop_frame_recording().into())
+}
+
+#[tauri::command]
+fn close_review(state: State<AppState>) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().close_review().into())
 }
 
 #[tauri::command]
@@ -267,6 +278,8 @@ struct ExperimentStatus {
     finalization_ok: bool,
     completion: u32,
     completion_reason: String,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    fault_revision: u64,
     fault_code: String,
     fault_message: String,
 }
@@ -316,7 +329,22 @@ fn experiment_start(state: State<AppState>, output_path: String) -> Result<CmdRe
     Ok(guard.pin_mut().experiment_start(&output_path).into())
 }
 
-/// Request an asynchronous experiment stop (final flush + metadata + close).
+/// Authoritative capture state and retained failure details.
+#[tauri::command]
+fn fetch_capture_lifecycle(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_capture_lifecycle()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn experiment_acknowledge_fault(state: State<AppState>, expected_run: String, fault_revision: String, code: String, message: String, confirmed: bool) -> Result<CmdResult, String> {
+    let revision = fault_revision.parse::<u64>().map_err(|_| "Invalid fault revision".to_string())?;
+    let generation = expected_run.parse::<u64>().map_err(|_| "Invalid run generation".to_string())?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().experiment_acknowledge_fault(generation, revision, &code, &message, confirmed).into())
+}
+
+/// Request asynchronous final flush, metadata persistence and close.
 #[tauri::command]
 fn experiment_stop(state: State<AppState>) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
@@ -361,6 +389,7 @@ fn fetch_experiment_status(state: State<AppState>) -> Result<ExperimentStatus, S
         finalization_ok: s.finalization_ok,
         completion: s.completion,
         completion_reason: s.completion_reason,
+        fault_revision: s.fault_revision,
         fault_code: s.fault_code,
         fault_message: s.fault_message,
     })
@@ -374,6 +403,8 @@ struct AutofocusStatus {
     enabled: bool,
     current_voltage: f64,
     com_port: i32,
+    backend_name: String,
+    endpoint_id: String,
     average_ring_ratio: f64,
     median_ring_ratio: f64,
     last_ring_ratio_update_us: u64,
@@ -397,6 +428,63 @@ struct AutofocusConfig {
     min_samples_per_step: i32,
     safe_shutdown_voltage: f64,
     focus_direction: bool,
+}
+
+#[tauri::command]
+fn set_processed_preview_enabled(state: State<AppState>, enabled: bool) -> Result<(), String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    guard.pin_mut().set_processed_preview_enabled(enabled); Ok(())
+}
+#[tauri::command]
+fn fetch_processed_preview(state: State<AppState>) -> Result<Response, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(Response::new(guard.pin_mut().fetch_processed_preview()))
+}
+
+#[tauri::command]
+fn background_calibration_command(state: State<AppState>, json: String) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().background_calibration_command(&json).into())
+}
+#[tauri::command]
+fn background_calibration_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().background_calibration_status()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn startup_discovery_set_preference(state: State<AppState>, json: String) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().startup_discovery_set_preference(&json)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn startup_discovery_run(state: State<AppState>, action: String) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().startup_discovery_run(&action)).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn startup_discovery_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().startup_discovery_status()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn pulse_generator_command(state: State<AppState>, json: String) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().pulse_generator_command(&json).into())
+}
+#[tauri::command]
+fn pulse_generator_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().pulse_generator_status()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn autofocus_connect_endpoint(state: State<AppState>, backend: String, endpoint: String,
+    com_port: i32, baud_rate: i32, device_address: i32) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().autofocus_connect_endpoint(&backend, &endpoint, com_port, baud_rate, device_address).into())
 }
 
 #[tauri::command]
@@ -461,6 +549,8 @@ fn fetch_autofocus_status(state: State<AppState>) -> Result<AutofocusStatus, Str
         enabled: s.enabled,
         current_voltage: s.current_voltage,
         com_port: s.com_port,
+        backend_name: s.backend_name,
+        endpoint_id: s.endpoint_id,
         average_ring_ratio: s.average_ring_ratio,
         median_ring_ratio: s.median_ring_ratio,
         last_ring_ratio_update_us: s.last_ring_ratio_update_us,
@@ -504,9 +594,16 @@ struct PumpStatus {
     com_port: i32,
     baud_rate: i32,
     modbus_address: i32,
+    port_name: String,
     configured_flow_rate: f64,
     flow_rate_unit: i32,
     direction: u32,
+}
+
+#[tauri::command]
+fn pump_connect_endpoint(state: State<AppState>, pump: u32, port_name: String, baud_rate: i32, modbus_address: i32) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().pump_connect_endpoint(pump, &port_name, baud_rate, modbus_address).into())
 }
 
 #[tauri::command]
@@ -601,6 +698,7 @@ fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<PumpStatus, St
         com_port: s.com_port,
         baud_rate: s.baud_rate,
         modbus_address: s.modbus_address,
+        port_name: s.port_name,
         configured_flow_rate: s.configured_flow_rate,
         flow_rate_unit: s.flow_rate_unit,
         direction: s.direction,
@@ -742,6 +840,7 @@ fn fetch_review_metrics_page(
                 area_ratio: r.area_ratio,
                 ring_ratio: r.ring_ratio,
                 youngs_modulus: r.youngs_modulus,
+                pixel_to_micron: r.pixel_to_micron,
             })
             .collect(),
     })
@@ -759,6 +858,57 @@ fn fetch_review_frame_packet(state: State<AppState>, dataset: u32, index: String
         bridge.pin_mut().fetch_review_image(dataset, index)
     };
     frame_packet::encode(frame, 3).map(Response::new)
+}
+
+#[tauri::command]
+fn render_review_overlay(state: State<AppState>, json: String) -> Result<Response, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let bytes = guard.pin_mut().render_review_overlay(&json);
+    if bytes.is_empty() { return Err("Saved image/mask unavailable for this source/index".into()); }
+    Ok(Response::new(bytes))
+}
+
+#[tauri::command]
+fn fetch_review_reanalysis_preview(state: State<AppState>, json: String) -> Result<Response, String> {
+    let frame = {
+        let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+        guard.pin_mut().fetch_review_reanalysis_preview(&json)
+    };
+    frame_packet::encode(frame, 3).map(Response::new)
+}
+
+#[tauri::command]
+fn fetch_monitoring_chart_reference(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_monitoring_chart_reference())
+}
+#[tauri::command]
+fn fetch_review_charts_json(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_review_charts_json())
+}
+
+#[tauri::command]
+fn review_reanalysis_json(state: State<AppState>, json: String) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_reanalysis_json(&json).into())
+}
+#[tauri::command]
+fn review_reanalysis_status_json(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_reanalysis_status_json())
+}
+
+#[tauri::command]
+fn review_export_json(state: State<AppState>, json: String) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_json(&json).into())
+}
+
+#[tauri::command]
+fn review_export_status_json(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_status_json())
 }
 
 /// Start a cancellable metrics CSV export job for the loaded file.
@@ -1156,6 +1306,12 @@ fn select_mindvision_camera(
     config_path: String,
 ) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
+        return Err("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+
     Ok(guard
         .pin_mut()
         .select_mindvision_camera(camera_index, &label, &config_path)
@@ -1166,13 +1322,37 @@ fn select_mindvision_camera(
 #[tauri::command]
 fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
+        return Err("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+
     Ok(guard.pin_mut().apply_camera_script(&script_path).into())
+}
+
+/// Explicit MindVision software exposure trigger; never an automatic startup action.
+#[tauri::command]
+fn soft_trigger_camera(state: State<AppState>) -> Result<CmdResult, String> {
+    let mut guard=state.bridge.lock().map_err(|e|e.to_string())?;
+    let selected=guard.pin_mut().fetch_camera_selection();
+    let experiment=guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !selected.configured || selected.mode != 3 || !selected.running || !experiment.valid || matches!(experiment.state,1..=3) {
+        return Err("Software trigger requires a running MindVision camera and an idle experiment".into());
+    }
+    Ok(guard.pin_mut().soft_trigger_camera().into())
 }
 
 /// Issue a GenICam DeviceReset to the selected hardware camera.
 #[tauri::command]
 fn reset_hardware_camera(state: State<AppState>) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
+        return Err("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+
     Ok(guard.pin_mut().reset_hardware_camera().into())
 }
 
@@ -1193,6 +1373,7 @@ struct MonitoringRow {
     area_ratio: f64,
     ring_ratio: f64,
     youngs_modulus: f64,
+    pixel_to_micron: f64,
 }
 
 /// Bounded monitoring snapshot for the webview (schema v6, BE-5).
@@ -1272,6 +1453,7 @@ fn fetch_monitoring_snapshot(
                 area_ratio: r.area_ratio,
                 ring_ratio: r.ring_ratio,
                 youngs_modulus: r.youngs_modulus,
+                pixel_to_micron: r.pixel_to_micron,
             })
             .collect(),
     })
@@ -1352,6 +1534,7 @@ fn fetch_processing_stats(state: State<AppState>) -> Result<ProcessingStats, Str
     })
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::kind_name;
@@ -1519,6 +1702,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             load_recording,
+            close_review,
             seek_index,
             fetch_frame_by_index,
             apply_processing,
@@ -1529,11 +1713,38 @@ pub fn run() {
             platform::get_preferences,
             platform::set_preferences,
             platform::shell_log,
+            preview_buffer::fetch_preview_buffer,
+            preview_buffer::save_preview_buffer,
+
+
+            updater::inspect_app_update,
+            app_update::check_tauri_app_update,
+            app_update::verify_tauri_app_installer,
+            app_update::launch_tauri_app_installer,
+            app_update::clear_tauri_installer_cache,
+            config_document::processing_core_command,
+            config_document::profile_fetch_url,
+            config_document::profile_command,
+            camera_document::camera_document,
+            config_document::fetch_config_document,
+            config_document::apply_config_document,
             experiment_start,
             experiment_stop,
+            experiment_acknowledge_fault,
+            fetch_capture_lifecycle,
             experiment_cancel,
             fetch_experiment_status,
             fetch_experiment_readiness,
+            set_processed_preview_enabled,
+            fetch_processed_preview,
+            background_calibration_command,
+            background_calibration_status,
+            startup_discovery_set_preference,
+            startup_discovery_run,
+            startup_discovery_status,
+            pulse_generator_command,
+            pulse_generator_status,
+            autofocus_connect_endpoint,
             autofocus_connect,
             autofocus_disconnect,
             autofocus_set_enabled,
@@ -1541,6 +1752,7 @@ pub fn run() {
             autofocus_set_config,
             fetch_autofocus_status,
             fetch_autofocus_config,
+            pump_connect_endpoint,
             pump_connect,
             pump_disconnect,
             pump_set_flow_rate,
@@ -1558,6 +1770,14 @@ pub fn run() {
             fetch_review_image,
             review_image_bytes,
             review_export_csv,
+            review_export_json,
+            render_review_overlay,
+            fetch_review_charts_json,
+            fetch_monitoring_chart_reference,
+            fetch_review_reanalysis_preview,
+            review_reanalysis_json,
+            review_reanalysis_status_json,
+            review_export_status_json,
             fetch_processing_config_json,
             apply_processing_config_json,
             set_processing_roi,
@@ -1575,6 +1795,7 @@ pub fn run() {
             select_mindvision_camera,
             apply_camera_script,
             reset_hardware_camera,
+            soft_trigger_camera,
             monitoring_set_active,
             monitoring_clear,
             fetch_monitoring_snapshot,

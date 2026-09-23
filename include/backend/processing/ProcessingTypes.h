@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <opencv2/core.hpp>
@@ -88,6 +89,9 @@ struct FilterResult {
     // experiment copies, all reference one allocation instead of duplicating
     // every contour point N times. Null when no contours were extracted.
     std::shared_ptr<const std::vector<std::vector<cv::Point>>> allContours;
+    // Host-only analysis provenance; not ProcessingCoreAbi or persisted HDF schema.
+    // Exact calibration passed to analyzeObjects for this result; 0 = unknown.
+    double analysisPixelToMicronFactor{0.0};
 };
 
 // One analysed frame (or one object of a frame — several ProcessedFrames can
@@ -95,6 +99,10 @@ struct FilterResult {
 // publication (frozen-Mats invariant): every consumer shares them by
 // refcount and never clones merely for lifetime (issue #370).
 struct ProcessedFrame {
+    // Host-only preview provenance, not ProcessingCoreAbi or persisted HDF schema.
+    uint64_t previewStoreGeneration{0}, previewCaptureSession{0};
+    std::string previewRecipeSha256;
+    cv::Rect previewRoi;
     uint64_t index{0};
     uint64_t timestampNs{0};
     // Host monotonic acquisition stamp carried from playback::Frame (0 if unknown).

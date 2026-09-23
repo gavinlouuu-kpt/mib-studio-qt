@@ -23,8 +23,14 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"]
+    "icon": [
+      "icons/icon.png"
+    ],
+    "resources": {
+      "../../resources/isoelastic_curve/": "resources/isoelastic_curve/",
+      "../../resources/defaults/": "resources/defaults/"
+    }
   }
 }

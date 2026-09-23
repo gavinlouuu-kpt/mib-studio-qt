@@ -1,3 +1,9 @@
+include("${PROJECT_SOURCE_DIR}/cmake/GenerateReviewIsoelastic.cmake")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt")
+mib_generate_review_isoelastic(
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/ReviewIsoelasticData.h")
 include(MIBLinkHelpers)
 
 # The Python wheel version is the processing-core release identity. Keep a
@@ -37,6 +43,8 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ProcessingOverlay.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/PipelineTimingRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
@@ -57,6 +65,7 @@ set_target_properties(mib_processing PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+target_include_directories(mib_processing PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(mib_processing PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
@@ -221,6 +230,13 @@ endif()
 add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileStore.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileCatalog.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
@@ -295,6 +311,8 @@ set_target_properties(mib_backend PROPERTIES
 target_compile_definitions(mib_backend PUBLIC
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
     MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
+    MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"
+    MIB_PROCESSING_CORE_ED25519_SPKI_SHA256="${MIB_PROCESSING_CORE_ED25519_SPKI_SHA256}"
 )
 
 if(MIB_HAS_EGRABBER)

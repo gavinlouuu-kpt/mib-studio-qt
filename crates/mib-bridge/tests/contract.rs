@@ -61,7 +61,7 @@ fn abi_version_is_stable() {
     // stop outcomes, run completion states, readiness gate statuses, typed
     // ExperimentStatus companions and fetch_experiment_readiness.
     // v14 the asynchronous device-discovery jobs (#419, ADR 0005).
-    assert_eq!(ffi::bridge_abi_version(), 14);
+    assert_eq!(ffi::bridge_abi_version(), 19);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
@@ -81,6 +81,16 @@ fn autofocus_commands_and_config_roundtrip() {
     assert_eq!(status.last_ring_ratio_update_us, 0);
     assert_eq!(status.ring_ratio_age_us, 0);
 
+    // New typed endpoint validation never probes a device on malformed input.
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("auto", "x", -1, 115200, 1).ok);
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("oeabt", "", -1, 115200, 1).ok);
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("unknown", "x", -1, 115200, 1).ok);
+    let pulse: serde_json::Value = serde_json::from_str(&bridge.pin_mut().pulse_generator_status()).unwrap();
+    assert_eq!(pulse["valid"], true);
+    assert_eq!(pulse["connected"], false);
+    for request in [r#"{"action":"connect","port":"","address":1}"#, r#"{"action":"frequency","channel":0,"value":0}"#, r#"{"action":"duty","channel":5,"value":50}"#] {
+        assert!(!bridge.pin_mut().pulse_generator_command(request).ok);
+    }
     // Structured parameter errors and safe failure without hardware.
     assert!(!bridge.pin_mut().autofocus_connect(-1, 115200, 1).ok);
     assert!(!bridge.pin_mut().autofocus_connect(3, 115200, 999).ok);
@@ -260,14 +270,18 @@ fn review_metadata_pages_images_and_export_job() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(completed, "export did not complete");
+    let retained: serde_json::Value = serde_json::from_str(&bridge.pin_mut().review_export_status_json()).unwrap();
+    assert_eq!(retained["state"], "completed");
+    assert_eq!(retained["operation_id"], export.operation_id.to_string());
+    assert_eq!(retained["final_path"], csv_path.to_string_lossy().as_ref());
     let csv = std::fs::read_to_string(&csv_path).unwrap();
     assert!(csv.starts_with("Frame Type,Index,Timestamp,Object Id"));
     assert!(csv.lines().count() as u64 >= meta.total_valid, "missing CSV rows");
 
     // Failure path cleans partial outputs: unwritable directory fails the
     // job and leaves no file behind.
-    let bad_path = "/nonexistent-dir/mib_export.csv";
-    let bad = bridge.pin_mut().review_export_csv(bad_path);
+    let bad_path = csv_path.join("mib_export.csv"); // existing file cannot be a parent
+    let bad = bridge.pin_mut().review_export_csv(&bad_path.to_string_lossy());
     assert!(bad.ok, "job starts, then fails asynchronously");
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut failed = false;
@@ -283,7 +297,7 @@ fn review_metadata_pages_images_and_export_job() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(failed, "bad-path export did not report Failed");
-    assert!(!std::path::Path::new(bad_path).exists());
+    assert!(!bad_path.exists());
     // Source recording is intact after the failed job.
     assert!(bridge.pin_mut().load_recording(&rec_path.to_string_lossy()).ok);
 
@@ -506,6 +520,9 @@ fn monitoring_and_trigger_contract() {
     assert!(!bridge.pin_mut().trigger_set_pulse_duration(0).ok);
     assert!(!bridge.pin_mut().trigger_periodic_start(0).ok);
 
+    let reference: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_chart_reference()).unwrap();
+    assert!(!reference["curves"].as_array().unwrap().is_empty());
+    assert!(reference["curve_source"].as_str().unwrap().contains("30 um"));
     // Monitoring enable/disable/clear round-trip.
     assert!(bridge.pin_mut().monitoring_set_active(true).ok);
     let snap = bridge.pin_mut().fetch_monitoring_snapshot(50);
@@ -1090,4 +1107,90 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_dir_all(&frame_dir);
     let _ = std::fs::remove_dir_all(&data_dir);
     let _ = std::fs::remove_file(&rec_path);
+}
+
+
+#[test]
+#[serial]
+fn checked_config_document_roundtrip_and_conflict() {
+    let data_dir = std::env::temp_dir().join(format!("mib_checked_config_{}", std::process::id()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let path = data_dir.join("config.json");
+    std::fs::write(&path, r#"{"custom":{"keep":17},"image_processing":{"area_threshold_min":1}}"#).unwrap();
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let doc = bridge.pin_mut().fetch_config_document(&path.to_string_lossy());
+    assert!(doc.ok, "{}", doc.error);
+    assert_eq!(doc.revision.len(), 64);
+    let patch = r#"{"image_processing":{"area_threshold_min":2}}"#;
+    let result = bridge.pin_mut().apply_config_document(&doc.path, &doc.revision, patch);
+    assert!(result.saved && result.applied && result.verified, "{}", result.error);
+    assert!(!result.conflict);
+    assert_ne!(result.revision, doc.revision);
+    let stale = bridge.pin_mut().apply_config_document(&doc.path, &doc.revision, patch);
+    assert!(stale.conflict && !stale.saved && !stale.applied);
+    let after = bridge.pin_mut().fetch_config_document(&doc.path);
+    let parsed: serde_json::Value = serde_json::from_str(&after.document_json).unwrap();
+    assert_eq!(parsed["custom"]["keep"], 17);
+    assert_eq!(parsed["image_processing"]["area_threshold_min"], 2);
+    let missing = bridge.pin_mut().fetch_config_document(&data_dir.join("missing.json").to_string_lossy());
+    assert!(!missing.ok && !missing.error.is_empty());
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+#[serial]
+fn local_profiles_roundtrip_and_conflict() {
+    let data_dir = std::env::temp_dir().join(format!("mib_profile_contract_{}",std::process::id()));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.as_path().to_string_lossy()));
+    let base = data_dir.as_path().join("profiles").to_string_lossy().to_string();
+    let create = r#"{"operation":"create","name":"test","document_json":"{\"pixel_to_micron_factor\":0.5}"}"#;
+    let saved: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base, create)).unwrap();
+    assert_eq!(saved["ok"], true);
+    let read: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"read","name":"test"}"#)).unwrap();
+    assert_eq!(read["profile"]["document_json"], "{\"pixel_to_micron_factor\":0.5}");
+    let stale: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"archive","name":"test","baseline":"stale"}"#)).unwrap();
+    assert_eq!(stale["ok"],false);
+    assert!(data_dir.as_path().join("profiles/test/config.json").exists());
+    bridge.pin_mut().shutdown();
+    std::fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
+#[serial]
+fn processing_core_management_bundled_roundtrip() {
+    let data_dir=std::env::temp_dir().join(format!("mib_core_management_{}",std::process::id()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut bridge=ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let cache=data_dir.join("cores").to_string_lossy().to_string();
+    let info:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"info"}"#)).unwrap();
+    assert_eq!(info["ok"],true);
+    let activate:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"bundled"}"#)).unwrap();
+    assert_eq!(activate["ok"],true);
+    let restored:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"restore"}"#)).unwrap();
+    assert_eq!(restored["ok"],true);
+    assert_eq!(activate["active_version"],restored["active_version"]);
+    bridge.pin_mut().shutdown();std::fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
+#[serial]
+fn recovery_refuses_unconfirmed_or_absent_fault_and_reports_capture_lifecycle() {
+    let mut bridge = ffi::new_backend_bridge();
+    let dir = std::env::temp_dir().join(format!("mib_recovery_contract_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    assert!(bridge.pin_mut().initialize(dir.to_str().unwrap()));
+    assert!(!bridge.pin_mut().experiment_acknowledge_fault(0, 0, "test", "fault", false).ok);
+    assert!(!bridge.pin_mut().experiment_acknowledge_fault(0, 0, "test", "fault", true).ok);
+    let status: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_capture_lifecycle()).unwrap();
+    assert_eq!(status["valid"], true);
+    assert_eq!(status["generation"], "0");
+    assert_eq!(status["state"], "idle");
+    bridge.pin_mut().shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
 }

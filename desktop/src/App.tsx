@@ -1,3 +1,11 @@
+import {CaptureRecovery} from "./components/CaptureRecovery";
+import {ExperimentRecovery} from "./components/ExperimentRecovery";
+import {recoverNativeRuntime} from "./runtimeRecovery";
+import { useCloseGuard } from "./closeGuard";
+import { ProcessedPreview } from "./components/ProcessedPreview";
+import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
+import { invoke } from "@tauri-apps/api/core";
+import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
@@ -34,27 +42,23 @@ import {
   DEFAULT_MODE,
   type OperatingMode,
 } from "./commissioning";
+import { CameraScriptControls, useCameraScript } from "./cameraScript";
+import { MonitoringCharts } from "./components/MonitoringCharts";
+import { HardwareControls } from "./components/HardwareControls";
+import { useLiveConfigDraft } from "./liveConfigDraft";
+import { previewIntervalMs } from "./previewPacing";
+import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
+import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
+import { ProfilesPanel, useProfiles } from "./profiles";
+import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
+import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
+import { SavedReviewImage } from "./components/SavedReviewImage";
+import { ReviewCharts } from "./components/ReviewCharts";
+import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
 const SIDEBAR_KEY = "mib.sidebar.collapsed";
-
-// Standard reason strings for controls whose backend surface is not bridged
-// yet. Shown as tooltips — the control stays visible (Qt parity) but cannot
-// be activated, and never fakes backend or hardware state.
-const PENDING = {
-  discovery: "Device discovery is not bridged yet — backend issue BE-2 (#272)",
-  roi: "ROI editing is not bridged yet — backend issue BE-3 (#273)",
-  script: "Camera script/config apply is not bridged yet — BE-2 (#272) / BE-3 (#273)",
-  config: "App config / profiles are not bridged yet — backend issue BE-3 (#273)",
-  profiles: "Profile management is not bridged yet — BE-3 (#273) follow-up",
-  saveBuffer: "Preview buffer save is not bridged yet — UI-3 (#268)",
-  monitoring: "Monitoring data is not bridged yet — backend issue BE-5 (#275)",
-  review: "HDF5 metadata/metrics/export are not bridged yet — backend issue BE-6 (#276)",
-  autofocus: "Autofocus/nanopositioner control is not bridged yet — BE-8 (#278)",
-  platform: "Platform/shell services are not migrated yet — BE-9 (#279)",
-  background: "Background image control is not bridged yet — backend issue BE-3 (#273)",
-};
 
 const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Idle]: "Inactive",
@@ -164,11 +168,17 @@ export default function App() {
 
   // Recording.
   const [recording, setRecording] = useState(false);
+  const [resumedNative,setResumedNative]=useState(false);
+  const recoveredReview=useRef(false);
   const [recPath, setRecPath] = useState("");
 
   // Processing (bridge schema v3).
-  const [procEnabled, setProcEnabled] = useState(false);
-  const [pixelToMicron, setPixelToMicron] = useState("1.0");
+  const quickDraft = useLiveConfigDraft();
+  const {acceptRemote: acceptQuickConfig, generation: quickGeneration, applied: quickApplied} = quickDraft;
+  const quickValues = quickDraft.text ? JSON.parse(quickDraft.text) : {enabled:false,factor:"1.0"};
+  const procEnabled = Boolean(quickValues.enabled);
+  const pixelToMicron = String(quickValues.factor);
+  const [autoBackgroundEnabled,setAutoBackgroundEnabled] = useState(false);
   const [stats, setStats] = useState<ProcessingStats | null>(null);
 
   // Experiment (bridge schema v5, BE-4 — backend-owned lifecycle).
@@ -191,8 +201,9 @@ export default function App() {
   const [sheathPump, setSheathPump] = useState<PumpStatus | null>(null);
 
   // Processing config / ROI / background / core identity (schema v8, BE-3).
-  const [configText, setConfigText] = useState("");
-  const [configDirty, setConfigDirty] = useState(false);
+  const liveDraft=useLiveConfigDraft();
+  const {text:configText,dirty:configDirty,acceptRemote:acceptConfig,applied:configApplied,generation:configGeneration}=liveDraft;
+  const [previewFpsLimit,setPreviewFpsLimit]=useState(30);
   const [coreStatus, setCoreStatus] = useState<ProcessingCoreStatus | null>(null);
   const [backgroundSet, setBackgroundSet] = useState(false);
   const [roiFields, setRoiFields] = useState({ x: "0", y: "0", w: "0", h: "0" });
@@ -213,7 +224,6 @@ export default function App() {
   const liveCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const reviewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const loopRef = useRef<number | null>(null);
   const previewLoopRef = useRef<number | null>(null);
   const framePulls = useRef(new FramePullScheduler());
   const tickBusy = useRef(false);
@@ -254,10 +264,18 @@ export default function App() {
       .catch((e) => append(`abi error: ${e}`));
     (async () => {
       try {
-        const already = await bridge.isInitialized();
-        const ok = already || (await bridge.init(""));
-        setReady(ok);
-        append(ok ? "backend initialized" : "backend init failed");
+        const snapshot=await recoverNativeRuntime();
+        setResumedNative(snapshot.resumed);
+        setRunning(snapshot.runtime.capture_running);setRecording(snapshot.runtime.recording);
+        setExpStatus(snapshot.experiment);setReviewMeta(snapshot.review);
+        if(snapshot.review.file_open){
+          setReviewPath(snapshot.review.file_path);setReviewing(true);
+          setReviewTab(snapshot.review.recording_file?"raw":"valid");
+          recoveredReview.current=true;
+          if(!snapshot.runtime.capture_running)setTab("review");
+        }
+        setReady(true);
+        append(snapshot.resumed ? "native session recovered without replaying startup settings" : "backend initialized");
       } catch (e) {
         append(`init error: ${e}`);
       }
@@ -345,7 +363,9 @@ export default function App() {
     try {
       // State/fault notifications do not wait behind pixel decode/rendering.
       applyEvents(await bridge.pollEvents());
-      if (procEnabledRef.current) setStats(await bridge.fetchProcessingStats());
+      const runtime = await invoke<{capture_running: boolean; recording: boolean}>("fetch_preview_buffer");
+      setRunning(runtime.capture_running); setRecording(runtime.recording);
+      setStats(await bridge.fetchProcessingStats());
       setExpStatus(await bridge.fetchExperimentStatus());
       setAfStatus(await bridge.fetchAutofocusStatus());
     } catch (e) {
@@ -359,13 +379,18 @@ export default function App() {
       window.clearInterval(previewLoopRef.current);
       previewLoopRef.current = null;
     }
-    if (loopRef.current !== null) {
-      window.clearInterval(loopRef.current);
-      loopRef.current = null;
-    }
+
   }, []);
 
   useEffect(() => () => stopLoop(), [stopLoop]);
+  // State reconciliation belongs to the shell, not a capture button/view.
+  // Remains active after stop/finalization and recovers after webview reload.
+  useEffect(() => {
+    if (!ready) return;
+    void tick();
+    const timer = window.setInterval(() => void tick(), 500);
+    return () => window.clearInterval(timer);
+  }, [ready, tick]);
 
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
   // image clones run only while the Monitoring view is actually shown.
@@ -374,15 +399,18 @@ export default function App() {
     if (!ready) return;
     bridge.monitoringSetActive(monitoringVisible).catch(() => {});
     if (!monitoringVisible) return;
+    let polling = false, disposed = false;
     const id = window.setInterval(async () => {
+      if (polling) return; polling = true;
       try {
-        setMonSnapshot(await bridge.fetchMonitoringSnapshot(200));
-        setTrigStatus(await bridge.fetchTriggerStatus());
+        const snapshot = await bridge.fetchMonitoringSnapshot(200);
+        const trigger = await bridge.fetchTriggerStatus();
+        if (!disposed) { setMonSnapshot(snapshot); setTrigStatus(trigger); }
       } catch {
         /* backend gone — next tick will surface it */
-      }
+      } finally { polling = false; }
     }, 500);
-    return () => window.clearInterval(id);
+    return () => { disposed = true; window.clearInterval(id); };
   }, [monitoringVisible, ready]);
 
   const toggleSidebar = useCallback(() => {
@@ -414,14 +442,17 @@ export default function App() {
 
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
-  const refreshConfig = useCallback(async () => {
+  const refreshConfig = useCallback(async (discardDraft=false) => {
+    const generation=configGeneration();
+    const quickToken=quickGeneration();
     try {
       const doc = await bridge.fetchProcessingConfigJson();
       if (doc.valid) {
         const parsed = JSON.parse(doc.json);
-        setConfigText(JSON.stringify(parsed, null, 2));
-        setConfigDirty(false);
+        acceptConfig(JSON.stringify(parsed, null, 2),discardDraft,generation);
         setBackgroundSet(Boolean(parsed.background_set));
+        setAutoBackgroundEnabled(Boolean(parsed.image_processing?.auto_background_enabled));
+        acceptQuickConfig(JSON.stringify({enabled:Boolean(parsed.realtime_processing?.enabled),factor:String(parsed.pixel_to_micron ?? 1)}),discardDraft,quickToken);
         if (parsed.roi) {
           setRoiFields({
             x: String(parsed.roi.x ?? 0),
@@ -435,22 +466,24 @@ export default function App() {
     } catch (e) {
       append(`config fetch error: ${e}`);
     }
-  }, [append]);
+  }, [append,acceptConfig,configGeneration,acceptQuickConfig,quickGeneration]);
 
   useEffect(() => {
     if (ready) void refreshConfig();
   }, [ready, refreshConfig]);
 
   const onApplyConfigJson = useCallback(async () => {
+    if (!liveDraft.canApply()) return append("Runtime configuration changed. Reload and reconcile the preserved draft before applying.");
     try {
       const res = await bridge.applyProcessingConfigJson(configText);
       if (!res.ok) return append(`config apply failed: ${res.message}`);
       append("processing config applied");
+      configApplied(configText);
       await refreshConfig();
     } catch (e) {
       append(`config apply error: ${e}`);
     }
-  }, [configText, append, refreshConfig]);
+  }, [configText, append, refreshConfig,configApplied,liveDraft.canApply]);
 
   const onApplyRoi = useCallback(async () => {
     try {
@@ -547,18 +580,29 @@ export default function App() {
     }
   }, [pickedDevice, discovery, append, refreshCameraState]);
 
+  const previewFollowing = useRef(true);
+  const seekPreview = useCallback((index: string | null) => {
+    previewFollowing.current = index === null;
+    framePulls.current.invalidate("live");
+    framePulls.current.request("live", index === null ? bridge.fetchFrame : () => bridge.fetchFrameByIndex(index));
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !running) return;
+    previewLoopRef.current = window.setInterval(() => {
+      if (previewFollowing.current) framePulls.current.request("live", bridge.fetchFrame, false);
+    }, previewIntervalMs(previewFpsLimit));
+    return stopLoop;
+  }, [ready, running, stopLoop, previewFpsLimit]);
+
   const onStartCamera = useCallback(async () => {
     try {
       setReviewing(false);
       const res = await bridge.startCapture();
       if (!res.ok) return append(`start failed: ${res.message}`);
       setRunning(true);
-      append("capture started");
-      stopLoop();
-      loopRef.current = window.setInterval(tick, 200);
-      previewLoopRef.current = window.setInterval(() => {
-        framePulls.current.request("live", bridge.fetchFrame, false);
-      }, 1000 / 30);
+      append("capture start requested; waiting for camera-ready confirmation");
+
       // Parity with Qt: a successful start lands the operator on Overview.
       setTab((t) => (t === "connect" ? "overview" : t));
     } catch (e) {
@@ -567,13 +611,14 @@ export default function App() {
   }, [tick, append, stopLoop]);
 
   const onStopCamera = useCallback(async () => {
-    stopLoop();
     try {
       if (recording) {
-        await bridge.stopRecording();
+        const stopped = await bridge.stopRecording();
+        if (!stopped.ok) return append(`stop recording failed: ${stopped.message}`);
         setRecording(false);
       }
-      await bridge.stopCapture();
+      const stopped = await bridge.stopCapture();
+      if (!stopped.ok) return append(`stop capture failed: ${stopped.message}`);
       setRunning(false);
       append("capture stopped");
     } catch (e) {
@@ -594,7 +639,8 @@ export default function App() {
         setRecording(true);
         append(`recording → ${picked}`);
       } else {
-        await bridge.stopRecording();
+        const stopped = await bridge.stopRecording();
+        if (!stopped.ok) return append(`stop recording failed: ${stopped.message}`);
         setRecording(false);
         append("recording stopped");
       }
@@ -606,30 +652,47 @@ export default function App() {
   // ---- Processing settings (bridged subset of App config) ----
 
   const onApplyProcessing = useCallback(async () => {
+    if (!quickDraft.canApply()) return append("Runtime processing controls changed. Reload and reconcile the preserved draft before applying.");
     try {
-      const factor = Number(pixelToMicron) || 1.0;
+      const factor = Number(pixelToMicron);
+      if (!pixelToMicron.trim() || !Number.isFinite(factor) || factor <= 0) return append("processing failed: px→µm must be a finite positive number");
+      const submitted=quickDraft.text;
       const res = await bridge.applyProcessing(procEnabled, factor);
       if (!res.ok) return append(`processing failed: ${res.message}`);
       append(`processing ${procEnabled ? "enabled" : "disabled"} (px→µm ${factor})`);
+      quickApplied(submitted);
+      await refreshConfig();
       setStats(await bridge.fetchProcessingStats());
     } catch (e) {
       append(`processing error: ${e}`);
     }
-  }, [procEnabled, pixelToMicron, append]);
+  }, [procEnabled, pixelToMicron, append, quickDraft.text, quickDraft.canApply, quickApplied, refreshConfig]);
 
   // ---- Experiment lifecycle (backend-owned, BE-4) ----
 
+  const experimentPending = useRef(false);
+  const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
+  const [readinessMessage, setReadinessMessage] = useState("");
   const onStartExperiment = useCallback(async () => {
+    if (experimentPending.current) return;
+    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage("");
     try {
       const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
       if (!picked) return;
+      const readiness = await bridge.fetchExperimentReadiness(picked);
+      if (!readiness.valid || !readiness.ready) {
+        const reason = readiness.gates.filter(g => g.status === 2 || g.status === 3)
+          .map(g => `${g.id}: ${g.reason}${g.remediation ? ` — ${g.remediation}` : ""}`).join("; ");
+        setReadinessMessage(`${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}`);
+        return;
+      }
       const res = await bridge.experimentStart(picked);
-      if (!res.ok) return append(`experiment start failed: ${res.message}`);
+      if (!res.ok) {setReadinessMessage(`${picked}: ${res.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${res.message}`); }
       append(`experiment started → ${picked}`);
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment start error: ${e}`);
-    }
+    } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
 
   const onStopExperiment = useCallback(async () => {
@@ -648,40 +711,56 @@ export default function App() {
     const idx = decimalU64(input);
     setReviewIndex(idx);
     framePulls.current.request("review", async () => {
-      const result = await bridge.seekIndex(idx);
-      if (!result.ok) throw new Error(result.message);
-      return bridge.fetchFrameByIndex(idx);
+      return bridge.fetchReviewImage(2, idx);
     });
   }, []);
 
+  const metricsGeneration = useRef(0);
   const loadMetricsPage = useCallback(
-    async (valid: boolean, offset: number) => {
+    async (valid: boolean, offset: number, source = reviewMeta?.file_path) => {
+      const generation = ++metricsGeneration.current;
+      setMetricsPage(null);
       try {
+        const before = await bridge.fetchReviewMetadata();
+        if (!before.file_open || before.file_path !== source || generation !== metricsGeneration.current) return;
         const page = await bridge.fetchReviewMetricsPage(valid, offset, METRICS_PAGE_SIZE);
-        if (page.valid) {
+        const after = await bridge.fetchReviewMetadata();
+        if (page.valid && after.file_open && after.file_path === source && generation === metricsGeneration.current) {
           setMetricsPage(page);
           setMetricsOffset(offset);
         }
       } catch (e) {
-        append(`metrics page error: ${e}`);
+        if (generation === metricsGeneration.current) append(`metrics page error: ${e}`);
       }
     },
-    [append],
+    [append, reviewMeta?.file_path],
   );
 
   const drawReviewImage = useCallback((dataset: number, index: number) => {
     framePulls.current.request("review", () => bridge.fetchReviewImage(dataset, index));
   }, []);
 
+  const reviewSourcePending=useRef(false);
+  const reviewSourceGeneration=useRef(0);
+  const [reviewSourceBusy,setReviewSourceBusy]=useState(false);
+  const clearReviewSource=useCallback(()=>{
+    framePulls.current.invalidate("review"); ++metricsGeneration.current;
+    setReviewMeta(null);setMetricsPage(null);setReviewPath("");setReviewing(false);setReviewIndex("0");setReviewImgIndex(0);
+    const canvas=reviewCanvasRef.current;if(canvas)canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
+  },[]);
   const onSelectHdf = useCallback(async () => {
+    if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
+    const sourceGeneration=++reviewSourceGeneration.current;
+    try {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
-    stopLoop();
-    setRunning(false);
-    setReviewPath(picked);
-    try {
+    ++metricsGeneration.current;
+    framePulls.current.invalidate("review");
+    setMetricsPage(null);
       const res = await bridge.loadRecording(picked);
-      if (!res.ok) return append(`load failed: ${res.message}`);
+      if(sourceGeneration!==reviewSourceGeneration.current)return;
+      if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);return append(`load failed: ${res.message}`); }
+      setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
       applyEvents(await bridge.pollEvents());
@@ -689,32 +768,26 @@ export default function App() {
       setReviewMeta(meta);
       setReviewTab(meta.recording_file ? "raw" : "valid");
       setReviewImgIndex(0);
-      await loadMetricsPage(true, 0);
+      await loadMetricsPage(true, 0, picked);
       if (meta.recording_file) {
-        await onScrub(range.earliest);
+        await onScrub("0");
       } else if (meta.valid_images.present && meta.valid_images.count > 0) {
         await drawReviewImage(0, 0);
       }
     } catch (e) {
       append(`load error: ${e}`);
-    }
+      try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
+    } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage]);
+  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
 
-  const onExportCsv = useCallback(async () => {
-    try {
-      const picked = await save({
-        title: "Export Metrics to CSV",
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-        defaultPath: "metrics.csv",
-      });
-      if (!picked) return;
-      const res = await bridge.reviewExportCsv(picked);
-      append(res.ok ? `CSV export started (operation ${res.operation_id})` : `export failed: ${res.message}`);
-    } catch (e) {
-      append(`export error: ${e}`);
-    }
-  }, [append]);
+  useEffect(()=>{
+    if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;
+    recoveredReview.current=false;
+    void loadMetricsPage(true,0,reviewMeta.file_path);
+    if(reviewMeta.recording_file)onScrub("0");
+    else if(reviewMeta.valid_images.present&&reviewMeta.valid_images.count>0)drawReviewImage(0,0);
+  },[ready,tab,reviewMeta,loadMetricsPage,onScrub,drawReviewImage]);
 
   const openReviewFromMenu = useCallback(() => {
     setTab("review");
@@ -729,17 +802,37 @@ export default function App() {
   const invalidFps = stats?.valid ? stats.invalid_fps1s : null;
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
-  const expActive = expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
-  const startExperimentReason = !ready
+  const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
+    ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
+  const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
+
+
+  const cameraScript = useCameraScript({
+    ready, running, experimentActive: expActive, selection: camSelection, append,
+    refresh: refreshCameraState,
+  });
+  const cameraDocumentContext={ready,running,experimentActive:expActive,selection:camSelection,append,refresh:refreshCameraState};
+  const scriptDocument=useCameraDocument(cameraDocumentContext,"js");
+  const mindvisionDocument=useCameraDocument(cameraDocumentContext,"json",operatingMode==="service"&&triggerArmed);
+  const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
+  const cores = useCoreManagement({ready,resume:resumedNative,active:expActive,append,onChanged:refreshConfig});
+  const startExperimentReason = !ready || !cores.initialized
     ? "Backend is not initialized"
     : !running
       ? "Camera must be running before starting an experiment"
       : expActive
         ? "Experiment is already running"
-        : "Authoritative readiness is unavailable in this backend revision";
+        : experimentRequestBusy ? "Experiment start request pending" : undefined;
+  const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
+  const profiles = useProfiles({ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
+  useEffect(()=>{const fps=profiles.activeProfile?.display_fps;if(typeof fps==="number"&&Number.isFinite(fps))setPreviewFpsLimit(Math.min(240,Math.max(1,fps)));},[profiles.activeProfile]);
 
+
+  const reviewExport = useReviewExport(ready, append);
+  const reanalysis = useReanalysis(ready);
+  const requestClose = useCloseGuard({ready, busy:scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:(text)=>{append(text);setShowLog(true);}});
   const cameraConfigured = camSelection?.configured ?? false;
-  const startCameraReason = !ready
+  const startCameraReason = cores.appUpdateBusy ? "Application update is pending" : cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
     : !cameraConfigured
       ? "No camera configured — select a device in the Connect tab"
@@ -801,17 +894,17 @@ export default function App() {
     autofocus: {
       valid: afStatus?.valid ?? false,
       connected: afStatus?.connected ?? false,
-      identity: afStatus?.valid ? `COM${afStatus.com_port}` : "",
+      identity: afStatus?.connected ? (afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}`) : "",
     },
     samplePump: {
       valid: samplePump?.valid ?? false,
       connected: samplePump?.connected ?? false,
-      identity: samplePump?.valid ? `COM${samplePump.com_port}` : "",
+      identity: samplePump?.connected ? (samplePump.port_name || `COM${samplePump.com_port}`) : "",
     },
     sheathPump: {
       valid: sheathPump?.valid ?? false,
       connected: sheathPump?.connected ?? false,
-      identity: sheathPump?.valid ? `COM${sheathPump.com_port}` : "",
+      identity: sheathPump?.connected ? (sheathPump.port_name || `COM${sheathPump.com_port}`) : "",
     },
     trigger: { valid: trigStatus?.valid ?? false, cameraAttached: trigStatus?.camera_attached ?? false },
     // Authoritative storage/free-space status is not bridged yet (backend
@@ -847,7 +940,7 @@ export default function App() {
   // Warnings = unresolved attention items surfaced by preflight + quality.
   const warningsCount = preflight.failed + preflight.warning + quality.warn + quality.fail;
   const contextFacts: ContextBarFacts = {
-    profileName: "", // Experiment Profile management not bridged yet (UX-2 #306)
+    profileName: profiles.activeProfile?.profile_id || profiles.activeProfile?.name || "",
     cameraConfigured,
     cameraRunning: running,
     cameraLabel: camSelection?.label || (camSelection?.mode === 1 ? "Mock camera" : ""),
@@ -943,16 +1036,16 @@ export default function App() {
                   .catch((e) => append(`open data folder failed: ${e}`));
               },
             },
-            { label: "Exit", pending: PENDING.platform },
+            { label: "Exit", onClick: () => void requestClose() },
           ]}
         />
         <Menu
           label="Settings"
           items={[
-            { label: "Processing Settings…", pending: PENDING.config },
-            { label: "Pixel to Micron…", pending: PENDING.config },
-            { label: "Monitoring Settings…", pending: PENDING.monitoring },
-            { label: "Updates…", pending: PENDING.platform },
+            { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+            { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           ]}
         />
         <Menu
@@ -967,7 +1060,7 @@ export default function App() {
                 );
               },
             },
-            { label: "Report a Problem…", pending: PENDING.platform },
+            { label: "Report a Problem…", onClick: () => void openUrl("https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/new/choose").catch(e => append(`Open issue page: ${e}`)) },
           ]}
         />
         <div className="menubar-spacer" />
@@ -988,6 +1081,7 @@ export default function App() {
             <strong>Service / Commissioning mode</strong> — hardware-actuating controls are enabled.
             Not for routine operation.
           </span>
+          <label><input type="checkbox" checked={triggerArmed} disabled={expActive} onChange={e => setTriggerArmed(e.target.checked)} /> Arm one hardware action</label>
           <button type="button" onClick={() => enterMode("operator")}>
             Exit to Operator
           </button>
@@ -1044,16 +1138,16 @@ export default function App() {
             <SideRow k="Flush Status:" v={expStatus?.flushing ? "Flushing" : "Idle"} />
             <SideRow k="Valid Images Saved:" v={expStatus?.valid ? expStatus.valid_saved : "Unavailable"} />
             <SideRow
-              k="Runtime:"
-              v="Unavailable (clock domain unverified)"
+              k="Elapsed (wall):"
+              v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}
             />
           </div>
           <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
             <h4>Nanopositioner Autofocus</h4>
             <SideRow
-              k="COM Port:"
-              v={afStatus?.valid ? `COM${afStatus.com_port}` : "—"}
-              cls={afStatus?.valid ? "" : "dim"}
+              k="Endpoint:"
+              v={afStatus?.connected ? (afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}`) : "Disconnected"}
+              cls={afStatus?.connected ? "" : "dim"}
             />
             <SideRow
               k="Voltage:"
@@ -1154,7 +1248,15 @@ export default function App() {
             </div>
           )}
 
+          <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => setTab("connect")} />
+          <ExperimentRecovery ready={ready} status={expStatus} onStatus={setExpStatus} />
+          <ReanalysisStatus model={reanalysis}/>
+          <ExportStatus model={reviewExport} />
           <div className="tab-body">
+            <div hidden={tab !== "connect"}>
+              <HardwareControls ready={ready} experimentActive={expActive} append={append}
+                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
+            </div>
             {/* ---- Connect ---- */}
             {tab === "connect" && (
               <>
@@ -1208,7 +1310,7 @@ export default function App() {
                     <button onClick={refreshCameraState} disabled={!ready}>Refresh</button>
                     <button
                       onClick={onConnectPicked}
-                      disabled={!ready || !pickedDevice}
+                      disabled={!ready || !pickedDevice || cameraScript.busy || running || expActive}
                       title={pickedDevice ? undefined : "Pick a device first"}
                     >
                       Connect
@@ -1299,7 +1401,7 @@ export default function App() {
               <>
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
-                  <button disabled title="ROI overlay rendering lands with UI-2 (#267)">ROI Overlay: Off</button>
+
                   <label>
                     X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
                   </label>
@@ -1349,21 +1451,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="toolbar" style={{ marginTop: 6 }}>
-                  <button disabled title={PENDING.script}>Reset</button>
-                  <button disabled title={PENDING.script}>Save</button>
-                  <button disabled title={PENDING.script}>Apply to Camera</button>
-                  <button disabled title={PENDING.script}>Browse…</button>
-                  <button disabled title={PENDING.script}>Clear</button>
-                  <span className="path-label right">camera script: not bridged (BE-2 #272)</span>
-                </div>
-                <textarea
-                  className="script-editor"
-                  disabled
-                  title={PENDING.script}
-                  value={"// Camera script editing is not bridged yet — BE-2 (#272)."}
-                  readOnly
-                />
+                <CameraScriptControls model={cameraScript} />
                 <p className="mono">
                   {lastMeta
                     ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`
@@ -1401,6 +1489,8 @@ export default function App() {
                   </div>
                 </div>
 
+                {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+
                 {expTab === "preview" && (
                   <>
                     <div className="canvas-wrap">
@@ -1408,7 +1498,7 @@ export default function App() {
                       <canvas ref={previewCanvasRef} className={fitWindow ? "fit" : ""} />
                     </div>
                     <div className="toolbar" style={{ marginTop: 6 }}>
-                      <button disabled title={PENDING.monitoring}>Overlay: Both</button>
+
                       <span className="legend">
                         <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
@@ -1436,9 +1526,9 @@ export default function App() {
                       >
                         Clear Background
                       </button>
-                      <label title="Auto background is configured via auto_background_* in the App config">
-                        <input type="checkbox" disabled checked={false} /> Auto
-                      </label>
+                      <button onClick={()=>{setConfigTab("app");}} title="Edit image_processing.auto_background_* in the configuration below">
+                        Auto background: {autoBackgroundEnabled ? "on" : "off"} · configure
+                      </button>
                       <button
                         onClick={async () => {
                           setRoiFields({ x: "0", y: "0", w: "0", h: "0" });
@@ -1449,13 +1539,15 @@ export default function App() {
                       >
                         Clear ROI
                       </button>
-                      <button disabled title={PENDING.saveBuffer}>Save Buffer</button>
+
                       <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
                       </button>
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
-                    <input type="range" className="scrub" disabled title={PENDING.saveBuffer} aria-label="Preview buffer scrub (not bridged)" />
+                    <PreviewBufferControls model={previewBuffer} />
+                    <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
+                    <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>
@@ -1469,20 +1561,12 @@ export default function App() {
                       {configTab === "app" && (
                         <>
                           <div className="toolbar">
-                            <button onClick={refreshConfig} disabled={!ready} title="Reload the live config from the backend">
+                            <button onClick={()=>{if((!configDirty&&!quickDraft.dirty)||window.confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
                               Reload
                             </button>
-                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
+                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
                               Apply
                             </button>
-                            <label>
-                              Profile:{" "}
-                              <select disabled title={PENDING.profiles}>
-                                <option>&lt;no prof&gt;</option>
-                              </select>
-                            </label>
-                            <button disabled title={PENDING.profiles}>Save Profile</button>
-                            <button disabled title={PENDING.profiles}>Show Diff</button>
                             <span className="mono right" title="Active processing core identity (backend-owned trust)">
                               core {coreStatus?.valid ? `v${coreStatus.active_version} (${coreStatus.source})` : "—"}
                               {coreStatus?.valid && !coreStatus.pin_satisfied
@@ -1490,16 +1574,19 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
+                          <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />
+                          <ProfilesPanel model={profiles} />
+                          <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
                               <h5>Live config document (merge-applied on Apply)</h5>
+                              {liveDraft.runtimeChanged&&configDirty&&<p role="status">Runtime configuration changed; your draft is preserved. Reload and reconcile before applying a stale snapshot.</p>}
                               <textarea
                                 className="script-editor"
                                 style={{ minHeight: 160 }}
                                 value={configText}
                                 onChange={(e) => {
-                                  setConfigText(e.target.value);
-                                  setConfigDirty(true);
+                                  liveDraft.edit(e.target.value);
                                 }}
                                 aria-label="Processing configuration JSON"
                               />
@@ -1511,7 +1598,7 @@ export default function App() {
                                   <input
                                     type="checkbox"
                                     checked={procEnabled}
-                                    onChange={(e) => setProcEnabled(e.target.checked)}
+                                    onChange={(e) => quickDraft.edit(JSON.stringify({enabled:e.target.checked,factor:pixelToMicron}))}
                                   />{" "}
                                   realtime processing
                                 </label>
@@ -1523,13 +1610,14 @@ export default function App() {
                                     type="text"
                                     style={{ width: 70 }}
                                     value={pixelToMicron}
-                                    onChange={(e) => setPixelToMicron(e.target.value)}
+                                    onChange={(e) => quickDraft.edit(JSON.stringify({enabled:procEnabled,factor:e.target.value}))}
                                   />
                                 </label>
-                                <button className="btn" onClick={onApplyProcessing} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+                                <button className="btn" onClick={onApplyProcessing} disabled={!ready || quickDraft.runtimeChanged} title={ready ? undefined : "Backend is not initialized"}>
                                   Apply
                                 </button>
                               </div>
+                              {quickDraft.runtimeChanged && <p role="status">Runtime processing controls changed; your edits are preserved. Use Reload above, then reconcile your changes.</p>}
                               {stats?.valid && (
                                 <p className="mono">
                                   algo {formatMetric(stats.algo_fps1s)} · valid {formatMetric(stats.valid_fps1s)} · invalid{" "}
@@ -1541,22 +1629,7 @@ export default function App() {
                           </div>
                         </>
                       )}
-                      {configTab === "script" && (
-                        <>
-                          <div className="toolbar">
-                            <button disabled title={PENDING.script}>Reset</button>
-                            <button disabled title={PENDING.script}>Save</button>
-                            <button disabled title={PENDING.script}>Apply to Camera</button>
-                          </div>
-                          <textarea
-                            className="script-editor"
-                            disabled
-                            title={PENDING.script}
-                            value={"// Camera script editing is not bridged yet — BE-2 (#272)."}
-                            readOnly
-                          />
-                        </>
-                      )}
+                      {configTab === "script" && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
                     </div>
                   </>
                 )}
@@ -1686,22 +1759,12 @@ export default function App() {
                       </span>
                     </div>
                     <div className="config-grid" style={{ flex: 1 }}>
-                      <div className="config-group" title={PENDING.monitoring}>
-                        <h5>Deformability vs Area (µm²)</h5>
+                      <MonitoringCharts snapshot={monSnapshot} />
+                      <div className="config-group">
+                        <h5>Processing settings</h5>
+                        <button disabled={expActive} onClick={() => {setExpTab("preview");setConfigTab("app");}}>Edit processing configuration</button>
                         <p className="pending-note">
-                          Chart rendering lands with UI-3 (#268); the bounded metric rows below are the live chart inputs.
-                        </p>
-                      </div>
-                      <div className="config-group" title={PENDING.monitoring}>
-                        <h5>Ring Width Distribution</h5>
-                        <p className="pending-note">
-                          Chart rendering lands with UI-3 (#268); ring-ratio inputs are in the metric rows below.
-                        </p>
-                      </div>
-                      <div className="config-group" title={PENDING.config}>
-                        <h5>Tune Params</h5>
-                        <p className="pending-note">
-                          Filter thresholds / target group / multi-image editing lands with the config round-trip — BE-3 (#273).
+                          Filter thresholds, target groups and multi-image settings use the checked processing configuration. Changes are locked during an experiment.
                         </p>
                       </div>
                     </div>
@@ -1714,7 +1777,7 @@ export default function App() {
                             <th>Track</th>
                             <th>Valid</th>
                             <th>Target</th>
-                            <th>Area (µm²)</th>
+                            <th>Area (raw px²)</th>
                             <th>Deformability</th>
                             <th>Ring ratio</th>
                             <th>E (kPa)</th>
@@ -1731,7 +1794,7 @@ export default function App() {
                               <td>{r.area.toFixed(1)}</td>
                               <td>{r.deformability.toFixed(3)}</td>
                               <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
                             </tr>
                           ))}
                           {(monSnapshot?.rows?.length ?? 0) === 0 && (
@@ -1754,20 +1817,30 @@ export default function App() {
             {tab === "review" && (
               <>
                 <div className="toolbar">
-                  <button onClick={onSelectHdf} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+                  <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} title={ready ? undefined : "Backend is not initialized"}>
                     Select HDF File…
                   </button>
-                  <button disabled title="Loading a new file replaces the current one">Close File</button>
+                  <button disabled={!reviewMeta?.file_open || expActive || recording || reviewSourceBusy} onClick={async () => {
+                    if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);++reviewSourceGeneration.current;
+                    try {
+                    const result = await bridge.closeReview();
+                    if (!result.ok) return append(result.message);
+                    clearReviewSource();
+                    }catch(e){append(`Close review failed: ${e}`);}finally{reviewSourcePending.current=false;setReviewSourceBusy(false);}
+                  }}>Close File</button>
                   <button
-                    onClick={onExportCsv}
-                    disabled={!reviewMeta?.file_open}
+                    onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}
+                    disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy}
                     title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
                   >
                     Export Metrics to CSV…
                   </button>
-                  <button disabled title={PENDING.review}>Export All…</button>
-                  <button disabled title={PENDING.review}>Batch Metrics…</button>
-                  <button disabled title={PENDING.review}>Regenerate masks…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("charts")}>Export Charts…</button>
+                  <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
+                  <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
+
                   <span className="legend">
                     <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                     <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
@@ -1780,7 +1853,7 @@ export default function App() {
                   </span>
                 </div>
                 <div className="subtabs" role="tablist" aria-label="Review views">
-                  <button className={reviewTab === "raw" ? "active" : ""} onClick={() => setReviewTab("raw")}>
+                  <button className={reviewTab === "raw" ? "active" : ""} onClick={() => { ++metricsGeneration.current; setMetricsPage(null); setReviewTab("raw"); }}>
                     Raw Frames
                   </button>
                   <button
@@ -1791,7 +1864,6 @@ export default function App() {
                       setReviewTab("valid");
                       setReviewImgIndex(0);
                       await loadMetricsPage(true, 0);
-                      await drawReviewImage(0, 0);
                     }}
                   >
                     Valid Frames
@@ -1804,35 +1876,37 @@ export default function App() {
                       setReviewTab("invalid");
                       setReviewImgIndex(0);
                       await loadMetricsPage(false, 0);
-                      await drawReviewImage(1, 0);
                     }}
                   >
                     Invalid Frames
                   </button>
-                  <button disabled title="Chart rendering lands with UI-4 (#269)">Charts</button>
+                  <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
                 </div>
                 <div className="subtab-body">
-                  <div className="review-split">
+                  <ReviewExportOptions model={reviewExport}/>
+                  <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>
+                  {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
+                  <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
                     <div className="frames">
-                      <div className="canvas-wrap">
+                      {reviewMeta?.file_open && (reviewTab === "valid" || reviewTab === "invalid") && <SavedReviewImage metadata={reviewMeta} valid={reviewTab === "valid"} index={reviewImgIndex} fit={fitWindow}/>}
+                      <div className="canvas-wrap" style={{display:reviewTab === "raw" ? undefined : "none"}}>
                         {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
                         <canvas ref={reviewCanvasRef} className={fitWindow ? "fit" : ""} />
                       </div>
-                      {reviewing && reviewTab === "raw" && BigInt(range.count) > 0n && (
+                      {reviewing && reviewTab === "raw" && (reviewMeta?.recorded_images.count ?? 0) > 0 && (
                         <>
                           <input
                             type="range"
                             className="scrub"
-                            min={range.earliest}
-                            max={range.latest}
+                            min={0}
+                            max={Math.max(0, (reviewMeta?.recorded_images.count ?? 0) - 1)}
                             value={reviewIndex}
                             onChange={(e) => onScrub(e.target.value)}
-                            disabled={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
-                            title={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
+                            title="Choose recorded frame"
                             aria-label="Frame scrubber"
                           />
                           <span className="mono">
-                            frame {reviewIndex} of [{range.earliest}…{range.latest}] ({range.count} available)
+                            frame {reviewIndex} of {reviewMeta?.recorded_images.count ?? 0} recorded frames
                           </span>
                         </>
                       )}
@@ -1852,7 +1926,6 @@ export default function App() {
                             onChange={async (e) => {
                               const idx = Number(e.target.value);
                               setReviewImgIndex(idx);
-                              await drawReviewImage(reviewTab === "valid" ? 0 : 1, idx);
                             }}
                             aria-label="Review image scrubber"
                           />
@@ -1879,15 +1952,19 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {(metricsPage?.rows ?? []).map((r) => (
-                            <tr key={`${r.frame_index}:${r.object_id}`}>
+                          {(metricsPage?.rows ?? []).map((r, rowIndex) => (
+                            <tr key={`${r.frame_index}:${r.object_id}`} tabIndex={0}
+                              aria-selected={reviewImgIndex === metricsOffset + rowIndex}
+                              onClick={() => setReviewImgIndex(metricsOffset + rowIndex)}
+                              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setReviewImgIndex(metricsOffset + rowIndex); } }}>
+
                               <td>{r.frame_index}</td>
                               <td>{r.object_id}</td>
                               <td>{r.track_id}</td>
                               <td>{r.area.toFixed(1)}</td>
                               <td>{r.deformability.toFixed(3)}</td>
                               <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
                             </tr>
                           ))}
                           {(metricsPage?.rows?.length ?? 0) === 0 && (
