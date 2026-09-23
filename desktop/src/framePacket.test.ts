@@ -1,10 +1,10 @@
-import golden from "../../crates/mib-bridge/contract/fixtures/frame-v1.json";
+import golden from "../../crates/mib-bridge/contract/fixtures/frame-v2.json";
 import { expect, it } from "vitest";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { FRAME_PACKET } from "./bridgeContract";
 function fixture(id = 18446744073709551615n) {
   const b = new ArrayBuffer(100), d = new DataView(b);
-  d.setUint32(0,0x4642494d,true); d.setUint16(4,1,true); d.setUint16(6,96,true);
+  d.setUint32(0,0x4642494d,true); d.setUint16(4,2,true); d.setUint16(6,96,true);
   d.setUint32(8,1,true); d.setUint32(12,1,true);
   [id,id,2n,2n,0n,2n,4n,0n,0n,0n].forEach((v,i)=>d.setBigUint64(16+8*i,v,true));
   new Uint8Array(b,96).set([1,2,3,4]); return b;
@@ -24,7 +24,7 @@ it("rejects truncation, excess bytes, oversize input and source mismatch",()=>{
   expect(()=>decodeFramePacket(fixture(),2)).toThrow();
   expect(()=>decodeFramePacket(new Uint8Array([...new Uint8Array(fixture()),0]).buffer,1)).toThrow();
 });
-it.each([32,40,48,56,64,72,80,88])("rejects malformed u64 field %s",offset=>{
+it.each([32,40,48,56,64,80])("rejects malformed u64 field %s",offset=>{
   const b=fixture(); new DataView(b).setBigUint64(offset,18446744073709551615n,true);
   expect(()=>decodeFramePacket(b,1)).toThrow();
 });
@@ -43,4 +43,9 @@ it("decodes the binary golden also emitted by the C++/Rust producer test",()=>{
   expect(packet.frame_index).toBe(golden.frame_index);
   expect(packet.timestamp_ns).toBe(golden.timestamp_ns);
   expect(Array.from(packet.data)).toEqual(golden.pixels);
+});
+it('carries exact acquisition/store epochs only for live raw frames',()=>{
+ const b=fixture();const d=new DataView(b);d.setBigUint64(72,9007199254740993n,true);d.setBigUint64(88,18446744073709551615n,true);
+ const p=decodeFramePacket(b,1);expect(p.session_id).toBe('9007199254740993');expect(p.store_generation).toBe('18446744073709551615');expect(p.config_revision).toBeNull();
+ d.setUint32(12,3,true);expect(()=>decodeFramePacket(b,3)).toThrow('UNSUPPORTED_IDENTITY');
 });

@@ -172,6 +172,8 @@ BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     BridgeFrame out{};
     out.valid = true;
     out.frame_index = frame.frameIndex;
+    out.capture_session = frame.captureSession;
+    out.store_generation = frame.storeGeneration;
     out.timestamp_ns = frame.timestampNs;
     out.width = frame.width;
     out.height = frame.height;
@@ -1735,7 +1737,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 17; }
+std::uint32_t bridge_abi_version() { return 18; }
 
 } // namespace mib_bridge
 

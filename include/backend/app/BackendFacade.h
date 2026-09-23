@@ -461,6 +461,8 @@ namespace backend::bridge
 
     struct BackendFrame
     {
+        std::uint64_t captureSession{0};
+        std::uint64_t storeGeneration{0};
         std::uint64_t frameIndex{0};
         std::uint64_t timestampNs{0};
         std::uint64_t width{0};

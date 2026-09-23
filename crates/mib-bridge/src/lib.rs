@@ -490,6 +490,8 @@ pub mod ffi {
     /// bytes. `valid` is false when no frame is available.
     #[derive(Debug, Clone, Default)]
     pub struct BridgeFrame {
+        pub capture_session: u64,
+        pub store_generation: u64,
         pub valid: bool,
         pub frame_index: u64,
         pub timestamp_ns: u64,

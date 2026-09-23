@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 17;
+export const BRIDGE_ABI_VERSION = 18;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -222,14 +222,14 @@ export const RECORDING_STATES = {
 } as const;
 
 export const FRAME_PACKET = {
-  "version": 1,
+  "version": 2,
   "header_bytes": 96,
   "byte_order": "little",
   "max_payload_bytes": 33554432,
   "max_pixels": 16777216,
   "max_dimension": 8192,
   "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
-  "identity_semantics": "source/session/config unavailable; reserved u64 slots zero",
+  "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities.",
   "pull_kinds": {
     "latest": 1,
     "indexed": 2,
@@ -249,9 +249,9 @@ export const FRAME_PACKET = {
     "pixel_format": 48,
     "stride_bytes": 56,
     "payload_bytes": 64,
-    "session_id_reserved": 72,
     "config_revision_reserved": 80,
-    "source_id_reserved": 88
+    "capture_session": 72,
+    "store_generation": 88
   }
 } as const;
 

@@ -115,6 +115,8 @@ namespace backend::bridge
         {
             BackendFrame out;
             out.frameIndex = frameIndex;
+            out.captureSession = frame.captureSession;
+            out.storeGeneration = frame.storeGeneration;
             out.timestampNs = frame.timestamp;
             out.width = frame.width;
             out.height = frame.height;

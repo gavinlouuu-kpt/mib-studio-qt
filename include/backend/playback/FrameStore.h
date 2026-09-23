@@ -17,6 +17,7 @@ namespace backend::playback {
 struct Frame {
     // Host-only identity epoch; resize renumbers indices and increments this.
     uint64_t storeGeneration = 0;
+    uint64_t captureSession = 0; // CaptureService generation; zero for non-camera producers
     uint64_t width = 0;
     uint64_t height = 0;
     uint64_t pixelFormat = 0; // PFNC code from Euresys
@@ -70,7 +71,7 @@ public:
     // monotonic acquisition stamp (0 = unknown/not applicable).
     void pushFrame(const uint8_t* src, size_t size, uint64_t width, uint64_t height,
                    size_t linePitch, uint64_t pixelFormat, uint64_t timestamp,
-                   uint64_t hostTimestampUs = 0);
+                   uint64_t hostTimestampUs = 0, uint64_t captureSession = 0);
 
     // Retrieve a copy of the latest COMMITTED frame; returns false if empty.
     // Uses the same committed-identity contract as indexed reads: never

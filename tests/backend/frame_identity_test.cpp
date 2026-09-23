@@ -19,7 +19,7 @@ int main() {
     std::thread producer([&] {
         for (uint64_t i = store->totalWritten(); i < 100000; ++i) {
             uint8_t pixels[64]; std::fill(std::begin(pixels), std::end(pixels), uint8_t(i % 251));
-            store->pushFrame(pixels, 64, 8, 8, 8, 0x01080001, i);
+            store->pushFrame(pixels, 64, 8, 8, 8, 0x01080001, i, 0, 9007199254740993ULL + i);
         }
         done = true;
     });
@@ -28,7 +28,7 @@ int main() {
         backend::bridge::BackendFrame frame;
         if (facade.fetchLatestFrame(frame)) {
             ++reads;
-            if (frame.timestampNs != frame.frameIndex || frame.data.front() != frame.frameIndex % 251) ++mismatches;
+            if (frame.captureSession != 9007199254740993ULL + frame.frameIndex || frame.storeGeneration != 1 || frame.timestampNs != frame.frameIndex || frame.data.front() != frame.frameIndex % 251) ++mismatches;
         }
     } while (!done.load());
     producer.join();

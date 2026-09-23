@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 17,
+  "abi_version": 18,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -188,14 +188,14 @@
     "Error": 5
   },
   "frame_packet": {
-    "version": 1,
+    "version": 2,
     "header_bytes": 96,
     "byte_order": "little",
     "max_payload_bytes": 33554432,
     "max_pixels": 16777216,
     "max_dimension": 8192,
     "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
-    "identity_semantics": "source/session/config unavailable; reserved u64 slots zero",
+    "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities.",
     "pull_kinds": {
       "latest": 1,
       "indexed": 2,
@@ -215,9 +215,9 @@
       "pixel_format": 48,
       "stride_bytes": 56,
       "payload_bytes": 64,
-      "session_id_reserved": 72,
       "config_revision_reserved": 80,
-      "source_id_reserved": 88
+      "capture_session": 72,
+      "store_generation": 88
     }
   },
   "json_transport": {
