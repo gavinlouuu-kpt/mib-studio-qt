@@ -41,7 +41,7 @@ export function useProfiles({ready,active,append,onOpen,onApplied}:{ready:boolea
       setMessage(text);if(text)append(text);
     }catch(e){setMessage(String(e));append(`Profiles: ${String(e)}`);}finally{pending.current=false;setBusy(false);}
   };
-  useEffect(()=>{if(!ready){restored.current=false;setActiveProfile(null);return;}if(base&&!restored.current){restored.current=true;void run("restore");}},[ready]);
+  useEffect(()=>{if(!ready){restored.current=false;setActiveProfile(null);return;}if(base&&!restored.current){restored.current=true;if(active){void profileCommand(base,{operation:"selection"}).then(r=>{if(r.ok)setActiveProfile(r.active_profile??null);else setMessage(r.error??"Cannot read runtime profile");}).catch(e=>setMessage(String(e)));}else void run("restore");}},[ready]);
   const remote=useProfileCatalog({base,selected,blocked:!ready||active||busy,dirty,onInstalled:(p)=>run("read",p),append});
   return {base,profiles,selected,activeProfile,remote,name,setName,document,edit:(v:string)=>{setDocument(v);setDirty(true);},script,editScript:(v:string|null)=>{setScript(v);setDirty(true);},dirty,busy,blocked:!ready||active||busy||remote.busy,message,run};
 }

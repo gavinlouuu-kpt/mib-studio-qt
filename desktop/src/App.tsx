@@ -40,6 +40,7 @@ import {
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
+import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
@@ -770,8 +771,9 @@ export default function App() {
     refresh: refreshCameraState,
   });
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview);
+  const cores = useCoreManagement({ready,active:expActive,append,onChanged:refreshConfig});
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
-  const profiles = useProfiles({ready, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
+  const profiles = useProfiles({ready:ready && cores.initialized, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   const reviewExport = useReviewExport(ready, append);
   const reanalysis = useReanalysis(ready);
   const cameraConfigured = camSelection?.configured ?? false;
@@ -988,7 +990,7 @@ export default function App() {
             { label: "Processing Settings…", pending: PENDING.config },
             { label: "Pixel to Micron…", pending: PENDING.config },
             { label: "Monitoring Settings…", pending: PENDING.monitoring },
-            { label: "Updates…", pending: PENDING.platform },
+            { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           ]}
         />
         <Menu
@@ -1513,6 +1515,7 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
+                          <CoreManagementPanel model={cores} />
                           <ProfilesPanel model={profiles} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">

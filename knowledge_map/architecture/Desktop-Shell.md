@@ -397,3 +397,18 @@ At most 32 MiB per image and 20,000 contour points/512 contours are delivered; c
 truncation is displayed. Unknown timestamp units remain unknown. UI polls at 5 Hz with
 one request in flight, enables retention only while active and disables it on cleanup.
 Pass `ready` and `active` from the owning Preview page; only mount one consumer.
+### Core and application release controls
+
+`coreManagement.tsx` retains operations across navigation. Core restoration completes
+before profile restoration; `cores.initialized` is the shell startup gate. Reopening a
+webview during an active experiment reads status rather than switching the kernel.
+`processing_core_command` runs expensive signature/cache verification in Tauri's blocking
+pool and delegates lifecycle authorization to the facade. The native test covers bundled
+roundtrip, corrupt persisted selection, failure recovery, persistence faults, unsupported
+signature schemes and concurrent activation requests. See [[frontend/ProcessingCoreDialog]].
+
+Settings → Updates now reaches these controls and read-only application release checks.
+The existing Rust manifest verifier recognizes both its `url`/`sha256` names and Qt's
+published `installer_url`/`installer_sha256` names. It does not launch Qt installers as
+Tauri updates. Tauri-specific package publication/installer launch/rollback remain release
+work; a successful manifest check is not proof of installable Tauri delivery.

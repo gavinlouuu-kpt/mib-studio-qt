@@ -437,5 +437,16 @@
     "calibration": "current backend pixel_to_micron, same as Qt; reference conditions labelled",
     "curves": "bundled existing scaled_isoelastic_data_6.16-4.24 table"
   },
-  "review_reanalysis_preview": "source_kind/source_path/dataset/index -> atomic Mono8 frame packet, independent reader, 64MiB frame limit"
+  "review_reanalysis_preview": "source_kind/source_path/dataset/index -> atomic Mono8 frame packet, independent reader, 64MiB frame limit",
+  "processing_core_management": {
+    "entrypoint": "processing_core_command(cache_root, request_json) -> JSON",
+    "operations": [
+      "info",
+      "restore",
+      "bundled",
+      "activate_local"
+    ],
+    "trust": "Existing portable cache/loader and shared Qt/Tauri compiled signer policy; selected index must match immutable manifest, ABI/contract/runtime/app bounds; never trust manifest-provided key alone.",
+    "persistence": "Atomic selection write in activateProcessingKernel preCommit callback; startup re-verifies signature/hash, failure marks selection unavailable; explicit bundled recovery honors pins."
+  }
 }

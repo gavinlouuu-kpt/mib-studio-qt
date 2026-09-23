@@ -1636,6 +1636,8 @@ pub fn run() {
             preview_buffer::save_preview_buffer,
 
 
+            updater::inspect_app_update,
+            config_document::processing_core_command,
             config_document::profile_fetch_url,
             config_document::profile_command,
             config_document::fetch_config_document,

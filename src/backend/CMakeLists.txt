@@ -231,6 +231,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileCatalog.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
@@ -305,6 +307,8 @@ set_target_properties(mib_backend PROPERTIES
 target_compile_definitions(mib_backend PUBLIC
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
     MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
+    MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"
+    MIB_PROCESSING_CORE_ED25519_SPKI_SHA256="${MIB_PROCESSING_CORE_ED25519_SPKI_SHA256}"
 )
 
 if(MIB_HAS_EGRABBER)

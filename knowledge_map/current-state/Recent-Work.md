@@ -2274,3 +2274,8 @@ provenance. See the catch-up execution plan for verified vs pending gates.
   fingerprint frozen processing parameters/ROI/background. Source retention is opt-in;
   old packets remain immutable across config changes and store resize. Native inline
   and async tests cover identity/pixel coherence; malformed webview packets are rejected.
+
+- 2026-09-23: Tauri processing-core registry, signed local-artifact activation, persisted
+  restore and bundled recovery reuse the shared cache/loader/signature verifiers. Qt now
+  shares the compiled trust-policy wrapper. Read-only app release checks are available;
+  Tauri package publication and installer/rollback remain explicit release gates.

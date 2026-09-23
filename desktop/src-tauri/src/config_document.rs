@@ -38,3 +38,18 @@ pub async fn profile_fetch_url(url: String) -> Result<serde_json::Value, String>
         serde_json::from_str(&mib_bridge::ffi::profile_fetch_url(&url)).map_err(|e| e.to_string())
     }).await.map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn processing_core_command(app: tauri::AppHandle, request: String) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    if request.len() > 4 * 1024 * 1024 { return Err("Core request too large".into()); }
+    let cache = match std::env::var("MIB_STUDIO_PROCESSING_CORE_CACHE_DIR") {
+        Ok(path) if !path.trim().is_empty() => std::path::PathBuf::from(path.trim()),
+        _ => app.path().app_cache_dir().map_err(|e| e.to_string())?.join("processing-cores"),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+        serde_json::from_str(&guard.pin_mut().processing_core_command(&cache.to_string_lossy(), &request)).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}

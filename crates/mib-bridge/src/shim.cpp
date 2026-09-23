@@ -1179,6 +1179,8 @@ BridgeCommandResult BackendBridge::review_export_csv(rust::Str output_path) {
     }
 }
 
+rust::String BackendBridge::processing_core_command(rust::Str cache_root, rust::Str request) { return rust::String(impl_->facade.processingCoreCommand(toStd(cache_root),toStd(request))); }
+
 rust::String BackendBridge::profile_command(rust::Str base, rust::Str request) {
     return rust::String(impl_->facade.profileCommand(toStd(base), toStd(request)));
 }

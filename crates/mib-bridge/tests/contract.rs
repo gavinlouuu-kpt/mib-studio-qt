@@ -1156,3 +1156,21 @@ fn local_profiles_roundtrip_and_conflict() {
     bridge.pin_mut().shutdown();
     std::fs::remove_dir_all(data_dir).unwrap();
 }
+
+#[test]
+#[serial]
+fn processing_core_management_bundled_roundtrip() {
+    let data_dir=std::env::temp_dir().join(format!("mib_core_management_{}",std::process::id()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut bridge=ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let cache=data_dir.join("cores").to_string_lossy().to_string();
+    let info:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"info"}"#)).unwrap();
+    assert_eq!(info["ok"],true);
+    let activate:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"bundled"}"#)).unwrap();
+    assert_eq!(activate["ok"],true);
+    let restored:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"restore"}"#)).unwrap();
+    assert_eq!(restored["ok"],true);
+    assert_eq!(activate["active_version"],restored["active_version"]);
+    bridge.pin_mut().shutdown();std::fs::remove_dir_all(data_dir).unwrap();
+}

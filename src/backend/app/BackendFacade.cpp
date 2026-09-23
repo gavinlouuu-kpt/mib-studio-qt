@@ -1,6 +1,7 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/app/ProfileCatalog.h"
+#include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
 
@@ -2417,6 +2418,7 @@ std::string BackendFacade::fetchPulseGeneratorStatusJson() const {
 std::string BackendFacade::fetchProfileCatalogUrl(const std::string& url) { return app::fetchProfileUrl(url); }
 std::string BackendFacade::profileCommand(const std::string& base, const std::string& request) {
     if (!isInitialized()) return R"({"ok":false,"error":"Backend is not initialized"})";
+    try {const auto q=nlohmann::json::parse(request);const auto op=q.value("operation","");if(op=="selection"||op=="list"||op=="read")return app::profileStoreCommand(backend_,base,request);}catch(const std::exception&e){return nlohmann::json{{"ok",false},{"error",e.what()}}.dump();}
     std::string result;
     if (!backend_.experiment().withIdleConfiguration([&] { result=app::profileStoreCommand(backend_,base,request); }))
         return R"({"ok":false,"error":"Profiles cannot change during an experiment"})";
@@ -2590,3 +2592,12 @@ std::vector<std::uint8_t> BackendFacade::fetchProcessedPreviewPacket() const {
     return packet;
 }
 } // namespace backend::bridge
+namespace backend::bridge {
+std::string BackendFacade::processingCoreCommand(const std::string& root, const std::string& request) {
+ if(!isInitialized())return R"({"ok":false,"error":"Backend is not initialized"})";
+ try{if(nlohmann::json::parse(request).value("operation","")=="info")return app::processingCoreCommand(backend_,root,request);}catch(const std::exception&e){return nlohmann::json{{"ok",false},{"error",e.what()}}.dump();}
+ std::string result;
+ if(!backend_.experiment().withIdleConfiguration([&]{result=app::processingCoreCommand(backend_,root,request);}))return R"({"ok":false,"error":"Stop the experiment before core changes"})";
+ return result;
+}
+}

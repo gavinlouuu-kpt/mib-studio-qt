@@ -771,6 +771,7 @@ namespace backend::bridge
     class BackendFacade
     {
     public:
+        std::string processingCoreCommand(const std::string& cacheRoot, const std::string& request);
         static std::string fetchProfileCatalogUrl(const std::string& url);
         std::string profileCommand(const std::string& base, const std::string& request);
         app::ConfigDocumentSnapshot fetchConfigDocument(const std::string& path) const;

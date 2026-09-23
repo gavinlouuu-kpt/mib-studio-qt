@@ -120,3 +120,20 @@ Release paths now require and validate the repository SPKI and compare it with
 the DLL's actual Authenticode signer, but provisioning the real certificate,
 pin, R2 publication, and an on-hardware Windows exercise remain live-environment
 gates tracked under A12.
+
+### Shared Tauri trust/activation policy (2026-09-23)
+
+Qt and Tauri now obtain their signature verifier from
+`backend/app/ProcessingCoreTrust`: the existing Authenticode/Ed25519 implementations,
+compiled SPKI allowlists and debug-only overrides remain authoritative. Catalog metadata
+never provides its own trusted key. Backend CMake receives the same pins as Qt.
+
+Tauri's `ProcessingCoreManagement` uses the existing content-addressed cache and portable
+loader. Selected index metadata must match the immutable version manifest, platform,
+ABI, processing contract, runtime fingerprint and app bounds; activation persists its
+selection in the service's pre-commit callback, so persistence failure leaves the previous
+kernel active. Startup re-verifies the cached artifact and fails readiness closed on a
+corrupt/missing selection; explicit bundled recovery remains subject to administrator pins.
+The shell presents registry/latest checks, downloaded-artifact verification/activation,
+and bundled recovery. Artifact download currently opens the HTTPS URL in the browser;
+select the downloaded file for native verification. This is not silent automatic updating.
