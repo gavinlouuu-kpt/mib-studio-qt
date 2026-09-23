@@ -448,3 +448,8 @@ CI also builds and extracts the Linux development `.deb` and runs the same nativ
 workflow from its packaged path, retaining package and evidence artifacts. File-dialog
 acceptance waits for actual GTK dialog closure: a slower hosted runner exposed that
 a fixed 300 ms folder-navigation delay could leave the export chooser pending.
+Webview reload and native process startup are distinct: `is_initialized` selects a
+read-only reconciliation path for retained sessions. Runtime flags, experiment status
+and review metadata must all resolve before readiness permits startup hooks. A reload
+never reapplies saved profile/core selections over current native state. Existing export
+and reanalysis jobs are polled by App-owned hooks; unknown initial status is busy, not idle.

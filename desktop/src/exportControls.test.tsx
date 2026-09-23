@@ -94,3 +94,12 @@ it("rejects reversed series ranges without starting an export",async()=>{
   await act(async()=>{model.options.setSeriesStart("5");model.options.setSeriesEnd("2");});
   await act(async()=>model.start("images"));expect(bridge.reviewExport).not.toHaveBeenCalled();
 });
+it("reload reconciles an existing native export before allowing another submission",async()=>{
+ await act(async()=>root.unmount());let finish!:(v:typeof running)=>void;
+ vi.mocked(bridge.reviewExportStatus).mockImplementation(()=>new Promise(r=>{finish=r;}));root=createRoot(host);
+ await act(async()=>root.render(<Harness/>));expect(model.busy).toBe(true);
+ await act(async()=>model.start("images"));expect(bridge.reviewExport).not.toHaveBeenCalled();
+ await act(async()=>finish(running));expect(model.status.operation_id).toBe(running.operation_id);
+ vi.mocked(bridge.reviewExportStatus).mockResolvedValue(running);
+ await act(async()=>model.cancel());expect(bridge.cancelOperation).toHaveBeenCalledWith(running.operation_id);
+});

@@ -2293,3 +2293,9 @@ Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows
   confirmation when frames are cleared), and background from a retained paused Mono8
   frame. Ring generation preconditions reject stale selections; saves reserve new folders.
   Linux RAM availability now uses MemAvailable for the shared resize budget check.
+
+- 2026-09-23: Webview reload now reconciles capture/raw recording, experiment and open
+  review metadata before publishing readiness. Retained native sessions read profile/core
+  identities without replaying startup selections, even when idle. Review UI recovers its
+  source, dataset, first-frame preview and metrics; export/reanalysis submissions remain
+  blocked until authoritative operation status has been recovered.

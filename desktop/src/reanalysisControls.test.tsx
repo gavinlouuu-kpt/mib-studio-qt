@@ -58,3 +58,12 @@ it("does not offer a late preview as background for a different requested index"
   const button=Array.from(host.querySelectorAll("button")).find(b=>b.textContent==="Use preview frame as background")!;
   expect(button.disabled).toBe(true);
 });
+it("reload recovers a native reanalysis and blocks duplicate work until reconciliation",async()=>{
+ await act(async()=>root.unmount());let finish!:(v:never)=>void;
+ vi.mocked(bridge.reviewReanalysisStatus).mockImplementation(()=>new Promise(r=>{finish=r;}));root=createRoot(host);
+ await act(async()=>root.render(<Harness/>));expect(model.busy).toBe(true);
+ await act(async()=>model.start("source.h5","all",0,0));expect(bridge.reviewReanalysis).not.toHaveBeenCalled();
+ await act(async()=>finish({state:"running",operation_id:"9007199254740993"} as never));
+ vi.mocked(bridge.cancelOperation).mockResolvedValue({ok:true} as never);
+ await act(async()=>model.cancel());expect(bridge.cancelOperation).toHaveBeenCalledWith("9007199254740993");
+});

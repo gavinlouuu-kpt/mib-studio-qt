@@ -6,7 +6,7 @@ import { configDocument } from "./configDocument";
 export interface Profile { name:string; path:string; revision:string; document_json?:string; script?:string|null; profile_id?:string;display_fps?:number }
 export interface ProfileReply { ok:boolean; error?:string; profiles?:Profile[]; profile?:Profile; destination?:string; warnings?:string[]; applied?:boolean; message?:string; display_fps?:number; profile_id?:string; active_profile?:Profile|null; selection?:Profile|null; restored?:boolean }
 export const profileCommand = (base:string, request:object) => invoke<ProfileReply>("profile_command",{base,request:JSON.stringify(request)});
-export function useProfiles({ready,active,append,onOpen,onApplied}:{ready:boolean;active:boolean;append:(s:string)=>void;onOpen:(path:string)=>Promise<void>;onApplied?:()=>Promise<void>}) {
+export function useProfiles({ready,active,resume=false,append,onOpen,onApplied}:{ready:boolean;active:boolean;resume?:boolean;append:(s:string)=>void;onOpen:(path:string)=>Promise<void>;onApplied?:()=>Promise<void>}) {
   const [base,setBase]=useState(()=>{try{return window.localStorage?.getItem("mib.profiles.directory")??"";}catch{return "";}});
   const [profiles,setProfiles]=useState<Profile[]>([]), [selected,setSelected]=useState<Profile|null>(null);
   const [name,setName]=useState(""),[document,setDocument]=useState("{}"),[script,setScript]=useState<string|null>(null);
@@ -41,7 +41,7 @@ export function useProfiles({ready,active,append,onOpen,onApplied}:{ready:boolea
       setMessage(text);if(text)append(text);
     }catch(e){setMessage(String(e));append(`Profiles: ${String(e)}`);}finally{pending.current=false;setBusy(false);}
   };
-  useEffect(()=>{if(!ready){restored.current=false;setActiveProfile(null);return;}if(base&&!restored.current){restored.current=true;if(active){void profileCommand(base,{operation:"selection"}).then(r=>{if(r.ok)setActiveProfile(r.active_profile??null);else setMessage(r.error??"Cannot read runtime profile");}).catch(e=>setMessage(String(e)));}else void run("restore");}},[ready]);
+  useEffect(()=>{if(!ready){restored.current=false;setActiveProfile(null);return;}if(base&&!restored.current){restored.current=true;if(active||resume){void profileCommand(base,{operation:"selection"}).then(r=>{if(r.ok)setActiveProfile(r.active_profile??null);else setMessage(r.error??"Cannot read runtime profile");}).catch(e=>setMessage(String(e)));}else void run("restore");}},[ready,resume,active]);
   const remote=useProfileCatalog({base,selected,blocked:!ready||active||busy,dirty,onInstalled:(p)=>run("read",p),append});
   return {base,profiles,selected,activeProfile,remote,name,setName,document,edit:(v:string)=>{setDocument(v);setDirty(true);},script,editScript:(v:string|null)=>{setScript(v);setDirty(true);},dirty,busy,blocked:!ready||active||busy||remote.busy,message,run};
 }

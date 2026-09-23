@@ -1,3 +1,4 @@
+import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
@@ -164,6 +165,8 @@ export default function App() {
 
   // Recording.
   const [recording, setRecording] = useState(false);
+  const [resumedNative,setResumedNative]=useState(false);
+  const recoveredReview=useRef(false);
   const [recPath, setRecPath] = useState("");
 
   // Processing (bridge schema v3).
@@ -258,10 +261,18 @@ export default function App() {
       .catch((e) => append(`abi error: ${e}`));
     (async () => {
       try {
-        const already = await bridge.isInitialized();
-        const ok = already || (await bridge.init(""));
-        setReady(ok);
-        append(ok ? "backend initialized" : "backend init failed");
+        const snapshot=await recoverNativeRuntime();
+        setResumedNative(snapshot.resumed);
+        setRunning(snapshot.runtime.capture_running);setRecording(snapshot.runtime.recording);
+        setExpStatus(snapshot.experiment);setReviewMeta(snapshot.review);
+        if(snapshot.review.file_open){
+          setReviewPath(snapshot.review.file_path);setReviewing(true);
+          setReviewTab(snapshot.review.recording_file?"raw":"valid");
+          recoveredReview.current=true;
+          if(!snapshot.runtime.capture_running)setTab("review");
+        }
+        setReady(true);
+        append(snapshot.resumed ? "native session recovered without replaying startup settings" : "backend initialized");
       } catch (e) {
         append(`init error: ${e}`);
       }
@@ -752,6 +763,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage]);
 
+  useEffect(()=>{
+    if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;
+    recoveredReview.current=false;
+    void loadMetricsPage(true,0,reviewMeta.file_path);
+    if(reviewMeta.recording_file)onScrub("0");
+    else if(reviewMeta.valid_images.present&&reviewMeta.valid_images.count>0)drawReviewImage(0,0);
+  },[ready,tab,reviewMeta,loadMetricsPage,onScrub,drawReviewImage]);
+
   const openReviewFromMenu = useCallback(() => {
     setTab("review");
     void onSelectHdf();
@@ -775,7 +794,7 @@ export default function App() {
     refresh: refreshCameraState,
   });
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
-  const cores = useCoreManagement({ready,active:expActive,append,onChanged:refreshConfig});
+  const cores = useCoreManagement({ready,resume:resumedNative,active:expActive,append,onChanged:refreshConfig});
   const startExperimentReason = !ready || !cores.initialized
     ? "Backend is not initialized"
     : !running
@@ -784,7 +803,7 @@ export default function App() {
         ? "Experiment is already running"
         : experimentRequestBusy ? "Experiment start request pending" : undefined;
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
-  const profiles = useProfiles({ready:ready && cores.initialized, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
+  const profiles = useProfiles({ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   useEffect(()=>{const fps=profiles.activeProfile?.display_fps;if(typeof fps==="number"&&Number.isFinite(fps))setPreviewFpsLimit(Math.min(240,Math.max(1,fps)));},[profiles.activeProfile]);
 
 

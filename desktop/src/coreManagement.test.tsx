@@ -2,10 +2,18 @@
 import {act} from "react";import {createRoot,Root} from "react-dom/client";import {beforeEach,afterEach,it,expect,vi} from "vitest";
 import {invoke} from "@tauri-apps/api/core";import {useCoreManagement,CoreManagementPanel,canonicalJson} from "./coreManagement";
 vi.mock("@tauri-apps/api/core",()=>({invoke:vi.fn()}));vi.mock("@tauri-apps/plugin-dialog",()=>({open:vi.fn()}));vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));vi.mock("./profileCatalog",()=>({fetchProfileText:vi.fn()}));Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});
-let root:Root,host:HTMLDivElement,model:ReturnType<typeof useCoreManagement>;const ctx={ready:true,active:false,append:vi.fn(),onChanged:vi.fn().mockResolvedValue(undefined)};
+let root:Root,host:HTMLDivElement,model:ReturnType<typeof useCoreManagement>;const ctx={ready:true,active:false,resume:false,append:vi.fn(),onChanged:vi.fn().mockResolvedValue(undefined)};
 function App(){model=useCoreManagement(ctx);return <CoreManagementPanel model={model}/>;}
-beforeEach(async()=>{vi.resetAllMocks();ctx.active=false;ctx.onChanged.mockResolvedValue(undefined);vi.spyOn(window,"confirm").mockReturnValue(true);vi.mocked(invoke).mockResolvedValue({ok:true,active_version:"1",bundled_version:"1",pin_satisfied:true,required_version:""});host=document.createElement("div");document.body.append(host);root=createRoot(host);await act(async()=>root.render(<App/>));});afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();});
+beforeEach(async()=>{vi.resetAllMocks();ctx.active=false;ctx.resume=false;ctx.onChanged.mockResolvedValue(undefined);vi.spyOn(window,"confirm").mockReturnValue(true);vi.mocked(invoke).mockResolvedValue({ok:true,active_version:"1",bundled_version:"1",pin_satisfied:true,required_version:""});host=document.createElement("div");document.body.append(host);root=createRoot(host);await act(async()=>root.render(<App/>));});afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();});
 it("restores startup exactly once and reports active identity",async()=>{expect(model.initialized).toBe(true);await act(async()=>root.render(<App/>));expect(vi.mocked(invoke).mock.calls.filter(([,a])=>JSON.parse((a as {request:string}).request).operation==="restore")).toHaveLength(1);expect(host.textContent).toContain("Active core: 1");});
 it("failed activation preserves displayed core and reports failure",async()=>{vi.mocked(invoke).mockImplementation(async(_c,a)=>JSON.parse((a as {request:string}).request).operation==="bundled"?{ok:false,error:"administrator pin"}:{ok:true,active_version:"1"});await act(async()=>model.run("bundled"));expect(model.info?.active_version).toBe("1");expect(model.message).toContain("administrator pin");});
 it("does not mutate a core during an active experiment",async()=>{ctx.active=true;await act(async()=>root.render(<App/>));vi.mocked(invoke).mockClear();await act(async()=>model.run("bundled"));expect(invoke).not.toHaveBeenCalled();});
 it("canonical registry comparison ignores object member ordering",()=>{expect(canonicalJson({b:2,a:{z:3,x:4}})).toBe(canonicalJson({a:{x:4,z:3},b:2}));});
+
+it("reload of an idle native session reads identity without replaying startup selection",async()=>{
+ await act(async()=>root.unmount());ctx.resume=true;vi.mocked(invoke).mockClear();root=createRoot(host);
+ await act(async()=>root.render(<App/>));
+ const operations=vi.mocked(invoke).mock.calls.map(([,args])=>JSON.parse((args as {request:string}).request).operation);
+ expect(operations).not.toContain("restore");
+ expect(operations).toContain("info");
+});

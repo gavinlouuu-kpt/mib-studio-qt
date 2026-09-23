@@ -14,7 +14,7 @@ export function canonicalJson(value:unknown):string {
  return JSON.stringify(normalized(value));
 }
 export function matchingNative(entry:Entry,info:Pick<Info,"os"|"arch">){return entry.native_plugins.find(p=>p.os===info.os&&({amd64:"x86_64",x64:"x86_64",arm64:"aarch64"}[p.arch]??p.arch)===info.arch);}
-export function useCoreManagement({ready,active,append,onChanged}:{ready:boolean;active:boolean;append:(s:string)=>void;onChanged:()=>Promise<void>}){
+export function useCoreManagement({ready,active,resume=false,append,onChanged}:{ready:boolean;active:boolean;resume?:boolean;append:(s:string)=>void;onChanged:()=>Promise<void>}){
  const [info,setInfo]=useState<Info|null>(null),[initialized,setInitialized]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
  const [channel,setChannel]=useState("stable"),[index,setIndex]=useState<Index|null>(null),[selected,setSelected]=useState(""),[registry,setRegistry]=useState("https://updates.yofo.bio");
  const [appRelease,setAppRelease]=useState<{version:string;url:string;sha256:string;artifact_family?:string}|null>(null);
@@ -48,7 +48,7 @@ export function useCoreManagement({ready,active,append,onChanged}:{ready:boolean
   }catch(e){setMessage(String(e));append(`Core/update: ${String(e)}`);try{await refresh();}catch{/* Retain primary error. */}}
   finally{pending.current=false;setBusy(false);if(action==="restore")setInitialized(true);}
  };
- useEffect(()=>{if(!ready){restored.current=false;setInitialized(false);return;}if(!restored.current){restored.current=true;if(active){setInitialized(true);void refresh().catch(e=>setMessage(String(e)));}else void run("restore");}},[ready,active]);
+ useEffect(()=>{if(!ready){restored.current=false;setInitialized(false);return;}if(!restored.current){restored.current=true;if(active||resume){setInitialized(true);void refresh().catch(e=>setMessage(String(e)));}else void run("restore");}},[ready,active,resume]);
  return {info,initialized,report:(s:string)=>setMessage(s),busy,message,channel,setChannel:(c:string)=>{setChannel(c);setIndex(null);},registry,setRegistry:(s:string)=>{setRegistry(s);setIndex(null);},index,selected,setSelected,blocked:!ready||active||busy,appRelease,run};
 }
 export function CoreManagementPanel({model:m}:{model:ReturnType<typeof useCoreManagement>}){

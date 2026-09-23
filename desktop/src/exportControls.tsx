@@ -10,6 +10,7 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
   const [isoelastic,setIsoelastic]=useState(true);
   const [status, setStatus] = useState<ReviewExportStatus>({state:"idle"});
   const [pending, setPending] = useState(false);
+  const [reconciled,setReconciled]=useState(false);
   const [error, setError] = useState("");
   const [statusError, setStatusError] = useState("");
   const submitting = useRef(false);
@@ -23,13 +24,13 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
     polling.current = true;
     try {
       const next = await bridge.reviewExportStatus();
-      if (gen === generation.current) { setStatus(next); setStatusError(""); }
+      if (gen === generation.current) { setStatus(next); setReconciled(true); setStatusError(""); }
     } catch (e) { if (gen === generation.current) setStatusError(`Export status unavailable: ${String(e)}`); }
     finally { polling.current = false; }
   }
   useEffect(() => {
     ++generation.current;
-    if (!ready) return;
+    if (!ready) {setReconciled(false);return;}
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -40,7 +41,7 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
     return () => { stopped=true; ++generation.current; clearTimeout(timer); };
   }, [ready]);
   async function start(format: ReviewExportRequest["format"], conversionFactor?: number, batch = false) {
-    if (!ready || submitting.current || currentStatus.current.state === "running") return;
+    if (!ready || !reconciled || submitting.current || currentStatus.current.state === "running") return;
     submitting.current=true; setPending(true); setError("");
     try {
       const start=Number(seriesStart),end=seriesEnd.trim()===""?undefined:Number(seriesEnd);
@@ -79,7 +80,7 @@ export function useReviewExport(ready: boolean, append: (s:string)=>void) {
     } catch (e) { setError(String(e)); }
     finally { submitting.current=false; setPending(false); }
   }
-  return {status,pending,options:{frames,setFrames,seriesEnabled,setSeriesEnabled,seriesStart,setSeriesStart,seriesEnd,setSeriesEnd,isoelastic,setIsoelastic},error:error || statusError,start,cancel,busy:pending || status.state==="running"};
+  return {status,pending,options:{frames,setFrames,seriesEnabled,setSeriesEnabled,seriesStart,setSeriesStart,seriesEnd,setSeriesEnd,isoelastic,setIsoelastic},error:error || statusError,start,cancel,busy:(ready&&!reconciled) || pending || status.state==="running"};
 }
 
 export function ExportStatus({model}:{model:ReturnType<typeof useReviewExport>}) {

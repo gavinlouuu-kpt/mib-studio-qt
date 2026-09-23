@@ -21,22 +21,23 @@ export function useReanalysis(ready:boolean) {
   const sourceRef=useRef<string|null>(null);
   const [status,setStatus]=useState<ReviewExportStatus>({state:"idle"});
   const [pending,setPending]=useState(false);
+  const [reconciled,setReconciled]=useState(false);
   const [error,setError]=useState("");
   const revision=useRef(0);
   const lock=useRef(false), current=useRef(status);current.current=status;
   useEffect(()=>{
-    if(!ready)return;
+    if(!ready){setReconciled(false);return;}
     let active=true;let timer:ReturnType<typeof setTimeout>;
     const poll=async()=>{
       const version=revision.current;
-      try {const next=await bridge.reviewReanalysisStatus();if(active && version===revision.current)setStatus(next);}
+      try {const next=await bridge.reviewReanalysisStatus();if(active && version===revision.current){setStatus(next);setReconciled(true);}}
       catch(e){if(active)setError(`Reanalysis status unavailable: ${String(e)}`);}
       finally{if(active)timer=setTimeout(()=>void poll(),500);}
     };
     void poll();return()=>{active=false;clearTimeout(timer);};
   },[ready]);
   async function start(source:string,dataset:string,start:number,count:number,options:Options={}){
-    if(!ready || lock.current || current.current.state==="running")return;
+    if(!ready || !reconciled || lock.current || current.current.state==="running")return;
     lock.current=true;setPending(true);setError("");
     try {
       if(!source || !Number.isSafeInteger(start) || start<0 || !Number.isSafeInteger(count) || count<0)throw new Error("Enter nonnegative integer range values.");
@@ -68,7 +69,7 @@ export function useReanalysis(ready:boolean) {
     try{if(!Number.isSafeInteger(spec.index) || spec.index<0)throw new Error("Preview index must be a nonnegative integer");const frame=await bridge.fetchReanalysisPreview(spec);if(!frame.valid)throw new Error("Cannot preview this source/index");setPreview({spec,frame});}
     catch(e){setDraftError(String(e));}finally{previewLock.current=false;setPreviewPending(false);}
   }
-  return {status,error,pending,start,cancel,loadPreview,previewPending,draft:{dataset,setDataset,start:startIndex,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef,previewIndex,setPreviewIndex,previewDataset,setPreviewDataset,preview,setPreview,background,setBackground,clearBackground,setClearBackground,maxFrames,setMaxFrames,maxInputMiB,setMaxInputMiB},busy:pending || status.state==="running"};
+  return {status,error,pending,start,cancel,loadPreview,previewPending,draft:{dataset,setDataset,start:startIndex,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef,previewIndex,setPreviewIndex,previewDataset,setPreviewDataset,preview,setPreview,background,setBackground,clearBackground,setClearBackground,maxFrames,setMaxFrames,maxInputMiB,setMaxInputMiB},busy:(ready&&!reconciled) || pending || status.state==="running"};
 }
 export function ReanalysisControls({model,metadata,blocked=false}:{model:ReturnType<typeof useReanalysis>;metadata:ReviewMetadata|null;blocked?:boolean}) {
   const {dataset,setDataset,start,setStart,count,setCount,kind,setKind,external,setExternal,synthetic,setSynthetic,settings,setSettings,roi,setRoi,draftError,setDraftError,sourceRef,previewIndex,setPreviewIndex,previewDataset,setPreviewDataset,preview,setPreview,background,setBackground,clearBackground,setClearBackground,maxFrames,setMaxFrames,maxInputMiB,setMaxInputMiB}=model.draft;
