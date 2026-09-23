@@ -6,7 +6,8 @@
 #include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QSettings>
-#include <QXYSeries>
+#include <QLegend>
+#include <QLegendMarker>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QTimer>
 #include <QLabel>
@@ -139,22 +140,12 @@ constexpr const char* kKdeKeyBandwidthFactor = "Monitoring/KdeBandwidthFactor";
 constexpr const char* kKdeKeyIntervalMs = "Monitoring/KdeIntervalMs";
 constexpr int kKdePreferenceVersion = 1;
 
-// Colour for a normalised density, quantised so the 500 ms refresh builds no
-// QColor per point.
-const QColor& kdeColorFor(double density)
+// Colour of a density level (0 = sparsest) on the sequential ramp.
+QColor kdeLevelColor(int level, int levels)
 {
-    static const std::vector<QColor> lut = [] {
-        std::vector<QColor> c;
-        c.reserve(65);
-        for (int i = 0; i <= 64; ++i) {
-            const auto rgb = frontend::monitoring::densityRampColor(i / 64.0);
-            c.emplace_back(rgb.r, rgb.g, rgb.b);
-        }
-        return c;
-    }();
-    if (!std::isfinite(density)) return lut.front();
-    const int idx = std::clamp(static_cast<int>(std::lround(density * 64.0)), 0, 64);
-    return lut[static_cast<std::size_t>(idx)];
+    const double t = levels > 1 ? static_cast<double>(level) / (levels - 1) : 1.0;
+    const auto rgb = frontend::monitoring::densityRampColor(t);
+    return QColor(rgb.r, rgb.g, rgb.b);
 }
 
 } // anonymous namespace
@@ -677,6 +668,7 @@ namespace frontend
         scatterSeries_->attachAxis(scatterYAxis_);
         targetGroupSeries_->attachAxis(scatterXAxis_);
         targetGroupSeries_->attachAxis(scatterYAxis_);
+        setupKdeLevelSeries();
         scatterXAxis_->setRange(scatterXMin_, scatterXMax_);
         scatterYAxis_->setRange(scatterYMin_, scatterYMax_);
 
@@ -851,36 +843,43 @@ namespace frontend
     {
         scatterSeries_->clear();
         targetGroupSeries_->clear();
-        scatterPointFrames_.clear();
-        targetPointFrames_.clear();
+        for (auto* s : kdeLevelSeries_) s->clear();
+        for (auto* s : kdeTargetLevelSeries_) s->clear();
 
         const double conversionFactor = backend_.processing().getPixelToMicronFactor();
         const double areaConversionFactor = conversionFactor * conversionFactor;
 
-        // Batch the points: one append per series instead of one signal per point.
+        // Batch the points: one append per series instead of one signal per
+        // point. With KDE on, each point goes to the series of its density
+        // level (unknown density = sparsest level until the next estimate).
         QList<QPointF> scatterPoints;
         QList<QPointF> targetPoints;
+        std::vector<QList<QPointF>> levelPoints(kdeEnabled_ ? kKdeLevels : 0);
+        std::vector<QList<QPointF>> targetLevelPoints(kdeEnabled_ ? kKdeLevels : 0);
         scatterPoints.reserve(static_cast<qsizetype>(validFrames.size()));
         for (const auto &frame : validFrames)
         {
-            if (frame.validation.isValid)
+            if (!frame.validation.isValid) continue;
+            const QPointF point(frame.validation.area * areaConversionFactor, frame.validation.deformability);
+            if (kdeEnabled_)
             {
-                double areaMicrons = frame.validation.area * areaConversionFactor;
-                double deform = frame.validation.deformability;
-                if (frame.validation.isTargetGroup) {
-                    targetPoints.append(QPointF(areaMicrons, deform));
-                    targetPointFrames_.push_back(frame.index);
-                } else {
-                    scatterPoints.append(QPointF(areaMicrons, deform));
-                    scatterPointFrames_.push_back(frame.index);
-                }
+                double density = 0.0;
+                kdeDensityForFrame(frame.index, density);
+                const int level = kdeLevelForDensity(density);
+                (frame.validation.isTargetGroup ? targetLevelPoints : levelPoints)[static_cast<std::size_t>(level)].append(point);
+            }
+            else if (frame.validation.isTargetGroup) {
+                targetPoints.append(point);
+            } else {
+                scatterPoints.append(point);
             }
         }
         scatterSeries_->append(scatterPoints);
         targetGroupSeries_->append(targetPoints);
-        if (kdeEnabled_)
+        for (std::size_t level = 0; level < levelPoints.size(); ++level)
         {
-            applyKdeColors();
+            kdeLevelSeries_[level]->append(levelPoints[level]);
+            kdeTargetLevelSeries_[level]->append(targetLevelPoints[level]);
         }
 
         if (!scatterplotView_->isUserZoomed()) {
@@ -1483,6 +1482,7 @@ namespace frontend
             kdeDensityByIndex_.clear();
             kdeFingerprint_ = KdeFingerprint{};
             setKdeModeVisuals(false);
+            updateScatterplot(recentValidFrames_); // plain series take the points back immediately
             ui->kdeToggleCheck->setToolTip(tr("Colour scatter points by local population density (Gaussian KDE, recomputed periodically)"));
         }
         saveKdePreferences();
@@ -1508,43 +1508,76 @@ namespace frontend
         saveKdePreferences();
     }
 
-    void ExperimentMonitoringTab::setKdeModeVisuals(bool on)
+    void ExperimentMonitoringTab::setupKdeLevelSeries()
     {
-        if (!scatterSeries_ || !targetGroupSeries_) return;
-        if (on)
+        // Created once, hidden until KDE is switched on. Both families take
+        // the density colour, so the target group keeps its identity through
+        // the marker shape (rectangle) instead of its colour. None of them
+        // appears in the legend.
+        for (int level = 0; level < kKdeLevels; ++level)
         {
-            // Both series take the density colour, so the target group keeps
-            // its identity through the marker shape instead of its colour.
-            targetGroupSeries_->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
+            for (bool target : {false, true})
+            {
+                auto* series = new QScatterSeries();
+                series->setMarkerSize(6.0);
+                series->setMarkerShape(target ? QScatterSeries::MarkerShapeRectangle : QScatterSeries::MarkerShapeCircle);
+                series->setColor(kdeLevelColor(level, kKdeLevels));
+                series->setName(QStringLiteral("density-%1%2").arg(level).arg(target ? QStringLiteral("-target") : QString()));
+                scatterplotChart_->addSeries(series);
+                series->attachAxis(scatterXAxis_);
+                series->attachAxis(scatterYAxis_);
+                series->setVisible(false);
+                (target ? kdeTargetLevelSeries_ : kdeLevelSeries_).push_back(series);
+            }
         }
-        else
+        hideKdeLegendMarkers();
+    }
+
+    void ExperimentMonitoringTab::hideKdeLegendMarkers()
+    {
+        // The legend lists every series of the chart; the density levels are
+        // an encoding of the plain series, not extra populations.
+        if (!scatterplotChart_) return;
+        for (const auto* family : {&kdeLevelSeries_, &kdeTargetLevelSeries_})
         {
-            scatterSeries_->clearPointsConfiguration();
-            targetGroupSeries_->clearPointsConfiguration();
-            targetGroupSeries_->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+            for (auto* series : *family)
+            {
+                for (auto* marker : scatterplotChart_->legend()->markers(series)) marker->setVisible(false);
+            }
         }
     }
 
-    void ExperimentMonitoringTab::applyKdeColors()
+    int ExperimentMonitoringTab::kdeLevelForDensity(double density)
+    {
+        if (!std::isfinite(density)) return 0;
+        const int level = static_cast<int>(std::clamp(density, 0.0, 1.0) * kKdeLevels);
+        return std::min(level, kKdeLevels - 1);
+    }
+
+    bool ExperimentMonitoringTab::kdeDensityForFrame(uint64_t frameIndex, double& density) const
+    {
+        const auto it = kdeDensityByIndex_.find(frameIndex);
+        if (it == kdeDensityByIndex_.end()) return false;
+        density = it->second;
+        return true;
+    }
+
+    void ExperimentMonitoringTab::setKdeModeVisuals(bool on)
     {
         if (!scatterSeries_ || !targetGroupSeries_) return;
-        using PointConfiguration = QXYSeries::PointConfiguration;
-        const auto build = [this](const std::vector<uint64_t>& frames) {
-            QHash<int, QHash<PointConfiguration, QVariant>> configuration;
-            configuration.reserve(static_cast<qsizetype>(frames.size()));
-            for (std::size_t i = 0; i < frames.size(); ++i)
-            {
-                double density = 0.0; // unknown (arrived after the last estimate): sparse end of the ramp
-                const auto it = kdeDensityByIndex_.find(frames[i]);
-                if (it != kdeDensityByIndex_.end()) density = it->second;
-                QHash<PointConfiguration, QVariant> conf;
-                conf.insert(PointConfiguration::Color, kdeColorFor(density));
-                configuration.insert(static_cast<int>(i), conf);
-            }
-            return configuration;
-        };
-        scatterSeries_->setPointsConfiguration(build(scatterPointFrames_));
-        targetGroupSeries_->setPointsConfiguration(build(targetPointFrames_));
+        scatterSeries_->setVisible(!on);
+        targetGroupSeries_->setVisible(!on);
+        for (auto* s : kdeLevelSeries_)
+        {
+            if (!on) s->clear();
+            s->setVisible(on);
+        }
+        for (auto* s : kdeTargetLevelSeries_)
+        {
+            if (!on) s->clear();
+            s->setVisible(on);
+        }
+        hideKdeLegendMarkers();
     }
 
     void ExperimentMonitoringTab::requestKdeUpdate()
@@ -1569,7 +1602,7 @@ namespace frontend
             if (!kdeDensityByIndex_.empty())
             {
                 kdeDensityByIndex_.clear();
-                applyKdeColors();
+                updateScatterplot(recentValidFrames_);
             }
             return;
         }
@@ -1613,7 +1646,9 @@ namespace frontend
             kdeDensityByIndex_[result.frameIndices[i]] = result.density[i];
         }
         ++kdeGeneration_;
-        applyKdeColors();
+        lastKdeComputeMs_ = result.computeMs;
+        lastKdePointCount_ = result.frameIndices.size();
+        updateScatterplot(recentValidFrames_); // re-route points into their new density levels
         ui->kdeToggleCheck->setToolTip(tr("Density (KDE) over %1 points; bandwidth %2 μm² × %3; computed in %4 ms; refreshed every %5 s")
                                            .arg(result.frameIndices.size())
                                            .arg(result.bandwidthX, 0, 'f', 1)
@@ -1775,7 +1810,8 @@ namespace frontend
         // Enable legend to show all series and position it on the right
         scatterplotChart_->legend()->setVisible(true);
         scatterplotChart_->legend()->setAlignment(Qt::AlignRight);
-        
+        hideKdeLegendMarkers();
+
         SPDLOG_INFO("Loaded {} isoelastic curves from {}", curvesByModulus.size(), filePath.toStdString());
     }
 

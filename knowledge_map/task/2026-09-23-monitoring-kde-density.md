@@ -33,6 +33,45 @@ density (KDE) colouring").
 - **Persist in `QSettings`** (`Monitoring/Kde*`, versioned) — a view
   preference, not a scientific parameter, so not in `ProcessingConfig`.
 
+## End-to-end on the mock camera (`integration.monitoring_kde_e2e`)
+
+`tests/frontend/monitoring_kde_e2e_test.cpp` boots the real `MainWindow` on
+the real pipeline (mock camera → FrameStore → realtime processing →
+monitoring rings → Monitoring tab) and runs KDE off / on / off phases of
+8 s, 8 s, 4 s. Frames: the public `gavinlouuu/512x96stream` asset
+(`python scripts/provision-assets.py --asset 512x96stream-mock-frames
+--count 1000`, background = per-pixel median, ROI = whole frame, acceptance
+criteria relaxed) at 200 fps; a synthetic ellipse set is generated when the
+asset is absent. KDE runs at its harshest cadence (500 ms). Windows,
+2026-09-23, this developer PC:
+
+| phase | capture | algo FPS | ring appends / 8 s | overlay lag | GUI 5 ms-tick p99 / max | estimates |
+|---|---|---|---|---|---|---|
+| KDE off | 199 fps | 144.6 | 2366 | 2.9 frames | 376 / 402 ms | — |
+| KDE on (500 ms) | 199 fps | 141.3 | 2339 | 2.1 frames | **45 / 56 ms** | 17 × 1000 pts, 2 ms each |
+| KDE off again | 199 fps | 143.2 | 1029 / 4 s | 1.8 frames | 382 / 396 ms | — |
+
+- Capture, processing throughput (−2 %, within run-to-run noise), ring
+  filling and overlay lag are unaffected by the estimate.
+- **Per-point configuration was the real cost.** The first cut applied
+  colours with `QXYSeries::setPointsConfiguration`; the same harness then
+  measured GUI 5 ms-tick p99 / max of 592 / 621 ms with KDE on (≈ +220 ms
+  per 500 ms refresh over the baseline). Routing points into eight
+  density-level series instead brought it to 45 / 56 ms.
+- **Pre-existing finding:** with KDE *off*, every 500 ms refresh already
+  stalls the GUI thread ~380 ms at this load (1000 points in one plain
+  `QScatterSeries` plus thumbnails). The same points spread over eight
+  series repaint in ~45 ms, so the plain series path is the suspect; not
+  changed here (out of scope), worth a follow-up (TD candidate).
+- Test-harness lessons: on Windows the Conan Qt 6.7.3 offscreen platform
+  deadlocks in the `QApplication` constructor when anything was written to
+  stderr before it (and, intermittently, when stdout/stderr are pipes); the
+  e2e uses the native `windows` platform on Windows like
+  `processing_core_dialog_test`. Starting capture re-applies the config
+  file, so the relaxed criteria and the ROI (config ROI 704,500 is outside
+  512x96 frames; the screenshot tour moves it too) are applied afterwards.
+  Screenshots of both states go to `MIB_KDE_E2E_OUT`.
+
 ## Verification (Windows, `windows-ninja`, 2026-09-23)
 
 - `mib_backend_tests monitoring_density_test` — kernel invariants, per-axis
@@ -40,6 +79,8 @@ density (KDE) colouring").
   invariance, ramp monotonicity, 4× points → 17.6× time (gate 64×).
 - `mib_frontend_tests monitoring_kde_density_test` — offscreen widget
   scenario (see the test header).
+- `mib_frontend_tests monitoring_kde_e2e_test` (label `integration`, not in
+  the Windows fast lane) — the mock-camera end-to-end above, 28 s.
 - `python scripts/check_docs.py`, `python scripts/check_screenshots.py`.
 - Windows fast lane (`ctest --preset windows-ninja-test`): 119 / 120. The one
   failure, `frontend.mainwindow_shutdown`, has a fixed 1 s exit budget and on

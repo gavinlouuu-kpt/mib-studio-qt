@@ -83,9 +83,21 @@ public:
     bool kdeJobInFlight() const { return kdeWatcher_ != nullptr; }
     bool kdeTimerActive() const;
     uint64_t kdeGeneration() const { return kdeGeneration_; } // completed estimates
+    int lastKdeComputeMs() const { return lastKdeComputeMs_; }
+    std::size_t lastKdePointCount() const { return lastKdePointCount_; }
     QCheckBox* kdeToggle() const;
     QScatterSeries* scatterSeriesForTests() const { return scatterSeries_; }
     QScatterSeries* targetGroupSeriesForTests() const { return targetGroupSeries_; }
+    // While KDE is on, points are routed into one series per density level
+    // (index 0 = sparsest) instead of Qt's per-point configuration, which
+    // rebuilds one graphics item per point on every refresh (~200 ms for
+    // 1000 points on the GUI thread, measured in integration.monitoring_kde_e2e).
+    static constexpr int kKdeLevels = 8;
+    static int kdeLevelForDensity(double density);
+    const std::vector<QScatterSeries*>& kdeLevelSeriesForTests() const { return kdeLevelSeries_; }
+    const std::vector<QScatterSeries*>& kdeTargetLevelSeriesForTests() const { return kdeTargetLevelSeries_; }
+    // Density of a frame from the last completed estimate; false if unknown.
+    bool kdeDensityForFrame(uint64_t frameIndex, double& density) const;
     // Append frames to the rolling buffer as if they had been polled from the
     // backend and redraw (tests drive the charts without a running pipeline).
     void injectMonitoringFramesForTests(const std::vector<backend::services::ProcessedFrame>& frames);
@@ -181,7 +193,8 @@ private:
     QImage createOverlayImage(const cv::Mat& original, const cv::Mat& mask, const backend::services::FilterResult* validation = nullptr) const;
     // KDE colouring (see the public block above).
     void onKdeJobFinished();
-    void applyKdeColors();
+    void setupKdeLevelSeries();
+    void hideKdeLegendMarkers();
     void setKdeModeVisuals(bool on);
     void loadKdePreferences();
     void saveKdePreferences();
@@ -233,6 +246,8 @@ private:
     QFutureWatcher<KdeResult>* kdeWatcher_ = nullptr;
     std::unordered_map<uint64_t, double> kdeDensityByIndex_; // last completed estimate
     uint64_t kdeGeneration_ = 0;
+    int lastKdeComputeMs_ = 0;
+    std::size_t lastKdePointCount_ = 0;
     struct KdeFingerprint {
         std::size_t count{0};
         uint64_t firstIndex{0};
@@ -246,10 +261,10 @@ private:
         }
     };
     KdeFingerprint kdeFingerprint_; // input of the last launched estimate
-    // Frame index behind each series point, in append order (rebuilt by
-    // updateScatterplot) so the density map can be applied per point.
-    std::vector<uint64_t> scatterPointFrames_;
-    std::vector<uint64_t> targetPointFrames_;
+    // One scatter series per density level (circles) and per level for the
+    // target group (rectangles); hidden and empty while KDE is off.
+    std::vector<QScatterSeries*> kdeLevelSeries_;
+    std::vector<QScatterSeries*> kdeTargetLevelSeries_;
 
     // Fixed chart axis ranges (user-definable)
     double scatterXMin_ = 0.0;

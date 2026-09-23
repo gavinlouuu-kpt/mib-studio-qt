@@ -2,20 +2,21 @@
 //
 // ExperimentMonitoringTab scatter density (KDE) colouring (offscreen, mock
 // backend, frames injected directly into the rolling buffer):
-//  - off by default: no per-point colours, timer idle, defaults persisted-free;
-//  - enabling colours every point at once (sparse end of the ramp), starts the
-//    periodic timer and launches the estimate on a worker thread; when it
-//    lands, crowded points are darker than isolated ones and the densest
-//    point wears the top of the ramp; the target group keeps a distinct
-//    marker shape;
-//  - points that arrive after an estimate are drawn with the sparse colour
-//    until the next estimate, which then colours them;
+//  - off by default: the plain series carry the points, the density-level
+//    series are empty and hidden, timer idle;
+//  - enabling re-routes every point into a density-level series at once
+//    (sparsest level until the first estimate), starts the periodic timer
+//    and launches the estimate on a worker thread; when it lands, crowded
+//    points sit in higher levels than isolated ones and the densest point
+//    reaches the top level; target-group points use the rectangle family;
+//  - points that arrive after an estimate sit in the sparsest level until
+//    the next estimate, which then places them;
 //  - an unchanged buffer does not relaunch the job; a large buffer is
 //    computed asynchronously (the call returns with the job in flight);
-//  - hide stops the timer, show restarts it; disabling clears the colours and
-//    restores the marker shape;
-//  - the three settings persist through QSettings and a fresh tab and the
-//    Monitoring Settings dialog read them back; the dialog applies them.
+//  - hide stops the timer, show restarts it; disabling empties and hides the
+//    level series and restores the plain ones;
+//  - the three settings persist through QSettings; a fresh tab and the
+//    Monitoring Settings dialog read them back.
 
 #include "backend/app/AppBackend.h"
 #include "backend/processing/ProcessingService.h"
@@ -31,7 +32,6 @@
 
 #include <QApplication>
 #include <QCheckBox>
-#include <QColor>
 #include <QCoreApplication>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -40,15 +40,17 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStyleFactory>
-#include <QXYSeries>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <random>
 #include <vector>
 
 namespace {
+
+using Tab = frontend::ExperimentMonitoringTab;
 
 void settle(int rounds = 4) {
     for (int i = 0; i < rounds; ++i) {
@@ -78,13 +80,21 @@ backend::services::ProcessedFrame frame(uint64_t index, double areaPx, double de
     return f;
 }
 
-QColor pointColor(const QScatterSeries* s, int i) {
-    return s->pointConfiguration(i).value(QXYSeries::PointConfiguration::Color).value<QColor>();
+int levelPoints(const std::vector<QScatterSeries*>& series) {
+    int n = 0;
+    for (const auto* s : series)
+        n += s->count();
+    return n;
 }
 
-QColor rampColor(double t) {
-    const auto rgb = frontend::monitoring::densityRampColor(t);
-    return QColor(rgb.r, rgb.g, rgb.b);
+bool allHidden(const std::vector<QScatterSeries*>& series) {
+    return std::all_of(series.begin(), series.end(),
+                       [](const QScatterSeries* s) { return !s->isVisible() && s->count() == 0; });
+}
+
+double densityOf(const Tab& tab, uint64_t index) {
+    double d = -1.0;
+    return tab.kdeDensityForFrame(index, d) ? d : -1.0;
 }
 
 } // namespace
@@ -128,91 +138,102 @@ int main(int argc, char* argv[]) {
         frames.push_back(frame(i, clusterArea(rng), clusterDeform(rng), true));
 
     {
-        frontend::ExperimentMonitoringTab tab(backend);
+        Tab tab(backend);
         tab.resize(1100, 760);
         tab.show();
         settle(4);
         QScatterSeries* scatter = tab.scatterSeriesForTests();
         QScatterSeries* target = tab.targetGroupSeriesForTests();
+        const auto& levels = tab.kdeLevelSeriesForTests();
+        const auto& targetLevels = tab.kdeTargetLevelSeriesForTests();
         MIB_REQUIRE(scatter && target, "series exposed");
+        MIB_REQUIRE(levels.size() == Tab::kKdeLevels && targetLevels.size() == Tab::kKdeLevels,
+                    "one series per density level, per family");
 
         // ---- 1. defaults --------------------------------------------------------
         wd.mark("defaults");
         MIB_EXPECT(!tab.kdeEnabled() && !tab.kdeToggle()->isChecked(), "KDE off by default");
         MIB_EXPECT(!tab.kdeTimerActive() && !tab.kdeJobInFlight(), "no timer, no job while off");
-        MIB_EXPECT(tab.kdeBandwidthFactor() ==
-                           frontend::ExperimentMonitoringTab::kKdeBandwidthFactorDefault &&
-                       tab.kdeIntervalMs() ==
-                           frontend::ExperimentMonitoringTab::kKdeIntervalMsDefault,
+        MIB_EXPECT(tab.kdeBandwidthFactor() == Tab::kKdeBandwidthFactorDefault &&
+                       tab.kdeIntervalMs() == Tab::kKdeIntervalMsDefault,
                    "default factor and interval");
         tab.injectMonitoringFramesForTests(frames);
         settle(2);
         MIB_EXPECT(scatter->count() == 330 && target->count() == 5,
-                   "frames plotted into both series");
-        MIB_EXPECT(scatter->pointsConfiguration().isEmpty() &&
-                       target->pointsConfiguration().isEmpty(),
-                   "off: no per-point colours");
-        MIB_EXPECT(target->markerShape() == QScatterSeries::MarkerShapeCircle,
-                   "off: default marker shape");
+                   "frames plotted into the plain series");
+        MIB_EXPECT(scatter->isVisible() && target->isVisible(), "off: plain series visible");
+        MIB_EXPECT(allHidden(levels) && allHidden(targetLevels),
+                   "off: level series empty and hidden");
+        MIB_EXPECT(Tab::kdeLevelForDensity(0.0) == 0 &&
+                       Tab::kdeLevelForDensity(1.0) == Tab::kKdeLevels - 1 &&
+                       Tab::kdeLevelForDensity(std::nan("")) == 0,
+                   "density -> level mapping covers both ends and non-finite input");
 
-        // ---- 2. enable: immediate sparse colouring, async estimate --------------
+        // ---- 2. enable: immediate re-routing, asynchronous estimate --------------
         wd.mark("enable");
         tab.kdeToggle()->setChecked(true);
         settle(1);
         MIB_EXPECT(tab.kdeEnabled() && tab.kdeTimerActive(),
                    "toggle enables and starts the periodic timer");
-        MIB_EXPECT(scatter->pointsConfiguration().size() == scatter->count() &&
-                       target->pointsConfiguration().size() == target->count(),
-                   "every point configured as soon as KDE is on");
-        MIB_EXPECT(target->markerShape() == QScatterSeries::MarkerShapeRectangle,
-                   "target group keeps its identity by shape");
+        MIB_EXPECT(!scatter->isVisible() && !target->isVisible() && scatter->count() == 0,
+                   "on: plain series hidden and empty");
+        MIB_EXPECT(levelPoints(levels) == 330 && levelPoints(targetLevels) == 5,
+                   "every point routed into a level series as soon as KDE is on");
+        // A 335-point estimate can finish within one settle round, so only
+        // claim "everything sparse" while no estimate has landed yet.
+        MIB_EXPECT(tab.kdeGeneration() >= 1 ||
+                       (levels[0]->count() == 330 && targetLevels[0]->count() == 5),
+                   "before the first estimate everything sits in the sparsest level");
+        MIB_EXPECT(targetLevels[0]->markerShape() == QScatterSeries::MarkerShapeRectangle &&
+                       levels[0]->markerShape() == QScatterSeries::MarkerShapeCircle,
+                   "target family keeps its identity by shape");
         MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() >= 1; }, 15000),
                     "first estimate lands");
         MIB_EXPECT(!tab.kdeJobInFlight(), "job released after completion");
         settle(1);
         {
-            // Series index i <-> frame i for the non-target frames (append order).
-            std::vector<int> clusterLightness, outlierLightness;
-            for (int i = 0; i < 300; ++i)
-                clusterLightness.push_back(pointColor(scatter, i).lightness());
-            for (int i = 300; i < 330; ++i)
-                outlierLightness.push_back(pointColor(scatter, i).lightness());
-            std::sort(clusterLightness.begin(), clusterLightness.end());
-            const int clusterMedian = clusterLightness[clusterLightness.size() / 2];
-            const int outlierMin =
-                *std::min_element(outlierLightness.begin(), outlierLightness.end());
-            MIB_EXPECT(clusterMedian < outlierMin, "crowded points are darker than isolated ones");
-            bool topOfRamp = false;
-            for (int i = 0; i < scatter->count(); ++i)
-                topOfRamp = topOfRamp || pointColor(scatter, i) == rampColor(1.0);
-            MIB_EXPECT(topOfRamp, "the densest point wears the top of the ramp");
-            MIB_EXPECT(pointColor(target, 0).lightness() < outlierMin,
+            std::vector<double> cluster, outliers;
+            for (uint64_t i = 0; i < 300; ++i)
+                cluster.push_back(densityOf(tab, i));
+            for (uint64_t i = 300; i < 330; ++i)
+                outliers.push_back(densityOf(tab, i));
+            std::sort(cluster.begin(), cluster.end());
+            const double clusterMedian = cluster[cluster.size() / 2];
+            const double outlierMax = *std::max_element(outliers.begin(), outliers.end());
+            MIB_EXPECT(cluster.front() >= 0.0 && outlierMax >= 0.0,
+                       "every injected frame has a density");
+            MIB_EXPECT(clusterMedian > outlierMax, "crowded points are denser than isolated ones");
+            MIB_EXPECT(cluster.back() == 1.0, "the densest point reaches the top of the range");
+            MIB_EXPECT(densityOf(tab, 330) > outlierMax,
                        "target-group members inside the cluster are dense too");
+            MIB_EXPECT(levels[Tab::kKdeLevels - 1]->count() >= 1,
+                       "the top level series holds the densest points");
+            MIB_EXPECT(levelPoints(levels) == 330 && levelPoints(targetLevels) == 5,
+                       "re-routing after the estimate conserves every point");
+            MIB_EXPECT(levels[0]->count() < 330, "points moved out of the sparsest level");
         }
 
-        // ---- 3. late points: sparse until the next estimate ----------------------
+        // ---- 3. late points: sparsest level until the next estimate ---------------
         wd.mark("late");
+        const int sparseBefore = levels[0]->count();
         std::vector<backend::services::ProcessedFrame> late;
         for (uint64_t i = 335; i < 340; ++i)
             late.push_back(frame(i, clusterArea(rng), clusterDeform(rng)));
         tab.injectMonitoringFramesForTests(late);
         settle(1);
-        MIB_EXPECT(scatter->count() == 335 && scatter->pointsConfiguration().size() == 335,
-                   "late points are plotted and configured");
-        bool lateSparse = true;
-        for (int i = 330; i < 335; ++i)
-            lateSparse = lateSparse && pointColor(scatter, i) == rampColor(0.0);
-        MIB_EXPECT(lateSparse, "late points wear the sparse colour until re-estimated");
+        MIB_EXPECT(levelPoints(levels) == 335, "late points are plotted");
+        MIB_EXPECT(levels[0]->count() == sparseBefore + 5,
+                   "late points wait in the sparsest level");
+        MIB_EXPECT(densityOf(tab, 337) < 0.0, "late points have no density yet");
         const uint64_t before = tab.kdeGeneration();
         tab.requestKdeUpdate();
         MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > before; }, 15000),
                     "second estimate lands");
         settle(1);
         bool lateDense = true;
-        for (int i = 330; i < 335; ++i)
-            lateDense =
-                lateDense && pointColor(scatter, i).lightness() < rampColor(0.0).lightness();
-        MIB_EXPECT(lateDense, "late cluster points are coloured by the next estimate");
+        for (uint64_t i = 335; i < 340; ++i)
+            lateDense = lateDense && densityOf(tab, i) > 0.0;
+        MIB_EXPECT(lateDense, "late cluster points are placed by the next estimate");
 
         // ---- 4. unchanged buffer: no relaunch; large buffer: asynchronous -------
         wd.mark("fingerprint");
@@ -227,15 +248,15 @@ int main(int argc, char* argv[]) {
                 frame(i, clusterArea(rng) + (i % 7) * 40.0, clusterDeform(rng) + (i % 5) * 0.05));
         tab.injectMonitoringFramesForTests(many);
         settle(1);
-        MIB_EXPECT(scatter->count() + target->count() == 1000,
+        MIB_EXPECT(levelPoints(levels) + levelPoints(targetLevels) == 1000,
                    "rolling buffer capped at 1000 points");
         tab.requestKdeUpdate();
         MIB_EXPECT(tab.kdeJobInFlight(),
                    "a 1000-point estimate returns immediately with the job in flight");
         MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > gen; }, 15000),
                     "large estimate lands");
-        MIB_EXPECT(scatter->pointsConfiguration().size() == scatter->count(),
-                   "all 1000 points coloured");
+        MIB_EXPECT(levelPoints(levels) + levelPoints(targetLevels) == 1000,
+                   "all 1000 points still plotted");
 
         // ---- 5. hide / show, disable --------------------------------------------
         wd.mark("visibility");
@@ -248,23 +269,21 @@ int main(int argc, char* argv[]) {
         tab.kdeToggle()->setChecked(false);
         settle(2);
         MIB_EXPECT(!tab.kdeEnabled() && !tab.kdeTimerActive(), "toggle off stops the timer");
-        MIB_EXPECT(scatter->pointsConfiguration().isEmpty() &&
-                       target->pointsConfiguration().isEmpty(),
-                   "off: colours cleared");
-        MIB_EXPECT(target->markerShape() == QScatterSeries::MarkerShapeCircle,
-                   "off: marker shape restored");
+        MIB_EXPECT(allHidden(levels) && allHidden(targetLevels),
+                   "off: level series emptied and hidden");
+        MIB_EXPECT(scatter->isVisible() && target->isVisible() &&
+                       scatter->count() + target->count() == 1000,
+                   "off: plain series back with every point");
 
         // ---- 6. settings persist ------------------------------------------------
         wd.mark("persist");
         tab.setKdeBandwidthFactor(1.5);
         tab.setKdeIntervalMs(3000);
         tab.setKdeIntervalMs(10); // below the floor: clamped, not accepted verbatim
-        MIB_EXPECT(tab.kdeIntervalMs() == frontend::ExperimentMonitoringTab::kKdeIntervalMsMin,
-                   "interval clamped to its floor");
+        MIB_EXPECT(tab.kdeIntervalMs() == Tab::kKdeIntervalMsMin, "interval clamped to its floor");
         tab.setKdeIntervalMs(3000);
         tab.setKdeBandwidthFactor(99.0);
-        MIB_EXPECT(tab.kdeBandwidthFactor() ==
-                       frontend::ExperimentMonitoringTab::kKdeBandwidthFactorMax,
+        MIB_EXPECT(tab.kdeBandwidthFactor() == Tab::kKdeBandwidthFactorMax,
                    "factor clamped to its ceiling");
         tab.setKdeBandwidthFactor(1.5);
         tab.setKdeEnabled(true);
@@ -283,7 +302,7 @@ int main(int argc, char* argv[]) {
         settle(2);
     }
     {
-        frontend::ExperimentMonitoringTab again(backend);
+        Tab again(backend);
         MIB_EXPECT(again.kdeEnabled() && again.kdeToggle()->isChecked(),
                    "enabled state restored from settings");
         MIB_EXPECT(again.kdeBandwidthFactor() == 1.5 && again.kdeIntervalMs() == 3000,
@@ -292,9 +311,9 @@ int main(int argc, char* argv[]) {
         again.show();
         settle(2);
         MIB_EXPECT(again.kdeTimerActive(), "restored and shown: timer runs");
-        MIB_EXPECT(again.targetGroupSeriesForTests()->markerShape() ==
-                       QScatterSeries::MarkerShapeRectangle,
-                   "restored: target marker shape applied");
+        MIB_EXPECT(!again.scatterSeriesForTests()->isVisible() &&
+                       again.kdeLevelSeriesForTests()[0]->isVisible(),
+                   "restored: density-level series are the visible ones");
         again.close();
         settle(2);
     }

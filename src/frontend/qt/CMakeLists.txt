@@ -247,6 +247,14 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_kde_density PROPERTIES LABELS "frontend;monitoring;concurrency;safety" TIMEOUT 240)
 
+    # End-to-end: real MainWindow on the mock-camera pipeline with synthetic
+    # cells; KDE off / on / off phases gated on ratios (capture, processing,
+    # monitoring ring, overlay lag, GUI responsiveness). ~25 s, integration lane.
+    mib_test_runner_add(mib_frontend_tests monitoring_kde_e2e_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_kde_e2e_test.cpp)
+    add_test(NAME integration.monitoring_kde_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_kde_e2e_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(integration.monitoring_kde_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring;performance" TIMEOUT 300)
+
     mib_test_runner_add(mib_frontend_tests app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp)
     add_test(NAME frontend.config_apply COMMAND $<TARGET_FILE:mib_frontend_tests> app_config_apply_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

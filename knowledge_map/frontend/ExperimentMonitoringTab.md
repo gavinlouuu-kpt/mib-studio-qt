@@ -67,22 +67,33 @@ markers overlap.
   count, first/last frame index, factor, µm conversion) is skipped; the
   destructor drains an in-flight job; a result arriving after the toggle
   went off is dropped. 1000 points cost ~3 ms on a desktop core.
-- **Cheap refresh** — `updateScatterplot` (every 500 ms) only records the
-  frame index behind each series point (`scatterPointFrames_`,
-  `targetPointFrames_`) and re-applies the last density map through
-  `QXYSeries::setPointsConfiguration` (per-point `Color`, quantised 65-entry
-  LUT). Points that arrived after the last estimate wear the sparse end of
-  the ramp until the next tick. While on, the target-group series switches
-  to a **rectangle marker** so it stays identifiable without its blue; off
-  restores circles and clears all per-point configuration — the chart looks
-  exactly as before.
+- **Cheap refresh: level series, not per-point colours.** While on, the
+  plain `scatterSeries_` / `targetGroupSeries_` are hidden and
+  `updateScatterplot` (every 500 ms) routes each point into one of
+  `kKdeLevels` (8) density-level `QScatterSeries` (`kdeLevelSeries_`,
+  circles; `kdeTargetLevelSeries_`, rectangles so the target group stays
+  identifiable without its blue), each with one ramp colour and hidden from
+  the legend. Points that arrived after the last estimate sit in the
+  sparsest level until the next tick; off empties and hides the level series
+  and shows the plain ones — the chart looks exactly as before. The first
+  cut used `QXYSeries::setPointsConfiguration` (per-point `Color`); Qt
+  Charts then rebuilds one graphics item per point on every refresh, which
+  `integration.monitoring_kde_e2e` measured as ~+220 ms of GUI-thread stall
+  per 500 ms refresh for 1000 points. Never go back to per-point
+  configuration for a live series.
 - **Settings** — `MonitoringSettingsDialog` exposes *KDE bandwidth factor*
   (0.2–5, default 1) and *KDE update interval* (500–60000 ms); the toggle,
   factor and interval persist in `QSettings` under `Monitoring/Kde*` with a
   version guard (`Monitoring/KdeVersion`), like `Preview/*`. Test hooks:
   `kdeToggle()`, `requestKdeUpdate()`, `kdeJobInFlight()`,
   `kdeTimerActive()`, `kdeGeneration()`, `scatterSeriesForTests()`,
-  `injectMonitoringFramesForTests()`. Guard: `frontend.monitoring_kde_density`.
+  `injectMonitoringFramesForTests()`, `kdeLevelSeriesForTests()`,
+  `kdeDensityForFrame()`. Guards: `frontend.monitoring_kde_density`
+  (offscreen widget) and `integration.monitoring_kde_e2e` (real
+  `MainWindow` on the mock-camera pipeline with the
+  `512x96stream-mock-frames` asset or synthetic cells; ratio gates on
+  capture, processing, ring filling, overlay lag and GUI responsiveness;
+  numbers in [[../task/2026-09-23-monitoring-kde-density]]).
 
 ## Tune panel (issue #364)
 

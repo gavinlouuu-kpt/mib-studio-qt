@@ -13,10 +13,18 @@ refresh. Target-group points keep their identity by marker shape while the
 mode is on. The never-called isotropic `computeKDE` grid and the grid
 resolution setting were removed; the settings dialog now exposes a bandwidth
 factor and the update interval, and toggle/factor/interval persist in
-`QSettings`. Guards: `frontend.monitoring_density` (kernel invariants,
-per-axis separation, ratio-gated cost) and `frontend.monitoring_kde_density`
+`QSettings`. Points are rendered through eight density-level series rather
+than Qt's per-point configuration, which the new mock-camera end-to-end
+(`integration.monitoring_kde_e2e`, real `MainWindow` on the
+`512x96stream` asset at 200 fps) measured at ≈ +220 ms GUI stall per
+refresh; with level series the KDE-on refresh is ~45 ms while capture,
+processing and overlay lag are unchanged. The same run shows the
+pre-existing plain 1000-point scatter refresh stalling the GUI ~380 ms
+(follow-up). Guards: `frontend.monitoring_density` (kernel invariants,
+per-axis separation, ratio-gated cost), `frontend.monitoring_kde_density`
 (offscreen widget: toggle, asynchronous estimate, late points, hide/show,
-persistence, dialog). See [[../frontend/ExperimentMonitoringTab]] and
+persistence, dialog) and `integration.monitoring_kde_e2e`. See
+[[../frontend/ExperimentMonitoringTab]] and
 [[../task/2026-09-23-monitoring-kde-density]].
 
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
