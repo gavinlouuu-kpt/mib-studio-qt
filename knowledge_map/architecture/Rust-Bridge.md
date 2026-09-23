@@ -319,3 +319,6 @@ Pump connections accept system serial names (including Linux paths), reusing the
 ### Windows manifest XML decoding
 
 The VS link-manifest reader decodes XML entities before splitting MSBuild semicolon lists, including per-source include paths. This preserves quoted version/signer macros and ampersands in dependency paths instead of turning entity terminators into invalid linker/compiler arguments. Portable CLI regression: `python3 tools/test_gen_bridge_link_manifest.py` exercises dependency paths, compile macros, inherited-list filtering and Release-only include selection without requiring Windows.
+
+The Windows candidate CI runs the portable escaped-XML manifest regression before
+provisioning native dependencies.
