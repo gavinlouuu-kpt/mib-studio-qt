@@ -489,7 +489,27 @@ ABI 19 adds analysis-time monitoring calibration/reference curves and explicit
 fault-revision recovery/capture-lifecycle status. The full non-network/non-hardware
 115-test CTest selection now passes (one optional exporter soak skipped) after
 installing declared Python build requirements into an isolated verification venv.
-Hosted folder chooser acceptance uses GTK's Select mnemonic rather than assuming
-Return accepts a directory; failures also capture the full X11 desktop for diagnosis.
+Hosted folder chooser acceptance clicks GTK's Open button while preserving the
+typed location and asserts the exact exported destination; failures also capture the full X11 desktop for diagnosis.
 Windows candidate runs are not cancelled mid-Conan build by each branch push; the
 latest queued candidate can reuse the completed dependency cache.
+### User-operated application installers
+
+The application updater reuses Qt's HTTPS manifest and SHA256 trust model; it is not a
+second signing authority. `check_tauri_app_update` uses only
+`https://updates.yofo.bio/{stable|beta}/tauri/{windows|linux}-{x86_64|aarch64}/latest.json`.
+The manifest must contain `version` (newer SemVer than native app_version), `installer_url`
+(HTTPS, no credentials), `installer_sha256`, `installer_size_bytes` (1..4 GiB), matching
+`channel`, `artifact_family: "tauri"`, `os`, and `arch`. Qt/unidentified artifacts are rejected.
+Supported package launch formats are Windows EXE/MSI and Linux DEB/RPM through the native
+opener/package installer; AppImage/macOS installation is not claimed.
+
+Browser download is followed by operator file selection, bounded streaming SHA256 copying
+into a private cache directory, then separate explicit launch confirmation. Native tickets
+expire after 15 minutes; a replaced ticket, changed manifest, wrong platform/version,
+size/digest mismatch or changed staged bytes fails closed. Both verification and launch
+re-fetch the canonical manifest. Capture, recording, experiment finalization, export,
+reanalysis, calibration, pending UI work and unsaved drafts must be inactive. Launch holds
+the native command mutex across the final idle check and opener request. The app never
+automatically exits; opener acceptance is not reported as completed installation. Feed
+publication, signing infrastructure and real-installer acceptance remain release tasks.

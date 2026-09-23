@@ -2322,3 +2322,11 @@ Added a nonpublishing SDK-free Windows x64 build/test/portable-package lane, sep
 ## 2026-09-23 — Explicit Tauri experiment/camera recovery
 
 Closed Qt's fault acknowledgment parity gap with compare-and-acknowledge backend guarding and explicit operator review. Retained failed output/error/accounting remains visible after acknowledgment; camera errors have persistent authoritative status and explicit retry/configuration actions. Fake/mock-only regression tests cover refusal, stale confirmation, retained file outcome and reconnect gating. See [[Desktop-Shell]].
+
+- 2026-09-23: Added user-operated Tauri app installer workflow using the existing
+  HTTPS manifest/SHA256 contract. Canonical platform-specific Tauri feeds must identify
+  artifact_family=tauri, exact OS/architecture, newer SemVer, size and digest. Downloads
+  open in the browser; local packages are streamed into private verified staging and
+  manifests/digests rechecked before explicit native installer launch. Active native work,
+  pending UI operations and dirty drafts block installation. No installer was launched,
+  release published, or signing keys changed during implementation/tests.

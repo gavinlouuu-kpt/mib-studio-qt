@@ -2079,6 +2079,7 @@ dependencies = [
  "cxx",
  "hex",
  "mib-bridge",
+ "semver",
  "serde",
  "serde_json",
  "serial_test",

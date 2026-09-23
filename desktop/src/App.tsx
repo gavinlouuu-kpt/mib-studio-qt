@@ -832,7 +832,7 @@ export default function App() {
   const reanalysis = useReanalysis(ready);
   const requestClose = useCloseGuard({ready, busy:scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:(text)=>{append(text);setShowLog(true);}});
   const cameraConfigured = camSelection?.configured ?? false;
-  const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
+  const startCameraReason = cores.appUpdateBusy ? "Application update is pending" : cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
     : !cameraConfigured
       ? "No camera configured — select a device in the Connect tab"
@@ -1574,7 +1574,7 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
-                          <CoreManagementPanel model={cores} />
+                          <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />
                           <ProfilesPanel model={profiles} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">

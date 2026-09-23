@@ -20,6 +20,7 @@ mod config_document;
 mod camera_document;
 mod preview_buffer;
 pub mod updater;
+mod app_update;
 
 struct AppState {
     bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
@@ -1716,6 +1717,9 @@ pub fn run() {
 
 
             updater::inspect_app_update,
+            app_update::check_tauri_app_update,
+            app_update::verify_tauri_app_installer,
+            app_update::launch_tauri_app_installer,
             config_document::processing_core_command,
             config_document::profile_fetch_url,
             config_document::profile_command,
