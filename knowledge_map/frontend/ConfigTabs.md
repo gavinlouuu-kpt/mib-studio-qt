@@ -244,3 +244,13 @@ in window-close protection. File read/save is bounded to 4 MiB and matching .js
 or .json extensions. `cameraDocument.test.tsx` covers non-actuating editing,
 stale camera/file rejection and conflict retention; native camera-document tests
 cover invalid JSON and revision-checked persistence without hardware.
+
+Camera editors also provide Save As and Load Bundled Default. Bundled defaults
+are immutable embedded resources copied only into a dirty draft; Save As creates
+a writable copy before Apply. New files publish without replacing a concurrently
+created destination; replacing an explicitly selected existing file requires
+confirmation and its checked disk revision. MindVision Soft Trigger is distinct
+from the sorter pulse: it delegates the existing shared camera software-trigger
+command, appears only usable with armed Service mode, running MindVision capture
+and idle experiment, and is never invoked during mount/edit/save. Native command
+checks camera mode/running and experiment state under the bridge mutex.

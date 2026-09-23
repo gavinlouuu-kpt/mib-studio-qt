@@ -458,5 +458,6 @@
     "row_youngs_modulus": "stored kernel LUT kPa result;zero unavailable",
     "calibrated_plot": "valid finite rows with known positive analysis-time factor;never rescale old rows by current config",
     "reference_command": "fetch_monitoring_chart_reference -> JSON curves [{modulus,points}],curve_source;shared bundled review/Qt resource;explicit reference conditions"
-  }
+  },
+  "soft_trigger_camera": "Explicit MindVision camera software exposure trigger; shell requires armed Service mode, native command requires running MindVision camera and idle experiment; no automatic invocation"
 }

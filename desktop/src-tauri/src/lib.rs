@@ -1330,6 +1330,18 @@ fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<Cm
     Ok(guard.pin_mut().apply_camera_script(&script_path).into())
 }
 
+/// Explicit MindVision software exposure trigger; never an automatic startup action.
+#[tauri::command]
+fn soft_trigger_camera(state: State<AppState>) -> Result<CmdResult, String> {
+    let mut guard=state.bridge.lock().map_err(|e|e.to_string())?;
+    let selected=guard.pin_mut().fetch_camera_selection();
+    let experiment=guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !selected.configured || selected.mode != 3 || !selected.running || !experiment.valid || matches!(experiment.state,1|2|3) {
+        return Err("Software trigger requires a running MindVision camera and an idle experiment".into());
+    }
+    Ok(guard.pin_mut().soft_trigger_camera().into())
+}
+
 /// Issue a GenICam DeviceReset to the selected hardware camera.
 #[tauri::command]
 fn reset_hardware_camera(state: State<AppState>) -> Result<CmdResult, String> {
@@ -1777,6 +1789,7 @@ pub fn run() {
             select_mindvision_camera,
             apply_camera_script,
             reset_hardware_camera,
+            soft_trigger_camera,
             monitoring_set_active,
             monitoring_clear,
             fetch_monitoring_snapshot,

@@ -809,6 +809,7 @@ pub mod ffi {
             -> BridgeCommandResult;
 
         /// Issue a GenICam DeviceReset to the selected hardware camera.
+        fn soft_trigger_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn reset_hardware_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 
         /// Enable/disable monitoring accumulation (schema v6, BE-5). Disabled

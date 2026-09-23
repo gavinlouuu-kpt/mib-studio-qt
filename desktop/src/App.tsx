@@ -813,7 +813,7 @@ export default function App() {
   });
   const cameraDocumentContext={ready,running,experimentActive:expActive,selection:camSelection,append,refresh:refreshCameraState};
   const scriptDocument=useCameraDocument(cameraDocumentContext,"js");
-  const mindvisionDocument=useCameraDocument(cameraDocumentContext,"json");
+  const mindvisionDocument=useCameraDocument(cameraDocumentContext,"json",operatingMode==="service"&&triggerArmed);
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
   const cores = useCoreManagement({ready,resume:resumedNative,active:expActive,append,onChanged:refreshConfig});
   const startExperimentReason = !ready || !cores.initialized

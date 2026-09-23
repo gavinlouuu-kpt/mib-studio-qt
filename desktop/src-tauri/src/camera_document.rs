@@ -17,18 +17,27 @@ fn revision(text:&str)->String{hex::encode(Sha256::digest(text.as_bytes()))}
 fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<CameraDocument,String>{
     let _lock=WRITER.lock().map_err(|e|e.to_string())?;
     if !["js","json"].contains(&kind){return Err("Unsupported camera document kind".into());}
-    let path=fs::canonicalize(path).map_err(|e|e.to_string())?;
+    if action=="default" {
+        let text=if kind=="js"{include_str!("../../../resources/defaults/egrabberConfig.js")}else{include_str!("../../../resources/defaults/mindvisionConfig.json")};
+        return Ok(CameraDocument{path:String::new(),text:text.into(),revision:String::new()});
+    }
+    let requested=Path::new(path);
+    let creating=action=="create";
+    let path=if creating {
+        let parent=fs::canonicalize(requested.parent().ok_or("Missing parent folder")?).map_err(|e|e.to_string())?;
+        parent.join(requested.file_name().ok_or("Missing filename")?)
+    } else {fs::canonicalize(path).map_err(|e|e.to_string())?};
     if path.extension().and_then(|x|x.to_str()).map(|x|x.eq_ignore_ascii_case(kind))!=Some(true){return Err("Camera document extension does not match editor".into());}
-    let old=read(&path)?;
+    let old=if creating{String::new()}else{read(&path)?};
     let result=match action {
         "read"=>old,
-        "save"=>{
-            if revision(&old)!=baseline{return Err("Camera file changed on disk; reload and reconcile your draft".into());}
+        "save"|"create"=>{
+            if !creating && revision(&old)!=baseline{return Err("Camera file changed on disk; reload and reconcile your draft".into());}
             if text.len()>LIMIT{return Err("Camera document exceeds 4 MiB".into());}
             if kind=="json" && !serde_json::from_str::<serde_json::Value>(text).map_err(|e|e.to_string())?.is_object(){return Err("MindVision JSON must be an object".into());}
             let temporary=path.with_extension(format!("{}.{}.tmp",kind,std::process::id()));
             let mut f=fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|e|e.to_string())?;
-            let save=(||{f.write_all(text.as_bytes())?;f.sync_all()?;fs::set_permissions(&temporary,fs::metadata(&path)?.permissions())?;drop(f);if revision(&read(&path).map_err(std::io::Error::other)?)!=baseline{return Err(std::io::Error::other("Camera file changed during save"));}fs::rename(&temporary,&path)})();
+            let save=(||{f.write_all(text.as_bytes())?;f.sync_all()?;if !creating{fs::set_permissions(&temporary,fs::metadata(&path)?.permissions())?;}drop(f);if creating{fs::hard_link(&temporary,&path)?;fs::remove_file(&temporary)}else{if revision(&read(&path).map_err(std::io::Error::other)?)!=baseline{return Err(std::io::Error::other("Camera file changed during save"));}fs::rename(&temporary,&path)}})();
             if let Err(error)=save{let _=fs::remove_file(&temporary);return Err(error.to_string());}
             text.to_owned()
         },
@@ -48,6 +57,11 @@ mod tests {
         assert!(transact("save",p,"json",&d.revision,"[]").is_err());
         fs::write(&path,"{\"changed\":true}").unwrap();assert!(transact("save",p,"json",&d.revision,"{}").is_err());
         let d=transact("read",p,"json","","").unwrap();transact("save",p,"json",&d.revision,"{\"saved\":true}").unwrap();assert_eq!(fs::read_to_string(&path).unwrap(),"{\"saved\":true}");
+        let copied=dir.join("copy.json");let target=copied.to_str().unwrap();
+        transact("create",target,"json","","{\"copy\":true}").unwrap();
+        assert!(transact("create",target,"json","","{}").is_err());
+        assert_eq!(fs::read_to_string(&copied).unwrap(),"{\"copy\":true}");
+        let defaults=transact("default","","json","","").unwrap();assert!(defaults.path.is_empty());assert!(serde_json::from_str::<serde_json::Value>(&defaults.text).unwrap().is_object());
         fs::remove_dir_all(dir).unwrap();
     }
 }

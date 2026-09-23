@@ -151,6 +151,7 @@ public:
                                                  rust::Str config_path);
     BridgeCommandResult apply_camera_script(rust::Str script_path);
     BridgeCommandResult reset_hardware_camera();
+    BridgeCommandResult soft_trigger_camera();
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();
     BridgeMonitoringSnapshot fetch_monitoring_snapshot(std::uint64_t max_rows);
