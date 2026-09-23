@@ -412,3 +412,7 @@ and `<kind>s/<id>/<file>` layout as the provisioner/CMake, honors `MIB_ASSETS_DI
 and checks the declared SHA256 before packaging. The GTK harness tolerates only
 confirmed dialog unmapping between window search and focus; other X11 failures
 remain errors.
+
+Native packaged acceptance also regenerates a new HDF through the real UI/save
+dialog, verifies the source file digest is unchanged, waits for the frontend
+terminal status, and reopens the regenerated output with processing-core identity.

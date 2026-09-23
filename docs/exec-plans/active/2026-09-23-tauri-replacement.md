@@ -56,8 +56,8 @@ and the separately deferred hardware acceptance are satisfied.
   scientific rendering, not physical acquisition or all interactive Qt paths.
 - Native production WebKit `native-folder-preserve` passes actual GTK dialogs, mock capture,
   refused active-run Exit, complete webview reload preserving the same run,
-  finalization/conserved nonzero persistence, HDF reopen, shared export, close
-  review and successful idle Exit. Export asserts the exact chosen destination.
+  finalization/conserved nonzero persistence, HDF reopen, shared export, mask regeneration with unchanged source digest, regenerated
+  output reopen/core identity, close review and successful idle Exit. Export asserts the exact chosen destination.
   No backend mocks. Hosted picker failure was reproduced and fixed in the harness;
   hosted rerun pending.
 - Linux debug `.deb` built with derived native dependencies; extracted package

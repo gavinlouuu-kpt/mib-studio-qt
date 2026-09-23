@@ -6,6 +6,7 @@ All application/backend commands, dialogs, rendering, files and state are real.
 import argparse
 import base64
 import json
+import hashlib
 import os
 from pathlib import Path
 import socket
@@ -84,7 +85,7 @@ def main():
         wait(lambda: js('return [...document.querySelectorAll("button")].some(b=>b.textContent.trim()===arguments[0]&&!b.disabled)', text), text)
         js('const b=[...document.querySelectorAll("button")].find(b=>b.textContent.trim()===arguments[0]&&!b.disabled);b.scrollIntoView({block:"center"});b.click();', text)
         if next_picker is not None:
-            title = {"Start Experiment": "Save Experiment Data", "Select HDF File…": "Open recording", "Export All…": "Choose export parent folder"}[text]
+            title = {"Start Experiment": "Save Experiment Data", "Select HDF File…": "Open recording", "Export All…": "Choose export parent folder", "Regenerate into new HDF…": "Save regenerated masks as a new HDF file"}[text]
             def find_dialog():
                 result = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', title], capture_output=True, text=True)
                 return result.stdout.splitlines()[-1] if result.returncode == 0 and result.stdout.strip() else None
@@ -196,6 +197,22 @@ def main():
         assert Path(export['final_path']).parent == root, export
         evidence['export'] = export
         wait(lambda: 'Export: completed' in js('return document.body.innerText'), 'frontend export reconciliation')
+        original_digest = hashlib.sha256(output.read_bytes()).hexdigest()
+        regenerated = root / 'regenerated.h5'
+        picker(regenerated)
+        click('Regenerate into new HDF…')
+        reanalysis = wait(lambda: (lambda s: s if s.get('state') in ('completed', 'failed', 'cancelled') else None)(json.loads(invoke('review_reanalysis_status_json'))), 'reanalysis terminal')
+        assert reanalysis['state'] == 'completed', reanalysis
+        assert Path(reanalysis['final_path']) == regenerated and regenerated.is_file(), reanalysis
+        assert hashlib.sha256(output.read_bytes()).hexdigest() == original_digest, 'Reanalysis modified its source'
+        wait(lambda: 'Reanalysis: completed' in js('return document.body.innerText'), 'frontend reanalysis reconciliation')
+        evidence['reanalysis'] = reanalysis
+        click('Close File')
+        picker(regenerated)
+        click('Select HDF File…')
+        regenerated_metadata = wait(lambda: (lambda m: m if m.get('file_open') and m.get('file_path') == str(regenerated) else None)(invoke('fetch_review_metadata')), 'regenerated source reopen')
+        assert regenerated_metadata['has_core_identity'], regenerated_metadata
+        evidence['regenerated_review'] = regenerated_metadata
         click('Close File')
         assert not invoke('fetch_review_metadata')['file_open']
         evidence['closed'] = True
@@ -214,7 +231,7 @@ def main():
         wait(window_closed, 'idle native window close')
         evidence['idle_exit_closed_window'] = True
         (root / 'evidence.json').write_text(json.dumps(evidence, indent=2))
-        print('PASS: native production webview configure → capture → experiment → finalize → reopen → export → close')
+        print('PASS: native production webview configure → capture → experiment → finalize → reopen → export → reanalyse → reopen regenerated → close')
     except BaseException:
         if session:
             try:
