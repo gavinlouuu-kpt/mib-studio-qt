@@ -150,8 +150,9 @@ def main():
         time.sleep(.3)
         assert invoke('fetch_experiment_status')['state'] == 2
         # Reconstruct the entire webview while native work remains active.
+        js('window.__mibBeforeReload=true')
         request(f'/session/{session}/refresh', {})
-        wait(lambda: 'backend: ready' in js('return document.body.innerText'), 'webview recovery')
+        wait(lambda: js('return !window.__mibBeforeReload && document.body.innerText.includes("backend: ready")'), 'new webview recovery')
         recovered = invoke('fetch_experiment_status')
         assert recovered['state'] == 2 and recovered['output_path'] == active_before['output_path'], recovered
         evidence['reload_recovered_active_run'] = True
