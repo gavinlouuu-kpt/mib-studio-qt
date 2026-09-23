@@ -318,3 +318,9 @@ profile ID propagation into experiment requests, and display-FPS presentation ho
 The profile apply reply returns `profile_id`/`display_fps` for those shell integrations;
 these are not falsely reported as backend-applied settings. Directory publication is
 atomic within the filesystem; revisions serialize this backend, not external Qt writes.
+
+Native webview verification exposed a permanently disabled Start Experiment
+button left from pre-ABI-13 scaffolding. Start now selects an output path, fetches
+authoritative backend readiness, displays blocking gates, and invokes the shared
+backend Start transaction (which rechecks readiness). A synchronous pending owner
+prevents duplicate chooser/start requests; Starting joins Active/Stopping guards.

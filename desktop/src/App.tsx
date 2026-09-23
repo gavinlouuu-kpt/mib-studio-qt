@@ -649,17 +649,29 @@ export default function App() {
 
   // ---- Experiment lifecycle (backend-owned, BE-4) ----
 
+  const experimentPending = useRef(false);
+  const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
+  const [readinessMessage, setReadinessMessage] = useState("");
   const onStartExperiment = useCallback(async () => {
+    if (experimentPending.current) return;
+    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage("");
     try {
       const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
       if (!picked) return;
+      const readiness = await bridge.fetchExperimentReadiness(picked);
+      if (!readiness.valid || !readiness.ready) {
+        const reason = readiness.gates.filter(g => g.status === 2 || g.status === 3)
+          .map(g => `${g.id}: ${g.reason}${g.remediation ? ` — ${g.remediation}` : ""}`).join("; ");
+        setReadinessMessage(reason || "Backend readiness unavailable; experiment was not started.");
+        return;
+      }
       const res = await bridge.experimentStart(picked);
       if (!res.ok) return append(`experiment start failed: ${res.message}`);
       append(`experiment started → ${picked}`);
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment start error: ${e}`);
-    }
+    } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
 
   const onStopExperiment = useCallback(async () => {
@@ -740,14 +752,14 @@ export default function App() {
   const invalidFps = stats?.valid ? stats.invalid_fps1s : null;
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
-  const expActive = expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
+  const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
   const startExperimentReason = !ready
     ? "Backend is not initialized"
     : !running
       ? "Camera must be running before starting an experiment"
       : expActive
         ? "Experiment is already running"
-        : "Authoritative readiness is unavailable in this backend revision";
+        : experimentRequestBusy ? "Experiment start request pending" : undefined;
 
   const cameraScript = useCameraScript({
     ready, running, experimentActive: expActive, selection: camSelection, append,
@@ -1412,6 +1424,7 @@ export default function App() {
                   </div>
                 </div>
 
+                {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
                 {expTab === "preview" && (
                   <>
                     <div className="canvas-wrap">
