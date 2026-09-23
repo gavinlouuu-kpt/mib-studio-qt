@@ -5,6 +5,7 @@
 #include <opencv2/imgcodecs.hpp>
 
 #include <cstdlib>
+#include <fstream>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -237,6 +238,19 @@ int main()
             facade.shutdown();
             return 23;
         }
+        // Config transactions must not change the frozen run authority.
+        const auto configPath = (dataDir / "checked-config.json").string();
+        std::ofstream(configPath) << "{}";
+        const auto baseline = facade.fetchConfigDocument(configPath);
+        const auto checked = facade.applyConfigDocument(configPath, baseline.revision,
+            R"({"image_processing":{"area_threshold_min":42}})");
+        if (checked.saved || checked.applied || checked.error.empty() ||
+            facade.fetchConfigDocument(configPath).revision != baseline.revision)
+        {
+            std::cerr << "active experiment must reject config transactions without writing\n";
+            return 31;
+        }
+
         // A second Start while Active is a typed AlreadyActive, never a second run.
         const auto again = facade.dispatch(start);
         if (again.ok || !again.experimentStartOutcome ||

@@ -2235,3 +2235,6 @@ Fast-forwarded the migration branch onto develop and inventoried remaining
 cutover gaps. Wired existing EGrabber script selection/apply/reset controls with
 DOM regressions. Parallel config-persistence, shared-export and hardware-control
 work is tracked in `docs/exec-plans/active/2026-09-23-tauri-catch-up.md`.
+- 2026-09-23: Added the bounded Qt-free checked processing-document seam for
+  Tauri integration, with lifecycle exclusion and explicit persistence outcomes
+  ([[task/2026-09-23-tauri-config-transactions]]). Full Qt watcher migration remains open.

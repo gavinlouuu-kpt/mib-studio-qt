@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/ProcessingConfigTransaction.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
@@ -766,6 +767,9 @@ namespace backend::bridge
     class BackendFacade
     {
     public:
+        app::ConfigDocumentSnapshot fetchConfigDocument(const std::string& path) const;
+        app::ProcessingConfigTransactionResult applyConfigDocument(const std::string& path, const std::string& baselineRevision, const std::string& patchJson);
+
         using EventSink = std::function<void(const BackendEvent &)>;
 
         explicit BackendFacade(AppBackend &backend);

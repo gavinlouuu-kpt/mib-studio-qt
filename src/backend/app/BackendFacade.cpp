@@ -2217,3 +2217,8 @@ namespace backend::bridge
     }
 
 } // namespace backend::bridge
+
+namespace backend::bridge {
+app::ConfigDocumentSnapshot BackendFacade::fetchConfigDocument(const std::string& path) const { return app::readConfigDocument(path); }
+app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const std::string& path, const std::string& baseline, const std::string& patch) { if (!isInitialized()) { app::ProcessingConfigTransactionResult r; r.error = "backend is not initialized"; return r; } return app::applyProcessingConfigTransaction(backend_, path, baseline, patch); }
+}

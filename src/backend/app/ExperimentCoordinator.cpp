@@ -986,3 +986,12 @@ void ExperimentCoordinator::shutdown()
 }
 
 } // namespace backend::app
+
+namespace backend::app {
+bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ != ExperimentRunState::Idle) return false;
+    transaction();
+    return true;
+}
+}

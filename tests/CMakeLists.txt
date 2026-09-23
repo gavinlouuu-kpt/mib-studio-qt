@@ -277,6 +277,10 @@ mib_backend_test_link(memory_budget_bench PRIVATE Threads::Threads)
 add_test(NAME performance.memory_budget COMMAND $<TARGET_FILE:mib_backend_tests> memory_budget_bench)
 set_tests_properties(performance.memory_budget PROPERTIES LABELS "performance;memory" TIMEOUT 600)
 
+mib_add_backend_test_executable(processing_config_transaction_test backend/processing_config_transaction_test.cpp)
+add_test(NAME backend.processing_config_transaction COMMAND $<TARGET_FILE:mib_backend_tests> processing_config_transaction_test)
+set_tests_properties(backend.processing_config_transaction PROPERTIES LABELS "backend;roundtrip;fault-injection;stress" TIMEOUT 60)
+
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:mib_backend_tests> backend_facade_boundary_test)
 set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")

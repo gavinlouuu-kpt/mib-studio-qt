@@ -92,6 +92,8 @@ public:
     // readiness until cleared.
     void reportUnresolvedFault(const std::string& code, const std::string& message);
     void clearUnresolvedFault();
+    // Runs a non-reentrant config transaction while Start is excluded.
+    bool withIdleConfiguration(const std::function<void()>& transaction);
     bool hasUnresolvedFault() const;
 
 private:

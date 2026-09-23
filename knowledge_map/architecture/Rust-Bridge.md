@@ -256,3 +256,9 @@ no-CMake path validates all four archives, and Cargo watches the OEABT archives
 for relinking. Windows uses the CMake-generated dependency manifest and marks
 the OEABT libraries as static. Missing these dependencies produces undefined
 SerialTransport/ControllerSession and platform serial symbols in bridge CI.
+
+## Checked processing document seam
+
+`BackendFacade::fetchConfigDocument` / `applyConfigDocument` provide required
+SHA256 baselines and separate saved/applied/verified/conflict outcomes for
+image-processing patches; see [[task/2026-09-23-tauri-config-transactions]].
