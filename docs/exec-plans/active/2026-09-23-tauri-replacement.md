@@ -40,12 +40,12 @@ analysis pipeline in TypeScript/Rust.
 
 ## Integrated software evidence (2026-09-23)
 
-Published through `bcd3c53` on `dev/react-tauri` / draft PR450; subsequent review
+Published through `181097a` on `dev/react-tauri` / draft PR450; subsequent review
 fixes continue as small commits. Keep Qt until remaining software/release gates
 and the separately deferred hardware acceptance are satisfied.
 
-- 252 frontend tests and production build passed at the latest integrated batch.
-- 19 Rust/Tauri native tests, 12 targeted backend tests and 21 targeted TSan
+- 256 frontend tests and production build passed at the latest integrated batch.
+- 23 Rust/Tauri native tests, 12 targeted backend tests and 21 targeted TSan
   tests passed (including source identity, config faults, export, profile/core,
   startup policy, serial fake bus and capture/FrameStore stress).
 - Full SDK-free non-network/non-hardware CTest sweep: 114 passed and one optional
@@ -80,13 +80,18 @@ and the separately deferred hardware acceptance are satisfied.
   reapplies profiles/cores over a retained native session. Writer handles are not
   interpreted as saved review sources. Close protects pending/active work.
 - Resource lookup separates read-only installed assets from writable user data.
+- Camera script/JSON editing, checked Save As and bundled defaults are integrated.
+- Live monitoring retains analysis-time calibration; stale rows are never rescaled.
+- Fault recovery requires the exact displayed run/fault revision and preserves
+  failed output/accounting.
+- Application installers require canonical platform-specific Tauri manifests,
+  streamed SHA256 verification, expiry/refetch checks and explicit idle-state launch.
 
 ## Remaining completion work
 
-- Camera script/JSON editors, Save As/defaults, per-row live calibration provenance
-  and generation-checked fault recovery are integrated and under final acceptance.
 - Final combined checks, Linux package replay, hosted CI and Windows candidate
-  result. Signed automatic application updates require a Tauri-specific feed;
-  existing Qt installer feed must not be installed by this shell.
+  result. Verified explicit installer launch is implemented and fixture-tested;
+  a platform-specific Tauri feed and real installer acceptance remain release gates.
+  Existing Qt installer feeds are rejected. No release/feed was published.
 - Hardware suite, SDK-equipped deployment and physical timing remain deferred by
   Gavin; mock, fake-serial and SDK-free tests do not establish those claims.
