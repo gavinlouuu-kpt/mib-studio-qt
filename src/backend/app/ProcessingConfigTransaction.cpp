@@ -200,9 +200,17 @@ ProcessingConfigTransactionResult applyProcessingConfigTransaction(AppBackend& b
             }
             save(path, bytes, r.saved);
             r.revision = hash(bytes);
-            backend.setLastConfigJson(bytes);
             backend.processing().setProcessingConfig(config);
             r.applied = true;
+            // This transaction applies processing settings only. Do not claim
+            // the selected file's camera/ROI/calibration sections were applied
+            // by copying them into the experiment's runtime provenance.
+            const auto previousJson = backend.getLastConfigJson();
+            auto runtimeDocument =
+                previousJson.empty() ? Json::object() : Json::parse(previousJson);
+            if (!runtimeDocument.is_object()) runtimeDocument = Json::object();
+            runtimeDocument["image_processing"] = processing::config_json::toJson(config);
+            backend.setLastConfigJson(runtimeDocument.dump());
             r.verified =
                 processing::config_json::toJson(config) ==
                 processing::config_json::toJson(backend.processing().getProcessingConfig());

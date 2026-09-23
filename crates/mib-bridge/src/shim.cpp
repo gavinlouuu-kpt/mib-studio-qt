@@ -1107,6 +1107,31 @@ BridgeCommandResult BackendBridge::review_export_csv(rust::Str output_path) {
     }
 }
 
+BridgeCheckedConfigDocument BackendBridge::fetch_config_document(rust::Str path) {
+    BridgeCheckedConfigDocument out{};
+    try {
+        const auto doc = impl_->facade.fetchConfigDocument(toStd(path));
+        out.ok = doc.ok;
+        out.path = rust::String(doc.path);
+        out.revision = rust::String(doc.revision);
+        out.document_json = rust::String(doc.documentJson);
+        out.error = rust::String(doc.error);
+    } catch (const std::exception& e) { out.error = rust::String(e.what()); }
+      catch (...) { out.error = rust::String("config read failed"); }
+    return out;
+}
+
+BridgeConfigTransactionResult BackendBridge::apply_config_document(rust::Str path, rust::Str baseline, rust::Str patch) {
+    BridgeConfigTransactionResult out{};
+    try {
+        const auto r = impl_->facade.applyConfigDocument(toStd(path), toStd(baseline), toStd(patch));
+        out.saved = r.saved; out.applied = r.applied; out.verified = r.verified; out.conflict = r.conflict;
+        out.revision = rust::String(r.revision); out.error = rust::String(r.error);
+    } catch (const std::exception& e) { out.error = rust::String(e.what()); }
+      catch (...) { out.error = rust::String("config transaction failed"); }
+    return out;
+}
+
 BridgeConfigDocument BackendBridge::fetch_processing_config_json() {
     BridgeConfigDocument out{};
     std::string json;
@@ -1630,6 +1655,6 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // fetch_device_discovery, cancel_device_discovery) and the discovery contract
 // groups (#419, ADR 0005). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 14; }
+std::uint32_t bridge_abi_version() { return 15; }
 
 } // namespace mib_bridge

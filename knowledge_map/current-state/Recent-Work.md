@@ -2238,3 +2238,12 @@ work is tracked in `docs/exec-plans/active/2026-09-23-tauri-catch-up.md`.
 - 2026-09-23: Added the bounded Qt-free checked processing-document seam for
   Tauri integration, with lifecycle exclusion and explicit persistence outcomes
   ([[task/2026-09-23-tauri-config-transactions]]). Full Qt watcher migration remains open.
+
+
+### Tauri catch-up integration outcomes
+
+Integrated pump/autofocus controls, checked processing-only config save/apply,
+and shared HDF5 export/progress/cancel on current develop. Bumped bridge ABI to
+15. Native integration caught/fixed a runner-registration gap and valid-only
+export failure; config review prevented applying unrelated disk fields to runtime
+provenance. See the catch-up execution plan for verified vs pending gates.

@@ -16,6 +16,7 @@ use tauri::{Manager, State};
 mod event_transport;
 mod frame_packet;
 mod platform;
+mod config_document;
 pub mod updater;
 
 struct AppState {
@@ -1541,6 +1542,8 @@ pub fn run() {
             platform::get_preferences,
             platform::set_preferences,
             platform::shell_log,
+            config_document::fetch_config_document,
+            config_document::apply_config_document,
             experiment_start,
             experiment_stop,
             experiment_cancel,

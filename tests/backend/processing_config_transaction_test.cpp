@@ -13,6 +13,7 @@ int main() {
     backend::AppBackend backend;
     backend::bridge::BackendFacade facade(backend);
     MIB_REQUIRE(facade.initialize(temp.path().string()), "initialize backend");
+    backend.setLastConfigJson(R"({"camera":{"identity":"actual-camera"},"roi":{"x":17}})");
     const auto path = (temp / "config.json").string();
     std::ofstream(path)
         << R"({"custom":{"keep":17},"image_processing":{"unknown":3,"area_threshold_max":333}})";
@@ -23,6 +24,12 @@ int main() {
     MIB_REQUIRE(result.saved && result.applied && result.verified, result.error);
     MIB_EXPECT(backend.processing().getProcessingConfig().area_threshold_max == 333,
                "unpatched disk values are authoritative over previous runtime values");
+    const auto runtimeDocument = nlohmann::json::parse(backend.getLastConfigJson());
+    MIB_EXPECT(runtimeDocument["camera"]["identity"] == "actual-camera" &&
+                   runtimeDocument["roi"]["x"] == 17,
+               "processing-only save preserves actual runtime non-processing provenance");
+    MIB_EXPECT(!runtimeDocument.contains("custom"),
+               "selected disk document does not become runtime provenance");
     auto saved = facade.fetchConfigDocument(path);
     auto json = nlohmann::json::parse(saved.documentJson);
     MIB_EXPECT(json["custom"]["keep"] == 17 && json["image_processing"]["unknown"] == 3,

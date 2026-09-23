@@ -394,6 +394,24 @@ pub mod ffi {
     /// `background_set`, and the monotonic `config_version` for
     /// external-change detection. `valid` is false when uninitialized.
     #[derive(Debug, Clone, Default)]
+    pub struct BridgeCheckedConfigDocument {
+        pub ok: bool,
+        pub path: String,
+        pub revision: String,
+        pub document_json: String,
+        pub error: String,
+    }
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeConfigTransactionResult {
+        pub saved: bool,
+        pub applied: bool,
+        pub verified: bool,
+        pub conflict: bool,
+        pub revision: String,
+        pub error: String,
+    }
+
+    #[derive(Debug, Clone, Default)]
     pub struct BridgeConfigDocument {
         pub valid: bool,
         pub json: String,
@@ -675,6 +693,9 @@ pub mod ffi {
 
         /// Pull the full processing configuration document (schema v8, BE-3).
         fn fetch_processing_config_json(self: Pin<&mut BackendBridge>) -> BridgeConfigDocument;
+        fn fetch_config_document(self: Pin<&mut BackendBridge>, path: &str) -> BridgeCheckedConfigDocument;
+        fn apply_config_document(self: Pin<&mut BackendBridge>, path: &str, baseline: &str, patch: &str) -> BridgeConfigTransactionResult;
+
 
         /// Merge-apply a processing configuration document (schema v8, BE-3):
         /// only keys present in the JSON change; malformed values fail the

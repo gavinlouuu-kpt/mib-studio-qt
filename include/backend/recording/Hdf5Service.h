@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <string_view>
+#include <optional>
 
 namespace cv {
     class Mat;
@@ -106,6 +107,9 @@ public:
                          std::vector<cv::Mat>& outImages) const;
 
     // Metadata-only reads (do not load image/mask payloads)
+    // Distinguishes a legitimately absent lazily-created metadata dataset from
+    // an HDF5 query failure. nullopt means unavailable/error, not empty data.
+    std::optional<bool> metadataDatasetPresent(bool valid) const;
     bool readValidMetadata(std::vector<ProcessedFrame>& frames);
     bool readInvalidMetadata(std::vector<ProcessedFrame>& frames);
 

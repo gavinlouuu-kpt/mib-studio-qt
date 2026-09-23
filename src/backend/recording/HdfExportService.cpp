@@ -230,10 +230,16 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         if (result.recordingMode) {
             if (!reader.readRecordingMetadata(valid)) throw Failed{"failed to read recording metadata"};
         } else {
-            if (request.frames != HdfExportFrames::Invalid && !reader.readValidMetadata(valid))
-                throw Failed{"failed to read valid-frame metadata"};
-            if (request.frames != HdfExportFrames::Valid && !reader.readInvalidMetadata(invalid))
-                throw Failed{"failed to read invalid-frame metadata"};
+            if (request.frames != HdfExportFrames::Invalid) {
+                const auto present = reader.metadataDatasetPresent(true);
+                if (!present || (*present && !reader.readValidMetadata(valid)))
+                    throw Failed{"failed to read valid-frame metadata"};
+            }
+            if (request.frames != HdfExportFrames::Valid) {
+                const auto present = reader.metadataDatasetPresent(false);
+                if (!present || (*present && !reader.readInvalidMetadata(invalid)))
+                    throw Failed{"failed to read invalid-frame metadata"};
+            }
         }
         if (request.frames == HdfExportFrames::Invalid) valid.clear();
         if (request.frames == HdfExportFrames::Valid) invalid.clear();

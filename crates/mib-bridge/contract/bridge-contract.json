@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 14,
+  "abi_version": 15,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -358,5 +358,20 @@
     },
     "retention": "latest export snapshot retained until next accepted submit",
     "concurrency": "one active export; busy submit rejected; cancel through operation_cancel; terminal after cleanup"
+  },
+  "checked_config_document": {
+    "read": "path -> ok/path/revision/document_json/error",
+    "apply": "path + required SHA256 baseline + image_processing-only JSON patch",
+    "limits": {
+      "document_bytes": 4194304,
+      "patch_bytes": 65536
+    },
+    "outcomes": [
+      "saved",
+      "applied",
+      "verified",
+      "conflict"
+    ],
+    "notes": "No force overwrite; no startup-file selection changes; saved-only is not successful application."
   }
 }

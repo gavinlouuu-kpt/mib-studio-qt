@@ -262,3 +262,20 @@ SerialTransport/ControllerSession and platform serial symbols in bridge CI.
 `BackendFacade::fetchConfigDocument` / `applyConfigDocument` provide required
 SHA256 baselines and separate saved/applied/verified/conflict outcomes for
 image-processing patches; see [[task/2026-09-23-tauri-config-transactions]].
+
+
+## ABI 15: checked config and shared exports
+
+Additive `fetch_config_document` and `apply_config_document` carry typed
+snapshot/result structs (required SHA256 baseline; 4 MiB documents, 64 KiB
+image_processing-only patches). Outcomes saved/applied/verified/conflict are
+independent. The facade owns lifecycle serialization and durable replacement.
+Only effective processing fields update runtime provenance: selecting a saved
+file does not claim its other device/ROI settings were applied.
+
+Shared exporter request/status JSON is carried through the cxx/Tauri bridge;
+operation identity and counters remain decimal strings. The previous CSV entry
+point delegates to the same HdfExportService. Terminal status is retained for
+reconciliation even if operation events are missed. Full general resnapshot,
+frame source/session/config identities and native cross-shell acceptance remain
+open; this addition does not close #372/#246.

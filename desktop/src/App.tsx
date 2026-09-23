@@ -35,6 +35,9 @@ import {
   type OperatingMode,
 } from "./commissioning";
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
+import { HardwareControls } from "./components/HardwareControls";
+import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
+import { ExportStatus, useReviewExport } from "./exportControls";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -702,21 +705,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage]);
 
-  const onExportCsv = useCallback(async () => {
-    try {
-      const picked = await save({
-        title: "Export Metrics to CSV",
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-        defaultPath: "metrics.csv",
-      });
-      if (!picked) return;
-      const res = await bridge.reviewExportCsv(picked);
-      append(res.ok ? `CSV export started (operation ${res.operation_id})` : `export failed: ${res.message}`);
-    } catch (e) {
-      append(`export error: ${e}`);
-    }
-  }, [append]);
-
   const openReviewFromMenu = useCallback(() => {
     setTab("review");
     void onSelectHdf();
@@ -743,6 +731,8 @@ export default function App() {
     ready, running, experimentActive: expActive, selection: camSelection, append,
     refresh: refreshCameraState,
   });
+  const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
+  const reviewExport = useReviewExport(ready, append);
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
@@ -993,6 +983,7 @@ export default function App() {
             <strong>Service / Commissioning mode</strong> — hardware-actuating controls are enabled.
             Not for routine operation.
           </span>
+          <label><input type="checkbox" checked={triggerArmed} disabled={expActive} onChange={e => setTriggerArmed(e.target.checked)} /> Arm one hardware action</label>
           <button type="button" onClick={() => enterMode("operator")}>
             Exit to Operator
           </button>
@@ -1159,7 +1150,12 @@ export default function App() {
             </div>
           )}
 
+          <ExportStatus model={reviewExport} />
           <div className="tab-body">
+            <div hidden={tab !== "connect"}>
+              <HardwareControls ready={ready} experimentActive={expActive} append={append}
+                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} />
+            </div>
             {/* ---- Connect ---- */}
             {tab === "connect" && (
               <>
@@ -1481,6 +1477,7 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
+                          <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
                               <h5>Live config document (merge-applied on Apply)</h5>
@@ -1735,13 +1732,14 @@ export default function App() {
                   </button>
                   <button disabled title="Loading a new file replaces the current one">Close File</button>
                   <button
-                    onClick={onExportCsv}
-                    disabled={!reviewMeta?.file_open}
+                    onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron : undefined)}
+                    disabled={!reviewMeta?.file_open || reviewExport.busy}
                     title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
                   >
                     Export Metrics to CSV…
                   </button>
-                  <button disabled title={PENDING.review}>Export All…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron : undefined)}>Export All…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron : undefined)}>Export Images…</button>
                   <button disabled title={PENDING.review}>Batch Metrics…</button>
                   <button disabled title={PENDING.review}>Regenerate masks…</button>
                   <span className="legend">

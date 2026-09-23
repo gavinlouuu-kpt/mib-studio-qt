@@ -236,3 +236,27 @@ Reset require a stopped, configured EGrabber camera and no active experiment,
 then re-read selection to reject stale capture/device state. Script text editing
 is external; MindVision uses the Connect JSON path. DOM regressions cover stale
 selection, duplicate commands, errors and disabled setup states.
+
+
+## September 23 operator integrations (ABI 15)
+
+`HardwareControls` stays mounted across tabs so pending command ownership and
+hardware form drafts survive navigation. Connect exposes existing numeric-COM
+pump/autofocus APIs; manual actuation requires the shared service-mode arm,
+which clears on one action. Typed endpoints remain follow-up work.
+
+`configDocument.tsx` owns a saved processing-document draft in App. Open/reload
+are explicit; changed-field patches avoid resubmitting unknown additive keys.
+Save and Apply uses a SHA256 baseline through the shared Qt-free transaction,
+reports saved/applied/verified separately and preserves drafts on conflict or
+partial failure. It changes image_processing only, not startup file selection,
+ROI/calibration/realtime/camera settings. The old live JSON editor remains a
+separate, non-persistent path. DOM tests cover conflict, partial outcomes, repeated
+saves, navigation, command failures and duplicate submissions.
+
+`exportControls.tsx` uses the shared export engine for CSV/images/all, retains
+status across navigation, and exposes cancellation and partial paths. Polls are
+single-flight and status errors do not erase command failures. Conversion uses
+known current calibration or delegates to the backend's current factor; no
+fabricated UI fallback value is sent. Chart images/series range controls remain
+unexposed. Config and export controls have interaction tests, not just codec tests.

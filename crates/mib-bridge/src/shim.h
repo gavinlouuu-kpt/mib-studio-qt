@@ -22,6 +22,8 @@ struct BridgeDiscoverySnapshot;
 struct BridgeCameraSelection;
 struct BridgeCommandResult;
 struct BridgeConfigDocument;
+struct BridgeCheckedConfigDocument;
+struct BridgeConfigTransactionResult;
 struct BridgeProcessingCoreStatus;
 struct BridgeAutofocusConfig;
 struct BridgeAutofocusStatus;
@@ -100,6 +102,8 @@ public:
     rust::String review_export_status_json();
     BridgeCommandResult review_export_csv(rust::Str output_path);
     BridgeConfigDocument fetch_processing_config_json();
+    BridgeCheckedConfigDocument fetch_config_document(rust::Str path);
+    BridgeConfigTransactionResult apply_config_document(rust::Str path, rust::Str baseline, rust::Str patch);
     BridgeCommandResult apply_processing_config_json(rust::Str json);
     BridgeCommandResult set_processing_roi(std::int32_t x, std::int32_t y,
                                            std::int32_t w, std::int32_t h);

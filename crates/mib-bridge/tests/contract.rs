@@ -61,7 +61,7 @@ fn abi_version_is_stable() {
     // stop outcomes, run completion states, readiness gate statuses, typed
     // ExperimentStatus companions and fetch_experiment_readiness.
     // v14 the asynchronous device-discovery jobs (#419, ADR 0005).
-    assert_eq!(ffi::bridge_abi_version(), 14);
+    assert_eq!(ffi::bridge_abi_version(), 15);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
@@ -1094,4 +1094,34 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_dir_all(&frame_dir);
     let _ = std::fs::remove_dir_all(&data_dir);
     let _ = std::fs::remove_file(&rec_path);
+}
+
+
+#[test]
+#[serial]
+fn checked_config_document_roundtrip_and_conflict() {
+    let data_dir = std::env::temp_dir().join(format!("mib_checked_config_{}", std::process::id()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let path = data_dir.join("config.json");
+    std::fs::write(&path, r#"{"custom":{"keep":17},"image_processing":{"area_threshold_min":1}}"#).unwrap();
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let doc = bridge.pin_mut().fetch_config_document(&path.to_string_lossy());
+    assert!(doc.ok, "{}", doc.error);
+    assert_eq!(doc.revision.len(), 64);
+    let patch = r#"{"image_processing":{"area_threshold_min":2}}"#;
+    let result = bridge.pin_mut().apply_config_document(&doc.path, &doc.revision, patch);
+    assert!(result.saved && result.applied && result.verified, "{}", result.error);
+    assert!(!result.conflict);
+    assert_ne!(result.revision, doc.revision);
+    let stale = bridge.pin_mut().apply_config_document(&doc.path, &doc.revision, patch);
+    assert!(stale.conflict && !stale.saved && !stale.applied);
+    let after = bridge.pin_mut().fetch_config_document(&doc.path);
+    let parsed: serde_json::Value = serde_json::from_str(&after.document_json).unwrap();
+    assert_eq!(parsed["custom"]["keep"], 17);
+    assert_eq!(parsed["image_processing"]["area_threshold_min"], 2);
+    let missing = bridge.pin_mut().fetch_config_document(&data_dir.join("missing.json").to_string_lossy());
+    assert!(!missing.ok && !missing.error.is_empty());
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data_dir);
 }

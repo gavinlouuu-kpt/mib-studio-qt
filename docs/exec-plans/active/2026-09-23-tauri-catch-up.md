@@ -12,10 +12,10 @@ an assertion of production cutover readiness or hardware acceptance.
 ## Acceptance and progress
 
 - [x] Fast-forward local migration branch to develop `2fe0282` (252 commits).
-- [ ] Existing camera-script/reset APIs exposed as real operator controls.
-- [ ] Existing pump/autofocus APIs exposed with commissioning/lifecycle guards.
-- [ ] Checked Qt-free processing-config persistence contract and Tauri adapter.
-- [ ] Reuse HdfExportService for cancellable export/status through the bridge.
+- [x] Existing camera-script/reset APIs exposed as real operator controls.
+- [x] Existing pump/autofocus APIs exposed with commissioning/lifecycle guards.
+- [x] Checked Qt-free processing-config persistence contract and Tauri adapter.
+- [x] Reuse HdfExportService for cancellable export/status through the bridge.
 - [ ] Integrate and execute frontend, contract, native backend/bridge checks.
 - [ ] Publish the updated branch with exact tested and unverified scope.
 
@@ -37,3 +37,17 @@ profiles, chart/overlay/reanalysis parity, current hardware endpoint coverage,
 real native workflow/Qt comparison, performance, installers/updater and Windows
 acceptance remain tracked by #372/#246 and the readiness assessment. Passing a
 build or process-alive smoke is not a native end-to-end workflow pass.
+
+
+## Executed integration checks (in progress)
+
+Frontend DOM/unit tests and TypeScript build pass. Five targeted native tests
+pass: checked configuration, facade boundary, experiment coordinator, shared
+HDF5 exporter and export facade. ABI generation, docs and screenshot checks
+pass. Rust toolchain download and native desktop/sanitizer checks are underway;
+no production-cutover or real-hardware result is claimed.
+
+Source fixes discovered during verification: export test registration before
+runner finalization; absence-aware metadata handling for valid-only recordings;
+unknown-key-preserving changed patches; runtime provenance includes only the
+processing fields actually applied, not unrelated sections from the saved file.

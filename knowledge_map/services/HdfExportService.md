@@ -85,3 +85,12 @@ All uses the service's default full-series selection without UI charts.
 busy rejection, source hash immutability, output-parent faults, and retained
 terminal recovery under a watchdog. Rust review contract tests verify CSV
 round-trip and retained status. Run the backend stress/TSan lane before cutover.
+
+
+Valid-only and invalid-only experiment recordings need not contain both metadata
+datasets: export checks presence and skips the absent side without swallowing
+read errors. An explicit output equivalent to the source (including existing
+hard/symbolic links) is refused. React owns status polling across navigation,
+keeps cancel available in a persistent status panel, and distinguishes accepted
+cancellation from authoritative cancelled/completed/failed results and retained
+partial output. Native facade tests exercise repeated cancel/reopen/export cycles.
