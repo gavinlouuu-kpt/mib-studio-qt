@@ -206,6 +206,7 @@ struct ExperimentStatus {
     bool finalizationOk{false};       // every finalize step succeeded
     backend::recording::RunCompletionState completion{backend::recording::RunCompletionState::Unknown};
     std::string completionReason;
+    uint64_t faultRevision{0}; // monotonic occurrence identity, including repeated identical faults
     std::string faultCode;            // unresolved fault, if any
     std::string faultMessage;
     std::string message;              // last human-readable transition note

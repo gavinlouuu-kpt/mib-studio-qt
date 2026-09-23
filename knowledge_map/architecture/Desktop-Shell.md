@@ -478,3 +478,9 @@ unknown-factor rows are omitted from calibrated scatter. Tauri also renders vali
 ring-ratio and modulus histograms. Optional isoelastic reference curves reuse the bundled
 Qt/review resource and label channel/flow/viscosity conditions, not inferred hardware state.
 The calibration stamp is host-only, not a ProcessingCore C ABI or persisted HDF change.
+
+## Explicit operator recovery (Tauri)
+
+A persistent recovery panel displays failed experiment output path, exact committed/admitted/failed counters and terminal error. Matching Qt's explicit acknowledgment, the operator must review a checkbox before clearing the readiness fault. The coordinator compares the displayed run generation, monotonic fault occurrence revision, fault code and message under its lifecycle mutex and refuses active/flushing/replaced or already-cleared faults. Acknowledgment does not alter the recorded failed outcome, repair/delete its file or automatically restart. Start readiness is still evaluated again.
+
+Capture lifecycle polling exposes exact capture/failure generations, retained failure details and authoritative camera-ready state. Explicit retry reuses the existing configured-camera Start path; it is blocked during experiment finalization/recording, never retries automatically, and does not equate accepted start with a ready device. Configuration review remains available. These panels persist across stage tabs; no hardware execution is required by their tests.

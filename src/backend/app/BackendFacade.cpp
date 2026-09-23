@@ -2802,3 +2802,40 @@ std::string BackendFacade::processingCoreCommand(const std::string& root, const 
  return result;
 }
 }
+
+namespace backend::bridge {
+BackendCommandResult BackendFacade::acknowledgeExperimentFault(std::uint64_t expectedRun,
+                                                               std::uint64_t faultRevision,
+                                                               const std::string& code,
+                                                               const std::string& message,
+                                                               bool confirmed) {
+    BackendCommandResult result{false, BackendCommandType::Experiment,
+                                "Explicit operator acknowledgment is required"};
+    if (!initialized_) {
+        result.message = "Backend is not initialized";
+        return result;
+    }
+    if (!confirmed) return result;
+    result.ok = backend_.experiment().acknowledgeFault(expectedRun, faultRevision, code, message,
+                                                       result.message);
+    if (result.ok)
+        result.message = "Fault acknowledged; readiness must pass again. Failed output was not "
+                         "repaired or deleted.";
+    return result;
+}
+} // namespace backend::bridge
+
+namespace backend::bridge {
+std::string BackendFacade::fetchCaptureLifecycleJson() const {
+    if (!initialized_) return R"({"valid":false})";
+    const auto value = backend_.capture().lifecycleSnapshot();
+    return nlohmann::json{{"valid", true},
+                          {"state", services::toString(value.state)},
+                          {"generation", std::to_string(value.generation)},
+                          {"camera_ready", value.cameraReady},
+                          {"failure", services::toString(value.lastFailure)},
+                          {"message", value.lastFailureMessage},
+                          {"failure_generation", std::to_string(value.lastFailureGeneration)}}
+        .dump();
+}
+} // namespace backend::bridge

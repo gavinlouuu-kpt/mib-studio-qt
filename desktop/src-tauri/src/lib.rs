@@ -277,6 +277,8 @@ struct ExperimentStatus {
     finalization_ok: bool,
     completion: u32,
     completion_reason: String,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    fault_revision: u64,
     fault_code: String,
     fault_message: String,
 }
@@ -326,7 +328,22 @@ fn experiment_start(state: State<AppState>, output_path: String) -> Result<CmdRe
     Ok(guard.pin_mut().experiment_start(&output_path).into())
 }
 
-/// Request an asynchronous experiment stop (final flush + metadata + close).
+/// Authoritative capture state and retained failure details.
+#[tauri::command]
+fn fetch_capture_lifecycle(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_capture_lifecycle()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn experiment_acknowledge_fault(state: State<AppState>, expected_run: String, fault_revision: String, code: String, message: String, confirmed: bool) -> Result<CmdResult, String> {
+    let revision = fault_revision.parse::<u64>().map_err(|_| "Invalid fault revision".to_string())?;
+    let generation = expected_run.parse::<u64>().map_err(|_| "Invalid run generation".to_string())?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().experiment_acknowledge_fault(generation, revision, &code, &message, confirmed).into())
+}
+
+/// Request asynchronous final flush, metadata persistence and close.
 #[tauri::command]
 fn experiment_stop(state: State<AppState>) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
@@ -371,6 +388,7 @@ fn fetch_experiment_status(state: State<AppState>) -> Result<ExperimentStatus, S
         finalization_ok: s.finalization_ok,
         completion: s.completion,
         completion_reason: s.completion_reason,
+        fault_revision: s.fault_revision,
         fault_code: s.fault_code,
         fault_message: s.fault_message,
     })
@@ -1694,6 +1712,8 @@ pub fn run() {
             config_document::apply_config_document,
             experiment_start,
             experiment_stop,
+            experiment_acknowledge_fault,
+            fetch_capture_lifecycle,
             experiment_cancel,
             fetch_experiment_status,
             fetch_experiment_readiness,

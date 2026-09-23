@@ -368,6 +368,8 @@ export const bridge = {
   experimentStart: (outputPath: string) =>
     invokeCommand("experiment_start", { outputPath }),
   experimentStop: () => invokeCommand("experiment_stop"),
+  fetchCaptureLifecycle: () => invoke<CaptureLifecycle>("fetch_capture_lifecycle"),
+  experimentAcknowledgeFault: (expectedRun: string, faultRevision: string, code: string, message: string, confirmed: boolean) => invokeCommand("experiment_acknowledge_fault", {expectedRun, faultRevision, code, message, confirmed}),
   experimentCancel: () => invokeCommand("experiment_cancel"),
   fetchExperimentStatus: async () => decodeExperimentStatus(await invoke<unknown>("fetch_experiment_status")),
   // ABI 13: gate list + the generation a Start must present (the bridge's
@@ -537,3 +539,5 @@ export interface StartupDiscoveryStatus {preference?: StartupPreference; valid: 
 interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
 
 export interface BackgroundCalibrationStatus {valid: boolean; state: string; operation_generation: string; frozen_config_version: string; attempted: number; accepted: number; rejected_non_empty: number; rejected_processing_failed: number; published_background_generation: string; published_sha256: string; message: string}
+
+export interface CaptureLifecycle {valid: boolean; state: string; generation: string; camera_ready: boolean; failure: string; message: string; failure_generation: string}

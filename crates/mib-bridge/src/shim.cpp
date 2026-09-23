@@ -667,6 +667,24 @@ BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path) {
     }
 }
 
+rust::String BackendBridge::fetch_capture_lifecycle() {
+    return rust::String(impl_->facade.fetchCaptureLifecycleJson());
+}
+
+BridgeCommandResult BackendBridge::experiment_acknowledge_fault(std::uint64_t expected_run,
+                                                                std::uint64_t fault_revision,
+                                                                rust::Str code, rust::Str message,
+                                                                bool confirmed) {
+    try {
+        return toBridgeResult(impl_->facade.acknowledgeExperimentFault(
+            expected_run, fault_revision, toStd(code), toStd(message), confirmed));
+    } catch (const std::exception& error) {
+        return errorResult(error.what());
+    } catch (...) {
+        return errorResult("Fault acknowledgment failed");
+    }
+}
+
 BridgeCommandResult BackendBridge::experiment_stop() {
     try {
         backend::bridge::ExperimentCommand cmd;
@@ -1681,6 +1699,7 @@ BridgeExperimentStatus BackendBridge::fetch_experiment_status() {
     out.finalization_ok = status.finalizationOk;
     out.completion = static_cast<std::uint32_t>(status.completion);
     out.completion_reason = rust::String(status.completionReason);
+    out.fault_revision = status.faultRevision;
     out.fault_code = rust::String(status.faultCode);
     out.fault_message = rust::String(status.faultMessage);
     return out;

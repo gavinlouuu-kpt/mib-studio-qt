@@ -1,3 +1,5 @@
+import {CaptureRecovery} from "./components/CaptureRecovery";
+import {ExperimentRecovery} from "./components/ExperimentRecovery";
 import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
@@ -599,7 +601,7 @@ export default function App() {
       const res = await bridge.startCapture();
       if (!res.ok) return append(`start failed: ${res.message}`);
       setRunning(true);
-      append("capture started");
+      append("capture start requested; waiting for camera-ready confirmation");
 
       // Parity with Qt: a successful start lands the operator on Overview.
       setTab((t) => (t === "connect" ? "overview" : t));
@@ -681,11 +683,11 @@ export default function App() {
       if (!readiness.valid || !readiness.ready) {
         const reason = readiness.gates.filter(g => g.status === 2 || g.status === 3)
           .map(g => `${g.id}: ${g.reason}${g.remediation ? ` — ${g.remediation}` : ""}`).join("; ");
-        setReadinessMessage(reason || "Backend readiness unavailable; experiment was not started.");
+        setReadinessMessage(`${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}`);
         return;
       }
       const res = await bridge.experimentStart(picked);
-      if (!res.ok) return append(`experiment start failed: ${res.message}`);
+      if (!res.ok) {setReadinessMessage(`${picked}: ${res.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${res.message}`); }
       append(`experiment started → ${picked}`);
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
@@ -1246,6 +1248,8 @@ export default function App() {
             </div>
           )}
 
+          <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => setTab("connect")} />
+          <ExperimentRecovery ready={ready} status={expStatus} onStatus={setExpStatus} />
           <ReanalysisStatus model={reanalysis}/>
           <ExportStatus model={reviewExport} />
           <div className="tab-body">
@@ -1486,6 +1490,7 @@ export default function App() {
                 </div>
 
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+
                 {expTab === "preview" && (
                   <>
                     <div className="canvas-wrap">

@@ -899,6 +899,11 @@ namespace backend::bridge
         bool fetchExperimentReadiness(app::ExperimentReadinessSnapshot &out,
                                       const std::string &outputPath = {},
                                       const std::string &profileId = {}) const;
+        std::string fetchCaptureLifecycleJson() const;
+        BackendCommandResult acknowledgeExperimentFault(std::uint64_t expectedRun,
+                                                        std::uint64_t faultRevision,
+                                                        const std::string& code,
+                                                        const std::string& message, bool confirmed);
         bool fetchExperimentStatus(app::ExperimentStatus &out) const;
 
     private:

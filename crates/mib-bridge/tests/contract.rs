@@ -1177,3 +1177,20 @@ fn processing_core_management_bundled_roundtrip() {
     assert_eq!(activate["active_version"],restored["active_version"]);
     bridge.pin_mut().shutdown();std::fs::remove_dir_all(data_dir).unwrap();
 }
+
+#[test]
+#[serial]
+fn recovery_refuses_unconfirmed_or_absent_fault_and_reports_capture_lifecycle() {
+    let mut bridge = ffi::new_backend_bridge();
+    let dir = std::env::temp_dir().join(format!("mib_recovery_contract_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    assert!(bridge.pin_mut().initialize(dir.to_str().unwrap()));
+    assert!(!bridge.pin_mut().experiment_acknowledge_fault(0, 0, "test", "fault", false).ok);
+    assert!(!bridge.pin_mut().experiment_acknowledge_fault(0, 0, "test", "fault", true).ok);
+    let status: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_capture_lifecycle()).unwrap();
+    assert_eq!(status["valid"], true);
+    assert_eq!(status["generation"], "0");
+    assert_eq!(status["state"], "idle");
+    bridge.pin_mut().shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}

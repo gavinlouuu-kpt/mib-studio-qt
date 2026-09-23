@@ -144,6 +144,7 @@ pub mod ffi {
         /// Contract `run_completion_states` value (Unknown until terminal).
         pub completion: u32,
         pub completion_reason: String,
+        pub fault_revision: u64,
         pub fault_code: String,
         pub fault_message: String,
     }
@@ -584,6 +585,8 @@ pub mod ffi {
         /// provenance write (only after data is flushed), close. Never blocks
         /// on the flush.
         fn experiment_stop(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn fetch_capture_lifecycle(self: Pin<&mut BackendBridge>) -> String;
+        fn experiment_acknowledge_fault(self: Pin<&mut BackendBridge>, expected_run: u64, fault_revision: u64, code: &str, message: &str, confirmed: bool) -> BridgeCommandResult;
 
         /// Like `experiment_stop`, but the terminal status is marked cancelled.
         /// The HDF5 file is still finalized so it remains readable.

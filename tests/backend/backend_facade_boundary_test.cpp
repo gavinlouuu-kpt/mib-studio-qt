@@ -1,5 +1,6 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/app/ExperimentCoordinator.h"
 
 #include <opencv2/core.hpp>
 #include <nlohmann/json.hpp>
@@ -135,6 +136,25 @@ int main()
         {
             std::cerr << "BackendFacade should initialize AppBackend explicitly\n";
             return 2;
+        }
+
+        backend.experiment().reportUnresolvedFault("test.operator", "injected retained fault");
+        if (facade
+                .acknowledgeExperimentFault(0, backend.experiment().status().faultRevision,
+                                            "test.operator", "injected retained fault", false)
+                .ok)
+            return 91;
+        if (!backend.experiment().hasUnresolvedFault()) return 92;
+        if (!facade
+                 .acknowledgeExperimentFault(0, backend.experiment().status().faultRevision,
+                                             "test.operator", "injected retained fault", true)
+                 .ok)
+            return 93;
+        if (facade.fetchCaptureLifecycleJson().find("\"generation\":\"0\"") == std::string::npos)
+            return 94;
+        {
+            std::lock_guard<std::mutex> lock(eventsMutex);
+            events.clear();
         }
 
         if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":0,"max_attempts":200,"timeout_ms":5000})").ok) return 74;

@@ -2319,3 +2319,6 @@ Added a nonpublishing SDK-free Windows x64 build/test/portable-package lane, sep
   Qt and Tauri now plot mixed historical epochs correctly without current-factor rescaling.
   Added optional shared bundled isoelastic references with explicit physical conditions;
   unknown calibration rows remain excluded. Processing-core C ABI/HDF schema unchanged.
+## 2026-09-23 — Explicit Tauri experiment/camera recovery
+
+Closed Qt's fault acknowledgment parity gap with compare-and-acknowledge backend guarding and explicit operator review. Retained failed output/error/accounting remains visible after acknowledgment; camera errors have persistent authoritative status and explicit retry/configuration actions. Fake/mock-only regression tests cover refusal, stale confirmation, retained file outcome and reconnect gating. See [[Desktop-Shell]].
