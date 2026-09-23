@@ -15,7 +15,8 @@
     "board_abi": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/5",
     "board_bsp": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/6",
     "board_integration": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/7",
-    "board_release": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/8"
+    "board_release": "https://github.com/gavinlouuu-kpt/pz7035-imx426/issues/8",
+    "board_manifest": "pz7035-imx426 docs/platform/pz7035-target-manifest.json (PZ1 draft, branch feat/pz1-platform-contract, 2026-09-23; not yet merged)"
   },
   "baseline": {
     "application": {
@@ -62,10 +63,10 @@
       "cores": 2,
       "linux_triplet": "arm-linux-gnueabihf",
       "max_clock_mhz": {
-        "value": null,
+        "value": 800,
         "unit": "MHz",
-        "status": "unknown",
-        "derivation": "Read from AMD DS190 for the -2I part and the board's PS clock configuration (U10). Not asserted here."
+        "status": "sizing-input",
+        "derivation": "AMD DS191 nominal for the -2 speed grade, as recorded by the board PZ1 manifest; the PS clock actually configured on this board is unverified (U10)."
       },
       "evidence": {
         "class": "vendor-documentation",
