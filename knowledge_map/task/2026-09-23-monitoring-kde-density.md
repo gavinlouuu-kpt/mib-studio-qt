@@ -96,3 +96,10 @@ asset is absent. KDE runs at its harshest cadence (500 ms). Windows,
   next refreshed.
 - The other Monitoring Settings values (axis ranges, bin width) still do not
   persist; the KDE keys show the pattern if that is wanted.
+
+## 2026-09-24 — core contour (PR 1 of the core-region plan)
+
+Solid 90% core contour (true KDE iso-line: level from the point densities,
+128x64 grid, marching squares) plus a dashed pinned reference, controls in
+the settings dialog only. See
+`docs/exec-plans/active/2026-09-24-kde-core-region-split.md`.

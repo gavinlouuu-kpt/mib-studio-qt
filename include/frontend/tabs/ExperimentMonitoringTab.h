@@ -1,6 +1,7 @@
 #pragma once
 
 #include "frontend/models/ProcessingConfigDraft.h"
+#include "frontend/tabs/MonitoringDensity.h"
 
 #include <QWidget>
 #include <QImage>
@@ -63,6 +64,12 @@ public:
         double bandwidthX{0.0};      // µm²
         double bandwidthY{0.0};      // deformability
         int computeMs{0};
+        // Core region: the iso-contour(s) at the density level enclosing
+        // `coreFraction` of the samples, in axis units (µm², deformability).
+        double coreFraction{0.0};
+        double coreLevel{0.0}; // NaN when fewer than three samples
+        std::size_t coreCount{0};
+        std::vector<std::vector<monitoring::DensityPoint>> contours;
     };
     static constexpr double kKdeBandwidthFactorMin = 0.2;
     static constexpr double kKdeBandwidthFactorMax = 5.0;
@@ -85,6 +92,26 @@ public:
     uint64_t kdeGeneration() const { return kdeGeneration_; } // completed estimates
     int lastKdeComputeMs() const { return lastKdeComputeMs_; }
     std::size_t lastKdePointCount() const { return lastKdePointCount_; }
+    // Core contour: share of the population enclosed by the solid contour
+    // drawn on the scatter while KDE is on (Monitoring Settings, persisted).
+    static constexpr double kKdeCoreFractionMin = 0.05;
+    static constexpr double kKdeCoreFractionMax = 1.0;
+    static constexpr double kKdeCoreFractionDefault = 0.9;
+    static constexpr int kKdeGridNx = 128;
+    static constexpr int kKdeGridNy = 64;
+    double kdeCoreFraction() const { return kdeCoreFraction_; }
+    void setKdeCoreFraction(double fraction);
+    const std::vector<std::vector<monitoring::DensityPoint>>& lastKdeContours() const { return lastKdeContours_; }
+    double lastKdeCoreLevel() const { return lastKdeCoreLevel_; }
+    std::size_t lastKdeCoreCount() const { return lastKdeCoreCount_; }
+    // Reference contour (dashed) compared against the live one. Pin copies
+    // the current live contour; set takes loops from elsewhere (a file, later).
+    bool hasKdeReference() const { return !kdeReference_.empty(); }
+    void pinKdeReference();
+    void setKdeReference(std::vector<std::vector<monitoring::DensityPoint>> loops, const QString& label);
+    void clearKdeReference();
+    const std::vector<QLineSeries*>& kdeContourSeriesForTests() const { return kdeContourSeries_; }
+    const std::vector<QLineSeries*>& kdeReferenceSeriesForTests() const { return kdeReferenceSeries_; }
     QCheckBox* kdeToggle() const;
     QScatterSeries* scatterSeriesForTests() const { return scatterSeries_; }
     QScatterSeries* targetGroupSeriesForTests() const { return targetGroupSeries_; }
@@ -248,19 +275,36 @@ private:
     uint64_t kdeGeneration_ = 0;
     int lastKdeComputeMs_ = 0;
     std::size_t lastKdePointCount_ = 0;
+    double lastKdeBandwidthX_ = 0.0;
+    double lastKdeBandwidthY_ = 0.0;
     struct KdeFingerprint {
         std::size_t count{0};
         uint64_t firstIndex{0};
         uint64_t lastIndex{0};
         double bandwidthFactor{0.0};
         double areaConversion{0.0};
+        double coreFraction{0.0};
+        double x0{0.0}, x1{0.0}, y0{0.0}, y1{0.0};
         bool operator==(const KdeFingerprint& o) const
         {
             return count == o.count && firstIndex == o.firstIndex && lastIndex == o.lastIndex
-                   && bandwidthFactor == o.bandwidthFactor && areaConversion == o.areaConversion;
+                   && bandwidthFactor == o.bandwidthFactor && areaConversion == o.areaConversion
+                   && coreFraction == o.coreFraction && x0 == o.x0 && x1 == o.x1 && y0 == o.y0 && y1 == o.y1;
         }
     };
     KdeFingerprint kdeFingerprint_; // input of the last launched estimate
+    // Core contour state.
+    double kdeCoreFraction_ = kKdeCoreFractionDefault;
+    std::vector<std::vector<monitoring::DensityPoint>> lastKdeContours_;
+    double lastKdeCoreLevel_ = 0.0;
+    std::size_t lastKdeCoreCount_ = 0;
+    std::vector<std::vector<monitoring::DensityPoint>> kdeReference_;
+    QString kdeReferenceLabel_;
+    std::vector<QLineSeries*> kdeContourSeries_;   // solid, live
+    std::vector<QLineSeries*> kdeReferenceSeries_; // dashed, reference
+    void redrawKdeContours(std::vector<QLineSeries*>& family,
+                           const std::vector<std::vector<monitoring::DensityPoint>>& loops, bool reference);
+    void refreshKdeTooltip();
     // One scatter series per density level (circles) and per level for the
     // target group (rectangles); hidden and empty while KDE is off.
     std::vector<QScatterSeries*> kdeLevelSeries_;

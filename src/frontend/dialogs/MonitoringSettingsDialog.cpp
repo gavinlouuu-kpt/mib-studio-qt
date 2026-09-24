@@ -4,6 +4,8 @@
 
 #include <QPushButton>
 
+#include <cmath>
+
 #include <spdlog/spdlog.h>
 
 MonitoringSettingsDialog::MonitoringSettingsDialog(frontend::ExperimentMonitoringTab* monitoringTab, QWidget* parent)
@@ -14,6 +16,7 @@ MonitoringSettingsDialog::MonitoringSettingsDialog(frontend::ExperimentMonitorin
     if (monitoringTab_) {
         ui->kdeBandwidthSpin->setValue(monitoringTab_->kdeBandwidthFactor());
         ui->kdeIntervalSpin->setValue(monitoringTab_->kdeIntervalMs());
+        ui->kdeCoreFractionSpin->setValue(static_cast<int>(std::lround(monitoringTab_->kdeCoreFraction() * 100.0)));
         ui->scatterXMinSpin->setValue(monitoringTab_->getScatterXMin());
         ui->scatterXMaxSpin->setValue(monitoringTab_->getScatterXMax());
         ui->scatterYMinSpin->setValue(monitoringTab_->getScatterYMin());
@@ -25,6 +28,7 @@ MonitoringSettingsDialog::MonitoringSettingsDialog(frontend::ExperimentMonitorin
     } else {
         ui->kdeBandwidthSpin->setValue(frontend::ExperimentMonitoringTab::kKdeBandwidthFactorDefault);
         ui->kdeIntervalSpin->setValue(frontend::ExperimentMonitoringTab::kKdeIntervalMsDefault);
+        ui->kdeCoreFractionSpin->setValue(static_cast<int>(std::lround(frontend::ExperimentMonitoringTab::kKdeCoreFractionDefault * 100.0)));
         ui->scatterXMinSpin->setValue(0.0);
         ui->scatterXMaxSpin->setValue(1000.0);
         ui->scatterYMinSpin->setValue(0.0);
@@ -38,6 +42,20 @@ MonitoringSettingsDialog::MonitoringSettingsDialog(frontend::ExperimentMonitorin
     connect(ui->buttons, &QDialogButtonBox::accepted, this, &MonitoringSettingsDialog::onOk);
     connect(ui->buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(ui->buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, &MonitoringSettingsDialog::onApply);
+    // Reference contour actions take effect immediately (they are not values to apply).
+    const bool kdeOn = monitoringTab_ && monitoringTab_->kdeEnabled();
+    ui->kdePinReferenceBtn->setEnabled(kdeOn && !monitoringTab_->lastKdeContours().empty());
+    ui->kdeClearReferenceBtn->setEnabled(monitoringTab_ && monitoringTab_->hasKdeReference());
+    connect(ui->kdePinReferenceBtn, &QPushButton::clicked, this, [this]() {
+        if (!monitoringTab_) return;
+        monitoringTab_->pinKdeReference();
+        ui->kdeClearReferenceBtn->setEnabled(monitoringTab_->hasKdeReference());
+    });
+    connect(ui->kdeClearReferenceBtn, &QPushButton::clicked, this, [this]() {
+        if (!monitoringTab_) return;
+        monitoringTab_->clearKdeReference();
+        ui->kdeClearReferenceBtn->setEnabled(false);
+    });
 }
 
 MonitoringSettingsDialog::~MonitoringSettingsDialog() {
@@ -57,6 +75,7 @@ void MonitoringSettingsDialog::applySettings() {
     if (monitoringTab_) {
         monitoringTab_->setKdeBandwidthFactor(ui->kdeBandwidthSpin->value());
         monitoringTab_->setKdeIntervalMs(ui->kdeIntervalSpin->value());
+        monitoringTab_->setKdeCoreFraction(ui->kdeCoreFractionSpin->value() / 100.0);
         monitoringTab_->setScatterXRange(ui->scatterXMinSpin->value(), ui->scatterXMaxSpin->value());
         monitoringTab_->setScatterYRange(ui->scatterYMinSpin->value(), ui->scatterYMaxSpin->value());
         monitoringTab_->setHistogramXRange(ui->histogramXMinSpin->value(), ui->histogramXMaxSpin->value());

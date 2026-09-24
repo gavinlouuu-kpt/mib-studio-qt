@@ -210,6 +210,12 @@ schema `kde_core_schema_version = 1`:
 
 ## Progress
 
-- [ ] PR 1
+- [x] PR 1 — 2026-09-24: `coreLevel` / `gaussianKdeGrid` / `isoContours` /
+      `fractionInside` in `MonitoringDensity.h` with property tests; live
+      contour + dashed pinned reference on the tab; `Core %` and
+      Pin/Clear in the settings dialog; e2e: 1000 points → 21 ms per
+      estimate including the grid, GUI gates unchanged. Border-cut
+      populations may yield more than one closed loop (each arc closed
+      along the border), which the test now accepts.
 - [ ] PR 2
 - [ ] PR 3

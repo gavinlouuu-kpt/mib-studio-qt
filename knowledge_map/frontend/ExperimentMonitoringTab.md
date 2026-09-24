@@ -95,6 +95,35 @@ markers overlap.
   capture, processing, ring filling, overlay lag and GUI responsiveness;
   numbers in [[../task/2026-09-23-monitoring-kde-density]]).
 
+### Core contour (plan `docs/exec-plans/active/2026-09-24-kde-core-region-split.md`)
+
+While KDE is on, one solid blue contour encloses the densest `Core %` of the
+samples (default 90%, Monitoring Settings, `Monitoring/KdeCoreFraction`).
+It is a true KDE iso-line: the worker job takes the level `t` = the
+`ceil(p·n)`-th largest point density (`coreLevel`), evaluates the same
+kernel on a 128 × 64 grid over the fixed axis ranges (`gaussianKdeGrid`,
+normalised by `rawKdeMaximum` so grid and points share [0, 1]), and traces
+it with marching squares (`isoContours`, saddles resolved by the cell
+centre, border-cut loops closed along the border). Loops come back in
+`KdeResult::contours` in axis units; `redrawKdeContours` turns each into a
+`QLineSeries` (`core-contour-N`, 2 px cosmetic pen, legend marker hidden).
+A **reference** contour (dashed orange, `reference-contour-N`) is pinned
+from the live loops (`pinKdeReference`) or set from elsewhere
+(`setKdeReference`, used by the file-backed reference in PR 2); it survives
+re-estimates and is cleared with `clearKdeReference`. The fingerprint that
+skips unchanged buffers includes the fraction and the axis ranges. Both
+families are removed when KDE goes off, so the off state is the plain
+chart. The toggle tooltip carries the core count, loop count and reference
+label; nothing else is added to the tab. Test hooks:
+`kdeContourSeriesForTests`, `kdeReferenceSeriesForTests`,
+`lastKdeContours`, `lastKdeCoreCount`, `lastKdeCoreLevel`. Guards:
+`frontend.monitoring_density` (level rank semantics, one loop per cloud,
+~90% enclosed, two clouds → two loops, translation invariance, border cut,
+degenerate input), `frontend.monitoring_kde_density` (series, pin/clear,
+fraction change re-estimates, off state, dialog controls). Measured in
+`integration.monitoring_kde_e2e`: 1000 points with grid + contour = 21 ms
+on the worker; GUI gates unchanged.
+
 ## Tune panel (issue #364)
 
 The right-hand panel (`tunePanel`, 220–280 px) is a *draft* over the

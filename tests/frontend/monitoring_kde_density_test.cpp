@@ -36,6 +36,9 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QLineSeries>
+#include <QPen>
+#include <QPushButton>
 #include <QScatterSeries>
 #include <QSettings>
 #include <QSpinBox>
@@ -235,6 +238,39 @@ int main(int argc, char* argv[]) {
             lateDense = lateDense && densityOf(tab, i) > 0.0;
         MIB_EXPECT(lateDense, "late cluster points are placed by the next estimate");
 
+        // ---- 3b. core contour on the scatter, pinned reference ------------------
+        wd.mark("contour");
+        {
+            const auto& contours = tab.kdeContourSeriesForTests();
+            MIB_EXPECT(!tab.lastKdeContours().empty() && contours.size() == tab.lastKdeContours().size(),
+                       "the live core contour is drawn as one line series per loop");
+            MIB_EXPECT(tab.lastKdeCoreCount() >= 250 && tab.lastKdeCoreCount() <= 320,
+                       "90% core of 335 samples holds ~302 cells");
+            MIB_EXPECT(tab.kdeReferenceSeriesForTests().empty() && !tab.hasKdeReference(), "no reference yet");
+            for (auto* s : contours)
+                MIB_EXPECT(s->pen().style() == Qt::SolidLine && s->count() >= 4, "live contour: solid, closed polyline");
+            tab.pinKdeReference();
+            settle(1);
+            MIB_EXPECT(tab.hasKdeReference() && tab.kdeReferenceSeriesForTests().size() == contours.size(),
+                       "pinning copies the live loops into dashed reference series");
+            for (auto* s : tab.kdeReferenceSeriesForTests())
+                MIB_EXPECT(s->pen().style() == Qt::DashLine, "reference contour is dashed");
+            const std::size_t coreBefore = tab.lastKdeCoreCount();
+            const uint64_t genBefore = tab.kdeGeneration();
+            tab.setKdeCoreFraction(0.5);
+            MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > genBefore; }, 15000), "fraction change re-estimates");
+            settle(1);
+            MIB_EXPECT(tab.lastKdeCoreCount() < coreBefore && tab.lastKdeCoreCount() >= 160,
+                       "a 50% core holds fewer cells than the 90% core");
+            MIB_EXPECT(tab.kdeReferenceSeriesForTests().size() == contours.size() || tab.hasKdeReference(),
+                       "reference survives a re-estimate");
+            tab.clearKdeReference();
+            MIB_EXPECT(!tab.hasKdeReference() && tab.kdeReferenceSeriesForTests().empty(), "clear removes the reference");
+            tab.setKdeCoreFraction(0.9);
+            const uint64_t genRestore = tab.kdeGeneration();
+            MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > genRestore; }, 15000), "fraction restored");
+        }
+
         // ---- 4. unchanged buffer: no relaunch; large buffer: asynchronous -------
         wd.mark("fingerprint");
         const uint64_t gen = tab.kdeGeneration();
@@ -274,6 +310,8 @@ int main(int argc, char* argv[]) {
         MIB_EXPECT(scatter->isVisible() && target->isVisible() &&
                        scatter->count() + target->count() == 1000,
                    "off: plain series back with every point");
+        MIB_EXPECT(tab.kdeContourSeriesForTests().empty() && tab.kdeReferenceSeriesForTests().empty(),
+                   "off: no contour series remain on the chart");
 
         // ---- 6. settings persist ------------------------------------------------
         wd.mark("persist");
@@ -297,6 +335,12 @@ int main(int argc, char* argv[]) {
                        "dialog reads the tab's KDE settings");
             MIB_EXPECT(dlg.findChild<QSpinBox*>(QStringLiteral("kdeGridResolutionSpin")) == nullptr,
                        "grid resolution control retired");
+            auto* coreSpin = dlg.findChild<QSpinBox*>(QStringLiteral("kdeCoreFractionSpin"));
+            MIB_REQUIRE(coreSpin, "dialog exposes the core contour percentage");
+            MIB_EXPECT(coreSpin->value() == 90, "dialog reads the core fraction");
+            MIB_EXPECT(dlg.findChild<QPushButton*>(QStringLiteral("kdePinReferenceBtn")) != nullptr
+                           && dlg.findChild<QPushButton*>(QStringLiteral("kdeClearReferenceBtn")) != nullptr,
+                       "dialog carries the reference actions");
         }
         tab.close();
         settle(2);

@@ -76,6 +76,13 @@ backend's reason in the status bar and offers **Start Live View** again.
   as squares instead of circles so they remain identifiable. Hover the
   toggle to see how many points the last estimate covered and how long it
   took. The setting is remembered between sessions.
+- **Core contour.** With Density on, a solid blue line encloses the densest
+  90% of the cells (the share is adjustable under Settings ▸ Monitoring
+  Settings ▸ *Core contour*). A bimodal population shows one loop per
+  cluster. To compare against an earlier state, *Pin current* in the same
+  dialog keeps that contour on the chart as a dashed orange line; *Clear*
+  removes it. A drift of the solid line away from the dashed one is the
+  population shift.
 - Live totals: valid count, invalid count, algorithm FPS, valid FPS.
 - Charts accumulate only while the tab is visible, and they are a live
   preview — they are not saved with the experiment.

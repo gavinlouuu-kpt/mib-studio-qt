@@ -218,5 +218,109 @@ int main() {
         MIB_EXPECT(sink > 0.0, "work not optimised away");
     }
 
+    // ---- core region: level, grid, contour --------------------------------------
+    {
+        using frontend::monitoring::Contour;
+        using frontend::monitoring::coreLevel;
+        using frontend::monitoring::DensityGrid;
+        using frontend::monitoring::fractionInside;
+        using frontend::monitoring::gaussianKdeGrid;
+        using frontend::monitoring::isoContours;
+        using frontend::monitoring::rawKdeMaximum;
+
+        // coreLevel: rank semantics and degenerate input.
+        {
+            const std::vector<double> d{0.1, 0.9, 0.5, 0.3, 0.7};
+            MIB_EXPECT(coreLevel(d, 1.0) == 0.1, "p = 1 -> the minimum density");
+            MIB_EXPECT(coreLevel(d, 0.4) == 0.7, "ceil(0.4*5) = 2 -> the 2nd largest");
+            MIB_EXPECT(coreLevel(d, 0.5) == 0.5, "ceil(0.5*5) = 3 -> the median");
+            MIB_EXPECT(std::isnan(coreLevel({0.2, 0.4}, 0.9)), "fewer than 3 samples -> no level");
+            MIB_EXPECT(std::isnan(coreLevel(d, 0.0)) && std::isnan(coreLevel(d, 1.5)), "fraction outside (0,1] -> no level");
+            const std::vector<double> withNan{0.1, std::nan(""), 0.9, 0.5, 0.3};
+            MIB_EXPECT(coreLevel(withNan, 0.5) == 0.5, "non-finite densities are ignored in the rank");
+        }
+
+        auto contoursFor = [&](const std::vector<DensityPoint>& pts, double frac, double x0, double x1, double y0,
+                               double y1) {
+            const auto bw = silvermanBandwidth(pts, 1.0);
+            const auto d = gaussianKdeAtPoints(pts, bw);
+            const double level = coreLevel(d, frac);
+            const DensityGrid g = gaussianKdeGrid(pts, bw, rawKdeMaximum(pts, bw), x0, x1, y0, y1, 128, 64);
+            return isoContours(g, level);
+        };
+
+        // One Gaussian cloud: one loop enclosing about p of the samples.
+        {
+            const auto pts = gaussianCloud(rng, 600, 300.0, 0.10, 30.0, 0.015);
+            const auto loops = contoursFor(pts, 0.9, 0.0, 700.0, 0.0, 0.5);
+            MIB_EXPECT(loops.size() == 1, "a single cloud gives exactly one loop");
+            const double inside = fractionInside(pts, loops);
+            std::fprintf(stderr, "single cloud: %zu loop(s), %.3f inside the 90%% contour\n", loops.size(), inside);
+            MIB_EXPECT(inside >= 0.85 && inside <= 0.96, "the 90% contour encloses ~90% of the samples");
+            MIB_EXPECT(!loops.empty() && loops[0].size() > 20 && loops[0].front().x == loops[0].back().x &&
+                           loops[0].front().y == loops[0].back().y,
+                       "loop is closed");
+        }
+
+        // Two separated clouds: two loops.
+        {
+            auto pts = gaussianCloud(rng, 400, 150.0, 0.05, 20.0, 0.01);
+            const auto b = gaussianCloud(rng, 300, 450.0, 0.30, 20.0, 0.01);
+            pts.insert(pts.end(), b.begin(), b.end());
+            const auto loops = contoursFor(pts, 0.9, 0.0, 700.0, 0.0, 0.5);
+            MIB_EXPECT(loops.size() == 2, "two separated clouds give two loops");
+            MIB_EXPECT(fractionInside(pts, loops) >= 0.85, "both cores are enclosed");
+        }
+
+        // Translation invariance (to within one grid cell).
+        {
+            const auto pts = gaussianCloud(rng, 500, 250.0, 0.15, 25.0, 0.012);
+            std::vector<DensityPoint> shifted;
+            for (const auto& p : pts) shifted.push_back({p.x + 100.0, p.y + 0.1});
+            const auto a = contoursFor(pts, 0.9, 0.0, 700.0, 0.0, 0.5);
+            const auto b = contoursFor(shifted, 0.9, 0.0, 700.0, 0.0, 0.5);
+            MIB_REQUIRE(a.size() == 1 && b.size() == 1, "one loop each");
+            auto centroid = [](const Contour& c) {
+                double sx = 0, sy = 0;
+                for (const auto& p : c) { sx += p.x; sy += p.y; }
+                return DensityPoint{sx / c.size(), sy / c.size()};
+            };
+            const auto ca = centroid(a[0]), cb = centroid(b[0]);
+            const double cellX = 700.0 / 127, cellY = 0.5 / 63;
+            MIB_EXPECT(std::fabs((cb.x - ca.x) - 100.0) < 2 * cellX && std::fabs((cb.y - ca.y) - 0.1) < 2 * cellY,
+                       "shifting the population shifts the contour by the same offset");
+        }
+
+        // Population cut by the chart border: every loop is closed (along the
+        // border where the iso-line leaves the chart) and the visible samples
+        // are still mostly enclosed.
+        {
+            const auto pts = gaussianCloud(rng, 400, 40.0, 0.10, 25.0, 0.01);
+            const auto loops = contoursFor(pts, 0.9, 0.0, 700.0, 0.0, 0.5);
+            std::vector<DensityPoint> visible;
+            for (const auto& p : pts)
+                if (p.x >= 0.0) visible.push_back(p);
+            std::fprintf(stderr, "border-cut: %zu loop(s), %.3f of visible samples inside\n", loops.size(),
+                         fractionInside(visible, loops));
+            MIB_EXPECT(!loops.empty(), "border-cut population still yields a contour");
+            bool closed = true;
+            for (const auto& l : loops) closed = closed && l.size() >= 3 && l.front().x == l.back().x && l.front().y == l.back().y;
+            MIB_EXPECT(closed, "border-cut loops are closed along the border");
+            MIB_EXPECT(fractionInside(visible, loops) >= 0.8, "visible samples are enclosed");
+        }
+
+        // Degenerate input never yields NaN or loops.
+        {
+            const std::vector<DensityPoint> same(20, DensityPoint{100.0, 0.1});
+            const auto bw = silvermanBandwidth(same, 1.0);
+            const auto g = gaussianKdeGrid(same, bw, rawKdeMaximum(same, bw), 0.0, 700.0, 0.0, 0.5, 32, 16);
+            MIB_EXPECT(std::all_of(g.value.begin(), g.value.end(), [](double v) { return std::isfinite(v); }),
+                       "identical points: finite grid");
+            MIB_EXPECT(isoContours(g, std::nan("")).empty(), "NaN level -> no loops");
+            MIB_EXPECT(isoContours(DensityGrid{}, 0.5).empty(), "empty grid -> no loops");
+            MIB_EXPECT(contoursFor({{1, 1}, {2, 2}}, 0.9, 0, 10, 0, 10).empty(), "two points -> no level -> no loops");
+        }
+    }
+
     return mib::test::exitCode();
 }

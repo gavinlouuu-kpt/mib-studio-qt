@@ -4,7 +4,10 @@
 #include "ui_ExperimentMonitoringTab.h"
 
 #include <QElapsedTimer>
+#include <QDateTime>
 #include <QFutureWatcher>
+#include <QLegendMarker>
+#include <QPen>
 #include <QSettings>
 #include <QLegend>
 #include <QLegendMarker>
@@ -138,6 +141,7 @@ constexpr const char* kKdeKeyVersion = "Monitoring/KdeVersion";
 constexpr const char* kKdeKeyEnabled = "Monitoring/KdeEnabled";
 constexpr const char* kKdeKeyBandwidthFactor = "Monitoring/KdeBandwidthFactor";
 constexpr const char* kKdeKeyIntervalMs = "Monitoring/KdeIntervalMs";
+constexpr const char* kKdeKeyCoreFraction = "Monitoring/KdeCoreFraction";
 constexpr int kKdePreferenceVersion = 1;
 
 // Colour of a density level (0 = sparsest) on the sequential ramp.
@@ -1450,6 +1454,11 @@ namespace frontend
         {
             kdeIntervalMs_ = std::clamp(interval, kKdeIntervalMsMin, kKdeIntervalMsMax);
         }
+        const double fraction = s.value(QLatin1String(kKdeKeyCoreFraction)).toDouble(&ok);
+        if (ok && std::isfinite(fraction))
+        {
+            kdeCoreFraction_ = std::clamp(fraction, kKdeCoreFractionMin, kKdeCoreFractionMax);
+        }
     }
 
     void ExperimentMonitoringTab::saveKdePreferences()
@@ -1459,6 +1468,7 @@ namespace frontend
         s.setValue(QLatin1String(kKdeKeyEnabled), kdeEnabled_);
         s.setValue(QLatin1String(kKdeKeyBandwidthFactor), kdeBandwidthFactor_);
         s.setValue(QLatin1String(kKdeKeyIntervalMs), kdeIntervalMs_);
+        s.setValue(QLatin1String(kKdeKeyCoreFraction), kdeCoreFraction_);
     }
 
     void ExperimentMonitoringTab::setKdeEnabled(bool enabled)
@@ -1483,7 +1493,7 @@ namespace frontend
             kdeFingerprint_ = KdeFingerprint{};
             setKdeModeVisuals(false);
             updateScatterplot(recentValidFrames_); // plain series take the points back immediately
-            ui->kdeToggleCheck->setToolTip(tr("Colour scatter points by local population density (Gaussian KDE, recomputed periodically)"));
+            refreshKdeTooltip();
         }
         saveKdePreferences();
         SPDLOG_INFO("Monitoring scatter density (KDE) {}", enabled ? "enabled" : "disabled");
@@ -1506,6 +1516,98 @@ namespace frontend
         kdeIntervalMs_ = ms;
         if (kdeTimer_) kdeTimer_->setInterval(ms);
         saveKdePreferences();
+    }
+
+    void ExperimentMonitoringTab::setKdeCoreFraction(double fraction)
+    {
+        if (!std::isfinite(fraction)) return;
+        fraction = std::clamp(fraction, kKdeCoreFractionMin, kKdeCoreFractionMax);
+        if (fraction == kdeCoreFraction_) return;
+        kdeCoreFraction_ = fraction;
+        saveKdePreferences();
+        if (kdeEnabled_) requestKdeUpdate();
+    }
+
+    void ExperimentMonitoringTab::redrawKdeContours(std::vector<QLineSeries*>& family,
+                                                    const std::vector<std::vector<monitoring::DensityPoint>>& loops,
+                                                    bool reference)
+    {
+        if (!scatterplotChart_) return;
+        for (auto* series : family)
+        {
+            scatterplotChart_->removeSeries(series);
+            delete series;
+        }
+        family.clear();
+        if (!kdeEnabled_) return;
+        // Categorical slots 1 (blue) and 2 (orange), never the density ramp.
+        QPen pen(reference ? QColor(0xeb, 0x68, 0x34) : QColor(0x2a, 0x78, 0xd6));
+        pen.setWidthF(2.0);
+        pen.setCosmetic(true);
+        if (reference) pen.setStyle(Qt::DashLine);
+        int loopIndex = 0;
+        for (const auto& loop : loops)
+        {
+            auto* series = new QLineSeries();
+            series->setName(QStringLiteral("%1-contour-%2").arg(reference ? QStringLiteral("reference") : QStringLiteral("core")).arg(loopIndex++));
+            series->setPen(pen);
+            QList<QPointF> pts;
+            pts.reserve(static_cast<qsizetype>(loop.size()));
+            for (const auto& p : loop) pts.append(QPointF(p.x, p.y));
+            series->append(pts);
+            scatterplotChart_->addSeries(series);
+            series->attachAxis(scatterXAxis_);
+            series->attachAxis(scatterYAxis_);
+            for (auto* marker : scatterplotChart_->legend()->markers(series)) marker->setVisible(false);
+            family.push_back(series);
+        }
+    }
+
+    void ExperimentMonitoringTab::pinKdeReference()
+    {
+        setKdeReference(lastKdeContours_, tr("pinned %1").arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+    }
+
+    void ExperimentMonitoringTab::setKdeReference(std::vector<std::vector<monitoring::DensityPoint>> loops, const QString& label)
+    {
+        kdeReference_ = std::move(loops);
+        kdeReferenceLabel_ = kdeReference_.empty() ? QString() : label;
+        redrawKdeContours(kdeReferenceSeries_, kdeReference_, true);
+        refreshKdeTooltip();
+        SPDLOG_INFO("Monitoring KDE reference contour: {} loop(s) ({})", kdeReference_.size(), kdeReferenceLabel_.toStdString());
+    }
+
+    void ExperimentMonitoringTab::clearKdeReference()
+    {
+        setKdeReference({}, QString());
+    }
+
+    void ExperimentMonitoringTab::refreshKdeTooltip()
+    {
+        if (!kdeEnabled_)
+        {
+            ui->kdeToggleCheck->setToolTip(tr("Colour scatter points by local population density (Gaussian KDE, recomputed periodically)"));
+            return;
+        }
+        QString text = tr("Density (KDE) over %1 points; bandwidth %2 μm² × %3; computed in %4 ms; refreshed every %5 s")
+                           .arg(lastKdePointCount_)
+                           .arg(lastKdeBandwidthX_, 0, 'f', 1)
+                           .arg(lastKdeBandwidthY_, 0, 'f', 4)
+                           .arg(lastKdeComputeMs_)
+                           .arg(kdeIntervalMs_ / 1000.0, 0, 'g', 3);
+        if (std::isfinite(lastKdeCoreLevel_))
+        {
+            text += tr("\nCore %1%: %2 cells, %3 contour loop(s)")
+                        .arg(std::lround(kdeCoreFraction_ * 100.0))
+                        .arg(lastKdeCoreCount_)
+                        .arg(lastKdeContours_.size());
+        }
+        else
+        {
+            text += tr("\nCore: too few cells for a contour");
+        }
+        if (!kdeReference_.empty()) text += tr("\nReference contour: %1").arg(kdeReferenceLabel_);
+        ui->kdeToggleCheck->setToolTip(text);
     }
 
     void ExperimentMonitoringTab::setupKdeLevelSeries()
@@ -1577,6 +1679,19 @@ namespace frontend
             if (!on) s->clear();
             s->setVisible(on);
         }
+        if (!on)
+        {
+            // Contours belong to the KDE mode; the off state is the plain chart.
+            lastKdeContours_.clear();
+            lastKdeCoreLevel_ = std::nan("");
+            lastKdeCoreCount_ = 0;
+            redrawKdeContours(kdeContourSeries_, {}, false);
+            redrawKdeContours(kdeReferenceSeries_, {}, true);
+        }
+        else
+        {
+            redrawKdeContours(kdeReferenceSeries_, kdeReference_, true);
+        }
         hideKdeLegendMarkers();
     }
 
@@ -1608,15 +1723,18 @@ namespace frontend
         }
         // The rolling buffer only grows at the back and trims at the front, so
         // (count, first, last) identifies the window; skip an unchanged one.
-        const KdeFingerprint fingerprint{points.size(), indices.front(), indices.back(), kdeBandwidthFactor_, areaConversionFactor};
+        const KdeFingerprint fingerprint{points.size(), indices.front(), indices.back(), kdeBandwidthFactor_, areaConversionFactor,
+                                         kdeCoreFraction_, scatterXMin_, scatterXMax_, scatterYMin_, scatterYMax_};
         if (fingerprint == kdeFingerprint_) return;
         kdeFingerprint_ = fingerprint;
 
         const double factor = kdeBandwidthFactor_;
+        const double coreFraction = kdeCoreFraction_;
+        const double x0 = scatterXMin_, x1 = scatterXMax_, y0 = scatterYMin_, y1 = scatterYMax_;
         auto* watcher = new QFutureWatcher<KdeResult>(this);
         kdeWatcher_ = watcher;
         connect(watcher, &QFutureWatcher<KdeResult>::finished, this, &ExperimentMonitoringTab::onKdeJobFinished);
-        watcher->setFuture(QtConcurrent::run([indices = std::move(indices), points = std::move(points), factor]() {
+        watcher->setFuture(QtConcurrent::run([indices = std::move(indices), points = std::move(points), factor, coreFraction, x0, x1, y0, y1]() {
             QElapsedTimer clock;
             clock.start();
             KdeResult result;
@@ -1625,6 +1743,18 @@ namespace frontend
             result.frameIndices = std::move(indices);
             result.bandwidthX = bandwidth.x;
             result.bandwidthY = bandwidth.y;
+            // Core contour at the level enclosing `coreFraction` of the samples,
+            // on the same [0, 1] scale as the point densities.
+            result.coreFraction = coreFraction;
+            result.coreLevel = monitoring::coreLevel(result.density, coreFraction);
+            if (std::isfinite(result.coreLevel))
+            {
+                for (double d : result.density)
+                    if (d >= result.coreLevel) ++result.coreCount;
+                const auto grid = monitoring::gaussianKdeGrid(points, bandwidth, monitoring::rawKdeMaximum(points, bandwidth),
+                                                              x0, x1, y0, y1, kKdeGridNx, kKdeGridNy);
+                result.contours = monitoring::isoContours(grid, result.coreLevel);
+            }
             result.computeMs = static_cast<int>(clock.elapsed());
             return result;
         }));
@@ -1648,15 +1778,17 @@ namespace frontend
         ++kdeGeneration_;
         lastKdeComputeMs_ = result.computeMs;
         lastKdePointCount_ = result.frameIndices.size();
+        lastKdeBandwidthX_ = result.bandwidthX;
+        lastKdeBandwidthY_ = result.bandwidthY;
+        lastKdeCoreLevel_ = result.coreLevel;
+        lastKdeCoreCount_ = result.coreCount;
+        lastKdeContours_ = result.contours;
         updateScatterplot(recentValidFrames_); // re-route points into their new density levels
-        ui->kdeToggleCheck->setToolTip(tr("Density (KDE) over %1 points; bandwidth %2 μm² × %3; computed in %4 ms; refreshed every %5 s")
-                                           .arg(result.frameIndices.size())
-                                           .arg(result.bandwidthX, 0, 'f', 1)
-                                           .arg(result.bandwidthY, 0, 'f', 4)
-                                           .arg(result.computeMs)
-                                           .arg(kdeIntervalMs_ / 1000.0, 0, 'g', 3));
-        SPDLOG_DEBUG("Monitoring KDE: {} points, bandwidth ({:.2f} um^2, {:.4f}), {} ms", result.frameIndices.size(),
-                     result.bandwidthX, result.bandwidthY, result.computeMs);
+        redrawKdeContours(kdeContourSeries_, lastKdeContours_, false);
+        refreshKdeTooltip();
+        SPDLOG_DEBUG("Monitoring KDE: {} points, bandwidth ({:.2f} um^2, {:.4f}), core {:.0f}% -> {} cells, {} loop(s), {} ms",
+                     result.frameIndices.size(), result.bandwidthX, result.bandwidthY, result.coreFraction * 100.0,
+                     result.coreCount, result.contours.size(), result.computeMs);
     }
 
 
