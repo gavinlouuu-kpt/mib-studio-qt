@@ -42,6 +42,14 @@ inline constexpr bool contractUsesAbsoluteDifference(int contract) noexcept {
 inline constexpr bool contractHasRingWidth(int contract) noexcept {
     return contract < kProcessingContractVersionV2;
 }
+// Contract 1 segments the bright defocus halo, so the object is the inner
+// contour (the hole in the ring) and `require_single_inner_contour` gates on
+// it. Contract 2 (absdiff) segments the whole cell as one blob with no halo,
+// so the object is always the top-level contour; the inner-contour rule does
+// not apply and is ignored.
+inline constexpr bool contractObjectsAreInnerContours(int contract) noexcept {
+    return contract < kProcessingContractVersionV2;
+}
 
 enum class SchemaCompatibility {
     Same,          // merge missing defaults in memory; do not rewrite the file

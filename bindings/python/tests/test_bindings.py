@@ -313,3 +313,12 @@ def test_compute_processed_objects_expands_per_object():
     # No detection -> single empty record.
     empty = mp.compute_processed_objects(bg, bg, cfg, (0, 0, 120, 80))
     assert len(empty) == 1 and empty[0]["object_id"] == -1
+
+
+def test_contract_2_objects_are_top_level_contours():
+    frame, bg = _dark_object_frame()
+    frame[28:32, 38:42] = 128  # hole inside the dark object
+    cfg = _contract_config(2)
+    cfg["require_single_inner_contour"] = True  # Contract-1 rule, ignored under Contract 2
+    objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 80, 60))
+    assert len(objs) == 1 and objs[0]["object_id"] == 1 and objs[0]["area"] > 300

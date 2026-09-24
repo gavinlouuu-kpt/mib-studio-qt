@@ -333,7 +333,8 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
     // contour touches the border, per-object metrics are not computed, so the
     // metric-range reasons below would read uninitialised gates. Report only
     // the early-exit reason in those cases (matches getInvalidReasons()).
-    if (config.require_single_inner_contour && result.innerContourCount == 0) {
+    if (contract::contractObjectsAreInnerContours(config.processing_contract_version) &&
+        config.require_single_inner_contour && result.innerContourCount == 0) {
         reasons.push_back(InvalidReasonCode::NoContour);
         return reasons;
     }
@@ -604,11 +605,16 @@ std::vector<services::FilterResult> filterProcessedObjects(
         emptyResult.brightness = calculateBrightnessQuantiles(originalImage, processedImage);
     }
 
-    if (config.require_single_inner_contour && analysis.innerContours.empty()) {
+    // Contract 2 objects are top-level contours (no halo, no inner-contour rule).
+    const bool innerContourMode =
+        contract::contractObjectsAreInnerContours(config.processing_contract_version);
+    const bool requireSingleInner = innerContourMode && config.require_single_inner_contour;
+
+    if (requireSingleInner && analysis.innerContours.empty()) {
         return {std::move(emptyResult)};
     }
 
-    if (!analysis.innerContours.empty()) {
+    if (innerContourMode && !analysis.innerContours.empty()) {
         std::vector<size_t> objectOrder;
         objectOrder.reserve(analysis.innerContours.size());
         for (size_t i = 0; i < analysis.innerContours.size(); ++i) {
@@ -634,7 +640,7 @@ std::vector<services::FilterResult> filterProcessedObjects(
         return results;
     }
 
-    if (!analysis.filteredContours.empty() && !config.require_single_inner_contour) {
+    if (!analysis.filteredContours.empty() && !requireSingleInner) {
         std::vector<size_t> topLevelContours;
         for (size_t i = 0; i < analysis.filteredContours.size(); ++i) {
             const size_t origIdx =

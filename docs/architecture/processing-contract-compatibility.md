@@ -54,6 +54,7 @@ The executed contract is `ProcessingConfig::processing_contract_version`
 |---|---|---|
 | `contractUsesAbsoluteDifference` | saturating `cv::subtract` | `cv::absdiff` (kernel mask, empty-frame checks, realtime/batch loops) |
 | `contractHasRingWidth` | ring ratio computed + gated | ring ratio `NaN`, gate ignored, no `Ring` invalid reason |
+| `contractObjectsAreInnerContours` | object = inner contour (hole in the bright halo); `require_single_inner_contour` gates | object = top-level contour (absdiff blob, no halo); inner-contour rule ignored, no `NoContour` reason |
 | `isSupportedProcessingContract` | ✅ | ✅ (anything else fails closed: no mask, `ValueError` in Python) |
 
 The Python wheel (0.3.0+) executes both contracts; `CONTRACT_VERSION` stays

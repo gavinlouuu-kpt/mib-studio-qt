@@ -186,6 +186,10 @@ Branches are stacked in this order (`claude/pc2-v2-1-schema` → … ).
       acceptance item.
 - [x] `processMaskWithActiveKernel` derives the kernel's absolute-difference
       flag from the contract and fails closed on unsupported versions.
+- [x] Contract-2 objects are top-level contours (`contractObjectsAreInnerContours`):
+      absdiff segments the whole cell with no halo, so the Contract-1
+      inner-contour rule is ignored (first real-corpus run showed it emitting
+      the holes inside the blob as objects). Wheel 0.3.1.
 - [x] Ring width under Contract 2: NaN on the inner, outer and empty paths,
       never gated, never an invalid reason. Laplacian variance already computed
       per object (V2-3).

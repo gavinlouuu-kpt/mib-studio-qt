@@ -186,6 +186,22 @@ void conformServiceContractSelection() {
     const auto reasons = science::classifyInvalidReasons(v2.validation, cfg, 0.5);
     MIB_EXPECT(reasons.empty(), "contract 2: no Ring invalid reason");
 
+    // Contract 2 objects are top-level contours: a solid blob with a hole is one
+    // object even when the (Contract-1) single-inner-contour rule is on, and a
+    // hole-free blob is not rejected as "no contour".
+    cv::Mat holed = frame.clone();
+    cv::rectangle(holed, cv::Rect(38, 28, 4, 4), cv::Scalar(128), cv::FILLED); // hole in the dark object
+    cfg.require_single_inner_contour = true;
+    const ProcessedFrame v2h = service.computeProcessedFrame(holed, bg, cfg, roi, 0, 0);
+    MIB_EXPECT(v2h.validation.objectCount == 1 && v2h.validation.area > 300.0,
+               "contract 2: the top-level blob is the object, not the hole");
+    const ProcessedFrame v2s = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    MIB_EXPECT(v2s.validation.objectCount == 1 && v2s.validation.isValid,
+               "contract 2: hole-free blob is valid despite require_single_inner_contour");
+    MIB_EXPECT(science::classifyInvalidReasons(v2s.validation, cfg, 0.5).empty(),
+               "contract 2: no NoContour reason for a hole-free blob");
+    cfg.require_single_inner_contour = false;
+
     cfg.processing_contract_version = 3;
     const ProcessedFrame v3 = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
     MIB_EXPECT(v3.processedImage.empty(), "unsupported contract fails closed (no mask)");
