@@ -86,7 +86,7 @@ class TestProcessBatch:
 
         assert len(results) == 1
         result = results[0]
-        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus", "laplacian_variance", "processing_contract_version"}
+        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus", "laplacian_variance", "processing_contract_version", "bbox_xywh", "centroid_xy"}
         assert GOLD_STANDARD_KEYS - {"youngs_modulus"} <= set(result.keys())
         assert result["frame_type"] == "valid"
         assert result["is_valid"] is True
@@ -322,3 +322,13 @@ def test_contract_2_objects_are_top_level_contours():
     cfg["require_single_inner_contour"] = True  # Contract-1 rule, ignored under Contract 2
     objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 80, 60))
     assert len(objs) == 1 and objs[0]["object_id"] == 1 and objs[0]["area"] > 300
+
+
+def test_object_geometry_is_in_frame_coordinates():
+    frame, bg = _dark_object_frame()  # dark object at rows 20:40, cols 30:50
+    objs = mp.compute_processed_objects(frame, bg, _contract_config(2), (10, 5, 60, 50))
+    assert len(objs) == 1
+    cx, cy = objs[0]["centroid_xy"]
+    assert abs(cx - 39.5) < 1.5 and abs(cy - 29.5) < 1.5
+    x, y, w, h = objs[0]["bbox_xywh"]
+    assert 28 <= x <= 31 and 18 <= y <= 21 and 18 <= w <= 22 and 18 <= h <= 22

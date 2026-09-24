@@ -43,6 +43,11 @@ inline py::dict processedFrameToDict(const ProcessedFrame& frame, double pixelTo
     // Contract 2 focus metric (per-object Laplacian variance); NaN when not
     // computed (no detection) so readers can tell "unusable" from a value.
     d["laplacian_variance"] = v.laplacianVariance;
+    // Object geometry in the coordinates of the image handed to the core (full
+    // frame for compute_processed_frame/objects). Lets callers place the
+    // object, e.g. reject objects whose centroid sits on a channel wall.
+    d["bbox_xywh"] = py::make_tuple(v.bboxX, v.bboxY, v.bboxWidth, v.bboxHeight);
+    d["centroid_xy"] = py::make_tuple(v.centroidX, v.centroidY);
     if (!std::isnan(v.youngsModulus)) {
         d["youngs_modulus"] = v.youngsModulus;
     }
@@ -87,6 +92,15 @@ inline ProcessedFrame processedFrameFromDict(const py::dict& d) {
     v.area = dictGet(d, "area", 0.0);
     v.areaRatio = dictGet(d, "area_ratio", 0.0);
     v.ringRatio = dictGet(d, "ring_ratio", 0.0);
+    if (d.contains("bbox_xywh")) {
+        const py::tuple b = d["bbox_xywh"].cast<py::tuple>();
+        v.bboxX = b[0].cast<double>(); v.bboxY = b[1].cast<double>();
+        v.bboxWidth = b[2].cast<double>(); v.bboxHeight = b[3].cast<double>();
+    }
+    if (d.contains("centroid_xy")) {
+        const py::tuple c = d["centroid_xy"].cast<py::tuple>();
+        v.centroidX = c[0].cast<double>(); v.centroidY = c[1].cast<double>();
+    }
     v.laplacianVariance =
         dictGet(d, "laplacian_variance", std::numeric_limits<double>::quiet_NaN());
     v.isTargetGroup = dictGet(d, "is_target_group", false);
