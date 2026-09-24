@@ -1689,6 +1689,40 @@ namespace backend::services
         return true;
     }
 
+    bool Hdf5Service::openFileForUpdate(const std::string& filePath)
+    {
+        if (impl_->isOpen_)
+        {
+            SPDLOG_WARN("HDF5 file already open: {}", impl_->filePath_);
+            return false;
+        }
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(std::filesystem::u8path(filePath), ec))
+        {
+            SPDLOG_WARN("openFileForUpdate: not an existing file: {}", filePath);
+            return false;
+        }
+        const hid_t fileAccessId = createFileAccessPropertyList();
+        H5E_BEGIN_TRY
+        {
+            impl_->fileId_ = H5Fopen(filePath.c_str(), H5F_ACC_RDWR, fileAccessId);
+        }
+        H5E_END_TRY;
+        closePropertyList(fileAccessId);
+        if (impl_->fileId_ < 0)
+        {
+            impl_->fileId_ = H5I_INVALID_HID;
+            SPDLOG_WARN("openFileForUpdate: cannot open {} read-write (read-only, locked or already open)", filePath);
+            return false;
+        }
+        impl_->filePath_ = filePath;
+        impl_->isOpen_ = true;
+        impl_->writable_ = true;
+        impl_->datasetsInitialized_ = false;
+        SPDLOG_INFO("HDF5 file opened for update: {}", filePath);
+        return true;
+    }
+
     static bool readImageDataset(hid_t fileId, const std::string& datasetPath,
                                  std::vector<cv::Mat>& images)
     {

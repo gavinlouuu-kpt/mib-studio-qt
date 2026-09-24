@@ -458,6 +458,9 @@ set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;b
 mib_add_backend_test_executable(kde_core_fault_test recording/kde_core_fault_test.cpp)
 add_test(NAME recording.kde_core_fault COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_fault_test)
 set_tests_properties(recording.kde_core_fault PROPERTIES LABELS "recording;backend;monitoring;safety" TIMEOUT 30)
+mib_add_backend_test_executable(kde_full_run_core_test recording/kde_full_run_core_test.cpp)
+add_test(NAME recording.kde_full_run_core COMMAND $<TARGET_FILE:mib_backend_tests> kde_full_run_core_test)
+set_tests_properties(recording.kde_full_run_core PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 60)
 
 # Issue #344: native Qt-free export service (round-trip, cancellation, faults,
 # bounded names, repeated runs with HDF5 open-object accounting). The

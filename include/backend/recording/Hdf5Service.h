@@ -45,6 +45,11 @@ public:
     // File operations
     bool openFile(const std::string& filePath);
     bool loadFile(const std::string& filePath); // Open existing file for reading
+    // Open an existing file read-write for post-run metadata only (e.g. the
+    // KDE analysis record). Never creates or truncates; frame datasets are
+    // not initialised, so append paths stay unavailable. Fails when the file
+    // is missing, read-only on disk, or already open elsewhere in-process.
+    bool openFileForUpdate(const std::string& filePath);
     void closeFile();
     bool flush(); // Explicit global flush — call before metadata writes to protect frame data on crash
     bool isFileOpen() const;

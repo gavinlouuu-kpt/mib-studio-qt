@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QImage>
 #include <QCache>
+#include <optional>
 #include <vector>
 #include <cstdint>
 #include <memory>
@@ -49,6 +50,7 @@ class QProgressDialog;
 class QToolButton;
 class QAction;
 namespace frontend { class ElidingLabel; }
+namespace frontend::monitoring { struct KdeCoreRecord; }
 template<typename T> class QFutureWatcher;
 #if __has_include(<QHistogramSeries>)
 class QHistogramSeries;
@@ -81,6 +83,15 @@ namespace frontend
         const std::vector<QLineSeries*> &storedKdeContourSeriesForTests() const { return storedKdeSeries_; }
         bool hasStoredKdeLive() const { return !storedKdeLive_.empty(); }
         bool hasStoredKdeAnalysis() const { return !storedKdeAnalysis_.empty(); }
+        // Full-run core contour (scatter context menu "Compute core contour
+        // from full run"): computed on a worker from the file's valid cells,
+        // saved as /analysis @kde_core_json after confirming an overwrite.
+        void computeFullRunCoreForTests() { startFullRunCoreComputation(); }
+        bool fullRunCoreJobInFlight() const { return coreWatcher_ != nullptr; }
+        // nullopt: ask with a dialog (default); true/false: answer for tests.
+        void setOverwriteAnswerForTests(std::optional<bool> answer) { overwriteAnswerForTests_ = answer; }
+        QString statusTextForTests() const;
+        QAction *computeCoreAction() const { return computeCoreAction_; }
 
     private slots:
         void onSelectFile();
@@ -184,6 +195,13 @@ namespace frontend
         std::vector<QLineSeries*> storedKdeSeries_;
         void readStoredKdeRecords();
         void drawStoredKdeContours();
+        void startFullRunCoreComputation();
+        void onFullRunCoreFinished();
+        void updateComputeCoreActionState();
+        QAction *computeCoreAction_ = nullptr;
+        QFutureWatcher<frontend::monitoring::KdeCoreRecord> *coreWatcher_ = nullptr;
+        QString coreJobPath_;
+        std::optional<bool> overwriteAnswerForTests_;
         QChartView *histogramView_ = nullptr;
         QChart *histogramChart_ = nullptr;
 #if __has_include(<QHistogramSeries>)

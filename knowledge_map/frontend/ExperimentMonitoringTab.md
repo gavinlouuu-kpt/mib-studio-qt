@@ -95,7 +95,7 @@ markers overlap.
   capture, processing, ring filling, overlay lag and GUI responsiveness;
   numbers in [[../task/2026-09-23-monitoring-kde-density]]).
 
-### Core contour (plan `docs/exec-plans/active/2026-09-24-kde-core-region-split.md`)
+### Core contour (plan `docs/exec-plans/completed/2026-09-24-kde-core-region-split.md`)
 
 While KDE is on, one solid blue contour encloses the densest `Core %` of the
 samples (default 90%, Monitoring Settings, `Monitoring/KdeCoreFraction`).

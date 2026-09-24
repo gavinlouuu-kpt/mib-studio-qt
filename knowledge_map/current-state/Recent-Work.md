@@ -9,13 +9,16 @@ existing worker job. A dashed reference contour can be pinned or taken from a
 previous experiment file (Monitoring Settings). Each experiment run with
 Density on stores the on-screen contour as a provisional record
 (`/monitoring @kde_live_json`, written by the coordinator at stop); the Review
-tab draws stored contours. The full-run analysis record is the next step.
+tab draws stored contours and, on right-click, computes the authoritative
+full-run contour of all recorded cells and saves it into the file
+(`/analysis @kde_core_json`, via the new `Hdf5Service::openFileForUpdate`).
 Guards: `frontend.monitoring_density`, `recording.kde_core_roundtrip`,
-`recording.kde_core_fault`, `e2e.experiment_coordinator`,
+`recording.kde_core_fault`, `recording.kde_full_run_core`,
+`e2e.experiment_coordinator`,
 `frontend.monitoring_kde_density`, `frontend.hdf_review_core`,
 `integration.monitoring_kde_e2e`. See
 [[../task/2026-09-23-monitoring-kde-density]] and
-`docs/exec-plans/active/2026-09-24-kde-core-region-split.md`.
+`docs/exec-plans/completed/2026-09-24-kde-core-region-split.md`.
 
 ## 2026-09-23 — Monitoring scatter density (KDE) colouring
 

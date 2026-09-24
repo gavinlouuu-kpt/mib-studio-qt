@@ -26,8 +26,7 @@ using frontend::monitoring::fromJson;
 using frontend::monitoring::KdeCoreRecord;
 using frontend::monitoring::toJson;
 
-int main()
-{
+int main() {
     mib::test::TempDir td("mib_kde_core_fault");
     const std::string path = (td / "experiment.h5").string();
     const std::string good = toJson(KdeCoreRecord{});
@@ -36,8 +35,10 @@ int main()
     {
         Hdf5Service hdf5;
         std::string s = "stale";
-        MIB_EXPECT(!hdf5.writeKdeLiveJson(good) && !hdf5.writeKdeAnalysisJson(good), "no file: writes refused");
-        MIB_EXPECT(!hdf5.readKdeLiveJson(s) && s.empty(), "no file: read fails and clears the output");
+        MIB_EXPECT(!hdf5.writeKdeLiveJson(good) && !hdf5.writeKdeAnalysisJson(good),
+                   "no file: writes refused");
+        MIB_EXPECT(!hdf5.readKdeLiveJson(s) && s.empty(),
+                   "no file: read fails and clears the output");
         MIB_EXPECT(!hdf5.readKdeAnalysisJson(s) && s.empty(), "no file: analysis read fails");
     }
 
@@ -54,28 +55,37 @@ int main()
         MIB_EXPECT(!reader.writeKdeLiveJson(good), "read-only: live write refused");
         MIB_EXPECT(!reader.writeKdeAnalysisJson(good), "read-only: analysis write refused");
         std::string s;
-        MIB_EXPECT(!reader.readKdeLiveJson(s) && !reader.readKdeAnalysisJson(s), "refused writes left nothing behind");
+        MIB_EXPECT(!reader.readKdeLiveJson(s) && !reader.readKdeAnalysisJson(s),
+                   "refused writes left nothing behind");
         reader.closeFile();
     }
 
     // ---- codec rejects bad documents -----------------------------------------
     {
         std::string why;
-        MIB_EXPECT(!fromJson("{not json", &why) && !why.empty(), "malformed JSON rejected with a reason");
+        MIB_EXPECT(!fromJson("{not json", &why) && !why.empty(),
+                   "malformed JSON rejected with a reason");
         MIB_EXPECT(!fromJson("[1,2,3]", &why), "non-object rejected");
-        MIB_EXPECT(!fromJson("{\"contours\":[]}", &why) && why.find("schema_version") != std::string::npos,
+        MIB_EXPECT(!fromJson("{\"contours\":[]}", &why) &&
+                       why.find("schema_version") != std::string::npos,
                    "missing schema_version rejected");
-        MIB_EXPECT(!fromJson("{\"schema_version\":99,\"contours\":[]}", &why) && why.find("99") != std::string::npos,
+        MIB_EXPECT(!fromJson("{\"schema_version\":99,\"contours\":[]}", &why) &&
+                       why.find("99") != std::string::npos,
                    "future schema version rejected, naming the version");
         MIB_EXPECT(!fromJson("{\"schema_version\":1}", &why), "missing contours rejected");
-        MIB_EXPECT(!fromJson("{\"schema_version\":1,\"contours\":[[[1,2],[3]]]}", &why), "vertex without two numbers rejected");
-        MIB_EXPECT(!fromJson("{\"schema_version\":1,\"contours\":[[[1,\"x\"]]]}", &why), "non-numeric vertex rejected");
-        MIB_EXPECT(!fromJson("{\"schema_version\":1,\"cell_count\":\"many\",\"contours\":[]}", &why),
-                   "wrongly typed member rejected, not thrown");
+        MIB_EXPECT(!fromJson("{\"schema_version\":1,\"contours\":[[[1,2],[3]]]}", &why),
+                   "vertex without two numbers rejected");
+        MIB_EXPECT(!fromJson("{\"schema_version\":1,\"contours\":[[[1,\"x\"]]]}", &why),
+                   "non-numeric vertex rejected");
+        MIB_EXPECT(
+            !fromJson("{\"schema_version\":1,\"cell_count\":\"many\",\"contours\":[]}", &why),
+            "wrongly typed member rejected, not thrown");
         MIB_EXPECT(!fromJson("", &why), "empty document rejected");
         const auto degenerate = fromJson("{\"schema_version\":1,\"contours\":[[[1,2],[3,4]]]}");
-        MIB_EXPECT(degenerate && degenerate->contours.empty(), "loops with fewer than 3 vertices are dropped");
-        const auto extra = fromJson("{\"schema_version\":1,\"contours\":[],\"future_member\":{\"a\":1}}");
+        MIB_EXPECT(degenerate && degenerate->contours.empty(),
+                   "loops with fewer than 3 vertices are dropped");
+        const auto extra =
+            fromJson("{\"schema_version\":1,\"contours\":[],\"future_member\":{\"a\":1}}");
         MIB_EXPECT(extra.has_value(), "unknown extra members are ignored");
     }
 
@@ -85,14 +95,16 @@ int main()
         Hdf5Service hdf5;
         MIB_REQUIRE(hdf5.openFile(path2), "create file 2");
         MIB_REQUIRE(hdf5.initializeDatasets(), "datasets 2");
-        MIB_REQUIRE(hdf5.writeKdeLiveJson("\xff\xfe garbage \x01"), "service stores the document verbatim");
+        MIB_REQUIRE(hdf5.writeKdeLiveJson("\xff\xfe garbage \x01"),
+                    "service stores the document verbatim");
         hdf5.closeFile();
     }
     {
         Hdf5Service reader;
         MIB_REQUIRE(reader.loadFile(path2), "reopen 2");
         std::string s;
-        MIB_EXPECT(reader.readKdeLiveJson(s) && s == "\xff\xfe garbage \x01", "garbage reads back verbatim");
+        MIB_EXPECT(reader.readKdeLiveJson(s) && s == "\xff\xfe garbage \x01",
+                   "garbage reads back verbatim");
         MIB_EXPECT(!fromJson(s), "garbage is rejected by the codec");
         reader.closeFile();
     }
@@ -104,7 +116,8 @@ int main()
         MIB_REQUIRE(file >= 0, "raw create");
         hid_t group = H5Gcreate2(file, "/monitoring", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         hid_t scalar = H5Screate(H5S_SCALAR);
-        hid_t attr = H5Acreate2(group, "kde_live_json", H5T_NATIVE_INT, scalar, H5P_DEFAULT, H5P_DEFAULT);
+        hid_t attr =
+            H5Acreate2(group, "kde_live_json", H5T_NATIVE_INT, scalar, H5P_DEFAULT, H5P_DEFAULT);
         const int value = 42;
         H5Awrite(attr, H5T_NATIVE_INT, &value);
         H5Aclose(attr);

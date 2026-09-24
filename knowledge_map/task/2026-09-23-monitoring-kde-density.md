@@ -102,4 +102,11 @@ asset is absent. KDE runs at its harshest cadence (500 ms). Windows,
 Solid 90% core contour (true KDE iso-line: level from the point densities,
 128x64 grid, marching squares) plus a dashed pinned reference, controls in
 the settings dialog only. See
-`docs/exec-plans/active/2026-09-24-kde-core-region-split.md`.
+`docs/exec-plans/completed/2026-09-24-kde-core-region-split.md`.
+
+## 2026-09-24 — stored records and full-run contour (PR 2, PR 3)
+
+Provisional record at stop via the coordinator, reference from file, Review
+tab drawing and the right-click full-run computation with save. Plan
+completed; open debt: TD-16 (plain-series GUI cost), TD-17 (Review uses the
+current pixel-to-micron factor).

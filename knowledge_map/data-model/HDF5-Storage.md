@@ -79,8 +79,8 @@
   `source:"live-buffer"`, a copy of the Monitoring tab's last on-screen core
   contour, written by the coordinator at finalization only when KDE was on
   during the run) and `/analysis @kde_core_json` (`provisional:false`,
-  `source:"full-run"`, computed on demand from the recorded valid frames;
-  writer lands in core-region PR 3). Each group also carries
+  `source:"full-run"`, computed on demand from the recorded valid frames
+  by the Review tab and written through `Hdf5Service::openFileForUpdate`). Each group also carries
   `kde_core_schema_version`. Document members: `core_fraction`, `level`
   (null when no level), `cell_count`, `population_count`,
   `excluded_points`, bandwidth rule/factor/x (µm²)/y, `pixel_to_micron_factor`,

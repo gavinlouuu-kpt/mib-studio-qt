@@ -139,7 +139,10 @@ store the frontend's KDE core record verbatim (plus
 when no file is open or it was opened read-only (`loadFile`); readers return
 false for an absent record or a non-string attribute. Parsing and schema
 checks belong to the codec (`frontend/tabs/KdeCoreRecord.h`), never to this
-class. Guards: `recording.kde_core_roundtrip`, `recording.kde_core_fault`.
+class. `openFileForUpdate(path)` opens an existing, finished file read-write
+for such post-run metadata (never creates or truncates, no dataset appends;
+refuses a missing or read-only file). Guards: `recording.kde_core_roundtrip`,
+`recording.kde_core_fault`, `recording.kde_full_run_core`.
 See [[../data-model/HDF5-Storage]].
 
 ## Run configuration snapshot (issue #369)

@@ -119,8 +119,19 @@ blue, live (provisional) dashed orange, one legend entry per record
 ("Core 90% (full run)" / "Core 90% (live, provisional)"). An unreadable
 record is logged and skipped; `clearDisplay()` removes the previous file's
 contours. Test hooks: `loadHdfFileForTests`, `storedKdeContourSeriesForTests`.
-Guard: `frontend.hdf_review_core`. Computing and saving the full-run record
-is core-region PR 3.
+**Compute core contour from full run** (scatter right-click,
+`computeCoreAction`, enabled for experiment files with valid cells): the
+valid cells (µm² with the same factor as the scatter, see TD-17) go to
+`computeFullRunCoreRecord` (`KdeCoreRecord.h`: Silverman factor 1, core share
+from `Monitoring/KdeCoreFraction`, fixed-seed subsample above 5000 cells,
+grid over the padded data range) on `QtConcurrent`. On completion an existing
+full-run record needs confirmation to be replaced; saving closes the review
+reader, writes `/analysis @kde_core_json` through
+`Hdf5Service::openFileForUpdate`, and reopens the reader. When the file
+cannot be written (read-only, export running) the contour is still drawn and
+the status says it was not saved. A result for a file that is no longer open
+is dropped; the destructor drains the job. Guard: `frontend.hdf_review_core`
+(compute, save, decline/confirm overwrite, read-only).
 
 ## Run accounting (issue #367)
 

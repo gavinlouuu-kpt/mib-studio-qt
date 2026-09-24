@@ -1,6 +1,6 @@
 # KDE core contour on the Monitoring scatter (live vs full-run records)
 
-Status: active
+Status: completed
 
 Builds on the Monitoring scatter density (KDE) colouring
 (`knowledge_map/task/2026-09-23-monitoring-kde-density.md`,
@@ -175,15 +175,15 @@ schema `kde_core_schema_version = 1`:
 
 ## Acceptance criteria
 
-- [ ] Solid live contour on the Monitoring scatter while Density is on;
+- [x] Solid live contour on the Monitoring scatter while Density is on;
       off state identical to today; no new widgets on the tab.
-- [ ] Core % and reference selection in the Monitoring Settings dialog,
+- [x] Core % and reference selection in the Monitoring Settings dialog,
       persisted; dashed reference contour from a pinned run or a file.
-- [ ] Live record written at stop when available, never blocking stop.
-- [ ] Review tab draws stored contours; full-run contour computed and saved
+- [x] Live record written at stop when available, never blocking stop.
+- [x] Review tab draws stored contours; full-run contour computed and saved
       on demand.
-- [ ] Round-trip, fault-injection, kernel property, widget and e2e tests.
-- [ ] Vault, `HDF5-Storage.md`, manual and task note updated in the same PRs.
+- [x] Round-trip, fault-injection, kernel property, widget and e2e tests.
+- [x] Vault, `HDF5-Storage.md`, manual and task note updated in the same PRs.
 
 ## Decision log
 
@@ -203,6 +203,16 @@ schema `kde_core_schema_version = 1`:
   setter on the coordinator, pushed after every estimate while `Active`,
   instead of a stop-time pull from the tab. The coordinator owns the run's
   file on its worker, and a push keeps Stop independent of the GUI thread.
+
+- 2026-09-24 (PR 3): the full-run contour uses the same pixel-to-micron
+  factor as the Review scatter (the current backend factor) so the two
+  overlay, and records it; reading the recorded factor for both is TD-17.
+  The core share follows `Monitoring/KdeCoreFraction` so the full-run and
+  live contours are comparable. The grid spans the padded data range, the
+  Review scatter's own axis rule, rather than a stored axis range.
+- 2026-09-24 (PR 3): the two changed manual screenshots were regenerated
+  with `screenshot_tour` on Windows (`QT_QPA_PLATFORM=windows`; the Conan
+  offscreen platform aborts there); the other seven are unchanged.
 
 ## Sequencing
 
@@ -231,4 +241,12 @@ schema `kde_core_schema_version = 1`:
       draws stored records; *From file…* reference in the settings dialog,
       path persisted. e2e now runs a real experiment with KDE on and reads
       the record back (900 of 1000 cells, 2 loops).
-- [ ] PR 3
+- [x] PR 3 — 2026-09-24: `Hdf5Service::openFileForUpdate` (never
+      creates/truncates); `computeFullRunCoreRecord` in `KdeCoreRecord.h`
+      (fixed-seed 5000-cell subsample; 20000-cell test: 89.2% of all cells
+      inside the 90% contour); Review tab right-click *Compute core contour
+      from full run* with overwrite confirmation, read-only fallback
+      (shown, not saved); manual (Review, Monitoring) and the two affected
+      screenshots regenerated on Windows. Tests:
+      `recording.kde_full_run_core` (new), `frontend.hdf_review_core`
+      extended.
