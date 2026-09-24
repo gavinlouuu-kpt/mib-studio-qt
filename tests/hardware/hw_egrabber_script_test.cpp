@@ -12,14 +12,14 @@
 #include "support/hardware.h"
 #include "support/tempdir.h"
 
-#include <QCoreApplication>
 
 #include <cstdio>
 #include <string>
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication app(argc, argv);
+    (void)argc;
+    (void)argv;
     const char* scriptPath = mib::test::requireDeviceEnv("MIB_TEST_EGRABBER_SCRIPT");
 
 #if !MIB_HAS_EGRABBER

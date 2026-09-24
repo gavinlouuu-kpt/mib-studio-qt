@@ -59,11 +59,12 @@ namespace frontend
                      .arg(QString::number(invalidFps, 'f', 1))
                      .arg(QString::number(static_cast<qulonglong>(totalValidFlushed)));
 
-        // Camera transport stats
+        // Camera transport stats (issue #368: unknown is never shown as 0)
         if (cap.isRunning()) {
+            const auto telemetry = cap.telemetrySnapshot();
             status += QString(" | Camera=%1 fps, %2 MB/s")
-                          .arg(QString::number(s.lastFrameRate.load()))
-                          .arg(QString::number(s.lastDataRateMBps.load()));
+                          .arg(formatMetric(telemetry.captureFrameRate))
+                          .arg(formatMetric(telemetry.captureDataRateMBps));
         } else {
             status += " | Camera: stopped";
         }
@@ -145,5 +146,21 @@ namespace frontend
 
         return status;
     }
+
+QString StatsDisplayManager::formatMetric(const backend::services::MetricSample& m)
+{
+    using backend::services::MetricValidity;
+    switch (m.validity) {
+    case MetricValidity::Valid: return QString::number(static_cast<qulonglong>(m.value));
+    case MetricValidity::Stale:
+        return QStringLiteral("%1 (stale %2 s)")
+            .arg(static_cast<qulonglong>(m.value))
+            .arg(QString::number(static_cast<double>(m.ageUs) / 1e6, 'f', 1));
+    case MetricValidity::Unavailable: return QStringLiteral("n/a");
+    case MetricValidity::Unsupported: return QStringLiteral("unsupported");
+    case MetricValidity::Error: return QStringLiteral("error");
+    }
+    return QStringLiteral("?");
+}
 
 } // namespace frontend

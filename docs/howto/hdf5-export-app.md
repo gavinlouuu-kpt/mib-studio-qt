@@ -29,122 +29,43 @@ The HDF5 Export GUI Application is a standalone PySide6 (Qt for Python) applicat
 
 ## Building the Application
 
+The export GUI ships inside the **MIB Studio Tools** bundle together with
+`mib_reanalyse_hdf5`; there is one packager per platform under `tools/`
+(`docs/howto/tools.md`). The former duplicate under `scripts/` was removed on
+2026-09-21 (TD-14).
+
 ### Windows
 
-1. **Navigate to the scripts directory:**
-   ```powershell
-   cd scripts
-   ```
+```powershell
+cd tools
+.\build_windows.ps1          # -Clean to rebuild from scratch
+```
 
-2. **Run the build script:**
-   ```powershell
-   .\build_windows.ps1
-   ```
+Output: `tools\dist\hdf5_export_app.exe` (plus `mib_reanalyse_hdf5.exe`).
 
-   To clean previous builds first:
-   ```powershell
-   .\build_windows.ps1 -Clean
-   ```
+### macOS / Linux
 
-3. **Find the executable:**
-   The built executable will be located at:
-   ```
-   scripts\dist\hdf5_export_app.exe
-   ```
+```bash
+cd tools
+./build_mac.sh               # --clean to rebuild; --dmg for MIB_Studio_Tools.dmg on macOS
+```
 
-### macOS
+Output: `tools/dist/hdf5_export_app.app` on macOS (`tools/dist/hdf5_export_app`
+on Linux) and `tools/dist/mib_reanalyse_hdf5`.
 
-1. **Navigate to the scripts directory:**
-   ```bash
-   cd scripts
-   ```
-
-2. **Make the build script executable (first time only):**
-   ```bash
-   chmod +x build_mac.sh
-   ```
-
-3. **Run the build script:**
-   ```bash
-   ./build_mac.sh
-   ```
-
-   To clean previous builds:
-   ```bash
-   ./build_mac.sh --clean
-   ```
-
-   To also create a DMG file:
-   ```bash
-   ./build_mac.sh --dmg
-   ```
-
-4. **Find the application bundle:**
-   The built application will be located at:
-   ```
-   scripts/dist/hdf5_export_app.app
-   ```
-
-   If you created a DMG:
-   ```
-   scripts/dist/hdf5_export_app.dmg
-   ```
-
-### Linux
-
-1. **Navigate to the scripts directory:**
-   ```bash
-   cd scripts
-   ```
-
-2. **Run the Unix build script:**
-   ```bash
-   ./build_mac.sh
-   ```
-
-   To clean previous builds:
-   ```bash
-   ./build_mac.sh --clean
-   ```
-
-3. **Find the executable:**
-   The built executable will be located at:
-   ```
-   scripts/dist/hdf5_export_app
-   ```
+Both scripts create `tools/.venv`, install `env/requirements-tools-runtime.txt`
+and `env/requirements-tools-build.txt`, and run PyInstaller with
+`tools/hdf5_export_app/hdf5_export.spec`, which packages
+`scripts/hdf5_export_app.py` and its `export_hdf5` / `export_worker` modules.
 
 ## Manual Build Process
 
-If you prefer to build manually:
-
-### 1. Set Up Virtual Environment
-
-**Windows:**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**macOS / Linux:**
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+cd tools
+python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
+pip install -r ../env/requirements-tools-runtime.txt -r ../env/requirements-tools-build.txt
+pyinstaller hdf5_export_app/hdf5_export.spec --clean --workpath build --distpath dist
 ```
-
-### 2. Install Dependencies
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### 3. Build with PyInstaller
-
-```bash
-pyinstaller hdf5_export.spec --clean
-```
-
-The executable will be in the `dist` directory.
 
 ## Using the Application
 
@@ -184,10 +105,15 @@ Run from command line:
    - **Pixel to Micron:** Enter the conversion factor (default: 0.4886)
 
 4. **Export:**
-   - Click the "Export" button
-   - Monitor progress in the status area
-   - The progress bar shows export completion
-   - Click "Cancel" to abort if needed
+   - Click the "Export" button (one export runs at a time; the button stays
+     disabled until the background job has fully finished)
+   - Monitor progress in the status area; the phase label and progress bar
+     advance monotonically through metadata → metrics → valid images →
+     series images → invalid images → publish
+   - Click "Cancel" to abort: the job stops within one frame, the partial
+     output is deleted, and the status shows "Export cancelled"
+   - Closing the window during an export cancels it first and closes only
+     after the worker thread has stopped
 
 5. **Completion:**
    - A message box will appear when export completes
@@ -195,6 +121,26 @@ Run from command line:
      - `<input-basename>_metrics.csv` for CSV-only export
      - `<input-basename>/metrics.csv` for All export
      - `<input-basename>/valid_frame_XXXXXX.tiff` and `<input-basename>/invalid_frame_XXXXXX.tiff` for image exports
+
+### Memory, partial output and repeated exports
+
+- Images are streamed from the HDF5 file one frame at a time, so memory use
+  depends on the frame size, not on the number of frames or the size of the
+  recording. Running many exports in one session keeps a flat memory and
+  timing profile (see `docs/evidence/2026-09-07-exporter-soak/`).
+- Every export is written to a hidden staging name
+  (`.<name>.partial-<job-id>` next to the destination) and renamed to its
+  final name only when it is complete. A cancelled or failed export is
+  removed; if the removal itself fails, the staging folder is kept under its
+  `.partial-` name with an `export-failure.json` manifest. You will never
+  find a normal-looking export folder that is silently incomplete.
+- An image that cannot be written (disk full, permissions) fails the whole
+  export; a frame with an unsupported shape is skipped with a warning.
+- Generated names (`_2`, `_3`, …) are chosen from a single directory listing,
+  so a destination containing hundreds of previous exports costs the same
+  as an empty one.
+- Each job has an id that appears in the status log and in the console log
+  (`export <id>: started / cancelled / failed / completed`).
 
 ## Output Files
 
@@ -236,15 +182,15 @@ Where `XXXXXX` is the zero-padded frame index.
 
 **"PyInstaller not found"**
 - Ensure you've activated the virtual environment
-- Run `pip install -r requirements.txt` again
+- Run `pip install -r ../env/requirements-scripts.txt` again
 - If you are using system Python (no venv), run:
   `python3 -m pip install --user pyinstaller`
 
 **"Module not found" errors during build**
-- Check that all dependencies in `requirements.txt` are installed
-- Try cleaning and rebuilding: `build_windows.ps1 -Clean` or `./build_mac.sh --clean`
+- Check that all dependencies in `env/requirements-scripts.txt` are installed
+- Try cleaning and rebuilding: `tools\build_windows.ps1 -Clean` or `tools/build_mac.sh --clean`
 - On Linux system Python, install user-scoped deps:
-  `python3 -m pip install --user -r requirements.txt`
+  `python3 -m pip install --user -r ../env/requirements-scripts.txt`
 
 ### Runtime Issues
 
@@ -320,8 +266,21 @@ The `hdf5_export_app` binary is a standalone Linux executable produced by PyInst
 
 ### Architecture
 
-- `hdf5_export_app.py`: Main GUI application
-- `export_worker.py`: Background worker for non-blocking export operations
-- `export_hdf5.py`: Core export logic (shared with CLI version)
+- `hdf5_export_app.py`: Main GUI application (`ExportWindow`: one
+  `ActiveExport` at a time, deterministic `QThread` teardown, deferred close)
+- `export_worker.py`: `ExportWorker` Qt adapter (immutable job in, progress /
+  result / finished signals out)
+- `hdf_export_engine.py`: Qt-free export engine shared by the GUI and the CLI
+  (`ExportJob` → `run_export_job` → `ExportResult`; streaming, cancellation,
+  transactional output, bounded name lookup)
+- `export_hdf5.py`: CLI adapter and metrics/JSON writers
+- `export_test_fixture.py`, `test_export_hdf5_streaming.py`,
+  `test_hdf5_export_app_lifecycle.py`, `exporter_soak.py`: fixture, tests and
+  the repeated-run soak harness (`python3 scripts/exporter_soak.py --cycles 50`)
 
-The GUI uses Qt signals and slots for communication between the main thread and the worker thread, ensuring the UI remains responsive during export operations.
+The GUI uses Qt signals and slots for communication between the main thread
+and the worker thread; the worker is connected with
+`worker.finished → thread.quit / worker.deleteLater` and
+`thread.finished → thread.deleteLater`, references are released only from the
+thread-finished handler, and `QThread.wait()` / `terminate()` are never used
+on the GUI thread.

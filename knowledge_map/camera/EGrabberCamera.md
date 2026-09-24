@@ -12,6 +12,11 @@
 - Wrap an `Euresys::EGrabber` handle scoped to a specific
   `(interfaceIndex, deviceIndex)` selection.
 - Implement `start`, `stop`, `grabFrame`, `pollStats`.
+- Implement the delivery-mode contract (`deliveryCapabilities`,
+  `activeDeliveryMode`, `pollAcquisitionQueueStats`): both `EveryFrame` and
+  `LatestFrame` are supported, mode changes require a restart, and Coaxlink
+  buffer timestamps are host-comparable on Windows only (µs since computer
+  startup, same domain as `Tools::getTimestamp` QPC µs).
 - Expose `configureTriggerOutput` + `setTriggerOutput` for
   [[../services/TriggerService]].
 - Surface `checkDeviceHealth()` to detect camera disappearance.
@@ -29,8 +34,56 @@
   task `knowledge_map/task/2025-11-14-safe-start-stop-egrabber.md`.
 - **Device reset flow** — task `knowledge_map/task/camera-reset.md`.
 
+## Delivery modes (issue #331)
+
+- **Start sequencing:** `start()` calls `grabber_->start()` once and lets the
+  SDK do the ordering — it starts the data stream first, then executes
+  `AcquisitionStart` on the remote device. Never send a manual
+  `AcquisitionStart` before `grabber_->start()`: remote acquisition must be
+  started exactly once, and only after the data stream is ready. The
+  defensive `AcquisitionStop`-before-start block stays, and `stop()` remains
+  symmetric (remote `AcquisitionStop`, then `grabber_->stop()`).
+- **EveryFrame** keeps the plain FIFO pop: every completed buffer is copied
+  and delivered in acquisition order.
+- **LatestFrame** drains stale buffers in `replenishPendingFrames()` *before*
+  the expensive copy: while `getPendingEventCount<NewBufferData>() > 1`, pop
+  a `ScopedBuffer` and let it destruct immediately (requeues to the input
+  FIFO), counting each drop in the atomic `intentionallyDiscardedFrames_`;
+  then pop and copy the final (freshest) buffer. Never
+  `flushEvent<NewBufferData>()` — it would discard events without releasing
+  the buffers they own.
+- **BufferPartCount=1 in LatestFrame:** forced at `start()` regardless of
+  `config_.bufferPartCount` (warn if the config asked for more) — multi-frame
+  batching per buffer would add exactly the latency the mode exists to avoid.
+- **`activeDeliveryMode()`** reports the mode confirmed at the most recent
+  successful `start()` (`confirmedDeliveryMode_`); before any start it falls
+  back to `config_.deliveryMode`.
+- **`pollAcquisitionQueueStats()`** maps GenTL stream counters:
+  `STREAM_INFO_NUM_AWAIT_DELIVERY` → completed queue depth,
+  `STREAM_INFO_NUM_QUEUED` → input buffer count, `STREAM_INFO_NUM_UNDERRUN` →
+  underruns, `STREAM_INFO_NUM_DELIVERED` → delivered frames, plus the
+  intentional-discard counter (reset at `start()`). No documented counter
+  maps to transport loss, so `transportLossValid` stays false.
+
+## Timestamps (issue #368)
+
+`Frame::timestamp` is the Coaxlink `BUFFER_INFO_TIMESTAMP` / per-part custom
+timestamp: microseconds since host boot. `timestampDescriptor()` reports
+`hostMonotonicUs @1e6 Hz, transportReceipt, valid` on Windows (QPC domain =
+`Tools::getTimestamp()`, hence `timestampsHostComparable`), and
+`unknown/unsupported` on other platforms where the mapping is unverified. It
+marks transport receipt, not exposure.
+
 ## Gotchas
 
+- **One GenTL handle per process.** `start()` takes the shared handle from
+  `backend::camera::egrabber::sharedGenTL()` (`GenTLHolder.h/.cpp`) instead
+  of constructing its own `EGenTL`; `stop()` drops its reference but the
+  holder keeps the producer open until process exit. A second `EGenTL` in the
+  same process fails with `GenTL -1004 GCInitLib: resource already in use`,
+  and the MindVision SDK's CoaXPress plugin tries to open the same producer
+  during enumeration, so the handle must be ours first. Details in
+  [[../services/CameraControlService]].
 - **StreamModule counters** must be refreshed before stopping capture or
   the final `frameRate` / `dataRate` read will be zero. See
   `fps_mbs_zero.md` task and [[../conventions/Code-Conventions]].

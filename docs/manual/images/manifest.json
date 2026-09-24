@@ -1,5 +1,5 @@
 {
-    "appVersion": "1.0.3",
+    "appVersion": "1.0.7",
     "generator": "screenshot_tour",
     "shots": [
         {
@@ -31,6 +31,12 @@
             "file": "review-tab.png",
             "id": "review-tab",
             "title": "Review tab for browsing recorded HDF5 experiments"
+        },
+        {
+            "captured": true,
+            "file": "sidebar-collapsed.png",
+            "id": "sidebar-collapsed",
+            "title": "Main window with the hardware panel hidden (reopen control in the tab-bar corner)"
         },
         {
             "captured": true,

@@ -1,0 +1,16 @@
+# Minimum tool versions for building MIB Studio Qt. Flat `name = ">=x.y"`
+# lines: scripts/doctor.{sh,ps1} parse them with sed/regex, no TOML library.
+# Pins that tools read on their own live beside them: rust-toolchain.toml,
+# .nvmrc / desktop/package.json "engines", .python-version, mise.toml.
+
+[tools]
+git    = ">=2.30"
+cmake  = ">=3.21"     # CMakeLists.txt cmake_minimum_required; string(JSON) needs 3.19+
+ninja  = ">=1.10"
+conan  = ">=2.0"      # Conan 2 only (conanfile.py, CMakeDeps/CMakeToolchain)
+python = ">=3.10"     # scripts/, tools/, bindings (requires-python >=3.9/3.10); CI uses 3.12
+node   = ">=22"       # desktop/ (Vite, vitest); desktop-ci.yml pins 22
+rust   = ">=1.75"     # crates/mib-bridge, desktop/src-tauri (edition 2021); channel in rust-toolchain.toml
+
+[windows]
+msvc = "194"          # VS 2022 17.10+, matches conan/profiles/windows-msvc194*

@@ -47,8 +47,8 @@ echo -e "${CYAN}Activating virtual environment...${NC}"
 source "$VENV_PATH/bin/activate"
 
 pip install --upgrade pip
-pip install -r requirements-runtime.txt
-pip install -r requirements-build.txt
+pip install -r ../env/requirements-tools-runtime.txt
+pip install -r ../env/requirements-tools-build.txt
 
 mkdir -p dist build
 

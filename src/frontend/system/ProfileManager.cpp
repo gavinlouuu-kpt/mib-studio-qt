@@ -147,6 +147,7 @@ bool isHighRiskPath(const QString& path) {
 bool isMediumRiskPath(const QString& path) {
     return path == QStringLiteral("buffer_threshold") ||
            path.startsWith(QStringLiteral("realtime_processing.")) ||
+           path == QStringLiteral("camera.frame_delivery_mode") ||
            path == QStringLiteral("target_fps");
 }
 
@@ -163,6 +164,11 @@ QString configSourceForPath(const QString& path) {
     }
     if (path.startsWith(QStringLiteral("camera_script"))) {
         return QStringLiteral("Camera script");
+    }
+    if (path.startsWith(QStringLiteral("camera."))) {
+        // Acquisition settings (e.g. camera.frame_delivery_mode) live in
+        // config.json; they are not camera-script content.
+        return QStringLiteral("Config");
     }
     return QStringLiteral("Config");
 }

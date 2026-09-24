@@ -17,6 +17,7 @@ below is the policy it cannot check for you.
 | HDF5 schema / dataset paths (`Hdf5Service.cpp`) | [[data-model/HDF5-Storage]] + [[services/Hdf5Service]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |
+| `env/assets.json`, `scripts/assets_manifest.py`, `scripts/provision-assets.py` | [[build-and-run/Assets]] |
 | Conventions / logging patterns | [[conventions/Code-Conventions]], [[conventions/Logging]] |
 | Domain vocabulary (new metric, new concept) | [[domain/Glossary]], [[domain/Microscopy-Pipeline]] |
 | **Added a new** service / tab / dialog / camera impl | Create the atomic note AND add it to the cluster's `_MOC.md` AND link it from [[README]] and [[Agent-Onboarding]] |

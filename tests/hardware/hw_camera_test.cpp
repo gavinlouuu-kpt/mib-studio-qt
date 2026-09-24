@@ -15,7 +15,6 @@
 #include "support/hardware.h"
 #include "support/tempdir.h"
 
-#include <QCoreApplication>
 
 #include <chrono>
 #include <cstdio>
@@ -23,7 +22,8 @@
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication app(argc, argv);
+    (void)argc;
+    (void)argv;
     mib::test::requireDeviceEnv("MIB_TEST_CAMERA");
 
     mib::test::TempDir td("mib_hw_camera");

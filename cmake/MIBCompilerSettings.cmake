@@ -1,14 +1,43 @@
 # Suppress character encoding warnings from third-party headers.
 if(MSVC)
-    add_compile_options(/wd4828)
+    # C/C++ only: add_compile_options also reaches MASM (crashpad's
+    # capture_context_win.asm), and ml64 rejects cl flags — the auto-beta
+    # runs from 2026-09-08 failed with LNK1181 on that .obj.
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/wd4828>)
+    # Conformance mode. With Qt in the link, Qt6::Platform propagated
+    # /permissive- and /Zc:__cplusplus to every target; the Qt-free backend
+    # and its tests must compile the same way (e.g. a functional cast such as
+    # `int(i)` is a prvalue only in conformance mode).
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/permissive-> $<$<COMPILE_LANGUAGE:C,CXX>:/Zc:__cplusplus>)
 endif()
 
 # Preserve PDBs and address-to-source mapping for Release builds so that
 # minidumps from end-user crashes can be symbolicated. /Zi generates the
 # .pdb; /DEBUG instructs the linker to emit and keep it; /OPT:REF /OPT:ICF
 # restore Release optimizations that /DEBUG would otherwise disable.
+# Compiler cache: when sccache is on PATH (or MIB_COMPILER_LAUNCHER names one)
+# every C/C++ compile goes through it. A no-op or header-touch rebuild of
+# this tree relinks 126 targets but recompiles only what changed; the cache
+# makes the recompiles free across worktrees, branches and CI runs.
+if(NOT CMAKE_CXX_COMPILER_LAUNCHER AND NOT CMAKE_C_COMPILER_LAUNCHER)
+    set(MIB_COMPILER_LAUNCHER "" CACHE STRING "Compiler launcher (sccache/ccache); empty = auto-detect sccache")
+    if(MIB_COMPILER_LAUNCHER)
+        set(_mib_launcher "${MIB_COMPILER_LAUNCHER}")
+    else()
+        find_program(_mib_launcher sccache)
+    endif()
+    if(_mib_launcher)
+        set(CMAKE_C_COMPILER_LAUNCHER "${_mib_launcher}" CACHE STRING "" FORCE)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${_mib_launcher}" CACHE STRING "" FORCE)
+        message(STATUS "Compiler launcher: ${_mib_launcher}")
+    endif()
+endif()
+
 if(MSVC)
-    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    # /Z7 (debug info in the object) instead of /Zi: identical PDB output at
+    # link time (/DEBUG below), but cacheable — sccache cannot cache /Zi,
+    # which writes a shared vcNNN.pdb during compilation.
+    add_compile_options($<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:C,CXX>>:/Z7>)
     add_link_options(
         $<$<CONFIG:Release>:/DEBUG>
         $<$<CONFIG:Release>:/OPT:REF>
@@ -37,4 +66,28 @@ if(MIB_SANITIZER AND NOT MSVC)
     message(STATUS "MIB sanitizer enabled: ${MIB_SANITIZER} (${_mib_san})")
     add_compile_options(-g -fno-omit-frame-pointer ${_mib_san})
     add_link_options(${_mib_san})
+endif()
+
+# Ninja tracks MSVC header dependencies by parsing cl.exe's /showIncludes
+# output. CMake detects the (localized) prefix at the first configure and
+# stores it in CMAKE_CL_SHOWINCLUDES_PREFIX; when detection fails (seen on a
+# rig PC whose Build Tools ship only a non-English language pack) the value is
+# empty, `ninja -t deps` reports `#deps 0`, and editing a header does not
+# rebuild its includers — a stale object can keep an old struct layout. Fail
+# loudly instead of silently losing dependencies.
+if(MSVC AND CMAKE_GENERATOR MATCHES "Ninja")
+    option(MIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX
+        "Continue configuring even if cl.exe's /showIncludes prefix was not detected (header edits then need --clean-first)"
+        OFF)
+    if(NOT CMAKE_CL_SHOWINCLUDES_PREFIX AND NOT MIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX)
+        message(FATAL_ERROR
+            "cl.exe's /showIncludes prefix was not detected, so Ninja cannot track header dependencies.\n"
+            "Fix one of:\n"
+            "  - install the English language pack: vs_installer.exe modify --installPath \"<VS>\" --addProductLang en-US\n"
+            "  - pass the localized prefix: -DCMAKE_CL_SHOWINCLUDES_PREFIX=\"<text before the path in cl /showIncludes output>\"\n"
+            "  - or -DMIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX=ON and always build with --clean-first after header edits.\n"
+            "scripts/doctor.ps1 reports the prefix your cl.exe prints (knowledge_map/build-and-run/Build.md).")
+    elseif(CMAKE_CL_SHOWINCLUDES_PREFIX)
+        message(STATUS "cl.exe /showIncludes prefix: '${CMAKE_CL_SHOWINCLUDES_PREFIX}'")
+    endif()
 endif()

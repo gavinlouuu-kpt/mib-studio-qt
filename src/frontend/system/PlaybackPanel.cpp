@@ -92,6 +92,8 @@ namespace
 
         std::function<void(const QRect &)> onRoiSelected;
         std::function<void()> onRequestBackground;
+        std::function<void()> onRequestBackgroundCalibration;
+        std::function<bool()> backgroundCalibrationRunning;
 
     protected:
         void paintEvent(QPaintEvent *) override
@@ -263,6 +265,9 @@ namespace
         {
             QMenu menu(this);
             QAction *setBg = menu.addAction("Set Background");
+            const bool calibrating = backgroundCalibrationRunning && backgroundCalibrationRunning();
+            QAction *calibrateBg = menu.addAction(calibrating ? "Cancel Background Calibration"
+                                                              : "Calibrate Background (bounded)");
             QAction *clearRoi = menu.addAction("Clear ROI");
             QAction *chosen = menu.exec(event->globalPos());
             if (!chosen)
@@ -271,6 +276,11 @@ namespace
             {
                 if (onRequestBackground)
                     onRequestBackground();
+            }
+            else if (chosen == calibrateBg)
+            {
+                if (onRequestBackgroundCalibration)
+                    onRequestBackgroundCalibration();
             }
             else if (chosen == clearRoi)
             {
@@ -427,6 +437,18 @@ PlaybackPanel::PlaybackPanel(backend::AppBackend &backend, QWidget *parent)
     {
         onSetBackground();
     };
+    canvas->onRequestBackgroundCalibration = [this]()
+    {
+        onCalibrateBackground();
+    };
+    canvas->backgroundCalibrationRunning = [this]()
+    {
+        return backend_.processing().backgroundCalibrationStatus().state ==
+               backend::services::ProcessingService::BackgroundCalibrationState::Running;
+    };
+    bgCalTimer_ = new QTimer(this);
+    bgCalTimer_->setInterval(200);
+    connect(bgCalTimer_, &QTimer::timeout, this, &PlaybackPanel::onPollBackgroundCalibration);
 
     // Timer for periodic refresh (configurable display_fps, default 60 Hz)
     int displayFps = 60;
@@ -787,6 +809,87 @@ QImage PlaybackPanel::getBackgroundImage() const
     return backgroundGray_.copy();
 }
 
+void PlaybackPanel::onCalibrateBackground()
+{
+    using Proc = backend::services::ProcessingService;
+    auto& proc = backend_.processing();
+    if (proc.backgroundCalibrationStatus().state == Proc::BackgroundCalibrationState::Running)
+    {
+        proc.cancelBackgroundCalibration();
+        return; // the poll reports the Cancelled result
+    }
+    if (!backend_.capture().isRunning())
+    {
+        QMessageBox::information(this, tr("Background Calibration"),
+                                 tr("Start Live View first: calibration samples empty frames from the live camera."));
+        return;
+    }
+    Proc::BackgroundCalibrationRequest request; // 10 empty frames, ≤200 attempts, ≤5 s
+    std::string error;
+    if (!proc.startBackgroundCalibration(request, &error))
+    {
+        QMessageBox::warning(this, tr("Background Calibration"),
+                             tr("Could not start background calibration: %1").arg(QString::fromStdString(error)));
+        return;
+    }
+    SPDLOG_INFO("PlaybackPanel: bounded background calibration started");
+    bgCalTimer_->start();
+}
+
+void PlaybackPanel::onPollBackgroundCalibration()
+{
+    using Proc = backend::services::ProcessingService;
+    auto& proc = backend_.processing();
+    const auto status = proc.backgroundCalibrationStatus();
+    if (!status.finished())
+        return;
+    bgCalTimer_->stop();
+    if (status.state == Proc::BackgroundCalibrationState::Succeeded)
+    {
+        const cv::Mat bg = proc.getRealtimeBackgroundGray();
+        if (!bg.empty() && bg.type() == CV_8UC1)
+        {
+            backgroundGray_ = QImage(bg.data, bg.cols, bg.rows, static_cast<int>(bg.step),
+                                     QImage::Format_Grayscale8).copy();
+            hasBackground_ = !backgroundGray_.isNull();
+            updateBackgroundIndicator();
+            emit backgroundImageSet(backgroundGray_);
+            if (overlayMode_ != OverlayMode::Off)
+            {
+                computeProcessedOverlay();
+                if (canvas_) canvas_->update();
+            }
+        }
+        SPDLOG_INFO("PlaybackPanel: background calibration succeeded ({} accepted of {} attempted, generation {})",
+                    status.accepted, status.attempted, status.publishedBackgroundGeneration);
+        return;
+    }
+    QString what;
+    switch (status.state)
+    {
+    case Proc::BackgroundCalibrationState::FailedInsufficient:
+        what = tr("Not enough empty frames: %1 accepted in %2 attempts (%3 contaminated).")
+                   .arg(status.accepted).arg(status.attempted).arg(status.rejectedNonEmpty);
+        break;
+    case Proc::BackgroundCalibrationState::FailedTimeout:
+        what = tr("Timed out with %1 empty frames accepted.").arg(status.accepted);
+        break;
+    case Proc::BackgroundCalibrationState::FailedProcessing:
+        what = tr("Processing configuration changed or frames could not be processed.");
+        break;
+    case Proc::BackgroundCalibrationState::Cancelled:
+        what = tr("Cancelled.");
+        break;
+    default:
+        what = QString::fromStdString(status.message);
+        break;
+    }
+    SPDLOG_WARN("PlaybackPanel: background calibration ended without publishing: {}", status.message);
+    QMessageBox::information(this, tr("Background Calibration"),
+                             tr("%1\n\nThe previous background is unchanged.\n%2")
+                                 .arg(what, QString::fromStdString(status.message)));
+}
+
 void PlaybackPanel::onBackgroundAutoCaptured(const QImage& background, uint64_t frameIndex) {
     if (background.isNull()) return;
     
@@ -923,16 +1026,10 @@ void PlaybackPanel::onToggleFit()
 
 void PlaybackPanel::onToggleCapture()
 {
-    if (backend_.capture().isRunning())
-    {
-        SPDLOG_INFO("PlaybackPanel: stopping capture (Space)");
-        backend_.capture().stop();
-    }
-    else
-    {
-        SPDLOG_INFO("PlaybackPanel: starting capture (Space)");
-        backend_.capture().start();
-    }
+    // Presentation only: the authoritative command path (CameraController in
+    // MainWindow) decides whether a start/stop is allowed right now.
+    SPDLOG_INFO("PlaybackPanel: capture toggle requested (Space)");
+    emit captureToggleRequested();
 }
 
 static cv::Mat qimageToCvGrayClone(const QImage &img)
@@ -1192,6 +1289,7 @@ void PlaybackPanel::resetMetrics()
     lastDisplayTimeUs_ = 0;
     metricsInitialized_ = false;
     totalDrops_ = 0;
+    framesPresented_ = 0;
     lastDisplayFps_ = 0.0;
 }
 
@@ -1226,6 +1324,7 @@ void PlaybackPanel::trackFrameDisplay(uint64_t frameIndex, uint64_t frameTimesta
     sample.frameTimestamp = frameTimestamp;
     sample.frameIndex = frameIndex;
     metricsWindow_.push_back(sample);
+    ++framesPresented_;
 
     lastDisplayedIndex_ = frameIndex;
     lastDisplayTimeUs_ = displayTime;

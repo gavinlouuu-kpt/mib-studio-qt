@@ -2,7 +2,6 @@
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/processing/ProcessingService.h"
 
-#include <QCoreApplication>
 
 #include <cstdlib>
 #include <filesystem>
@@ -43,7 +42,8 @@ void setEnv(const char* name, const char* value)
 
 int main(int argc, char** argv)
 {
-    QCoreApplication app(argc, argv);
+    (void)argc;
+    (void)argv;
 
     const auto dataDir = makeTempDir();
     const auto mockDir = dataDir / "mock_frames";

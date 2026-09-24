@@ -25,8 +25,20 @@ public:
         double tracesSampleRate{0.20};      // Sentry performance sample rate.
         bool uploadPendingOnStart{true};
         bool installSignalHandlers{true};
-        bool installQtMessageHandler{true};
         bool installTerminateHandler{true};
+        size_t maxRetainedDumps{50};        // per-class retention bound
+                                            // (pending .dmp, delivered
+                                            // .dmp.sent/.dmp.rejected, orphan
+                                            // .json sidecars)
+        // Pending-dump upload (MinidumpUploader): at most this many dumps
+        // per launch, oldest first, on a background thread; a dump is
+        // renamed .dmp.sent only on an HTTP 2xx, .dmp.rejected on a
+        // permanent 4xx, and stays .dmp (retried next launch) otherwise.
+        size_t maxUploadsPerStart{10};
+        int uploadTimeoutMs{60000};         // per dump
+        // sentry-native flush budget at shutdown() for live events (the
+        // library default of 2 s left queued envelopes behind on close).
+        int shutdownTimeoutMs{5000};
     };
 
     // Returns true if at least the local minidump path is armed. Returns
@@ -35,6 +47,7 @@ public:
     static bool init(const Config& cfg);
     static void shutdown();
     static bool isInitialized();
+    static bool isSentryActive();
 
     // Diagnostic decorations attached to subsequent crash events.
     static void setTag(std::string_view key, std::string_view value);

@@ -19,7 +19,7 @@ GitHub tracking:
   V2-6 [#302], V2-7 [#303]
 - Builds on hot-swappable cores epic [#236] and [#242].
 
-See [ADR 0001](../../decisions/0001-processing-contract-v2.md) and the
+See [ADR 0001](../../decisions/0006-processing-contract-v2.md) and the
 [compatibility matrix](../../architecture/processing-contract-compatibility.md).
 
 ## Acceptance criteria (epic)

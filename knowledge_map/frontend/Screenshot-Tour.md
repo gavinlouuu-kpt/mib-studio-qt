@@ -40,6 +40,17 @@ target defined in `src/frontend/qt/CMakeLists.txt`
   `mib_frontend_common` static library shared with `mib_studio_qt` (see
   [[../build-and-run/Build]] for the AUTOUIC/qrc constraints).
 
+## Viewport assertions (issue #358)
+
+The tour tells the window its available desktop explicitly
+(`setAvailableGeometryOverrideForTests`, requested size + margin) and, before
+every grab, `assertViewport()` checks that the window still has the
+requested size and that `minimumSizeHint()` fits the requested viewport. A
+window silently enlarged by minimum-size constraints therefore fails the
+tour (non-zero exit) instead of producing a misleading PNG. The registry
+includes `sidebar-collapsed` (hardware panel hidden through
+`MainWindow::setHardwarePanelVisible(false)`).
+
 ## CI wiring
 
 - `docs-ci.yml` runs `scripts/check_screenshots.py` on every push/PR.

@@ -20,8 +20,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Path gate: the sanitizer lanes cost ~17 min (ASan+UBSan) and ~8 min
+  # (TSan) per PR, and they only exercise the C++ backend. Docs, vault,
+  # desktop/bridge, tools and wheel-only changes skip them. A skipped job
+  # still satisfies the required status checks on develop/main (see the
+  # step-level gates on the sanitize job). Nightly and manual runs always execute.
+  changes:
+    name: Detect C++ changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      cpp: ${{ steps.filter.outputs.cpp }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            cpp:
+              - 'src/**'
+              - 'include/**'
+              - 'tests/**'
+              - 'cmake/**'
+              - 'CMakeLists.txt'
+              - 'CMakePresets.json'
+              - 'conanfile.*'
+              - 'conan/**'
+              - 'scripts/provision-mindvision-sdk.sh'
+              - 'env/**'
+              - '.github/actions/setup-linux-env/**'
+              - '.github/workflows/sanitizers.yml'
+
+  # The job itself always runs so the matrix expands and the required status
+  # contexts "thread" and "address+undefined" exist on every PR (a job-level
+  # `if:` leaves an unexpanded "matrix.sanitizer" placeholder and branch
+  # protection waits forever). Each step is gated instead: a docs-only PR
+  # finishes in seconds with every step skipped and the contexts green.
   sanitize:
     name: ${{ matrix.sanitizer }}
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -31,27 +70,30 @@ jobs:
 
     steps:
       - name: Checkout
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
         uses: actions/checkout@v6
 
-      - name: Install Linux system packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake git libgl1-mesa-dev libhdf5-dev libopencv-dev \
-            libspdlog-dev libsqlite3-dev libxkbcommon-dev nlohmann-json3-dev \
-            pkg-config python3-numpy python3-pip qt6-base-dev qt6-serialport-dev
+      - name: Set up Linux build environment
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,backend,frontend,test-extras
+          conan: "false"
+          mindvision: "true"
+          assets: none
 
       - name: Configure (backend-only + sanitizer)
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
         shell: bash
         run: cmake --preset linux-backend-only -DMIB_SANITIZER=${{ matrix.sanitizer }}
 
       - name: Build
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
         shell: bash
         run: cmake --build --preset linux-backend-only-build
 
       - name: Test under sanitizer
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
         shell: bash
         env:
           # Route the e-modulus LUT manifest lookup to a file: URL so startup

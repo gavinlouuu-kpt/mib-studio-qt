@@ -21,6 +21,8 @@ This folder hosts living documentation as we build functionality. Keep content c
   screenshots regenerate via `screenshot_tour`
   (`python3 scripts/check_screenshots.py` keeps pages and images in sync)
 - Integration: EGrabber — see `integration/egrabber.md`
+- Integration: OEABT nanopositioner — see
+  [integration/oeabt-nanopositioner.md](integration/oeabt-nanopositioner.md)
 - Integration: Ultra96 FPGA image pipeline — see
   [integration/ultra96-fpga-image-pipeline.md](integration/ultra96-fpga-image-pipeline.md)
 - Tasks/issues live in `knowledge_map/task/`
@@ -30,6 +32,9 @@ This folder hosts living documentation as we build functionality. Keep content c
   non-Qt consumers like Biowork) — see
   [gold_standard_metrics.md](gold_standard_metrics.md) and
   [portable-processing-sync.md](portable-processing-sync.md)
+- External datasets and model weights (Hugging Face, pinned in
+  `env/assets.json`, fetched by `scripts/provision-assets.py`) — see
+  [../knowledge_map/build-and-run/Assets.md](../knowledge_map/build-and-run/Assets.md)
 - Post-processing tools (export, reanalyse) — see [howto/tools.md](howto/tools.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)
@@ -37,3 +42,6 @@ This folder hosts living documentation as we build functionality. Keep content c
 - Agent map — see [../AGENTS.md](../AGENTS.md)
 
 Run `python3 scripts/check_docs.py` after editing any markdown; CI enforces it.
+
+- [One-click illuminated Live View](howto/illuminated-live-view.md) — saved
+  MindVision XGC/R5D rig setup, coordinated Play/Stop and commissioning evidence.

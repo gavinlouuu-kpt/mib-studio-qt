@@ -5,6 +5,14 @@
 **Related:** [[Threading-Model]], [[AppBackend]],
 [[../data-model/FrameStore]], [[../services/ProcessingService]]
 
+Frame freshness at the head of this pipeline is governed by the
+**frame delivery mode** ([[../domain/Glossary]]): `EveryFrame` keeps the
+camera SDK's completed-buffer FIFO ordered and complete, `LatestFrame`
+drains stale completed buffers inside the camera backend before
+[[../services/CaptureService]] ever copies a frame. Downstream queues
+(FrameStore, processing) are unaffected by the mode; their drops are
+counted separately.
+
 ## Realtime path (no experiment active)
 
 ```
@@ -80,3 +88,14 @@ reads these on a timer to refresh live histograms and scatter plots.
 `ProcessingService::setRealtimeRoi(Roi)` configures a sub-rectangle used by
 both preview and analysis. ROI is persisted via
 [[../frontend/System-Utilities]] `AppConfigWatcher`.
+
+## Agent B frame transaction slice (2026-09-07)
+
+The Tauri adapter now encodes one owned BridgeFrame into one binary response;
+metadata and pixels are never separate mutable-cache pulls. Native calls retain
+the existing bridge mutex serialization. Encoding uses the returned owned value
+after releasing that mutex; no worker or second backend authority was added.
+The frontend scheduler bounds aggregate pending pulls and discards retired view
+responses. Details and limitations: `docs/architecture/frame-packet-v1.md`.
+The accepted readiness/configuration/finalization/recovery handoff is still open
+under #372; this slice does not establish native experiment acceptance.

@@ -17,17 +17,57 @@ namespace backend::playback {
 
 FrameStore::FrameStore(size_t capacity)
     : capacity_(capacity), slotMutexes_(capacity), ring_(capacity),
-      slotWriteIndices_(capacity, kSlotEmpty) {
+      slotWriteIndices_(capacity, kSlotEmpty), slotBytes_(capacity, 0) {
     backend::diagnostics::CrashStateMirror::instance().frameStore.capacity.store(capacity_.load());
+}
+
+void FrameStore::noteSlotBytes(size_t idx, size_t bytes) {
+    // Caller holds the slot lock (pushFrame) or the exclusive structural lock.
+    const size_t prev = slotBytes_[idx];
+    if (prev == bytes) return;
+    slotBytes_[idx] = bytes;
+    uint64_t total;
+    if (bytes > prev) {
+        total = retainedBytes_.fetch_add(bytes - prev, std::memory_order_relaxed) + (bytes - prev);
+    } else {
+        total = retainedBytes_.fetch_sub(prev - bytes, std::memory_order_relaxed) - (prev - bytes);
+    }
+    uint64_t peak = peakRetainedBytes_.load(std::memory_order_relaxed);
+    while (total > peak && !peakRetainedBytes_.compare_exchange_weak(peak, total, std::memory_order_relaxed)) {
+    }
+}
+
+backend::diagnostics::MemoryOwnerStats FrameStore::memoryStats() const {
+    backend::diagnostics::MemoryOwnerStats o;
+    o.name = "playback.frameStore";
+    o.knowledge = backend::diagnostics::MemoryKnowledge::Measured;
+    o.currentBytes = retainedBytes_.load(std::memory_order_relaxed);
+    o.peakBytes = peakRetainedBytes_.load(std::memory_order_relaxed);
+    const size_t cap = capacity_.load(std::memory_order_acquire);
+    const uint64_t w = totalWritten_.load(std::memory_order_relaxed);
+    o.currentCount = availableCount();
+    o.peakCount = std::min<uint64_t>(w, cap);
+    o.capacityCount = cap;
+    const size_t reserved = reservedFrameBytes_.load(std::memory_order_relaxed);
+    o.capacityBytes = reserved > 0 ? static_cast<uint64_t>(cap) * reserved : 0;
+    o.evictedByBudget = w > cap ? w - cap : 0; // ring overwrites (declared: fixed capacity)
+    o.note = "ring slot allocations (resident even when a slot is stale); overwrites are the ring's declared policy";
+    return o;
 }
 
 void FrameStore::reserveFrameBytes(size_t frameBytes) {
     if (frameBytes == 0) return;
     std::unique_lock structLk(structureMutex_);
-    for (auto& f : ring_) {
+    for (size_t i = 0; i < ring_.size(); ++i) {
+        auto& f = ring_[i];
         if (f.data.capacity() < frameBytes) f.data.reserve(frameBytes);
+        noteSlotBytes(i, f.data.capacity());
     }
-    SPDLOG_INFO("FrameStore: reserved {} bytes per slot across {} slots", frameBytes, ring_.size());
+    size_t prev = reservedFrameBytes_.load(std::memory_order_relaxed);
+    while (frameBytes > prev && !reservedFrameBytes_.compare_exchange_weak(prev, frameBytes, std::memory_order_relaxed)) {
+    }
+    SPDLOG_INFO("FrameStore: reserved {} bytes per slot across {} slots ({:.1f} MB retained)", frameBytes,
+                ring_.size(), retainedBytes_.load(std::memory_order_relaxed) / (1024.0 * 1024.0));
 }
 
 void FrameStore::pushFrame(const uint8_t* src, size_t size, uint64_t width, uint64_t height,
@@ -62,8 +102,13 @@ void FrameStore::pushFrame(const uint8_t* src, size_t size, uint64_t width, uint
         f.hostTimestampUs = hostTimestampUs;
         f.data.resize(size);
         std::copy_n(src, size, f.data.begin());
+        noteSlotBytes(idx, f.data.capacity());
         slotWriteIndices_[idx] = w - 1;
+        if (commitHookForTests_) commitHookForTests_(w - 1);
     }
+    // Publication (issue #367): the frame is readable only from here on.
+    // Single producer => commit order == reservation order.
+    committed_.store(w, std::memory_order_release);
 
     // Wake consumers blocked in waitForFrame, after the slot copy so the
     // frame is readable on wake. seq_cst load pairs with the waiter's seq_cst
@@ -106,25 +151,34 @@ uint64_t FrameStore::waitForFrame(uint64_t lastSeenTotal, std::chrono::microseco
     return totalWritten_.load(std::memory_order_seq_cst);
 }
 
+void FrameStore::setCommitHookForTests(std::function<void(uint64_t)> hook) {
+    std::unique_lock structLk(structureMutex_);
+    commitHookForTests_ = std::move(hook);
+}
+
 bool FrameStore::getLatest(Frame& out) const {
-    const uint64_t w = totalWritten_.load();
-    if (w == 0 || capacity_.load(std::memory_order_acquire) == 0) return false;
-    std::shared_lock structLk(structureMutex_);
-    const size_t idx = static_cast<size_t>((w - 1) % capacity_.load(std::memory_order_acquire));
-    std::scoped_lock slotLk(slotMutexes_[idx]);
-    out = ring_[idx];
-    return !out.data.empty();
+    // Latest COMMITTED identity, not the reservation counter: a slot whose
+    // copy is still in progress must never be exposed as "latest".
+    const uint64_t c = committed_.load(std::memory_order_acquire);
+    if (c == 0 || capacity_.load(std::memory_order_acquire) == 0) return false;
+    return readByWriteIndex(c - 1, out) == FrameReadOutcome::Available;
 }
 
 bool FrameStore::getByWriteIndex(uint64_t writeIndex, Frame& out) const {
+    return readByWriteIndex(writeIndex, out) == FrameReadOutcome::Available;
+}
+
+FrameReadOutcome FrameStore::readByWriteIndex(uint64_t writeIndex, Frame& out) const {
+    const uint64_t cap0 = capacity_.load(std::memory_order_acquire);
+    if (cap0 == 0) return FrameReadOutcome::OutOfRange;
     const uint64_t w = totalWritten_.load();
-    if (writeIndex >= w || capacity_.load(std::memory_order_acquire) == 0) return false;
+    if (w == 0) return FrameReadOutcome::OutOfRange;
+    if (writeIndex >= w) return FrameReadOutcome::NotYetCommitted; // not even reserved
     // Reject indices already evicted from the ring. Without this, the slot at
     // writeIndex % capacity holds a newer frame and we would silently return the
     // wrong frame instead of failing. Computed from the same `w` snapshot.
-    if (w > static_cast<uint64_t>(capacity_.load(std::memory_order_acquire)) &&
-        writeIndex < w - static_cast<uint64_t>(capacity_.load(std::memory_order_acquire))) {
-        return false;
+    if (w > cap0 && writeIndex < w - cap0) {
+        return FrameReadOutcome::Overwritten;
     }
     std::shared_lock structLk(structureMutex_);
     const size_t cap = capacity_.load(std::memory_order_acquire);
@@ -134,11 +188,20 @@ bool FrameStore::getByWriteIndex(uint64_t writeIndex, Frame& out) const {
     // incremented before the slot data is copied, so the eviction check above
     // is a snapshot — a wrapping producer may have overwritten this slot with
     // a newer frame, or not yet written the frame this index refers to.
-    if (slotWriteIndices_[idx] != writeIndex) {
-        return false;
+    const uint64_t held = slotWriteIndices_[idx];
+    if (held != writeIndex) {
+        if (held == kSlotEmpty || held < writeIndex) return FrameReadOutcome::NotYetCommitted;
+        return FrameReadOutcome::Overwritten;
     }
-    out = ring_[idx];
-    return !out.data.empty();
+    const Frame& src = ring_[idx];
+    if (src.data.empty() || src.width == 0 || src.height == 0) return FrameReadOutcome::Malformed;
+    const size_t stride = src.linePitch == 0 ? static_cast<size_t>(src.width) : src.linePitch;
+    if (stride < src.width ||
+        src.data.size() < static_cast<size_t>(src.height - 1) * stride + static_cast<size_t>(src.width)) {
+        return FrameReadOutcome::Malformed;
+    }
+    out = src;
+    return FrameReadOutcome::Available;
 }
 
 bool FrameStore::getByWriteIndexROI(uint64_t writeIndex, int roiX, int roiY, int roiW, int roiH,
@@ -618,6 +681,7 @@ bool FrameStore::resize(size_t newCapacity) {
         // Update totalWritten_ to reflect preserved frames
         // After resize, frames will be at indices 0 to preservedCount-1
         totalWritten_.store(static_cast<uint64_t>(preservedCount));
+        committed_.store(static_cast<uint64_t>(preservedCount));
 
         SPDLOG_INFO("FrameStore: Resized from {} to {} capacity, preserved {}/{} frames",
                     capacity_.load(std::memory_order_acquire), newCapacity, preservedCount,
@@ -625,6 +689,7 @@ bool FrameStore::resize(size_t newCapacity) {
     } else {
         // New capacity is smaller than available frames, clear buffer
         totalWritten_.store(0);
+        committed_.store(0);
         SPDLOG_INFO("FrameStore: Resized from {} to {} capacity, cleared buffer (new size < "
                     "available frames)",
                     capacity_.load(std::memory_order_acquire), newCapacity);
@@ -638,6 +703,10 @@ bool FrameStore::resize(size_t newCapacity) {
 
     ring_ = std::move(newRing);
     slotWriteIndices_ = std::move(newSlotIndices);
+    // Re-account the retained allocations for the new ring (issue #370).
+    slotBytes_.assign(newCapacity, 0);
+    retainedBytes_.store(0, std::memory_order_relaxed);
+    for (size_t i = 0; i < ring_.size(); ++i) noteSlotBytes(i, ring_[i].data.capacity());
     capacity_.store(newCapacity, std::memory_order_release);
     backend::diagnostics::CrashStateMirror::instance().frameStore.capacity.store(capacity_.load());
 

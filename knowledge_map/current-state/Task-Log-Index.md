@@ -6,13 +6,27 @@
 
 ## By theme
 
-### Camera lifecycle & EGrabber
+### Reliability release (epic #371)
+- `task/2026-09-07-reliability-release-371.md` — phase order, commits,
+  evidence pointers, open hardware items
+- `task/2026-08-24-exporter-stability.md` — #344 exporter phase
+
+### Build environment
+- [[../task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo]] — localized cl.exe `/showIncludes` prefix, `cpuinfo` Conan conflict (rig PC)
+- [[../task/2026-09-09-windows-ninja-fast-loop]] — `windows-ninja` preset measurements, sccache, Rust bridge on the Ninja tree
+- [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — cloud image `-lstdc++` fix
+
+### Camera lifecycle & hardware SDKs
+- [[../task/2026-09-15-device-discovery-service]] — backend discovery job service, providers, startup policy, ABI 14 bridge (#419)
+- [[../task/2026-09-15-mindvision-overview-roi]] - full-sensor overview, 400 Hz trigger, experiment ROI persistence and rig acceptance
+- [[../task/2026-09-15-hardware-shutdown]] — duplicate desktop protection, explicit disconnects, bounded Windows serial drain
 - `task/2025-11-14-safe-start-stop-egrabber.md`
 - `task/camera-reset.md`
 - `task/fps_mbs_zero.md`
 - `task/fix_hdfreviewtab_linker_error.md`
 - `task/qt_qpa_platform_plugin_missing_windows.md`
 - `task/2026-04-20-linux-build-windows-hardware-guards.md`
+- `task/2026-08-03-issue-338-mindvision-release-builds.md`
 
 ### Cloud/Linux build environment
 - `task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix.md`
@@ -42,6 +56,7 @@
 
 ### Nanopositioner
 - `task/2025-11-19-nanopositioner-tab.md`
+- `task/2026-08-31-oeabt-nanopositioner.md`
 
 ### HDF Review scalability & crashes
 - `task/review_2gb_scalability.md`
@@ -60,7 +75,21 @@
 - `task/2026-07-13-hot-swappable-processing-core-native.md`
 - `task/2026-07-13-processing-conformance.md`
 - `task/2026-07-13-processing-core-registry.md`
+- `task/2026-08-07-issue-341-processing-core-wheel-architectures.md`
 
+### Qt → React/Tauri migration (epic #246)
+- `task/2026-07-15-qt-decoupling-phase1-slice1.md`
+- `task/2026-07-15-qt-decoupling-mockcamera-decode.md`
+- `task/2026-07-15-qt-decoupling-serial-abstraction.md`
+- `task/2026-07-15-qt-decoupling-lut-catalog.md`
+- `task/2026-07-15-qt-decoupling-crashreporter.md`
+- `task/2026-07-15-qt-decoupling-exit-gate.md`
+- `task/2026-07-15-rust-cxx-bridge-phase2.md`
+- `task/2026-07-15-tauri-desktop-phase3-slice.md`
+- `task/2026-07-15-tauri-phase4-recording-review.md`
+- `task/2026-07-15-tauri-phase4-processing-overlay.md`
+
+## By filename (all 43)
 ## By filename (selected historical records)
 
 ```
@@ -78,12 +107,25 @@
 2026-05-22-boot-service-toggles.md
 2026-05-22-crash-monitoring.md
 2026-06-01-backend-only-build-test-mode.md
+2026-08-31-oeabt-nanopositioner.md
 2026-06-01-hdf5-crash-recovery-checkpoints.md
 2026-06-02-long-run-frame-growth.md
 2026-07-13-processing-conformance.md
 2026-07-13-processing-core-registry.md
 2026-07-13-hot-swappable-processing-core-native.md
+2026-07-15-qt-decoupling-phase1-slice1.md
+2026-07-15-qt-decoupling-mockcamera-decode.md
+2026-07-15-qt-decoupling-serial-abstraction.md
+2026-07-15-qt-decoupling-lut-catalog.md
+2026-07-15-qt-decoupling-crashreporter.md
+2026-07-15-qt-decoupling-exit-gate.md
+2026-07-15-rust-cxx-bridge-phase2.md
+2026-07-15-tauri-desktop-phase3-slice.md
+2026-07-15-tauri-phase4-recording-review.md
+2026-07-15-tauri-phase4-processing-overlay.md
+2026-08-07-issue-341-processing-core-wheel-architectures.md
 2026-07-15-ultra96-direct-ddr.md
+2026-08-03-issue-338-mindvision-release-builds.md
 camera-reset.md
 diagnostic-logging.md
 external-config-browse.md
@@ -101,3 +143,5 @@ ui-status-stats.md
 ```
 
 **Up**: [[Recent-Work]] · [[../README|Vault home]]
+
+- `task/2026-09-14-one-click-illuminated-live.md`

@@ -1,0 +1,22 @@
+# Homebrew formulae for a macOS host, grouped like env/apt-packages.txt.
+# macOS is a development convenience (no CMake preset yet, no release
+# artefact); the Qt-free mib_processing core and the Python tools build here.
+# section: base
+cmake
+ninja
+pkgconf
+git
+python@3.12
+sevenzip
+
+# section: backend
+opencv
+hdf5
+spdlog
+fmt
+nlohmann-json
+sqlite
+openssl@3
+
+# section: frontend
+qt

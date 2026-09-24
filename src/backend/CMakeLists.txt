@@ -30,12 +30,15 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreCache.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreEd25519.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/PipelineTimingRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
@@ -101,6 +104,43 @@ mib_link_hdf5(mib_processing PUBLIC)
 # manylinux configuration and makes its dependency surface auditable.
 if(MIB_BUILD_PROCESSING_ONLY)
     return()
+endif()
+
+# Clean-room OEABT compatibility layer. The protocol target is standard
+# C++17; native ISerialPort is shared with the existing serial services.
+add_library(oeabt_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/OeabtProtocol.cpp
+)
+target_include_directories(oeabt_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(oeabt_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+
+add_library(oeabt_serial STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
+)
+target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
+if(WIN32)
+    target_link_libraries(oeabt_serial PUBLIC setupapi)
+endif()
+set_target_properties(oeabt_serial PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+if(MIB_BUILD_OEABT_TOOLS)
+    add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)
+    target_link_libraries(oeabtctl PRIVATE oeabt_serial)
+    set_target_properties(oeabtctl PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
 endif()
 
 # Native hot-swap artifact. It deliberately links only the mask kernel and
@@ -184,32 +224,45 @@ endif()
 add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h
     ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLutCatalog.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/Logger.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CrashReporter.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/MinidumpUploader.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/database/SqliteService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CameraControlService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/RecorderService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/PlaybackService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/DeviceDiscoveryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryPolicy.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/CameraEnumerationProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/NanopositionerProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/PulseGeneratorProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionApply.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
-target_link_libraries(mib_backend PUBLIC mib_processing)
+target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
+
+
 
 if(MIB_HAS_EGRABBER)
     target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
-    )
-else()
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.stub.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
     )
 endif()
 
@@ -223,14 +276,28 @@ else()
     )
 endif()
 
-# Explicitly enable AUTOMOC for this target to ensure MOC files are generated.
+# Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the
+# backend links no Qt SerialPort (epic #246).
+if(WIN32)
+    target_sources(oeabt_serial PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortWin32.cpp
+    )
+else()
+    target_sources(oeabt_serial PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortPosix.cpp
+    )
+endif()
+
+# The backend is Qt-free (epic #246): no Q_OBJECT, so AUTOMOC has nothing to
+# generate and is disabled.
 set_target_properties(mib_backend PROPERTIES
-    AUTOMOC ON
+    AUTOMOC OFF
     ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
 )
 
 target_compile_definitions(mib_backend PUBLIC
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
+    MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
 )
 
 if(MIB_HAS_EGRABBER)
@@ -239,8 +306,18 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=0)
 endif()
 
+if(MIB_HAS_COREMOR)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=1)
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=0)
+endif()
+
 if(MIB_HAS_MINDVISION)
-    target_compile_definitions(mib_backend PUBLIC MIB_HAS_MINDVISION=1)
+    target_compile_definitions(mib_backend PUBLIC
+        MIB_HAS_MINDVISION=1
+        # Verified against every pinned R2 SDK by the platform provisioners.
+        MIB_MINDVISION_USE_PRIORITY_API=1
+    )
 else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_MINDVISION=0)
 endif()
@@ -256,31 +333,46 @@ target_include_directories(mib_backend PUBLIC
 )
 if(MIB_HAS_EGRABBER)
     target_include_directories(mib_backend PUBLIC
-        ${PROJECT_SOURCE_DIR}/include/Coremor
         "C:/Program Files/Euresys/eGrabber/include"
     )
+endif()
+if(MIB_HAS_COREMOR)
+    target_include_directories(mib_backend PUBLIC ${PROJECT_SOURCE_DIR}/include/Coremor)
 endif()
 if(MIB_HAS_MINDVISION)
     target_include_directories(mib_backend PUBLIC
         ${MIB_MINDVISION_INCLUDE_DIR}
     )
+    if(NOT WIN32)
+        target_link_libraries(mib_backend PUBLIC
+            ${MIB_MINDVISION_LIBRARY}
+        )
+    endif()
 endif()
 
 target_link_libraries(mib_backend PUBLIC
     spdlog::spdlog
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Network
-    Qt6::SerialPort
 )
 
 if(TARGET nlohmann_json::nlohmann_json)
     target_link_libraries(mib_backend PUBLIC nlohmann_json::nlohmann_json)
 endif()
 
-# CrashReporter requires dbghelp on Windows for MiniDumpWriteDump.
+# CrashReporter requires dbghelp on Windows for MiniDumpWriteDump; the serial
+# port enumeration (SerialPortWin32.cpp) uses SetupAPI.
 if(WIN32)
-    target_link_libraries(mib_backend PUBLIC dbghelp)
+    # winhttp: MinidumpUploader posts pending crash dumps to Sentry itself.
+    target_link_libraries(mib_backend PUBLIC dbghelp setupapi winhttp)
+else()
+    # Elsewhere the uploader uses libcurl when the build has it (the Linux
+    # backend-only preset does: sentry-native's curl transport needs it too).
+    find_package(CURL QUIET)
+    if(TARGET CURL::libcurl)
+        target_link_libraries(mib_backend PUBLIC CURL::libcurl)
+        target_compile_definitions(mib_backend PRIVATE MIB_HAVE_CURL=1)
+    else()
+        target_compile_definitions(mib_backend PRIVATE MIB_HAVE_CURL=0)
+    endif()
 endif()
 
 # Wire optional sentry-native. When MIB_USE_SENTRY=OFF (or the fetch failed)
@@ -293,7 +385,7 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_USE_SENTRY=0)
 endif()
 
-if(MIB_HAS_EGRABBER)
+if(MIB_HAS_COREMOR)
     set(COREMOR_LIB_DIR ${PROJECT_SOURCE_DIR}/include/Coremor)
     target_link_libraries(mib_backend PUBLIC
         ${COREMOR_LIB_DIR}/XMT_DLL_SER.lib

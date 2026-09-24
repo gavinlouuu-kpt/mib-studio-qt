@@ -42,7 +42,7 @@
   background comparison, adds a deterministic preprocessing filter stage, and
   replaces ring width with a per-detected-object Laplacian variance focus
   metric. Contract and config-schema versions are both `2` and matched by
-  equality, not ordering. See `docs/decisions/0001-processing-contract-v2.md`
+  equality, not ordering. See `docs/decisions/0006-processing-contract-v2.md`
   and `docs/architecture/processing-contract-compatibility.md`. The Qt-free
   versioning / migration / compatibility boundary is
   `backend::processing::contract` (issue V2-1); later slices add the shared
@@ -56,7 +56,7 @@
   used as a peak-seeking autofocus focus score (V2-4). Ring width / ring ratio
   is removed from the v2 contract entirely.
 - **Processing core registry** — versioned engine metadata published by
-  `publish-processing-core.py`: a complete short-cache active pointer at
+  `scripts/release/publish-processing-core.py`: a complete short-cache active pointer at
   `{channel}/processing-core/latest.json`, immutable manifests under
   `versions/<version>.json`, and an enumerable `index.json`. Schema v2 pins
   the canonical core/contract version, hash-qualified Python wheels, optional
@@ -91,10 +91,38 @@
 - **StreamModule** — EGrabber statistics module
   (`StatisticsFrameRate`, `StatisticsDataRate`). Must refresh before
   stopping capture.
+- **Acquisition trigger** — the signal that starts a camera exposure.
+  `trigger_mode` in the MindVision JSON config: 0 free-run, 1 software
+  (`softTrigger()` / `CameraSoftTrigger`), 2 external (TTL edge on the camera
+  trigger input). See [[../camera/MindVisionCamera]]. Distinct from the sort
+  trigger below — opposite signal direction.
+- **Sort trigger (sort-output pulse)** — TTL pulse the camera's GPIO emits
+  toward the sorter when a target group is detected, driven by
+  [[../services/TriggerService]] via `setTriggerOutput`. NOT an acquisition
+  trigger.
+- **Strobe** — camera output synchronized to exposure, used to fire
+  illumination. MindVision modes: 0 auto-sync with exposure, 1 manual
+  (delay + pulse width), 2 always high, 3 always low.
+- **Pulse generator** — Zhongsheng RS485 module producing the external
+  acquisition-trigger pulse train (400 Hz–40 kHz, duty-gated on/off); driven
+  by [[../services/PulseGeneratorService]]. Identified by (bus, serial
+  settings, Modbus slave address); the output channel is a setting below
+  that identity.
+- **RS485 bus session** — one shared `QSerialPort` owner per physical
+  USB/RS485 adapter ([[../services/SerialBus]]); RS485 is multi-drop, so
+  several Modbus devices at different slave addresses share one adapter and
+  all requests on it are serialized with strict response correlation.
 - **Modbus RTU** — serial protocol used by
-  [[../services/SyringePumpService]] (Sample + Sheath pumps).
+  [[../services/SyringePumpService]] (Sample + Sheath pumps) and
+  [[../services/PulseGeneratorService]], framed by `ModbusRtu.h` over
+  [[../services/SerialBus]].
 - **Coremor XMT** — serial protocol for the piezo nanopositioner used by
-  [[../services/AutofocusService]]. DLL under `include/Coremor/`.
+  the Windows backend of [[../services/AutofocusService]]. DLL under
+  `include/Coremor/`.
+- **OEABT** — single-piezo controller supported by
+  [[../services/AutofocusService]] through a clean-room ASCII serial backend.
+  Linux uses the standard `ch341` USB-serial driver; see
+  `docs/integration/oeabt-nanopositioner.md`.
 - **ONNX Runtime** — ML runtime for [[../services/YoloService]].
 
 ## Code idioms
@@ -107,3 +135,11 @@
   themselves never decrease.
 - **FrameStore filter mode** — frame filter that returns `true` to SKIP
   (used by recording mode to drop empty frames).
+- **Frame delivery mode** — user-facing SDK-queue policy in
+  [[../camera/ICamera]]: **Every Frame** (ordered, never intentionally
+  skipped; backlog grows under overload) vs **Latest Frame** (stale
+  completed SDK buffers are drained before the copy; every deliberate
+  discard is counted). Applied at the earliest controllable SDK queue,
+  not in [[../data-model/FrameStore]]. Intentional discards, transport
+  loss/underrun, and downstream processing drops are separate counters
+  by contract.

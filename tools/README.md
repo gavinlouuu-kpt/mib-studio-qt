@@ -18,14 +18,14 @@ From the repository root:
 - **Windows:** `.\tools\build_windows.ps1` (optionally `-Clean`). Output: `tools\dist\`.
 - **macOS:** `./tools/build_mac.sh` (options: `--clean`, `--dmg`). Output: `tools/dist/`.
 
-Requires Python 3.8+, a virtual environment is created under `tools/.venv` and dependencies from `tools/requirements-runtime.txt` and `tools/requirements-build.txt`.
+Requires Python 3.8+, a virtual environment is created under `tools/.venv` and dependencies from `env/requirements-tools-runtime.txt` and `env/requirements-tools-build.txt`.
 
 ## Packaging and distribution
 
 1. **Create versioned zip** (from `tools/`): `.\package-tools.ps1` or `.\package-tools.ps1 -Version 0.1.7`  
    Output: `tools/dist/MIB_Studio_Tools_vX.Y.Z_windows.zip` (exes + README.txt).
 
-2. **Publish to Cloudflare R2** (from repo root): `.\publish-tools.ps1 -Zip "tools\dist\MIB_Studio_Tools_v0.1.7_windows.zip"`
+2. **Publish to Cloudflare R2** (from repo root): `.\scripts\release\publish-tools.ps1 -Zip "tools\dist\MIB_Studio_Tools_v0.1.7_windows.zip"`
    Uploads the zip to `stable/tools/` and writes `tools-latest.json` under `https://updates.yofo.bio/stable/tools/` so users can fetch the latest tools programmatically.
 
 ## Classification

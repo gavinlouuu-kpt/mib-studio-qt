@@ -57,6 +57,10 @@ feature/fix branch ──PR──▶ develop ──PR──▶ main ──dispat
   trigger CI), close and reopen it. A failed sync PR never blocks the
   release — the workflow warns and the release proceeds.
 - The workflow refuses `mode=release` off any other ref.
+- The lane runs the correctness suite only (`ctest -LE "soak|performance"`):
+  soak and performance tests are timing-sensitive on shared runners and
+  are exercised repeatedly by `soak.yml` (nightly / manual) instead, so a
+  release cut never waits on or fails because of them.
 - The repository **Latest** badge always belongs to the newest stable
   desktop release: `mib-processing-v*` releases are created with
   `--latest=false`, and betas are prereleases.

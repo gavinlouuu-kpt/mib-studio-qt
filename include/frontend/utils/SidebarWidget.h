@@ -8,15 +8,19 @@ namespace frontend { class NanopositionerTab; }
 namespace frontend { class SyringePumpTab; }
 namespace frontend { class BackgroundPreviewWidget; }
 class QScrollArea;
-class QSplitter;
-class QToolButton;
 class QVBoxLayout;
-class QHBoxLayout;
 class QImage;
 
 namespace frontend
 {
 
+    // Hardware/statistics side panel content (issue #359).
+    //
+    // The widget owns its *content* only: background preview, statistics,
+    // nanopositioner and syringe-pump controls inside one scroll area. It
+    // does not own its width, visibility preference or persistence — the
+    // main window's QSplitter is the single geometry owner and toggles the
+    // panel through MainWindow::setHardwarePanelVisible().
     class SidebarWidget : public QWidget
     {
         Q_OBJECT
@@ -25,41 +29,25 @@ namespace frontend
         explicit SidebarWidget(backend::AppBackend& backend, QWidget* parent = nullptr);
         ~SidebarWidget();
 
-        bool isCollapsed() const { return collapsed_; }
-        void setCollapsed(bool collapsed);
-
         StatisticsPanel* statisticsPanel() const { return statisticsPanel_; }
         NanopositionerTab* nanopositionerTab() const { return nanopositionerTab_; }
         SyringePumpTab* syringePumpTab() const { return syringePumpTab_; }
-
-        int expandedWidth() const { return expandedWidth_; }
-        void setExpandedWidth(int width);
+        QScrollArea* scrollArea() const { return scrollArea_; }
 
     public slots:
-        void toggleCollapse();
         void updateBackgroundPreview(const QImage& image);
-
-    signals:
-        void collapseStateChanged(bool collapsed);
 
     private:
         void setupUI();
-        void updateCollapseState();
-        void loadCollapseState();
-        void saveCollapseState();
 
         backend::AppBackend& backend_;
         BackgroundPreviewWidget* backgroundPreview_ = nullptr;
         StatisticsPanel* statisticsPanel_ = nullptr;
         NanopositionerTab* nanopositionerTab_ = nullptr;
         SyringePumpTab* syringePumpTab_ = nullptr;
-        QToolButton* toggleButton_ = nullptr;
         QScrollArea* scrollArea_ = nullptr;
         QWidget* contentWidget_ = nullptr;
         QVBoxLayout* contentLayout_ = nullptr;
-        bool collapsed_ = false;
-        int expandedWidth_ = 300;
-        int collapsedWidth_ = 30;
     };
 
 } // namespace frontend

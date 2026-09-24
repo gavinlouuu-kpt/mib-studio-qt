@@ -71,6 +71,7 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/ConfigPathManager.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/ConfigPathManager.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/ApplicationSettings.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/DesktopInstance.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/ApplicationSettings.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/OverlayRenderer.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/OverlayRenderer.h
@@ -103,7 +104,18 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/BackgroundPreviewWidget.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/BackgroundPreviewWidget.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/SidebarWidget.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/utils/ElidingLabel.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/ConfigDocumentStore.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/models/RunStatusModel.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/models/RunStatusModel.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/models/ProcessingConfigDraft.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/widgets/RunStatusWidget.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/widgets/RunStatusWidget.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/widgets/AlertBanner.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/widgets/AlertBanner.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/utils/WindowGeometryPolicy.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/SidebarWidget.h
+    ${PROJECT_SOURCE_DIR}/include/frontend/utils/ElidingLabel.h
     # Models
     ${PROJECT_SOURCE_DIR}/src/frontend/models/HdfMetricsModel.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/models/HdfMetricsModel.h
@@ -112,6 +124,10 @@ set(FRONTEND_COMMON_SOURCES
     # System
     ${PROJECT_SOURCE_DIR}/src/frontend/system/AppConfigWatcher.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/system/AppConfigWatcher.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/LutHttpFetcher.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/system/LutHttpFetcher.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/QtLogBridge.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/system/QtLogBridge.h
     ${PROJECT_SOURCE_DIR}/src/frontend/system/AutoUpdater.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/system/AutoUpdater.h
     ${PROJECT_SOURCE_DIR}/src/frontend/system/DeviceInitManager.cpp
@@ -165,19 +181,9 @@ target_compile_definitions(mib_frontend_common PUBLIC
 mib_link_opencv(mib_frontend_common PUBLIC)
 
 if(BUILD_TESTING)
-    add_executable(processing_core_dialog_test
-        ${PROJECT_SOURCE_DIR}/tests/frontend/processing_core_dialog_test.cpp
-    )
-    target_include_directories(processing_core_dialog_test PRIVATE
-        ${PROJECT_SOURCE_DIR}/tests
-    )
-    target_link_libraries(processing_core_dialog_test PRIVATE mib_frontend_common)
-    set_target_properties(processing_core_dialog_test PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
-        AUTOUIC OFF
-    )
+    mib_test_runner_add(mib_frontend_tests processing_core_dialog_test ${PROJECT_SOURCE_DIR}/tests/frontend/processing_core_dialog_test.cpp)
     add_test(NAME frontend.processing_core_dialog
-        COMMAND $<TARGET_FILE:processing_core_dialog_test>)
+        COMMAND $<TARGET_FILE:mib_frontend_tests> processing_core_dialog_test)
     # The test binary selects the QPA platform itself: offscreen everywhere
     # except Windows, where the Conan Qt offscreen plugin deadlocks in the
     # QApplication constructor on release runners; the native windows
@@ -187,6 +193,87 @@ if(BUILD_TESTING)
         LABELS "frontend;processing"
         TIMEOUT 120
     )
+
+    # Frontend test executables construct the real widgets (ConfigTabs seeds
+    # <exe>/../include from :/defaults on a fresh build tree), so each one compiles
+    # the .qrc itself like the app does — see the mib_frontend_common note above.
+    # Issue #360: one guarded camera command path for every UI presentation.
+    mib_test_runner_add(mib_frontend_tests camera_action_state_test ${PROJECT_SOURCE_DIR}/tests/frontend/camera_action_state_test.cpp)
+    add_test(NAME frontend.camera_action_state COMMAND $<TARGET_FILE:mib_frontend_tests> camera_action_state_test)
+    set_tests_properties(frontend.camera_action_state PROPERTIES
+        LABELS "frontend;camera;safety"
+        TIMEOUT 120
+    )
+
+    # Issues #358/#359: full-widget layout harness (viewport matrix, sidebar
+    # single-owner geometry, window restoration). Offscreen; the available
+    # desktop is injected explicitly, so it never depends on the platform
+    # screen size.
+    mib_test_runner_add(mib_frontend_tests ui_layout_test ${PROJECT_SOURCE_DIR}/tests/frontend/ui_layout_test.cpp)
+    add_test(NAME frontend.ui_layout COMMAND $<TARGET_FILE:mib_frontend_tests> ui_layout_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.ui_layout PROPERTIES
+        LABELS "frontend;layout;safety"
+        TIMEOUT 300
+    )
+
+    # Issue #361: explicit editor state + bounded, responsive config header.
+    mib_test_runner_add(mib_frontend_tests config_tabs_state_test ${PROJECT_SOURCE_DIR}/tests/frontend/config_tabs_state_test.cpp)
+    add_test(NAME frontend.config_tabs_state COMMAND $<TARGET_FILE:mib_frontend_tests> config_tabs_state_test)
+    set_tests_properties(frontend.config_tabs_state PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
+
+    # Issue #362: Preview inspector modes, persistence and clamping.
+    mib_test_runner_add(mib_frontend_tests preview_layout_test ${PROJECT_SOURCE_DIR}/tests/frontend/preview_layout_test.cpp)
+    add_test(NAME frontend.preview_layout COMMAND $<TARGET_FILE:mib_frontend_tests> preview_layout_test)
+    set_tests_properties(frontend.preview_layout PROPERTIES LABELS "frontend;layout" TIMEOUT 240)
+
+    # Issue #363: run state / alerts / metrics separation in the main window.
+    mib_test_runner_add(mib_frontend_tests run_status_ui_test ${PROJECT_SOURCE_DIR}/tests/frontend/run_status_ui_test.cpp)
+    add_test(NAME frontend.run_status_ui COMMAND $<TARGET_FILE:mib_frontend_tests> run_status_ui_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.run_status_ui PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
+
+    # Issue #364: Monitoring tune panel (criteria grouping, dirty/conflict
+    # state, fixed footer, compact widths) and the acknowledged apply path.
+    mib_test_runner_add(mib_frontend_tests monitoring_tune_panel_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_tune_panel_test.cpp)
+    add_test(NAME frontend.monitoring_tune COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_tune_panel_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.monitoring_tune PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
+
+    mib_test_runner_add(mib_frontend_tests app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp)
+    add_test(NAME frontend.config_apply COMMAND $<TARGET_FILE:mib_frontend_tests> app_config_apply_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.config_apply PROPERTIES LABELS "frontend;safety" TIMEOUT 240)
+
+    # The eight widget tests above share one executable (cmake/MIBTestRunner.cmake):
+    # it compiles resources/defaults.qrc itself like the app does (ConfigTabs
+    # seeds <exe>/../include from :/defaults on a fresh build tree — without
+    # the resource the constructor blocked headless tests in a modal warning).
+    include(MIBTestRunner)
+    # Issue #419: Qt adapter over the backend device-discovery service
+    # (fake providers, offscreen widgets, responsiveness, coalescing, stop).
+    mib_test_runner_add(mib_frontend_tests device_discovery_ui_test ${PROJECT_SOURCE_DIR}/tests/frontend/device_discovery_ui_test.cpp)
+    add_test(NAME frontend.device_discovery COMMAND $<TARGET_FILE:mib_frontend_tests> device_discovery_ui_test)
+    set_tests_properties(frontend.device_discovery PROPERTIES LABELS "frontend;discovery;concurrency;safety" TIMEOUT 180)
+    mib_test_runner_add(mib_frontend_tests mindvision_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/mindvision_overview_test.cpp)
+    add_test(NAME frontend.mindvision_overview COMMAND $<TARGET_FILE:mib_frontend_tests> mindvision_overview_test)
+    set_tests_properties(frontend.mindvision_overview PROPERTIES LABELS "frontend;camera;safety" TIMEOUT 120)
+    mib_test_runner_finalize(mib_frontend_tests ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
+    # Standalone: this test runs the application's event loop through quit.
+    add_executable(mainwindow_shutdown_test ${PROJECT_SOURCE_DIR}/tests/frontend/mainwindow_shutdown_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
+    target_include_directories(mainwindow_shutdown_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(mainwindow_shutdown_test PRIVATE mib_frontend_common)
+    set_target_properties(mainwindow_shutdown_test PROPERTIES AUTOUIC OFF RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
+    add_test(NAME frontend.mainwindow_shutdown COMMAND mainwindow_shutdown_test)
+    set_tests_properties(frontend.mainwindow_shutdown PROPERTIES LABELS "frontend;lifecycle" TIMEOUT 60)
+    add_executable(desktop_instance_test ${PROJECT_SOURCE_DIR}/tests/frontend/desktop_instance_test.cpp ${PROJECT_SOURCE_DIR}/src/frontend/system/DesktopInstance.cpp)
+    target_include_directories(desktop_instance_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(desktop_instance_test PRIVATE Qt6::Core)
+    set_target_properties(desktop_instance_test PROPERTIES AUTOUIC OFF RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
+    add_test(NAME frontend.desktop_instance COMMAND desktop_instance_test)
+    set_tests_properties(frontend.desktop_instance PROPERTIES LABELS "frontend;lifecycle;concurrency" TIMEOUT 30)
+    target_link_libraries(mib_frontend_tests PRIVATE mib_frontend_common)
+    set_target_properties(mib_frontend_tests PROPERTIES AUTOUIC OFF)
 endif()
 
 set(MIB_STUDIO_QT_EXTRA_SOURCES)
@@ -209,7 +296,7 @@ endif()
 # once by mib_frontend_common, and CMake would otherwise emit duplicate
 # generation rules for the same headers on every target in this directory.
 set_target_properties(mib_studio_qt PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
     AUTOUIC OFF
 )
 
@@ -226,7 +313,7 @@ add_executable(screenshot_tour
 )
 
 set_target_properties(screenshot_tour PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
     AUTOUIC OFF
 )
 
@@ -246,3 +333,7 @@ if(MSVC)
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
     )
 endif()
+
+# Windows: headless Qt frontend tests need the offscreen platform plugin (see cmake/MIBQtOffscreenTests.cmake).
+include(MIBQtOffscreenTests)
+mib_apply_qt_offscreen_plugin_path()

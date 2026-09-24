@@ -2,9 +2,9 @@ name: Docs CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, dev/react-tauri]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, dev/react-tauri]
 
 jobs:
   knowledge-base:

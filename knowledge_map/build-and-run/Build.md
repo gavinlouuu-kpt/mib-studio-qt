@@ -3,18 +3,88 @@
 > CMake + Conan. Windows (VS2022 x64) is the primary target, with Linux
 > cloud builds supported for non-hardware paths.
 
-**Source:** `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`
+**Source:** `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`,
+`env/` (`apt-packages.txt`, `brew-packages.txt`, `toolchain.toml`,
+`requirements-*.txt`, `assets.json`), `conan/profiles/`,
+`scripts/doctor.{sh,ps1}`, `scripts/bootstrap.{sh,ps1}`
+
+## Start here (any host, 2026-09-21)
+
+```bash
+scripts/doctor.sh [--sections base,backend,frontend,desktop-shell] [--with-private]
+scripts/bootstrap.sh [--sections ...] [--public-assets-only] [--dry-run]
+```
+
+The doctor only checks and prints one fix command per missing item; the
+bootstrap installs (system packages via apt/brew, a `.venv` with Conan and
+NumPy from `env/requirements-build.txt`, the MindVision SDK, the required
+assets) and is safe to rerun. Windows: `.\scripts\doctor.ps1` /
+`.\scripts\bootstrap.ps1 [-Generator Ninja]` (winget for tools, then
+`conan install` with `conan/profiles/windows-msvc194[-ninja]`). Every list
+these read has exactly one home:
+
+| Concern | File | Read by |
+|---|---|---|
+| apt packages, by `# section:` | `env/apt-packages.txt` | doctor/bootstrap; `.devcontainer/Dockerfile`; `.github/actions/setup-linux-env` (every Linux CI lane) |
+| Homebrew formulae | `env/brew-packages.txt` | doctor/bootstrap on macOS |
+| tool minimums | `env/toolchain.toml` | doctor (flat `name = ">=x"` lines) |
+| runtime pins | `rust-toolchain.toml`, `.nvmrc` + `desktop/package.json` engines, `.python-version`, `mise.toml` | rustup, nvm/Node, pyenv/uv, mise |
+| Python packages | `env/requirements-build.txt` (conan, numpy), `-scripts.txt`, `-tools-runtime.txt`, `-tools-build.txt` | bootstrap, `tools/build_*`, `scripts/build_*`, CI |
+| Conan host profiles | `conan/profiles/linux-gcc13`, `windows-msvc194`, `windows-msvc194-ninja` (carries the `cpuinfo` `[replace_requires]`) | `conan install -pr conan/profiles/<name>`; Windows workflows |
+| external datasets / models | `env/assets.json` | `scripts/provision-assets.py`, CMake, harnesses ([[Assets]]) |
+
+## Containers and CI lanes (2026-09-21)
+
+`.devcontainer/` builds `ubuntu:24.04` + sections `base,backend,frontend` of
+`env/apt-packages.txt`, a `/opt/venv` with Conan + NumPy, and on create runs
+`scripts/bootstrap.sh --skip-packages --public-assets-only` (SDK, `.venv`,
+Conan profile, public assets) then the doctor. Named volumes keep the
+Hugging Face and Conan caches across rebuilds; `HF_TOKEN` passes through from
+the host when set. The image is built per job/container, not published
+(decision in the plan). `.github/actions/setup-linux-env` is the one place
+Linux workflows get packages (`sections`, `extra-packages`), Conan
+(`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
+`desktop-ci`, `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
+and `network-tests` all use it, and `grep apt-get .github/workflows` should
+match nothing. `network-tests.yml` (nightly + manual) runs
+`ctest --preset linux-network-test`; every default test preset excludes the
+`network` label.
 
 ## Presets
 
-From `CMakePresets.json`:
-- `windows-default` — VS2022 x64, uses `build/conan_toolchain.cmake`
-- `linux-backend-only` — Linux backend-only configure (`mib_backend` + tests;
-  skips frontend executables)
+Every configure preset carries a `description` naming the `env/` sections
+and Conan profile it expects (`cmake --list-presets` shows them). The shared
+file holds no machine-specific paths: put ignores such as a conda or
+linuxbrew prefix in `CMakeUserPresets.json` (gitignored; start from
+`CMakeUserPresets.example.json`).
+
+From `CMakePresets.json` (each preset's `description` says which `env/`
+sections and Conan profile it needs):
+
+| Configure preset | Generator | Toolchain | Use |
+|---|---|---|---|
+| `windows-default` | VS 2022 x64 | `conan install . -of build -pr conan/profiles/windows-msvc194` | Debug/Release multi-config; installers |
+| `windows-ninja` | Ninja, `build-ninja/` | `conan install . -of build-ninja -pr conan/profiles/windows-msvc194-ninja` (VS x64 dev shell) | **fast local loop**; sccache picked up automatically ([[../task/2026-09-09-windows-ninja-fast-loop]]) |
+| `windows-ninja-ci` | Ninja, `build/` | same profile, `-of build` | what `build-windows.yml` uses |
+| `linux-backend-only` | Makefiles | apt sections `base,backend` | backend libs + CTest, no Qt; CI and devcontainer |
+| `linux-system-release` | Ninja | apt sections `base,backend,frontend` | full app from Ubuntu packages |
+| `linux-release` / `linux-sentry-release` | Makefiles | `conan/profiles/linux-gcc13` | Conan Qt 6.7.3 on Linux |
+
+- Every preset builds with `MIB_USE_SENTRY=ON` (the option's default) so
+  CrashReporter's sentry-native paths are compiled and tested everywhere;
+  on Linux this needs `libcurl4-openssl-dev` (in section `backend`), and an
+  offline fetch degrades gracefully to local-only crash reporting. The wheel
+  workflow's plugin builds pass `-DMIB_USE_SENTRY=OFF` explicitly.
+- Windows + Ninja requires cl.exe's `/showIncludes` prefix to be detected;
+  configure fails otherwise ([[../task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo]]).
 - Build presets: `windows-default-build` (Debug),
-  `windows-default-build-release` (Release),
-  `linux-backend-only-build`
-- Test presets: `windows-test`, `linux-backend-only-test`
+  `windows-default-build-release`, `windows-ninja-build`, `windows-ninja-ci-build`,
+  `linux-*-build`.
+- Test presets: `windows-test` / `windows-ninja-test` (fast lane: excludes
+  `integration|hardware|soak` — `scripts.exporter_soak` alone is ~10 min and
+  belongs to `soak.yml`), `windows-ninja-integration-test`,
+  `windows-ninja-hardware-test`, `linux-backend-only-test` (excludes label
+  `network`), `linux-network-test` (only `network`).
 
 ## Targets
 
@@ -27,8 +97,8 @@ From `CMakePresets.json`:
 | `mib_studio_qt` | executable (`WIN32` on Windows) | Production app (mock camera reachable via ConnectTab "Configure Mock…" or `MIB_CAMERA_MODE=mock`) |
 | `screenshot_tour` | executable | Headless UI tour that regenerates the user-manual screenshots (`docs/manual/images`); builds on Linux too (`linux-system-release`); see [[../frontend/Screenshot-Tour]] |
 | `processing_core_dialog_test` | executable test | Offscreen Qt regression proving the local active-core identity remains visible when registry loading fails; generated only by full frontend builds (`ctest -R frontend.processing_core_dialog`) |
-| `mib_backend_smoke_test` | executable test | Backend-only HDF5/open/flush smoke test (`ctest -L backend`) |
-| `emodulus_lut_catalog_test` | executable test | Backend-only LUT manifest/cache smoke test (`ctest -L backend`) |
+| `mib_backend_tests`, `mib_frontend_tests` | executable test runners | **One binary per test group** (2026-09-09, `cmake/MIBTestRunner.cmake`): each registered test source is compiled with `main=mib_test_main__<target>` and dispatched on the first argument, so CTest runs `<runner> <target> [args]` (one process per test). Run one directly: `build/Release/mib_backend_tests.exe emodulus_lut_catalog_test`; `--list` prints the names. `mib_backend_tests` holds the 72 backend tests (eleven stay standalone: `MIB_STANDALONE_BACKEND_TESTS` in `tests/CMakeLists.txt`, each with its reason); `mib_frontend_tests` holds the eight widget tests and compiles `resources/defaults.qrc` itself. The per-test executables summed 345 s of link time on the bench PC; the two runners link in a few seconds. |
+| `mib_backend_smoke_test` | executable test | Backend-only HDF5/open/flush smoke test (`ctest -L backend`); standalone because `tools/gen_bridge_link_manifest.py` reads its `.vcxproj` |
 
 `mib_backend` is linked by every executable. Source is in
 `src/backend/`, `src/camera/`, and `src/backend/playback/`.
@@ -73,20 +143,28 @@ has `POSITION_INDEPENDENT_CODE ON` (needed to link a static library into a
 shared `.so` extension module); this has no effect on the desktop static/
 executable link.
 
-CI produces repaired `manylinux_2_28_x86_64` wheels for CPython 3.10–3.13 and
-imports CPython 3.12 in a slim production base with Biowork's `libgl1` and
-`libglib2.0-0` prerequisites (manylinux-allowlisted OS libraries). The pinned AlmaLinux 8
-builder enables EPEL to obtain HDF5 and spdlog development packages before
-`auditwheel` repairs their runtime libraries into the wheel. See
-`bindings/python/README.md`. `.github/workflows/python-wheel.yml` builds + tests on every relevant PR
-then runs the full-parity conformance harness before publishing wheels as
-GitHub Release assets on `mib-processing-v*` tags
+CI produces repaired `manylinux_2_28` wheels for CPython 3.10–3.13 on
+`x86_64` and `aarch64`. cibuildwheel installs/imports every
+wheel in its matching container (QEMU-backed for ARM64 on the GitHub x86_64
+runner); the x86_64 jobs retain the full pytest/conformance suite and import
+CPython 3.12 in a slim production base with Biowork's `libgl1` and
+`libglib2.0-0` prerequisites. AlmaLinux/EPEL supplies the build dependencies
+before `auditwheel` repair. Linux i686 is intentionally unsupported because
+NumPy no longer publishes those wheels and the workload is not a practical fit
+for a 32-bit address space. See `bindings/python/README.md`.
+ARMv7 is excluded because cibuildwheel 2.22 marks it experimental and lacks a
+CPython 3.12 manylinux ARMv7 target.
+
+`.github/workflows/python-wheel.yml` builds + tests on every relevant PR then
+runs the full-parity conformance harness before publishing wheels as GitHub
+Release assets on `mib-processing-v*` tags
 (a separate tag namespace from the app's own `v*.*.*` releases,
 `.github/workflows/release.yml`).
 
 The same workflow is the processing-core release gate. Its wheel matrix covers
-CPython 3.10–3.13, a Windows x64 job builds the native core artifact, and a tag
-release attaches all assets before `publish-processing-core.py --from-release`
+all 8 CPython/architecture pairs, a Windows x64 job builds the native core
+artifact, and a tag release rejects any incomplete wheel set before
+`publish-processing-core.py --from-release`
 updates the R2 registry. Publication order is immutable
 `processing-core/versions/<version>.json`, merged `index.json`, generated PEP
 503 page, then the backward-compatible full `latest.json` pointer. A tag build
@@ -198,7 +276,7 @@ links `opencv_geometry`; OpenCV 4 keeps the existing imgproc-only path.
 ## Commands
 
 ```bash
-# Configure (once)
+# Configure (once; after scripts/bootstrap.ps1, which runs conan install with conan/profiles/windows-msvc194)
 cmake --preset windows-default
 
 # Build Debug
@@ -206,6 +284,12 @@ cmake --build build --config Debug
 
 # Build Release
 cmake --build build --preset windows-default-build-release
+
+# Fast local loop (VS 2022 x64 developer shell; see the windows-ninja preset above)
+conan install . -of build-ninja --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194-ninja
+cmake --preset windows-ninja
+cmake --build --preset windows-ninja-build
+ctest --preset windows-ninja-test -j8
 
 # Backend-only (Linux)
 cmake --preset linux-backend-only
@@ -218,8 +302,8 @@ windeployqt.exe --release build/Release/mib_studio_qt.exe
 
 ## Conan
 
-Dependencies resolved via Conan (not vcpkg — despite old comments). See
-[[Dependencies]] and `conanfile.txt`. Post-build hooks call
+Dependencies resolved via Conan 2 (`conanfile.py`; host profiles in
+`conan/profiles/`). See [[Dependencies]]. Post-build hooks call
 `windeployqt.exe` to copy Qt plugins and DLLs next to the exe. CMake resolves
 `windeployqt` and the `PATH` prefix from Conan CMakeDeps’ `qt_PACKAGE_FOLDER_*`
 so Release/Debug tools stay aligned with the linked Qt package (stale
@@ -232,46 +316,43 @@ different Conan package IDs after reinstalls).
   - `ON` on Windows
   - `OFF` on non-Windows
 - `cmake/MIBOptions.cmake` adds `MIB_ENABLE_MINDVISION`:
-  - `OFF` by default
-  - `ON` enables MindVision SDK discovery on Windows
+  - `ON` by default on Windows, Linux, and macOS
+  - callers may explicitly use `OFF` only for a deliberate SDK-free stub build
 - `cmake/MIBDependencies.cmake` sets `MIB_HAS_MINDVISION`:
-  - `ON` when `WIN32 AND MIB_ENABLE_MINDVISION`
-  - `OFF` otherwise
+  - `ON` when `MIB_ENABLE_MINDVISION=ON` for desktop/backend builds
+  - `OFF` for processing-only builds, which do not compile camera services
+- `MIB_HAS_COREMOR` independently detects the Windows CoreMOR SDK. Windows
+  defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver even when
+  `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber; set `MIB_ENABLE_COREMOR=OFF`
+  for a build without it. Linux and processing-only builds are SDK-free for
+  Coremor (vendor inventory: [[../services/AutofocusService]]).
 - When `MIB_HAS_EGRABBER=OFF`, build wiring skips:
   - EGrabber include path (`C:/Program Files/Euresys/eGrabber/include`)
-  - Coremor include path (`include/Coremor`)
-  - Coremor import library (`XMT_DLL_SER.lib`)
-  - Windows-only autofocus implementation (`AutofocusService.cpp`)
-- Non-Windows uses `src/backend/services/AutofocusService.stub.cpp` so Linux
-  cloud builds can compile and run mock/non-hardware workflows.
+- When `MIB_HAS_COREMOR=OFF`, build wiring skips the CoreMOR import library;
+  the full autofocus service and OEABT serial backend still build.
+- `MIB_BUILD_OEABT_TOOLS=ON` builds `oeabtctl` in the build root.
 - When `MIB_HAS_MINDVISION=ON`, CMake requires:
-  - `MindVision/CameraApiLoad.h` (or `CameraApiLoad.h`)
-  - `MVCAMSDK.dll` or `MVCAMSDK_X64.dll`
+  - Windows: `CameraApiLoad.h` plus `MVCAMSDK.dll` / `MVCAMSDK_X64.dll`
+  - Linux/macOS: `CameraApi.h` plus `libMVSDK.so` / `libmvsdk.dylib`
   - SDK root overrides via `MIB_MINDVISION_SDK_ROOT` or the
-    `MIB_MINDVISION_SDK_DIR` environment variable
+    `MIB_MINDVISION_SDK_DIR` environment variable; a separate runtime path may
+    be supplied with `MIB_MINDVISION_RUNTIME_DIR`
+- Official beta/stable workflows and `release.ps1` run
+  `scripts/provision-mindvision-sdk.ps1`, which checksum-verifies the pinned
+  R2 vendor installer, extracts the build headers/runtime without installing
+  drivers on CI, and fails the release if `MVCAMSDK_X64.dll` is absent from
+  the deployed payload.
+- Linux backend, sanitizer, soak, and native-core CI run
+  `scripts/provision-mindvision-sdk.sh`; the same command provisions local
+  Linux/macOS build trees from the platform/architecture-specific R2 archive.
 - When MindVision is disabled, the backend still compiles a stub camera
   implementation and the connect UI keeps mock/EGrabber workflows intact.
 
 ## Linux cloud toolchain note (`cannot find -lstdc++`)
 
-Some cloud images can fail during compiler smoke-test before project
-configuration with:
-
-`/usr/bin/ld: cannot find -lstdc++`
-
-In those cases, `/usr/bin/c++` is often set to `clang++` via alternatives while
-the image lacks the expected unversioned `libstdc++.so` path for that clang
-setup.
-
-Workaround:
-
-```bash
-sudo update-alternatives --set c++ /usr/bin/g++
-printf 'int main(){return 0;}' | c++ -x c++ - -o /tmp/cxx-link-test
-```
-
-If this succeeds, rerun CMake/Conan. Any next failure is likely dependency
-resolution/provisioning, not the runtime linker.
+Some cloud images pin `/usr/bin/c++` to clang without an unversioned
+`libstdc++.so`; switch the alternative to g++. Details and the smoke test:
+[[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]].
 
 ## Linux cloud dependency fallback (ONNX Runtime optional)
 
@@ -294,3 +375,24 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+## Windows Authenticode test target
+
+`processing_core_authenticode_test` stays a standalone executable because the
+Python-wheel workflow and `scripts/test-processing-core-authenticode.ps1` invoke
+it directly with unsigned/signed fixture paths and a signer SPKI hash. Bundling
+it into `mib_backend_tests` removes the expected MSBuild target and breaks that
+release verification. The standalone-test list in `tests/CMakeLists.txt` preserves
+this contract.
+
+## History
+
+Dated build notes live in `knowledge_map/task/` (this note states current
+truth only):
+
+- [[../task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo]] — localized cl.exe prefix, `cpuinfo` conflict
+- [[../task/2026-09-09-windows-ninja-fast-loop]] — Ninja preset measurements, sccache, Rust bridge on the Ninja tree
+- [[../task/2026-09-15-hardware-shutdown]] — shutdown regression targets and why two desktop tests are standalone
+- [[../task/2026-09-15-mindvision-overview-roi]] — MindVision overview test coverage
+- [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — `-lstdc++` cloud image fix
+- [[../task/2026-06-01-backend-only-build-test-mode]] — origin of `MIB_BUILD_BACKEND_ONLY`

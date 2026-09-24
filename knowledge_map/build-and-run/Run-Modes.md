@@ -7,11 +7,20 @@
 
 ## Executables
 
+The Qt desktop reserves one per-user session before opening hardware; a second
+launch reports the owner PID and exits. The lock spans installation paths and
+channels, and recovers after a dead owner. Existing builds without this guard
+must be closed before using the new build. See [[../frontend/DesktopInstance]].
+
 - **`mib_studio_qt.exe`** — the app. Hardware camera via
   [[../camera/EGrabberCamera]] or MindVision; the mock camera is reachable
   from [[../frontend/ConnectTab]] ("Configure Mock…") or forced via
   `MIB_CAMERA_MODE=mock`. (The former separate `mock_studio_qt` target was
   removed — mock support lives in the production binary.)
+  Desktop builds compile the MindVision provider by default on Windows,
+  Linux, and macOS. Official Windows binaries compile both EGrabber and MindVision;
+  `MVCAMSDK_X64.dll` ships beside the executable, while the workstation still
+  needs the vendor device driver installed.
 - **`screenshot_tour.exe`** — headless mock-mode UI tour that regenerates
   the user-manual screenshots. See [[../frontend/Screenshot-Tour]].
 
@@ -65,3 +74,18 @@ the network.
 - `docs/howto/troubleshoot-crashes.md`
 - `docs/howto/safe-start-stop-egrabber.md`
 - `knowledge_map/task/qt_qpa_platform_plugin_missing_windows.md`
+
+
+### Independent nanopositioner support (2026-09-15)
+
+Windows defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver
+even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
+`MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
+processing-only builds remain SDK-free for Coremor. See
+[[../services/AutofocusService]] for the vendor support inventory.
+
+## Mock frame source (2026-09-21)
+
+`data/mock_frames/` holds two placeholder frames. For a real stream use the
+Hub asset `512x96stream-mock-frames` via `scripts/provision-assets.py` and
+point `MIB_MOCK_CAMERA_DIR` at the provisioned folder. See [[Assets]].

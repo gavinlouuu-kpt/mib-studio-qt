@@ -4,6 +4,7 @@
 // Optional: MIB_TEST_PUMP_BAUD (default 115200), MIB_TEST_PUMP_ADDR (default 1).
 // Skips (exit 77) when MIB_TEST_PUMP_PORT is absent.
 
+#include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 
 #include "support/assert.h"
@@ -21,7 +22,8 @@ int main()
     const int baud = mib::test::envInt("MIB_TEST_PUMP_BAUD", 115200);
     const int addr = mib::test::envInt("MIB_TEST_PUMP_ADDR", 1);
 
-    SyringePumpService svc;
+    backend::services::serialbus::SerialBusManager busManager;
+    SyringePumpService svc(busManager);
     const auto id = SyringePumpService::PumpId::Sample;
 
     MIB_REQUIRE(svc.connect(id, port, baud, static_cast<uint8_t>(addr)),

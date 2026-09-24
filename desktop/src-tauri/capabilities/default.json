@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core permissions for the main window. App-defined commands (init, configure_mock, start_capture, …) are allowed by default in Tauri v2. Opener actions are capability-scoped (BE-9, #279): only https URLs and directory reveals, no arbitrary process launch.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://**" }]
+    },
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

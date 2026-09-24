@@ -7,7 +7,7 @@ HDF5 files may be combined. Enforced in code by
 and mirrored on the frontend by
 `processingcorecatalog::isProcessingContractCompatible`.
 
-See [ADR 0001](../decisions/0001-processing-contract-v2.md) for the rationale.
+See [ADR 0001](../decisions/0006-processing-contract-v2.md) for the rationale.
 
 ## Version axes
 

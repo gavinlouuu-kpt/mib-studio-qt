@@ -42,8 +42,9 @@
 ## Third-party stack
 
 See [[../build-and-run/Dependencies]]. Key libs: Qt6, OpenCV, HDF5, spdlog,
-ONNX Runtime, nlohmann_json, Euresys EGrabber SDK (hardware camera), Coremor
-DLL (nanopositioner).
+ONNX Runtime, nlohmann_json, Euresys EGrabber SDK (hardware camera), Qt
+SerialPort/standard Linux CH341 support for OEABT nanopositioners, and the
+optional CoreMOR DLL on Windows.
 
 `mib_processing` (the processing/HDF5 core above) depends only on OpenCV,
 HDF5, spdlog, and the standard library — no Qt. This is the portable

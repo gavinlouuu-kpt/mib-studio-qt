@@ -1,0 +1,14 @@
+{
+  "environment": {"rss_start_mb": 59.781, "frame_w": 512, "frame_h": 96, "threads": 4},
+  "A_objects_0": {"frames": 200, "results": 200, "ms_per_frame": 0.221, "unique_allocation_bytes": 19660800, "retained_bytes_per_owner_sum": 19660800, "former_clone_per_object_bytes": 19660800, "allocations_per_result": 1.000, "rss_delta_mb": 21.297},
+  "A_objects_1": {"frames": 200, "results": 37, "ms_per_frame": 0.213, "unique_allocation_bytes": 3637248, "retained_bytes_per_owner_sum": 3637248, "former_clone_per_object_bytes": 3637248, "allocations_per_result": 1.000, "rss_delta_mb": 0.184},
+  "A_objects_8": {"frames": 200, "results": 41, "ms_per_frame": 0.419, "unique_allocation_bytes": 3342336, "retained_bytes_per_owner_sum": 4030464, "former_clone_per_object_bytes": 4030464, "allocations_per_result": 0.829, "rss_delta_mb": 0.000},
+  "B_slow_persistence": {"frames": 20000, "budget_bytes": 67108864, "peak_bytes": 67043328, "retained_frames": 682, "evicted": 19318, "us_per_append": 2.656, "rss_delta_mb": 36.148},
+  "C_large_frames": {"frame_bytes": 4456448, "budget_bytes": 268435456, "retained_frames": 60, "frame_cap": 1000, "evicted": 240, "ms_total": 453.940, "rss_delta_mb": 197.832},
+  "D_long_monitoring": {"frames": 6000, "processed": 6000, "ring_bytes_at_3k": 98304000, "ring_bytes_at_6k": 98304000, "ring_entries": 1000, "ring_replaced": 5000, "frames_per_s": 4401.114, "rss_delta_mb": 100.582},
+  "E_frame_store_everyframe": {"capacity": 512, "retained_bytes": 25165824, "peak_bytes": 25165824, "overwrites": 5489, "plateau": true},
+  "E_frame_store_latestframe": {"pushed": 10000, "processed_delta": 6184, "retained_bytes": 25165824, "ms_push_loop": 342.875},
+  "G_series_retention": {"results": 11, "max_series_images": 4, "retained_bytes": 3244032},
+  "F_metadata_1M": {"frames": 1000000, "ns_per_frame": 13.177, "rss_delta_mb": 0.000, "completion": 0},
+  "summary": {"rss_end_mb": 222.758, "rss_peak_mb": 329.973, "rss_delta_total_mb": 162.977}
+}

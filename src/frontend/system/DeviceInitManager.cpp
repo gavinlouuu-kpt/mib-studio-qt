@@ -1,229 +1,192 @@
 #include "frontend/system/DeviceInitManager.h"
 
-#include <QTimer>
-#include <QtConcurrent/QtConcurrent>
-#include <QFutureWatcher>
-
-#include <algorithm>
+#include <QMetaObject>
 
 #include <spdlog/spdlog.h>
 
 #include "backend/app/AppBackend.h"
 #include "backend/services/CameraControlService.h"
-#include "backend/services/CaptureService.h"
-#include "backend/services/AutofocusService.h"
-#include "backend/app/Tools.h"
 #include "frontend/tabs/ConnectTab.h"
 #include "frontend/tabs/NanopositionerTab.h"
 
 namespace frontend {
 
-namespace {
-
-std::vector<backend::services::DiscoveredCamera> discoverCamerasInWorker() {
-    backend::services::CameraControlService cc;
-    return cc.discoverAllCameras();
-}
-
-std::vector<int> probeNanopositionerPortsInWorker(int baudRate, unsigned char deviceAddress, int preferredPort) {
-    std::vector<int> validPorts;
-    std::vector<int> ports = backend::Tools::availableComPortNumbers();
-    if (preferredPort > 0 && std::find(ports.begin(), ports.end(), preferredPort) == ports.end()) {
-        ports.insert(ports.begin(), preferredPort);
-    }
-    std::stable_sort(ports.begin(), ports.end(), [preferredPort](int lhs, int rhs) {
-        const int lhsRank = (lhs == preferredPort) ? 0 : 1;
-        const int rhsRank = (rhs == preferredPort) ? 0 : 1;
-        return lhsRank == rhsRank ? lhs < rhs : lhsRank < rhsRank;
-    });
-    ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
-    for (int port : ports) {
-        if (backend::services::AutofocusService::probeComPort(port, baudRate, deviceAddress)) {
-            validPorts.push_back(port);
-        }
-    }
-    return validPorts;
-}
-
-} // namespace
+using Coordinator = backend::discovery::StartupDiscoveryCoordinator;
 
 DeviceInitManager::DeviceInitManager(backend::AppBackend& backend, QObject* parent)
-    : QObject(parent), backend_(backend) {
-    cameraStepTimer_ = new QTimer(this);
-    cameraStepTimer_->setSingleShot(true);
-    connect(cameraStepTimer_, &QTimer::timeout, this, &DeviceInitManager::onCameraStepTimer);
-
-    nanopositionerStepTimer_ = new QTimer(this);
-    nanopositionerStepTimer_->setSingleShot(true);
-    connect(nanopositionerStepTimer_, &QTimer::timeout, this, &DeviceInitManager::onNanopositionerStepTimer);
+    : QObject(parent), backend_(backend), coordinator_(backend.startupDiscovery()) {
+    // Decision actions (selection/connection hooks and outcome delivery) run
+    // on the UI thread: AppBackend's selection setters are read by widgets.
+    // `alive_` guards against a post that races this object's destruction.
+    auto alive = alive_;
+    coordinator_.setExecutor([this, alive](std::function<void()> fn) {
+        if (!alive->load()) return;
+        QMetaObject::invokeMethod(this, std::move(fn), Qt::QueuedConnection);
+    });
+    coordinator_.setCameraListener([this](const Coordinator::CameraOutcome& outcome) {
+        onCameraOutcome(outcome);
+    });
+    coordinator_.setNanopositionerListener(
+        [this](const Coordinator::NanopositionerOutcome& outcome) { onNanopositionerOutcome(outcome); });
+    coordinator_.setPreferredNanopositionerHook([this]() -> std::optional<backend::nanopositioner::Endpoint> {
+        if (!nanopositionerTab_) return std::nullopt;
+        return nanopositionerTab_->getConfiguredEndpoint();
+    });
 }
 
-DeviceInitManager::~DeviceInitManager() = default;
+DeviceInitManager::~DeviceInitManager() {
+    stop();
+    // The coordinator outlives this adapter (AppBackend owns it): detach every
+    // callback that references `this` before the QObject goes away.
+    alive_->store(false);
+    coordinator_.setExecutor({});
+    coordinator_.setCameraListener({});
+    coordinator_.setNanopositionerListener({});
+    coordinator_.setPreferredNanopositionerHook({});
+}
+
+void DeviceInitManager::stop() {
+    if (stopped_) return;
+    stopped_ = true;
+    SPDLOG_INFO("DeviceInitManager: stopping startup discovery");
+    coordinator_.stop();
+    if (nanopositionerTab_) nanopositionerTab_->setDiscoveryRunning(false);
+}
+
+void DeviceInitManager::setNanopositionerTab(NanopositionerTab* tab) {
+    if (nanopositionerTab_) disconnect(nanopositionerTab_, nullptr, this, nullptr);
+    nanopositionerTab_ = tab;
+    if (tab) connect(tab, &NanopositionerTab::discoveryRequested, this,
+                     &DeviceInitManager::runNanopositionerStep);
+}
 
 void DeviceInitManager::start() {
-    cameraStepScheduled_ = true;
-    cameraStepTimer_->start(400);
+    if (stopped_) return;
+    coordinator_.start();
 }
 
 void DeviceInitManager::runCameraStep() {
-    if (cameraStepRunning_) {
-        SPDLOG_INFO("DeviceInitManager: camera step already running, skipping");
-        return;
+    if (stopped_) return;
+    if (!coordinator_.runCameraStep()) {
+        SPDLOG_INFO("DeviceInitManager: camera step refused (running, capturing or configured)");
     }
-    if (backend_.capture().isRunning()) {
-        SPDLOG_INFO("DeviceInitManager: camera step skipped (capture running)");
-        return;
-    }
-    if (backend_.isCameraConfigured()) {
-        SPDLOG_INFO("DeviceInitManager: camera step skipped (already configured)");
-        return;
-    }
-    runCameraDiscoveryInWorker();
 }
 
-void DeviceInitManager::onCameraStepTimer() {
-    if (!cameraStepScheduled_) {
-        return;
+void DeviceInitManager::runNanopositionerStep() {
+    if (stopped_) return;
+    if (!coordinator_.runNanopositionerStep()) {
+        SPDLOG_INFO("DeviceInitManager: nanopositioner step refused (running or connected)");
     }
-    if (backend_.capture().isRunning() || backend_.isCameraConfigured()) {
-        scheduleNanopositionerStep();
-        return;
-    }
-    runCameraDiscoveryInWorker();
 }
 
-void DeviceInitManager::runCameraDiscoveryInWorker() {
-    cameraStepRunning_ = true;
-    if (!cameraWatcher_) {
-        cameraWatcher_ = std::make_unique<QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>>(this);
-        connect(cameraWatcher_.get(), &QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>::finished,
-                this, &DeviceInitManager::onCameraDiscoveryFinished);
-    }
-    QFuture<std::vector<backend::services::DiscoveredCamera>> future = QtConcurrent::run(discoverCamerasInWorker);
-    cameraWatcher_->setFuture(future);
-}
-
-void DeviceInitManager::onCameraDiscoveryFinished() {
-    cameraStepRunning_ = false;
-    if (!cameraWatcher_ || !cameraWatcher_->isFinished()) {
+void DeviceInitManager::onCameraOutcome(const Coordinator::CameraOutcome& outcome) {
+    using Kind = Coordinator::CameraOutcome::Kind;
+    if (stopped_) return;
+    if (outcome.kind == Kind::Started) {
+        if (connectTab_) connectTab_->showDiscoveryStarted();
         return;
     }
-    std::vector<backend::services::DiscoveredCamera> cameras = cameraWatcher_->result();
-
-    SPDLOG_INFO("DeviceInitManager: camera discovery found {} camera(s)", cameras.size());
-
-    if (cameras.empty()) {
-        if (connectTab_) {
-            connectTab_->reportNoCameras();
-        }
-        emit cameraInitFinished(false, tr("No cameras found."));
-        scheduleNanopositionerStep();
-        return;
+    if (outcome.kind != Kind::Skipped && connectTab_) {
+        connectTab_->showDiscoveryResults(outcome.snapshot);
     }
-
-    if (cameras.size() == 1) {
-        const auto& cam = cameras[0];
-        if (cam.cameraType == backend::services::CameraType::MindVision) {
-            backend_.setMindVisionCameraSelection(cam.cameraIndex, cam.label);
-            if (connectTab_) {
+    switch (outcome.kind) {
+    case Kind::Started:
+    case Kind::Skipped:
+        break;
+    case Kind::Selected: {
+        const QString label = QString::fromStdString(outcome.device ? outcome.device->displayName : "");
+        SPDLOG_INFO("DeviceInitManager: camera discovery selected '{}'", label.toStdString());
+        if (connectTab_ && outcome.device && outcome.device->camera) {
+            const auto& cam = *outcome.device->camera;
+            if (cam.cameraType == backend::services::CameraType::MindVision) {
                 connectTab_->applyMindVisionSelection(cam.cameraIndex, QString::fromStdString(cam.label));
-            }
-        } else {
-            backend_.setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
-            if (connectTab_) {
-                connectTab_->applyCameraSelection(cam.interfaceIndex, cam.deviceIndex, QString::fromStdString(cam.label));
+            } else {
+                connectTab_->applyCameraSelection(cam.interfaceIndex, cam.deviceIndex,
+                                                  QString::fromStdString(cam.label));
             }
         }
-        emit cameraInitFinished(true, QString::fromStdString(cam.label));
-    } else {
-        if (connectTab_) {
-            connectTab_->reportMultipleCameras();
-        }
+        emit cameraInitFinished(true, label);
+        break;
+    }
+    case Kind::NoneFound:
+        SPDLOG_INFO("DeviceInitManager: camera discovery found no cameras");
+        if (connectTab_) connectTab_->reportNoCameras();
+        emit cameraInitFinished(false, tr("No cameras found."));
+        break;
+    case Kind::RequireSelection:
+        if (connectTab_) connectTab_->reportMultipleCameras();
         emit cameraInitFinished(false, tr("Multiple cameras found; select one and click Connect."));
+        break;
+    case Kind::Incomplete:
+    case Kind::Refused: {
+        const QString message = tr("Camera discovery incomplete: %1")
+                                    .arg(QString::fromStdString(outcome.message));
+        SPDLOG_WARN("DeviceInitManager: {}", message.toStdString());
+        if (connectTab_) connectTab_->reportDiscoveryProblem(message);
+        emit cameraInitFinished(false, message);
+        break;
     }
-    scheduleNanopositionerStep();
+    }
 }
 
-void DeviceInitManager::scheduleNanopositionerStep() {
-    cameraStepScheduled_ = false;
-    if (!nanopositionerTab_) {
+void DeviceInitManager::onNanopositionerOutcome(const Coordinator::NanopositionerOutcome& outcome) {
+    using Kind = Coordinator::NanopositionerOutcome::Kind;
+    if (stopped_ || !nanopositionerTab_) return;
+    switch (outcome.kind) {
+    case Kind::Started:
+        nanopositionerTab_->setDiscoveryRunning(true);
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Identifying nanopositioners across available ports..."));
         return;
-    }
-    if (backend_.autofocus().isConnected()) {
+    case Kind::Searching:
+        // attempt N of M means retry N-1 of M-1 in the pre-#419 wording.
+        nanopositionerTab_->setNanopositionerStatus(tr("Searching for nanopositioner... (retry %1/%2)")
+                                                        .arg(outcome.attempt - 1)
+                                                        .arg(outcome.maxAttempts - 1));
         return;
+    case Kind::Skipped:
+        return;
+    default:
+        break;
     }
-    nanopositionerRetryCount_ = 0;
-    nanopositionerStepTimer_->start(0);
-}
 
-void DeviceInitManager::onNanopositionerStepTimer() {
-    if (!nanopositionerTab_) {
-        return;
-    }
-    if (backend_.autofocus().isConnected()) {
-        return;
-    }
-    int baudRate = nanopositionerTab_->getBaudRate();
-    unsigned char deviceAddress = nanopositionerTab_->getDeviceAddress();
-    int preferredPort = nanopositionerTab_->getConfiguredComPort();
-
-    if (preferredPort > 0 && nanopositionerRetryCount_ == 0) {
-        nanopositionerTab_->setNanopositionerStatus(tr("Checking saved nanopositioner port COM%1...").arg(preferredPort));
-        if (backend::services::AutofocusService::probeComPort(preferredPort, baudRate, deviceAddress) &&
-            backend_.autofocus().connect(preferredPort, baudRate, deviceAddress)) {
-            nanopositionerTab_->applyAutoConnectResult(preferredPort);
-            SPDLOG_INFO("DeviceInitManager: auto-connected to nanopositioner on saved COM{}", preferredPort);
-            emit nanopositionerInitFinished(true);
-            return;
+    nanopositionerTab_->showDiscoveryCandidates(outcome.snapshot);
+    nanopositionerTab_->setDiscoveryRunning(false);
+    switch (outcome.kind) {
+    case Kind::Connected:
+        if (outcome.endpoint) {
+            nanopositionerTab_->applyAutoConnectResult(*outcome.endpoint);
+            SPDLOG_INFO("DeviceInitManager: auto-connected to nanopositioner on {}",
+                        outcome.endpoint->systemPath);
         }
-        SPDLOG_WARN("DeviceInitManager: saved nanopositioner COM{} did not validate; scanning all ports", preferredPort);
-    }
-
-    if (!nanopositionerWatcher_) {
-        nanopositionerWatcher_ = std::make_unique<QFutureWatcher<std::vector<int>>>(this);
-        connect(nanopositionerWatcher_.get(), &QFutureWatcher<std::vector<int>>::finished,
-                this, &DeviceInitManager::onNanopositionerProbeFinished);
-    }
-    QFuture<std::vector<int>> future = QtConcurrent::run(probeNanopositionerPortsInWorker, baudRate, deviceAddress, preferredPort);
-    nanopositionerWatcher_->setFuture(future);
-}
-
-void DeviceInitManager::onNanopositionerProbeFinished() {
-    if (!nanopositionerWatcher_ || !nanopositionerWatcher_->isFinished() || !nanopositionerTab_) {
-        return;
-    }
-    std::vector<int> validPorts = nanopositionerWatcher_->result();
-
-    if (validPorts.empty()) {
-        if (nanopositionerRetryCount_ < NANOPOSITIONER_MAX_RETRIES) {
-            ++nanopositionerRetryCount_;
-            nanopositionerTab_->setNanopositionerStatus(
-                tr("Searching for nanopositioner... (retry %1/%2)").arg(nanopositionerRetryCount_).arg(NANOPOSITIONER_MAX_RETRIES));
-            nanopositionerStepTimer_->start(NANOPOSITIONER_RETRY_DELAY_MS);
-        } else {
-            nanopositionerTab_->setNanopositionerStatus(tr("Nanopositioner not found. Click Refresh to search again."));
-            emit nanopositionerInitFinished(false);
-        }
-        return;
-    }
-
-    if (validPorts.size() != 1) {
-        nanopositionerTab_->setNanopositionerStatus(tr("Multiple devices found; select one and click Connect."));
-        emit nanopositionerInitFinished(false);
-        return;
-    }
-
-    int port = validPorts[0];
-    int baudRate = nanopositionerTab_->getBaudRate();
-    unsigned char deviceAddress = nanopositionerTab_->getDeviceAddress();
-    bool success = backend_.autofocus().connect(port, baudRate, deviceAddress);
-    if (success) {
-        nanopositionerTab_->applyAutoConnectResult(port);
-        SPDLOG_INFO("DeviceInitManager: auto-connected to nanopositioner on COM{}", port);
         emit nanopositionerInitFinished(true);
-    } else {
-        nanopositionerTab_->setNanopositionerStatus(tr("Auto-connect failed on COM%1").arg(port));
+        break;
+    case Kind::ConnectFailed:
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Auto-connect failed on %1")
+                .arg(QString::fromStdString(outcome.endpoint ? outcome.endpoint->systemPath : "?")));
         emit nanopositionerInitFinished(false);
+        break;
+    case Kind::NotFound:
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Nanopositioner not found. Click Refresh to search again."));
+        emit nanopositionerInitFinished(false);
+        break;
+    case Kind::RequireSelection:
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Multiple devices found; select one and click Connect."));
+        emit nanopositionerInitFinished(false);
+        break;
+    case Kind::Incomplete:
+        nanopositionerTab_->setNanopositionerStatus(
+            tr("Nanopositioner discovery incomplete: %1. Click Refresh to search again.")
+                .arg(QString::fromStdString(outcome.message)));
+        emit nanopositionerInitFinished(false);
+        break;
+    case Kind::Started:
+    case Kind::Searching:
+    case Kind::Skipped:
+        break;
     }
 }
 

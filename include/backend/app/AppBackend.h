@@ -8,6 +8,10 @@
 #include <thread>
 
 #include "backend/app/BackgroundFrame.h"
+#include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
+#include "backend/app/ExperimentReadiness.h"
+#include "backend/diagnostics/MemoryBudget.h"
+#include "backend/recording/RecordingAccounting.h"
 
 namespace backend::services
 {
@@ -21,6 +25,11 @@ namespace backend::services
     class TriggerService;
     class YoloService;
     class SyringePumpService;
+    class PulseGeneratorService;
+    namespace serialbus
+    {
+        class SerialBusManager;
+    }
 }
 
 namespace backend
@@ -35,6 +44,13 @@ namespace camera::mock
     struct MockCameraOptions;
 }
 
+namespace backend::app { class ExperimentCoordinator; }
+namespace backend::discovery
+{
+    class DeviceDiscoveryService;
+    class StartupDiscoveryCoordinator;
+}
+
 namespace backend
 {
 
@@ -45,6 +61,17 @@ namespace backend
         ~AppBackend();
 
         bool initialize(const std::string &dataDir);
+
+        // Inject the HTTP GET used to fetch the E-modulus LUT manifest/blob
+        // (ADR 0002); the shell supplies it so the backend links no Qt
+        // networking. Without a fetcher, remote LUT fetch is skipped and the
+        // cached/bundled LUT is used. Call before initialize().
+        void setLutHttpFetcher(HttpGetFn fetcher) { lutHttpGet_ = std::move(fetcher); }
+        // Base directory for the LUT cache — the shell passes the platform
+        // app-data dir so the on-disk cache location is unchanged. Call before
+        // initialize(). (The env override MIB_STUDIO_EMODULUS_LUT_CACHE_DIR
+        // still takes precedence.)
+        void setLutAppDataDir(std::string dir) { lutAppDataDir_ = std::move(dir); }
 
         // Stop every service-owned thread in dependency order (capture →
         // trigger → recording → realtime/processing). Idempotent; called by
@@ -61,11 +88,20 @@ namespace backend
         services::TriggerService &trigger();
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
+        services::PulseGeneratorService &pulseGenerator();
+        // Device discovery job service (issue #419, ADR 0005): every camera /
+        // nanopositioner / pulse-generator scan runs through it. Frontends
+        // start jobs and poll snapshots; they never enumerate hardware.
+        discovery::DeviceDiscoveryService &deviceDiscovery();
+        // Startup selection/connection policy over the discovery service.
+        // Constructed here but started by the shell (Qt adapter) so headless
+        // consumers keep today's no-auto-connect behaviour.
+        discovery::StartupDiscoveryCoordinator &startupDiscovery();
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
 
-        void configureMockCamera(const camera::mock::MockCameraOptions &options);
+        void configureMockCamera(const ::camera::mock::MockCameraOptions& options);
 
         // Select a specific hardware device (does not start capture)
         void setHardwareCameraSelection(int interfaceIndex, int deviceIndex, const std::string &label);
@@ -79,10 +115,30 @@ namespace backend
 
         // Apply a JSON config file to the currently selected MindVision camera.
         // If capture is running, it will be stopped first. Capture remains stopped.
+        // Save/select the next-start profile without opening the camera.
+        bool stageMindVisionConfigFromFile(const std::string& path,
+                                           std::string* errorOut = nullptr);
         bool applyMindVisionConfigFromFile(const std::string &path, std::string *errorOut = nullptr);
 
         // Returns true if a MindVision camera is currently selected.
         bool isMindVisionCameraSelected() const;
+
+        // Lifecycle-owner calls only. Stops capture/processing, replaces the frame
+        // store, stages the mode; caller decides whether to restart. No hardware
+        // is opened while idle. Rejected during an experiment or recording.
+        bool setMindVisionOverview(bool overview, std::string* errorOut = nullptr);
+        bool isMindVisionOverview() const { return mindVisionOverview_.load(); }
+        struct MindVisionSensor {
+            int sensorWidth{0}, sensorHeight{0}, minWidth{1}, minHeight{1};
+        };
+        MindVisionSensor mindVisionSensor() const;
+        // Atomic experiment-profile update; does not reconfigure the live overview.
+        bool saveMindVisionRoi(int x, int y, int width, int height,
+                               std::string* errorOut = nullptr);
+
+        // Fire one software acquisition trigger on the live capture camera
+        // (camera must be running in soft-trigger mode). NOT the sort pulse.
+        bool softTriggerCamera(std::string *errorOut = nullptr);
 
         // Issue GenICam DeviceReset to the selected hardware camera.
         // If capture is running, it will be stopped first. Capture remains stopped.
@@ -91,6 +147,43 @@ namespace backend
         // Check if a camera is configured (either hardware or mock)
         bool isCameraConfigured() const;
 
+        // Authoritative selected-device snapshot (BE-2, #272): which source is
+        // selected, its identity/labels/indices, applied config/script paths,
+        // and the mock parameters. Values survive capture start/stop.
+        struct CameraSelectionSnapshot
+        {
+            enum class Mode
+            {
+                None,
+                Mock,
+                Hardware,
+                MindVision,
+            };
+            Mode mode{Mode::None};
+            int interfaceIndex{-1};
+            int deviceIndex{-1};
+            std::string label;
+            int mindVisionIndex{-1};
+            std::string mindVisionConfigPath;
+            std::string cameraScriptPath;
+            std::string mockFrameDir;
+            int mockIntervalMs{0};
+            bool mockLoop{true};
+            bool configured{false};
+        };
+        CameraSelectionSnapshot cameraSelection() const;
+        // Requested vs effective camera source (issue #369). A hardware
+        // selection that could not be honored is reported as a fallback —
+        // readiness refuses to treat it as a successful hardware run, and
+        // it is never silently presented as "mock selected".
+        app::CameraSourceInfo cameraSourceInfo() const;
+
+        // Backend-owned experiment readiness + Start transaction (issue #369).
+        app::ExperimentCoordinator& experiment();
+        // Shared RS485 bus registry (pump, pulse generator); tests inject a
+        // fake serial-port factory here.
+        services::serialbus::SerialBusManager& serialBus();
+
         // Frame recording mode: record non-empty frames directly to HDF5 (images + metadata only, no contour processing)
         // Returns false if recording cannot start (e.g., capture not running, file error)
         bool startFrameRecording(const std::string& hdf5FilePath);
@@ -98,6 +191,16 @@ namespace backend
         bool isFrameRecording() const;
         uint64_t frameRecordingCount() const;     // Frames written so far
         uint64_t frameRecordingFiltered() const;   // Empty frames skipped
+        // Explicit per-run frame accounting (issue #367): live (reconciled on
+        // demand) while recording, otherwise the final snapshot of the last
+        // run including its Complete/Partial/Loss/Failed completion state.
+        backend::recording::RecordingAccountingSnapshot recordingAccounting() const;
+
+        // Issue #370: byte-budget view of every host-path memory owner
+        // (camera/SDK buffers, FrameStore, processing queues/retention,
+        // persistence queue, presentation snapshot, exporter) plus process
+        // RSS. Unknown vendor memory is reported as Unknown, never as 0.
+        backend::diagnostics::HostMemoryBudgetSnapshot memoryBudgetSnapshot() const;
 
         // Raw config JSON storage (set by config watcher, read at experiment save)
         void setLastConfigJson(const std::string& json);
@@ -140,8 +243,20 @@ namespace backend
         std::unique_ptr<services::AutofocusService> autofocusService_;
         std::unique_ptr<services::TriggerService> triggerService_;
         std::unique_ptr<services::YoloService> yoloService_;
+        // Shared RS485/Modbus bus registry — declared before the serial
+        // services so it outlives their sessions.
+        std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
         std::unique_ptr<services::SyringePumpService> syringePumpService_;
+        std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
+        // Declared after every service the providers/hooks reference so the
+        // discovery workers and the coordinator are destroyed first.
+        std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
+        std::unique_ptr<discovery::StartupDiscoveryCoordinator> startupDiscovery_;
         std::shared_ptr<playback::FrameStore> frameStore_;
+
+        // Shell-injected LUT fetch config (ADR 0002).
+        HttpGetFn lutHttpGet_;
+        std::string lutAppDataDir_;
 
         // Last selected hardware device (for script apply)
         int selectedIfIndex_{-1};
@@ -149,7 +264,24 @@ namespace backend
         std::string selectedLabel_;
         int selectedMvCameraIndex_{-1};
         std::string lastMindVisionConfigPath_;
+        std::string savedMindVisionConfigPath_;
+        void releaseMindVisionOverviewStore();
+        std::atomic<bool> mindVisionOverview_{false};
+        size_t mindVisionExperimentCapacity_{5000};
+        mutable std::mutex mindVisionSensorMutex_;
+        MindVisionSensor mindVisionSensor_{};
         bool mockCameraConfigured_{false};
+        // Selection-snapshot extras (BE-2): last applied camera script and the
+        // active mock parameters.
+        std::string lastCameraScriptPath_;
+        std::string mockFrameDir_;
+        int mockIntervalMs_{0};
+        bool mockLoop_{true};
+        // Issue #369: what was asked for vs what the capture factory builds.
+        std::string requestedCameraSource_{"unknown"};
+        std::string effectiveCameraSource_{"unknown"};
+        std::string cameraFallbackReason_;
+        std::unique_ptr<app::ExperimentCoordinator> experimentCoordinator_;
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;
@@ -160,6 +292,9 @@ namespace backend
         std::atomic<uint64_t> frameRecordingWritten_{0};
         std::atomic<uint64_t> frameRecordingFiltered_{0};
         std::string frameRecordingPath_;
+        mutable std::mutex recordingAccountingMutex_;
+        backend::recording::RecordingAccounting recordingAccounting_;
+        backend::recording::RecordingAccountingSnapshot lastRecordingAccounting_;
 
         mutable std::mutex backgroundCaptureCallbackMutex_;
         BackgroundCaptureCallback backgroundCaptureCallback_;

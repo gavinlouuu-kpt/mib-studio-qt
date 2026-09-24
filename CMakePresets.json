@@ -1,18 +1,24 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "linux-release",
       "displayName": "Linux Release (Conan, no Windows SDKs)",
+      "description": "Conan toolchain: conan install . -pr conan/profiles/linux-gcc13 --output-folder=build/linux; apt sections base,backend,frontend (env/apt-packages.txt).",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/linux",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/linux/conan_toolchain.cmake",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "ON",
         "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
-        "MIB_USE_SENTRY": "OFF"
+        "MIB_USE_SENTRY": "ON"
       },
       "condition": {
         "type": "equals",
@@ -23,14 +29,15 @@
     {
       "name": "linux-system-release",
       "displayName": "Linux Release (system packages, no Windows SDKs)",
+      "description": "System Qt/OpenCV/HDF5 from apt sections base,backend,frontend (scripts/bootstrap.sh --sections base,backend,frontend); Ninja; MindVision from build/vendor.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/linux-system",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_IGNORE_PREFIX_PATH": "/home/gavin/miniconda3;/home/linuxbrew/.linuxbrew",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "ON",
         "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
-        "MIB_USE_SENTRY": "OFF"
+        "MIB_USE_SENTRY": "ON"
       },
       "condition": {
         "type": "equals",
@@ -41,16 +48,17 @@
     {
       "name": "linux-backend-only",
       "displayName": "Linux Backend-only (system packages)",
+      "description": "Backend libs + CTest, no Qt SDK: apt sections base,backend (scripts/bootstrap.sh). What backend-ci, the sanitizer/soak lanes and the devcontainer use.",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/linux-backend",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_IGNORE_PREFIX_PATH": "/home/gavin/miniconda3;/home/linuxbrew/.linuxbrew",
         "MIB_BUILD_BACKEND_ONLY": "ON",
         "BUILD_TESTING": "ON",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "ON",
         "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
-        "MIB_USE_SENTRY": "OFF"
+        "MIB_USE_SENTRY": "ON"
       },
       "condition": {
         "type": "equals",
@@ -61,6 +69,7 @@
     {
       "name": "linux-sentry-release",
       "displayName": "Linux Release (Conan, sentry-native)",
+      "description": "linux-release with its own binary dir and Conan toolchain under build/linux-sentry (sentry-native variant).",
       "inherits": "linux-release",
       "binaryDir": "${sourceDir}/build/linux-sentry",
       "cacheVariables": {
@@ -71,12 +80,42 @@
     {
       "name": "windows-default",
       "displayName": "Windows VS2022 x64 (Conan)",
+      "description": "VS 2022 generator. After scripts/bootstrap.ps1 (assets, SDK) and conan install . -of build -pr conan/profiles/windows-msvc194.",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan_toolchain.cmake",
-        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW"
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "MIB_ENABLE_MINDVISION": "ON"
+      }
+    },
+    {
+      "name": "windows-ninja",
+      "displayName": "Windows Ninja x64 Release (Conan, MSVC dev shell)",
+      "description": "Single-config Ninja build in build-ninja/. From a VS 2022 x64 developer shell after: conan install . -of build-ninja --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194-ninja (or scripts/bootstrap.ps1 -Generator Ninja).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build-ninja/conan_toolchain.cmake",
+        "MIB_ENABLE_MINDVISION": "ON"
+      }
+    },
+    {
+      "name": "windows-ninja-ci",
+      "displayName": "Windows Ninja x64 Release in build/ (CI)",
+      "description": "windows-ninja with the CI layout: binary dir build/, toolchain from conan install . -of build -pr conan/profiles/windows-msvc194-ninja. Executables land in build/Release like the VS tree.",
+      "inherits": "windows-ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan_toolchain.cmake"
       }
     }
   ],
@@ -112,6 +151,14 @@
       "displayName": "Build (Release)",
       "configurePreset": "windows-default",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-ninja-build",
+      "configurePreset": "windows-ninja"
+    },
+    {
+      "name": "windows-ninja-ci-build",
+      "configurePreset": "windows-ninja-ci"
     }
   ],
   "testPresets": [
@@ -124,6 +171,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -135,6 +187,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -146,6 +203,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -155,7 +217,7 @@
       "configuration": "Debug",
       "filter": {
         "exclude": {
-          "label": "integration|hardware"
+          "label": "integration|hardware|soak"
         }
       },
       "output": {
@@ -189,7 +251,7 @@
       "configuration": "Release",
       "filter": {
         "exclude": {
-          "label": "integration|hardware"
+          "label": "integration|hardware|soak"
         }
       },
       "output": {
@@ -214,6 +276,64 @@
       },
       "execution": {
         "timeout": 120
+      }
+    },
+    {
+      "filter": {
+        "exclude": {
+          "label": "integration|hardware|soak"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 30
+      },
+      "name": "windows-ninja-test",
+      "configurePreset": "windows-ninja"
+    },
+    {
+      "filter": {
+        "include": {
+          "label": "integration"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 180
+      },
+      "name": "windows-ninja-integration-test",
+      "configurePreset": "windows-ninja"
+    },
+    {
+      "filter": {
+        "include": {
+          "label": "hardware"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 120
+      },
+      "name": "windows-ninja-hardware-test",
+      "configurePreset": "windows-ninja"
+    },
+    {
+      "name": "linux-network-test",
+      "displayName": "Test Linux Backend-only: network-labelled tests only (Hub datasets)",
+      "configurePreset": "linux-backend-only",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "network"
+        }
       }
     }
   ]

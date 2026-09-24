@@ -1,0 +1,968 @@
+Start testing: Sep 07 16:00 HKT
+----------------------------------------------------------
+74/109 Testing: frontend.json_flatten_roundtrip
+74/109 Test: frontend.json_flatten_roundtrip
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/json_flatten_roundtrip_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.json_flatten_roundtrip" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.json_flatten_roundtrip" end time: Sep 07 16:00 HKT
+"frontend.json_flatten_roundtrip" time elapsed: 00:00:00
+----------------------------------------------------------
+
+75/109 Testing: frontend.json_config_merge
+75/109 Test: frontend.json_config_merge
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/json_config_merge_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.json_config_merge" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+JSON config deep-merge (add-missing, preserve-existing) verified
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.json_config_merge" end time: Sep 07 16:00 HKT
+"frontend.json_config_merge" time elapsed: 00:00:00
+----------------------------------------------------------
+
+76/109 Testing: frontend.processing_core_catalog
+76/109 Test: frontend.processing_core_catalog
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/processing_core_catalog_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.processing_core_catalog" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.processing_core_catalog" end time: Sep 07 16:00 HKT
+"frontend.processing_core_catalog" time elapsed: 00:00:00
+----------------------------------------------------------
+
+77/109 Testing: frontend.application_settings
+77/109 Test: frontend.application_settings
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/application_settings_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.application_settings" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.application_settings" end time: Sep 07 16:00 HKT
+"frontend.application_settings" time elapsed: 00:00:00
+----------------------------------------------------------
+
+78/109 Testing: frontend.processing_core_settings
+78/109 Test: frontend.processing_core_settings
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/processing_core_settings_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.processing_core_settings" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.processing_core_settings" end time: Sep 07 16:00 HKT
+"frontend.processing_core_settings" time elapsed: 00:00:00
+----------------------------------------------------------
+
+79/109 Testing: frontend.hdf_review_export_paths
+79/109 Test: frontend.hdf_review_export_paths
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/hdf_review_export_paths_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.hdf_review_export_paths" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+HDF review export path policy verified
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.hdf_review_export_paths" end time: Sep 07 16:00 HKT
+"frontend.hdf_review_export_paths" time elapsed: 00:00:00
+----------------------------------------------------------
+
+80/109 Testing: frontend.window_geometry_policy
+80/109 Test: frontend.window_geometry_policy
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/window_geometry_policy_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.window_geometry_policy" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.window_geometry_policy" end time: Sep 07 16:00 HKT
+"frontend.window_geometry_policy" time elapsed: 00:00:00
+----------------------------------------------------------
+
+81/109 Testing: frontend.config_document_state
+81/109 Test: frontend.config_document_state
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/config_document_state_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.config_document_state" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.config_document_state" end time: Sep 07 16:00 HKT
+"frontend.config_document_state" time elapsed: 00:00:00
+----------------------------------------------------------
+
+82/109 Testing: frontend.config_draft
+82/109 Test: frontend.config_draft
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/processing_config_draft_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.config_draft" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.config_draft" end time: Sep 07 16:00 HKT
+"frontend.config_draft" time elapsed: 00:00:00
+----------------------------------------------------------
+
+83/109 Testing: frontend.run_status_model
+83/109 Test: frontend.run_status_model
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/run_status_model_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.run_status_model" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.run_status_model" end time: Sep 07 16:00 HKT
+"frontend.run_status_model" time elapsed: 00:00:00
+----------------------------------------------------------
+
+84/109 Testing: frontend.update_catalog
+84/109 Test: frontend.update_catalog
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/update_catalog_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/tests
+"frontend.update_catalog" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+UpdateCatalog parse/sort/downgrade + publish-fixture round-trip verified
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.update_catalog" end time: Sep 07 16:00 HKT
+"frontend.update_catalog" time elapsed: 00:00:00
+----------------------------------------------------------
+
+102/109 Testing: frontend.processing_core_dialog
+102/109 Test: frontend.processing_core_dialog
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/processing_core_dialog_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/src/frontend/qt
+"frontend.processing_core_dialog" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+stage: creating QApplication
+stage: QApplication ready
+stage: initializing AppBackend
+[2026-09-07 16:00:18.500] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/processing_core_dialog_1799512340703491582/logs/app.log
+[2026-09-07 16:00:18.501] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=false, hdf5=false, processing=false, yolo=false, autofocus=false, trigger=false, capture=false, playback=false
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:335] AppBackend: sqlite bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:344] AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:417] AppBackend: processing bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:459] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:671] AppBackend: capture bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [warning] [AppBackend.cpp:687] AppBackend: playback bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.501] [app] [info] [AppBackend.cpp:707] Backend initialized.
+stage: AppBackend initialized
+stage: constructing ProcessingCoreDialog
+stage: ProcessingCoreDialog constructed
+<end of output>
+Test time =   0.09 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.processing_core_dialog" end time: Sep 07 16:00 HKT
+"frontend.processing_core_dialog" time elapsed: 00:00:00
+----------------------------------------------------------
+
+103/109 Testing: frontend.camera_action_state
+103/109 Test: frontend.camera_action_state
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/camera_action_state_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/src/frontend/qt
+"frontend.camera_action_state" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 16:00:18.592] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/camera_action_state_8394206468621309474/logs/app.log
+[2026-09-07 16:00:18.593] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=true, autofocus=true, trigger=true, capture=true, playback=true
+[2026-09-07 16:00:18.593] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/camera_action_state_8394206468621309474/app.sqlite3
+[2026-09-07 16:00:18.593] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/camera_action_state_8394206468621309474
+[2026-09-07 16:00:18.593] [app] [warning] [YoloService.stub.cpp:21] YoloService: ONNX Runtime is unavailable; YOLO features are disabled in this build
+[2026-09-07 16:00:18.593] [app] [warning] [AppBackend.cpp:356] YOLO model not loaded - segmentation features will not be available
+[2026-09-07 16:00:18.593] [app] [warning] [EModulusLutCatalog.cpp:550] EModulusLutCatalog: manifest fetch failed and no local cache exists
+[2026-09-07 16:00:18.593] [app] [warning] [AppBackend.cpp:375] AppBackend: LUT catalog resolution failed, falling back to bundled path /tmp/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt: Bundled LUT not found: /tmp/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-09-07 16:00:18.593] [app] [warning] [EModulusLut.cpp:149] EModulusLut: Failed to load LUT from /tmp/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-09-07 16:00:18.593] [app] [warning] [AppBackend.cpp:402] Young's modulus LUT not loaded - emodulus gating will not be available
+[2026-09-07 16:00:18.593] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=bundled-fallback, revision=bundled, path=/tmp/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=unknown, remote_updated=false, bundled_fallback=false, manifest=
+[2026-09-07 16:00:18.594] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 16:00:18.594] [app] [info] [AppBackend.cpp:568] AppBackend: configuring MockCamera (folder=/tmp/camera_action_state_8394206468621309474/mock_frames, interval=33000 us, ~30.3 fps, loop=true)
+[2026-09-07 16:00:18.594] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 16:00:18.594] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 16:00:18.594] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:18.594] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 16:00:18.595] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 32 bytes per slot across 5000 slots (0.2 MB retained)
+[2026-09-07 16:00:18.614] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=1)
+[2026-09-07 16:00:18.614] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 16:00:18.614] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 16:00:18.614] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 16:00:18.614] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:18.615] [app] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 16:00:18.635] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 16:00:18.635] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=3, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:18.635] [app] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 16:00:18.655] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 16:00:18.655] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=4, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:18.655] [app] [error] [CaptureService.cpp:658] CaptureService exception: CaptureService camera failed to start
+[2026-09-07 16:00:18.675] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 16:00:18.675] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=5, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:18.675] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 16:00:18.675] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 32 bytes per slot across 5000 slots (0.2 MB retained)
+[2026-09-07 16:00:18.677] [app] [info] [CaptureService.cpp:531] CaptureService camera stopped streaming (fake camera ended its stream)
+[2026-09-07 16:00:18.677] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 16:00:18.677] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=5, faulted)
+[2026-09-07 16:00:18.695] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-09-07 16:00:18.695] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=6, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:18.695] [app] [info] [TriggerService.cpp:68] TriggerService started
+[2026-09-07 16:00:18.695] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 32 bytes per slot across 5000 slots (0.2 MB retained)
+[2026-09-07 16:00:18.715] [app] [info] [CameraController.cpp:280] CameraController: stop requested (gen=6)
+[2026-09-07 16:00:18.715] [app] [info] [TriggerService.cpp:91] TriggerService stopped
+[2026-09-07 16:00:18.715] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=6, requested)
+camera_action_state: 46 state changes, 4 refused commands
+[2026-09-07 16:00:18.716] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   0.34 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.camera_action_state" end time: Sep 07 16:00 HKT
+"frontend.camera_action_state" time elapsed: 00:00:00
+----------------------------------------------------------
+
+104/109 Testing: frontend.ui_layout
+104/109 Test: frontend.ui_layout
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/ui_layout_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test
+"frontend.ui_layout" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 16:00:18.943] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/ui_layout_2817170584273038205/data/logs/app.log
+[2026-09-07 16:00:18.944] [app] [warning] [AppBackend.cpp:316] Unknown token 'syringe_pump' in MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.944] [app] [warning] [AppBackend.cpp:316] Unknown token 'pulse_generator' in MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.944] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=false, autofocus=false, trigger=false, capture=true, playback=true
+[2026-09-07 16:00:18.944] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/ui_layout_2817170584273038205/data/app.sqlite3
+[2026-09-07 16:00:18.944] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/ui_layout_2817170584273038205/data
+[2026-09-07 16:00:18.944] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:18.944] [app] [warning] [EModulusLutCatalog.cpp:547] EModulusLutCatalog: file:///nonexistent/mib-lut-manifest.json: manifest fetch failed; using local cache
+[2026-09-07 16:00:19.087] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 16:00:19.087] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=r2-public-catalog, revision=2026.07.14-1, path=/home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=verified, remote_updated=false, bundled_fallback=false, manifest=file:///nonexistent/mib-lut-manifest.json
+[2026-09-07 16:00:19.088] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 16:00:19.088] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:19.088] [app] [warning] [AppBackend.cpp:459] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:19.088] [app] [info] [AppBackend.cpp:568] AppBackend: configuring MockCamera (folder=data/mock_frames, interval=33000 us, ~30.3 fps, loop=true)
+[2026-09-07 16:00:19.088] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 16:00:19.119] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:19.120] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 16:00:19.120] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+[2026-09-07 16:00:19.138] [app] [warning] [CameraControlService.cpp:65] CameraControlService hardware operations unavailable: EGrabber SDK is unavailable on this platform
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 16:00:23.345] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 16:00:23.345] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 16:00:23.346] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 16:00:23.347] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:23.378] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 16:00:23.378] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:23.378] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:23.378] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:23.378] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:23.378] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:23.378] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:23.378] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 16:00:23.378] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 16:00:23.390] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:23.421] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 16:00:23.432] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:23.433] [app] [info] [MainWindow.cpp:877] MainWindow: geometry default 800x800@0,0 (screen 0)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:23.456] [app] [info] [MainWindow.cpp:902] MainWindow: window 1028x732@0,0 exceeds the available desktop 1024x728@0,0; fitting to 1024x728@0,0
+1024x768: minimumSizeHint=804x509 sidebar=1
+[2026-09-07 16:00:23.476] [app] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+[2026-09-07 16:00:23.476] [app] [info] [PlaybackService.cpp:17] PlaybackService: play
+[2026-09-07 16:00:23.476] [app] [info] [MainWindow.cpp:1948] MainWindow: Experiment services started
+[2026-09-07 16:00:23.476] [app] [info] [MainWindow.cpp:2038] MainWindow: auto-starting camera on Overview navigation
+[2026-09-07 16:00:23.476] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:23.476] [app] [info] [MainWindow.cpp:2118] MainWindow::onTabChanged: Auto-applying camera script from /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/overviewConfig.js
+[2026-09-07 16:00:23.476] [app] [error] [MainWindow.cpp:2121] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+libpng error: IDAT: CRC error
+[2026-09-07 16:00:23.477] [app] [warning] [MockCamera.cpp:353] MockCamera: QImageReader failed for data/mock_frames/frame_000.png (Unable to read image data)
+[2026-09-07 16:00:23.478] [app] [info] [MockCamera.cpp:84] MockCamera started with 2 files from data/mock_frames (preloaded 1 frames)
+[2026-09-07 16:00:23.491] [app] [info] [MainWindow.cpp:2118] MainWindow::onTabChanged: Auto-applying camera script from /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/egrabberConfig.js
+[2026-09-07 16:00:23.491] [app] [error] [MainWindow.cpp:2121] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+[2026-09-07 16:00:23.522] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 49152 bytes per slot across 5000 slots (234.4 MB retained)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:23.526] [app] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 16:00:23.526] [app] [info] [PlaybackService.cpp:22] PlaybackService: pause
+[2026-09-07 16:00:23.526] [app] [info] [MainWindow.cpp:1960] MainWindow: Experiment services stopped
+[2026-09-07 16:00:23.544] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=1, requested)
+[2026-09-07 16:00:23.583] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:23.583] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 16:00:23.583] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 16:00:27.191] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 16:00:27.191] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 16:00:27.192] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 16:00:27.193] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:27.216] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 16:00:27.216] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:27.216] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:27.216] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:27.216] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:27.216] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:27.216] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:27.216] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 16:00:27.216] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 16:00:27.228] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:27.235] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 16:00:27.245] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:27.246] [app] [info] [MainWindow.cpp:877] MainWindow: geometry restored 800x728@0,0 (screen 0, clamped)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:27.265] [app] [info] [MainWindow.cpp:902] MainWindow: window 1370x732@0,0 exceeds the available desktop 1366x728@0,0; fitting to 1366x728@0,0
+1366x768: minimumSizeHint=804x509 sidebar=1
+[2026-09-07 16:00:27.281] [app] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+[2026-09-07 16:00:27.281] [app] [info] [PlaybackService.cpp:17] PlaybackService: play
+[2026-09-07 16:00:27.281] [app] [info] [MainWindow.cpp:1948] MainWindow: Experiment services started
+[2026-09-07 16:00:27.281] [app] [info] [MainWindow.cpp:2038] MainWindow: auto-starting camera on Overview navigation
+[2026-09-07 16:00:27.281] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:27.281] [app] [info] [MainWindow.cpp:2118] MainWindow::onTabChanged: Auto-applying camera script from /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/overviewConfig.js
+[2026-09-07 16:00:27.281] [app] [error] [MainWindow.cpp:2121] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+libpng error: IDAT: CRC error
+[2026-09-07 16:00:27.281] [app] [warning] [MockCamera.cpp:353] MockCamera: QImageReader failed for data/mock_frames/frame_000.png (Unable to read image data)
+[2026-09-07 16:00:27.282] [app] [info] [MockCamera.cpp:84] MockCamera started with 2 files from data/mock_frames (preloaded 1 frames)
+[2026-09-07 16:00:27.290] [app] [info] [MainWindow.cpp:2118] MainWindow::onTabChanged: Auto-applying camera script from /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/egrabberConfig.js
+[2026-09-07 16:00:27.290] [app] [error] [MainWindow.cpp:2121] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+[2026-09-07 16:00:27.315] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 49152 bytes per slot across 5000 slots (234.4 MB retained)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:27.331] [app] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 16:00:27.331] [app] [info] [PlaybackService.cpp:22] PlaybackService: pause
+[2026-09-07 16:00:27.331] [app] [info] [MainWindow.cpp:1960] MainWindow: Experiment services stopped
+[2026-09-07 16:00:27.348] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=2, requested)
+[2026-09-07 16:00:27.378] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:27.378] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 16:00:27.378] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 16:00:31.386] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 16:00:31.386] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 16:00:31.387] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 16:00:31.388] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:31.420] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 16:00:31.420] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:31.420] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:31.420] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:31.420] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:31.420] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:31.420] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:31.420] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 16:00:31.420] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 16:00:31.431] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:31.437] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 16:00:31.448] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:31.449] [app] [info] [MainWindow.cpp:877] MainWindow: geometry restored 800x728@0,0 (screen 0, clamped)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:31.467] [app] [info] [MainWindow.cpp:902] MainWindow: window 1924x1044@0,0 exceeds the available desktop 1920x1040@0,0; fitting to 1920x1040@0,0
+1920x1080: minimumSizeHint=804x509 sidebar=1
+[2026-09-07 16:00:31.492] [app] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+[2026-09-07 16:00:31.492] [app] [info] [PlaybackService.cpp:17] PlaybackService: play
+[2026-09-07 16:00:31.492] [app] [info] [MainWindow.cpp:1948] MainWindow: Experiment services started
+[2026-09-07 16:00:31.492] [app] [info] [MainWindow.cpp:2038] MainWindow: auto-starting camera on Overview navigation
+[2026-09-07 16:00:31.492] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=3, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:31.492] [app] [info] [MainWindow.cpp:2118] MainWindow::onTabChanged: Auto-applying camera script from /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/overviewConfig.js
+libpng error: IDAT: CRC error
+[2026-09-07 16:00:31.492] [app] [error] [MainWindow.cpp:2121] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+[2026-09-07 16:00:31.492] [app] [warning] [MockCamera.cpp:353] MockCamera: QImageReader failed for data/mock_frames/frame_000.png (Unable to read image data)
+[2026-09-07 16:00:31.493] [app] [info] [MockCamera.cpp:84] MockCamera started with 2 files from data/mock_frames (preloaded 1 frames)
+[2026-09-07 16:00:31.506] [app] [info] [MainWindow.cpp:2118] MainWindow::onTabChanged: Auto-applying camera script from /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/egrabberConfig.js
+[2026-09-07 16:00:31.506] [app] [error] [MainWindow.cpp:2121] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+[2026-09-07 16:00:31.526] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 49152 bytes per slot across 5000 slots (234.4 MB retained)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:31.564] [app] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 16:00:31.564] [app] [info] [PlaybackService.cpp:22] PlaybackService: pause
+[2026-09-07 16:00:31.564] [app] [info] [MainWindow.cpp:1960] MainWindow: Experiment services stopped
+[2026-09-07 16:00:31.592] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=3, requested)
+[2026-09-07 16:00:31.629] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:31.629] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 16:00:31.629] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 16:00:35.237] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 16:00:35.237] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 16:00:35.238] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 16:00:35.239] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:35.265] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 16:00:35.265] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:35.265] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:35.265] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:35.265] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:35.265] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:35.265] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:35.265] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 16:00:35.265] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 16:00:35.272] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:35.276] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 16:00:35.284] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:35.286] [app] [info] [MainWindow.cpp:877] MainWindow: geometry restored 800x800@0,0 (screen 0, clamped)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:35.298] [app] [info] [MainWindow.cpp:902] MainWindow: window 1370x732@0,0 exceeds the available desktop 1366x728@0,0; fitting to 1366x728@0,0
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:35.688] [app] [warning] [DeviceInitManager.cpp:179] DeviceInitManager: saved nanopositioner COM6 did not validate; scanning all ports
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:35.798] [app] [info] [ProcessingService.cpp:192] ProcessingService: realtime processing started
+[2026-09-07 16:00:35.798] [app] [info] [PlaybackService.cpp:17] PlaybackService: play
+[2026-09-07 16:00:35.798] [app] [info] [MainWindow.cpp:1948] MainWindow: Experiment services started
+[2026-09-07 16:00:35.798] [app] [info] [MainWindow.cpp:2038] MainWindow: auto-starting camera on Overview navigation
+[2026-09-07 16:00:35.798] [app] [info] [CaptureService.cpp:382] CaptureService starting: gen=4, parts=1, buffers=20, mode=everyFrame
+[2026-09-07 16:00:35.798] [app] [info] [MainWindow.cpp:2118] MainWindow::onTabChanged: Auto-applying camera script from /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/overviewConfig.js
+[2026-09-07 16:00:35.798] [app] [error] [MainWindow.cpp:2121] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+libpng error: IDAT: CRC error
+[2026-09-07 16:00:35.798] [app] [warning] [MockCamera.cpp:353] MockCamera: QImageReader failed for data/mock_frames/frame_000.png (Unable to read image data)
+[2026-09-07 16:00:35.799] [app] [info] [MockCamera.cpp:84] MockCamera started with 2 files from data/mock_frames (preloaded 1 frames)
+[2026-09-07 16:00:35.806] [app] [info] [ProcessingService.cpp:328] ProcessingService: realtime processing stopped
+[2026-09-07 16:00:35.806] [app] [info] [PlaybackService.cpp:22] PlaybackService: pause
+[2026-09-07 16:00:35.806] [app] [info] [MainWindow.cpp:1960] MainWindow: Experiment services stopped
+[2026-09-07 16:00:35.832] [app] [info] [FrameStore.cpp:69] FrameStore: reserved 49152 bytes per slot across 5000 slots (234.4 MB retained)
+[2026-09-07 16:00:35.832] [app] [info] [CaptureService.cpp:655] CaptureService stopped (gen=4, requested)
+[2026-09-07 16:00:35.879] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:35.880] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 16:00:35.880] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 16:00:39.898] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 16:00:39.898] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 16:00:39.899] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 16:00:39.900] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:39.932] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 16:00:39.933] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:39.933] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:39.933] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:39.933] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:39.933] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:39.933] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:39.933] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 16:00:39.933] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 16:00:39.944] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:39.950] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 16:00:39.961] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:39.962] [app] [info] [MainWindow.cpp:877] MainWindow: geometry restored 800x800@0,0 (screen 0, clamped)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:39.981] [app] [info] [MainWindow.cpp:902] MainWindow: window 808x804@0,0 exceeds the available desktop 1366x728@0,0; fitting to 808x728@0,0
+[2026-09-07 16:00:40.036] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:40.036] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 16:00:40.036] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 16:00:43.846] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 16:00:43.846] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 16:00:43.847] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 16:00:43.848] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:43.870] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 16:00:43.870] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:43.870] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:43.870] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:43.870] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:43.870] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:43.870] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:43.870] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 16:00:43.870] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 16:00:43.878] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:43.882] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 16:00:43.888] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:43.889] [app] [info] [MainWindow.cpp:877] MainWindow: geometry default 800x800@0,0 (screen 0)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:43.902] [app] [info] [MainWindow.cpp:902] MainWindow: window 808x804@0,0 exceeds the available desktop 1366x728@0,0; fitting to 808x728@0,0
+[2026-09-07 16:00:43.912] [app] [warning] [DeviceInitManager.cpp:179] DeviceInitManager: saved nanopositioner COM6 did not validate; scanning all ports
+[2026-09-07 16:00:43.959] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =  25.33 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.ui_layout" end time: Sep 07 16:00 HKT
+"frontend.ui_layout" time elapsed: 00:00:25
+----------------------------------------------------------
+
+105/109 Testing: frontend.config_tabs_state
+105/109 Test: frontend.config_tabs_state
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/config_tabs_state_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/src/frontend/qt
+"frontend.config_tabs_state" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 16:00:44.297] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/config_tabs_state_14467894288645438130/data/logs/app.log
+[2026-09-07 16:00:44.297] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=false, hdf5=false, processing=false, yolo=false, autofocus=false, trigger=false, capture=false, playback=false
+[2026-09-07 16:00:44.297] [app] [warning] [AppBackend.cpp:335] AppBackend: sqlite bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.297] [app] [warning] [AppBackend.cpp:344] AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.298] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.298] [app] [warning] [AppBackend.cpp:417] AppBackend: processing bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.298] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.298] [app] [warning] [AppBackend.cpp:459] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.298] [app] [warning] [AppBackend.cpp:671] AppBackend: capture bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.298] [app] [warning] [AppBackend.cpp:687] AppBackend: playback bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:44.298] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 16:00:44.371] [app] [warning] [ConfigTabs.cpp:1736] ConfigTabs: config changed externally while editor has unsaved changes (conflict retained)
+[2026-09-07 16:00:44.375] [app] [error] [ConfigTabs.cpp:868] Failed to save config.json to /tmp/config_tabs_state_14467894288645438130/cfg/config.json: the document changed on disk since it was loaded: /tmp/config_tabs_state_14467894288645438130/cfg/config.json
+[2026-09-07 16:00:44.405] [app] [error] [ConfigTabs.cpp:868] Failed to save config.json to /tmp/config_tabs_state_14467894288645438130/cfg/adir: path is a directory: /tmp/config_tabs_state_14467894288645438130/cfg/adir
+reflow: wide=3 narrow=1 width=400 min=509
+<end of output>
+Test time =   1.34 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.config_tabs_state" end time: Sep 07 16:00 HKT
+"frontend.config_tabs_state" time elapsed: 00:00:01
+----------------------------------------------------------
+
+106/109 Testing: frontend.preview_layout
+106/109 Test: frontend.preview_layout
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/preview_layout_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/src/frontend/qt
+"frontend.preview_layout" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 16:00:45.642] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/preview_layout_2657212511769164735/data/logs/app.log
+[2026-09-07 16:00:45.643] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=false, hdf5=false, processing=false, yolo=false, autofocus=false, trigger=false, capture=false, playback=false
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:335] AppBackend: sqlite bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:344] AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:417] AppBackend: processing bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:459] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:671] AppBackend: capture bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [warning] [AppBackend.cpp:687] AppBackend: playback bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:45.643] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 16:00:45.675] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:45.702] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /tmp/preview_layout_2657212511769164735/config.json
+[2026-09-07 16:00:45.702] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,1.00] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:45.702] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:45.702] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+This plugin does not support propagateSizeHints()
+default: image=437 inspector=225 frac=0.34
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:45.802] [app] [warning] [ConfigTabs.cpp:1736] ConfigTabs: config changed externally while editor has unsaved changes (conflict retained)
+[2026-09-07 16:00:45.806] [app] [info] [AppConfigWatcher.cpp:114] AppConfigWatcher: file changed: /tmp/preview_layout_2657212511769164735/config.json
+[2026-09-07 16:00:45.806] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,1.00] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:45.806] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:45.806] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:45.806] [app] [warning] [ConfigTabs.cpp:1736] ConfigTabs: config changed externally while editor has unsaved changes (conflict retained)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:46.226] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:46.243] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /tmp/preview_layout_2657212511769164735/config.json
+[2026-09-07 16:00:46.243] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,1.00] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:46.243] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:46.243] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:46.259] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:46.277] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /tmp/preview_layout_2657212511769164735/config.json
+[2026-09-07 16:00:46.277] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,1.00] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:46.277] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:46.277] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:46.291] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:46.308] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /tmp/preview_layout_2657212511769164735/config.json
+[2026-09-07 16:00:46.308] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,1.00] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:46.308] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:46.308] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+<end of output>
+Test time =   1.59 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.preview_layout" end time: Sep 07 16:00 HKT
+"frontend.preview_layout" time elapsed: 00:00:01
+----------------------------------------------------------
+
+107/109 Testing: frontend.run_status_ui
+107/109 Test: frontend.run_status_ui
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/run_status_ui_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test
+"frontend.run_status_ui" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 16:00:47.213] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/run_status_ui_9646757168483919670/data/logs/app.log
+[2026-09-07 16:00:47.214] [app] [warning] [AppBackend.cpp:316] Unknown token 'syringe_pump' in MIB_DISABLED_SERVICES
+[2026-09-07 16:00:47.214] [app] [warning] [AppBackend.cpp:316] Unknown token 'pulse_generator' in MIB_DISABLED_SERVICES
+[2026-09-07 16:00:47.214] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=false, autofocus=false, trigger=false, capture=true, playback=true
+[2026-09-07 16:00:47.214] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/run_status_ui_9646757168483919670/data/app.sqlite3
+[2026-09-07 16:00:47.214] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/run_status_ui_9646757168483919670/data
+[2026-09-07 16:00:47.214] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:47.215] [app] [warning] [EModulusLutCatalog.cpp:547] EModulusLutCatalog: file:///nonexistent/mib-lut-manifest.json: manifest fetch failed; using local cache
+[2026-09-07 16:00:47.397] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 16:00:47.397] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=r2-public-catalog, revision=2026.07.14-1, path=/home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=verified, remote_updated=false, bundled_fallback=false, manifest=file:///nonexistent/mib-lut-manifest.json
+[2026-09-07 16:00:47.398] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 16:00:47.399] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:47.399] [app] [warning] [AppBackend.cpp:459] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:47.399] [app] [info] [AppBackend.cpp:568] AppBackend: configuring MockCamera (folder=data/mock_frames, interval=33000 us, ~30.3 fps, loop=true)
+[2026-09-07 16:00:47.399] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 16:00:47.429] [app] [info] [MainWindow.cpp:312] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:47.429] [app] [info] [ProcessingService.cpp:1710] Invalid frame sampling rate set to: every 200th frame
+[2026-09-07 16:00:47.429] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 200 frames (max buffered backlog: 1000)
+[2026-09-07 16:00:47.457] [app] [warning] [CameraControlService.cpp:65] CameraControlService hardware operations unavailable: EGrabber SDK is unavailable on this platform
+CtiPath: /usr/lib/fg_cxp.cti is error or system not find
+CXP system count:0
+DetectMSDevice....................
+MSCamera Begin link......................................
+user control fd open failed
+BackWorkerStop
+begin destory msdevice
+end destory msdevice
+End DetectMSDevice
+[2026-09-07 16:00:51.264] [app] [info] [CameraControlService.cpp:449] MindVision discovery found 1 camera(s)
+[2026-09-07 16:00:51.264] [app] [info] [ConnectTab.cpp:242] ConnectTab: refreshed, 0 framegrabber(s), 0 eGrabber camera(s), 1 MindVision camera(s) listed
+[2026-09-07 16:00:51.265] [app] [info] [OverviewTab.cpp:132] Overview tab: display_fps=50 (~20 ms)
+[2026-09-07 16:00:51.266] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-09-07 16:00:51.299] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /home/gavin/Developer/.worktrees/reliability-qt-test/build/include/config.json
+[2026-09-07 16:00:51.299] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:51.299] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-09-07 16:00:51.299] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:51.299] [app] [info] [ProcessingService.cpp:379] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:51.299] [app] [info] [AppConfigWatcher.cpp:418] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-09-07 16:00:51.299] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:51.299] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-09-07 16:00:51.299] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-09-07 16:00:51.311] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:51.341] [app] [info] [HdfReviewTab.cpp:332] HdfReviewTab: thumbnail cache size set to 2048
+[2026-09-07 16:00:51.352] [app] [info] [HdfReviewTab.cpp:2531] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-09-07 16:00:51.353] [app] [info] [MainWindow.cpp:877] MainWindow: geometry default 800x800@0,0 (screen 0)
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:51.376] [app] [info] [MainWindow.cpp:902] MainWindow: window 1370x732@0,0 exceeds the available desktop 1366x728@0,0; fitting to 1366x728@0,0
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support raise()
+[2026-09-07 16:00:51.532] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   4.59 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.run_status_ui" end time: Sep 07 16:00 HKT
+"frontend.run_status_ui" time elapsed: 00:00:04
+----------------------------------------------------------
+
+108/109 Testing: frontend.monitoring_tune
+108/109 Test: frontend.monitoring_tune
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/monitoring_tune_panel_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test
+"frontend.monitoring_tune" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 16:00:51.790] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/monitoring_tune_6741003362688339428/data/logs/app.log
+[2026-09-07 16:00:51.791] [app] [warning] [AppBackend.cpp:316] Unknown token 'syringe_pump' in MIB_DISABLED_SERVICES
+[2026-09-07 16:00:51.791] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=false, autofocus=false, trigger=false, capture=true, playback=true
+[2026-09-07 16:00:51.791] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/monitoring_tune_6741003362688339428/data/app.sqlite3
+[2026-09-07 16:00:51.791] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/monitoring_tune_6741003362688339428/data
+[2026-09-07 16:00:51.791] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:51.791] [app] [warning] [EModulusLutCatalog.cpp:547] EModulusLutCatalog: file:///nonexistent/mib-lut-manifest.json: manifest fetch failed; using local cache
+[2026-09-07 16:00:51.910] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 16:00:51.910] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=r2-public-catalog, revision=2026.07.14-1, path=/home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=verified, remote_updated=false, bundled_fallback=false, manifest=file:///nonexistent/mib-lut-manifest.json
+[2026-09-07 16:00:51.911] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 16:00:51.911] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:51.911] [app] [warning] [AppBackend.cpp:459] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:51.911] [app] [info] [AppBackend.cpp:568] AppBackend: configuring MockCamera (folder=data/mock_frames, interval=33000 us, ~30.3 fps, loop=true)
+[2026-09-07 16:00:51.911] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 16:00:51.939] [app] [info] [ExperimentMonitoringTab.cpp:1560] Loaded 11 isoelastic curves from /home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:51.964] [app] [info] [ExperimentMonitoringTab.cpp:575] Tune panel: apply request 2 (AreaMin=110)
+[2026-09-07 16:00:51.965] [app] [info] [ExperimentMonitoringTab.cpp:589] Tune panel: request 2 persisted and applied
+[2026-09-07 16:00:51.967] [app] [info] [ExperimentMonitoringTab.cpp:575] Tune panel: apply request 3 (RingRatioMax=33.5)
+[2026-09-07 16:00:51.967] [app] [warning] [ExperimentMonitoringTab.cpp:592] Tune panel: request 3 not applied (persisted=false, applied=false, conflict=false): disk full
+[2026-09-07 16:00:51.971] [app] [warning] [ExperimentMonitoringTab.cpp:534] Tune panel: external configuration change while 1 edit(s) are unapplied; keeping the draft (conflict)
+[2026-09-07 16:00:51.973] [app] [warning] [ExperimentMonitoringTab.cpp:534] Tune panel: external configuration change while 1 edit(s) are unapplied; keeping the draft (conflict)
+[2026-09-07 16:00:51.980] [app] [info] [ExperimentMonitoringTab.cpp:575] Tune panel: apply request 4 (AreaRatioMax=2.25)
+[2026-09-07 16:00:51.981] [app] [warning] [ExperimentMonitoringTab.cpp:583] Tune panel: ignoring apply result for request 103 (active 4)
+[2026-09-07 16:00:51.981] [app] [info] [ExperimentMonitoringTab.cpp:589] Tune panel: request 4 persisted and applied
+[2026-09-07 16:00:51.983] [app] [info] [ExperimentMonitoringTab.cpp:575] Tune panel: apply request 5 (MultiImageCount=4)
+[2026-09-07 16:00:51.984] [app] [warning] [ExperimentMonitoringTab.cpp:592] Tune panel: request 5 not applied (persisted=true, applied=false, conflict=false):
+This plugin does not support propagateSizeHints()
+[2026-09-07 16:00:52.026] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   0.57 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.monitoring_tune" end time: Sep 07 16:00 HKT
+"frontend.monitoring_tune" time elapsed: 00:00:00
+----------------------------------------------------------
+
+109/109 Testing: frontend.config_apply
+109/109 Test: frontend.config_apply
+Command: "/home/gavin/Developer/.worktrees/reliability-qt-test/build/linux-system/app_config_apply_test"
+Directory: /home/gavin/Developer/.worktrees/reliability-qt-test
+"frontend.config_apply" start time: Sep 07 16:00 HKT
+Output:
+----------------------------------------------------------
+[2026-09-07 16:00:52.370] [app] [info] [Logger.cpp:46] Logger initialized: /tmp/config_apply_16715531942570262847/data/logs/app.log
+[2026-09-07 16:00:52.370] [app] [warning] [AppBackend.cpp:316] Unknown token 'syringe_pump' in MIB_DISABLED_SERVICES
+[2026-09-07 16:00:52.370] [app] [info] [AppBackend.cpp:326] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=false, autofocus=false, trigger=false, capture=true, playback=true
+[2026-09-07 16:00:52.370] [app] [info] [SqliteService.cpp:9] SqliteService initialized at /tmp/config_apply_16715531942570262847/data/app.sqlite3
+[2026-09-07 16:00:52.370] [app] [info] [Hdf5Service.cpp:239] Hdf5Service initialized at /tmp/config_apply_16715531942570262847/data
+[2026-09-07 16:00:52.370] [app] [warning] [AppBackend.cpp:361] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:52.371] [app] [warning] [EModulusLutCatalog.cpp:547] EModulusLutCatalog: file:///nonexistent/mib-lut-manifest.json: manifest fetch failed; using local cache
+[2026-09-07 16:00:52.491] [app] [info] [EModulusLut.cpp:173] EModulusLut: Loaded 1241 data points from /home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-09-07 16:00:52.491] [app] [info] [AppBackend.cpp:405] AppBackend: Young's modulus LUT source=r2-public-catalog, revision=2026.07.14-1, path=/home/gavin/.local/share/MIB Studio/MIB Studio Qt/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=verified, remote_updated=false, bundled_fallback=false, manifest=file:///nonexistent/mib-lut-manifest.json
+[2026-09-07 16:00:52.491] [app] [info] [ProcessingService.cpp:110] ProcessingService started with 24 workers
+[2026-09-07 16:00:52.491] [app] [warning] [AppBackend.cpp:435] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:52.491] [app] [warning] [AppBackend.cpp:459] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-09-07 16:00:52.491] [app] [info] [AppBackend.cpp:568] AppBackend: configuring MockCamera (folder=data/mock_frames, interval=33000 us, ~30.3 fps, loop=true)
+[2026-09-07 16:00:52.491] [app] [info] [AppBackend.cpp:707] Backend initialized.
+[2026-09-07 16:00:52.492] [app] [info] [AppConfigWatcher.cpp:105] AppConfigWatcher: watching /tmp/config_apply_16715531942570262847/config.json
+[2026-09-07 16:00:52.492] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=5, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.12,1.00] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:52.492] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.5,10.0]
+[2026-09-07 16:00:52.492] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:52.492] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:52.550] [app] [info] [AppConfigWatcher.cpp:698] AppConfigWatcher: applied processing draft request 11 (4 field(s)) to /tmp/config_apply_16715531942570262847/config.json: persisted=true applied=true
+[2026-09-07 16:00:52.550] [app] [info] [AppConfigWatcher.cpp:114] AppConfigWatcher: file changed: /tmp/config_apply_16715531942570262847/config.json
+[2026-09-07 16:00:53.153] [app] [info] [AppConfigWatcher.cpp:114] AppConfigWatcher: file changed: /tmp/config_apply_16715531942570262847/config.json
+[2026-09-07 16:00:53.154] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=5, thresh=8, morph=3x1, area=[60,333 um2], deform=[0.12,0.55] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,40.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:53.154] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=true, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.5,10.0]
+[2026-09-07 16:00:53.154] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:53.154] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:53.770] [app] [info] [AppConfigWatcher.cpp:698] AppConfigWatcher: applied processing draft request 13 (1 field(s)) to /tmp/config_apply_16715531942570262847/config.json: persisted=true applied=true
+[2026-09-07 16:00:53.770] [app] [info] [AppConfigWatcher.cpp:114] AppConfigWatcher: file changed: /tmp/config_apply_16715531942570262847/config.json
+[2026-09-07 16:00:54.171] [app] [info] [AppConfigWatcher.cpp:114] AppConfigWatcher: file changed: /tmp/config_apply_16715531942570262847/config.json
+[2026-09-07 16:00:54.171] [app] [warning] [AppConfigWatcher.cpp:274] AppConfigWatcher: config root is not an object
+[2026-09-07 16:00:54.672] [app] [info] [AppConfigWatcher.cpp:114] AppConfigWatcher: file changed: /tmp/config_apply_16715531942570262847/config.json
+[2026-09-07 16:00:54.673] [app] [info] [AppConfigWatcher.cpp:365] AppConfigWatcher: applied ProcessingConfig (blur=5, thresh=8, morph=3x1, area=[100,333 um2], deform=[0.12,0.55] enabled=false, areaRatio_max=1.50 enabled=false, ring=[15.0,40.0] enabled=true, empty_px=100)
+[2026-09-07 16:00:54.673] [app] [info] [AppConfigWatcher.cpp:372] AppConfigWatcher: target_group enabled=true, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.5,10.0]
+[2026-09-07 16:00:54.673] [app] [info] [ProcessingService.cpp:1696] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-09-07 16:00:54.673] [app] [info] [AppConfigWatcher.cpp:439] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-09-07 16:00:55.188] [app] [info] [AppConfigWatcher.cpp:698] AppConfigWatcher: applied processing draft request 30 (1 field(s)) to /tmp/config_apply_16715531942570262847/config.json: persisted=true applied=true
+[2026-09-07 16:00:55.188] [app] [info] [AppConfigWatcher.cpp:114] AppConfigWatcher: file changed: /tmp/config_apply_16715531942570262847/config.json
+[2026-09-07 16:00:55.590] [app] [info] [ProcessingService.cpp:132] ProcessingService stopped
+<end of output>
+Test time =   3.57 sec
+----------------------------------------------------------
+Test Passed.
+"frontend.config_apply" end time: Sep 07 16:00 HKT
+"frontend.config_apply" time elapsed: 00:00:03
+----------------------------------------------------------
+
+End testing: Sep 07 16:00 HKT
+
+camera =   0.34 sec*proc
+
+frontend =  37.54 sec*proc
+
+layout =  33.42 sec*proc
+
+processing =   0.09 sec*proc
+
+safety =  35.77 sec*proc
+
+utility =   0.13 sec*proc

@@ -4,7 +4,7 @@ Status: deterministic portion complete; real-corpus / hardware / MLflow pending.
 
 This is the release gate for the Processing Contract v2 epic
 ([#296](https://github.com/KPT1020/mib-studio-qt/issues/296), issue V2-7 #303).
-See [ADR 0001](decisions/0001-processing-contract-v2.md) and the
+See [ADR 0001](decisions/0006-processing-contract-v2.md) and the
 [compatibility matrix](architecture/processing-contract-compatibility.md).
 
 ## Calibration decisions

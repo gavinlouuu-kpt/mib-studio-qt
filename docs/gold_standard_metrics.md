@@ -193,21 +193,23 @@ pins eight frames starting at offset 500 of the in-focus recording at Hub revisi
 `fc62e3147fb0237e46e6eebd0fb09e669abef12f`; the source file's LFS SHA-256 is
 `7ed2a721c85adc600688e32d4c4dbb7a58f0c725e351559ebc946eddab311bdc`.
 
-After downloading `50V_in_focus/recording_20260511_160006.h5` with authorized
-Hub access to `data/conformance/z-adjustment-50v-in-focus.h5`, verify the
-installed wheel with:
+The recording is declared in [`env/assets.json`](../env/assets.json) as the
+private asset `z-adjustment-50v`. With `HF_TOKEN` set to a token that can read
+the dataset, provision it (1.5 GB, SHA-256 verified) and verify the installed
+wheel:
 
 ```bash
+HF_TOKEN=... python3 scripts/provision-assets.py --asset z-adjustment-50v
 python scripts/run_processing_conformance.py \
-  --hdf5 data/conformance/z-adjustment-50v-in-focus.h5 \
+  --hdf5 build/vendor/assets/datasets/z-adjustment-50v/50V_in_focus/recording_20260511_160006.h5 \
   --hdf5-dataset /recorded_frames/images \
   --frame-offset 500 --frame-limit 8 \
   --fixture-id "hf:gavinlouuu/z_adjustment-data@fc62e3147fb0237e46e6eebd0fb09e669abef12f:50V_in_focus/recording_20260511_160006.h5#sha256=7ed2a721c85adc600688e32d4c4dbb7a58f0c725e351559ebc946eddab311bdc:/recorded_frames/images[500:508]" \
   --reference scripts/z_adjustment_50v_reference.json
 ```
 
-The recording stays under ignored `data/conformance/`; only metrics and exact
-mask/series hashes are committed. The private corpus is therefore a local
+The recording stays under the ignored `build/vendor/assets/` tree; only metrics
+and exact mask/series hashes are committed. The private corpus is therefore a local
 release-evidence lane, while the generated ring fixture remains the always-on
 CI lane. Offset 500 was selected because this bounded window contains valid,
 multi-object tracked detections and non-empty series payloads. Add
@@ -219,7 +221,10 @@ Issue #225 originally designated **PANC1 PDE3A CONTROL.h5** for quality-control
 and regression testing. It was not available during implementation, but the
 existing export path remains supported:
 
-- **HDF5 path**: `c:\Users\gavin\data\2026_jan_chengdu\PANC1 PDE3A CONTROL.h5` (or set your copy path in [scripts/gold_standard_dataset.json](../scripts/gold_standard_dataset.json)).
+- **HDF5 path**: the recording is not published anywhere the team can fetch
+  it (it was unavailable when #225 was implemented and is not in
+  `env/assets.json`). If a copy is added to the private Hub dataset later,
+  declare it as an asset and pin it there rather than referencing a local path.
 - **Pixel-to-micron**: Use `-p 0.4886` (script default) unless the experiment uses a different value.
 
 **Generate a metrics reference JSON** from a local copy of this HDF5:

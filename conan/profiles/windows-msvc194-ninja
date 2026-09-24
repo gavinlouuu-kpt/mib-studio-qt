@@ -1,0 +1,6 @@
+# windows-msvc194 plus the Ninja generator: the windows-ninja / windows-ninja-ci
+# presets (single-config Release, VS 2022 x64 developer shell required).
+include(windows-msvc194)
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
