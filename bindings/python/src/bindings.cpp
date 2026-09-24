@@ -12,6 +12,7 @@
 
 #include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/EModulusLut.h"
+#include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 
@@ -120,6 +121,69 @@ py::dict computeProcessedFrame(const py::array& grayInput, const py::object& bac
     return out;
 }
 
+// Per-object results for one frame/ROI: the same science expansion processBatch
+// performs (science::filterProcessedObjects), without tracking. This is the
+// YOLO-guided pattern (one ROI per detection) and the Contract-2 "full
+// per-object results" surface of the wheel. Returns a list with one dict per
+// detected object; a frame with no detection returns a single empty record
+// (object_id -1). `mask` (when requested) is the full-frame mask, shared by
+// every record of the frame.
+py::list computeProcessedObjects(const py::array& grayInput, const py::object& background,
+                                 const py::dict& configDict, const py::tuple& roiTuple,
+                                 uint64_t index, uint64_t timestampNs, double pixelToMicron,
+                                 bool includeMask) {
+    const cv::Mat gray = numpyToGrayMat(grayInput);
+    const cv::Mat bg = backgroundFromObject(background);
+    const ProcessingConfig config = configFromDict(configDict);
+    const ProcessingService::Roi roiIn = roiFromTuple(roiTuple);
+
+    ProcessingService service;
+    ProcessedFrame frame;
+    std::vector<backend::services::FilterResult> objects;
+    {
+        py::gil_scoped_release release;
+        frame = service.computeProcessedFrame(gray, bg, config, roiIn, index, timestampNs);
+        if (!frame.processedImage.empty()) {
+            // Same ROI normalisation as computeProcessedFrame.
+            ProcessingService::Roi roi = roiIn;
+            if (roi.w <= 0 || roi.h <= 0) {
+                roi = ProcessingService::Roi{0, 0, frame.processedImage.cols,
+                                             frame.processedImage.rows};
+            }
+            roi.x = std::max(0, std::min(roi.x, frame.processedImage.cols - 1));
+            roi.y = std::max(0, std::min(roi.y, frame.processedImage.rows - 1));
+            roi.w = std::max(1, std::min(roi.w, frame.processedImage.cols - roi.x));
+            roi.h = std::max(1, std::min(roi.h, frame.processedImage.rows - roi.y));
+            const cv::Rect cvRoi(roi.x, roi.y, roi.w, roi.h);
+            objects = backend::processing::science::filterProcessedObjects(
+                frame.processedImage, cvRoi, config, frame.originalImage, pixelToMicron,
+                nullptr);
+        }
+    }
+    py::list out;
+    if (objects.empty()) {
+        py::dict d = processedFrameToPyDict(frame, pixelToMicron, includeMask, false);
+        d["processing_contract_version"] = config.processing_contract_version;
+        out.append(d);
+        return out;
+    }
+    py::object sharedMask;
+    if (includeMask) {
+        sharedMask = matToNumpy(frame.processedImage);
+    }
+    for (auto& object : objects) {
+        ProcessedFrame objectFrame = frame; // cv::Mat headers share the frame's pixels
+        objectFrame.validation = std::move(object);
+        py::dict d = processedFrameToPyDict(objectFrame, pixelToMicron, false, false);
+        if (includeMask) {
+            d["mask"] = sharedMask;
+        }
+        d["processing_contract_version"] = config.processing_contract_version;
+        out.append(d);
+    }
+    return out;
+}
+
 py::tuple loadFromFolder(const std::string& folderPath) {
     std::vector<cv::Mat> outGray;
     std::vector<std::string> outFilenames;
@@ -221,6 +285,16 @@ PYBIND11_MODULE(_mib_processing, m) {
         py::arg("config"),
         "Round-trip a ProcessingConfig dict through the C++ struct, filling in "
         "any missing fields with the struct's own defaults.");
+
+    m.def("compute_processed_objects", &computeProcessedObjects, py::arg("gray"),
+          py::arg("background"), py::arg("config"), py::arg("roi"), py::arg("index") = 0,
+          py::arg("timestamp_ns") = 0, py::arg("pixel_to_micron") = 0.4886,
+          py::arg("include_mask") = false,
+          "Per-object variant of compute_processed_frame: returns a list with one "
+          "gold-standard-shaped dict per detected object in the ROI (the same "
+          "science expansion process_batch performs, without tracking). Honors "
+          "config['processing_contract_version'] (1 or 2). A frame with no "
+          "detection returns a single empty record (object_id -1).");
 
     m.def("load_from_folder", &loadFromFolder, py::arg("folder_path"),
           "Load all TIFF/PNG/JPEG/BMP files in folder_path as grayscale "
