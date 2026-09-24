@@ -489,6 +489,9 @@ FilterResult evaluateOuterContourObject(
     const cv::Mat& originalImage, double pixelToMicronFactor,
     const backend::EModulusLut* eModulusLut) {
     FilterResult result{};
+    if (!contract::contractHasRingWidth(config.processing_contract_version)) {
+        result.ringRatio = std::numeric_limits<double>::quiet_NaN(); // no ring under Contract 2
+    }
     // allContours is assigned once (shared) by filterProcessedObjects after all
     // objects are evaluated; hierarchy is no longer retained on the result.
     result.innerContourCount = static_cast<int>(analysis.innerContours.size());
@@ -592,6 +595,9 @@ std::vector<services::FilterResult> filterProcessedObjects(
 
     FilterResult emptyResult{};
     emptyResult.allContours = sharedContours;
+    if (!contract::contractHasRingWidth(config.processing_contract_version)) {
+        emptyResult.ringRatio = std::numeric_limits<double>::quiet_NaN();
+    }
     emptyResult.innerContourCount = static_cast<int>(analysis.innerContours.size());
     emptyResult.hasSingleInnerContour = (analysis.innerContours.size() == 1);
     if (!originalImage.empty()) {

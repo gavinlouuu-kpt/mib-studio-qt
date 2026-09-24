@@ -6,7 +6,9 @@
 // native-plugin conformance are tracked in docs/processing-contract-v2-validation.md.
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ImageFilterPipeline.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingScience.h"
+#include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "support/assert.h"
 
@@ -145,6 +147,56 @@ void conformGateDefaultOff() {
     }
 }
 
+// C-7: contract selection is a ProcessingConfig property executed by the host
+// service (and therefore by the Python wheel): Contract 2 detects a dark-on-
+// bright object through cv::absdiff, abolishes ring width (NaN, gate ignored)
+// and carries a finite per-object Laplacian variance; Contract 1 on the same
+// frame is unchanged (saturating subtraction sees nothing, ring stays a
+// number); an unsupported contract fails closed.
+void conformServiceContractSelection() {
+    using backend::services::ProcessedFrame;
+    using backend::services::ProcessingService;
+    const cv::Mat bg(60, 80, CV_8UC1, cv::Scalar(128));
+    cv::Mat frame = bg.clone();
+    cv::rectangle(frame, cv::Rect(30, 20, 20, 20), cv::Scalar(88), cv::FILLED); // dark object
+
+    backend::services::ProcessingConfig cfg;
+    cfg.enable_area_range_check = false;
+    cfg.enable_border_check = false;
+    cfg.require_single_inner_contour = false;
+    cfg.enable_ring_ratio_check = true; // must be ignored under Contract 2
+    cfg.ring_ratio_min = 15.0;
+    cfg.ring_ratio_max = 25.0;
+    cfg.bg_subtract_threshold = 8;
+    const ProcessingService::Roi roi{0, 0, 80, 60};
+
+    ProcessingService service;
+    cfg.processing_contract_version = 1;
+    const ProcessedFrame v1 = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    MIB_EXPECT(v1.validation.objectCount == 0, "contract 1: saturating subtraction ignores a dark object");
+    MIB_EXPECT(!std::isnan(v1.validation.ringRatio), "contract 1: ring width stays a number");
+
+    cfg.processing_contract_version = 2;
+    const ProcessedFrame v2 = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    MIB_REQUIRE(v2.validation.objectCount == 1, "contract 2: absdiff detects the dark object");
+    MIB_EXPECT(v2.validation.isValid, "contract 2: ring gate is ignored (object valid)");
+    MIB_EXPECT(std::isnan(v2.validation.ringRatio), "contract 2: ring width is NaN");
+    MIB_EXPECT(std::isfinite(v2.validation.laplacianVariance) && v2.validation.laplacianVariance > 0.0,
+               "contract 2: finite per-object Laplacian variance");
+    const auto reasons = science::classifyInvalidReasons(v2.validation, cfg, 0.5);
+    MIB_EXPECT(reasons.empty(), "contract 2: no Ring invalid reason");
+
+    cfg.processing_contract_version = 3;
+    const ProcessedFrame v3 = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    MIB_EXPECT(v3.processedImage.empty(), "unsupported contract fails closed (no mask)");
+    MIB_EXPECT(v3.validation.objectCount == 0, "unsupported contract fails closed (no objects)");
+
+    MIB_EXPECT(proc::contract::contractUsesAbsoluteDifference(2) && !proc::contract::contractUsesAbsoluteDifference(1),
+               "contract helpers: absdiff is Contract 2 only");
+    MIB_EXPECT(proc::contract::contractHasRingWidth(1) && !proc::contract::contractHasRingWidth(2),
+               "contract helpers: ring width is Contract 1 only");
+}
+
 } // namespace
 
 int main() {
@@ -153,5 +205,6 @@ int main() {
     conformFocusMetric();
     conformDegenerate();
     conformGateDefaultOff();
+    conformServiceContractSelection();
     return mib::test::exitCode();
 }
