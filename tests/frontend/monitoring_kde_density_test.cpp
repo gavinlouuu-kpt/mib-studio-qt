@@ -24,6 +24,8 @@
 #include "frontend/dialogs/MonitoringSettingsDialog.h"
 #include "frontend/tabs/ExperimentMonitoringTab.h"
 #include "frontend/tabs/MonitoringDensity.h"
+#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/recording/Hdf5Service.h"
 #include "frontend/utils/ApplicationSettings.h"
 
 #include "support/assert.h"
@@ -271,6 +273,67 @@ int main(int argc, char* argv[]) {
             MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > genRestore; }, 15000), "fraction restored");
         }
 
+        // ---- 3c. provisional record, reference from an experiment file -------
+        wd.mark("record");
+        const std::string liveOnlyPath = (td.path() / "ref_live_only.h5").string();
+        const std::string bothPath = (td.path() / "ref_both.h5").string();
+        const std::string emptyPath = (td.path() / "ref_none.h5").string();
+        {
+            namespace mon = frontend::monitoring;
+            const auto rec = mon::fromJson(tab.lastCoreRecordJson());
+            MIB_REQUIRE(rec.has_value(), "the live estimate serialises to a valid record");
+            MIB_EXPECT(rec->provisional && rec->source == "live-buffer", "live record is provisional");
+            MIB_EXPECT(rec->coreFraction == tab.kdeCoreFraction() && rec->cellCount == tab.lastKdeCoreCount()
+                           && rec->populationCount == tab.lastKdePointCount(),
+                       "record carries fraction, core and population counts of the estimate on screen");
+            MIB_EXPECT(rec->contours.size() == tab.lastKdeContours().size() && rec->gridNx == Tab::kKdeGridNx
+                           && rec->x1 == tab.getScatterXMax(),
+                       "record carries the drawn contours and the grid/axis they were traced on");
+
+            auto writeFixture = [](const std::string& path, const mon::KdeCoreRecord* live, const mon::KdeCoreRecord* full) {
+                backend::services::Hdf5Service hdf5;
+                MIB_REQUIRE(hdf5.openFile(path), "fixture create");
+                MIB_REQUIRE(hdf5.initializeDatasets(), "fixture datasets");
+                if (live) MIB_REQUIRE(hdf5.writeKdeLiveJson(mon::toJson(*live)), "fixture live record");
+                if (full) MIB_REQUIRE(hdf5.writeKdeAnalysisJson(mon::toJson(*full)), "fixture analysis record");
+                hdf5.closeFile();
+            };
+            mon::KdeCoreRecord live;
+            live.coreFraction = 0.8;
+            live.contours = {{{100, 0.02}, {200, 0.02}, {200, 0.08}, {100, 0.08}, {100, 0.02}}};
+            mon::KdeCoreRecord full = live;
+            full.provisional = false;
+            full.source = "full-run";
+            full.coreFraction = 0.9;
+            full.contours.push_back({{400, 0.3}, {450, 0.3}, {450, 0.35}, {400, 0.3}});
+            writeFixture(liveOnlyPath, &live, nullptr);
+            writeFixture(bothPath, &live, &full);
+            writeFixture(emptyPath, nullptr, nullptr);
+
+            QString why;
+            MIB_REQUIRE(tab.loadKdeReferenceFromFile(QString::fromStdString(liveOnlyPath), &why), "live-only reference loads");
+            MIB_EXPECT(tab.kdeReferenceSeriesForTests().size() == 1 && tab.kdeReferenceLabel().contains(QStringLiteral("live estimate"))
+                           && tab.kdeReferenceLabel().contains(QStringLiteral("80%")),
+                       "live record drawn, labelled as the live estimate with its fraction");
+            MIB_REQUIRE(tab.loadKdeReferenceFromFile(QString::fromStdString(bothPath), &why), "reference with both records loads");
+            MIB_EXPECT(tab.kdeReferenceSeriesForTests().size() == 2 && tab.kdeReferenceLabel().contains(QStringLiteral("full-run")),
+                       "the full-run record is preferred over the live one");
+            for (auto* s : tab.kdeReferenceSeriesForTests())
+                MIB_EXPECT(s->pen().style() == Qt::DashLine, "file reference is dashed");
+            MIB_EXPECT(tab.kdeReferencePath() == QString::fromStdString(bothPath), "reference path remembered");
+
+            why.clear();
+            MIB_EXPECT(!tab.loadKdeReferenceFromFile(QString::fromStdString((td.path() / "missing.h5").string()), &why)
+                           && !why.isEmpty(),
+                       "missing file refused with a reason");
+            why.clear();
+            MIB_EXPECT(!tab.loadKdeReferenceFromFile(QString::fromStdString(emptyPath), &why)
+                           && why.contains(QStringLiteral("no stored core contour")),
+                       "file without a record refused with a reason");
+            MIB_EXPECT(tab.kdeReferenceSeriesForTests().size() == 2 && tab.kdeReferencePath() == QString::fromStdString(bothPath),
+                       "a refused file leaves the current reference in place");
+        }
+
         // ---- 4. unchanged buffer: no relaunch; large buffer: asynchronous -------
         wd.mark("fingerprint");
         const uint64_t gen = tab.kdeGeneration();
@@ -352,12 +415,20 @@ int main(int argc, char* argv[]) {
         MIB_EXPECT(again.kdeBandwidthFactor() == 1.5 && again.kdeIntervalMs() == 3000,
                    "factor and interval restored from settings");
         MIB_EXPECT(!again.kdeTimerActive(), "restored but hidden: timer idle");
+        const std::string bothPath = (td.path() / "ref_both.h5").string(); // written in section 3c
+        MIB_EXPECT(again.hasKdeReference() && again.kdeReferencePath() == QString::fromStdString(bothPath)
+                       && again.kdeReferenceLabel().contains(QStringLiteral("full-run")),
+                   "reference contour file restored from settings");
         again.show();
         settle(2);
         MIB_EXPECT(again.kdeTimerActive(), "restored and shown: timer runs");
         MIB_EXPECT(!again.scatterSeriesForTests()->isVisible() &&
                        again.kdeLevelSeriesForTests()[0]->isVisible(),
                    "restored: density-level series are the visible ones");
+        MIB_EXPECT(again.kdeReferenceSeriesForTests().size() == 2, "restored reference is drawn once KDE is on");
+        again.clearKdeReference();
+        MIB_EXPECT(!again.hasKdeReference() && !QSettings().contains(QStringLiteral("Monitoring/KdeReferencePath")),
+                   "clear forgets the reference file");
         again.close();
         settle(2);
     }

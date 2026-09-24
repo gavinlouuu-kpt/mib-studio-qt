@@ -126,6 +126,16 @@
         </widget>
        </item>
        <item>
+        <widget class="QPushButton" name="kdeReferenceFromFileBtn">
+         <property name="text">
+          <string>From file…</string>
+         </property>
+         <property name="toolTip">
+          <string>Show the core contour stored in a previous experiment file (full-run if computed, else the live estimate) as the dashed reference</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QPushButton" name="kdeClearReferenceBtn">
          <property name="text">
           <string>Clear</string>

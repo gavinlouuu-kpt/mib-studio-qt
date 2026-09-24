@@ -74,6 +74,14 @@ namespace frontend
         explicit HdfReviewTab(backend::AppBackend &backend, QWidget *parent = nullptr);
         ~HdfReviewTab() override;
 
+        // Test hooks: open a file as "Select File" would, and inspect the
+        // stored KDE core contours drawn on the scatter (full-run solid,
+        // live/provisional dashed).
+        void loadHdfFileForTests(const QString &filePath) { loadHdfFile(filePath); }
+        const std::vector<QLineSeries*> &storedKdeContourSeriesForTests() const { return storedKdeSeries_; }
+        bool hasStoredKdeLive() const { return !storedKdeLive_.empty(); }
+        bool hasStoredKdeAnalysis() const { return !storedKdeAnalysis_.empty(); }
+
     private slots:
         void onSelectFile();
         void onCloseFile();
@@ -167,6 +175,15 @@ namespace frontend
         QValueAxis *scatterXAxis_ = nullptr;
         QValueAxis *scatterYAxis_ = nullptr;
         std::vector<QLineSeries*> isoelasticCurves_;
+        // Stored KDE core contours of the open file (loops in µm² /
+        // deformability) and the series drawing them on the scatter.
+        std::vector<std::vector<std::pair<double, double>>> storedKdeLive_;
+        std::vector<std::vector<std::pair<double, double>>> storedKdeAnalysis_;
+        double storedKdeLiveFraction_ = 0.0;
+        double storedKdeAnalysisFraction_ = 0.0;
+        std::vector<QLineSeries*> storedKdeSeries_;
+        void readStoredKdeRecords();
+        void drawStoredKdeContours();
         QChartView *histogramView_ = nullptr;
         QChart *histogramChart_ = nullptr;
 #if __has_include(<QHistogramSeries>)

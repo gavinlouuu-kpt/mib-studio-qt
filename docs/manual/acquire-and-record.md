@@ -80,9 +80,14 @@ backend's reason in the status bar and offers **Start Live View** again.
   90% of the cells (the share is adjustable under Settings ▸ Monitoring
   Settings ▸ *Core contour*). A bimodal population shows one loop per
   cluster. To compare against an earlier state, *Pin current* in the same
-  dialog keeps that contour on the chart as a dashed orange line; *Clear*
-  removes it. A drift of the solid line away from the dashed one is the
-  population shift.
+  dialog keeps that contour on the chart as a dashed orange line; *From
+  file…* takes the contour stored in a previous experiment instead (and is
+  remembered across restarts); *Clear* removes it. A drift of the solid
+  line away from the dashed one is the population shift.
+- When Density is on during an experiment, the contour on screen at Stop is
+  saved into the experiment file as a *provisional* core contour. It covers
+  the most recent cells shown on the chart, not the whole run; the Review
+  tab draws it dashed on that experiment's scatter.
 - Live totals: valid count, invalid count, algorithm FPS, valid FPS.
 - Charts accumulate only while the tab is visible, and they are a live
   preview — they are not saved with the experiment.

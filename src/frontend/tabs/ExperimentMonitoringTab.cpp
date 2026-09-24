@@ -1,10 +1,12 @@
 #include "frontend/tabs/ExperimentMonitoringTab.h"
 #include "frontend/tabs/MonitoringDensity.h"
+#include "frontend/tabs/KdeCoreRecord.h"
 #include "frontend/tabs/MonitoringRoiCrop.h"
 #include "ui_ExperimentMonitoringTab.h"
 
 #include <QElapsedTimer>
 #include <QDateTime>
+#include <QFileInfo>
 #include <QFutureWatcher>
 #include <QLegendMarker>
 #include <QPen>
@@ -65,6 +67,8 @@
 
 #include "frontend/widgets/ZoomableChartView.h"
 #include "backend/app/AppBackend.h"
+#include "backend/app/ExperimentCoordinator.h"
+#include "backend/recording/Hdf5Service.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingScience.h"
 #include "backend/services/TriggerService.h"
@@ -142,6 +146,7 @@ constexpr const char* kKdeKeyEnabled = "Monitoring/KdeEnabled";
 constexpr const char* kKdeKeyBandwidthFactor = "Monitoring/KdeBandwidthFactor";
 constexpr const char* kKdeKeyIntervalMs = "Monitoring/KdeIntervalMs";
 constexpr const char* kKdeKeyCoreFraction = "Monitoring/KdeCoreFraction";
+constexpr const char* kKdeKeyReferencePath = "Monitoring/KdeReferencePath";
 constexpr int kKdePreferenceVersion = 1;
 
 // Colour of a density level (0 = sparsest) on the sequential ramp.
@@ -218,6 +223,21 @@ namespace frontend
             ui->kdeToggleCheck->setChecked(kdeEnabled_);
         }
         setKdeModeVisuals(kdeEnabled_);
+        {
+            // Reload the reference contour chosen in a previous session; a file
+            // that went away is dropped quietly (one info line).
+            const QString referencePath = QSettings().value(QLatin1String(kKdeKeyReferencePath)).toString();
+            if (!referencePath.isEmpty())
+            {
+                QString why;
+                if (!loadKdeReferenceFromFile(referencePath, &why))
+                {
+                    SPDLOG_INFO("Monitoring KDE: previous reference contour {} not restored: {}", referencePath.toStdString(),
+                                why.toStdString());
+                    setKdeReferencePath(QString());
+                }
+            }
+        }
     }
 
     void ExperimentMonitoringTab::updateRoiDisplay(int offsetX, int offsetY, int width, int height) {
@@ -1565,7 +1585,76 @@ namespace frontend
 
     void ExperimentMonitoringTab::pinKdeReference()
     {
+        setKdeReferencePath(QString()); // a pinned contour lives for the session only
         setKdeReference(lastKdeContours_, tr("pinned %1").arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+    }
+
+    void ExperimentMonitoringTab::setKdeReferencePath(const QString& path)
+    {
+        kdeReferencePath_ = path;
+        QSettings s;
+        if (path.isEmpty()) s.remove(QLatin1String(kKdeKeyReferencePath));
+        else s.setValue(QLatin1String(kKdeKeyReferencePath), path);
+    }
+
+    bool ExperimentMonitoringTab::loadKdeReferenceFromFile(const QString& path, QString* error)
+    {
+        auto fail = [&](const QString& why) {
+            if (error) *error = why;
+            SPDLOG_WARN("Monitoring KDE: reference contour from {} not loaded: {}", path.toStdString(), why.toStdString());
+            return false;
+        };
+        if (path.isEmpty() || !QFileInfo::exists(path)) return fail(tr("file not found"));
+        backend::services::Hdf5Service reader;
+        if (!reader.loadFile(path.toStdString())) return fail(tr("not a readable HDF5 file"));
+        // Prefer the authoritative full-run record, fall back to the live one.
+        std::string json;
+        std::optional<monitoring::KdeCoreRecord> record;
+        std::string whyAnalysis, whyLive;
+        if (reader.readKdeAnalysisJson(json)) record = monitoring::fromJson(json, &whyAnalysis);
+        if (!record && reader.readKdeLiveJson(json)) record = monitoring::fromJson(json, &whyLive);
+        reader.closeFile();
+        if (!record)
+        {
+            if (!whyAnalysis.empty() || !whyLive.empty())
+                return fail(tr("stored core contour unreadable (%1)").arg(QString::fromStdString(!whyLive.empty() ? whyLive : whyAnalysis)));
+            return fail(tr("the experiment has no stored core contour"));
+        }
+        if (record->contours.empty()) return fail(tr("the stored core contour is empty (too few cells)"));
+        const QString label = tr("%1, %2 %3%")
+                                  .arg(QFileInfo(path).fileName(),
+                                       record->provisional ? tr("live estimate") : tr("full-run"))
+                                  .arg(std::lround(record->coreFraction * 100.0));
+        setKdeReferencePath(path);
+        setKdeReference(std::move(record->contours), label);
+        return true;
+    }
+
+    std::string ExperimentMonitoringTab::lastCoreRecordJson() const
+    {
+        if (!kdeEnabled_ || !lastKdeValid_) return {};
+        monitoring::KdeCoreRecord r;
+        r.provisional = true;
+        r.source = "live-buffer";
+        r.coreFraction = lastKdeMeta_.coreFraction;
+        r.level = lastKdeMeta_.coreLevel;
+        r.cellCount = lastKdeMeta_.coreCount;
+        r.populationCount = lastKdePointCount_;
+        r.bandwidthFactor = lastKdeMeta_.bandwidthFactor;
+        r.bandwidthX = lastKdeMeta_.bandwidthX;
+        r.bandwidthY = lastKdeMeta_.bandwidthY;
+        r.pixelToMicron = lastKdeMeta_.pixelToMicron;
+        r.x0 = lastKdeMeta_.x0;
+        r.x1 = lastKdeMeta_.x1;
+        r.y0 = lastKdeMeta_.y0;
+        r.y1 = lastKdeMeta_.y1;
+        r.gridNx = kKdeGridNx;
+        r.gridNy = kKdeGridNy;
+        r.contours = lastKdeContours_;
+        r.computedAtNs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                        std::chrono::system_clock::now().time_since_epoch())
+                                                        .count());
+        return monitoring::toJson(r);
     }
 
     void ExperimentMonitoringTab::setKdeReference(std::vector<std::vector<monitoring::DensityPoint>> loops, const QString& label)
@@ -1579,6 +1668,7 @@ namespace frontend
 
     void ExperimentMonitoringTab::clearKdeReference()
     {
+        setKdeReferencePath(QString());
         setKdeReference({}, QString());
     }
 
@@ -1685,6 +1775,7 @@ namespace frontend
             lastKdeContours_.clear();
             lastKdeCoreLevel_ = std::nan("");
             lastKdeCoreCount_ = 0;
+            lastKdeValid_ = false;
             redrawKdeContours(kdeContourSeries_, {}, false);
             redrawKdeContours(kdeReferenceSeries_, {}, true);
         }
@@ -1731,10 +1822,11 @@ namespace frontend
         const double factor = kdeBandwidthFactor_;
         const double coreFraction = kdeCoreFraction_;
         const double x0 = scatterXMin_, x1 = scatterXMax_, y0 = scatterYMin_, y1 = scatterYMax_;
+        const double pixelToMicron = conversionFactor;
         auto* watcher = new QFutureWatcher<KdeResult>(this);
         kdeWatcher_ = watcher;
         connect(watcher, &QFutureWatcher<KdeResult>::finished, this, &ExperimentMonitoringTab::onKdeJobFinished);
-        watcher->setFuture(QtConcurrent::run([indices = std::move(indices), points = std::move(points), factor, coreFraction, x0, x1, y0, y1]() {
+        watcher->setFuture(QtConcurrent::run([indices = std::move(indices), points = std::move(points), factor, coreFraction, x0, x1, y0, y1, pixelToMicron]() {
             QElapsedTimer clock;
             clock.start();
             KdeResult result;
@@ -1755,6 +1847,12 @@ namespace frontend
                                                               x0, x1, y0, y1, kKdeGridNx, kKdeGridNy);
                 result.contours = monitoring::isoContours(grid, result.coreLevel);
             }
+            result.bandwidthFactor = factor;
+            result.pixelToMicron = pixelToMicron;
+            result.x0 = x0;
+            result.x1 = x1;
+            result.y0 = y0;
+            result.y1 = y1;
             result.computeMs = static_cast<int>(clock.elapsed());
             return result;
         }));
@@ -1783,9 +1881,20 @@ namespace frontend
         lastKdeCoreLevel_ = result.coreLevel;
         lastKdeCoreCount_ = result.coreCount;
         lastKdeContours_ = result.contours;
+        lastKdeMeta_ = result;
+        lastKdeMeta_.frameIndices.clear();
+        lastKdeMeta_.density.clear();
+        lastKdeMeta_.contours.clear();
+        lastKdeValid_ = true;
         updateScatterplot(recentValidFrames_); // re-route points into their new density levels
         redrawKdeContours(kdeContourSeries_, lastKdeContours_, false);
         refreshKdeTooltip();
+        // During a run the coordinator keeps the latest provisional record and
+        // writes it into the file at stop (a copy of what is on screen).
+        if (backend_.experiment().state() == backend::app::ExperimentRunState::Active)
+        {
+            backend_.experiment().setLiveKdeCoreRecord(lastCoreRecordJson());
+        }
         SPDLOG_DEBUG("Monitoring KDE: {} points, bandwidth ({:.2f} um^2, {:.4f}), core {:.0f}% -> {} cells, {} loop(s), {} ms",
                      result.frameIndices.size(), result.bandwidthX, result.bandwidthY, result.coreFraction * 100.0,
                      result.coreCount, result.contours.size(), result.computeMs);

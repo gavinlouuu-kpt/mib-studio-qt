@@ -104,7 +104,11 @@ append only, never renumber.
 5. `Hdf5Service::flush()`; `writeExperimentInfo(...)` (start/end wall-clock,
    remainder counts, processing config, ROI, background, core identity);
    `writeRunAccounting(experimentAccountingSnapshot())`;
-   `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`.
+   `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`;
+   then, best effort, `writeKdeLiveJson(...)` with the last provisional KDE
+   core record the Monitoring tab pushed through `setLiveKdeCoreRecord`
+   (accepted only while `Active`, cleared at Start; a failed write logs a
+   warning and never changes the run outcome).
 6. `closeFile()`.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled

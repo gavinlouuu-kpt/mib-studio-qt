@@ -109,6 +109,19 @@ frames. The currently active
 `processing().getProcessingConfig()` / `getRealtimeRoi()` /
 `getRealtimeBackgroundGray()`) are used as inputs.
 
+## Stored KDE core contours
+
+On open, `readStoredKdeRecords()` reads `/analysis @kde_core_json` and
+`/monitoring @kde_live_json` through the retained reader and parses them with
+`frontend/tabs/KdeCoreRecord.h`; `generateScatterPlot` redraws them via
+`drawStoredKdeContours()` as `QLineSeries` on the scatter: full-run solid
+blue, live (provisional) dashed orange, one legend entry per record
+("Core 90% (full run)" / "Core 90% (live, provisional)"). An unreadable
+record is logged and skipped; `clearDisplay()` removes the previous file's
+contours. Test hooks: `loadHdfFileForTests`, `storedKdeContourSeriesForTests`.
+Guard: `frontend.hdf_review_core`. Computing and saving the full-run record
+is core-region PR 3.
+
 ## Run accounting (issue #367)
 
 `accountingSummary()` appends the recorded completion state and the

@@ -3820,4 +3820,106 @@ namespace backend::services {
         return ok && !runSnapshotJson.empty();
     }
 
+    // ---- KDE core contour records (kde_core_schema_version = 1) -----------------
+
+    namespace {
+    constexpr uint64_t kKdeCoreSchemaVersion = 1;
+
+    bool writeGroupJsonAttribute(hid_t fileId, const char* groupPath, const char* name, const std::string& value)
+    {
+        hid_t group = H5Lexists(fileId, groupPath, H5P_DEFAULT) > 0
+                          ? H5Gopen2(fileId, groupPath, H5P_DEFAULT)
+                          : H5Gcreate2(fileId, groupPath, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        if (H5Aexists(group, name) > 0 && H5Adelete(group, name) < 0) ok = false;
+        hid_t type = H5Tcopy(H5T_C_S1);
+        H5Tset_size(type, H5T_VARIABLE);
+        H5Tset_cset(type, H5T_CSET_UTF8);
+        if (ok) {
+            hid_t attr = H5Acreate2(group, name, type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = value.c_str();
+                if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+        }
+        H5Tclose(type);
+        if (ok) {
+            const char* versionName = "kde_core_schema_version";
+            hid_t attr = H5Aexists(group, versionName) > 0
+                             ? H5Aopen(group, versionName, H5P_DEFAULT)
+                             : H5Acreate2(group, versionName, H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0 || H5Awrite(attr, H5T_NATIVE_UINT64, &kKdeCoreSchemaVersion) < 0) ok = false;
+            if (attr >= 0) H5Aclose(attr);
+        }
+        H5Sclose(scalar);
+        H5Gclose(group);
+        return ok;
+    }
+
+    bool readGroupJsonAttribute(hid_t fileId, const char* groupPath, const char* name, std::string& value)
+    {
+        value.clear();
+        if (H5Lexists(fileId, groupPath, H5P_DEFAULT) <= 0) return false;
+        hid_t group = H5Gopen2(fileId, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        bool ok = false;
+        if (H5Aexists(group, name) > 0) {
+            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+            if (attr >= 0) {
+                hid_t type = H5Aget_type(attr);
+                if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                    char* ptr = nullptr;
+                    ok = H5Aread(attr, type, &ptr) >= 0;
+                    if (ok) value = ptr ? ptr : "";
+                    if (ptr) H5free_memory(ptr);
+                }
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attr);
+            }
+        }
+        H5Gclose(group);
+        return ok && !value.empty();
+    }
+    } // namespace
+
+    bool Hdf5Service::writeKdeLiveJson(const std::string& json)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeKdeLiveJson: no writable HDF5 file open; KDE live record not stored");
+            return false;
+        }
+        const bool ok = writeGroupJsonAttribute(impl_->fileId_, "/monitoring", "kde_live_json", json);
+        if (!ok) SPDLOG_WARN("writeKdeLiveJson: attribute write failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readKdeLiveJson(std::string& json) const
+    {
+        if (!isFileOpen()) { json.clear(); return false; }
+        return readGroupJsonAttribute(impl_->fileId_, "/monitoring", "kde_live_json", json);
+    }
+
+    bool Hdf5Service::writeKdeAnalysisJson(const std::string& json)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeKdeAnalysisJson: no writable HDF5 file open; KDE analysis record not stored");
+            return false;
+        }
+        const bool ok = writeGroupJsonAttribute(impl_->fileId_, "/analysis", "kde_core_json", json);
+        if (!ok) SPDLOG_WARN("writeKdeAnalysisJson: attribute write failed");
+        else if (!flush()) SPDLOG_WARN("writeKdeAnalysisJson: flush after write failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readKdeAnalysisJson(std::string& json) const
+    {
+        if (!isFileOpen()) { json.clear(); return false; }
+        return readGroupJsonAttribute(impl_->fileId_, "/analysis", "kde_core_json", json);
+    }
+
 } // namespace backend::services

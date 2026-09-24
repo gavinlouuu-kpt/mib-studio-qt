@@ -2,6 +2,9 @@
 #include "ui_MonitoringSettingsDialog.h"
 #include "frontend/tabs/ExperimentMonitoringTab.h"
 
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
 #include <QPushButton>
 
 #include <cmath>
@@ -55,6 +58,23 @@ MonitoringSettingsDialog::MonitoringSettingsDialog(frontend::ExperimentMonitorin
         if (!monitoringTab_) return;
         monitoringTab_->clearKdeReference();
         ui->kdeClearReferenceBtn->setEnabled(false);
+    });
+    ui->kdeReferenceFromFileBtn->setEnabled(monitoringTab_ != nullptr);
+    connect(ui->kdeReferenceFromFileBtn, &QPushButton::clicked, this, [this]() {
+        if (!monitoringTab_) return;
+        const QString start = monitoringTab_->kdeReferencePath().isEmpty()
+                                  ? QString()
+                                  : QFileInfo(monitoringTab_->kdeReferencePath()).absolutePath();
+        const QString path = QFileDialog::getOpenFileName(this, tr("Reference core contour from experiment"), start,
+                                                          tr("Experiment files (*.h5 *.hdf5)"));
+        if (path.isEmpty()) return;
+        QString why;
+        if (!monitoringTab_->loadKdeReferenceFromFile(path, &why)) {
+            QMessageBox::warning(this, tr("Reference contour"),
+                                 tr("No reference contour loaded from\n%1\n\n%2").arg(path, why));
+            return;
+        }
+        ui->kdeClearReferenceBtn->setEnabled(true);
     });
 }
 

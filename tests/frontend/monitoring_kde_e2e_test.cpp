@@ -26,6 +26,9 @@
 // written to MIB_KDE_E2E_OUT (or the temp dir) for a visual check.
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/ExperimentCoordinator.h"
+#include "backend/recording/Hdf5Service.h"
+#include "frontend/tabs/KdeCoreRecord.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/core/MainWindow.h"
@@ -60,6 +63,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <random>
 #include <string>
 #include <vector>
@@ -424,6 +428,70 @@ int main(int argc, char* argv[]) {
     report(kdeOn);
     snapshot("monitoring-kde-on");
     std::printf("kde tooltip: %s\n", qPrintable(tab->kdeToggle()->toolTip()));
+
+    // ---- a real experiment while KDE is on: the file keeps the live contour ---
+    // Tab -> ExperimentCoordinator::setLiveKdeCoreRecord after every estimate
+    // -> Hdf5Service::writeKdeLiveJson during finalization.
+    wd.mark("experiment");
+    {
+        auto& coordinator = backend.experiment();
+        const std::string expPath = (td / "kde_run.h5").string();
+        {
+            // The harness disables the trigger service, so a run with sorting
+            // enabled is refused by the trigger.output gate; sorting is not
+            // what this step checks.
+            auto cfg = processing.getProcessingConfig();
+            cfg.enable_target_group = false;
+            processing.setProcessingConfig(cfg);
+        }
+        const auto readiness = coordinator.evaluateReadiness(expPath);
+        if (!readiness.ready) {
+            for (const auto& g : readiness.gates)
+                std::fprintf(stderr, "  gate %s %s %s\n", g.id.c_str(), backend::app::toString(g.status), g.reason.c_str());
+        }
+        MIB_REQUIRE(readiness.ready, "experiment readiness with the mock camera running");
+        backend::app::ExperimentStartRequest request;
+        request.outputPath = expPath;
+        request.readinessGeneration = readiness.generation;
+        request.acknowledgeLatestFrameDrops = true;
+        const auto started = coordinator.start(request);
+        MIB_REQUIRE(started.started(), "experiment start: " + started.message);
+        auto spinUntil = [&](const std::function<bool()>& pred, int timeoutMs) {
+            QElapsedTimer clock;
+            clock.start();
+            while (!pred() && clock.elapsed() < timeoutMs) spin(50);
+            return pred();
+        };
+        const uint64_t gen0 = tab->kdeGeneration();
+        MIB_REQUIRE(spinUntil([&] { return tab->kdeGeneration() >= gen0 + 2; }, 10000),
+                    "estimates land while the experiment runs");
+        MIB_REQUIRE(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "experiment stop accepted");
+        MIB_REQUIRE(spinUntil([&] {
+                        const auto st = coordinator.status();
+                        return st.terminal && st.state == backend::app::ExperimentRunState::Idle;
+                    }, 20000),
+                    "experiment finalized");
+        const std::string written = coordinator.status().outputPath;
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(written.empty() ? expPath : written), "experiment file readable");
+        std::string json;
+        MIB_EXPECT(reader.readKdeLiveJson(json), "finalized file carries the live KDE core record");
+        std::string analysis;
+        MIB_EXPECT(!reader.readKdeAnalysisJson(analysis), "no full-run record is written automatically");
+        reader.closeFile();
+        std::string why;
+        const auto record = frontend::monitoring::fromJson(json, &why);
+        MIB_EXPECT(record.has_value(), "stored record parses: " + why);
+        if (record) {
+            std::printf("stored live record: fraction %.2f, %llu of %llu cells, %zu loop(s)\n", record->coreFraction,
+                        static_cast<unsigned long long>(record->cellCount),
+                        static_cast<unsigned long long>(record->populationCount), record->contours.size());
+            MIB_EXPECT(record->provisional && record->source == "live-buffer", "stored record is provisional");
+            MIB_EXPECT(!record->contours.empty() && record->populationCount >= 200
+                           && record->cellCount >= 0.85 * record->coreFraction * record->populationCount,
+                       "stored record holds the on-screen core contour of a real population");
+        }
+    }
 
     wd.mark("recovery");
     tab->setKdeEnabled(false);

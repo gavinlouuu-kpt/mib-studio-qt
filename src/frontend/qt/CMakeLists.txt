@@ -247,6 +247,12 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_kde_density PROPERTIES LABELS "frontend;monitoring;concurrency;safety" TIMEOUT 240)
 
+    # Review tab draws the stored KDE core contours (full-run solid, live dashed).
+    mib_test_runner_add(mib_frontend_tests hdf_review_core_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_review_core_test.cpp)
+    add_test(NAME frontend.hdf_review_core COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_core_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.hdf_review_core PROPERTIES LABELS "frontend;monitoring;recording" TIMEOUT 120)
+
     # End-to-end: real MainWindow on the mock-camera pipeline with synthetic
     # cells; KDE off / on / off phases gated on ratios (capture, processing,
     # monitoring ring, overlay lag, GUI responsiveness). ~25 s, integration lane.

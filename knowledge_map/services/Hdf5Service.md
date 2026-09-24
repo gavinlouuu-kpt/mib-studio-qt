@@ -130,6 +130,18 @@ persist and read the versioned `accounting_*` attributes described in
 debug logging can prove HDF5 handles return to baseline after repeated
 jobs ([[HdfExportService]] stress test). HDF5 ids never leave this class.
 
+## KDE core contour records
+
+`writeKdeLiveJson` / `readKdeLiveJson` (`/monitoring @kde_live_json`) and
+`writeKdeAnalysisJson` / `readKdeAnalysisJson` (`/analysis @kde_core_json`)
+store the frontend's KDE core record verbatim (plus
+`kde_core_schema_version` = 1 on the group). Writers refuse with a warning
+when no file is open or it was opened read-only (`loadFile`); readers return
+false for an absent record or a non-string attribute. Parsing and schema
+checks belong to the codec (`frontend/tabs/KdeCoreRecord.h`), never to this
+class. Guards: `recording.kde_core_roundtrip`, `recording.kde_core_fault`.
+See [[../data-model/HDF5-Storage]].
+
 ## Run configuration snapshot (issue #369)
 
 `writeRunSnapshotJson(runJson, readinessJson)` / `readRunSnapshotJson(...)`

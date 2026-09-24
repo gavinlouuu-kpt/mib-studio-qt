@@ -199,6 +199,11 @@ schema `kde_core_schema_version = 1`:
 - 2026-09-24: contours stored as polylines in native units so any reader
   can overlay them without re-running the kernel.
 
+- 2026-09-24 (PR 2): the live record reaches the file through a Qt-free
+  setter on the coordinator, pushed after every estimate while `Active`,
+  instead of a stop-time pull from the tab. The coordinator owns the run's
+  file on its worker, and a push keeps Stop independent of the GUI thread.
+
 ## Sequencing
 
 1. PR 1 — kernel (level, grid, marching squares) + property tests; live
@@ -217,5 +222,13 @@ schema `kde_core_schema_version = 1`:
       estimate including the grid, GUI gates unchanged. Border-cut
       populations may yield more than one closed loop (each arc closed
       along the border), which the test now accepts.
-- [ ] PR 2
+- [x] PR 2 — 2026-09-24: `Hdf5Service::{write,read}Kde{Live,Analysis}Json`
+      with round-trip and fault-injection tests; Qt-free codec
+      `frontend/tabs/KdeCoreRecord.h`; live record at stop through
+      `ExperimentCoordinator::setLiveKdeCoreRecord` (the planned
+      "chart-snapshot hook" does not exist: `captureChartSnapshots` has no
+      caller and the coordinator owns the file during a run); Review tab
+      draws stored records; *From file…* reference in the settings dialog,
+      path persisted. e2e now runs a real experiment with KDE on and reads
+      the record back (900 of 1000 cells, 2 loops).
 - [ ] PR 3

@@ -1,5 +1,22 @@
 # Recent Work
 
+## 2026-09-24 — KDE core contour: live contour, reference, stored records
+
+The Monitoring scatter shows a solid contour around the densest `Core %`
+(default 90%) of the population while Density (KDE) is on: a true KDE
+iso-line (mass-fraction level, 128×64 grid, marching squares) computed in the
+existing worker job. A dashed reference contour can be pinned or taken from a
+previous experiment file (Monitoring Settings). Each experiment run with
+Density on stores the on-screen contour as a provisional record
+(`/monitoring @kde_live_json`, written by the coordinator at stop); the Review
+tab draws stored contours. The full-run analysis record is the next step.
+Guards: `frontend.monitoring_density`, `recording.kde_core_roundtrip`,
+`recording.kde_core_fault`, `e2e.experiment_coordinator`,
+`frontend.monitoring_kde_density`, `frontend.hdf_review_core`,
+`integration.monitoring_kde_e2e`. See
+[[../task/2026-09-23-monitoring-kde-density]] and
+`docs/exec-plans/active/2026-09-24-kde-core-region-split.md`.
+
 ## 2026-09-23 — Monitoring scatter density (KDE) colouring
 
 The Monitoring tab's deformability-vs-area scatter can now be coloured by

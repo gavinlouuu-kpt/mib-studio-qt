@@ -226,6 +226,9 @@ int main()
             return 5;
         }
 
+        // A KDE core record offered while no run is active is ignored.
+        backendApp.experiment().setLiveKdeCoreRecord("{\"idle\":true}");
+
         // Start the experiment.
         result = startViaFacade(facade, exp1);
         if (!result.ok || result.operationId == 0)
@@ -233,6 +236,11 @@ int main()
             std::cerr << "experiment start failed: " << result.message << "\n";
             return 6;
         }
+        // The Monitoring view pushes its latest provisional KDE core record;
+        // the last one before Stop is what the file must carry.
+        backendApp.experiment().setLiveKdeCoreRecord("{\"schema_version\":1,\"n\":1}");
+        const std::string kdeRecord = "{\"schema_version\":1,\"n\":2,\"contours\":[]}";
+        backendApp.experiment().setLiveKdeCoreRecord(kdeRecord);
 
         // Double start fails without desynchronizing.
         if (startViaFacade(facade, exp1).ok)
@@ -288,6 +296,12 @@ int main()
                 std::cerr << "finalized experiment file failed to load\n";
                 return 13;
             }
+            std::string stored;
+            if (!reader.readKdeLiveJson(stored) || stored != kdeRecord)
+            {
+                std::cerr << "finalized file lacks the last live KDE core record (got '" << stored << "')\n";
+                return 40;
+            }
             reader.closeFile();
         }
 
@@ -315,6 +329,17 @@ int main()
         {
             std::cerr << "cancelled experiment did not finalize\n";
             return 16;
+        }
+        // The second run received no record: it must not inherit the first one.
+        {
+            backend::services::Hdf5Service reader;
+            std::string stored;
+            if (!reader.loadFile(exp2) || reader.readKdeLiveJson(stored))
+            {
+                std::cerr << "second run inherited a KDE core record or failed to load\n";
+                return 41;
+            }
+            reader.closeFile();
         }
 
         // Exercise the config-json write path on the next run.

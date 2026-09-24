@@ -450,6 +450,15 @@ mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_r
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> experiment_roundtrip_test)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
 
+# KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
+# round-trip + fault injection for the save path and the frontend codec.
+mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
+add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
+set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)
+mib_add_backend_test_executable(kde_core_fault_test recording/kde_core_fault_test.cpp)
+add_test(NAME recording.kde_core_fault COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_fault_test)
+set_tests_properties(recording.kde_core_fault PROPERTIES LABELS "recording;backend;monitoring;safety" TIMEOUT 30)
+
 # Issue #344: native Qt-free export service (round-trip, cancellation, faults,
 # bounded names, repeated runs with HDF5 open-object accounting). The
 # `performance`-labelled variant is the 50-round soak release gate.

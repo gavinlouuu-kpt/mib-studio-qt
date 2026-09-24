@@ -116,7 +116,17 @@ families are removed when KDE goes off, so the off state is the plain
 chart. The toggle tooltip carries the core count, loop count and reference
 label; nothing else is added to the tab. Test hooks:
 `kdeContourSeriesForTests`, `kdeReferenceSeriesForTests`,
-`lastKdeContours`, `lastKdeCoreCount`, `lastKdeCoreLevel`. Guards:
+`lastKdeContours`, `lastKdeCoreCount`, `lastKdeCoreLevel`.
+**Stored record (PR 2):** after every estimate during an `Active` run the tab
+pushes `lastCoreRecordJson()` (provisional record, codec
+`frontend/tabs/KdeCoreRecord.h`) to
+`ExperimentCoordinator::setLiveKdeCoreRecord`; finalization writes the last
+one into the file (`/monitoring @kde_live_json`). The tab never touches the
+run's file itself. **Reference from file:** `loadKdeReferenceFromFile(path)`
+reads the full-run record, else the live one, labels the reference
+"<file>, full-run|live estimate <p>%", and persists the path as
+`Monitoring/KdeReferencePath` (reloaded at startup; a vanished file is
+dropped with one info line; pin/clear forget it). Guards:
 `frontend.monitoring_density` (level rank semantics, one loop per cloud,
 ~90% enclosed, two clouds → two loops, translation invariance, border cut,
 degenerate input), `frontend.monitoring_kde_density` (series, pin/clear,

@@ -24,6 +24,8 @@
 #include <QComboBox>
 #include <QChartView>
 #include <QLineSeries>
+#include <QLegendMarker>
+#include <QPen>
 #include <QCoreApplication>
 #include <QDir>
 #include <map>
@@ -49,6 +51,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/recording/Hdf5Service.h"
+#include "frontend/tabs/KdeCoreRecord.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/dialogs/BatchMaskDialog.h"
@@ -530,6 +533,7 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
     }
 
     loadedHdfFilePath_ = filePath;
+    readStoredKdeRecords();
 
     // Detect recording-mode file. Recording files have no valid/invalid
     // categorization, no masks, no per-frame metrics — just raw frames
@@ -691,6 +695,9 @@ void HdfReviewTab::populateFrames(const std::vector<backend::services::Processed
 }
 
 void HdfReviewTab::clearDisplay() {
+    storedKdeLive_.clear();
+    storedKdeAnalysis_.clear();
+    drawStoredKdeContours(); // removes the previous file's contours
     validFrames_.clear();
     invalidFrames_.clear();
     selectedFrameIndex_ = -1;
@@ -2207,12 +2214,81 @@ void HdfReviewTab::updateCharts() {
     SPDLOG_INFO("HdfReviewTab::updateCharts: Generated charts from {} valid frames", validFrames_.size());
 }
 
+void HdfReviewTab::readStoredKdeRecords() {
+    storedKdeLive_.clear();
+    storedKdeAnalysis_.clear();
+    if (!hdfReader_) return;
+    auto readInto = [](const std::string& json, const char* which,
+                       std::vector<std::vector<std::pair<double, double>>>& out, double& fraction) {
+        std::string why;
+        const auto record = frontend::monitoring::fromJson(json, &why);
+        if (!record) {
+            SPDLOG_WARN("HdfReviewTab: stored KDE {} record ignored: {}", which, why);
+            return;
+        }
+        fraction = record->coreFraction;
+        for (const auto& loop : record->contours) {
+            std::vector<std::pair<double, double>> pts;
+            pts.reserve(loop.size());
+            for (const auto& p : loop) pts.emplace_back(p.x, p.y);
+            out.push_back(std::move(pts));
+        }
+    };
+    std::string json;
+    if (hdfReader_->readKdeAnalysisJson(json)) readInto(json, "full-run", storedKdeAnalysis_, storedKdeAnalysisFraction_);
+    if (hdfReader_->readKdeLiveJson(json)) readInto(json, "live", storedKdeLive_, storedKdeLiveFraction_);
+    SPDLOG_INFO("HdfReviewTab: stored KDE core contours: full-run {} loop(s), live {} loop(s)",
+                storedKdeAnalysis_.size(), storedKdeLive_.size());
+}
+
+void HdfReviewTab::drawStoredKdeContours() {
+    if (!scatterPlotChart_) return;
+    for (auto* series : storedKdeSeries_) {
+        scatterPlotChart_->removeSeries(series);
+        delete series;
+    }
+    storedKdeSeries_.clear();
+    // Full-run solid blue, live (provisional) dashed orange: the same slots
+    // the Monitoring tab uses for live vs reference. One legend entry per
+    // record; further loops of the same record stay out of the legend.
+    auto drawFamily = [&](const std::vector<std::vector<std::pair<double, double>>>& loops, double fraction,
+                          bool provisional) {
+        QPen pen(provisional ? QColor(0xeb, 0x68, 0x34) : QColor(0x2a, 0x78, 0xd6));
+        pen.setWidthF(2.0);
+        pen.setCosmetic(true);
+        if (provisional) pen.setStyle(Qt::DashLine);
+        const QString name = provisional ? tr("Core %1% (live, provisional)").arg(std::lround(fraction * 100.0))
+                                         : tr("Core %1% (full run)").arg(std::lround(fraction * 100.0));
+        bool first = true;
+        for (const auto& loop : loops) {
+            auto* series = new QLineSeries();
+            series->setName(name);
+            series->setPen(pen);
+            QList<QPointF> pts;
+            pts.reserve(static_cast<qsizetype>(loop.size()));
+            for (const auto& p : loop) pts.append(QPointF(p.first, p.second));
+            series->append(pts);
+            scatterPlotChart_->addSeries(series);
+            series->attachAxis(scatterXAxis_);
+            series->attachAxis(scatterYAxis_);
+            if (!first) {
+                for (auto* marker : scatterPlotChart_->legend()->markers(series)) marker->setVisible(false);
+            }
+            first = false;
+            storedKdeSeries_.push_back(series);
+        }
+    };
+    drawFamily(storedKdeAnalysis_, storedKdeAnalysisFraction_, false);
+    drawFamily(storedKdeLive_, storedKdeLiveFraction_, true);
+}
+
 void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::ProcessedFrame>& validFrames) {
     if (!scatterSeries_ || !scatterXAxis_ || !scatterYAxis_) {
         return;
     }
 
     scatterSeries_->clear();
+    drawStoredKdeContours();
 
     if (validFrames.empty()) {
         scatterXAxis_->setRange(0, 1000);

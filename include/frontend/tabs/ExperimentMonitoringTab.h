@@ -70,6 +70,10 @@ public:
         double coreLevel{0.0}; // NaN when fewer than three samples
         std::size_t coreCount{0};
         std::vector<std::vector<monitoring::DensityPoint>> contours;
+        // Inputs the estimate was computed with (for the stored record).
+        double bandwidthFactor{0.0};
+        double pixelToMicron{0.0};
+        double x0{0.0}, x1{0.0}, y0{0.0}, y1{0.0};
     };
     static constexpr double kKdeBandwidthFactorMin = 0.2;
     static constexpr double kKdeBandwidthFactorMax = 5.0;
@@ -110,6 +114,16 @@ public:
     void pinKdeReference();
     void setKdeReference(std::vector<std::vector<monitoring::DensityPoint>> loops, const QString& label);
     void clearKdeReference();
+    // Reference from a previous experiment file: the full-run analysis record
+    // when present, else the provisional live record. The path persists
+    // (Monitoring/KdeReferencePath) and is reloaded at startup.
+    bool loadKdeReferenceFromFile(const QString& path, QString* error = nullptr);
+    QString kdeReferenceLabel() const { return kdeReferenceLabel_; }
+    QString kdeReferencePath() const { return kdeReferencePath_; }
+    // Provisional record (JSON, frontend/tabs/KdeCoreRecord.h) describing the
+    // last completed estimate; empty before the first estimate or while off.
+    // Pushed to the experiment coordinator after every estimate during a run.
+    std::string lastCoreRecordJson() const;
     const std::vector<QLineSeries*>& kdeContourSeriesForTests() const { return kdeContourSeries_; }
     const std::vector<QLineSeries*>& kdeReferenceSeriesForTests() const { return kdeReferenceSeries_; }
     QCheckBox* kdeToggle() const;
@@ -300,6 +314,10 @@ private:
     std::size_t lastKdeCoreCount_ = 0;
     std::vector<std::vector<monitoring::DensityPoint>> kdeReference_;
     QString kdeReferenceLabel_;
+    QString kdeReferencePath_; // file the reference came from; empty when pinned/none
+    KdeResult lastKdeMeta_;    // last completed estimate without per-point vectors
+    bool lastKdeValid_ = false;
+    void setKdeReferencePath(const QString& path);
     std::vector<QLineSeries*> kdeContourSeries_;   // solid, live
     std::vector<QLineSeries*> kdeReferenceSeries_; // dashed, reference
     void redrawKdeContours(std::vector<QLineSeries*>& family,
