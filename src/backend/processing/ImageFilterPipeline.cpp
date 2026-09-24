@@ -185,11 +185,7 @@ bool differenceCore(const cv::Mat& currentRoi,
         inputStages.apply(backgroundRoi, backgroundFiltered);
         cv::Mat blurredBackground;
         cv::GaussianBlur(backgroundFiltered, blurredBackground, blurSize, 0);
-        if (absoluteDifference) {
-            cv::absdiff(blurredCurrent, blurredBackground, difference);
-        } else {
-            cv::subtract(blurredCurrent, blurredBackground, difference);
-        }
+        differenceImage(blurredCurrent, blurredBackground, absoluteDifference, difference);
     } else {
         difference = blurredCurrent;
     }
@@ -199,6 +195,17 @@ bool differenceCore(const cv::Mat& currentRoi,
 }
 
 } // namespace
+
+void differenceImage(const cv::Mat& blurredCurrent,
+                     const cv::Mat& blurredBackground,
+                     bool absoluteDifference,
+                     cv::Mat& outDifference) {
+    if (absoluteDifference) {
+        cv::absdiff(blurredCurrent, blurredBackground, outDifference);
+    } else {
+        cv::subtract(blurredCurrent, blurredBackground, outDifference);
+    }
+}
 
 bool buildDifferenceImageCropped(const cv::Mat& currentRoi,
                                  const cv::Mat& backgroundRoi,

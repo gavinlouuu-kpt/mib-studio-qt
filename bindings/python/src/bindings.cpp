@@ -92,7 +92,9 @@ py::list processBatch(const std::vector<py::array>& frames, const py::dict& conf
 
     py::list out;
     for (const auto& frame : results) {
-        out.append(processedFrameToPyDict(frame, pixelToMicron, includeMasks, includeSeriesImages));
+        py::dict d = processedFrameToPyDict(frame, pixelToMicron, includeMasks, includeSeriesImages);
+        d["processing_contract_version"] = config.processing_contract_version;
+        out.append(d);
     }
     return out;
 }
@@ -112,7 +114,10 @@ py::dict computeProcessedFrame(const py::array& grayInput, const py::object& bac
         py::gil_scoped_release release;
         frame = service.computeProcessedFrame(gray, bg, config, roi, index, timestampNs);
     }
-    return processedFrameToPyDict(frame, pixelToMicron, includeMask, /*includeSeriesImages=*/false);
+    py::dict out =
+        processedFrameToPyDict(frame, pixelToMicron, includeMask, /*includeSeriesImages=*/false);
+    out["processing_contract_version"] = config.processing_contract_version;
+    return out;
 }
 
 py::tuple loadFromFolder(const std::string& folderPath) {
@@ -250,5 +255,8 @@ PYBIND11_MODULE(_mib_processing, m) {
              "Bilinear-interpolated Young's modulus (kPa) lookup. Returns "
              "NaN if the query point is outside LUT coverage.");
 
+    // Default (Contract 1) science contract executed when a config omits
+    // processing_contract_version; the wheel also executes Contract 2.
     m.attr("CONTRACT_VERSION") = 1;
+    m.attr("SUPPORTED_CONTRACT_VERSIONS") = py::make_tuple(1, 2);
 }

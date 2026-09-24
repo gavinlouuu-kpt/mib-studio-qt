@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from ._mib_processing import (
     CONTRACT_VERSION,
+    SUPPORTED_CONTRACT_VERSIONS,
     EModulusLut,
     compute_processed_frame,
     config_from_dict,
@@ -29,7 +30,7 @@ from ._mib_processing import (
     save_masks_to_hdf5,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 #: Default ProcessingConfig, taken from the C++ struct's own field defaults
 #: (include/backend/processing/ProcessingService.h), not from the desktop
 #: app's resources/defaults/config.json. Callers should generally pull the
@@ -40,6 +41,7 @@ DEFAULT_PROCESSING_CONFIG = config_from_dict({})
 
 __all__ = [
     "CONTRACT_VERSION",
+    "SUPPORTED_CONTRACT_VERSIONS",
     "DEFAULT_PROCESSING_CONFIG",
     "EModulusLut",
     "compute_processed_frame",

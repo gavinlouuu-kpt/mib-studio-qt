@@ -36,6 +36,7 @@ set(MIB_STANDALONE_BACKEND_TESTS
     kin6_batch_pipeline_evidence        # uses argv[0]
     kin10_hf_dataset_pipeline_test      # uses argv[0]; the harness passes the binary path
     processing_core_loader_test         # add_dependencies on the plugin fixtures
+    processing_core_v2_plugin_test      # add_dependencies on the plugin (Contract v2 dlopen test)
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
     processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
@@ -172,7 +173,7 @@ if(UNIX AND NOT APPLE)
         TIMEOUT 30)
 endif()
 mib_add_backend_test_executable(autofocus_focus_score_test backend/autofocus_focus_score_test.cpp)
-add_test(NAME backend.autofocus_focus_score COMMAND $<TARGET_FILE:autofocus_focus_score_test>)
+add_test(NAME backend.autofocus_focus_score COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_score_test)
 set_tests_properties(backend.autofocus_focus_score PROPERTIES LABELS "backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_test.cpp)
@@ -314,19 +315,19 @@ add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:mib_backend_tests> p
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_contract_v2_migration_test processing/processing_contract_v2_migration_test.cpp)
-add_test(NAME processing.contract_v2_migration COMMAND $<TARGET_FILE:processing_contract_v2_migration_test>)
+add_test(NAME processing.contract_v2_migration COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract_v2_migration_test)
 set_tests_properties(processing.contract_v2_migration PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_contract2_conformance_test processing/processing_contract2_conformance_test.cpp)
-add_test(NAME processing.contract2_conformance COMMAND $<TARGET_FILE:processing_contract2_conformance_test>)
+add_test(NAME processing.contract2_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract2_conformance_test)
 set_tests_properties(processing.contract2_conformance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
-add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:image_filter_pipeline_test>)
+add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
 set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_laplacian_variance_test processing/processing_laplacian_variance_test.cpp)
-add_test(NAME processing.laplacian_variance COMMAND $<TARGET_FILE:processing_laplacian_variance_test>)
+add_test(NAME processing.laplacian_variance COMMAND $<TARGET_FILE:mib_backend_tests> processing_laplacian_variance_test)
 set_tests_properties(processing.laplacian_variance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
@@ -368,7 +369,7 @@ add_test(NAME processing.core_abi_v2_c COMMAND $<TARGET_FILE:processing_core_abi
 set_tests_properties(processing.core_abi_v2_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_core_capabilities_test processing/processing_core_capabilities_test.cpp)
-add_test(NAME processing.core_capabilities COMMAND $<TARGET_FILE:processing_core_capabilities_test>)
+add_test(NAME processing.core_capabilities COMMAND $<TARGET_FILE:mib_backend_tests> processing_core_capabilities_test)
 set_tests_properties(processing.core_capabilities PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_core_loader_test processing/processing_core_loader_test.cpp)

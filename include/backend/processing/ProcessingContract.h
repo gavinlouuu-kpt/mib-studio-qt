@@ -28,6 +28,21 @@ inline constexpr int kCurrentConfigSchemaVersion = kConfigSchemaVersionV2;
 inline constexpr char kDifferenceThresholdKey[] = "difference_threshold";        // v2 canonical
 inline constexpr char kLegacyBgSubtractThresholdKey[] = "bg_subtract_threshold"; // v1 legacy
 
+// Runtime contract selection helpers (ProcessingConfig::processing_contract_version).
+inline constexpr bool isSupportedProcessingContract(int contract) noexcept {
+    return contract == kProcessingContractVersionV1 || contract == kProcessingContractVersionV2;
+}
+// Contract 2 compares against the background with cv::absdiff; Contract 1 keeps
+// saturating cv::subtract. Every difference site must route through this.
+inline constexpr bool contractUsesAbsoluteDifference(int contract) noexcept {
+    return contract >= kProcessingContractVersionV2;
+}
+// Ring width is a Contract-1 metric only: under Contract 2 it is NaN and its
+// gate is ignored.
+inline constexpr bool contractHasRingWidth(int contract) noexcept {
+    return contract < kProcessingContractVersionV2;
+}
+
 enum class SchemaCompatibility {
     Same,          // merge missing defaults in memory; do not rewrite the file
     UpgradeNeeded, // older source: preserve untouched, offer explicit copy-upgrade

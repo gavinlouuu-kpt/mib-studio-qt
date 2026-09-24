@@ -1,5 +1,6 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ImageFilterPipeline.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingScience.h"
 #include "backend/recording/Hdf5Service.h"
@@ -773,14 +774,16 @@ bool ProcessingService::isFrameEmpty(const backend::playback::Frame& frame,
     effectiveRoi.h = std::max(1, std::min(effectiveRoi.h, gray.rows - effectiveRoi.y));
 
     cv::Rect cvRoi(effectiveRoi.x, effectiveRoi.y, effectiveRoi.w, effectiveRoi.h);
-    // Shared difference path (identity preprocessing, Contract-1 saturating
-    // subtraction, fixed 3x3 blur to match the legacy empty-frame filter).
+    // Shared difference path (identity preprocessing, contract-gated difference,
+    // fixed 3x3 blur to match the legacy empty-frame filter).
     const backend::processing::ImageFilterPipeline identityStages;
     cv::Mat diff, thresh;
     std::string diffError;
-    if (!backend::processing::buildDifferenceImage(gray, background, cvRoi, identityStages,
-                                                   identityStages, /*gaussianBlurSize=*/3,
-                                                   /*absoluteDifference=*/false, diff, &diffError)) {
+    if (!backend::processing::buildDifferenceImage(
+            gray, background, cvRoi, identityStages, identityStages, /*gaussianBlurSize=*/3,
+            backend::processing::contract::contractUsesAbsoluteDifference(
+                config.processing_contract_version),
+            diff, &diffError)) {
         return true; // undecidable difference counts as empty
     }
 
@@ -826,10 +829,11 @@ bool ProcessingService::isFrameEmpty(const backend::playback::Frame& frame,
     }
     cv::Mat diff, thresh;
     std::string diffError;
-    if (!backend::processing::buildDifferenceImageCropped(roiCurr, bgRoi, identityStages,
-                                                          identityStages, /*gaussianBlurSize=*/3,
-                                                          /*absoluteDifference=*/false, diff,
-                                                          &diffError)) {
+    if (!backend::processing::buildDifferenceImageCropped(
+            roiCurr, bgRoi, identityStages, identityStages, /*gaussianBlurSize=*/3,
+            backend::processing::contract::contractUsesAbsoluteDifference(
+                config.processing_contract_version),
+            diff, &diffError)) {
         return true; // undecidable difference counts as empty
     }
 
@@ -1131,9 +1135,19 @@ bool ProcessingService::isImageEmptyWithActiveKernel(const cv::Mat& gray, const 
 bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
                                                     const ProcessingConfig& config, const Roi& roi,
                                                     cv::Mat& mask, std::string* error) const {
+    if (!backend::processing::contract::isSupportedProcessingContract(
+            config.processing_contract_version)) {
+        if (error) {
+            *error = "unsupported processing_contract_version " +
+                     std::to_string(config.processing_contract_version);
+        }
+        return false;
+    }
     const backend::processing::KernelConfig kernelConfig{
         config.gaussian_blur_size, config.bg_subtract_threshold, config.morph_kernel_size,
-        config.morph_iterations, config.empty_frame_pixel_threshold};
+        config.morph_iterations, config.empty_frame_pixel_threshold,
+        backend::processing::contract::contractUsesAbsoluteDifference(
+            config.processing_contract_version)};
     const backend::processing::KernelRoi kernelRoi{roi.x, roi.y, roi.w, roi.h};
     std::shared_lock lock(processingKernelMutex_);
     if (!processingCoreSelectionAvailable_.load(std::memory_order_acquire)) {
@@ -2626,7 +2640,11 @@ void ProcessingService::realtimeInlineLoop() {
                     cv::Rect bgRoi(roi.x, roi.y, roi.w, roi.h);
                     cv::Mat bgROI = (*bgShared)(bgRoi);
                     cv::GaussianBlur(bgROI, blurredBg, cv::Size(blurK, blurK), 0);
-                    cv::subtract(blurredCurr, blurredBg, diffForProcessing);
+                    backend::processing::differenceImage(
+                        blurredCurr, blurredBg,
+                        backend::processing::contract::contractUsesAbsoluteDifference(
+                            config.processing_contract_version),
+                        diffForProcessing);
                 } else {
                     diffForProcessing = blurredCurr;
                 }
@@ -3075,7 +3093,11 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat diffForProcessing;
                 if (hasBackground) {
                     cv::GaussianBlur((*bgShared)(cvRoi), blurredBg, cv::Size(blurK, blurK), 0);
-                    cv::subtract(blurredCurr, blurredBg, diffForProcessing);
+                    backend::processing::differenceImage(
+                        blurredCurr, blurredBg,
+                        backend::processing::contract::contractUsesAbsoluteDifference(
+                            config.processing_contract_version),
+                        diffForProcessing);
                 } else {
                     diffForProcessing = blurredCurr;
                 }
@@ -3487,7 +3509,11 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat diffForProcessing;
                 if (hasBackground) {
                     cv::GaussianBlur((*bgShared)(cvRoi), blurredBg, cv::Size(blurK, blurK), 0);
-                    cv::subtract(blurredCurr, blurredBg, diffForProcessing);
+                    backend::processing::differenceImage(
+                        blurredCurr, blurredBg,
+                        backend::processing::contract::contractUsesAbsoluteDifference(
+                            config.processing_contract_version),
+                        diffForProcessing);
                 } else {
                     diffForProcessing = blurredCurr;
                 }

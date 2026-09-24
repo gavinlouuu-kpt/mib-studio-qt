@@ -21,6 +21,7 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
@@ -281,12 +282,29 @@ namespace frontend
 		{
 			// Start from current config to preserve unspecified values
 			pcfg = backend_.processing().getProcessingConfig();
+			// Contract selection (ADR 0006): a profile declares
+			// processing_contract_version at its root; absent means Contract 1.
+			// Unsupported values fall back to Contract 1 with a warning rather
+			// than silently running v2 science.
+			{
+				const int declared = root.value("processing_contract_version").toInt(1);
+				if (backend::processing::contract::isSupportedProcessingContract(declared))
+					pcfg.processing_contract_version = declared;
+				else
+				{
+					SPDLOG_WARN("AppConfigWatcher: unsupported processing_contract_version {}; using Contract 1", declared);
+					pcfg.processing_contract_version = 1;
+				}
+			}
 			if (root.contains("image_processing") && root.value("image_processing").isObject())
 			{
 				const QJsonObject ip = root.value("image_processing").toObject();
 				if (ip.contains("gaussian_blur_size"))
 					pcfg.gaussian_blur_size = ip.value("gaussian_blur_size").toInt(pcfg.gaussian_blur_size);
-				if (ip.contains("bg_subtract_threshold"))
+				// v2 canonical key wins; the legacy key is accepted for Contract 1.
+				if (ip.contains("difference_threshold"))
+					pcfg.bg_subtract_threshold = ip.value("difference_threshold").toInt(pcfg.bg_subtract_threshold);
+				else if (ip.contains("bg_subtract_threshold"))
 					pcfg.bg_subtract_threshold = ip.value("bg_subtract_threshold").toInt(pcfg.bg_subtract_threshold);
 				if (ip.contains("morph_kernel_size"))
 					pcfg.morph_kernel_size = ip.value("morph_kernel_size").toInt(pcfg.morph_kernel_size);

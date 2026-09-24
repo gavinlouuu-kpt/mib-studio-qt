@@ -12,7 +12,11 @@
 
 #include <pybind11/pybind11.h>
 
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingService.h"
+
+#include <stdexcept>
+#include <string>
 
 namespace mib_processing_bindings {
 
@@ -29,8 +33,18 @@ inline T dictGet(const py::dict& d, const char* key, T fallback) {
 
 inline ProcessingConfig configFromDict(const py::dict& d) {
     ProcessingConfig c;  // start from struct defaults; dict only overrides what it sets
+    // Contract selection (ADR 0006). Fail closed on anything but 1 or 2.
+    c.processing_contract_version =
+        dictGet(d, "processing_contract_version", c.processing_contract_version);
+    if (!backend::processing::contract::isSupportedProcessingContract(c.processing_contract_version)) {
+        throw std::invalid_argument("unsupported processing_contract_version " +
+                                    std::to_string(c.processing_contract_version) +
+                                    " (supported: 1, 2)");
+    }
     c.gaussian_blur_size = dictGet(d, "gaussian_blur_size", c.gaussian_blur_size);
+    // v2 canonical `difference_threshold` wins over the legacy v1 key.
     c.bg_subtract_threshold = dictGet(d, "bg_subtract_threshold", c.bg_subtract_threshold);
+    c.bg_subtract_threshold = dictGet(d, "difference_threshold", c.bg_subtract_threshold);
     c.morph_kernel_size = dictGet(d, "morph_kernel_size", c.morph_kernel_size);
     c.morph_iterations = dictGet(d, "morph_iterations", c.morph_iterations);
     c.area_threshold_min = dictGet(d, "area_threshold_min", c.area_threshold_min);
@@ -70,7 +84,12 @@ inline ProcessingConfig configFromDict(const py::dict& d) {
 inline py::dict configToDict(const ProcessingConfig& c) {
     py::dict d;
     d["gaussian_blur_size"] = c.gaussian_blur_size;
-    d["bg_subtract_threshold"] = c.bg_subtract_threshold;
+    d["processing_contract_version"] = c.processing_contract_version;
+    if (backend::processing::contract::contractHasRingWidth(c.processing_contract_version)) {
+        d["bg_subtract_threshold"] = c.bg_subtract_threshold;
+    } else {
+        d["difference_threshold"] = c.bg_subtract_threshold;
+    }
     d["morph_kernel_size"] = c.morph_kernel_size;
     d["morph_iterations"] = c.morph_iterations;
     d["area_threshold_min"] = c.area_threshold_min;

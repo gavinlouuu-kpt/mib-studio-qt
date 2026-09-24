@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingScience.h"
+#include "backend/processing/ProcessingContract.h"
 
 #include "backend/processing/EModulusLut.h"
 
@@ -20,6 +21,8 @@
 #endif
 
 namespace backend::processing::science {
+
+namespace contract = backend::processing::contract;
 
 using services::BatchTrack;
 using services::BrightnessQuantiles;
@@ -344,7 +347,8 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
         (areaUm < config.area_threshold_min || areaUm > config.area_threshold_max)) {
         reasons.push_back(InvalidReasonCode::Area);
     }
-    if (config.enable_ring_ratio_check &&
+    if (contract::contractHasRingWidth(config.processing_contract_version) &&
+        config.enable_ring_ratio_check &&
         (result.ringRatio <= config.ring_ratio_min || result.ringRatio >= config.ring_ratio_max)) {
         reasons.push_back(InvalidReasonCode::Ring);
     }
@@ -427,7 +431,10 @@ FilterResult evaluateInnerContourObject(
     result.deformability = 1.0 - circularity;
     result.area = hullArea;
 
-    if (parentIdx >= 0 && parentIdx < static_cast<int>(analysis.filteredContours.size())) {
+    if (!contract::contractHasRingWidth(config.processing_contract_version)) {
+        // Contract 2 abolishes ring width: not computed, never gated.
+        result.ringRatio = std::numeric_limits<double>::quiet_NaN();
+    } else if (parentIdx >= 0 && parentIdx < static_cast<int>(analysis.filteredContours.size())) {
         result.ringRatio = calculateRingRatio(innerContour, analysis.filteredContours[parentIdx]);
     }
 
@@ -438,6 +445,7 @@ FilterResult evaluateInnerContourObject(
         !config.enable_area_range_check ||
         (areaUm >= config.area_threshold_min && areaUm <= config.area_threshold_max);
     const bool ringRatioInRange =
+        !contract::contractHasRingWidth(config.processing_contract_version) ||
         !config.enable_ring_ratio_check ||
         (result.ringRatio > config.ring_ratio_min && result.ringRatio < config.ring_ratio_max);
     const bool deformabilityInRange = !config.enable_deformability_range_check ||

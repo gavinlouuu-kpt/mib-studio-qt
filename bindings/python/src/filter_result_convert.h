@@ -36,7 +36,13 @@ inline py::dict processedFrameToDict(const ProcessedFrame& frame, double pixelTo
     d["area"] = v.area;
     d["area_um2"] = v.area * pixelToMicron * pixelToMicron;
     d["area_ratio"] = v.areaRatio;
-    d["ring_ratio"] = v.ringRatio;
+    // Contract 1 focus metric (ring width). NaN under Contract 2 -> omitted.
+    if (!std::isnan(v.ringRatio)) {
+        d["ring_ratio"] = v.ringRatio;
+    }
+    // Contract 2 focus metric (per-object Laplacian variance); NaN when not
+    // computed (no detection) so readers can tell "unusable" from a value.
+    d["laplacian_variance"] = v.laplacianVariance;
     if (!std::isnan(v.youngsModulus)) {
         d["youngs_modulus"] = v.youngsModulus;
     }
@@ -81,6 +87,8 @@ inline ProcessedFrame processedFrameFromDict(const py::dict& d) {
     v.area = dictGet(d, "area", 0.0);
     v.areaRatio = dictGet(d, "area_ratio", 0.0);
     v.ringRatio = dictGet(d, "ring_ratio", 0.0);
+    v.laplacianVariance =
+        dictGet(d, "laplacian_variance", std::numeric_limits<double>::quiet_NaN());
     v.isTargetGroup = dictGet(d, "is_target_group", false);
     v.youngsModulus = dictGet(d, "youngs_modulus", std::numeric_limits<double>::quiet_NaN());
     v.brightness.q1 = dictGet(d, "brightness_q1", 0.0);

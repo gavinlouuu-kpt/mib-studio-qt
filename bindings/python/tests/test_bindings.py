@@ -86,7 +86,7 @@ class TestProcessBatch:
 
         assert len(results) == 1
         result = results[0]
-        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus"}
+        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus", "laplacian_variance", "processing_contract_version"}
         assert GOLD_STANDARD_KEYS - {"youngs_modulus"} <= set(result.keys())
         assert result["frame_type"] == "valid"
         assert result["is_valid"] is True

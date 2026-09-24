@@ -72,6 +72,14 @@ private:
     std::shared_ptr<const Impl> impl_;
 };
 
+// The one difference operation shared by every path (kernel mask, empty-frame
+// checks, realtime/batch loops): cv::absdiff under Contract 2
+// (`absoluteDifference`), saturating cv::subtract under Contract 1.
+void differenceImage(const cv::Mat& blurredCurrent,
+                     const cv::Mat& blurredBackground,
+                     bool absoluteDifference,
+                     cv::Mat& outDifference);
+
 // Build the background-difference image over a region of `gray`/`background`.
 //
 // Order: input stages applied symmetrically to the current and background ROI

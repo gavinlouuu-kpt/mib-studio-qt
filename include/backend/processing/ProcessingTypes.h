@@ -58,6 +58,12 @@ struct ProcessingConfig {
     bool enable_target_group_emodulus{false};
     double target_group_emodulus_min{0.0};
     double target_group_emodulus_max{10.0};
+    // Processing contract executed by this config (ADR 0006). 1 = saturating
+    // subtraction + ring width (frozen, byte-for-byte reproducible). 2 =
+    // cv::absdiff background comparison, ring width abolished (NaN, gate
+    // ignored), per-object Laplacian variance as the focus metric.
+    // `bg_subtract_threshold` holds the v2 canonical `difference_threshold`.
+    int processing_contract_version{1};
     // Multi-image recording: capture a series of N consecutive frames per valid detection
     // Metrics are computed only from the first (trigger) frame
     bool multi_image_enabled{false};
