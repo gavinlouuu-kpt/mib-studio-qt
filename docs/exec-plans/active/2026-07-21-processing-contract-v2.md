@@ -49,6 +49,7 @@ See [ADR 0001](../../decisions/0006-processing-contract-v2.md) and the
 | V2-5 | #301 | V2-1, V2-2, V2-3 | Engine ABI v2 (filters + full per-object results) |
 | V2-6 | #302 | V2-1, V2-3, V2-5 | HDF5/Python/export/profiles/UI migration |
 | V2-7 | #303 | V2-2…V2-6 | Calibration + validation (release gate) |
+| V2-8 | — | V2-2, V2-3, V2-5 | Contract selection at runtime: `ProcessingConfig::processing_contract_version` executed by the host service, the bundled kernel and the Python wheel |
 
 Branches are stacked in this order (`claude/pc2-v2-1-schema` → … ).
 
@@ -169,11 +170,50 @@ Branches are stacked in this order (`claude/pc2-v2-1-schema` → … ).
       require the approved corpus, hardware, MLflow, and the signed native v2
       plugin (not available in CI/container). Tracked in the validation doc.
 
+### V2-8 — execute Contract 2 through ProcessingConfig and the Python wheel
+- [x] 2026-09-24: stack merged with `develop` (268 commits; ADR renumbered
+      0001→0006, v2 tests registered on the consolidated `mib_backend_tests`
+      runner, contract-aware JSON export ported onto the streaming export
+      engine via `read_processing_contract_version`).
+- [x] `ProcessingConfig::processing_contract_version` (default 1) is the
+      runtime contract selector. `contract::isSupportedProcessingContract`,
+      `contractUsesAbsoluteDifference`, `contractHasRingWidth` are the only
+      places that interpret it.
+- [x] One shared `differenceImage()` (absdiff under Contract 2, saturating
+      subtract under Contract 1) used by `buildDifferenceImage`, the bundled
+      kernel, both host empty-frame helpers and the three realtime/batch loops
+      that still called `cv::subtract` directly — closes the open V2-2
+      acceptance item.
+- [x] `processMaskWithActiveKernel` derives the kernel's absolute-difference
+      flag from the contract and fails closed on unsupported versions.
+- [x] Ring width under Contract 2: NaN on the inner, outer and empty paths,
+      never gated, never an invalid reason. Laplacian variance already computed
+      per object (V2-3).
+- [x] Profile loading (`AppConfigWatcher`) reads the root
+      `processing_contract_version` and the canonical `difference_threshold`.
+- [x] Python wheel 0.3.0: `processing_contract_version` / `difference_threshold`
+      in the config dict (ValueError on unsupported contracts), result dicts
+      carry `processing_contract_version` + `laplacian_variance` and omit
+      `ring_ratio` under Contract 2, `SUPPORTED_CONTRACT_VERSIONS = (1, 2)`,
+      new `compute_processed_objects` (per-object records for one frame/ROI).
+- [x] Tests: `processing.contract2_conformance` C-7 (service-level selection,
+      fail-closed) + 6 pytest cases; Contract-1 golden/seam/multi-object
+      unchanged; full backend lane 114/114.
+- [ ] Frontend surfaces still read `bg_subtract_threshold` in the UI and label
+      the histogram "ring"; the AppConfigWatcher change is not covered by a
+      Qt test in the backend-only lane (V2-6 follow-on).
+- [ ] Native ABI-v2 loader activation and signing (V2-5 follow-on) — the
+      bundled kernel is the Contract-2 executor until then.
+
 ## Status summary
 
-Slices V2-1…V2-7 landed as stacked branches. Every deterministic, container-
-verifiable behavior is implemented and tested (Contract-1 output byte-for-byte
-unchanged throughout). The remaining work is resource-dependent and enumerated
-in `docs/processing-contract-v2-validation.md`: the native v2 plugin + loader
-activation (V2-5), the HDF5 compound + exporters + review/monitoring UI (V2-6),
-and the real-corpus/hardware/MLflow calibration + release references (V2-7).
+Slices V2-1…V2-8 are on `feat/pc2-contract2` (rebased onto `develop`
+2026-09-24). Contract 2 is now executable end to end from a config: desktop
+profile → `AppConfigWatcher` → `ProcessingService` (realtime, batch, HDF5
+reanalysis, empty-frame checks) and Python wheel 0.3.0
+(`compute_processed_frame` / `process_batch` / `compute_processed_objects`),
+with Contract-1 output byte-for-byte unchanged. The first real-corpus run is
+the cells-in-different-focus dataset (`gavinlouuu/mib-cells-different-focus`,
+config `contract2`). Still open: native ABI-v2 loader activation + signing
+(V2-5), review/monitoring UI relabeling (V2-6), and threshold calibration /
+hardware / MLflow references (V2-7).

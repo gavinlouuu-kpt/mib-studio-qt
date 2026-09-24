@@ -212,6 +212,17 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Processing Contract v2 — runtime selection (V2-8)** (2026-09-24, epic
+  #296) — the stack was merged with `develop` and Contract 2 became
+  executable from a config: `ProcessingConfig::processing_contract_version`
+  drives one shared `differenceImage()` (absdiff vs subtract) across the
+  bundled kernel, empty-frame helpers and realtime/batch loops; ring width is
+  `NaN`/ungated under Contract 2; `AppConfigWatcher` reads the root contract
+  key + `difference_threshold`; wheel 0.3.0 accepts the contract in its config
+  dict, omits `ring_ratio` / emits `laplacian_variance` under Contract 2 and
+  adds `compute_processed_objects`. Conformance C-7 + pytest; Contract-1
+  golden unchanged. See `docs/exec-plans/active/2026-07-21-processing-contract-v2.md`.
+
 - **Processing Contract v2 — HDF5 focus metric + reviewable export** (2026-07-21,
   issue #302 follow-on, epic #296) — closes the e2e generate→review loop.
   `laplacianVariance` is appended to the HDF5 per-object compound (offsets

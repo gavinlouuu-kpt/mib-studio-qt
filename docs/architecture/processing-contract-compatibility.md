@@ -43,6 +43,25 @@ difference, filter chain, per-object Laplacian variance. A Contract-2 profile
 may activate a core only if the core advertises the capabilities the profile
 needs.
 
+## Runtime selection (V2-8)
+
+The executed contract is `ProcessingConfig::processing_contract_version`
+(default `1`), set from a profile's root `processing_contract_version` by
+`AppConfigWatcher` or from a Python config dict. Only
+`backend::processing::contract` interprets it:
+
+| Helper | 1 | 2 |
+|---|---|---|
+| `contractUsesAbsoluteDifference` | saturating `cv::subtract` | `cv::absdiff` (kernel mask, empty-frame checks, realtime/batch loops) |
+| `contractHasRingWidth` | ring ratio computed + gated | ring ratio `NaN`, gate ignored, no `Ring` invalid reason |
+| `isSupportedProcessingContract` | ✅ | ✅ (anything else fails closed: no mask, `ValueError` in Python) |
+
+The Python wheel (0.3.0+) executes both contracts; `CONTRACT_VERSION` stays
+`1` (the default when a config omits the key) and
+`SUPPORTED_CONTRACT_VERSIONS == (1, 2)`. Result dicts carry
+`processing_contract_version`; a Contract-2 record has no `ring_ratio` key and
+always has `laplacian_variance` (`NaN` when no object was detected).
+
 ## Config-schema handling (loading a profile document)
 
 `classifyConfigSchema(sourceSchema, targetSchema)` drives loading:

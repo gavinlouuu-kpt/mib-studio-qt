@@ -34,6 +34,7 @@ in the backend-only CTest lane:
 | Per-object Laplacian variance: blur lowers score, inversion preserves it, neighbours/background excluded, NaN for tiny/no object, per-object independence | `processing.laplacian_variance`, `processing.contract2_conformance` |
 | Incompatible non-empty background is a Contract-2 error | `processing.contract2_conformance` |
 | Focus gate disabled by default (no silent invalidation) | `processing.contract2_conformance` |
+| Runtime contract selection through `ProcessingService::computeProcessedFrame` (dark object: invisible under 1, detected under 2; ring `NaN`; no `Ring` reason; contract 3 fails closed) | `processing.contract2_conformance` (C-7), `bindings/python/tests/test_bindings.py` |
 | Config schema/migration + compatibility matrix | `processing.contract_v2_migration` |
 | Engine ABI v2 POD conformance + capability negotiation | `processing.core_abi_v2_c`, `processing.core_capabilities` |
 | Focus-score autofocus convergence/stability/clamp | `backend.autofocus_focus_score` |
@@ -46,9 +47,14 @@ These acceptance items need the approved real corpus, hardware recordings, an
 MLflow server, and the signed native v2 plugin. They are **not** satisfied by
 this slice and remain open on the release gate:
 
-- [ ] Controlled experiments over the approved real corpus + hardware
+- [~] Controlled experiments over the approved real corpus + hardware
       recordings; upload original/filtered/blurred/diff/threshold/mask/object
       crops/overlays/params/metrics/summaries to MLflow (`mlflow.yofo.bio`).
+      First real-corpus run 2026-09-24: the cells-in-different-focus dataset
+      (`gavinlouuu/mib-cells-different-focus`) re-processed under Contract 2
+      with wheel 0.3.0 (config `contract2`, per-recording
+      `provenance/recordings/*/contract2_reprocess.json`); MLflow upload still
+      pending.
 - [ ] Calibrate the Laplacian gate, optional filter defaults, and autofocus
       sample/step parameters from that evidence; keep the gate disabled until
       explicitly reviewed.
