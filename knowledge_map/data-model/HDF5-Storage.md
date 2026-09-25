@@ -102,6 +102,11 @@
   `MIB_HDF5_FLUSH_INTERVAL_MS` (default 5000 ms) so the recorder thread stays
   off synchronous I/O on every batch. A crash loses at most one interval's
   worth of buffered frames; there is no recovery sidecar.
+- **No compression on the live path.** Datasets are chunked but unfiltered;
+  inline gzip cannot keep up with 1000+ fps on the single writer thread and a
+  full `HdfWriteQueue` aborts the run. Lossless compression is planned as a
+  post-run rewrite — see
+  [post-run compression plan](../../docs/exec-plans/active/2026-09-25-post-run-hdf5-compression.md).
 
 ## Read paths (scalable)
 
