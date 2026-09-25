@@ -156,6 +156,11 @@ add_library(mib_processing_core MODULE
 )
 target_include_directories(mib_processing_core PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(mib_processing_core PRIVATE spdlog::spdlog)
+# Header-only: ProcessingScience.cpp includes ProcessingContract.h. Without the
+# target, MSVC builds (Conan nlohmann_json) cannot find the header.
+if(TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(mib_processing_core PRIVATE nlohmann_json::nlohmann_json)
+endif()
 mib_link_opencv(mib_processing_core PRIVATE)
 target_compile_definitions(mib_processing_core PRIVATE
     MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
@@ -168,7 +173,8 @@ set_target_properties(mib_processing_core PROPERTIES
     AUTORCC OFF
     POSITION_INDEPENDENT_CODE ON
     # MSVC only exports __declspec(dllexport) symbols; ELF must opt into the
-    # same discipline so the release audit sees exactly mib_processing_get_api.
+    # same discipline so the release audit sees exactly mib_processing_get_api
+    # and mib_processing_get_api_v2.
     C_VISIBILITY_PRESET hidden
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
