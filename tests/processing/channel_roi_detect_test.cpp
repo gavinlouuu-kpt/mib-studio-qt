@@ -36,6 +36,24 @@ cv::Mat makeChannelBackground() {
     return bg;
 }
 
+// A 240x1184 MIB-style background: the channel sits mid-frame (~22% of the
+// height) between dark textured walls, with flat glass above and below. The
+// flat glass runs are longer than the channel, so a longest-run pick would
+// land on the glass.
+cv::Mat makeMidFrameChannelBackground() {
+    cv::Mat bg(240, 1184, CV_8UC1, cv::Scalar(150)); // flat glass
+    for (int r = 90; r < 96; ++r) {
+        bg.row(r).setTo(60 + (r % 3) * 10); // top wall
+    }
+    for (int r = 96; r < 148; ++r) {
+        bg.row(r).setTo(120 + (r % 3) * 3); // lightly textured channel
+    }
+    for (int r = 148; r < 154; ++r) {
+        bg.row(r).setTo(60 + (r % 3) * 10); // bottom wall
+    }
+    return bg;
+}
+
 } // namespace
 
 int main() {
@@ -80,14 +98,24 @@ int main() {
         check(b.y >= a.y && (b.y + b.h) <= (a.y + a.h), "larger margin shrinks (never grows) the band");
     }
 
-    // 5) Service integration: disabled by default -> empty ROI (full frame).
+    // 5) Mid-frame channel: pick the wall-bounded band, not the longer flat
+    //    glass runs touching the frame edge, and accept a ~22%-high band.
+    {
+        const cv::Mat mid = makeMidFrameChannelBackground();
+        const ChannelRoi r = detectChannelRoi(mid);
+        check(r.w == mid.cols, "mid-frame channel keeps full width");
+        check(r.y >= 94 && r.y <= 104, "mid-frame channel top sits at the top wall");
+        check(r.y + r.h >= 140 && r.y + r.h <= 150, "mid-frame channel bottom sits at the bottom wall");
+    }
+
+    // 6) Service integration: disabled by default -> empty ROI (full frame).
     {
         backend::services::ProcessingService service;
         const auto roi = service.computeAutoRoiFromBackground(bg);
         check(roi.w == 0 && roi.h == 0, "auto-ROI disabled by default returns full-frame sentinel");
     }
 
-    // 6) Service integration: enabled -> wall-avoiding ROI matching the detector.
+    // 7) Service integration: enabled -> wall-avoiding ROI matching the detector.
     {
         backend::services::ProcessingService service;
         backend::services::ProcessingConfig config;

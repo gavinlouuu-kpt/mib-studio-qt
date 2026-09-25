@@ -1321,7 +1321,11 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
   the wall noise that both pollutes detections and defeats the empty-frame fast
   path. Guard: `processing.channel_roi_detect`. Config threaded through
   `AppConfigWatcher` (`image_processing`). Task:
-  [[../task/2026-07-21-auto-roi-warmup]].
+  [[../task/2026-07-21-auto-roi-warmup]]. Landed on the Contract-2 branch
+  2026-09-25 with the two fixes validated on the cells-different-focus
+  dataset: the band is the wall-bounded run with the strongest walls (not the
+  longest run, which is the flat glass outside a mid-frame channel) and
+  `minBandFraction` defaults to 0.15 (the MIB channel is ~22% of 1184x240).
 
 - **Trigger-path hardening** (2026-07-18, issue #227) — the
   [[../services/TriggerService]] thread elevates itself to

@@ -81,30 +81,53 @@ ChannelRoi detectChannelRoi(const cv::Mat& backgroundGray, const ChannelRoiParam
         threshold = static_cast<float>(peak * 0.5);
     }
 
-    // Largest contiguous run of non-wall rows = the channel band.
+    // The channel band is a run of non-wall rows bounded by wall rows on BOTH
+    // sides. Runs touching the frame edge are the flat glass outside the
+    // channel (on 1184x240 MIB frames the channel sits mid-frame and, at strong
+    // defocus, the glass outside it is the longest flat run), so they are never
+    // the channel. Among bounded runs tall enough to be a channel, pick the one
+    // with the strongest bounding walls.
+    const int minHeight = std::max(1, static_cast<int>(std::lround(rows * params.minBandFraction)));
+    const int wallWindow = 8;
+    auto windowPeak = [&](int from, int to) {
+        float peak = 0.0f;
+        for (int r = std::max(0, from); r < std::min(rows, to); ++r) {
+            peak = std::max(peak, rowProfile[static_cast<size_t>(r)]);
+        }
+        return peak;
+    };
+
     int bestStart = -1;
     int bestLen = 0;
-    int currentStart = -1;
-    int currentLen = 0;
-    for (int r = 0; r < rows; ++r) {
-        const bool isWall = rowProfile[static_cast<size_t>(r)] > threshold;
-        if (isWall) {
-            currentLen = 0;
-            currentStart = -1;
+    float bestStrength = -1.0f;
+    int runStart = -1;
+    for (int r = 0; r <= rows; ++r) {
+        const bool isWall = r == rows || rowProfile[static_cast<size_t>(r)] > threshold;
+        if (!isWall) {
+            if (runStart < 0) {
+                runStart = r;
+            }
             continue;
         }
-        if (currentLen == 0) {
-            currentStart = r;
+        if (runStart < 0) {
+            continue;
         }
-        ++currentLen;
-        if (currentLen > bestLen) {
-            bestLen = currentLen;
-            bestStart = currentStart;
+        const int runLen = r - runStart;
+        const bool bounded = runStart > 0 && r < rows;
+        if (bounded && runLen >= minHeight) {
+            const float strength = std::min(windowPeak(runStart - wallWindow, runStart),
+                                            windowPeak(r, r + wallWindow));
+            if (strength > bestStrength) {
+                bestStrength = strength;
+                bestStart = runStart;
+                bestLen = runLen;
+            }
         }
+        runStart = -1;
     }
 
     if (bestStart < 0 || bestLen <= 0) {
-        return fullFrame; // everything looked like a wall: don't crop
+        return fullFrame; // no wall-bounded channel band: don't crop
     }
 
     const int margin = std::max(0, params.marginRows);
@@ -117,7 +140,6 @@ ChannelRoi detectChannelRoi(const cv::Mat& backgroundGray, const ChannelRoiParam
 
     // Reject an implausibly thin band, and skip cropping when no wall was
     // actually trimmed (band spans the whole frame).
-    const int minHeight = std::max(1, static_cast<int>(std::lround(rows * params.minBandFraction)));
     if (height < minHeight || height >= rows) {
         return fullFrame;
     }

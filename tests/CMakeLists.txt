@@ -343,7 +343,7 @@ add_test(NAME processing.pipeline_smoke COMMAND $<TARGET_FILE:mib_backend_tests>
 set_tests_properties(processing.pipeline_smoke PROPERTIES LABELS "processing;backend")
 
 mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
-add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:channel_roi_detect_test>)
+add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
 set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_executable(processing_core_abi_c_test

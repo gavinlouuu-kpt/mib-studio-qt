@@ -35,12 +35,15 @@ struct ChannelRoiParams {
     int marginRows{1};
     // Reject the detection (return the full frame) when the surviving channel
     // band is thinner than this fraction of the frame height — an over-thin
-    // band is more likely a misdetection than a real channel.
-    double minBandFraction{0.25};
+    // band is more likely a misdetection than a real channel. The MIB channel
+    // is ~22% of a 1184x240 frame, so this must stay below that.
+    double minBandFraction{0.15};
 };
 
 // Detect the horizontal channel band in a captured background image and return
-// an ROI (full width, wall rows excluded). Returns the full frame on
+// an ROI (full width, wall rows excluded). The band is the non-wall run bounded
+// by walls on both sides with the strongest bounding walls, never a run that
+// touches the frame edge. Returns the full frame on
 // empty/degenerate/ambiguous input.
 ChannelRoi detectChannelRoi(const cv::Mat& backgroundGray, const ChannelRoiParams& params = {});
 
