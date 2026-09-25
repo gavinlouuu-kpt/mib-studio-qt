@@ -110,3 +110,15 @@ Provisional record at stop via the coordinator, reference from file, Review
 tab drawing and the right-click full-run computation with save. Plan
 completed; open debt: TD-16 (plain-series GUI cost), TD-17 (Review uses the
 current pixel-to-micron factor).
+
+## 2026-09-25 — Linux backend lane (container, pre-PR)
+
+`linux-backend-only` (GCC 13, Ubuntu 24.04 system packages) builds cleanly
+with the branch; `ctest --preset linux-backend-only-test` passes every KDE
+test. `recording.kde_full_run_core` failed only when run as **root**: root
+ignores permission bits, so the "read-only on disk" refusal cannot be
+provoked. The test now asserts that refusal only when the OS refuses a
+read-write open of the chmod'ed file for the current user, and prints a NOTE
+otherwise; verified both ways (root: NOTE + pass; `runuser -u nobody`:
+refusal asserted + pass). The unrelated `scripts.run_processing_conformance_input`
+failed there because the container's Python 3.11 loaded Ubuntu's 3.12 numpy.

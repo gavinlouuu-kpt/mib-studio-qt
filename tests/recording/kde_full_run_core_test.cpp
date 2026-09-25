@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <random>
 #include <string>
 #include <vector>
@@ -145,11 +146,19 @@ int main() {
         fs::permissions(path,
                         fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
                         fs::perm_options::remove);
+        // Root (containers, devcontainer) bypasses permission bits, so only
+        // assert the refusal where the OS itself refuses writes to the file.
+        const bool osRefusesWrite =
+            !std::fstream(path, std::ios::in | std::ios::out | std::ios::binary).is_open();
         Hdf5Service updater;
         const bool opened = updater.openFileForUpdate(path);
         if (opened) updater.closeFile();
         fs::permissions(path, fs::perms::owner_write, fs::perm_options::add);
-        MIB_EXPECT(!opened, "file read-only on disk refused");
+        if (osRefusesWrite)
+            MIB_EXPECT(!opened, "file read-only on disk refused");
+        else
+            std::printf("NOTE: write bits not enforced for this user (root?); "
+                        "read-only refusal not checked\n");
     }
 
     return mib::test::exitCode();
