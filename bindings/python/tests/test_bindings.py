@@ -86,7 +86,7 @@ class TestProcessBatch:
 
         assert len(results) == 1
         result = results[0]
-        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus", "laplacian_variance", "processing_contract_version", "bbox_xywh", "centroid_xy"}
+        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus", "laplacian_variance", "processing_contract_version", "bbox_xywh", "centroid_xy", "in_channel"}
         assert GOLD_STANDARD_KEYS - {"youngs_modulus"} <= set(result.keys())
         assert result["frame_type"] == "valid"
         assert result["is_valid"] is True
@@ -332,3 +332,19 @@ def test_object_geometry_is_in_frame_coordinates():
     assert abs(cx - 39.5) < 1.5 and abs(cy - 29.5) < 1.5
     x, y, w, h = objs[0]["bbox_xywh"]
     assert 28 <= x <= 31 and 18 <= y <= 21 and 18 <= w <= 22 and 18 <= h <= 22
+
+
+def test_channel_band_rejects_objects_outside_by_centroid():
+    bg = np.full((80, 120), 128, dtype=np.uint8)
+    frame = bg.copy()
+    frame[4:14, 20:40] = 88    # on the top wall (centroid row ~8.5)
+    frame[34:54, 70:90] = 88   # in the channel (centroid row ~43.5)
+    cfg = _contract_config(2)
+    cfg["enable_area_range_check"] = False
+    objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 120, 80))
+    assert len(objs) == 2 and all(o["in_channel"] and o["is_valid"] for o in objs)
+    cfg["channel_band_y"], cfg["channel_band_h"] = 20, 50  # rows 20..69
+    objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 120, 80))
+    by_row = sorted(objs, key=lambda o: o["centroid_xy"][1])
+    assert not by_row[0]["in_channel"] and not by_row[0]["is_valid"]
+    assert by_row[1]["in_channel"] and by_row[1]["is_valid"]

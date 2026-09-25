@@ -276,7 +276,7 @@ public:
                                                 // first — no pulse is dispatched for them
         // Invalid-reason histogram, indexed by science::InvalidReasonCode:
         // {NoContour, Border, Area, Ring, Deform, AreaRatio, Laplacian}.
-        uint64_t reasonCounts[7]{};
+        uint64_t reasonCounts[8]{};
     };
     IdentificationCounters getIdentificationCounters() const;
     void resetIdentificationCounters();
@@ -482,9 +482,10 @@ public:
     using BackgroundCaptureCallback = std::function<void(const cv::Mat& background, uint64_t frameIndex)>;
     void setBackgroundCaptureCallback(BackgroundCaptureCallback callback);
 
-    // Suggested-ROI callback: fired when auto_roi_from_background derives a
-    // wall-avoiding ROI from a captured background (after it is applied via
-    // setRealtimeRoi). Lets the UI reflect the automatically chosen ROI.
+    // Channel-band callback: fired when auto_roi_from_background detects the
+    // channel band (full width, wall rows excluded, frame coordinates) in a
+    // captured background. The band gates objects by centroid; the ROI is not
+    // changed. Lets the UI draw the detected band.
     using SuggestedRoiCallback = std::function<void(const Roi& roi, uint64_t frameIndex)>;
     void setSuggestedRoiCallback(SuggestedRoiCallback callback);
 
@@ -493,6 +494,10 @@ public:
     // detection is disabled or the background is unusable. Pure w.r.t. service
     // state (does not apply the result); exposed for reuse and testing.
     Roi computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const;
+
+    // Channel band detected from the latest background, in frame coordinates.
+    // Empty (h == 0) when auto_roi_from_background is off or no background.
+    Roi getChannelBand() const;
 
 private:
     struct DroppedFrameCounts {
@@ -546,8 +551,11 @@ private:
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
     FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi, 
                                       const ProcessingConfig& config, const cv::Mat& originalImage);
+    // maskOrigin is the frame position of the mask's (0,0), so the frame-space
+    // channel band can be expressed in the mask's coordinates.
     std::vector<FilterResult> filterProcessedObjects(const cv::Mat& processedImage, const cv::Rect& roi,
-                                                     const ProcessingConfig& config, const cv::Mat& originalImage);
+                                                     const ProcessingConfig& config, const cv::Mat& originalImage,
+                                                     cv::Point maskOrigin = {});
     // Batch track matching routed through the selected kernel; -1 = new track.
     int matchTrackWithActiveKernel(const std::vector<BatchTrack>& tracks,
                                    const std::vector<bool>& matchedThisFrame,
@@ -767,9 +775,13 @@ private:
     mutable std::mutex backgroundCaptureCallbackMutex_;
     BackgroundCaptureCallback backgroundCaptureCallback_;
 
-    // Suggested-ROI callback (fired when auto_roi_from_background applies a ROI)
+    // Channel-band callback (fired when auto_roi_from_background detects a band)
     mutable std::mutex suggestedRoiCallbackMutex_;
     SuggestedRoiCallback suggestedRoiCallback_;
+
+    // Channel band from the latest background (frame coordinates; h == 0: none)
+    mutable std::mutex channelBandMutex_;
+    Roi channelBand_{};
     
     // Auto-capture state tracking
     std::atomic<uint64_t> consecutiveEmptyFrames_{0};
@@ -800,7 +812,7 @@ private:
     std::atomic<uint64_t> idInvalidObjects_{0};
     std::atomic<uint64_t> idTargetGroupObjects_{0};
     std::atomic<uint64_t> idUnservedTargetGroupObjects_{0};
-    std::atomic<uint64_t> idReasonCounts_[7]{};
+    std::atomic<uint64_t> idReasonCounts_[8]{};
     
     // Pixel to micron conversion factor (default: 0.4886)
     std::atomic<double> pixelToMicronFactor_{0.4886};

@@ -83,8 +83,13 @@ enum class InvalidReasonCode : uint8_t {
     Deform,
     AreaRatio,
     Laplacian, // Contract v2 object focus gate (disabled by default)
+    Channel,   // centroid outside the channel band (auto channel band)
 };
-inline constexpr int kInvalidReasonCount = 7;
+inline constexpr int kInvalidReasonCount = 8;
+
+// True when no channel band is configured, or the centroid row lies inside it.
+bool centroidInChannelBand(const services::FilterResult& result,
+                           const services::ProcessingConfig& config);
 
 // Returns the reasons `result` is invalid. Empty for a valid detection.
 // pixelToMicronFactor converts result.area (pixels) to μm² to compare against

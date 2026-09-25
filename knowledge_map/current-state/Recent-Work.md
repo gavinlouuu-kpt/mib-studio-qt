@@ -1326,6 +1326,11 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
   dataset: the band is the wall-bounded run with the strongest walls (not the
   longest run, which is the flat glass outside a mid-frame channel) and
   `minBandFraction` defaults to 0.15 (the MIB channel is ~22% of 1184x240).
+  Same day the band stopped cropping the ROI: it now gates objects by
+  **centroid** (`FilterResult::inChannel`, invalid reason `Channel`, wheel
+  0.3.2 `channel_band_y/h` → `in_channel`), so debris stuck on a wall is
+  rejected without clipping cells near the walls. See
+  [[../services/ProcessingService#Channel band from background]].
 
 - **Trigger-path hardening** (2026-07-18, issue #227) — the
   [[../services/TriggerService]] thread elevates itself to

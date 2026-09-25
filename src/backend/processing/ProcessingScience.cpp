@@ -321,6 +321,14 @@ bool contourTouchesRoiBorder(const std::vector<cv::Point>& contour,
     return false;
 }
 
+bool centroidInChannelBand(const FilterResult& result, const ProcessingConfig& config) {
+    if (config.channel_band_h <= 0) {
+        return true;
+    }
+    return result.centroidY >= config.channel_band_y &&
+           result.centroidY < config.channel_band_y + config.channel_band_h;
+}
+
 std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result,
                                                       const ProcessingConfig& config,
                                                       double pixelToMicronFactor) {
@@ -343,6 +351,9 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
         return reasons;
     }
 
+    if (!result.inChannel) {
+        reasons.push_back(InvalidReasonCode::Channel);
+    }
     const double areaUm = result.area * pixelToMicronFactor * pixelToMicronFactor;
     if (config.enable_area_range_check &&
         (areaUm < config.area_threshold_min || areaUm > config.area_threshold_max)) {
@@ -403,6 +414,7 @@ FilterResult evaluateInnerContourObject(
             ? analysis.filteredContours[static_cast<size_t>(parentIdx)]
             : innerContour;
     populateGeometry(result, geometryContour);
+    result.inChannel = centroidInChannelBand(result, config);
     if (!originalImage.empty()) {
         const cv::Rect bbox(static_cast<int>(result.bboxX), static_cast<int>(result.bboxY),
                             static_cast<int>(result.bboxWidth),
@@ -460,8 +472,8 @@ FilterResult evaluateInnerContourObject(
          result.laplacianVariance >= config.laplacian_variance_min &&
          result.laplacianVariance <= config.laplacian_variance_max);
 
-    if (areaInRange && ringRatioInRange && deformabilityInRange && areaRatioInRange &&
-        laplacianInRange) {
+    if (result.inChannel && areaInRange && ringRatioInRange && deformabilityInRange &&
+        areaRatioInRange && laplacianInRange) {
         result.inRange = true;
         result.isValid = true;
     }
@@ -508,6 +520,7 @@ FilterResult evaluateOuterContourObject(
     const cv::Mat objectMask = makeObjectMask(processedImage.size(), analysis.filteredContours,
                                               static_cast<int>(contourIdx), -1, false);
     populateGeometry(result, contour);
+    result.inChannel = centroidInChannelBand(result, config);
     if (!originalImage.empty()) {
         const cv::Rect bbox(static_cast<int>(result.bboxX), static_cast<int>(result.bboxY),
                             static_cast<int>(result.bboxWidth),
@@ -554,7 +567,8 @@ FilterResult evaluateOuterContourObject(
          result.laplacianVariance >= config.laplacian_variance_min &&
          result.laplacianVariance <= config.laplacian_variance_max);
 
-    if (areaInRange && deformabilityInRange && areaRatioInRange && laplacianInRange) {
+    if (result.inChannel && areaInRange && deformabilityInRange && areaRatioInRange &&
+        laplacianInRange) {
         result.inRange = true;
         result.isValid = true;
     }

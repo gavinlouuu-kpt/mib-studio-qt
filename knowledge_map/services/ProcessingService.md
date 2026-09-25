@@ -161,7 +161,9 @@ All gates in one struct. Notable fields:
 - `auto_background_enabled` + `auto_background_empty_frames`,
   `auto_background_cooldown_frames`
 - `auto_roi_from_background` (+ `auto_roi_wall_gradient_ratio`,
-  `auto_roi_wall_margin`) — see [[#Auto-fit ROI from background]]
+  `auto_roi_wall_margin`) — see [[#Channel band from background]];
+  `channel_band_y`/`channel_band_h` are the runtime band the object filter
+  gates on (not persisted)
 - Target-group gate: `target_group_area_*`, `target_group_deformability_*`,
   `enable_target_group_emodulus` + `target_group_emodulus_*` (uses
   `EModulusLut`, which is now fed from the managed LUT cache prepared by
@@ -337,33 +339,39 @@ read path. Snapshot is immutable; readers are safe without extra locking.
 `setProcessingConfig` / `setRealtimeRoi`), so the realtime loop's hoisted-config
 cache refreshes when the background changes.
 
-## Auto-fit ROI from background
+## Channel band from background
 
 Including the microfluidic **channel walls** in the processing ROI injects
-noise (spurious wall-edge contours) and defeats the empty-frame fast path,
-while cropping too tight clips real cells via the border check — so the ROI is
-a *window* that must clear the walls without cutting the cell band (see
+noise (spurious wall-edge contours, debris stuck on a wall), while cropping the
+ROI to clear them clips real cells near the walls via the border check (see
 issue #295 for the measured tradeoff on `gavinlouuu/512x96stream`).
 
-`auto_roi_from_background` (default **off**) automates that choice.
+`auto_roi_from_background` (default **off**) resolves this without cropping.
 `detectChannelRoi` (`ChannelRoiDetect.{h,cpp}`, a pure OpenCV-only free
 function in `backend::processing`, part of the Qt-free `mib_processing` core)
-takes a captured background and returns a full-width ROI with the wall rows
-excluded: it takes the mean vertical-gradient (`cv::Sobel` + `cv::reduce`) row
-profile, treats rows whose gradient exceeds `auto_roi_wall_gradient_ratio` ×
-the central-channel baseline as walls, keeps the largest contiguous non-wall
-band, and trims `auto_roi_wall_margin` rows inward. It **fails safe** — empty,
-flat, or ambiguous input returns the full frame — so the result is always
-applyable.
+takes a captured background and returns the full-width channel band: it takes
+the mean vertical-gradient (`cv::Sobel` + `cv::reduce`) row profile, treats
+rows whose gradient exceeds `auto_roi_wall_gradient_ratio` × the
+central-third baseline as walls, picks the non-wall run bounded by walls on
+both sides with the strongest bounding walls (runs touching the frame edge are
+the glass outside a mid-frame channel), and trims `auto_roi_wall_margin` rows
+inward. Bands thinner than `minBandFraction` (0.15; the MIB channel is ~22% of
+1184x240) are rejected. It **fails safe** — empty, flat, or ambiguous input
+returns the full frame.
 
 Wiring: `setRealtimeBackgroundGray` is the single chokepoint every background
 capture (manual and auto-background, all loop variants) funnels through. When
-the flag is set it calls `computeAutoRoiFromBackground` (maps
-`ProcessingConfig` → `ChannelRoiParams`, runs the detector) after releasing
-`rtMutex_`, applies the result via `setRealtimeRoi`, and fires
-`SuggestedRoiCallback` so the UI can reflect the chosen ROI. Off by default the
-manually drawn ROI is never touched. (Frontend surfacing of the callback is a
-follow-up; the backend applies the ROI directly today.)
+the flag is set it runs `computeAutoRoiFromBackground` and publishes the band
+(`getChannelBand()`, frame coordinates) *before* bumping the background
+generation, then fires `SuggestedRoiCallback` with the band. The ROI is never
+changed. The service's `filterProcessedObjects` wrapper expresses the band in
+the mask's coordinates (`maskOrigin`: the ROI-local realtime loops pass the
+ROI's top-left) as `ProcessingConfig::channel_band_y/h`, and the shared object
+filter sets `FilterResult::inChannel` from the object's centroid row. An
+object outside the band is invalid with `InvalidReasonCode::Channel` (tooltip
+"Wall"); its metrics are still computed. The Python wheel exposes the same
+gate: pass `channel_band_y`/`channel_band_h` (frame rows) in the config dict
+and read `in_channel` per object. Native ABI cores do not carry the band yet.
 
 ## Metrics exposed
 

@@ -125,6 +125,11 @@ std::vector<InvalidReason> getInvalidReasons(
                                    .arg(config.laplacian_variance_min, 0, 'f', 1)
                                    .arg(config.laplacian_variance_max, 0, 'f', 1)});
             break;
+        case science::InvalidReasonCode::Channel:
+            reasons.push_back({"Wall",
+                               QString("Centroid row %1 outside the channel band")
+                                   .arg(result.centroidY, 0, 'f', 1)});
+            break;
         }
     }
 

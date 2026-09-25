@@ -5,6 +5,7 @@
 // gated on ProcessingConfig::auto_roi_from_background.
 
 #include "backend/processing/ChannelRoiDetect.h"
+#include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingService.h"
 
 #include <opencv2/imgproc.hpp>
@@ -126,6 +127,57 @@ int main() {
         check(roi.w == direct.w && roi.h == direct.h && roi.x == direct.x && roi.y == direct.y,
               "enabled auto-ROI matches the pure detector");
         check(roi.h > 0 && roi.h < bg.rows, "enabled auto-ROI excludes the walls");
+    }
+
+    // 8) Background capture publishes the channel band and leaves the ROI
+    //    alone (no crop): objects are gated by centroid instead.
+    {
+        backend::services::ProcessingService service;
+        backend::services::ProcessingConfig config;
+        config.auto_roi_from_background = true;
+        service.setProcessingConfig(config);
+        const auto roiBefore = service.getRealtimeRoi();
+        service.setRealtimeBackgroundGray(bg);
+        const auto band = service.getChannelBand();
+        const ChannelRoi direct = detectChannelRoi(bg);
+        check(band.y == direct.y && band.h == direct.h, "background publishes the detected band");
+        const auto roiAfter = service.getRealtimeRoi();
+        check(roiAfter.x == roiBefore.x && roiAfter.y == roiBefore.y && roiAfter.w == roiBefore.w &&
+                  roiAfter.h == roiBefore.h,
+              "channel band does not crop the ROI");
+        service.setRealtimeBackgroundGray(cv::Mat{});
+        check(service.getChannelBand().h == 0, "clearing the background clears the band");
+    }
+
+    // 9) Object filter: centroid outside the band -> invalid with reason
+    //    Channel; inside -> valid. No band -> both valid.
+    {
+        namespace science = backend::processing::science;
+        cv::Mat mask(96, 200, CV_8UC1, cv::Scalar(0));
+        cv::rectangle(mask, cv::Rect(20, 2, 16, 10), cv::Scalar(255), cv::FILLED);  // on the wall
+        cv::rectangle(mask, cv::Rect(120, 40, 16, 16), cv::Scalar(255), cv::FILLED); // in channel
+        backend::services::ProcessingConfig config;
+        config.processing_contract_version = 2;
+        config.enable_area_range_check = false;
+        config.enable_border_check = false;
+        const cv::Rect frame(0, 0, mask.cols, mask.rows);
+
+        auto open = science::filterProcessedObjects(mask, frame, config, cv::Mat{}, 1.0, nullptr);
+        check(open.size() == 2 && open[0].isValid && open[1].isValid && open[0].inChannel &&
+                  open[1].inChannel,
+              "no band: both objects valid and in channel");
+
+        config.channel_band_y = 20;
+        config.channel_band_h = 60;
+        auto gated = science::filterProcessedObjects(mask, frame, config, cv::Mat{}, 1.0, nullptr);
+        check(gated.size() == 2, "band: both objects still reported");
+        if (gated.size() == 2) {
+            check(!gated[0].inChannel && !gated[0].isValid, "wall object rejected by centroid");
+            check(gated[1].inChannel && gated[1].isValid, "channel object kept");
+            const auto reasons = science::classifyInvalidReasons(gated[0], config);
+            check(reasons.size() == 1 && reasons[0] == science::InvalidReasonCode::Channel,
+                  "wall object reason is Channel");
+        }
     }
 
     if (failures == 0) {

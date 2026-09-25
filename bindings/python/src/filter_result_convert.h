@@ -53,6 +53,7 @@ inline py::dict processedFrameToDict(const ProcessedFrame& frame, double pixelTo
     }
     d["is_valid"] = v.isValid;
     d["touches_border"] = v.touchesBorder;
+    d["in_channel"] = v.inChannel;
     d["has_single_inner_contour"] = v.hasSingleInnerContour;
     d["in_range"] = v.inRange;
     d["is_target_group"] = v.isTargetGroup;
@@ -79,6 +80,7 @@ inline ProcessedFrame processedFrameFromDict(const py::dict& d) {
     FilterResult& v = f.validation;
     v.isValid = dictGet(d, "is_valid", false);
     v.touchesBorder = dictGet(d, "touches_border", false);
+    v.inChannel = dictGet(d, "in_channel", true);
     v.hasSingleInnerContour = dictGet(d, "has_single_inner_contour", false);
     v.inRange = dictGet(d, "in_range", false);
     v.innerContourCount = dictGet(d, "inner_contour_count", 0);

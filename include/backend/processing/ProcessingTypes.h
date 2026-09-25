@@ -48,15 +48,24 @@ struct ProcessingConfig {
     bool auto_background_enabled{false};
     int auto_background_empty_frames{30};
     int auto_background_cooldown_frames{1000};
-    // Auto-fit processing ROI: when enabled, derive a wall-avoiding rectangular
-    // ROI from each captured background (detect the microfluidic channel walls
-    // and exclude them) and apply it via setRealtimeRoi. Off by default so the
-    // manually drawn ROI is untouched unless the operator opts in.
+    // Auto channel band: when enabled, detect the microfluidic channel walls in
+    // each captured background and reject objects whose centroid lies outside
+    // the channel band (debris stuck on a wall). The ROI itself is not cropped,
+    // so cells near the walls are not clipped by the border check. Off by
+    // default.
     bool auto_roi_from_background{false};
     // Row mean-gradient multiple over the channel baseline that marks a wall row.
     double auto_roi_wall_gradient_ratio{2.5};
     // Extra rows trimmed inward from each detected wall edge, for margin.
     int auto_roi_wall_margin{1};
+    // Channel band gate, in the row coordinates of the mask handed to the
+    // object filter. An object is in the channel when its centroid row lies in
+    // [channel_band_y, channel_band_y + channel_band_h). channel_band_h <= 0
+    // disables the gate. Runtime input, not persisted: ProcessingService fills
+    // it from the detected band when auto_roi_from_background is on; wheel
+    // callers may set it directly.
+    int channel_band_y{0};
+    int channel_band_h{0};
     // Target group sort trigger (second gate within valid frames)
     bool enable_target_group{false};
     int target_group_area_min{72};   // μm²
@@ -84,6 +93,9 @@ struct FilterResult {
     bool touchesBorder{false};
     bool hasSingleInnerContour{false};
     bool inRange{false};
+    // False when a channel band is active and the object's centroid lies
+    // outside it (e.g. debris stuck on a channel wall). True when no band.
+    bool inChannel{true};
     int innerContourCount{0};
     int objectId{-1};
     int objectCount{0};

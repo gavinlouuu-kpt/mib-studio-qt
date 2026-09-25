@@ -435,31 +435,36 @@ void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
         }
         stored = rtBgGray_;
     }
+    // Detect the channel band so objects whose centroid sits outside it (debris
+    // stuck on a wall) are rejected, while the ROI stays as drawn and cells
+    // near the walls are not clipped by the border check. Off unless opted in;
+    // a cleared background or a disabled setting clears the band. Published
+    // before the background generation bump so the realtime loop never pairs
+    // the new background with the previous band.
+    const Roi band =
+        (stored && !stored->empty()) ? computeAutoRoiFromBackground(*stored) : Roi{};
+    const bool haveBand = band.w > 0 && band.h > 0;
+    {
+        std::scoped_lock lk(channelBandMutex_);
+        channelBand_ = haveBand ? band : Roi{};
+    }
+
     // Every publication (or clear) is a new background identity (issue #369).
     backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
     configVersion_.fetch_add(
         1, std::memory_order_release); // wake cached-config refresh in realtime loop
     refreshRealtimeBatchPipelineConfig();
 
-    // Auto-fit the processing ROI to the channel so the operator can keep the
-    // full sensor frame while the wall bands (a noise source that also defeats
-    // the empty-frame fast path) are excluded. Off unless opted in. Done after
-    // the rtMutex_ scope so setRealtimeRoi can take the lock without re-entry.
-    if (stored && !stored->empty()) {
-        const Roi autoRoi = computeAutoRoiFromBackground(*stored);
-        if (autoRoi.w > 0 && autoRoi.h > 0) {
-            setRealtimeRoi(autoRoi);
-            SuggestedRoiCallback cb;
-            {
-                std::scoped_lock lk(suggestedRoiCallbackMutex_);
-                cb = suggestedRoiCallback_;
-            }
-            if (cb) {
-                cb(autoRoi, lastAutoBackgroundFrame_.load(std::memory_order_relaxed));
-            }
-            SPDLOG_INFO("Auto-fit processing ROI from background: x={} y={} w={} h={}", autoRoi.x,
-                        autoRoi.y, autoRoi.w, autoRoi.h);
+    if (haveBand) {
+        SuggestedRoiCallback cb;
+        {
+            std::scoped_lock lk(suggestedRoiCallbackMutex_);
+            cb = suggestedRoiCallback_;
         }
+        if (cb) {
+            cb(band, lastAutoBackgroundFrame_.load(std::memory_order_relaxed));
+        }
+        SPDLOG_INFO("Channel band from background: y={} h={}", band.y, band.h);
     }
 }
 
@@ -1710,6 +1715,11 @@ ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) c
     return Roi{detected.x, detected.y, detected.w, detected.h};
 }
 
+ProcessingService::Roi ProcessingService::getChannelBand() const {
+    std::scoped_lock lk(channelBandMutex_);
+    return channelBand_;
+}
+
 void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dropped,
                                                    size_t bufferedTotal, size_t maxBufferedFrames) {
     if (dropped.valid == 0 && dropped.invalid == 0) {
@@ -1873,7 +1883,21 @@ size_t ProcessingService::getInvalidFrameSamplingRate() const {
 std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Mat& processedImage,
                                                                     const cv::Rect& roi,
                                                                     const ProcessingConfig& config,
-                                                                    const cv::Mat& originalImage) {
+                                                                    const cv::Mat& originalImage,
+                                                                    cv::Point maskOrigin) {
+    // The service owns the detected channel band (frame coordinates); express
+    // it in the mask's coordinates for the object filter.
+    ProcessingConfig bandConfig;
+    const ProcessingConfig* effectiveConfig = &config;
+    if (config.auto_roi_from_background) {
+        const Roi band = getChannelBand();
+        if (band.h > 0) {
+            bandConfig = config;
+            bandConfig.channel_band_y = band.y - maskOrigin.y;
+            bandConfig.channel_band_h = band.h;
+            effectiveConfig = &bandConfig;
+        }
+    }
     // Version-sensitive science is owned by the selected kernel (A7). The
     // caller already holds a CoreOperationLease, so the kernel cannot swap
     // between the mask call and this analysis call.
@@ -1886,7 +1910,7 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
     }
     std::vector<FilterResult> results;
     std::string error;
-    if (!kernel || !kernel->analyzeObjects(processedImage, roi, config, originalImage,
+    if (!kernel || !kernel->analyzeObjects(processedImage, roi, *effectiveConfig, originalImage,
                                            pixelToMicronFactor, eModulusLut, results, &error)) {
         SPDLOG_ERROR("filterProcessedObjects: kernel object analysis failed: {}", error);
         return {};
@@ -2045,7 +2069,7 @@ void ProcessingService::accumulateIdentificationCounters(
     const std::vector<FilterResult>& validations, const ProcessingConfig& config,
     double pixelToMicronFactor) {
     namespace science = backend::processing::science;
-    static_assert(science::kInvalidReasonCount == 7,
+    static_assert(science::kInvalidReasonCount == 8,
                   "idReasonCounts_ / IdentificationCounters.reasonCounts size must match "
                   "science::kInvalidReasonCount");
 
@@ -2105,7 +2129,7 @@ ProcessingService::IdentificationCounters ProcessingService::getIdentificationCo
     c.invalidObjects = idInvalidObjects_.load(std::memory_order_relaxed);
     c.targetGroupObjects = idTargetGroupObjects_.load(std::memory_order_relaxed);
     c.unservedTargetGroupObjects = idUnservedTargetGroupObjects_.load(std::memory_order_relaxed);
-    for (size_t i = 0; i < 6; ++i) {
+    for (size_t i = 0; i < std::size(idReasonCounts_); ++i) {
         c.reasonCounts[i] = idReasonCounts_[i].load(std::memory_order_relaxed);
     }
     return c;
@@ -2848,7 +2872,8 @@ void ProcessingService::realtimeInlineLoop() {
                 // Always run validation for monitoring (even without experiment)
                 // mask is ROI-sized so contour coords are 0-based; use local roi for border check
                 cv::Rect localRoi(0, 0, roi.w, roi.h);
-                auto validations = filterProcessedObjects(mask, localRoi, config, grayROI);
+                auto validations = filterProcessedObjects(mask, localRoi, config, grayROI,
+                                                          cv::Point(roi.x, roi.y));
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }
@@ -3745,7 +3770,8 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiMaskForValidation = mask(cvRoi).clone();
                 cv::Rect localRoi(0, 0, cvRoi.width, cvRoi.height);
                 auto validations =
-                    filterProcessedObjects(roiMaskForValidation, localRoi, config, roiCurr);
+                    filterProcessedObjects(roiMaskForValidation, localRoi, config, roiCurr,
+                                           cvRoi.tl());
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }

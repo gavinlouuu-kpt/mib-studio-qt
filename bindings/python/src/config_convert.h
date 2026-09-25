@@ -68,6 +68,8 @@ inline ProcessingConfig configFromDict(const py::dict& d) {
     c.auto_background_enabled = dictGet(d, "auto_background_enabled", c.auto_background_enabled);
     c.auto_background_empty_frames = dictGet(d, "auto_background_empty_frames", c.auto_background_empty_frames);
     c.auto_background_cooldown_frames = dictGet(d, "auto_background_cooldown_frames", c.auto_background_cooldown_frames);
+    c.channel_band_y = dictGet(d, "channel_band_y", c.channel_band_y);
+    c.channel_band_h = dictGet(d, "channel_band_h", c.channel_band_h);
     c.enable_target_group = dictGet(d, "enable_target_group", c.enable_target_group);
     c.target_group_area_min = dictGet(d, "target_group_area_min", c.target_group_area_min);
     c.target_group_area_max = dictGet(d, "target_group_area_max", c.target_group_area_max);
@@ -112,6 +114,8 @@ inline py::dict configToDict(const ProcessingConfig& c) {
     d["auto_background_enabled"] = c.auto_background_enabled;
     d["auto_background_empty_frames"] = c.auto_background_empty_frames;
     d["auto_background_cooldown_frames"] = c.auto_background_cooldown_frames;
+    d["channel_band_y"] = c.channel_band_y;
+    d["channel_band_h"] = c.channel_band_h;
     d["enable_target_group"] = c.enable_target_group;
     d["target_group_area_min"] = c.target_group_area_min;
     d["target_group_area_max"] = c.target_group_area_max;

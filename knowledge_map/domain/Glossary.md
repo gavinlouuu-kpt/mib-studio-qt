@@ -27,10 +27,11 @@
   channel. Inside the processing ROI they produce spurious contours (noise) and
   keep the empty-frame fast path awake; cells flow in the central band between
   them. See issue #295.
-- **Auto-fit ROI** — a wall-avoiding processing ROI derived automatically from a
-  captured background (`detectChannelRoi`): the channel walls are located by
-  their vertical-gradient row profile and excluded, keeping the full frame width
-  and the cell band. Gated by `auto_roi_from_background`; see
+- **Channel band** — the rows between the channel walls, detected automatically
+  from a captured background (`detectChannelRoi`) by the walls'
+  vertical-gradient row profile. Objects whose **centroid** lies outside the
+  band (debris stuck on a wall) are rejected with invalid reason `Channel`; the
+  ROI is not cropped. Gated by `auto_roi_from_background`; see
   [[../services/ProcessingService]].
 
 ## Portability
