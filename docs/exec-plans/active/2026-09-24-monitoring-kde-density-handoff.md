@@ -69,6 +69,7 @@ the user to **only a contour on the scatter** (no readouts, no tab buttons).
 | `ctest -L monitoring` (7 tests incl. the e2e) | 7/7 |
 | `integration.monitoring_kde_e2e` phases | capture 199–200 fps in every phase; processing algo FPS 141–145 off and on; overlay lag 1–2 frames; estimate incl. contour grid 18–21 ms per 1000 points on the worker; GUI 5 ms-tick p99 ~375 ms with KDE off (pre-existing, TD-16) vs ~46 ms with KDE on; stored record 900 of 1000 cells |
 | `scripts/check_docs.py`, `scripts/check_screenshots.py` | OK / 9 in sync |
+| Linux container, 2026-09-25 (pre-PR, same filters as `backend-ci.yml` / `sanitizers.yml`) | `linux-backend-only` GCC 13 build clean; `ctest --preset linux-backend-only-test` all pass after `21741f6` (`recording.kde_full_run_core` had failed only because the container runs as root); TSan and ASan+UBSan: 84/85, every KDE test and `e2e.experiment_coordinator` clean. The one failure in all three runs, `scripts.run_processing_conformance_input`, is the container's Python 3.11 loading Ubuntu's 3.12 numpy (not this branch) |
 | HDF5 "attribute open failed" stderr traces during experiment finalization | pre-existing: identical count (242) from `experiment_coordinator_test` on the unmodified main-checkout build |
 
 ## 5. Not done — the consumer's list
@@ -76,7 +77,7 @@ the user to **only a contour on the scatter** (no readouts, no tab buttons).
 1. **Open the PR** against `develop` (title suggestion: "Monitoring: KDE
    density colouring and core contour with live/full-run records"). Do not
    squash; the commits map to the plan's PR 1–3.
-2. **CI lanes not runnable on the bench:** `backend-ci.yml` (Linux
+2. **CI lanes not runnable on the bench** (backend and both sanitizer filters since run in a Linux container, §4; the PR's own runs are still owed): `backend-ci.yml` (Linux
    backend-only: `MonitoringDensity.h`/`KdeCoreRecord.h` are compiled by the
    backend runner tests; watch `std::nan`, `<random>` and nlohmann includes
    on GCC), `sanitizers.yml` (TSan/ASan on the coordinator setter and the

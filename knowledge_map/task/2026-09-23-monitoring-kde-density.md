@@ -122,3 +122,8 @@ read-write open of the chmod'ed file for the current user, and prints a NOTE
 otherwise; verified both ways (root: NOTE + pass; `runuser -u nobody`:
 refusal asserted + pass). The unrelated `scripts.run_processing_conformance_input`
 failed there because the container's Python 3.11 loaded Ubuntu's 3.12 numpy.
+
+Sanitizers (same configure flags and label filter as `sanitizers.yml`):
+TSan 84/85 and ASan+UBSan 84/85, with every KDE test and
+`e2e.experiment_coordinator` clean under both; the one failure is the
+numpy mismatch above.
