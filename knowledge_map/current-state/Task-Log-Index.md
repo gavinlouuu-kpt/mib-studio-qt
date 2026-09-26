@@ -59,6 +59,7 @@
 - `task/2026-08-31-oeabt-nanopositioner.md`
 
 ### HDF Review scalability & crashes
+- [[../task/2026-09-26-hdf5-compression-pr0]] — lossless compression epic PR 0: benchmark script, direct-chunk capability test, rig procedure (ADR 0006)
 - `task/review_2gb_scalability.md`
 - `task/review_hdf_thumbnail_spacer_crash.md`
 - `task/2026-06-02-long-run-frame-growth.md`

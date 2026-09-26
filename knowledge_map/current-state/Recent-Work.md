@@ -1,5 +1,23 @@
 # Recent Work
 
+## 2026-09-26 — Lossless HDF5 compression: epic spec + PR 0 measurements (ADR 0006)
+
+Inline gzip on the single HDF5 writer cannot keep up with 1000 fps, and a full
+`HdfWriteQueue` aborts the run. [ADR 0006](../../docs/decisions/0006-hdf5-lossless-compression.md)
+therefore specifies:
+
+- live deflate-1 compression on a worker pool, stored with `H5Dwrite_chunk`;
+- a per-chunk raw fallback, so compression never costs a frame;
+- an idle-time finish pass that compresses the raw chunks.
+
+PR 0 adds `scripts/bench_hdf5_compression.py`, the
+`recording.hdf5_direct_chunk_capability` ctest guard and
+`docs/howto/hdf5-compression-measurement.md`. On a cloud VM, gzip-1 at
+10-frame chunks ran at 56/114/222 MB/s on 1/2/4 threads (1.64x). Spike S1
+(tail-chunk rewrites) passed on HDF5 1.10.10, 1.14.6 and 2.0.0, and spike S2
+(mixed raw/compressed chunks readable) passed. Rig headroom is still open.
+Task note: [[../task/2026-09-26-hdf5-compression-pr0]].
+
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
 
 Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,

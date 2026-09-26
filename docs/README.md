@@ -36,6 +36,8 @@ This folder hosts living documentation as we build functionality. Keep content c
   `env/assets.json`, fetched by `scripts/provision-assets.py`) — see
   [../knowledge_map/build-and-run/Assets.md](../knowledge_map/build-and-run/Assets.md)
 - Post-processing tools (export, reanalyse) — see [howto/tools.md](howto/tools.md)
+- HDF5 compression headroom on the rig (ADR 0006, PR 0) — see
+  [howto/hdf5-compression-measurement.md](howto/hdf5-compression-measurement.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)

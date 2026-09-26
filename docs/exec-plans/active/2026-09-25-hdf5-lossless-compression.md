@@ -249,23 +249,51 @@ App config `storage.compression.*`:
     (S2 pass).
   - PR 0 still repeats both on HDF5 1.14.6 (Conan) and 1.10.x (apt,
     manylinux), plus HDFView and MATLAB.
+- 2026-09-26 (PR 0, cloud VM, 4 × 2.1 GHz Xeon, idle): these are the numbers
+  PR 1 and PR 2 build on until the rig numbers replace them.
+  - gzip-1 at C = 10 scales linearly with threads: 56 / 114 / 222 MB/s
+    compress on 1 / 2 / 4 threads (≈ 1,140 / 2,320 / 4,510 fps at 512x96).
+    End to end with `H5Dwrite_chunk` to local disk: 57 / 101 / 209 MB/s.
+  - Inflating one C = 10 chunk takes 2.9 ms, against 15.5 ms at C = 50. D9's
+    ≤ 10 ms random-access target holds at C = 10, which confirms D2.
+  - Levels 4 and 6 again give no ratio gain (1.65 vs 1.64) at 1.6x and 3.5x
+    the CPU, which confirms D1.
+  - `recording.hdf5_direct_chunk_capability` (C++, the app's own
+    `Hdf5Service` reader) passes on apt HDF5 1.10.10: deflate encode and
+    decode are available, the library is threadsafe (`threadsafe=1`), mixed,
+    raw and edge chunks read back byte-identical, and S1 growth is 0.00 %.
+  - S1 and S2 via the benchmark script: HDF5 1.14.6 (h5py 3.14) +0.65 %, pass;
+    HDF5 2.0.0 (h5py 3.16) +0.65 %, pass.
+  - **S1 passes on 1.10.10, 1.14.6 and 2.0.0, so D3.4 stands and T2 is not
+    needed.**
+  - Still open (rig only): the Conan 1.14.6 capability line (threadsafe
+    status), headroom under a live 1000 fps run (sets `threads`), and
+    HDFView/MATLAB reads of `--emit-mixed`. The procedure is in
+    [hdf5-compression-measurement](../../howto/hdf5-compression-measurement.md).
 
 ## Phases (one PR each)
 
 ### PR 0: measure and de-risk (no product behaviour change)
 
-- Check in `scripts/bench_hdf5_compression.py` (codec × level × threads ×
-  chunk frames; ratio, compress/decompress MB/s) and run it on the rig PC.
-- Rig CPU headroom: per-thread CPU during a 1000 fps, 5-min experiment and
+- [x] Check in `scripts/bench_hdf5_compression.py` (codec × level × threads ×
+  chunk frames; ratio, compress/decompress MB/s, `--write-dir`, `--spikes`,
+  `--emit-mixed`). [ ] Run it on the rig PC.
+- [x] `recording.hdf5_direct_chunk_capability` (C++ guard, runs on every
+  ctest lane, including Windows): prints `HDF5_CAPABILITY` (version,
+  threadsafe, deflate) and `HDF5_S1`, and asserts mixed-chunk byte identity
+  through `Hdf5Service::readImageByIndex`.
+- [ ] Rig CPU headroom: per-thread CPU during a 1000 fps, 5-min experiment and
   recording with processing on. Sets `threads = auto` and validates the 75 %
   budget.
-- **S1** (h5py `write_direct_chunk` prototype, then a C++ test in PR 2): a
+- [x] **S1** (h5py prototype and the C++ guard above): a
   partial chunk written raw and rewritten 10×, then compressed. Final file size
   must be within 5 % of an h5repack of the same data. Pass → D3.4; fail → T2.
-- **S2:** a mixed-mask file reads correctly in h5py (no plugin), HDFView, and
-  on the MATLAB rig PC.
-- Record `H5is_library_threadsafe()` for the Conan (Windows), apt (Linux) and
-  manylinux builds. Add a tech-debt row if review/export threads share a
+- [x] **S2** in h5py (no plugin). [ ] HDFView and MATLAB on the rig
+  (`--emit-mixed`).
+- [x] apt 1.10.10: threadsafe. [ ] Conan 1.14.6 (Windows CI/rig
+  `HDF5_CAPABILITY` line). [ ] manylinux 1.10.5 (the wheel does not write
+  live files, so this is informational). Record `H5is_library_threadsafe()`
+  for each build. Add a tech-debt row if review/export threads share a
   non-threadsafe library with the writer.
 - Exit: decision-log entries with the rig numbers, S1/S2 outcomes and the
   default thread count.
@@ -366,6 +394,10 @@ App config `storage.compression.*`:
 - [x] 2026-09-25: Impact analysis, codec benchmark, ADR 0006, this epic spec,
       early S1/S2 on HDF5 2.0.0 (pass).
 - [ ] PR 0: rig measurements, S1/S2 spikes, threadsafe audit
+  - [x] 2026-09-26: benchmark script, C++ capability guard, measurement howto,
+        VM numbers, and S1/S2 on HDF5 1.10.10, 1.14.6 and 2.0.0
+  - [ ] rig: Conan capability line, headroom under load (`threads`),
+        HDFView/MATLAB
 - [ ] PR 1: fixed chunk geometry, chunk-aligned batches, reader chunk cache
 - [ ] PR 2: compressing chunk writer + raw fallback (default off)
 - [ ] PR 3: config, run snapshot, storage attributes, telemetry, bridge, Qt status
