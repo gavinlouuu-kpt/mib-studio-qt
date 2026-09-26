@@ -160,4 +160,9 @@ Verification (Linux container, GCC 13, Ubuntu 24.04 packages):
   tab's camera-script apply fails ("No hardware camera selected"); it was
   last green on the Windows bench before this change and must be re-run
   there.
-
+- Sanitizers (flags and label filter of `sanitizers.yml`): ASan+UBSan 85/85;
+  TSan 84/85 with `backend.monitoring_density_service` and
+  `e2e.experiment_coordinator` clean. The one TSan failure,
+  `recording.hdf_export_service` (last-round timing ratio), ran while
+  parallel builds loaded the CPU and passed when re-run alone; the export
+  code is untouched by this branch.
