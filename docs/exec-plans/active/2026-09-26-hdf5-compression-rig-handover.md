@@ -199,7 +199,7 @@ Results from 2026-09-26, commit `3eb6e61`. Details are in §8 and the
 | Step 3: with-benchmark run accounting | all 8 loaded runs complete with extra loss 0; capture Δ ≤ 0.04 % | pass |
 | Step 3: chosen default `threads` | `auto = clamp(hw_concurrency / 2, 1, 4)`, which gives 4 on the rig; 4 passes in both modes. The smallest passing pool is 1. | – |
 | Step 3b: real camera | skipped (nobody at the rig) | – |
-| Step 4: HDFView | not available (not installed) | – |
+| Step 4: HDFView | not available. It is not installed, and the portable 3.4.1 build fails to start with "Failed to launch JVM" even without a file (2026-09-27). The MSI was not tried. | – |
 | Step 4: MATLAB | not available (not installed) | – |
 | Step 4 (extra): `h5dump` 1.14.6 | reads `mixed.h5` with no errors; its binary dump is byte-identical to h5py's read | pass |
 

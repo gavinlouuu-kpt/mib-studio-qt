@@ -124,7 +124,7 @@ with no plugin.
 
 | Reader | Result |
 |---|---|
-| HDFView | not available (not installed on the rig) |
+| HDFView | not available. It is not installed. The portable `HDFView-3.4.1App-Windows.zip` (SHA-256 verified, bundles HDF5 2.0.0 and a Java 21 runtime) fails to start on the rig with "Failed to launch JVM", with or without a file argument, so the file was never opened. The MSI installer was not tried. |
 | MATLAB | not available (not installed; only the NI "Matlab Interface" LabVIEW add-on is present) |
 | `h5dump` 1.14.6 (miniconda HDF5 tools, the same library version as the app's Conan build) | reads the dataset with no errors, with `DEFLATE { LEVEL 1 }` and 1.347:1 overall; its binary dump is byte-identical to the h5py read (49,152,000 bytes) |
 
