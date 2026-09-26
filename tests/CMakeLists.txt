@@ -559,6 +559,11 @@ set_tests_properties(integration.e2e_pipeline_timing PROPERTIES LABELS "integrat
 mib_add_backend_test_executable(mock_pipeline_timing_run tools/mock_pipeline_timing_run.cpp)
 mib_backend_test_link(mock_pipeline_timing_run PRIVATE Threads::Threads)
 
+# Headless experiment/recording soak through the production save path, used by
+# scripts/run_compression_headroom_e2e.py (ADR 0006 PR 0, step 3). Manual tool.
+mib_add_backend_test_executable(mock_experiment_soak_run tools/mock_experiment_soak_run.cpp)
+mib_backend_test_link(mock_experiment_soak_run PRIVATE Threads::Threads)
+
 mib_add_backend_test_executable(e2e_pipeline_stress_test integration/e2e_pipeline_stress_test.cpp)
 mib_backend_test_link(e2e_pipeline_stress_test PRIVATE Threads::Threads)
 # Lifecycle start/stop race test. Has an in-process watchdog that _Exit(99)s

@@ -42,26 +42,54 @@ whether each thread count keeps up.
 
 ## 3. Headroom during a live run (the number that sets `threads`)
 
+### 3a. Scripted, mock camera (run this first)
+
+```powershell
+py scripts\run_compression_headroom_e2e.py --runner build-ninja\mib_backend_tests.exe `
+    --duration 300 --threads 1,2,3 --json rig-headroom.json
+```
+
+For each save mode (experiment, then recording), the script runs:
+
+- a baseline soak: the mock camera at 1000 fps on the 512x96 frames, through
+  the full production pipeline, `ExperimentCoordinator` /
+  `startFrameRecording`, `HdfWriteQueue` and HDF5, using
+  `mib_backend_tests mock_experiment_soak_run`;
+- the gzip ratio of the frames that run actually stored;
+- one soak per pool size T, with `bench_hdf5_compression.py --seconds`
+  compressing on T below-normal threads for the whole run.
+
+**Pass for T:** both conditions hold.
+
+- **Headroom:** gzip MB/s sustained during the run is at least 1.3 × the
+  rate the baseline actually wrote. The worst case, every frame non-empty
+  (fps × 512 × 96 = 49 MB/s), is reported beside it.
+- **No harm:** the completion state equals the baseline's, capture fps is
+  within 1 %, and the loss terms (ring overwrites, persistence failed or
+  pending, processing drops, camera discards) grow by at most 1 % of
+  admitted frames.
+
+The smallest passing T becomes the `threads = auto` default on the rig.
+About 45 minutes for both modes.
+
+The mock camera is a software timer thread, so under heavy CPU load its
+frame rate dips slightly, which a hardware-timed camera would not do. That
+makes the capture-fps check conservative.
+
+### 3b. Manual, real camera (confirmation)
+
 1. Start the app and run the reference load: a 1000 fps experiment with
-   processing on, as in the 2026-09-08 soak (mock camera on the
-   512x96 frames, or the real camera).
-2. Once it is steady, run the benchmark in a second terminal. It lowers its own
-   priority, as the planned pool will.
+   processing on, using the real camera and the bundled 1000 fps preset.
+2. Once it is steady, run the benchmark as a load in a second terminal:
 
    ```powershell
-   python scripts/bench_hdf5_compression.py --levels 1 --threads 1,2,3 --chunk-frames 10 `
-       --repeat 8 --json rig-under-load.json
+   py scripts\bench_hdf5_compression.py --levels 1 --threads <T from 3a> --chunk-frames 10 `
+       --seconds 300 --json rig-under-load.json
    ```
 
 3. Stop the experiment. Compare its run accounting (completion state, drop and
    overwrite counters, `persistence*` terms) with an identical run without the
-   benchmark.
-
-**Pass for a thread count:** its compress MB/s under load is at least
-1.3 × the demand at 1000 fps (≥ 64 MB/s), and the run with the benchmark shows
-the same completion state with drop counters within ±1 % of the run without it.
-The smallest thread count that passes becomes the `threads = auto` default on
-the rig.
+   benchmark, using the same pass rules as 3a.
 
 ## 4. Reader compatibility (spike S2 by hand)
 

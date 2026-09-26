@@ -23,6 +23,8 @@ With --write-dir it also writes a deflate dataset with H5Dwrite_chunk
 (h5py write_direct_chunk) to that directory, so disk throughput is included.
 --spikes re-runs spikes S1 (tail-rewrite file growth) and S2 (mixed
 compressed/raw chunks read back byte-identical) on this machine's h5py/HDF5.
+--seconds N keeps each (level, threads, chunk) configuration compressing for N
+seconds: the sustained load run_compression_headroom_e2e.py puts beside a live run.
 --emit-mixed FILE writes a small mixed compressed/raw file (every third chunk
 raw) at /recorded_frames/images, for opening in HDFView or MATLAB.
 
@@ -116,14 +118,21 @@ def chunks_of(frames, c):
     return [frames[i:i + c].tobytes() for i in range(0, n, c)]
 
 
-def bench_codec(chunks, level, threads, repeat):
-    raw = sum(map(len, chunks)) * repeat
-    work = chunks * repeat
+def bench_codec(chunks, level, threads, repeat, seconds=0.0):
     t0 = time.perf_counter()
     with ThreadPoolExecutor(threads) as ex:
-        out = list(ex.map(lambda b: zlib.compress(b, level), work))
+        if seconds > 0:  # sustained load: keep the pool busy for `seconds`
+            raw = stored = 0
+            out = []
+            while time.perf_counter() - t0 < seconds:
+                out = list(ex.map(lambda b: zlib.compress(b, level), chunks))
+                raw += sum(map(len, chunks))
+                stored += sum(map(len, out))
+        else:
+            raw = sum(map(len, chunks)) * repeat
+            out = list(ex.map(lambda b: zlib.compress(b, level), chunks * repeat))
+            stored = sum(map(len, out))
     dt = time.perf_counter() - t0
-    stored = sum(map(len, out))
     t1 = time.perf_counter()
     for z in out[: len(chunks)]:
         zlib.decompress(z)
@@ -215,6 +224,9 @@ def main():
     ap.add_argument("--threads", default=",".join(str(t) for t in sorted({1, 2, 4, os.cpu_count() or 1})))
     ap.add_argument("--chunk-frames", default="10,50")
     ap.add_argument("--repeat", type=int, default=4, help="passes over the frames per measurement")
+    ap.add_argument("--seconds", type=float, default=0.0,
+                    help="sustained mode: compress continuously for this long per configuration "
+                         "(used as a load generator alongside a live run)")
     ap.add_argument("--target-fps", default="1000,5000")
     ap.add_argument("--write-dir", help="also time H5Dwrite_chunk writes to this directory (the recording drive)")
     ap.add_argument("--spikes", action="store_true", help="re-run spikes S1/S2 on this h5py/HDF5")
@@ -251,7 +263,7 @@ def main():
             continue
         for level in parse_ints(args.levels):
             for threads in parse_ints(args.threads):
-                mbs, ratio, inflate_ms = bench_codec(chunks, level, threads, args.repeat)
+                mbs, ratio, inflate_ms = bench_codec(chunks, level, threads, args.repeat, args.seconds)
                 fps = mbs * 1e6 / frame_bytes
                 row = {"level": level, "chunk_frames": c, "threads": threads, "ratio": round(ratio, 3),
                        "compress_mb_s": round(mbs, 1), "fps_capacity": round(fps),

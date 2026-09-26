@@ -104,34 +104,43 @@ py scripts\bench_hdf5_compression.py --threads 1,2,4 --chunk-frames 10,50 `
 - **Decision it drives:** the rig ceiling. It is compared with the VM
   (56 MB/s per thread).
 
-### Step 3: headroom during a live run (about 30 minutes; the key number)
+### Step 3: headroom during a live run (about 45 minutes scripted, plus an optional real-camera check)
 
-1. Run a **baseline** 1000 fps, 5-minute experiment with processing on. Use
-   the reference soak setup: mock camera on the 512x96 frames, or the real
-   camera with the bundled 1000 fps preset. Save the run accounting: the log
-   line `ExperimentCoordinator: run N accounting: completion=... persisted=x/y
-   failed=z`, plus capture drop/overwrite counters from the status panel or
-   log.
-2. Run the **same experiment again**. Once it is steady, start the benchmark
-   in a second terminal. It lowers its own priority, as the planned pool
-   will.
+**3a. Scripted, mock camera.** This is the same run the cloud container did
+(§7), now on rig hardware.
 
-   ```powershell
-   py scripts\bench_hdf5_compression.py --levels 1 --threads 1,2,3 --chunk-frames 10 `
-       --repeat 8 --json rig-under-load.json
-   ```
+```powershell
+py scripts\run_compression_headroom_e2e.py --runner build-ninja\mib_backend_tests.exe `
+    --duration 300 --threads 1,2,3 --json rig-headroom.json
+```
 
-3. Stop the run and record its accounting the same way.
+For each save mode (experiment, recording) the script runs:
 
-- **Pass for a thread count:** compress MB/s under load ≥ **64 MB/s** (1.3 ×
-  the 49 MB/s demand at 1000 fps), **and** the second run has the same
-  completion state as the baseline, with drop/overwrite counters within
-  **±1 %**.
-- **Record:** MB/s per thread count under load, and both runs' accounting.
-- **Decision it drives:** the smallest passing thread count becomes the rig
-  default for `threads = auto` (design D6). If no thread count passes, stop
-  and report: the plan's budget (D4) and default mode need revisiting before
-  PR 2.
+- a baseline 5-minute 1000 fps soak through the full production save path;
+- the gzip ratio of the frames that soak actually stored;
+- one soak per pool size T, with the benchmark compressing on T
+  below-normal threads for the whole run.
+
+It prints PASS/FAIL per T and a summary line per mode with the smallest
+passing pool.
+
+**3b. Real camera (optional confirmation).** Repeat with the real camera and
+the bundled 1000 fps preset in the app. First run without load, then with
+`py scripts\bench_hdf5_compression.py --levels 1 --threads <T> --chunk-frames 10 --seconds 300`
+in a second terminal. Compare the two runs' accounting: the log line
+`ExperimentCoordinator: run N accounting: completion=... persisted=x/y failed=z`
+and the drop counters.
+
+- **Pass for T** (what the script checks):
+  - **Headroom:** compress MB/s during the run is at least 1.3 × the rate the
+    baseline actually wrote. The 49 MB/s worst case (every frame non-empty)
+    is reported too.
+  - **No harm:** same completion state, capture fps within 1 %, and loss
+    terms grow by at most 1 % of admitted frames.
+- **Record:** the summary lines and `rig-headroom.json`.
+- **Decision it drives:** the smallest passing T becomes the rig default for
+  `threads = auto` (design D6). If no T passes, stop and report: the plan's
+  budget (D4) and default mode need revisiting before PR 2.
 
 ### Step 4: reader compatibility (about 5 minutes)
 
