@@ -51,7 +51,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/recording/Hdf5Service.h"
-#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/processing/KdeCoreRecord.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/dialogs/BatchMaskDialog.h"
@@ -2236,7 +2236,7 @@ void HdfReviewTab::readStoredKdeRecords() {
     auto readInto = [](const std::string& json, const char* which,
                        std::vector<std::vector<std::pair<double, double>>>& out, double& fraction) {
         std::string why;
-        const auto record = frontend::monitoring::fromJson(json, &why);
+        const auto record = backend::monitoring::fromJson(json, &why);
         if (!record) {
             SPDLOG_WARN("HdfReviewTab: stored KDE {} record ignored: {}", which, why);
             return;
@@ -2315,7 +2315,7 @@ void HdfReviewTab::startFullRunCoreComputation() {
     // Same axes as this scatter: area in µm² with the current factor.
     const double factor = backend_.processing().getPixelToMicronFactor();
     const double areaFactor = factor * factor;
-    std::vector<frontend::monitoring::DensityPoint> points;
+    std::vector<backend::monitoring::DensityPoint> points;
     points.reserve(validFrames_.size());
     for (const auto& f : validFrames_) {
         if (f.validation.isValid) points.push_back({f.validation.area * areaFactor, f.validation.deformability});
@@ -2333,12 +2333,12 @@ void HdfReviewTab::startFullRunCoreComputation() {
     ui->statusLabel->setText(tr("Computing core contour from %1 cells…").arg(points.size()));
     SPDLOG_INFO("HdfReviewTab: full-run core contour started ({} cells, {:.0f}%) for {}", points.size(), fraction * 100.0,
                 coreJobPath_.toStdString());
-    coreWatcher_ = new QFutureWatcher<frontend::monitoring::KdeCoreRecord>(this);
-    connect(coreWatcher_, &QFutureWatcher<frontend::monitoring::KdeCoreRecord>::finished, this,
+    coreWatcher_ = new QFutureWatcher<backend::monitoring::KdeCoreRecord>(this);
+    connect(coreWatcher_, &QFutureWatcher<backend::monitoring::KdeCoreRecord>::finished, this,
             &HdfReviewTab::onFullRunCoreFinished);
     updateComputeCoreActionState();
     coreWatcher_->setFuture(QtConcurrent::run([points = std::move(points), fraction, factor]() {
-        auto record = frontend::monitoring::computeFullRunCoreRecord(points, fraction, factor);
+        auto record = backend::monitoring::computeFullRunCoreRecord(points, fraction, factor);
         record.computedAtNs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                              std::chrono::system_clock::now().time_since_epoch())
                                                              .count());
@@ -2350,7 +2350,7 @@ void HdfReviewTab::onFullRunCoreFinished() {
     auto* watcher = coreWatcher_;
     coreWatcher_ = nullptr;
     if (!watcher) return;
-    const frontend::monitoring::KdeCoreRecord record = watcher->result();
+    const backend::monitoring::KdeCoreRecord record = watcher->result();
     watcher->deleteLater();
     updateComputeCoreActionState();
     if (coreJobPath_ != loadedHdfFilePath_ || !hdfReader_) {
@@ -2394,7 +2394,7 @@ void HdfReviewTab::onFullRunCoreFinished() {
             if (!updater.openFileForUpdate(path)) {
                 notSaved = tr("the file cannot be opened for writing");
             } else {
-                if (!updater.writeKdeAnalysisJson(frontend::monitoring::toJson(record))) notSaved = tr("the write failed");
+                if (!updater.writeKdeAnalysisJson(backend::monitoring::toJson(record))) notSaved = tr("the write failed");
                 updater.closeFile();
             }
         }

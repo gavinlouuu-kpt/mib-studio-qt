@@ -648,6 +648,28 @@ std::vector<ProcessedFrame> ProcessingService::getMonitoringInvalidFrames() cons
     return monitoringInvalidFrames_.toVector();
 }
 
+std::vector<ProcessingService::MonitoringPoint> ProcessingService::getMonitoringValidPoints() const {
+    std::vector<MonitoringPoint> out;
+    out.reserve(MAX_MONITORING_FRAMES);
+    std::scoped_lock lk(monitoringFramesMutex_);
+    monitoringValidFrames_.forEach([&out](const ProcessedFrame& f) {
+        if (f.validation.isValid) out.push_back({f.index, f.validation.area, f.validation.deformability});
+    });
+    return out;
+}
+
+void ProcessingService::appendMonitoringFrameForTests(const ProcessedFrame& frame) {
+    std::scoped_lock lk(monitoringFramesMutex_);
+    ProcessedFrame copy = frame;
+    if (frame.validation.isValid) {
+        monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringValidFrames_.push_back(std::move(copy));
+    } else {
+        monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringInvalidFrames_.push_back(std::move(copy));
+    }
+}
+
 void ProcessingService::clearMonitoringFrames() {
     // Clear is atomic from the consumer's perspective: buffers and appended
     // totals reset under the same lock the reader snapshot takes (BE-5).
@@ -1497,6 +1519,7 @@ ProcessingService::BatchPipelineStats ProcessingService::getBatchPipelineStats()
     std::scoped_lock lk(batchMutex_);
     stats.currentQueueDepth = batchQueue_.size();
     stats.batchSize = batchConfig_.batchSize;
+    stats.queueCapacity = batchConfig_.maxQueuedFrames;
     if (stats.workerCount == 0 && stats.running) {
         stats.workerCount = batchConfig_.workerCount;
     }

@@ -12,7 +12,7 @@
 
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
-#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/processing/KdeCoreRecord.h"
 
 #include "support/assert.h"
 #include "support/tempdir.h"
@@ -27,7 +27,7 @@
 #include <string>
 #include <vector>
 
-namespace mon = frontend::monitoring;
+namespace mon = backend::monitoring;
 using backend::services::Hdf5Service;
 using backend::services::ProcessedFrame;
 

@@ -113,7 +113,7 @@ frames. The currently active
 
 On open, `readStoredKdeRecords()` reads `/analysis @kde_core_json` and
 `/monitoring @kde_live_json` through the retained reader and parses them with
-`frontend/tabs/KdeCoreRecord.h`; `generateScatterPlot` redraws them via
+`backend/processing/KdeCoreRecord.h`; `generateScatterPlot` redraws them via
 `drawStoredKdeContours()` as `QLineSeries` on the scatter: full-run solid
 blue, live (provisional) dashed orange, one legend entry per record
 ("Core 90% (full run)" / "Core 90% (live, provisional)"). An unreadable

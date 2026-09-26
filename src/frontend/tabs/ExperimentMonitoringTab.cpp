@@ -1,19 +1,17 @@
 #include "frontend/tabs/ExperimentMonitoringTab.h"
-#include "frontend/tabs/MonitoringDensity.h"
-#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/processing/MonitoringDensity.h"
+#include "backend/processing/KdeCoreRecord.h"
 #include "frontend/tabs/MonitoringRoiCrop.h"
 #include "ui_ExperimentMonitoringTab.h"
 
 #include <QElapsedTimer>
 #include <QDateTime>
 #include <QFileInfo>
-#include <QFutureWatcher>
 #include <QLegendMarker>
 #include <QPen>
 #include <QSettings>
 #include <QLegend>
 #include <QLegendMarker>
-#include <QtConcurrent/QtConcurrentRun>
 #include <QTimer>
 #include <QLabel>
 #include <QPixmap>
@@ -153,7 +151,7 @@ constexpr int kKdePreferenceVersion = 1;
 QColor kdeLevelColor(int level, int levels)
 {
     const double t = levels > 1 ? static_cast<double>(level) / (levels - 1) : 1.0;
-    const auto rgb = frontend::monitoring::densityRampColor(t);
+    const auto rgb = backend::monitoring::densityRampColor(t);
     return QColor(rgb.r, rgb.g, rgb.b);
 }
 
@@ -211,12 +209,12 @@ namespace frontend
         updateTimer_->setInterval(UPDATE_INTERVAL_MS);
         connect(updateTimer_, &QTimer::timeout, this, &ExperimentMonitoringTab::onUpdate);
 
-        // Scatter density (KDE): its own, slower timer; the estimate runs on a
-        // worker thread and the result is applied on the next refresh.
+        // Scatter density (KDE): the backend service computes on its own
+        // lowest-priority worker; this timer only polls for a new result.
         loadKdePreferences();
         kdeTimer_ = new QTimer(this);
-        kdeTimer_->setInterval(kdeIntervalMs_);
-        connect(kdeTimer_, &QTimer::timeout, this, &ExperimentMonitoringTab::requestKdeUpdate);
+        kdeTimer_->setInterval(kKdePollMs);
+        connect(kdeTimer_, &QTimer::timeout, this, &ExperimentMonitoringTab::pollKdeResult);
         connect(ui->kdeToggleCheck, &QCheckBox::toggled, this, &ExperimentMonitoringTab::setKdeEnabled);
         {
             QSignalBlocker blocker(ui->kdeToggleCheck);
@@ -246,13 +244,6 @@ namespace frontend
     }
 
     ExperimentMonitoringTab::~ExperimentMonitoringTab() {
-        // A density estimate may still be running on the thread pool: it owns
-        // its input by value, so just make sure it cannot call back into us.
-        if (kdeWatcher_) {
-            kdeWatcher_->disconnect(this);
-            kdeWatcher_->waitForFinished();
-            kdeWatcher_ = nullptr;
-        }
         // Cleanup isoelastic curve line series
         for (QLineSeries* series : isoelasticCurves_)
         {
@@ -836,8 +827,8 @@ namespace frontend
         if (kdeEnabled_ && kdeTimer_ && !kdeTimer_->isActive())
         {
             kdeTimer_->start();
-            requestKdeUpdate();
         }
+        pushKdeSettings(true); // the backend estimates only while someone looks
         // Refresh tune panel with current config when tab becomes visible
         loadCurrentConfig();
     }
@@ -853,6 +844,7 @@ namespace frontend
         {
             kdeTimer_->stop();
         }
+        pushKdeSettings(false);
         // Stop monitoring accumulation while hidden (no consumer polling)
         backend_.processing().setMonitoringActive(false);
         // Disarm periodic test trigger on hide to avoid background pulsing
@@ -1315,7 +1307,7 @@ namespace frontend
             lastValidFrameIndex_ = 0;
             lastInvalidFrameIndex_ = 0;
             kdeDensityByIndex_.clear();
-            kdeFingerprint_ = KdeFingerprint{};
+            requestKdeUpdate(); // the service drops its result for the empty ring
             // Update displays
             updateScatterplot(recentValidFrames_);
             updateHistogram(recentValidFrames_);
@@ -1442,6 +1434,11 @@ namespace frontend
 
     void ExperimentMonitoringTab::injectMonitoringFramesForTests(const std::vector<backend::services::ProcessedFrame>& frames)
     {
+        // The backend density service reads the processing ring; feed both.
+        for (const auto& frame : frames)
+        {
+            backend_.processing().appendMonitoringFrameForTests(frame);
+        }
         recentValidFrames_.insert(recentValidFrames_.end(), frames.begin(), frames.end());
         if (recentValidFrames_.size() > MAX_RECENT_FRAMES)
         {
@@ -1504,13 +1501,13 @@ namespace frontend
             setKdeModeVisuals(true);
             if (kdeTimer_ && isVisible() && !kdeTimer_->isActive()) kdeTimer_->start();
             updateScatterplot(recentValidFrames_); // sparse colouring until the first estimate lands
-            requestKdeUpdate();
+            pushKdeSettings(); // enabling wakes the backend worker at once
         }
         else
         {
             if (kdeTimer_) kdeTimer_->stop();
             kdeDensityByIndex_.clear();
-            kdeFingerprint_ = KdeFingerprint{};
+            pushKdeSettings();
             setKdeModeVisuals(false);
             updateScatterplot(recentValidFrames_); // plain series take the points back immediately
             refreshKdeTooltip();
@@ -1526,7 +1523,7 @@ namespace frontend
         if (factor == kdeBandwidthFactor_) return;
         kdeBandwidthFactor_ = factor;
         saveKdePreferences();
-        if (kdeEnabled_) requestKdeUpdate();
+        pushKdeSettings();
     }
 
     void ExperimentMonitoringTab::setKdeIntervalMs(int ms)
@@ -1534,8 +1531,8 @@ namespace frontend
         ms = std::clamp(ms, kKdeIntervalMsMin, kKdeIntervalMsMax);
         if (ms == kdeIntervalMs_) return;
         kdeIntervalMs_ = ms;
-        if (kdeTimer_) kdeTimer_->setInterval(ms);
         saveKdePreferences();
+        pushKdeSettings();
     }
 
     void ExperimentMonitoringTab::setKdeCoreFraction(double fraction)
@@ -1545,11 +1542,11 @@ namespace frontend
         if (fraction == kdeCoreFraction_) return;
         kdeCoreFraction_ = fraction;
         saveKdePreferences();
-        if (kdeEnabled_) requestKdeUpdate();
+        pushKdeSettings();
     }
 
     void ExperimentMonitoringTab::redrawKdeContours(std::vector<QLineSeries*>& family,
-                                                    const std::vector<std::vector<monitoring::DensityPoint>>& loops,
+                                                    const std::vector<std::vector<backend::monitoring::DensityPoint>>& loops,
                                                     bool reference)
     {
         if (!scatterplotChart_) return;
@@ -1609,10 +1606,10 @@ namespace frontend
         if (!reader.loadFile(path.toStdString())) return fail(tr("not a readable HDF5 file"));
         // Prefer the authoritative full-run record, fall back to the live one.
         std::string json;
-        std::optional<monitoring::KdeCoreRecord> record;
+        std::optional<backend::monitoring::KdeCoreRecord> record;
         std::string whyAnalysis, whyLive;
-        if (reader.readKdeAnalysisJson(json)) record = monitoring::fromJson(json, &whyAnalysis);
-        if (!record && reader.readKdeLiveJson(json)) record = monitoring::fromJson(json, &whyLive);
+        if (reader.readKdeAnalysisJson(json)) record = backend::monitoring::fromJson(json, &whyAnalysis);
+        if (!record && reader.readKdeLiveJson(json)) record = backend::monitoring::fromJson(json, &whyLive);
         reader.closeFile();
         if (!record)
         {
@@ -1632,32 +1629,11 @@ namespace frontend
 
     std::string ExperimentMonitoringTab::lastCoreRecordJson() const
     {
-        if (!kdeEnabled_ || !lastKdeValid_) return {};
-        monitoring::KdeCoreRecord r;
-        r.provisional = true;
-        r.source = "live-buffer";
-        r.coreFraction = lastKdeMeta_.coreFraction;
-        r.level = lastKdeMeta_.coreLevel;
-        r.cellCount = lastKdeMeta_.coreCount;
-        r.populationCount = lastKdePointCount_;
-        r.bandwidthFactor = lastKdeMeta_.bandwidthFactor;
-        r.bandwidthX = lastKdeMeta_.bandwidthX;
-        r.bandwidthY = lastKdeMeta_.bandwidthY;
-        r.pixelToMicron = lastKdeMeta_.pixelToMicron;
-        r.x0 = lastKdeMeta_.x0;
-        r.x1 = lastKdeMeta_.x1;
-        r.y0 = lastKdeMeta_.y0;
-        r.y1 = lastKdeMeta_.y1;
-        r.gridNx = kKdeGridNx;
-        r.gridNy = kKdeGridNy;
-        r.contours = lastKdeContours_;
-        r.computedAtNs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                                        std::chrono::system_clock::now().time_since_epoch())
-                                                        .count());
-        return monitoring::toJson(r);
+        if (!kdeEnabled_ || !kdeResult_) return {};
+        return backend::services::MonitoringDensityService::liveRecordJson(*kdeResult_);
     }
 
-    void ExperimentMonitoringTab::setKdeReference(std::vector<std::vector<monitoring::DensityPoint>> loops, const QString& label)
+    void ExperimentMonitoringTab::setKdeReference(std::vector<std::vector<backend::monitoring::DensityPoint>> loops, const QString& label)
     {
         kdeReference_ = std::move(loops);
         kdeReferenceLabel_ = kdeReference_.empty() ? QString() : label;
@@ -1775,7 +1751,7 @@ namespace frontend
             lastKdeContours_.clear();
             lastKdeCoreLevel_ = std::nan("");
             lastKdeCoreCount_ = 0;
-            lastKdeValid_ = false;
+            kdeResult_.reset();
             redrawKdeContours(kdeContourSeries_, {}, false);
             redrawKdeContours(kdeReferenceSeries_, {}, true);
         }
@@ -1786,118 +1762,76 @@ namespace frontend
         hideKdeLegendMarkers();
     }
 
-    void ExperimentMonitoringTab::requestKdeUpdate()
+    void ExperimentMonitoringTab::pushKdeSettings()
     {
-        if (!kdeEnabled_ || kdeWatcher_) return;
-
-        const double conversionFactor = backend_.processing().getPixelToMicronFactor();
-        const double areaConversionFactor = conversionFactor * conversionFactor;
-        std::vector<uint64_t> indices;
-        std::vector<monitoring::DensityPoint> points;
-        indices.reserve(recentValidFrames_.size());
-        points.reserve(recentValidFrames_.size());
-        for (const auto& frame : recentValidFrames_)
-        {
-            if (!frame.validation.isValid) continue;
-            indices.push_back(frame.index);
-            points.push_back({frame.validation.area * areaConversionFactor, frame.validation.deformability});
-        }
-        if (points.empty())
-        {
-            kdeFingerprint_ = KdeFingerprint{};
-            if (!kdeDensityByIndex_.empty())
-            {
-                kdeDensityByIndex_.clear();
-                updateScatterplot(recentValidFrames_);
-            }
-            return;
-        }
-        // The rolling buffer only grows at the back and trims at the front, so
-        // (count, first, last) identifies the window; skip an unchanged one.
-        const KdeFingerprint fingerprint{points.size(), indices.front(), indices.back(), kdeBandwidthFactor_, areaConversionFactor,
-                                         kdeCoreFraction_, scatterXMin_, scatterXMax_, scatterYMin_, scatterYMax_};
-        if (fingerprint == kdeFingerprint_) return;
-        kdeFingerprint_ = fingerprint;
-
-        const double factor = kdeBandwidthFactor_;
-        const double coreFraction = kdeCoreFraction_;
-        const double x0 = scatterXMin_, x1 = scatterXMax_, y0 = scatterYMin_, y1 = scatterYMax_;
-        const double pixelToMicron = conversionFactor;
-        auto* watcher = new QFutureWatcher<KdeResult>(this);
-        kdeWatcher_ = watcher;
-        connect(watcher, &QFutureWatcher<KdeResult>::finished, this, &ExperimentMonitoringTab::onKdeJobFinished);
-        watcher->setFuture(QtConcurrent::run([indices = std::move(indices), points = std::move(points), factor, coreFraction, x0, x1, y0, y1, pixelToMicron]() {
-            QElapsedTimer clock;
-            clock.start();
-            KdeResult result;
-            const auto bandwidth = monitoring::silvermanBandwidth(points, factor);
-            result.density = monitoring::gaussianKdeAtPoints(points, bandwidth);
-            result.frameIndices = std::move(indices);
-            result.bandwidthX = bandwidth.x;
-            result.bandwidthY = bandwidth.y;
-            // Core contour at the level enclosing `coreFraction` of the samples,
-            // on the same [0, 1] scale as the point densities.
-            result.coreFraction = coreFraction;
-            result.coreLevel = monitoring::coreLevel(result.density, coreFraction);
-            if (std::isfinite(result.coreLevel))
-            {
-                for (double d : result.density)
-                    if (d >= result.coreLevel) ++result.coreCount;
-                const auto grid = monitoring::gaussianKdeGrid(points, bandwidth, monitoring::rawKdeMaximum(points, bandwidth),
-                                                              x0, x1, y0, y1, kKdeGridNx, kKdeGridNy);
-                result.contours = monitoring::isoContours(grid, result.coreLevel);
-            }
-            result.bandwidthFactor = factor;
-            result.pixelToMicron = pixelToMicron;
-            result.x0 = x0;
-            result.x1 = x1;
-            result.y0 = y0;
-            result.y1 = y1;
-            result.computeMs = static_cast<int>(clock.elapsed());
-            return result;
-        }));
+        pushKdeSettings(isVisible());
     }
 
-    void ExperimentMonitoringTab::onKdeJobFinished()
+    void ExperimentMonitoringTab::pushKdeSettings(bool visible)
     {
-        auto* watcher = kdeWatcher_;
-        kdeWatcher_ = nullptr;
-        if (!watcher) return;
-        const KdeResult result = watcher->result();
-        watcher->deleteLater();
-        if (!kdeEnabled_) return; // switched off while the estimate was running
+        backend::services::MonitoringDensitySettings settings;
+        settings.enabled = kdeEnabled_ && visible;
+        settings.intervalMs = kdeIntervalMs_;
+        settings.bandwidthFactor = kdeBandwidthFactor_;
+        settings.coreFraction = kdeCoreFraction_;
+        // The contour grid spans the chart's fixed axes.
+        settings.x0 = scatterXMin_;
+        settings.x1 = scatterXMax_;
+        settings.y0 = scatterYMin_;
+        settings.y1 = scatterYMax_;
+        backend_.monitoringDensity().setSettings(settings);
+    }
 
+    void ExperimentMonitoringTab::requestKdeUpdate()
+    {
+        if (!kdeEnabled_) return;
+        pushKdeSettings();
+        backend_.monitoringDensity().requestUpdate();
+    }
+
+    bool ExperimentMonitoringTab::kdeJobInFlight() const
+    {
+        return backend_.monitoringDensity().busy();
+    }
+
+    void ExperimentMonitoringTab::pollKdeResult()
+    {
+        auto& service = backend_.monitoringDensity();
+        const uint64_t generation = service.generation();
+        if (generation == kdeServiceGeneration_) return;
+        kdeServiceGeneration_ = generation;
+        if (!kdeEnabled_) return; // switched off while the estimate was running
+        auto result = service.latest();
         kdeDensityByIndex_.clear();
-        kdeDensityByIndex_.reserve(result.frameIndices.size());
-        for (std::size_t i = 0; i < result.frameIndices.size() && i < result.density.size(); ++i)
+        if (!result)
         {
-            kdeDensityByIndex_[result.frameIndices[i]] = result.density[i];
+            // The ring emptied (cleared buffer): back to the sparsest level.
+            kdeResult_.reset();
+            lastKdeContours_.clear();
+            lastKdeCoreLevel_ = std::nan("");
+            lastKdeCoreCount_ = 0;
+            updateScatterplot(recentValidFrames_);
+            redrawKdeContours(kdeContourSeries_, {}, false);
+            refreshKdeTooltip();
+            return;
+        }
+        kdeDensityByIndex_.reserve(result->frameIndices.size());
+        for (std::size_t i = 0; i < result->frameIndices.size() && i < result->density.size(); ++i)
+        {
+            kdeDensityByIndex_[result->frameIndices[i]] = result->density[i];
         }
         ++kdeGeneration_;
-        lastKdeComputeMs_ = result.computeMs;
-        lastKdePointCount_ = result.frameIndices.size();
-        lastKdeBandwidthX_ = result.bandwidthX;
-        lastKdeBandwidthY_ = result.bandwidthY;
-        lastKdeCoreLevel_ = result.coreLevel;
-        lastKdeCoreCount_ = result.coreCount;
-        lastKdeContours_ = result.contours;
-        lastKdeMeta_ = result;
-        lastKdeMeta_.frameIndices.clear();
-        lastKdeMeta_.density.clear();
-        lastKdeMeta_.contours.clear();
-        lastKdeValid_ = true;
+        lastKdeComputeMs_ = result->computeMs;
+        lastKdePointCount_ = result->frameIndices.size();
+        lastKdeBandwidthX_ = result->bandwidth.x;
+        lastKdeBandwidthY_ = result->bandwidth.y;
+        lastKdeCoreLevel_ = result->coreLevel;
+        lastKdeCoreCount_ = result->coreCount;
+        lastKdeContours_ = result->contours;
+        kdeResult_ = std::move(result);
         updateScatterplot(recentValidFrames_); // re-route points into their new density levels
         redrawKdeContours(kdeContourSeries_, lastKdeContours_, false);
         refreshKdeTooltip();
-        // During a run the coordinator keeps the latest provisional record and
-        // writes it into the file at stop (a copy of what is on screen).
-        if (backend_.experiment().state() == backend::app::ExperimentRunState::Active)
-        {
-            backend_.experiment().setLiveKdeCoreRecord(lastCoreRecordJson());
-        }
-        SPDLOG_DEBUG("Monitoring KDE: {} points, bandwidth ({:.2f} um^2, {:.4f}), core {:.0f}% -> {} cells, {} loop(s), {} ms",
-                     result.frameIndices.size(), result.bandwidthX, result.bandwidthY, result.coreFraction * 100.0,
-                     result.coreCount, result.contours.size(), result.computeMs);
     }
 
 
@@ -1911,6 +1845,7 @@ namespace frontend
             scatterplotView_->setDefaultRange(scatterXAxis_, minVal, maxVal);
             scatterplotView_->resetZoom();
         }
+        pushKdeSettings();
     }
 
     void ExperimentMonitoringTab::setScatterYRange(double minVal, double maxVal)
@@ -1923,6 +1858,7 @@ namespace frontend
             scatterplotView_->setDefaultRange(scatterYAxis_, minVal, maxVal);
             scatterplotView_->resetZoom();
         }
+        pushKdeSettings();
     }
 
     void ExperimentMonitoringTab::setHistogramXRange(double minVal, double maxVal)

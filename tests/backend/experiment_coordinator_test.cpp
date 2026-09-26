@@ -13,7 +13,10 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/camera/mock/MockCamera.h"
+#include "backend/processing/KdeCoreRecord.h"
+#include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/services/MonitoringDensityService.h"
 #include "backend/services/CaptureService.h"
 
 #include <functional>
@@ -340,6 +343,68 @@ int main()
                 return 41;
             }
             reader.closeFile();
+        }
+
+        // The backend density service supplies the record itself, with no
+        // shell involved: synthetic cells in the monitoring ring (monitoring
+        // accumulation is off, so the mock camera adds none), an estimate
+        // during the run, and the finalized file carries that provisional
+        // record.
+        {
+            for (uint64_t i = 0; i < 400; ++i)
+            {
+                backend::services::ProcessedFrame f;
+                f.index = 900000 + i;
+                f.validation.isValid = true;
+                f.validation.area = 300.0 + static_cast<double>(i % 23);
+                f.validation.deformability = 0.05 + 0.001 * static_cast<double>(i % 17);
+                backendApp.processing().appendMonitoringFrameForTests(f);
+            }
+            const std::string exp3 = (dataDir / "exp3.h5").string();
+            if (!startViaFacade(facade, exp3).ok)
+            {
+                std::cerr << "density-record experiment start failed\n";
+                return 42;
+            }
+            auto& density = backendApp.monitoringDensity();
+            const uint64_t gen0 = density.generation();
+            backend::services::MonitoringDensitySettings settings;
+            settings.enabled = true;
+            settings.intervalMs = 60000;
+            density.setSettings(settings);
+            if (!waitFor([&] { return density.generation() > gen0 && !density.busy(); }, 10000))
+            {
+                std::cerr << "density estimate did not land during the run\n";
+                return 43;
+            }
+            bridge::ExperimentCommand stop3;
+            stop3.action = bridge::ExperimentCommandAction::Stop;
+            if (!facade.dispatch(stop3).ok ||
+                !waitFor([&] {
+                    app::ExperimentStatus s;
+                    return facade.fetchExperimentStatus(s) && statusIsTerminal(s, app::ExperimentRunState::Idle);
+                }, 15000))
+            {
+                std::cerr << "density-record experiment did not finalize\n";
+                return 44;
+            }
+            settings.enabled = false;
+            density.setSettings(settings);
+            backend::services::Hdf5Service reader;
+            std::string stored, why;
+            if (!reader.loadFile(exp3) || !reader.readKdeLiveJson(stored))
+            {
+                std::cerr << "finalized file lacks the service's live KDE core record\n";
+                return 45;
+            }
+            reader.closeFile();
+            const auto record = backend::monitoring::fromJson(stored, &why);
+            if (!record || !record->provisional || record->source != "live-buffer" ||
+                record->populationCount != 400 || record->contours.empty())
+            {
+                std::cerr << "stored service record is wrong: " << why << " " << stored.substr(0, 200) << "\n";
+                return 46;
+            }
         }
 
         // Exercise the config-json write path on the next run.

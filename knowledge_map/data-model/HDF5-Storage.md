@@ -74,7 +74,7 @@
   older files. See [[../architecture/ExperimentCoordinator]].
 - **KDE core contour records (`kde_core_schema_version` = 1)** — JSON
   documents produced/parsed by the Qt-free frontend codec
-  `include/frontend/tabs/KdeCoreRecord.h`, stored verbatim as UTF-8 string
+  `include/backend/processing/KdeCoreRecord.h`, stored verbatim as UTF-8 string
   attributes: `/monitoring @kde_live_json` (provisional: `provisional:true`,
   `source:"live-buffer"`, a copy of the Monitoring tab's last on-screen core
   contour, written by the coordinator at finalization only when KDE was on

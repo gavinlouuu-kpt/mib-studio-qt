@@ -172,6 +172,12 @@ All gates in one struct. Notable fields:
   (`getMonitoringValidAppended`/`getMonitoringInvalidAppended`, reset by
   `clearMonitoringFrames` under the rings' lock) make ring evictions
   observable (appended − held) for the bridge snapshot.
+  `getMonitoringValidPoints()` copies only (index, area, deformability) of
+  the valid ring under its lock — no image or contour references — for
+  [[MonitoringDensityService]]; `appendMonitoringFrameForTests` is the test
+  seam that fills the ring without the activity gate. `BatchPipelineStats`
+  carries `queueCapacity` (configured `maxQueuedFrames`) so the density
+  service can treat a quarter-full queue as load.
 - **Experiment accumulation** — bounded `std::deque<ProcessedFrame>` populated
   while `experimentActive_` is true. Deque gives O(1) `pop_front()` when the
   bounded backlog is full under high frame rates. `flushBufferedFrames(Hdf5Service&)`

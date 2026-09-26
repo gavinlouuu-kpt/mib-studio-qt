@@ -50,7 +50,7 @@ class QProgressDialog;
 class QToolButton;
 class QAction;
 namespace frontend { class ElidingLabel; }
-namespace frontend::monitoring { struct KdeCoreRecord; }
+namespace backend::monitoring { struct KdeCoreRecord; }
 template<typename T> class QFutureWatcher;
 #if __has_include(<QHistogramSeries>)
 class QHistogramSeries;
@@ -199,7 +199,7 @@ namespace frontend
         void onFullRunCoreFinished();
         void updateComputeCoreActionState();
         QAction *computeCoreAction_ = nullptr;
-        QFutureWatcher<frontend::monitoring::KdeCoreRecord> *coreWatcher_ = nullptr;
+        QFutureWatcher<backend::monitoring::KdeCoreRecord> *coreWatcher_ = nullptr;
         QString coreJobPath_;
         std::optional<bool> overwriteAnswerForTests_;
         QChartView *histogramView_ = nullptr;

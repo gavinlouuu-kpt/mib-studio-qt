@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace frontend::monitoring {
+namespace backend::monitoring {
 
 struct DensityPoint {
     double x{0.0};
@@ -389,4 +389,4 @@ inline DensityRgb densityRampColor(double t) {
     return {mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b)};
 }
 
-} // namespace frontend::monitoring
+} // namespace backend::monitoring

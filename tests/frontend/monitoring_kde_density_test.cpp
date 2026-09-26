@@ -5,14 +5,15 @@
 //  - off by default: the plain series carry the points, the density-level
 //    series are empty and hidden, timer idle;
 //  - enabling re-routes every point into a density-level series at once
-//    (sparsest level until the first estimate), starts the periodic timer
-//    and launches the estimate on a worker thread; when it lands, crowded
+//    (sparsest level until the first estimate), starts the result poll and
+//    wakes the backend MonitoringDensityService (frames are injected into
+//    the processing monitoring ring it reads as well); when it lands, crowded
 //    points sit in higher levels than isolated ones and the densest point
 //    reaches the top level; target-group points use the rectangle family;
 //  - points that arrive after an estimate sit in the sparsest level until
 //    the next estimate, which then places them;
-//  - an unchanged buffer does not relaunch the job; a large buffer is
-//    computed asynchronously (the call returns with the job in flight);
+//  - an unchanged buffer yields no new estimate; a large buffer is
+//    computed asynchronously (the call returns with the request pending);
 //  - hide stops the timer, show restarts it; disabling empties and hides the
 //    level series and restores the plain ones;
 //  - the three settings persist through QSettings; a fresh tab and the
@@ -23,8 +24,9 @@
 #include "backend/processing/ProcessingTypes.h"
 #include "frontend/dialogs/MonitoringSettingsDialog.h"
 #include "frontend/tabs/ExperimentMonitoringTab.h"
-#include "frontend/tabs/MonitoringDensity.h"
-#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/processing/MonitoringDensity.h"
+#include "backend/processing/KdeCoreRecord.h"
+#include "backend/services/MonitoringDensityService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "frontend/utils/ApplicationSettings.h"
 
@@ -194,7 +196,8 @@ int main(int argc, char* argv[]) {
                    "target family keeps its identity by shape");
         MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() >= 1; }, 15000),
                     "first estimate lands");
-        MIB_EXPECT(!tab.kdeJobInFlight(), "job released after completion");
+        MIB_EXPECT(waitFor([&] { return !tab.kdeJobInFlight(); }, 5000),
+                   "the backend worker goes idle after the estimate");
         settle(1);
         {
             std::vector<double> cluster, outliers;
@@ -279,7 +282,7 @@ int main(int argc, char* argv[]) {
         const std::string bothPath = (td.path() / "ref_both.h5").string();
         const std::string emptyPath = (td.path() / "ref_none.h5").string();
         {
-            namespace mon = frontend::monitoring;
+            namespace mon = backend::monitoring;
             const auto rec = mon::fromJson(tab.lastCoreRecordJson());
             MIB_REQUIRE(rec.has_value(), "the live estimate serialises to a valid record");
             MIB_EXPECT(rec->provisional && rec->source == "live-buffer", "live record is provisional");
@@ -338,7 +341,7 @@ int main(int argc, char* argv[]) {
         wd.mark("fingerprint");
         const uint64_t gen = tab.kdeGeneration();
         tab.requestKdeUpdate();
-        MIB_EXPECT(!tab.kdeJobInFlight(), "unchanged buffer does not relaunch the estimate");
+        MIB_REQUIRE(waitFor([&] { return !tab.kdeJobInFlight(); }, 5000), "the request is consumed");
         settle(2);
         MIB_EXPECT(tab.kdeGeneration() == gen, "no new generation for an unchanged buffer");
         std::vector<backend::services::ProcessedFrame> many;
@@ -351,7 +354,7 @@ int main(int argc, char* argv[]) {
                    "rolling buffer capped at 1000 points");
         tab.requestKdeUpdate();
         MIB_EXPECT(tab.kdeJobInFlight(),
-                   "a 1000-point estimate returns immediately with the job in flight");
+                   "a 1000-point request returns immediately with the estimate pending");
         MIB_REQUIRE(waitFor([&] { return tab.kdeGeneration() > gen; }, 15000),
                     "large estimate lands");
         MIB_EXPECT(levelPoints(levels) + levelPoints(targetLevels) == 1000,
@@ -362,12 +365,15 @@ int main(int argc, char* argv[]) {
         tab.hide();
         settle(2);
         MIB_EXPECT(!tab.kdeTimerActive(), "hidden tab stops the KDE timer");
+        MIB_EXPECT(!backend.monitoringDensity().settings().enabled, "hidden tab switches the backend worker off");
         tab.show();
         settle(2);
         MIB_EXPECT(tab.kdeTimerActive(), "shown tab restarts the KDE timer");
+        MIB_EXPECT(backend.monitoringDensity().settings().enabled, "shown tab switches the backend worker back on");
         tab.kdeToggle()->setChecked(false);
         settle(2);
         MIB_EXPECT(!tab.kdeEnabled() && !tab.kdeTimerActive(), "toggle off stops the timer");
+        MIB_EXPECT(!backend.monitoringDensity().settings().enabled, "toggle off switches the backend worker off");
         MIB_EXPECT(allHidden(levels) && allHidden(targetLevels),
                    "off: level series emptied and hidden");
         MIB_EXPECT(scatter->isVisible() && target->isVisible() &&

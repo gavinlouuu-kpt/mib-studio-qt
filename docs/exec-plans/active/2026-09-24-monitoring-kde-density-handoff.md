@@ -20,7 +20,8 @@ execution plan
 | Repository | `gavinlouuu-kpt/mib-studio-qt` |
 | Branch | `feat/monitoring-kde-density`, pushed to `origin`; **no PR opened** |
 | Base | `develop` at `2fe0282` (tip of `develop` when pushed) |
-| Commits (oldest first) | `9aa04d2` KDE density colouring · `8bf5243` mock-camera e2e + level-series rendering · `b56cd33` / `0886e14` core-region spec · `cfa903d` PR 1 live contour + pinned reference · `64f9c4b` PR 2 stored live record, reference from file, Review drawing · `1ba71ed` PR 3 full-run contour computed and saved from Review · this handover |
+| Commits (oldest first) | `9aa04d2` KDE density colouring · `8bf5243` mock-camera e2e + level-series rendering · `b56cd33` / `0886e14` core-region spec · `cfa903d` PR 1 live contour + pinned reference · `64f9c4b` PR 2 stored live record, reference from file, Review drawing · `1ba71ed` PR 3 full-run contour computed and saved from Review · `a33808f` this handover · `21741f6` root-safe read-only test · `3c19e0b` Linux results · then the move of the estimate into the backend (2026-09-26, §2a) |
+| Continuation branch | `claude/monitoring-kde-density-handover-mf5q0m` = `feat/monitoring-kde-density` + the commits after `a33808f`; open the PR from this branch |
 | Size | 38 files, +4608 / −98 before this document |
 | Local worktree | `C:\Users\ERBG07\Developer\mib-studio-qt\.claude\worktrees\feat-monitoring-kde-density` (bench PC) |
 
@@ -48,17 +49,33 @@ the user to **only a contour on the scatter** (no readouts, no tab buttons).
 | Record codec | Qt-free JSON (`kde_core_schema_version` = 1, nlohmann), contours as polylines in µm² / deformability, malformed or future documents rejected with a reason | `include/frontend/tabs/KdeCoreRecord.h` |
 | Review tab | Draws stored contours (full-run solid, live dashed); right-click **Compute core contour from full run** (all valid cells, fixed-seed 5000-cell subsample above that) saves `/analysis @kde_core_json` after confirming an overwrite; read-only files show it unsaved | `src/frontend/tabs/HdfReviewTab.cpp`, `KdeCoreRecord.h::computeFullRunCoreRecord`, `Hdf5Service::openFileForUpdate` |
 
+## 2a. 2026-09-26: the estimate moved into the backend
+
+The user asked how to guarantee the KDE never affects experiment
+performance and noted the migration away from Qt, so the Qt worker job was
+replaced by a backend service rather than hardened in Qt:
+
+| Change | Where |
+|---|---|
+| `MonitoringDensityService`: one `std::thread` at the lowest OS priority (SCHED_IDLE / THREAD_PRIORITY_LOWEST); tick skipped when frames were dropped or the batch queue is ≥ 25% full; unchanged input skipped; next wake ≥ 20× the last compute (≤ ~5% of one core); immutable result + generation; provisional record handed to `ExperimentCoordinator::setLiveKdeCoreRecord` by the backend | `include/backend/services/MonitoringDensityService.h`, `src/backend/services/MonitoringDensityService.cpp`, wired in `AppBackend` (constructed in the constructor, stopped first at shutdown) |
+| Metrics-only ring copy (no image refs under the ring lock), test seam, queue capacity in the batch stats | `ProcessingService::getMonitoringValidPoints`, `appendMonitoringFrameForTests`, `BatchPipelineStats::queueCapacity` |
+| Kernel + record codec moved, namespace `backend::monitoring` | `include/backend/processing/{MonitoringDensity,KdeCoreRecord}.h` |
+| Qt tab: no worker job; pushes settings + chart axes (enabled = toggle on and tab visible), polls the service generation every 100 ms, adopts results on the GUI thread; `QSettings` persistence unchanged | `ExperimentMonitoringTab.{h,cpp}` |
+| Not yet: bridge (`BackendFacade` pull + contract/ABI bump) and React scatter colouring; backend-owned settings persistence | follow-up PR |
+
 ## 3. Tests added or extended
 
 | Test | Covers |
 |---|---|
-| `frontend.monitoring_density` (backend runner) | kernel invariants, per-axis separation with an isotropic control, degenerate/non-finite input, order invariance, colour ramp, ratio-gated quadratic cost; core level rank semantics, one loop per cloud enclosing ~90%, two clouds → two loops, translation invariance, border-cut loops closed |
+| `processing.monitoring_density` (backend runner; was `frontend.monitoring_density`) | kernel invariants, per-axis separation with an isotropic control, degenerate/non-finite input, order invariance, colour ramp, ratio-gated quadratic cost; core level rank semantics, one loop per cloud enclosing ~90%, two clouds → two loops, translation invariance, border-cut loops closed |
 | `recording.kde_core_roundtrip` | both records survive close/reopen byte-identical; codec reproduces every field; records independent; rewrite replaces |
 | `recording.kde_core_fault` | writes refused with no file / read-only; codec rejects malformed, non-object, missing/future schema, bad vertices, wrong types; garbage stored verbatim then rejected; non-string attribute reads as absent |
 | `recording.kde_full_run_core` | full-run record deterministic, subsample cap, exclusions counted, 89.2% of 20000 cells inside the 90% contour; `openFileForUpdate` keeps frames/info/live record, refuses missing and read-only files (the read-only check is skipped with a NOTE when the user bypasses permission bits, e.g. root) |
-| `e2e.experiment_coordinator` (extended) | record offered while idle ignored, last record before Stop written, next run does not inherit it |
+| `e2e.experiment_coordinator` (extended) | record offered while idle ignored, last record before Stop written, next run does not inherit it; a run where only `MonitoringDensityService` supplies the record (file carries it, 400 cells) |
+| `backend.monitoring_density_service` | interval budget and load policy, clamping, disabled no-op, first estimate + record to the sink, fingerprint skip, interval-only change, fraction/axis change, back-off on drops and backlog, disable/re-enable, empty ring, prompt stop, four concurrent callers (TSan lane) |
+| `performance.monitoring_density_contention` | uncontended duty cycle within the 20× budget; real `computeProcessedFrame` on every core with the service off vs on in alternating windows, median throughput ratio ≥ 0.90 |
 | `frontend.monitoring_kde_density` (offscreen widget) | toggle, async estimate, late points, level series, contour series, pin/clear, fraction change, record contents, reference from file (preference order, refusals), persistence and restore, dialog controls |
-| `frontend.hdf_review_core` | stored contours drawn/cleared, unreadable record ignored, full-run compute + save, decline/confirm overwrite, read-only file |
+| `frontend.hdf_review_core` | stored contours drawn/cleared, unreadable record ignored, full-run compute + save, decline/confirm overwrite, read-only file (refusal asserted only where the OS refuses the write, e.g. not as root) |
 | `integration.monitoring_kde_e2e` | real `MainWindow` on the mock camera at 200 fps (asset `512x96stream-mock-frames`, synthetic ellipses if absent), KDE off/on/off phases gated on ratios; a real experiment with KDE on whose file must carry the live record |
 
 ## 4. Verification evidence (Windows 11 bench PC, `windows-ninja` Release)
@@ -100,6 +117,16 @@ the user to **only a contour on the scatter** (no readouts, no tab buttons).
    consistent look matters.
 6. After merge: move this handover to `docs/exec-plans/completed/` and add a
    Recent-Work line noting the merge.
+7. **Re-run on the Windows bench after the backend move (§2a):**
+   `integration.monitoring_kde_e2e` (it does not run in the Linux container:
+   processing stays at 0 fps there on the unchanged branch too, after the
+   Experiment tab's camera-script apply fails with "No hardware camera
+   selected") and the full `windows-ninja-test` preset; confirm
+   `priorityLowered` in the service stats (THREAD_PRIORITY_LOWEST).
+8. **Follow-up PR (migration):** expose `MonitoringDensityService` through
+   `BackendFacade` + the Rust bridge (append-only contract change, ABI bump
+   per ADR 0004) and colour the React Monitoring scatter from it; move the
+   `Monitoring/Kde*` settings persistence into the backend.
 
 ## 6. Behaviour notes a reviewer should know
 
@@ -107,8 +134,13 @@ the user to **only a contour on the scatter** (no readouts, no tab buttons).
   1000-cell buffer**, not the whole run; the record says so
   (`provisional: true`, `source: "live-buffer"`). Only the Review
   computation produces `provisional: false`.
-- Stop never waits for the GUI: the coordinator keeps the last pushed
-  record; an estimate landing after Stop is not stored. A failed record
+- The estimate runs in the backend at the lowest OS priority: under full
+  CPU load it simply does not run (the contour goes stale) and ticks are
+  skipped while the pipeline drops frames or the batch queue backs up. A
+  run watched with the Monitoring view hidden gets no estimate and no
+  stored record (the monitoring ring is visibility-gated).
+- Stop never waits for the estimate: the coordinator keeps the last record
+  the service handed over; an estimate landing after Stop is not stored. A failed record
   write logs a warning and never changes the run outcome.
 - The full-run core share follows `Monitoring/KdeCoreFraction` so live and
   full-run contours are comparable; its grid spans the padded data range
@@ -142,22 +174,25 @@ Copy verbatim into a fresh session in a clone of the repository:
 ```text
 You are continuing the "Monitoring scatter density (KDE) and core contour"
 feature of gavinlouuu-kpt/mib-studio-qt. The implementation is complete and
-verified locally on branch feat/monitoring-kde-density (pushed to origin, on
-top of develop@2fe0282, no PR yet). Read, in this order:
+verified locally on branch claude/monitoring-kde-density-handover-mf5q0m
+(= feat/monitoring-kde-density + the backend move of §2a; pushed to origin,
+no PR yet). Read, in this order:
 AGENTS.md; docs/exec-plans/active/2026-09-24-monitoring-kde-density-handoff.md
 (this handover); docs/exec-plans/completed/2026-09-24-kde-core-region-split.md;
+knowledge_map/services/MonitoringDensityService.md;
 knowledge_map/frontend/ExperimentMonitoringTab.md;
 knowledge_map/frontend/HdfReviewTab.md; knowledge_map/data-model/HDF5-Storage.md.
 
 Your job, in order:
-1. Open a PR from feat/monitoring-kde-density into develop. Body: the
+1. Open a PR from claude/monitoring-kde-density-handover-mf5q0m into develop. Body: the
    delivered table (handover §2), tests (§3), verification (§4) and the
    explicit "not done / not verified" list (§5). Do not squash or rewrite
    the existing commits.
 2. Watch every CI lane (backend-ci, sanitizers TSan + ASan/UBSan, docs-ci,
    Windows packaging). Fix failures on the same branch with
-   regression-first tests. Code under test: include/frontend/tabs/
-   {MonitoringDensity,KdeCoreRecord}.h, src/frontend/tabs/
+   regression-first tests. Code under test: include/backend/processing/
+   {MonitoringDensity,KdeCoreRecord}.h, src/backend/services/
+   MonitoringDensityService.cpp, src/frontend/tabs/
    {ExperimentMonitoringTab,HdfReviewTab}.cpp,
    src/frontend/dialogs/MonitoringSettingsDialog.cpp,
    src/backend/app/ExperimentCoordinator.cpp,
@@ -168,16 +203,19 @@ Your job, in order:
    handover §5 item 3 and record it in the task note
    knowledge_map/task/2026-09-23-monitoring-kde-density.md; claim nothing
    untested and name what was unavailable.
-4. Only if asked: address TD-17 (Review should use the file's recorded
+4. On the Windows bench, re-run integration.monitoring_kde_e2e and the
+   windows-ninja-test preset after the backend move (handover §5 item 7).
+5. Only if asked: address TD-17 (Review should use the file's recorded
    pixel-to-micron factor for the scatter and the full-run contour) or
    TD-16 (plain scatter GUI stall), each with its own tests.
-5. Report: files changed, commands run with results, anything left open.
+6. Report: files changed, commands run with results, anything left open.
 
 Rules: the user wants the core region shown ONLY as a contour on the
 scatter (no readouts, no new tab widgets; controls live in Monitoring
 Settings). The live record is provisional and never recomputed at Stop;
 the full-run record is computed only on explicit request in Review. No
 client touches a run's HDF5 file while the coordinator owns it. KDE work
-stays off the GUI thread. Use spdlog; headers mirror src; run Qt tests from
+stays in the backend MonitoringDensityService (lowest priority, load
+back-off, compute budget); shells only push settings and read results. Use spdlog; headers mirror src; run Qt tests from
 PowerShell on Windows. Bench recipe: handover §7.
 ```

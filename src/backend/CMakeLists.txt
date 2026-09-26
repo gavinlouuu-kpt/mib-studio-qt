@@ -238,6 +238,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/DeviceDiscoveryService.cpp

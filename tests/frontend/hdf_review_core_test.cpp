@@ -11,7 +11,7 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "frontend/tabs/HdfReviewTab.h"
-#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/processing/KdeCoreRecord.h"
 #include "frontend/utils/ApplicationSettings.h"
 
 #include "support/assert.h"
@@ -29,13 +29,15 @@
 
 #include <opencv2/core.hpp>
 
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <random>
 #include <string>
 #include <vector>
 
-namespace mon = frontend::monitoring;
+namespace mon = backend::monitoring;
 using backend::services::Hdf5Service;
 using backend::services::ProcessedFrame;
 
@@ -251,20 +253,27 @@ int main(int argc, char* argv[]) {
     namespace fs = std::filesystem;
     fs::permissions(ro, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
                     fs::perm_options::remove);
+    // Root (containers, devcontainer) bypasses permission bits, so the save
+    // refusal is only asserted where the OS itself refuses writes to the file.
+    const bool osRefusesWrite = !std::fstream(ro, std::ios::in | std::ios::out | std::ios::binary).is_open();
     tab.loadHdfFileForTests(QString::fromStdString(ro));
     settle(4);
     tab.computeFullRunCoreForTests();
     MIB_REQUIRE(waitFor([&] { return !tab.fullRunCoreJobInFlight(); }, 30000),
                 "read-only computation finishes");
     settle(2);
-    MIB_EXPECT(tab.hasStoredKdeAnalysis() &&
-                   tab.statusTextForTests().contains(QStringLiteral("not saved")),
-               "read-only file: contour shown and the status says it was not saved");
+    MIB_EXPECT(tab.hasStoredKdeAnalysis(), "read-only file: contour shown");
+    if (osRefusesWrite)
+        MIB_EXPECT(tab.statusTextForTests().contains(QStringLiteral("not saved")),
+                   "read-only file: the status says it was not saved");
     tab.loadHdfFileForTests(
         QString::fromStdString(none)); // release the read-only file before restoring permissions
     settle(2);
     fs::permissions(ro, fs::perms::owner_write, fs::perm_options::add);
-    MIB_EXPECT(readAnalysis(ro).empty(), "nothing was written to the read-only file");
+    if (osRefusesWrite)
+        MIB_EXPECT(readAnalysis(ro).empty(), "nothing was written to the read-only file");
+    else
+        std::printf("NOTE: write bits not enforced for this user (root?); read-only refusal not checked\n");
 
     tab.close();
     settle(2);

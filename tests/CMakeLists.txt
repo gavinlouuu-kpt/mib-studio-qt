@@ -192,9 +192,23 @@ set_tests_properties(frontend.monitoring_roi_crop PROPERTIES LABELS "frontend;sa
 
 # Monitoring scatter density (KDE): invariants, per-axis bandwidth, degenerate
 # input, colour ramp and a ratio-gated cost budget (no Qt).
-mib_add_backend_test_executable(monitoring_density_test frontend/monitoring_density_test.cpp)
-add_test(NAME frontend.monitoring_density COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_test)
-set_tests_properties(frontend.monitoring_density PROPERTIES LABELS "frontend;monitoring;performance" TIMEOUT 60)
+mib_add_backend_test_executable(monitoring_density_test processing/monitoring_density_test.cpp)
+add_test(NAME processing.monitoring_density COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_test)
+set_tests_properties(processing.monitoring_density PROPERTIES LABELS "processing;monitoring;performance" TIMEOUT 60)
+
+# MonitoringDensityService (backend-owned live KDE): settings, lowest-priority
+# worker, fingerprint skip, load back-off, compute budget, record sink, stop,
+# and concurrent callers (TSan lane).
+mib_add_backend_test_executable(monitoring_density_service_test backend/monitoring_density_service_test.cpp)
+add_test(NAME backend.monitoring_density_service COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_service_test)
+set_tests_properties(backend.monitoring_density_service PROPERTIES LABELS "backend;monitoring;concurrency;safety" TIMEOUT 120)
+
+# The density worker never costs the processing pipeline throughput: real
+# computeProcessedFrame on every core, density service off vs on (ratio gate),
+# duty cycle within the compute budget when uncontended.
+mib_add_backend_test_executable(monitoring_density_contention_test performance/monitoring_density_contention_test.cpp)
+add_test(NAME performance.monitoring_density_contention COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_contention_test)
+set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 120)
 
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)

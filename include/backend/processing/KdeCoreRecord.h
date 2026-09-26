@@ -11,7 +11,7 @@
 // empty `contours` array.
 #pragma once
 
-#include "frontend/tabs/MonitoringDensity.h"
+#include "backend/processing/MonitoringDensity.h"
 
 #include <nlohmann/json.hpp>
 
@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-namespace frontend::monitoring {
+namespace backend::monitoring {
 
 inline constexpr int kKdeCoreSchemaVersion = 1;
 
@@ -220,4 +220,4 @@ inline KdeCoreRecord computeFullRunCoreRecord(const std::vector<DensityPoint>& p
     return r;
 }
 
-} // namespace frontend::monitoring
+} // namespace backend::monitoring

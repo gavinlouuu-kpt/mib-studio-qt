@@ -12,7 +12,7 @@
 //  - a non-string attribute of the same name (foreign writer) reads as absent.
 
 #include "backend/recording/Hdf5Service.h"
-#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/processing/KdeCoreRecord.h"
 
 #include "support/assert.h"
 #include "support/tempdir.h"
@@ -22,9 +22,9 @@
 #include <string>
 
 using backend::services::Hdf5Service;
-using frontend::monitoring::fromJson;
-using frontend::monitoring::KdeCoreRecord;
-using frontend::monitoring::toJson;
+using backend::monitoring::fromJson;
+using backend::monitoring::KdeCoreRecord;
+using backend::monitoring::toJson;
 
 int main() {
     mib::test::TempDir td("mib_kde_core_fault");

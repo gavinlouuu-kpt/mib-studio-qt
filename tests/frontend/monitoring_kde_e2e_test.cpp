@@ -28,7 +28,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/recording/Hdf5Service.h"
-#include "frontend/tabs/KdeCoreRecord.h"
+#include "backend/processing/KdeCoreRecord.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/core/MainWindow.h"
@@ -480,7 +480,7 @@ int main(int argc, char* argv[]) {
         MIB_EXPECT(!reader.readKdeAnalysisJson(analysis), "no full-run record is written automatically");
         reader.closeFile();
         std::string why;
-        const auto record = frontend::monitoring::fromJson(json, &why);
+        const auto record = backend::monitoring::fromJson(json, &why);
         MIB_EXPECT(record.has_value(), "stored record parses: " + why);
         if (record) {
             std::printf("stored live record: fraction %.2f, %llu of %llu cells, %zu loop(s)\n", record->coreFraction,

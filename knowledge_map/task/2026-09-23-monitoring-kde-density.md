@@ -127,3 +127,37 @@ Sanitizers (same configure flags and label filter as `sanitizers.yml`):
 TSan 84/85 and ASan+UBSan 84/85, with every KDE test and
 `e2e.experiment_coordinator` clean under both; the one failure is the
 numpy mismatch above.
+
+## 2026-09-26 — estimate moved into the backend (migration away from Qt)
+
+The user asked how to guarantee the KDE never affects experiment
+performance, then noted the migration away from Qt. The Qt-specific
+hardening (a low-priority Qt pool) would have been thrown away, so the
+estimate moved into `backend::services::MonitoringDensityService`:
+lowest-priority `std::thread`, load back-off (dropped frames / queue ≥ 25%),
+compute budget (next wake ≥ 20× last compute), fingerprint skip, record
+sink to the coordinator (no GUI in the record path). Headers moved to
+`include/backend/processing/` (`backend::monitoring`); the tab polls the
+service generation every 100 ms and pushes settings + axes; settings
+persistence stays in `QSettings` for now.
+
+Verification (Linux container, GCC 13, Ubuntu 24.04 packages):
+- `linux-backend-only` build + `ctest --preset linux-backend-only-test`:
+  119/119 (conformance-input test excluded, container numpy mismatch).
+- `backend.monitoring_density_service`, `e2e.experiment_coordinator`
+  (new run exp3: the file carries the service's record, 400 cells).
+- `performance.monitoring_density_contention`: 4 workers running
+  `computeProcessedFrame` flat out, 24212 frames/s density off vs 24864 on
+  (ratio 1.03); uncontended, a 2500-cell estimate took 121 ms and the next
+  wake was 2420 ms (duty 6.2% over a 4 s window including the first,
+  unbudgeted estimate).
+- Qt `linux-system-release` (apt Qt 6.4.2): `frontend.monitoring_kde_density`
+  5/5 runs, all 26 `frontend` tests pass (`frontend.hdf_review_core` after
+  making its read-only case conditional on the OS refusing writes, as for
+  `recording.kde_full_run_core`; verified as root and as `nobody`).
+- `integration.monitoring_kde_e2e` does **not** run in this container: on
+  the unchanged branch too, processing reports 0 fps after the Experiment
+  tab's camera-script apply fails ("No hardware camera selected"); it was
+  last green on the Windows bench before this change and must be re-run
+  there.
+

@@ -13,7 +13,7 @@
 //  - the colour ramp is monotone (darker for denser) and clamps its input;
 //  - the cost grows no worse than quadratically (ratio-gated, no absolute ms).
 
-#include "frontend/tabs/MonitoringDensity.h"
+#include "backend/processing/MonitoringDensity.h"
 
 #include "support/assert.h"
 
@@ -26,13 +26,13 @@
 #include <random>
 #include <vector>
 
-using frontend::monitoring::DensityBandwidth;
-using frontend::monitoring::DensityPoint;
-using frontend::monitoring::densityRampColor;
-using frontend::monitoring::DensityRgb;
-using frontend::monitoring::gaussianKdeAtPoints;
-using frontend::monitoring::normalizedDensity;
-using frontend::monitoring::silvermanBandwidth;
+using backend::monitoring::DensityBandwidth;
+using backend::monitoring::DensityPoint;
+using backend::monitoring::densityRampColor;
+using backend::monitoring::DensityRgb;
+using backend::monitoring::gaussianKdeAtPoints;
+using backend::monitoring::normalizedDensity;
+using backend::monitoring::silvermanBandwidth;
 
 namespace {
 
@@ -220,13 +220,13 @@ int main() {
 
     // ---- core region: level, grid, contour --------------------------------------
     {
-        using frontend::monitoring::Contour;
-        using frontend::monitoring::coreLevel;
-        using frontend::monitoring::DensityGrid;
-        using frontend::monitoring::fractionInside;
-        using frontend::monitoring::gaussianKdeGrid;
-        using frontend::monitoring::isoContours;
-        using frontend::monitoring::rawKdeMaximum;
+        using backend::monitoring::Contour;
+        using backend::monitoring::coreLevel;
+        using backend::monitoring::DensityGrid;
+        using backend::monitoring::fractionInside;
+        using backend::monitoring::gaussianKdeGrid;
+        using backend::monitoring::isoContours;
+        using backend::monitoring::rawKdeMaximum;
 
         // coreLevel: rank semantics and degenerate input.
         {

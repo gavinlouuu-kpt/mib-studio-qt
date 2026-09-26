@@ -5,8 +5,9 @@
 
 **Source:** `src/frontend/tabs/ExperimentMonitoringTab.cpp`,
 `include/frontend/tabs/ExperimentMonitoringTab.h`,
-`include/frontend/tabs/MonitoringDensity.h` (KDE kernel + colour ramp),
-`include/frontend/tabs/MonitoringRoiCrop.h`
+`include/frontend/tabs/MonitoringRoiCrop.h`; the KDE is computed by
+[[../services/MonitoringDensityService]] (kernel + colour ramp in
+`include/backend/processing/MonitoringDensity.h`)
 **Related:** [[../services/ProcessingService]] (monitoring rings),
 [[../frontend/System-Utilities]] (`ZoomableChartView`),
 [[Dialogs]] (`MonitoringSettingsDialog`)
@@ -47,8 +48,8 @@ population density, the pseudocolour dot plot used in flow / deformability
 cytometry, so an operator can see where the population sits even when
 markers overlap.
 
-- **Kernel** — `include/frontend/tabs/MonitoringDensity.h` (Qt-free,
-  header-only, same pattern as `MonitoringRoiCrop.h`): Gaussian KDE evaluated
+- **Kernel** — `include/backend/processing/MonitoringDensity.h` (Qt-free,
+  header-only): Gaussian KDE evaluated
   at every sample with a **per-axis Silverman bandwidth** (`sigma_axis ·
   n^(-1/6)` × user factor), normalised so the densest sample is 1. Per-axis
   is not optional: area spans hundreds of µm² while deformability spans
@@ -56,17 +57,22 @@ markers overlap.
   only in deformability (the old, never-called `computeKDE` grid did exactly
   that and used a 1-D normalisation — it was removed). `densityRampColor(t)`
   is the sequential single-hue ramp (blue, light → dark; the light end still
-  clears 2:1 on the white chart). Guard: `frontend.monitoring_density`
+  clears 2:1 on the white chart). Guard: `processing.monitoring_density`
   (invariants, per-axis separation with an isotropic control, degenerate
   and non-finite input, order invariance, ratio-gated quadratic cost).
-- **Periodic, off the GUI thread** — `kdeTimer_` (default 2 s,
-  `kKdeIntervalMs*`) calls `requestKdeUpdate()`, which snapshots the rolling
-  buffer into value types and runs the kernel via `QtConcurrent::run` +
-  `QFutureWatcher<KdeResult>` (the frontend's established async idiom, see
-  [[HdfReviewTab]]). One job at a time; an unchanged buffer (fingerprint =
-  count, first/last frame index, factor, µm conversion) is skipped; the
-  destructor drains an in-flight job; a result arriving after the toggle
-  went off is dropped. 1000 points cost ~3 ms on a desktop core.
+- **Computed in the backend, never on the GUI thread** —
+  [[../services/MonitoringDensityService]] owns the estimate: a
+  lowest-priority worker (SCHED_IDLE / THREAD_PRIORITY_LOWEST) over the
+  processing monitoring ring, skipped while the pipeline drops frames or
+  the batch queue backs up, unchanged input skipped, next wake ≥ 20× the
+  last compute. The tab only pushes its settings and scatter axes
+  (`pushKdeSettings()`: enabled = toggle on **and** tab visible, interval,
+  factor, core fraction, axis range) and polls `generation()` every
+  `kKdePollMs` (100 ms, `kdeTimer_`); a new result is adopted on the GUI
+  thread (`pollKdeResult()`: density per frame index, contours, tooltip
+  numbers). The Qt worker job (`QtConcurrent` + `QFutureWatcher`) of the
+  first version is gone. 1000 points cost ~3 ms (~20 ms with the contour
+  grid) on a desktop core.
 - **Cheap refresh: level series, not per-point colours.** While on, the
   plain `scatterSeries_` / `targetGroupSeries_` are hidden and
   `updateScatterplot` (every 500 ms) routes each point into one of
@@ -84,10 +90,12 @@ markers overlap.
 - **Settings** — `MonitoringSettingsDialog` exposes *KDE bandwidth factor*
   (0.2–5, default 1) and *KDE update interval* (500–60000 ms); the toggle,
   factor and interval persist in `QSettings` under `Monitoring/Kde*` with a
-  version guard (`Monitoring/KdeVersion`), like `Preview/*`. Test hooks:
+  version guard (`Monitoring/KdeVersion`), like `Preview/*`, and are pushed
+  to the backend service on every change. Test hooks:
   `kdeToggle()`, `requestKdeUpdate()`, `kdeJobInFlight()`,
   `kdeTimerActive()`, `kdeGeneration()`, `scatterSeriesForTests()`,
-  `injectMonitoringFramesForTests()`, `kdeLevelSeriesForTests()`,
+  `injectMonitoringFramesForTests()` (feeds the processing ring too, via
+  `appendMonitoringFrameForTests`), `kdeLevelSeriesForTests()`,
   `kdeDensityForFrame()`. Guards: `frontend.monitoring_kde_density`
   (offscreen widget) and `integration.monitoring_kde_e2e` (real
   `MainWindow` on the mock-camera pipeline with the
@@ -99,40 +107,43 @@ markers overlap.
 
 While KDE is on, one solid blue contour encloses the densest `Core %` of the
 samples (default 90%, Monitoring Settings, `Monitoring/KdeCoreFraction`).
-It is a true KDE iso-line: the worker job takes the level `t` = the
+It is a true KDE iso-line: the backend service takes the level `t` = the
 `ceil(p·n)`-th largest point density (`coreLevel`), evaluates the same
 kernel on a 128 × 64 grid over the fixed axis ranges (`gaussianKdeGrid`,
 normalised by `rawKdeMaximum` so grid and points share [0, 1]), and traces
 it with marching squares (`isoContours`, saddles resolved by the cell
 centre, border-cut loops closed along the border). Loops come back in
-`KdeResult::contours` in axis units; `redrawKdeContours` turns each into a
+`MonitoringDensityResult::contours` in axis units; `redrawKdeContours` turns each into a
 `QLineSeries` (`core-contour-N`, 2 px cosmetic pen, legend marker hidden).
 A **reference** contour (dashed orange, `reference-contour-N`) is pinned
 from the live loops (`pinKdeReference`) or set from elsewhere
 (`setKdeReference`, used by the file-backed reference in PR 2); it survives
-re-estimates and is cleared with `clearKdeReference`. The fingerprint that
-skips unchanged buffers includes the fraction and the axis ranges. Both
+re-estimates and is cleared with `clearKdeReference`. The service's
+fingerprint that skips unchanged input includes the fraction and the axis
+ranges. Both
 families are removed when KDE goes off, so the off state is the plain
 chart. The toggle tooltip carries the core count, loop count and reference
 label; nothing else is added to the tab. Test hooks:
 `kdeContourSeriesForTests`, `kdeReferenceSeriesForTests`,
 `lastKdeContours`, `lastKdeCoreCount`, `lastKdeCoreLevel`.
-**Stored record (PR 2):** after every estimate during an `Active` run the tab
-pushes `lastCoreRecordJson()` (provisional record, codec
-`frontend/tabs/KdeCoreRecord.h`) to
-`ExperimentCoordinator::setLiveKdeCoreRecord`; finalization writes the last
-one into the file (`/monitoring @kde_live_json`). The tab never touches the
-run's file itself. **Reference from file:** `loadKdeReferenceFromFile(path)`
+**Stored record:** after every estimate the backend service hands the
+provisional record (codec `backend/processing/KdeCoreRecord.h`) to
+`ExperimentCoordinator::setLiveKdeCoreRecord` itself, which keeps it only
+while a run is `Active`; finalization writes the last one into the file
+(`/monitoring @kde_live_json`). `lastCoreRecordJson()` returns the same
+record for the estimate on screen. The tab never touches the run's file. **Reference from file:** `loadKdeReferenceFromFile(path)`
 reads the full-run record, else the live one, labels the reference
 "<file>, full-run|live estimate <p>%", and persists the path as
 `Monitoring/KdeReferencePath` (reloaded at startup; a vanished file is
 dropped with one info line; pin/clear forget it). Guards:
-`frontend.monitoring_density` (level rank semantics, one loop per cloud,
+`processing.monitoring_density` (level rank semantics, one loop per cloud,
 ~90% enclosed, two clouds → two loops, translation invariance, border cut,
 degenerate input), `frontend.monitoring_kde_density` (series, pin/clear,
 fraction change re-estimates, off state, dialog controls). Measured in
-`integration.monitoring_kde_e2e`: 1000 points with grid + contour = 21 ms
-on the worker; GUI gates unchanged.
+`integration.monitoring_kde_e2e` (Windows bench, before the move to the
+backend): 1000 points with grid + contour = 21 ms on the worker; GUI gates
+unchanged. Backend guards: `backend.monitoring_density_service`,
+`performance.monitoring_density_contention`, `e2e.experiment_coordinator`.
 
 ## Tune panel (issue #364)
 

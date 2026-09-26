@@ -106,7 +106,8 @@ append only, never renumber.
    `writeRunAccounting(experimentAccountingSnapshot())`;
    `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`;
    then, best effort, `writeKdeLiveJson(...)` with the last provisional KDE
-   core record the Monitoring tab pushed through `setLiveKdeCoreRecord`
+   core record [[../services/MonitoringDensityService]] handed over through
+   `setLiveKdeCoreRecord` (from its backend worker, no shell involved)
    (accepted only while `Active`, cleared at Start; a failed write logs a
    warning and never changes the run outcome).
 6. `closeFile()`.

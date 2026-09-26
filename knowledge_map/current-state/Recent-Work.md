@@ -1,5 +1,26 @@
 # Recent Work
 
+## 2026-09-26 — Monitoring density (KDE) moved into the backend
+
+The live scatter KDE and core contour now run in the Qt-free backend
+([[../services/MonitoringDensityService]]) instead of a Qt worker job in the
+Monitoring tab, so the React/Tauri shell can read the same result and the
+estimate cannot compete with acquisition: one worker at the lowest OS
+priority (SCHED_IDLE / THREAD_PRIORITY_LOWEST), ticks skipped while frames
+are dropped or the batch queue is ≥ 25% full, next wake ≥ 20× the last
+compute (≤ ~5% of one core). Its input is a metrics-only copy of the
+processing monitoring ring (`ProcessingService::getMonitoringValidPoints`),
+and it hands the provisional record to the coordinator itself. The kernel
+and record codec moved to `include/backend/processing/` (namespace
+`backend::monitoring`). The Qt tab pushes settings/axes and polls for new
+results. Guards: `backend.monitoring_density_service` (policy, back-off,
+concurrency under TSan), `performance.monitoring_density_contention`
+(processing throughput with the service on ≥ 90% of off, duty cycle within
+budget), `e2e.experiment_coordinator` (service-supplied record in the file),
+`processing.monitoring_density` (renamed from `frontend.monitoring_density`).
+Bridge + React consumption is the follow-up. See
+[[../task/2026-09-23-monitoring-kde-density]].
+
 ## 2026-09-24 — KDE core contour: live contour, reference, stored records
 
 The Monitoring scatter shows a solid contour around the densest `Core %`

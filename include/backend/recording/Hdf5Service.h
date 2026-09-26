@@ -177,7 +177,7 @@ public:
 
     // KDE core contour records (`kde_core_schema_version` = 1). The JSON
     // documents are produced and parsed by the frontend codec
-    // (frontend/tabs/KdeCoreRecord.h) and stored verbatim as UTF-8 string
+    // (backend/processing/KdeCoreRecord.h) and stored verbatim as UTF-8 string
     // attributes:
     //   /monitoring @kde_live_json  — provisional, copy of the contour shown
     //                                  live when the run stopped;
