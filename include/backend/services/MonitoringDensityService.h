@@ -14,8 +14,9 @@
 //     queue at least a quarter full): the tick is skipped and counted;
 //   - unchanged input and settings: skipped (the ring only grows at the back
 //     and trims at the front, so count + first + last index identify it);
-//   - the next wake is at least `kComputeBudgetFactor` x the last compute
-//     time, so the worker's duty cycle stays <= ~5% of one core on any host.
+//   - the next wake is at least `kComputeBudgetFactor` x the last compute's
+//     CPU time, so the worker's duty cycle stays <= ~5% of one core on any
+//     host (CPU, not wall: a starved worker must not stretch its own budget).
 // After each estimate the provisional core record (backend/processing/
 // KdeCoreRecord.h) goes to the record sink; AppBackend wires it to
 // ExperimentCoordinator::setLiveKdeCoreRecord, which keeps it only while a
@@ -85,8 +86,12 @@ struct MonitoringDensityResult {
     double pixelToMicron{0.0};
     double x0{0.0}, x1{0.0}, y0{0.0}, y1{0.0}; // grid range used
     int gridNx{0}, gridNy{0};
-    int computeMs{0}; // rounded up
+    // CPU time of the estimate on the computing thread (what the budget
+    // charges; a starved lowest-priority worker waits without consuming CPU),
+    // and the wall time it took, for diagnostics.
+    int computeMs{0}; // CPU, rounded up
     std::int64_t computeUs{0};
+    int wallMs{0};
     std::uint64_t computedAtNs{0}; // system clock
 };
 
@@ -94,8 +99,9 @@ struct MonitoringDensityStats {
     std::uint64_t estimates{0};
     std::uint64_t skippedUnchanged{0};
     std::uint64_t skippedUnderLoad{0};
-    double busyMs{0.0}; // total time spent computing estimates
-    int lastComputeMs{0};
+    double busyMs{0.0};   // total CPU time spent computing estimates
+    int lastComputeMs{0}; // CPU
+    int lastWallMs{0};
     int nextIntervalMs{0};
     bool priorityLowered{false};
 };

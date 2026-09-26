@@ -158,6 +158,38 @@ int main() {
                 .push_back(static_cast<double>(processed.load() - p0) / secs);
         }
     }
+    // ---- starved: the budget charges CPU time, not the wait ---------------------
+    // With every core busy the lowest-priority worker mostly waits. The same
+    // 2500-cell estimate cost `uncontendedMs` in the idle budget phase; a
+    // budget taken from wall time would stretch the next wake to 20x the wait.
+    wd.mark("starved");
+    const int uncontendedMs = std::max(st.lastComputeMs, 1);
+    const uint64_t before = svc.stats().estimates;
+    const auto s0 = std::chrono::steady_clock::now();
+    svc.setSettings(on);
+    svc.requestUpdate();
+    const auto starvedDeadline = s0 + std::chrono::seconds(60);
+    while ((svc.stats().estimates <= before || svc.busy()) &&
+           std::chrono::steady_clock::now() < starvedDeadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const double observedMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - s0).count();
+    const auto starved = svc.stats();
+    std::printf(
+        "starved: estimate landed after %.0f ms (uncontended %d ms); service reports %d ms CPU, "
+        "%d ms wall, next wake %d ms\n",
+        observedMs, uncontendedMs, starved.lastComputeMs, starved.lastWallMs,
+        starved.nextIntervalMs);
+    MIB_EXPECT(starved.estimates > before, "an estimate still completes under full load (60 s)");
+    if (observedMs >= 3.0 * uncontendedMs) {
+        MIB_EXPECT(starved.nextIntervalMs <=
+                       std::max(on.intervalMs,
+                                MonitoringDensityService::kComputeBudgetFactor * 2 * uncontendedMs),
+                   "budget charged on CPU time, not on the time spent waiting for a core");
+    } else {
+        std::printf(
+            "NOTE: worker was not starved on this host; CPU-vs-wall budget check skipped\n");
+    }
     run = false;
     for (auto& w : workers)
         w.join();

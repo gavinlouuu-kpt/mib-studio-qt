@@ -69,12 +69,12 @@ inline DensityBandwidth silvermanBandwidth(const std::vector<DensityPoint>& poin
     return bw;
 }
 
-// Gaussian KDE evaluated at each input point with per-axis bandwidth, scaled
-// so the densest point is 1.0. Non-finite points get 0 and never contribute.
-// O(n²/2): every pair is visited once (the kernel is symmetric). 1000 points
-// is ~0.5 M exp() calls — run it off the GUI thread.
-inline std::vector<double> gaussianKdeAtPoints(const std::vector<DensityPoint>& points,
-                                               DensityBandwidth bw) {
+// Raw (un-normalised) Gaussian kernel sum at each input point with per-axis
+// bandwidth, the self term included. Non-finite points get 0 and never
+// contribute. O(n²/2): every pair is visited once (the kernel is symmetric).
+// 1000 points is ~0.5 M exp() calls — run it off the GUI thread.
+inline std::vector<double> rawKdeAtPoints(const std::vector<DensityPoint>& points,
+                                          DensityBandwidth bw) {
     std::vector<double> density(points.size(), 0.0);
     if (points.empty()) return density;
     if (!(bw.x > 0.0) || !std::isfinite(bw.x)) bw.x = 1.0;
@@ -104,6 +104,11 @@ inline std::vector<double> gaussianKdeAtPoints(const std::vector<DensityPoint>& 
             density[j] += k;
         }
     }
+    return density;
+}
+
+// Divide by the maximum (in place) and return it; 0 leaves the values alone.
+inline double normaliseByMaximum(std::vector<double>& density) {
     double maxDensity = 0.0;
     for (double d : density)
         maxDensity = std::max(maxDensity, d);
@@ -111,6 +116,15 @@ inline std::vector<double> gaussianKdeAtPoints(const std::vector<DensityPoint>& 
         for (double& d : density)
             d /= maxDensity;
     }
+    return maxDensity;
+}
+
+// Gaussian KDE evaluated at each input point, scaled so the densest point
+// is 1.0 (rawKdeAtPoints / its maximum).
+inline std::vector<double> gaussianKdeAtPoints(const std::vector<DensityPoint>& points,
+                                               DensityBandwidth bw) {
+    std::vector<double> density = rawKdeAtPoints(points, bw);
+    normaliseByMaximum(density);
     return density;
 }
 
@@ -144,23 +158,13 @@ inline double coreLevel(const std::vector<double>& density, double fraction) {
 
 // Maximum raw (un-normalised) Gaussian kernel sum over the samples: the
 // constant gaussianKdeAtPoints divides by, so a grid can share its [0, 1].
+// Callers that also need the per-point densities should take the maximum of
+// rawKdeAtPoints instead of paying for the pairwise pass twice.
 inline double rawKdeMaximum(const std::vector<DensityPoint>& points, DensityBandwidth bw) {
-    if (!(bw.x > 0.0) || !std::isfinite(bw.x)) bw.x = 1.0;
-    if (!(bw.y > 0.0) || !std::isfinite(bw.y)) bw.y = 1.0;
-    const double invX = 1.0 / bw.x, invY = 1.0 / bw.y;
+    const std::vector<double> raw = rawKdeAtPoints(points, bw);
     double best = 0.0;
-    for (const auto& p : points) {
-        if (!isFinitePoint(p)) continue;
-        double sum = 0.0;
-        for (const auto& q : points) {
-            if (!isFinitePoint(q)) continue;
-            const double dx = (p.x - q.x) * invX, dy = (p.y - q.y) * invY;
-            const double d2 = dx * dx + dy * dy;
-            if (d2 > 50.0) continue;
-            sum += std::exp(-0.5 * d2);
-        }
-        best = std::max(best, sum);
-    }
+    for (double d : raw)
+        best = std::max(best, d);
     return best;
 }
 
@@ -176,8 +180,10 @@ struct DensityGrid {
 
 // The same Gaussian KDE on a regular grid over [x0,x1]×[y0,y1], divided by
 // `normaliser` (use rawKdeMaximum) so it is on the point-density scale.
-// nx·ny·n exp() calls minus the 5-bandwidth cut; 128×64 over 1000 points is
-// ~50 ms — worker thread only.
+// Separable: exp(-(dx²+dy²)/2) = exp(-dx²/2)·exp(-dy²/2), so the grid costs
+// (nx+ny)·n exp() calls plus nx·ny·n multiply-adds instead of nx·ny·n exp()
+// calls (128×64 over 1000 points: ~0.2 M instead of ~8 M). The 5-bandwidth
+// cut applies per axis; the extra corner terms are each < exp(-25).
 inline DensityGrid gaussianKdeGrid(const std::vector<DensityPoint>& points, DensityBandwidth bw,
                                    double normaliser, double x0, double x1, double y0, double y1,
                                    int nx, int ny) {
@@ -203,17 +209,26 @@ inline DensityGrid gaussianKdeGrid(const std::vector<DensityPoint>& points, Dens
         sx.push_back(p.x * invX);
         sy.push_back(p.y * invY);
     }
+    const std::size_t n = sx.size();
+    auto axisKernel = [n](const std::vector<double>& s, double g, double* out) {
+        for (std::size_t k = 0; k < n; ++k) {
+            const double d = g - s[k];
+            const double d2 = d * d;
+            out[k] = d2 > 50.0 ? 0.0 : std::exp(-0.5 * d2);
+        }
+    };
+    std::vector<double> ex(static_cast<std::size_t>(nx) * n), ey(static_cast<std::size_t>(ny) * n);
+    for (int i = 0; i < nx; ++i)
+        axisKernel(sx, g.x(i) * invX, ex.data() + static_cast<std::size_t>(i) * n);
+    for (int j = 0; j < ny; ++j)
+        axisKernel(sy, g.y(j) * invY, ey.data() + static_cast<std::size_t>(j) * n);
     for (int j = 0; j < ny; ++j) {
-        const double gy = g.y(j) * invY;
+        const double* ky = ey.data() + static_cast<std::size_t>(j) * n;
         for (int i = 0; i < nx; ++i) {
-            const double gx = g.x(i) * invX;
+            const double* kx = ex.data() + static_cast<std::size_t>(i) * n;
             double sum = 0.0;
-            for (std::size_t k = 0; k < sx.size(); ++k) {
-                const double dx = gx - sx[k], dy = gy - sy[k];
-                const double d2 = dx * dx + dy * dy;
-                if (d2 > 50.0) continue;
-                sum += std::exp(-0.5 * d2);
-            }
+            for (std::size_t k = 0; k < n; ++k)
+                sum += kx[k] * ky[k];
             g.value[static_cast<std::size_t>(j) * nx + i] = sum * inv;
         }
     }

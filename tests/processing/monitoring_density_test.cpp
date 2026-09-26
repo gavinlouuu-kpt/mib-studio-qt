@@ -67,6 +67,13 @@ double timeMs(const std::vector<DensityPoint>& pts, double& sink) {
     return std::chrono::duration<double, std::milli>(t1 - t0).count();
 }
 
+template <class F>
+double timeMs(F&& work) {
+    const auto t0 = std::chrono::steady_clock::now();
+    work();
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
 } // namespace
 
 int main() {
@@ -307,6 +314,75 @@ int main() {
             for (const auto& l : loops) closed = closed && l.size() >= 3 && l.front().x == l.back().x && l.front().y == l.back().y;
             MIB_EXPECT(closed, "border-cut loops are closed along the border");
             MIB_EXPECT(fractionInside(visible, loops) >= 0.8, "visible samples are enclosed");
+        }
+
+        // Grid and normaliser: the fast (separable, symmetric) evaluation equals
+        // the direct radial sum, and costs a fraction of it on a wide
+        // population where the 5-bandwidth cut prunes almost nothing (the real
+        // 512x96 stream: ~600 ms per 1000 cells with the direct sum on GCC).
+        {
+            // Spread like the real stream (Silverman bandwidth ~68 um^2 x 0.06 on a
+            // 0..1000 x 0..1 chart), so the cut prunes almost nothing.
+            const auto pts = gaussianCloud(rng, 1000, 450.0, 0.3, 215.0, 0.19);
+            const auto bw = silvermanBandwidth(pts, 1.0);
+            const auto directMax = [&] {
+                const double ix = 1.0 / bw.x, iy = 1.0 / bw.y;
+                double best = 0.0;
+                for (const auto& p : pts) {
+                    double sum = 0.0;
+                    for (const auto& q : pts) {
+                        const double dx = (p.x - q.x) * ix, dy = (p.y - q.y) * iy, d2 = dx * dx + dy * dy;
+                        if (d2 <= 50.0) sum += std::exp(-0.5 * d2);
+                    }
+                    best = std::max(best, sum);
+                }
+                return best;
+            };
+            const auto directGrid = [&](double norm, double x0, double x1, double y0, double y1, int nx, int ny) {
+                std::vector<double> v(static_cast<std::size_t>(nx) * ny, 0.0);
+                const double ix = 1.0 / bw.x, iy = 1.0 / bw.y;
+                for (int j = 0; j < ny; ++j)
+                    for (int i = 0; i < nx; ++i) {
+                        const double gx = x0 + (x1 - x0) * i / (nx - 1), gy = y0 + (y1 - y0) * j / (ny - 1);
+                        double sum = 0.0;
+                        for (const auto& p : pts) {
+                            const double dx = (gx - p.x) * ix, dy = (gy - p.y) * iy, d2 = dx * dx + dy * dy;
+                            if (d2 <= 50.0) sum += std::exp(-0.5 * d2);
+                        }
+                        v[static_cast<std::size_t>(j) * nx + i] = sum / norm;
+                    }
+                return v;
+            };
+            double refMax = 0.0, fastMax = 0.0;
+            const double tDirectMax = timeMs([&] { refMax = directMax(); });
+            const double tFastMax = timeMs([&] { fastMax = rawKdeMaximum(pts, bw); });
+            MIB_EXPECT(std::abs(fastMax - refMax) <= 1e-9 * refMax, "normaliser equals the direct pairwise sum");
+            {
+                // The service and the full-run record take the normaliser from
+                // the per-point pass instead of a second pairwise pass.
+                auto raw = backend::monitoring::rawKdeAtPoints(pts, bw);
+                const double fromPass = backend::monitoring::normaliseByMaximum(raw);
+                const auto normalised = backend::monitoring::gaussianKdeAtPoints(pts, bw);
+                bool same = std::abs(fromPass - refMax) <= 1e-9 * refMax && raw.size() == normalised.size();
+                for (std::size_t k = 0; same && k < raw.size(); ++k) same = raw[k] == normalised[k];
+                MIB_EXPECT(same, "one pass yields both the normalised densities and the normaliser");
+            }
+            std::vector<double> ref;
+            DensityGrid fast;
+            const double tDirectGrid = timeMs([&] { ref = directGrid(refMax, 0.0, 1000.0, 0.0, 1.0, 128, 64); });
+            const double tFastGrid =
+                timeMs([&] { fast = gaussianKdeGrid(pts, bw, refMax, 0.0, 1000.0, 0.0, 1.0, 128, 64); });
+            double worst = 0.0;
+            for (std::size_t k = 0; k < ref.size() && k < fast.value.size(); ++k)
+                worst = std::max(worst, std::abs(ref[k] - fast.value[k]));
+            std::fprintf(stderr,
+                         "grid 128x64 over 1000 clustered points: direct %.1f ms, fast %.1f ms; normaliser direct "
+                         "%.1f ms, fast %.1f ms; max |diff| %.2e\n",
+                         tDirectGrid, tFastGrid, tDirectMax, tFastMax, worst);
+            // Per-axis cut: the extra corner terms are each < exp(-25) of the self term.
+            MIB_EXPECT(fast.value.size() == ref.size() && worst <= 1e-7, "grid equals the direct radial sum");
+            MIB_EXPECT(tFastGrid * 4.0 <= tDirectGrid, "grid costs <= 1/4 of the direct sum");
+            MIB_EXPECT(tFastMax * 1.5 <= tDirectMax, "normaliser visits each pair once");
         }
 
         // Degenerate input never yields NaN or loops.

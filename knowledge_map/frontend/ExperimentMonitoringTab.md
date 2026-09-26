@@ -71,8 +71,10 @@ markers overlap.
   `kKdePollMs` (100 ms, `kdeTimer_`); a new result is adopted on the GUI
   thread (`pollKdeResult()`: density per frame index, contours, tooltip
   numbers). The Qt worker job (`QtConcurrent` + `QFutureWatcher`) of the
-  first version is gone. 1000 points cost ~3 ms (~20 ms with the contour
-  grid) on a desktop core.
+  first version is gone. 1000 cells cost ~90 ms of CPU inside the running
+  app on Linux (separable grid, one pairwise pass); the service then waits
+  ≥ 20× that, so the tooltip's "refreshed every" shows the effective
+  spacing (`max(interval, service nextIntervalMs)`).
 - **Cheap refresh: level series, not per-point colours.** While on, the
   plain `scatterSeries_` / `targetGroupSeries_` are hidden and
   `updateScatterplot` (every 500 ms) routes each point into one of

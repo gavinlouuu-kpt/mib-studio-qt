@@ -18,6 +18,10 @@ concurrency under TSan), `performance.monitoring_density_contention`
 (processing throughput with the service on ≥ 90% of off, duty cycle within
 budget), `e2e.experiment_coordinator` (service-supplied record in the file),
 `processing.monitoring_density` (renamed from `frontend.monitoring_density`).
+Before the PR the mock-camera e2e ran in the Linux container on the
+Hugging Face `512x96stream` frames: it exposed ~600 ms CPU per estimate in
+the busy app, fixed by a separable contour grid, a one-pass normaliser and
+a budget charged on thread CPU time (~90 ms, processing fps unchanged).
 Bridge + React consumption is the follow-up. See
 [[../task/2026-09-23-monitoring-kde-density]].
 

@@ -29,6 +29,7 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/processing/KdeCoreRecord.h"
+#include "backend/services/MonitoringDensityService.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/core/MainWindow.h"
@@ -393,7 +394,7 @@ int main(int argc, char* argv[]) {
         m.lastKdePoints = tab->lastKdePointCount();
         return m;
     };
-    auto report = [](const PhaseMetrics& m) {
+    auto report = [&](const PhaseMetrics& m) {
         const auto gaps = mib::test::summarize(m.guiGapMs);
         std::printf("%-10s %5.1fs captured=%4llu (%.0f fps) monitoring+=%4llu jobs=%5llu "
                     "algoFps=%6.1f validFps=%6.1f "
@@ -405,6 +406,13 @@ int main(int argc, char* argv[]) {
                     mean(m.validFps), lateMean(m.lag), gaps.p50, gaps.p99, gaps.max,
                     m.scatterPoints, static_cast<unsigned long long>(m.kdeGenerations),
                     m.lastKdePoints, m.lastKdeMs);
+        const auto d = backend.monitoringDensity().stats();
+        std::printf("           density service: estimates=%llu skippedLoad=%llu skippedUnchanged=%llu "
+                    "last=%d ms CPU / %d ms wall, next wake %d ms, lowest priority=%d\n",
+                    static_cast<unsigned long long>(d.estimates),
+                    static_cast<unsigned long long>(d.skippedUnderLoad),
+                    static_cast<unsigned long long>(d.skippedUnchanged), d.lastComputeMs, d.lastWallMs,
+                    d.nextIntervalMs, d.priorityLowered ? 1 : 0);
     };
     auto snapshot = [&](const char* name) {
         const QString file =
@@ -503,7 +511,16 @@ int main(int argc, char* argv[]) {
 
     // ---- gates (ratios against the baseline) ----------------------------------
     MIB_EXPECT(kdeOn.scatterPoints >= 200, "the scatter carries a real population while KDE is on");
-    MIB_EXPECT(kdeOn.kdeGenerations >= 6, "estimates keep landing at the 500 ms cadence");
+    // The 500 ms setting is a floor: the backend service spaces estimates by
+    // at least 20x their CPU cost, so the count depends on the host.
+    MIB_EXPECT(kdeOn.kdeGenerations >= 2, "estimates keep landing while KDE is on");
+    {
+        const auto d = backend.monitoringDensity().stats();
+        MIB_EXPECT(d.nextIntervalMs >= std::max(500, backend::services::MonitoringDensityService::kComputeBudgetFactor *
+                                                         d.lastComputeMs),
+                   "the density service keeps to its interval and compute budget");
+        MIB_EXPECT(d.priorityLowered, "the density worker runs at the lowest OS priority");
+    }
     MIB_EXPECT(kdeOn.lastKdePoints >= 200 && kdeOn.lastKdeMs < 250,
                "estimate covers the buffer and stays ms-scale");
     MIB_EXPECT(kdeOn.captured >= 0.9 * baseline.captured,

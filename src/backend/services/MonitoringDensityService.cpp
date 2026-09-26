@@ -15,6 +15,7 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <time.h>
 #include <sched.h>
 #endif
 
@@ -39,6 +40,24 @@ bool lowerCurrentThreadPriority() {
 
 double finiteOr(double v, double fallback) {
     return std::isfinite(v) ? v : fallback;
+}
+
+// CPU time consumed by the calling thread, in microseconds; -1 if unknown.
+std::int64_t threadCpuUs() {
+#ifdef _WIN32
+    FILETIME created, exited, kernel, user;
+    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) return -1;
+    const auto us = [](const FILETIME& f) {
+        return static_cast<std::int64_t>((static_cast<std::uint64_t>(f.dwHighDateTime) << 32) |
+                                         f.dwLowDateTime) /
+               10;
+    };
+    return us(kernel) + us(user);
+#else
+    timespec ts{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return -1;
+    return static_cast<std::int64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
+#endif
 }
 
 std::uint64_t nowNs() {
@@ -162,6 +181,7 @@ MonitoringDensityResult
 MonitoringDensityService::compute(const MonitoringDensityInput& input,
                                   const MonitoringDensitySettings& settings) {
     const auto t0 = std::chrono::steady_clock::now();
+    const std::int64_t cpu0 = threadCpuUs();
     MonitoringDensityResult r;
     r.frameIndices = input.frameIndices;
     r.bandwidthFactor = settings.bandwidthFactor;
@@ -171,7 +191,10 @@ MonitoringDensityService::compute(const MonitoringDensityInput& input,
     r.gridNy = kGridNy;
     const auto& points = input.points;
     r.bandwidth = monitoring::silvermanBandwidth(points, settings.bandwidthFactor);
-    r.density = monitoring::gaussianKdeAtPoints(points, r.bandwidth);
+    // One pairwise pass: the raw sums give both the densities and the
+    // normaliser the grid shares.
+    r.density = monitoring::rawKdeAtPoints(points, r.bandwidth);
+    const double rawMax = monitoring::normaliseByMaximum(r.density);
     if (settings.x1 > settings.x0 && settings.y1 > settings.y0) {
         r.x0 = settings.x0;
         r.x1 = settings.x1;
@@ -197,15 +220,17 @@ MonitoringDensityService::compute(const MonitoringDensityInput& input,
     if (std::isfinite(r.coreLevel)) {
         for (double d : r.density)
             if (d >= r.coreLevel) ++r.coreCount;
-        const auto grid = monitoring::gaussianKdeGrid(
-            points, r.bandwidth, monitoring::rawKdeMaximum(points, r.bandwidth), r.x0, r.x1, r.y0,
-            r.y1, kGridNx, kGridNy);
+        const auto grid = monitoring::gaussianKdeGrid(points, r.bandwidth, rawMax, r.x0, r.x1, r.y0,
+                                                      r.y1, kGridNx, kGridNy);
         r.contours = monitoring::isoContours(grid, r.coreLevel);
     }
-    r.computeUs =
+    const std::int64_t wallUs =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
             .count();
+    const std::int64_t cpu1 = threadCpuUs();
+    r.computeUs = (cpu0 >= 0 && cpu1 >= cpu0) ? cpu1 - cpu0 : wallUs; // wall if CPU time is unknown
     r.computeMs = static_cast<int>((r.computeUs + 999) / 1000);
+    r.wallMs = static_cast<int>((wallUs + 999) / 1000);
     r.computedAtNs = nowNs();
     return r;
 }
@@ -310,6 +335,7 @@ void MonitoringDensityService::tick() {
         std::scoped_lock lk(mutex_);
         stats_.busyMs += static_cast<double>(result->computeUs) / 1000.0;
         stats_.lastComputeMs = result->computeMs;
+        stats_.lastWallMs = result->wallMs;
         ++stats_.estimates;
         if (!settings_.enabled) return; // switched off while computing
         fingerprint_ = fp;
@@ -320,9 +346,11 @@ void MonitoringDensityService::tick() {
         if (sink_) json = liveRecordJson(*result);
     }
     if (!json.empty()) sink_(std::move(json));
-    SPDLOG_DEBUG("MonitoringDensityService: {} points, core {:.0f}% -> {} cells, {} loop(s), {} ms",
-                 result->frameIndices.size(), result->coreFraction * 100.0, result->coreCount,
-                 result->contours.size(), result->computeMs);
+    SPDLOG_DEBUG(
+        "MonitoringDensityService: {} points, core {:.0f}% -> {} cells, {} loop(s), {} ms CPU "
+        "({} ms wall)",
+        result->frameIndices.size(), result->coreFraction * 100.0, result->coreCount,
+        result->contours.size(), result->computeMs, result->wallMs);
 }
 
 } // namespace backend::services

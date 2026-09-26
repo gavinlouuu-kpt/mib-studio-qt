@@ -28,11 +28,19 @@ codec `include/backend/processing/MonitoringDensity.h`,
   3. **unchanged input** (count + first/last frame index + µm factor +
      bandwidth factor + core fraction + grid range) → skipped;
   4. estimate: Gaussian KDE at every cell (per-axis Silverman bandwidth ×
-     factor, normalised to [0, 1]), core level = `ceil(p·n)`-th largest
-     density, 128 × 64 grid, marching-squares contour;
+     factor; one pairwise pass gives the raw densities and their maximum,
+     which normalises both the points and the grid), core level =
+     `ceil(p·n)`-th largest density, 128 × 64 **separable** grid
+     ((128+64)·n `exp()` calls), marching-squares contour;
   5. **compute budget** — the next wake is at least
-     `kComputeBudgetFactor` (20) × the last compute time, so the duty cycle
-     stays ≤ ~5% of one core on any host.
+     `kComputeBudgetFactor` (20) × the last estimate's **thread CPU time**
+     (`CLOCK_THREAD_CPUTIME_ID` / `GetThreadTimes`), so the duty cycle stays
+     ≤ ~5% of one core on any host. Wall time is only reported
+     (`wallMs`, `lastWallMs`): a starved idle-priority worker waits without
+     using CPU and must not stretch its own interval.
+- Cost in the running app (Linux container, real 512x96 stream, 200 fps):
+  ~90 ms CPU per 1000-cell estimate, next wake ~1.8 s (was ~600 ms before
+  the separable grid and the one-pass normaliser).
 - Input: `AppBackend` copies `ProcessingService::getMonitoringValidPoints()`
   (index, area, deformability only — no image references under the ring
   lock) and converts area to µm² with the current pixel-to-micron factor.
@@ -73,10 +81,15 @@ the visibility-gated monitoring ring.
   empty ring, prompt stop, four concurrent callers (TSan lane).
 - `performance.monitoring_density_contention` — duty cycle within the
   budget when idle; real `computeProcessedFrame` on every core, density off
-  vs on in alternating windows, median throughput ratio ≥ 0.90.
+  vs on in alternating windows, median throughput ratio ≥ 0.90; starved
+  worker's next wake bounded by its CPU cost, not its wait.
 - `e2e.experiment_coordinator` — a run where only the service supplies the
   record: the finalized file carries it.
-- `processing.monitoring_density` — kernel invariants.
+- `processing.monitoring_density` — kernel invariants; separable grid and
+  one-pass normaliser equal the direct sums at a fraction of the cost.
+- `integration.monitoring_kde_e2e` (real `MainWindow`, mock camera,
+  Hugging Face frames) — capture/processing/lag ratios, estimates land,
+  interval + budget kept, lowest priority, stored record.
 
 ## Gotchas
 

@@ -61,6 +61,8 @@ replaced by a backend service rather than hardened in Qt:
 | Metrics-only ring copy (no image refs under the ring lock), test seam, queue capacity in the batch stats | `ProcessingService::getMonitoringValidPoints`, `appendMonitoringFrameForTests`, `BatchPipelineStats::queueCapacity` |
 | Kernel + record codec moved, namespace `backend::monitoring` | `include/backend/processing/{MonitoringDensity,KdeCoreRecord}.h` |
 | Qt tab: no worker job; pushes settings + chart axes (enabled = toggle on and tab visible), polls the service generation every 100 ms, adopts results on the GUI thread; `QSettings` persistence unchanged | `ExperimentMonitoringTab.{h,cpp}` |
+| Kernel cost: separable contour grid ((nx+ny)·n `exp()` calls instead of nx·ny·n) and one pairwise pass for densities + normaliser (`rawKdeAtPoints`, `normaliseByMaximum`); the budget charges thread **CPU** time, not wall time (a starved idle-priority worker must not stretch its own interval). In the running app on Linux: ~600 → ~90 ms CPU per 1000 cells | `include/backend/processing/MonitoringDensity.h`, service `compute()`, `KdeCoreRecord.h::computeFullRunCoreRecord` |
+| e2e gate: "≥ 6 estimates at the 500 ms cadence" became "≥ 2 estimates, and the service keeps its interval + compute budget and runs at the lowest priority"; the Density tooltip shows the effective refresh | `tests/frontend/monitoring_kde_e2e_test.cpp`, tab `refreshKdeTooltip` |
 | Not yet: bridge (`BackendFacade` pull + contract/ABI bump) and React scatter colouring; backend-owned settings persistence | follow-up PR |
 
 ## 3. Tests added or extended
@@ -73,7 +75,8 @@ replaced by a backend service rather than hardened in Qt:
 | `recording.kde_full_run_core` | full-run record deterministic, subsample cap, exclusions counted, 89.2% of 20000 cells inside the 90% contour; `openFileForUpdate` keeps frames/info/live record, refuses missing and read-only files (the read-only check is skipped with a NOTE when the user bypasses permission bits, e.g. root) |
 | `e2e.experiment_coordinator` (extended) | record offered while idle ignored, last record before Stop written, next run does not inherit it; a run where only `MonitoringDensityService` supplies the record (file carries it, 400 cells) |
 | `backend.monitoring_density_service` | interval budget and load policy, clamping, disabled no-op, first estimate + record to the sink, fingerprint skip, interval-only change, fraction/axis change, back-off on drops and backlog, disable/re-enable, empty ring, prompt stop, four concurrent callers (TSan lane) |
-| `performance.monitoring_density_contention` | uncontended duty cycle within the 20× budget; real `computeProcessedFrame` on every core with the service off vs on in alternating windows, median throughput ratio ≥ 0.90 |
+| `performance.monitoring_density_contention` | uncontended duty cycle within the 20× budget; real `computeProcessedFrame` on every core with the service off vs on in alternating windows, median throughput ratio ≥ 0.90; starved worker: next wake bounded by the CPU cost, not the wait (fails with a wall-clock budget: 78.5 s) |
+| `processing.monitoring_density` (extended) | separable grid equals the direct radial sum (≤ 1e-7) at ≤ 1/4 of its cost; one pass yields densities and normaliser |
 | `frontend.monitoring_kde_density` (offscreen widget) | toggle, async estimate, late points, level series, contour series, pin/clear, fraction change, record contents, reference from file (preference order, refusals), persistence and restore, dialog controls |
 | `frontend.hdf_review_core` | stored contours drawn/cleared, unreadable record ignored, full-run compute + save, decline/confirm overwrite, read-only file (refusal asserted only where the OS refuses the write, e.g. not as root) |
 | `integration.monitoring_kde_e2e` | real `MainWindow` on the mock camera at 200 fps (asset `512x96stream-mock-frames`, synthetic ellipses if absent), KDE off/on/off phases gated on ratios; a real experiment with KDE on whose file must carry the live record |
@@ -88,6 +91,7 @@ replaced by a backend service rather than hardened in Qt:
 | `scripts/check_docs.py`, `scripts/check_screenshots.py` | OK / 9 in sync |
 | Linux container, 2026-09-25 (pre-PR, same filters as `backend-ci.yml` / `sanitizers.yml`) | `linux-backend-only` GCC 13 build clean; `ctest --preset linux-backend-only-test` all pass after `21741f6` (`recording.kde_full_run_core` had failed only because the container runs as root); TSan and ASan+UBSan: 84/85, every KDE test and `e2e.experiment_coordinator` clean. The one failure in all three runs, `scripts.run_processing_conformance_input`, is the container's Python 3.11 loading Ubuntu's 3.12 numpy (not this branch) |
 | Linux container, 2026-09-26, after the backend move (§2a) | `linux-backend-only`: 119/119 (conformance-input test excluded, container numpy); `performance.monitoring_density_contention`: processing 24212 vs 24864 frames/s density off/on (4 workers), duty 5.2% of one core between the 1st and 3rd estimate, worker at SCHED_IDLE; TSan 84/85 with the service test and `e2e.experiment_coordinator` clean (the one failure, `recording.hdf_export_service`'s last-round timing ratio, happened while parallel builds loaded the CPU and passed when re-run alone); ASan+UBSan 85/85; Qt `linux-system-release` (apt Qt 6.4.2): all 26 `frontend` tests, `frontend.monitoring_kde_density` 5/5 runs. `integration.monitoring_kde_e2e` not runnable in the container (§5 item 7) |
+| Linux container, 2026-09-26, e2e with real frames | `integration.monitoring_kde_e2e` with the Hugging Face `512x96stream-mock-frames` asset (1000 frames): capture 200 fps off/on, processing 145.9/144.3 fps off vs 143.1/140.9 on (two runs), overlay lag 0.9–1.4 frames, 4–5 estimates per 8 s phase at ~90 ms CPU each spaced ~1.8 s by the budget, stored record 900 of 1000 cells; passes via ctest too (27/27 `frontend`). The first run exposed the kernel's real cost inside the busy app (~600 ms CPU per 1000 cells: 8 M grid `exp()` calls plus a second pairwise pass) and a budget charged on wall time; fixed by the separable grid, the one-pass normaliser and a CPU-time budget (§2a) |
 | HDF5 "attribute open failed" stderr traces during experiment finalization | pre-existing: identical count (242) from `experiment_coordinator_test` on the unmodified main-checkout build |
 
 ## 5. Not done — the consumer's list
@@ -119,11 +123,11 @@ replaced by a backend service rather than hardened in Qt:
 6. After merge: move this handover to `docs/exec-plans/completed/` and add a
    Recent-Work line noting the merge.
 7. **Re-run on the Windows bench after the backend move (§2a):**
-   `integration.monitoring_kde_e2e` (it does not run in the Linux container:
-   processing stays at 0 fps there on the unchanged branch too, after the
-   Experiment tab's camera-script apply fails with "No hardware camera
-   selected") and the full `windows-ninja-test` preset; confirm
-   `priorityLowered` in the service stats (THREAD_PRIORITY_LOWEST).
+   `integration.monitoring_kde_e2e` (green in the Linux container with the
+   Hugging Face frames, §4; its synthetic-frames fallback leaves processing
+   at 0 fps in the container, on the unchanged branch too) and the full
+   `windows-ninja-test` preset; confirm `priorityLowered` in the service
+   stats (THREAD_PRIORITY_LOWEST).
 8. **Follow-up PR (migration):** expose `MonitoringDensityService` through
    `BackendFacade` + the Rust bridge (append-only contract change, ABI bump
    per ADR 0004) and colour the React Monitoring scatter from it; move the

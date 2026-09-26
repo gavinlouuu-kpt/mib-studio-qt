@@ -155,14 +155,39 @@ Verification (Linux container, GCC 13, Ubuntu 24.04 packages):
   5/5 runs, all 26 `frontend` tests pass (`frontend.hdf_review_core` after
   making its read-only case conditional on the OS refusing writes, as for
   `recording.kde_full_run_core`; verified as root and as `nobody`).
-- `integration.monitoring_kde_e2e` does **not** run in this container: on
-  the unchanged branch too, processing reports 0 fps after the Experiment
-  tab's camera-script apply fails ("No hardware camera selected"); it was
-  last green on the Windows bench before this change and must be re-run
-  there.
+- `integration.monitoring_kde_e2e` with the synthetic-frames fallback does
+  not run in this container (processing stays at 0 fps, on the unchanged
+  branch too); with the Hugging Face frames it does — see below.
 - Sanitizers (flags and label filter of `sanitizers.yml`): ASan+UBSan 85/85;
   TSan 84/85 with `backend.monitoring_density_service` and
   `e2e.experiment_coordinator` clean. The one TSan failure,
   `recording.hdf_export_service` (last-round timing ratio), ran while
   parallel builds loaded the CPU and passed when re-run alone; the export
   code is untouched by this branch.
+
+### 2026-09-26 — e2e with the Hugging Face frames (before the PR)
+
+`python3 scripts/provision-assets.py --asset 512x96stream-mock-frames
+--count 1000`, then `mib_frontend_tests monitoring_kde_e2e_test`. First run:
+KDE on gave one estimate per 9 s phase — each estimate cost ~600 ms of CPU
+inside the busy app (profile: per-point pass 70 ms, normaliser 145 ms, grid
+368 ms; the same code costs ~60 ms uncontended, and the bench's MSVC build
+~20 ms), and the budget, charged on wall time, then waited 12 s. Fixes, each
+with a regression test that fails without it:
+- separable grid: `exp(-(dx²+dy²)/2) = exp(-dx²/2)·exp(-dy²/2)`, (nx+ny)·n
+  `exp()` calls + nx·ny·n multiply-adds (direct 42 ms → 7.4 ms uncontended,
+  max |diff| 3.6e-12);
+- one pairwise pass for densities and normaliser (`rawKdeAtPoints` +
+  `normaliseByMaximum`) instead of a second full n² `rawKdeMaximum` pass;
+- budget charged on thread CPU time (`CLOCK_THREAD_CPUTIME_ID` /
+  `GetThreadTimes`); the contention test's starved phase fails with the
+  wall-clock budget (next wake 78.5 s) and passes with CPU time (3.2 s).
+
+Result (two runs): capture 200 fps in every phase; processing 145.9 / 144.3
+fps off vs 143.1 / 140.9 on; overlay lag 0.9–1.4 frames on; ~90 ms CPU per
+1000-cell estimate, next wake ~1.8 s; 4–5 estimates per 8 s phase; stored
+live record 900 of 1000 cells; GUI p99 ~97 ms on vs ~684 ms off (TD-16).
+The e2e's "≥ 6 estimates at 500 ms" gate became "≥ 2 estimates, interval +
+budget kept, lowest priority". Suites afterwards: backend 119/119, `frontend`
+27/27 (e2e included).
+

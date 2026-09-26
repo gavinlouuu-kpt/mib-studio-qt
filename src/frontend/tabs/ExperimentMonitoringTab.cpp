@@ -1655,12 +1655,14 @@ namespace frontend
             ui->kdeToggleCheck->setToolTip(tr("Colour scatter points by local population density (Gaussian KDE, recomputed periodically)"));
             return;
         }
+        // The service may space estimates beyond the setting (compute budget).
+        const int refreshMs = std::max(kdeIntervalMs_, backend_.monitoringDensity().stats().nextIntervalMs);
         QString text = tr("Density (KDE) over %1 points; bandwidth %2 μm² × %3; computed in %4 ms; refreshed every %5 s")
                            .arg(lastKdePointCount_)
                            .arg(lastKdeBandwidthX_, 0, 'f', 1)
                            .arg(lastKdeBandwidthY_, 0, 'f', 4)
                            .arg(lastKdeComputeMs_)
-                           .arg(kdeIntervalMs_ / 1000.0, 0, 'g', 3);
+                           .arg(refreshMs / 1000.0, 0, 'g', 3);
         if (std::isfinite(lastKdeCoreLevel_))
         {
             text += tr("\nCore %1%: %2 cells, %3 contour loop(s)")

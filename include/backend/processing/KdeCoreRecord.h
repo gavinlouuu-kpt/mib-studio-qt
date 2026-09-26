@@ -209,12 +209,13 @@ inline KdeCoreRecord computeFullRunCoreRecord(const std::vector<DensityPoint>& p
     const DensityBandwidth bw = silvermanBandwidth(finite, 1.0);
     r.bandwidthX = bw.x;
     r.bandwidthY = bw.y;
-    const std::vector<double> density = gaussianKdeAtPoints(finite, bw);
+    std::vector<double> density = rawKdeAtPoints(finite, bw);
+    const double rawMax = normaliseByMaximum(density);
     r.level = coreLevel(density, fraction);
     if (!std::isfinite(r.level)) return r;
     for (double d : density)
         if (d >= r.level) ++r.cellCount;
-    const DensityGrid grid = gaussianKdeGrid(finite, bw, rawKdeMaximum(finite, bw), r.x0, r.x1,
+    const DensityGrid grid = gaussianKdeGrid(finite, bw, rawMax, r.x0, r.x1,
                                              r.y0, r.y1, gridNx, gridNy);
     r.contours = isoContours(grid, r.level);
     return r;
