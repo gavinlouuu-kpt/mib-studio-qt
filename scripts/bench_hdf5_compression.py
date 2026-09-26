@@ -142,6 +142,7 @@ def bench_codec(chunks, level, threads, repeat, seconds=0.0):
 
 def bench_write(chunks, c, shape, level, threads, write_dir):
     h, w = shape
+    Path(write_dir).mkdir(parents=True, exist_ok=True)
     path = Path(write_dir) / f"bench_{os.getpid()}.h5"
     t0 = time.perf_counter()
     with ThreadPoolExecutor(threads) as ex, h5py.File(path, "w") as f:
@@ -255,6 +256,14 @@ def main():
     print(f"HDF5 {report['host']['hdf5']} (h5py {report['host']['h5py']}), zlib {report['host']['zlib']}, "
           f"{os.cpu_count()} CPUs, below-normal priority: {niced}")
     print("demand: " + ", ".join(f"{t} fps = {v} MB/s" for t, v in report["demand_mb_s"].items()))
+    if args.write_dir:
+        Path(args.write_dir).mkdir(parents=True, exist_ok=True)
+        # FILE_ATTRIBUTE_COMPRESSED: Windows compresses every write synchronously, so the
+        # write-to-disk numbers would measure NTFS compression, not the drive.
+        report["write_dir_ntfs_compressed"] = bool(getattr(os.stat(args.write_dir), "st_file_attributes", 0) & 0x800)
+        if report["write_dir_ntfs_compressed"]:
+            print(f"WARNING: {args.write_dir} is NTFS-compressed; write-to-disk rows measure NTFS "
+                  "compression, not the drive. Use an uncompressed folder (compact /u).")
     print(f"\n{'level':>5} {'chunk':>5} {'thr':>3} {'ratio':>6} {'MB/s':>7} {'fps':>8} {'inflate ms':>10}  "
           + " ".join(f"{t}fps" for t in targets))
     for c in parse_ints(args.chunk_frames):

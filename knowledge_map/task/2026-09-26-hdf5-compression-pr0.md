@@ -28,8 +28,9 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
   (sets `threads`), and the reader check.
 
 - **zlib is now a required dependency.** It is a direct Conan requirement
-  with the hdf5 recipe's range, which resolves to the same 1.3.2 package on
-  the Linux and Windows profiles. `find_package(ZLIB REQUIRED)` is in
+  with the hdf5 recipe's range, which resolves to the zlib package HDF5
+  already uses: 1.3.2 on a fresh Linux or Windows profile, and 1.3.1 in the
+  rig PC's cache. `find_package(ZLIB REQUIRED)` is in
   `cmake/MIBDependencies.cmake`, and the package is declared as apt
   `zlib1g-dev`, manylinux `zlib-devel` and macOS SDK `libz`. See
   [[../build-and-run/Dependencies]].
@@ -77,17 +78,35 @@ records to a `D:` SATA HDD. Evidence:
   - Every T passes in both modes. **D6 `clamp(hw/2, 1, 4)` = 4 is
     confirmed.**
 - **The soak keeps 16–18 of 32 logical CPUs busy** (about 2 of 4 in the
-  container), so a pool thread gets about 33 MB/s instead of 47. This is not
-  investigated yet.
+  container), so a pool thread gets about 33 MB/s instead of 47. The cause is
+  OpenCV 4.12.0's MSVC Concurrency Runtime pool: `CONCRT140.dll`, about 32
+  threads each at 45–50 %, and `OPENCV_FOR_THREADS_NUM` has no effect.
+  Tracked as TD-18.
+- **The HDD passes:** recording to an uncompressed `D:\bench\e2e`, the
+  baseline completes and T = 4 passes at 135 MB/s.
+- **NTFS compression breaks recording (TD-19).** The `D:\` root has NTFS
+  "compress contents", so new top-level folders inherit it. A 1000 fps
+  recording there overflows the HDF5 write queue in about 13 s while the
+  disk is idle. `D:\data` is fine.
 - **Readers:** HDFView and MATLAB are not installed on the rig, and 3b (real
-  camera) was skipped.
+  camera) was skipped. `h5dump` 1.14.6 reads the mixed file
+  byte-identically.
+- **Plan D8 is amended:** the PR 4 finish pass needs process-wide HDF5
+  exclusivity (TD-17).
 
 ## Gotchas
 
 - An old `build-ninja` Conan output (from before zlib became a direct
   requirement) configures fine but fails with `C1083 'zlib.h'`. Re-run
   `conan install`. The rig resolves zlib 1.3.1 from its cache.
-- `bench_hdf5_compression.py --write-dir` does not create the directory.
+- `bench_hdf5_compression.py --write-dir` did not create the directory; it
+  does now. Both scripts warn when the target folder is NTFS-compressed.
+- `run_compression_headroom_e2e.py` used to print PASS for a loaded run that
+  `failed`, whenever the baseline had failed too. A PASS now requires
+  `completion=complete`.
+- A soak whose working dir is not under the repo cannot find `resources\`,
+  so the LUT is not loaded. YOLO is not loaded in any soak. The workloads are
+  still comparable.
 
 - `H5Dwrite_chunk` needs HDF5 ≥ 1.10.3 and `H5Dget_chunk_info_by_coord`
   needs ≥ 1.10.5. The mask assertions are behind `H5_VERSION_GE(1, 10, 5)`,

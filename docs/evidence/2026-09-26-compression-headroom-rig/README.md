@@ -29,10 +29,15 @@ python scripts\bench_hdf5_compression.py --levels 1 --threads 1 --chunk-frames 1
   (`build\compression-e2e` on the `C:` NVMe), not to the `D:` HDD.
 - **Load:** `bench_hdf5_compression.py --seconds 308` with gzip-1 on 10-frame
   chunks, T threads, at `BELOW_NORMAL_PRIORITY_CLASS`.
-- **Raw numbers:** `rig-idle.json` (step 2), `rig-headroom.json` (step 3a,
-  T = 1, 2, 3) and `rig-headroom-t4.json` (step 3a, T = 4, with its own
-  baselines). Local paths are replaced by repo-relative paths and
-  `<work-dir>`.
+- **Raw numbers:**
+  - `rig-idle.json`: step 2, re-run on the uncompressed `D:\bench`; see the
+    follow-up section.
+  - `rig-headroom.json`: step 3a, T = 1, 2, 3.
+  - `rig-headroom-t4.json`: step 3a, T = 4, with its own baselines.
+  - `rig-headroom-hdd.json`: recording mode on the `D:` HDD, T = 4, with
+    `<work-dir>` = `D:\bench\e2e`.
+
+  Local paths are replaced by repo-relative paths and `<work-dir>`.
 
 ## Step 1: Conan HDF5 capability
 
@@ -51,10 +56,15 @@ gzip-1, C = 10, ratio 1.64. The process runs at below-normal priority.
 
 | Threads | Compress MB/s | fps capacity | Write to `D:` MB/s (`H5Dwrite_chunk`) | Inflate ms/chunk |
 |---|---|---|---|---|
-| 1 | 84 | 1,715 | 63 | 2.2 |
-| 2 | 127 | 2,581 | 129 | 2.1 |
-| 4 | 256 | 5,215 | 242 | 2.0 |
+| 1 | 84 | 1,703 | 60 | 2.3 |
+| 2 | 125 | 2,547 | 125 | 2.1 |
+| 4 | 253 | 5,139 | 247 | 2.2 |
 
+- These rows are the re-run on the uncompressed `D:\bench` (see the
+  follow-up section). The first run went to a folder that had inherited NTFS
+  compression, and it measured almost the same: 84 / 127 / 256 compress and
+  63 / 129 / 242 to disk. Already-gzipped chunks barely compress further, so
+  NTFS compression cost little here.
 - An earlier attempt of the same command, aborted because `D:\bench` did not
   exist yet, measured 56 / 126 / 256 MB/s. So one thread varies between 56 and
   84 MB/s, most likely depending on whether Windows puts it on a P-core or an
@@ -116,6 +126,7 @@ with no plugin.
 |---|---|
 | HDFView | not available (not installed on the rig) |
 | MATLAB | not available (not installed; only the NI "Matlab Interface" LabVIEW add-on is present) |
+| `h5dump` 1.14.6 (miniconda HDF5 tools, the same library version as the app's Conan build) | reads the dataset with no errors, with `DEFLATE { LEVEL 1 }` and 1.347:1 overall; its binary dump is byte-identical to the h5py read (49,152,000 bytes) |
 
 ## Reading
 
@@ -135,9 +146,80 @@ with no plugin.
   capture rate; on the rig capture stays within 0.04 % up to T = 4.
 - **Side finding:** the headless soak uses about 16–18 of 32 logical CPUs on
   the rig, against about 2 of 4 on the container, at the same frame and algo
-  rates. Something in the pipeline sizes itself to `hardware_concurrency` and
-  keeps those threads busy (it could be thread-pool spinning). It was not
-  investigated here. It matters for PR 5's rig soak, because it is the load the
-  compression pool competes with.
+  rates. The follow-up below traces it to OpenCV's Concurrency Runtime pool
+  (TD-18).
 - The mock camera is a software timer, so the capture-fps check is
   conservative relative to a hardware-timed camera.
+
+## Follow-up (same day): recording volume, NTFS compression, CPU
+
+### Recording mode on the `D:` HDD
+
+The first step 3a runs wrote to the NVMe drive. This re-run wrote recording
+mode to the HDD (`--modes recording --threads 4 --work-dir D:\bench\e2e`).
+
+| Run | Completion | Stored | Loss | gzip MB/s during run | Capture Δ | Result |
+|---|---|---|---|---|---|---|
+| baseline | complete | 117,816 frames, 5.80 GB, 19.3 MB/s | 0 | – | – | – |
+| T = 4 | complete | – | 0 extra | 135.0 | 0.04 % | PASS |
+
+The HDD sustains a 1000 fps recording with the 4-thread load and no loss.
+
+### NTFS compression on `D:` makes 1000 fps recording fail
+
+The first attempt used a new folder `D:\bench\e2e`. **The `D:\` root has
+the NTFS "compress contents" attribute set, so every new top-level folder
+inherits it.** In that folder, the *uncompressed-HDF5* recording baseline:
+- failed after 13 s with `Recording save failed: write queue overflow (disk
+  too slow)`: 4,800 of 5,000 frames persisted, 50 failed, 150 pending,
+  `completion=failed`;
+- failed the same way on a repeat, and on the T = 4 run after 11 s.
+
+Evidence that NTFS compression is the cause, not the disk:
+
+- **The disk was idle.** Counters sampled every second during the failing
+  run showed `D:` at most 35 % busy, queue length 0 and about 0.3 ms per
+  write. The writer thread stalls inside the synchronous NTFS (LZNT1)
+  compression of each write.
+- `compact` reported the test file stored at 1.2:1.
+- The same 25 s soak passes on `C:\bench` (uncompressed) and in the
+  Developer folder.
+- It also passes on `D:` once `compact /u` has cleared the attribute on
+  `D:\bench`.
+- **Real recordings are not affected today.** `D:\data`, where the app's
+  recordings go, is uncompressed. But `D:\260720 HV` and
+  `D:\260720 RC_FK_ basal` (July) are compressed folders, and any new
+  top-level folder on `D:` will be too. See TD-19.
+- The fix is outside the app (clear the attribute), plus a guard in it
+  (TD-19). The measurement scripts now warn when their target folder is
+  NTFS-compressed. Compression inside HDF5 would not help: fewer bytes, but
+  each write is still compressed synchronously again by NTFS.
+
+### Where the soak's CPU goes (TD-18)
+
+- Per-thread sampling of a running recording soak: 75 threads, and about 32
+  of them each use 45–50 % of a core, 16.3 cores in total. The container's
+  soak used about 1.7–2.1 cores at the same 390 algo fps. That is about
+  41 ms of CPU per processed frame on the rig, against about 4.4 ms in the
+  container.
+- **The ProcessingService pools are not the cause.** The general pool
+  (`start()` defaults to `hardware_concurrency` workers) blocks on a
+  condition variable and wakes one worker per job. The realtime batch
+  pipeline has 1 worker with a 10 ms wait.
+- **The Conan OpenCV 4.12.0** (`parallel=False`) imports `CONCRT140.dll` and
+  reports `Parallel framework: Concurrency`. The Microsoft Concurrency
+  Runtime creates one worker per logical CPU, and its idle workers
+  spin-wait.
+- **`OPENCV_FOR_THREADS_NUM` has no effect** (30 s soaks, 3 settings, 2
+  modes):
+
+  | Mode | Default | `=1` | `=4` |
+  |---|---|---|---|
+  | experiment | 15.96 cores | 15.96 | 16.10 |
+  | recording | 16.85 | 17.89 | 17.82 |
+
+  Algo fps and completion were unchanged. With the Concurrency backend, the
+  pool size only changes through `cv::setNumThreads()` in code.
+- Conclusion: most likely ConcRT spinning. Confirming it needs a one-line
+  product change, which is out of scope for PR 0, so it is recorded as
+  TD-18 with that as the exit test.

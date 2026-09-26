@@ -27,162 +27,162 @@
       "chunk_frames": 10,
       "threads": 1,
       "ratio": 1.641,
-      "compress_mb_s": 84.3,
-      "fps_capacity": 1715,
-      "inflate_ms_per_chunk": 2.15
+      "compress_mb_s": 83.7,
+      "fps_capacity": 1703,
+      "inflate_ms_per_chunk": 2.32
     },
     {
       "level": 1,
       "chunk_frames": 10,
       "threads": 2,
       "ratio": 1.641,
-      "compress_mb_s": 126.9,
-      "fps_capacity": 2581,
-      "inflate_ms_per_chunk": 2.05
+      "compress_mb_s": 125.2,
+      "fps_capacity": 2547,
+      "inflate_ms_per_chunk": 2.07
     },
     {
       "level": 1,
       "chunk_frames": 10,
       "threads": 4,
       "ratio": 1.641,
-      "compress_mb_s": 256.3,
-      "fps_capacity": 5215,
-      "inflate_ms_per_chunk": 2.01
+      "compress_mb_s": 252.6,
+      "fps_capacity": 5139,
+      "inflate_ms_per_chunk": 2.24
     },
     {
       "level": 4,
       "chunk_frames": 10,
       "threads": 1,
       "ratio": 1.648,
-      "compress_mb_s": 34.5,
-      "fps_capacity": 702,
-      "inflate_ms_per_chunk": 2.18
+      "compress_mb_s": 36.5,
+      "fps_capacity": 743,
+      "inflate_ms_per_chunk": 2.11
     },
     {
       "level": 4,
       "chunk_frames": 10,
       "threads": 2,
       "ratio": 1.648,
-      "compress_mb_s": 77.7,
-      "fps_capacity": 1581,
-      "inflate_ms_per_chunk": 2.1
+      "compress_mb_s": 78.9,
+      "fps_capacity": 1605,
+      "inflate_ms_per_chunk": 1.98
     },
     {
       "level": 4,
       "chunk_frames": 10,
       "threads": 4,
       "ratio": 1.648,
-      "compress_mb_s": 151.3,
-      "fps_capacity": 3079,
-      "inflate_ms_per_chunk": 2.08
+      "compress_mb_s": 158.8,
+      "fps_capacity": 3231,
+      "inflate_ms_per_chunk": 1.93
     },
     {
       "level": 6,
       "chunk_frames": 10,
       "threads": 1,
       "ratio": 1.648,
-      "compress_mb_s": 14.0,
-      "fps_capacity": 286,
-      "inflate_ms_per_chunk": 2.34
-    },
-    {
-      "level": 6,
-      "chunk_frames": 10,
-      "threads": 2,
-      "ratio": 1.648,
-      "compress_mb_s": 30.3,
-      "fps_capacity": 617,
+      "compress_mb_s": 14.7,
+      "fps_capacity": 298,
       "inflate_ms_per_chunk": 2.36
     },
     {
       "level": 6,
       "chunk_frames": 10,
+      "threads": 2,
+      "ratio": 1.648,
+      "compress_mb_s": 30.9,
+      "fps_capacity": 629,
+      "inflate_ms_per_chunk": 2.27
+    },
+    {
+      "level": 6,
+      "chunk_frames": 10,
       "threads": 4,
       "ratio": 1.648,
-      "compress_mb_s": 60.3,
-      "fps_capacity": 1228,
-      "inflate_ms_per_chunk": 2.24
+      "compress_mb_s": 61.0,
+      "fps_capacity": 1242,
+      "inflate_ms_per_chunk": 2.16
     },
     {
       "level": 1,
       "chunk_frames": 50,
       "threads": 1,
       "ratio": 1.642,
-      "compress_mb_s": 58.0,
-      "fps_capacity": 1180,
-      "inflate_ms_per_chunk": 11.56
+      "compress_mb_s": 57.6,
+      "fps_capacity": 1172,
+      "inflate_ms_per_chunk": 11.33
     },
     {
       "level": 1,
       "chunk_frames": 50,
       "threads": 2,
       "ratio": 1.642,
-      "compress_mb_s": 127.9,
-      "fps_capacity": 2602,
-      "inflate_ms_per_chunk": 10.89
+      "compress_mb_s": 121.9,
+      "fps_capacity": 2480,
+      "inflate_ms_per_chunk": 12.1
     },
     {
       "level": 1,
       "chunk_frames": 50,
       "threads": 4,
       "ratio": 1.642,
-      "compress_mb_s": 252.8,
-      "fps_capacity": 5143,
-      "inflate_ms_per_chunk": 11.24
+      "compress_mb_s": 249.9,
+      "fps_capacity": 5085,
+      "inflate_ms_per_chunk": 11.41
     },
     {
       "level": 4,
       "chunk_frames": 50,
       "threads": 1,
       "ratio": 1.645,
-      "compress_mb_s": 36.9,
-      "fps_capacity": 750,
-      "inflate_ms_per_chunk": 11.54
+      "compress_mb_s": 34.9,
+      "fps_capacity": 710,
+      "inflate_ms_per_chunk": 11.68
     },
     {
       "level": 4,
       "chunk_frames": 50,
       "threads": 2,
       "ratio": 1.645,
-      "compress_mb_s": 77.6,
-      "fps_capacity": 1579,
-      "inflate_ms_per_chunk": 10.78
+      "compress_mb_s": 72.9,
+      "fps_capacity": 1484,
+      "inflate_ms_per_chunk": 11.11
     },
     {
       "level": 4,
       "chunk_frames": 50,
       "threads": 4,
       "ratio": 1.645,
-      "compress_mb_s": 151.7,
-      "fps_capacity": 3086,
-      "inflate_ms_per_chunk": 10.25
+      "compress_mb_s": 147.0,
+      "fps_capacity": 2992,
+      "inflate_ms_per_chunk": 11.27
     },
     {
       "level": 6,
       "chunk_frames": 50,
       "threads": 1,
       "ratio": 1.644,
-      "compress_mb_s": 14.3,
-      "fps_capacity": 291,
-      "inflate_ms_per_chunk": 11.47
+      "compress_mb_s": 13.7,
+      "fps_capacity": 279,
+      "inflate_ms_per_chunk": 11.72
     },
     {
       "level": 6,
       "chunk_frames": 50,
       "threads": 2,
       "ratio": 1.644,
-      "compress_mb_s": 31.1,
-      "fps_capacity": 633,
-      "inflate_ms_per_chunk": 11.31
+      "compress_mb_s": 29.2,
+      "fps_capacity": 594,
+      "inflate_ms_per_chunk": 12.59
     },
     {
       "level": 6,
       "chunk_frames": 50,
       "threads": 4,
       "ratio": 1.644,
-      "compress_mb_s": 61.6,
-      "fps_capacity": 1253,
-      "inflate_ms_per_chunk": 10.73
+      "compress_mb_s": 59.6,
+      "fps_capacity": 1213,
+      "inflate_ms_per_chunk": 11.83
     }
   ],
   "write": [
@@ -190,129 +190,130 @@
       "level": 1,
       "chunk_frames": 10,
       "threads": 1,
-      "end_to_end_mb_s": 62.6,
+      "end_to_end_mb_s": 59.9,
       "file_bytes": 29964089
     },
     {
       "level": 1,
       "chunk_frames": 10,
       "threads": 2,
-      "end_to_end_mb_s": 128.9,
+      "end_to_end_mb_s": 125.5,
       "file_bytes": 29964089
     },
     {
       "level": 1,
       "chunk_frames": 10,
       "threads": 4,
-      "end_to_end_mb_s": 242.3,
+      "end_to_end_mb_s": 246.6,
       "file_bytes": 29964089
     },
     {
       "level": 4,
       "chunk_frames": 10,
       "threads": 1,
-      "end_to_end_mb_s": 34.6,
+      "end_to_end_mb_s": 37.9,
       "file_bytes": 29829418
     },
     {
       "level": 4,
       "chunk_frames": 10,
       "threads": 2,
-      "end_to_end_mb_s": 76.1,
+      "end_to_end_mb_s": 78.4,
       "file_bytes": 29829418
     },
     {
       "level": 4,
       "chunk_frames": 10,
       "threads": 4,
-      "end_to_end_mb_s": 152.5,
+      "end_to_end_mb_s": 152.8,
       "file_bytes": 29829418
     },
     {
       "level": 6,
       "chunk_frames": 10,
+      "threads": 1,
+      "end_to_end_mb_s": 13.8,
+      "file_bytes": 29843065
+    },
+    {
+      "level": 6,
+      "chunk_frames": 10,
+      "threads": 2,
+      "end_to_end_mb_s": 30.0,
+      "file_bytes": 29843065
+    },
+    {
+      "level": 6,
+      "chunk_frames": 10,
+      "threads": 4,
+      "end_to_end_mb_s": 61.5,
+      "file_bytes": 29843065
+    },
+    {
+      "level": 1,
+      "chunk_frames": 50,
+      "threads": 1,
+      "end_to_end_mb_s": 57.6,
+      "file_bytes": 29944520
+    },
+    {
+      "level": 1,
+      "chunk_frames": 50,
+      "threads": 2,
+      "end_to_end_mb_s": 118.9,
+      "file_bytes": 29944520
+    },
+    {
+      "level": 1,
+      "chunk_frames": 50,
+      "threads": 4,
+      "end_to_end_mb_s": 243.8,
+      "file_bytes": 29944520
+    },
+    {
+      "level": 4,
+      "chunk_frames": 50,
+      "threads": 1,
+      "end_to_end_mb_s": 33.4,
+      "file_bytes": 29880910
+    },
+    {
+      "level": 4,
+      "chunk_frames": 50,
+      "threads": 2,
+      "end_to_end_mb_s": 73.5,
+      "file_bytes": 29880910
+    },
+    {
+      "level": 4,
+      "chunk_frames": 50,
+      "threads": 4,
+      "end_to_end_mb_s": 141.7,
+      "file_bytes": 29880910
+    },
+    {
+      "level": 6,
+      "chunk_frames": 50,
       "threads": 1,
       "end_to_end_mb_s": 13.4,
-      "file_bytes": 29843065
-    },
-    {
-      "level": 6,
-      "chunk_frames": 10,
-      "threads": 2,
-      "end_to_end_mb_s": 30.8,
-      "file_bytes": 29843065
-    },
-    {
-      "level": 6,
-      "chunk_frames": 10,
-      "threads": 4,
-      "end_to_end_mb_s": 57.7,
-      "file_bytes": 29843065
-    },
-    {
-      "level": 1,
-      "chunk_frames": 50,
-      "threads": 1,
-      "end_to_end_mb_s": 55.3,
-      "file_bytes": 29944520
-    },
-    {
-      "level": 1,
-      "chunk_frames": 50,
-      "threads": 2,
-      "end_to_end_mb_s": 125.7,
-      "file_bytes": 29944520
-    },
-    {
-      "level": 1,
-      "chunk_frames": 50,
-      "threads": 4,
-      "end_to_end_mb_s": 250.2,
-      "file_bytes": 29944520
-    },
-    {
-      "level": 4,
-      "chunk_frames": 50,
-      "threads": 1,
-      "end_to_end_mb_s": 36.8,
-      "file_bytes": 29880910
-    },
-    {
-      "level": 4,
-      "chunk_frames": 50,
-      "threads": 2,
-      "end_to_end_mb_s": 78.1,
-      "file_bytes": 29880910
-    },
-    {
-      "level": 4,
-      "chunk_frames": 50,
-      "threads": 4,
-      "end_to_end_mb_s": 148.0,
-      "file_bytes": 29880910
-    },
-    {
-      "level": 6,
-      "chunk_frames": 50,
-      "threads": 1,
-      "end_to_end_mb_s": 14.3,
       "file_bytes": 29893838
     },
     {
       "level": 6,
       "chunk_frames": 50,
       "threads": 2,
-      "end_to_end_mb_s": 30.1,
+      "end_to_end_mb_s": 29.0,
       "file_bytes": 29893838
     },
     {
       "level": 6,
       "chunk_frames": 50,
       "threads": 4,
-      "end_to_end_mb_s": 57.2,
+      "end_to_end_mb_s": 57.6,
       "file_bytes": 29893838
     }
   ],
+  "write_dir_ntfs_compressed": false,
   "spikes": {
     "S1": {
       "direct_bytes": 29964089,

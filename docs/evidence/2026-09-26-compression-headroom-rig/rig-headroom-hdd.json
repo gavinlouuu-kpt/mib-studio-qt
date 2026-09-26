@@ -1,0 +1,213 @@
+{
+  "host": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_count": 32,
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel"
+  },
+  "settings": {
+    "frames": "build/vendor/assets/datasets/512x96stream-mock-frames",
+    "modes": "recording",
+    "threads": [
+      4
+    ],
+    "duration": 300.0,
+    "fps": 1000.0,
+    "gates": "default",
+    "level": 1,
+    "chunk_frames": 10,
+    "work_dir": "<work-dir>",
+    "json": "rig-headroom-hdd.json",
+    "keep_files": false
+  },
+  "modes": {
+    "recording": {
+      "baseline": {
+        "tool": "mock_experiment_soak_run",
+        "mode": "recording",
+        "gates": "default",
+        "fps_requested": 1000,
+        "duration_s": 300.674,
+        "frame_width": 512,
+        "frame_height": 96,
+        "roi": [
+          0,
+          0,
+          512,
+          96
+        ],
+        "hardware_concurrency": 32,
+        "capture": {
+          "frames": 300624,
+          "fps_measured": 999.835,
+          "intentionally_discarded": 0,
+          "transport_lost": 0
+        },
+        "processing": {
+          "algo_fps_mean": 391.706,
+          "algo_fps_min": 344.755,
+          "dropped_valid": 0,
+          "dropped_invalid": 0
+        },
+        "stop_ms": 12.6526,
+        "process_cpu_s": 5232,
+        "process_cpu_cores": 17.4002,
+        "file_bytes": 5796592992,
+        "image_frames_in_file": 117816,
+        "live_accounting": {
+          "completion": "complete",
+          "completion_reason": "all admitted frames reconciled",
+          "reconciled": true,
+          "admitted": 300608,
+          "empty": 182792,
+          "processed": 117816,
+          "scientifically_rejected": 0,
+          "processing_failed": 0,
+          "store_overwritten": 0,
+          "store_not_committed": 0,
+          "store_malformed": 0,
+          "cancelled_by_policy": 0,
+          "pending_at_stop": 0,
+          "persistence_admitted": 117816,
+          "persistence_committed": 117816,
+          "persistence_failed": 0,
+          "persistence_pending_at_stop": 0,
+          "persistence_cancelled_by_policy": 0,
+          "sequence_gaps": 0,
+          "sequence_gap_frames": 0,
+          "fatal": false,
+          "fatal_message": ""
+        },
+        "stored_accounting": {
+          "completion": "complete",
+          "completion_reason": "all admitted frames reconciled",
+          "reconciled": true,
+          "admitted": 300608,
+          "empty": 182792,
+          "processed": 117816,
+          "scientifically_rejected": 0,
+          "processing_failed": 0,
+          "store_overwritten": 0,
+          "store_not_committed": 0,
+          "store_malformed": 0,
+          "cancelled_by_policy": 0,
+          "pending_at_stop": 0,
+          "persistence_admitted": 117816,
+          "persistence_committed": 117816,
+          "persistence_failed": 0,
+          "persistence_pending_at_stop": 0,
+          "persistence_cancelled_by_policy": 0,
+          "sequence_gaps": 0,
+          "sequence_gap_frames": 0,
+          "fatal": false,
+          "fatal_message": ""
+        },
+        "exit_code": 0
+      },
+      "write_mb_s": 19.28,
+      "worst_case_mb_s": 49.2,
+      "stored_frame_ratio": 1.628,
+      "loaded": [
+        {
+          "threads": 4,
+          "compress_mb_s_under_load": 135.0,
+          "required_mb_s": 25.1,
+          "worst_case_mb_s": 49.2,
+          "covers_worst_case": true,
+          "completion": "complete",
+          "capture_fps": 999.398,
+          "capture_fps_delta_pct": 0.04,
+          "loss": 0,
+          "extra_loss": 0,
+          "stop_ms": 13.5353,
+          "process_cpu_cores": 19.82,
+          "headroom_ok": true,
+          "no_harm_ok": true,
+          "pass": true,
+          "soak": {
+            "tool": "mock_experiment_soak_run",
+            "mode": "recording",
+            "gates": "default",
+            "fps_requested": 1000,
+            "duration_s": 300.076,
+            "frame_width": 512,
+            "frame_height": 96,
+            "roi": [
+              0,
+              0,
+              512,
+              96
+            ],
+            "hardware_concurrency": 32,
+            "capture": {
+              "frames": 299895,
+              "fps_measured": 999.398,
+              "intentionally_discarded": 0,
+              "transport_lost": 0
+            },
+            "processing": {
+              "algo_fps_mean": 391.434,
+              "algo_fps_min": 316.132,
+              "dropped_valid": 0,
+              "dropped_invalid": 0
+            },
+            "stop_ms": 13.5353,
+            "process_cpu_s": 5947.77,
+            "process_cpu_cores": 19.82,
+            "file_bytes": 5781837792,
+            "image_frames_in_file": 117548,
+            "live_accounting": {
+              "completion": "complete",
+              "completion_reason": "all admitted frames reconciled",
+              "reconciled": true,
+              "admitted": 299879,
+              "empty": 182331,
+              "processed": 117548,
+              "scientifically_rejected": 0,
+              "processing_failed": 0,
+              "store_overwritten": 0,
+              "store_not_committed": 0,
+              "store_malformed": 0,
+              "cancelled_by_policy": 0,
+              "pending_at_stop": 0,
+              "persistence_admitted": 117548,
+              "persistence_committed": 117548,
+              "persistence_failed": 0,
+              "persistence_pending_at_stop": 0,
+              "persistence_cancelled_by_policy": 0,
+              "sequence_gaps": 0,
+              "sequence_gap_frames": 0,
+              "fatal": false,
+              "fatal_message": ""
+            },
+            "stored_accounting": {
+              "completion": "complete",
+              "completion_reason": "all admitted frames reconciled",
+              "reconciled": true,
+              "admitted": 299879,
+              "empty": 182331,
+              "processed": 117548,
+              "scientifically_rejected": 0,
+              "processing_failed": 0,
+              "store_overwritten": 0,
+              "store_not_committed": 0,
+              "store_malformed": 0,
+              "cancelled_by_policy": 0,
+              "pending_at_stop": 0,
+              "persistence_admitted": 117548,
+              "persistence_committed": 117548,
+              "persistence_failed": 0,
+              "persistence_pending_at_stop": 0,
+              "persistence_cancelled_by_policy": 0,
+              "sequence_gaps": 0,
+              "sequence_gap_frames": 0,
+              "fatal": false,
+              "fatal_message": ""
+            },
+            "exit_code": 0
+          }
+        }
+      ],
+      "smallest_passing_threads": 4
+    }
+  }
+}

@@ -160,6 +160,15 @@ and joined at run end, never detached.
   app data directory. Stale temp files are deleted at startup.
   `AppBackend::shutdown()` cancels and joins the pass. A `RecordingLoad` of a
   file being compacted cancels and requeues that job.
+- **HDF5 exclusivity (TD-17):** the Windows Conan HDF5 is not threadsafe
+  (rig, 2026-09-26). "No run active" does not mean "no other HDF5 caller":
+  HdfReviewTab and HdfExportService can have files open on their own threads
+  while the pass runs. Before PR 4 lands, one of these must hold:
+  - TD-17 is closed (a threadsafe build or one process-wide HDF5 lock); or
+  - the pass holds the same HDF5 access gate as review and export, and
+    starts or continues only while no other HDF5 user is active.
+
+  A test runs the pass while a review read loop runs on another thread.
 - **Space check:** free space must be at least `stored × 1.05 + raw bytes`,
   otherwise the job is skipped with a user-visible reason.
 - **CLI:** `mib_h5_compact [--level N] [--dry-run] <file.h5>...` covers
@@ -344,6 +353,33 @@ App config `storage.compression.*`:
   - Build note: an old `build-ninja` Conan output configures but fails with
     `C1083 'zlib.h'` until `conan install` is re-run. The rig resolved zlib
     1.3.1, not 1.3.2, from its cache (the package HDF5 links).
+- 2026-09-26 (PR 0, rig follow-up): closing the gaps from the rig run.
+  - **The HDD recording volume passes.** Recording mode with
+    `--work-dir D:\bench\e2e`: baseline complete, 5.80 GB, zero loss;
+    T = 4 at 135 MB/s, capture Δ 0.04 %, PASS.
+  - **NTFS compression breaks recording (TD-19).** The rig's `D:\` root has
+    NTFS "compress contents" set, and new top-level folders inherit it. A
+    1000 fps recording into such a folder fails within about 13 s with
+    `write queue overflow (disk too slow)`, while the disk is at most 35 %
+    busy.
+    - This is not an HDF5 compression issue: the files were uncompressed
+      HDF5.
+    - `D:\data` is unaffected.
+    - Both measurement scripts now detect and warn about it.
+  - **The soak's CPU is OpenCV's Concurrency Runtime pool (TD-18).** The Conan
+    OpenCV 4.12.0 imports `CONCRT140.dll`: about 32 threads at 45–50 %, about
+    41 ms of CPU per processed frame against 4.4 ms in the container.
+    `OPENCV_FOR_THREADS_NUM` has no effect. The fix needs
+    `cv::setNumThreads` in product code, so it is out of PR 0's scope. It
+    is not needed for D6, which already passes at 4 threads.
+  - **Readers:** `h5dump` 1.14.6 reads the mixed file byte-identically. That
+    is a second standard reader besides h5py. HDFView and MATLAB are still
+    not installed on the rig.
+  - **D8 is amended:** the finish pass is a new HDF5 thread next to review
+    and export. With `threadsafe=0` (TD-17), PR 4 needs process-wide HDF5
+    exclusivity or a threadsafe build.
+  - **Scripts:** the e2e's per-T PASS now requires `completion=complete`,
+    and the benchmark creates `--write-dir`.
 
 ## Phases (one PR each)
 
@@ -435,12 +471,15 @@ App config `storage.compression.*`:
 - `Hdf5Compactor` (D8) + `CompactionScheduler` owned by `AppBackend`, run
   only in mode `live_and_finish`, plus the `mib_h5_compact` CLI (legacy files
   too).
+- **Precondition (TD-17):** HDF5 exclusivity per D8. Either TD-17 is closed
+  first, or the pass shares one HDF5 access gate with HdfReviewTab and
+  HdfExportService.
 - `BackendOperationKind::Compaction` (append-only) with Started / Progress /
   Completed / Failed / Cancelled.
 - Tests: chunk copy is byte-preserving; raw-only compression; legacy re-chunk;
   verify-failure keeps the original; cancel on run start; kill mid-pass;
   insufficient space; Windows locked-target retry; queue persistence across
-  restart.
+  restart; the pass running against a concurrent review read loop.
 - Vault: new `knowledge_map/services/Hdf5Compactor.md` (+ MOC links),
   AppBackend shutdown order, Recent-Work.
 
@@ -463,8 +502,11 @@ App config `storage.compression.*`:
 - **zlib in `mib_processing` changes the wheel and plugin build.** The
   availability part is closed: zlib is a declared, configure-checked dependency
   in every environment (2026-09-26). PR 2 still checks the signed-core ABI.
-- **Existing concurrent HDF5 use by review and export threads.** Not widened by
-  this epic (D5). PR 0 records threadsafe status and files debt if needed.
+- **Existing concurrent HDF5 use by review and export threads.** The live
+  path does not widen it (D5). The Windows Conan build is `threadsafe=0`
+  (PR 0 rig, TD-17). The **finish pass does widen it**: it is a new HDF5
+  caller on its own thread, and it runs while review or export may be
+  active. PR 4 is therefore gated on D8's HDF5-exclusivity rule.
 - **Windows AV or indexers locking the file during replace.** The soft retry
   keeps the original. Observe it in the PR 5 soak.
 - **Readers on very old HDF5 (< 1.8).** Filter masks are core since 1.8, so

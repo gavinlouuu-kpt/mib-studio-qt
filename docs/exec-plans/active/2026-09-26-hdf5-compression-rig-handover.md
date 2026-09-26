@@ -58,10 +58,13 @@ Already verified off-rig on a 4-core cloud VM, 2026-09-26:
    ```
 
    zlib is a direct Conan requirement (`zlib/[>=1.2.11 <2]`, which resolves
-   to the 1.3.2 package HDF5 already uses), so `conan install` brings no new
-   binaries. `find_package(ZLIB REQUIRED)` stops the configure if it is
-   somehow missing. If that happens, record the error and fix the Conan
-   install before going on.
+   to the zlib package HDF5 already uses: 1.3.2 fresh, 1.3.1 in the rig's
+   cache), so `conan install` brings no new binaries. `find_package(ZLIB
+   REQUIRED)` stops the configure if it is missing. **Re-run `conan install`
+   first** if `build-ninja` predates the zlib requirement. The old output
+   still configures, because `ZLIBConfig.cmake` exists as an HDF5
+   dependency, but its include dirs are empty, and the capability test fails
+   with `C1083: Cannot open include file: 'zlib.h'` (rig, 2026-09-26).
 
 3. Install the Python side and fetch the frames.
 
@@ -69,6 +72,9 @@ Already verified off-rig on a 4-core cloud VM, 2026-09-26:
    py -m pip install numpy h5py tifffile
    py scripts\provision-assets.py --asset 512x96stream-mock-frames --count 1000
    ```
+
+   The rig PC has no `py` launcher. Use the miniconda `python` wherever this
+   handover says `py`.
 
 4. Note the rig facts: CPU model and core count (`Get-CimInstance Win32_Processor`),
    RAM, the recording volume and its type (NVMe, SATA SSD, HDD or network),
@@ -86,8 +92,10 @@ ctest --test-dir build-ninja -R recording.hdf5_direct_chunk_capability -V
 - **Record:** the `HDF5_CAPABILITY ...` and `HDF5_S1 ...` lines verbatim.
 - **Decision it drives:** `threadsafe=0` → add a tech-debt row to
   `docs/exec-plans/tech-debt-tracker.md`, because review/export threads and
-  the live writer share a non-threadsafe library today. The epic itself does
-  not widen that sharing (design D5). `threadsafe=1` → no action.
+  the live writer share a non-threadsafe library today. The live path does
+  not widen that sharing (design D5), but the PR 4 finish pass would. That is
+  now gated in plan D8. `threadsafe=1` → no action. (Rig result:
+  `threadsafe=0`, TD-17.)
 
 ### Step 2: idle benchmark on the recording drive (about 5–10 minutes)
 
@@ -110,9 +118,14 @@ py scripts\bench_hdf5_compression.py --threads 1,2,4 --chunk-frames 10,50 `
 (§7), now on rig hardware.
 
 ```powershell
-py scripts\run_compression_headroom_e2e.py --runner build-ninja\mib_backend_tests.exe `
-    --duration 300 --threads 1,2,3 --json rig-headroom.json
+py scripts\run_compression_headroom_e2e.py --runner build-ninja\Release\mib_backend_tests.exe `
+    --duration 300 --threads 1,2,3 --work-dir <recording volume>\bench\e2e --json rig-headroom.json
 ```
+
+The `windows-ninja` runner is in `build-ninja\Release\`. Without
+`--work-dir`, the soaks write to `build\compression-e2e` on the system drive,
+not the recording volume. The first rig run on 2026-09-26 did that. The
+recording-mode check on `D:` is in §8.
 
 For each save mode (experiment, recording) the script runs:
 
@@ -178,16 +191,17 @@ Results from 2026-09-26, commit `3eb6e61`. Details are in §8 and the
 | Rig CPU / cores / RAM / recording drive | Intel Core i9-13900 (8 P + 16 E), 24 cores / 32 logical; 32 GB; recordings on `D:`, a WD20EZBX 2 TB SATA HDD (system `C:` is NVMe) | – |
 | Step 1: `HDF5_CAPABILITY` line | `HDF5_CAPABILITY version=1.14.6 threadsafe=0 deflate_encode=1 deflate_decode=1 zlib=1.3.1` (not threadsafe, so TD-17 is filed) | pass |
 | Step 1: `HDF5_S1` line | `HDF5_S1 raw_bytes=19660800 direct_bytes=15200776 tail_bytes=15200776 growth_pct=0.00 ratio=1.29` | pass |
-| Step 2: level 1, C = 10 compress MB/s @ 1 / 2 / 4 threads | 84 / 127 / 256, ratio 1.64. One thread varies from 56 to 84 between attempts (P-core vs E-core). | – |
-| Step 2: write-to-disk MB/s @ 1 / 2 / 4 threads | 63 / 129 / 242 to `D:\bench` | – |
+| Step 2: level 1, C = 10 compress MB/s @ 1 / 2 / 4 threads | 84 / 125 / 253, ratio 1.64. One thread varies from 56 to 84 between attempts (P-core vs E-core). | – |
+| Step 2: write-to-disk MB/s @ 1 / 2 / 4 threads | 60 / 125 / 247 to the uncompressed `D:\bench`. The first run, in an NTFS-compressed folder, gave 63 / 129 / 242. | – |
 | Step 2: S1 / S2 | S1 +0.65 % PASS / S2 PASS (h5py 3.16, HDF5 2.0.0) | pass |
 | Step 3: baseline run accounting (completion, persisted/admitted, drops) | experiment: complete, 5,095/5,095 persisted of 300,694 admitted, loss 0, 1.7 MB/s. recording: complete, 117,827/117,827 persisted of 300,604 admitted, loss 0, 19.3 MB/s. | – |
-| Step 3: under-load MB/s @ 1 / 2 / 3 threads | 35 / 68 / 99 in both modes; 129 at 4 threads | pass (all T) |
+| Step 3: under-load MB/s @ 1 / 2 / 3 threads | 35 / 68 / 99 in both modes; 129 at 4 threads (NVMe work dir). Recording on the `D:` HDD, T = 4: 135, complete, zero loss. | pass (all T) |
 | Step 3: with-benchmark run accounting | all 8 loaded runs complete with extra loss 0; capture Δ ≤ 0.04 % | pass |
 | Step 3: chosen default `threads` | `auto = clamp(hw_concurrency / 2, 1, 4)`, which gives 4 on the rig; 4 passes in both modes. The smallest passing pool is 1. | – |
 | Step 3b: real camera | skipped (nobody at the rig) | – |
 | Step 4: HDFView | not available (not installed) | – |
 | Step 4: MATLAB | not available (not installed) | – |
+| Step 4 (extra): `h5dump` 1.14.6 | reads `mixed.h5` with no errors; its binary dump is byte-identical to h5py's read | pass |
 
 Do not commit `mixed.h5`, the `bench\` directory, build trees or any `.h5`
 file. The `rig-*.json` reports go into the rig evidence directory, with local
@@ -240,8 +254,9 @@ Compared with the container (§7):
 - **Per-thread gzip during a run is lower:** about 33 MB/s per thread,
   against 47 on the container. Idle on the rig it is 56–84 MB/s. The headless
   soak keeps 16–18 of the rig's 32 logical CPUs busy (about 2 of 4 on the
-  container) at the same frame and algo rates. The below-normal pool threads
-  therefore most likely run on E-cores. Scaling stays linear up to 4 threads.
+  container) at the same frame and algo rates. That is OpenCV's spinning
+  Concurrency Runtime pool (TD-18, follow-up below). Scaling stays linear up
+  to 4 threads.
 - **More threads fit:** T = 3 passes on the rig (capture Δ 0.01 %), where it
   failed on the container (−1.12 %). T = 4, the value `clamp(hw/2, 1, 4)`
   gives here, passes with capture within 0.04 %. The only visible cost is the
@@ -251,10 +266,12 @@ Compared with the container (§7):
   needed (49 MB/s × 1.3). The margin is smaller than on the container
   (93 MB/s). 4 threads give 2.6× the worst case.
 - **The Conan HDF5 is not threadsafe** (`threadsafe=0`, unlike apt 1.10.10).
-  TD-17 is filed. D5 keeps the epic from widening the sharing.
+  TD-17 is filed. D5 keeps the live path from widening the sharing. The PR 4
+  finish pass would widen it, so it is now gated in plan D8.
 - **Step 3b (real camera) was skipped**, because nobody was at the rig.
   **Step 4:** HDFView and MATLAB are not installed on the rig ("not
-  available", not pass). h5py reads the mixed file with 34 of 100 chunks raw.
+  available", not pass). h5py and `h5dump` 1.14.6 both read the mixed file
+  (34 of 100 chunks raw) byte-identically.
 - **Setup notes for the next rig run:**
   - A `build-ninja` whose Conan output predates the zlib requirement
     configures fine (`ZLIBConfig.cmake` already exists as a transitive
@@ -263,13 +280,36 @@ Compared with the container (§7):
     fixes it.
   - Conan resolved zlib 1.3.1 here, not 1.3.2. It is the package HDF5 itself
     links, so nothing new was downloaded.
-  - `bench_hdf5_compression.py --write-dir` does not create the directory.
+  - `bench_hdf5_compression.py --write-dir` did not create the directory
+    (fixed the same day).
   - The rig has no `py` launcher; the miniconda `python` was used.
   - Step 3a's soak files go to `build\compression-e2e` (NVMe) unless
     `--work-dir` is given.
 
+**Follow-up the same day** (details in the evidence README):
+
+- **Recording on the `D:` HDD passes.** With `--work-dir D:\bench\e2e`
+  (uncompressed): baseline complete, 5.80 GB, zero loss; T = 4 at 135 MB/s,
+  capture Δ 0.04 %, PASS.
+- **NTFS compression on `D:` breaks 1000 fps recording (TD-19).** The `D:\`
+  root has "compress contents" set, so new top-level folders inherit it. In
+  such a folder, an uncompressed-HDF5 recording failed after 13 s with
+  `write queue overflow (disk too slow)`, while the disk was at most 35 %
+  busy.
+  - `D:\data` (the current recordings) is uncompressed and fine.
+  - The scripts now warn when their target folder is NTFS-compressed.
+  - The step 2 numbers above are from the re-run in the uncompressed folder
+    and are within 5 % of the first run.
+- **The soak's 16–18 cores are OpenCV's ConcRT pool (TD-18).** OpenCV 4.12.0
+  uses the MSVC Concurrency Runtime, with one spinning worker per logical
+  CPU. `OPENCV_FOR_THREADS_NUM` has no effect.
+- **Script fix:** `run_compression_headroom_e2e.py` no longer passes a
+  loaded run whose completion is `failed` just because the baseline failed
+  too.
+
 **Decision:** keep `threads = auto = clamp(hw_concurrency / 2, 1, 4)` (4 on
 the rig). PR 0 is complete apart from the optional real-camera check and the
 HDFView/MATLAB reads, which need those tools on a machine that has them. The
-next step is PR 1.
+next step is PR 1. TD-18 (fewer spinning OpenCV threads) would give the pool
+more headroom, but it is not needed for the chosen default.
 

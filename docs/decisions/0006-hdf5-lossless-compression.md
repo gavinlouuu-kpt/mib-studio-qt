@@ -58,6 +58,11 @@ large files for a while after Stop.
 - The writer path gains a chunk assembler, a compression pool and a budget
   policy. The HDF5 thread-ownership rule (one thread calls HDF5 per file)
   becomes explicit and is tested.
+- The Windows Conan HDF5 is not threadsafe (PR 0 rig, 2026-09-26, TD-17).
+  Its global state is shared across files, so "one thread per file" is not
+  enough for the finish pass, which runs on its own thread next to review and
+  export. The pass needs process-wide HDF5 exclusivity (plan D8) or a
+  threadsafe build.
 - The chunk shape is fixed when the dataset is created (target ~512 KiB), not
   derived from the first batch. Recording batches are chunk-aligned.
 - `mib_processing` (home of `Hdf5Service`) links zlib directly, which affects

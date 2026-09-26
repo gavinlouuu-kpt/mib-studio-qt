@@ -50,6 +50,12 @@ LOSS_TERMS = ("store_overwritten", "store_not_committed", "store_malformed", "pe
               "persistence_pending_at_stop", "pending_at_stop")
 
 
+def ntfs_compressed(path):
+    """True when Windows reports FILE_ATTRIBUTE_COMPRESSED on path (new files inherit it)."""
+    attrs = getattr(os.stat(path), "st_file_attributes", 0)
+    return bool(attrs & 0x800)
+
+
 def find_runner(explicit):
     if explicit:
         return Path(explicit)
@@ -133,8 +139,10 @@ def run_mode(args, runner, mode):
         fps_delta = abs(loaded["capture"]["fps_measured"] / base["capture"]["fps_measured"] - 1) * 100
         extra_loss = loss(loaded) - loss(base)
         headroom_ok = mbs >= 1.3 * write_mb_s
-        harm_ok = (completion(loaded) == completion(base) and fps_delta <= 1.0
-                   and extra_loss <= 0.01 * admitted)
+        # A failed baseline makes "same completion as baseline" meaningless, so
+        # a loaded run only passes when it actually completed.
+        harm_ok = (completion(loaded) == "complete" and completion(loaded) == completion(base)
+                   and fps_delta <= 1.0 and extra_loss <= 0.01 * admitted)
         row = {"threads": t, "compress_mb_s_under_load": mbs, "required_mb_s": round(1.3 * write_mb_s, 1),
                "worst_case_mb_s": round(worst_mb_s, 1), "covers_worst_case": mbs >= worst_mb_s,
                "completion": completion(loaded), "capture_fps": loaded["capture"]["fps_measured"],
@@ -168,6 +176,10 @@ def main():
     args = ap.parse_args()
     args.threads = [int(t) for t in args.threads.split(",") if t]
     Path(args.work_dir).mkdir(parents=True, exist_ok=True)
+    if ntfs_compressed(args.work_dir):
+        print(f"WARNING: {args.work_dir} is NTFS-compressed; files written there are compressed "
+              "synchronously by Windows and a 1000 fps recording overflows its write queue. "
+              "Use an uncompressed folder (compact /u) to measure the drive.", flush=True)
     runner = find_runner(args.runner)
 
     report = {"host": {"platform": platform.platform(), "cpu_count": os.cpu_count(),

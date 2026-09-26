@@ -13,8 +13,20 @@ These are the PR 0 measurements on the rig PC: an i9-13900 with 24 cores /
     against demand of 1.7 (experiment) and 19.3 (recording) MB/s.
   - Every pool size passes, so the D6 default `clamp(hw/2, 1, 4)`, which is
     4 on the rig, is confirmed.
-- **Side finding:** the headless soak keeps 16–18 cores busy on the rig
-  (about 2 in the container), which cuts per-thread gzip to about 33 MB/s.
+- **Side finding, TD-18:** the headless soak keeps 16–18 cores busy on the
+  rig (about 2 in the container), which cuts per-thread gzip to about
+  33 MB/s. The cause is OpenCV 4.12.0's MSVC Concurrency Runtime pool, which
+  spins, and `OPENCV_FOR_THREADS_NUM` has no effect on it.
+- **Follow-up:**
+  - Recording to the `D:` HDD passes, including with a 4-thread load.
+  - TD-19: the rig's `D:\` root is NTFS-compressed, so new top-level folders
+    inherit it, and a 1000 fps recording there overflows the write queue in
+    about 13 s while the disk is idle. `D:\data` is fine.
+  - Plan D8 now requires process-wide HDF5 exclusivity for the PR 4 finish
+    pass (TD-17).
+  - `h5dump` 1.14.6 reads the mixed file byte-identically.
+  - The scripts warn on NTFS-compressed folders, and a `failed` run no
+    longer counts as PASS.
 - **Not checked:** HDFView and MATLAB are not installed on the rig, and the
   real-camera check was skipped.
 - **Next:** PR 1.
