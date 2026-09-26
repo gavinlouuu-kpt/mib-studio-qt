@@ -348,3 +348,25 @@ def test_channel_band_rejects_objects_outside_by_centroid():
     by_row = sorted(objs, key=lambda o: o["centroid_xy"][1])
     assert not by_row[0]["in_channel"] and not by_row[0]["is_valid"]
     assert by_row[1]["in_channel"] and by_row[1]["is_valid"]
+
+
+def test_research_wheel_records_the_executed_contract(tmp_path):
+    """The wheel is a research build (ADR 0007): its HDF5 provenance names the
+    contract the config ran, plus the full Contract-2 era config (T0.2)."""
+    h5py = pytest.importorskip("h5py")
+    bg = np.full((60, 80), 128, dtype=np.uint8)
+    frame = bg.copy()
+    frame[20:40, 30:50] = 88
+    cfg = _contract_config(2)
+    cfg["channel_band_y"], cfg["channel_band_h"] = 10, 40
+    results = mp.process_batch([frame], cfg, background=bg, include_masks=True)
+    frame_dicts = [{k: v for k, v in r.items() if k != "mask"} for r in results]
+    out = str(tmp_path / "c2.h5")
+    assert mp.save_masks_to_hdf5(frame_dicts, [frame], [r["mask"] for r in results], out, cfg)
+    with h5py.File(out, "r") as f:
+        info = f["/experiment_info"].attrs
+        assert int(info["processing_contract_version"]) == 2
+        assert int(info["processing_config_processing_contract_version"]) == 2
+        assert int(info["processing_config_channel_band_y"]) == 10
+        assert int(info["processing_config_channel_band_h"]) == 40
+        assert "processing_config_enable_laplacian_variance_check" in info

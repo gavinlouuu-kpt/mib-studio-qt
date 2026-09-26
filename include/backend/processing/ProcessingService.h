@@ -245,6 +245,11 @@ public:
     // Configuration
     void setProcessingConfig(const ProcessingConfig& config);
     ProcessingConfig getProcessingConfig() const;
+    // The config as processing applies it: getProcessingConfig() plus the
+    // channel band detected from the background (frame coordinates) when
+    // auto_roi_from_background is on. For provenance only; never feed it back
+    // into setProcessingConfig (the band is runtime state).
+    ProcessingConfig getEffectiveProcessingConfig() const;
     
     // Pixel to micron conversion factor (1 pixel = X micron)
     void setPixelToMicronFactor(double factor);

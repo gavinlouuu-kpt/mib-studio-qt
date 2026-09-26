@@ -898,7 +898,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     bool metadataOk = true;
     if (fileOpen) {
         if (!hdf5.flush()) SPDLOG_WARN("ExperimentCoordinator: H5Fflush before metadata failed");
-        const auto cfg = proc.getProcessingConfig();
+        const auto cfg = proc.getEffectiveProcessingConfig();
         const auto roi = proc.getRealtimeRoi();
         cv::Mat bg = proc.getRealtimeBackgroundGray();
         const auto core = proc.activeProcessingCoreIdentity();

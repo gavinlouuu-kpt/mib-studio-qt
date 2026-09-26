@@ -64,6 +64,15 @@ int main()
         MIB_REQUIRE(hdf5.appendFrames(valid, invalid), "appendFrames");
 
         ProcessingConfig cfg;
+        cfg.processing_contract_version = 2;
+        cfg.bg_subtract_threshold = 11;
+        cfg.enable_ring_ratio_check = false;
+        cfg.enable_laplacian_variance_check = true;
+        cfg.laplacian_variance_min = 5.0;
+        cfg.laplacian_variance_max = 500.0;
+        cfg.auto_roi_from_background = true;
+        cfg.channel_band_y = 30;
+        cfg.channel_band_h = 50;
         ProcessingService::Roi roi{1, 2, 6, 7};
         backend::processing::ProcessingCoreIdentity core;
         core.version = "2.3.4";
@@ -104,6 +113,20 @@ int main()
         MIB_EXPECT(coreOut.artifactSha256 == std::string(64, 'a') &&
                        coreOut.manifestSha256 == std::string(64, 'b'),
                    "processing core digests round-trip");
+        MIB_EXPECT(coreOut.contractVersion == 1,
+                   "a plugin core's declared contract is recorded as-is");
+
+        ProcessingConfig cfgOut;
+        MIB_REQUIRE(r.readRecordedProcessingConfig(cfgOut), "recorded processing config reads back");
+        MIB_EXPECT(cfgOut.processing_contract_version == 2 && cfgOut.bg_subtract_threshold == 11,
+                   "declared contract and difference threshold round-trip");
+        MIB_EXPECT(!cfgOut.enable_ring_ratio_check && cfgOut.enable_laplacian_variance_check &&
+                       near(cfgOut.laplacian_variance_min, 5.0) &&
+                       near(cfgOut.laplacian_variance_max, 500.0),
+                   "ring and Laplacian gates round-trip");
+        MIB_EXPECT(cfgOut.auto_roi_from_background && cfgOut.channel_band_y == 30 &&
+                       cfgOut.channel_band_h == 50,
+                   "channel band round-trips");
 
         std::vector<ProcessedFrame> meta;
         MIB_REQUIRE(r.readValidMetadata(meta), "readValidMetadata");
@@ -180,6 +203,11 @@ int main()
         backend::processing::ProcessingCoreIdentity missing;
         MIB_EXPECT(!legacy.readProcessingCoreIdentity(missing),
                    "legacy file without core attributes is reported explicitly");
+        ProcessingConfig legacyConfig;
+        legacyConfig.processing_contract_version = 7; // sentinel: no attribute to read
+        MIB_EXPECT(legacy.readRecordedProcessingConfig(legacyConfig) &&
+                       legacyConfig.processing_contract_version == 7,
+                   "attributes a legacy file lacks keep the caller's values");
         legacy.closeFile();
     }
 

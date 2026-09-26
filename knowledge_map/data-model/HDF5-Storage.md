@@ -11,7 +11,9 @@
 
 - `/experiment_info` — root attributes:
   `startTimeNs`, `endTimeNs`, `totalValidFrames`, `totalInvalidFrames`,
-  serialized `ProcessingConfig`, ROI, optional `background` image,
+  serialized `ProcessingConfig` (`processing_config_*`, including the declared
+  contract, difference threshold, all object gates and the channel band;
+  read back by `readRecordedProcessingConfig`), ROI, optional `background` image,
   `config_json` (raw JSON string), plus processing-core provenance:
   `processing_core_version`, `processing_contract_version`,
   `processing_engine_abi_version`, `processing_core_sha256`,

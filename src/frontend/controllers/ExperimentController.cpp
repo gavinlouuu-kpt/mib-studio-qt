@@ -159,7 +159,7 @@ namespace frontend
                 SPDLOG_WARN("H5Fflush before writeExperimentInfo failed — file may be corrupt on crash");
 
             // Write experiment metadata (including background image for reproducibility if set)
-            auto processingConfig = processing.getProcessingConfig();
+            auto processingConfig = processing.getEffectiveProcessingConfig();
             auto roi = processing.getRealtimeRoi();
             cv::Mat bg = processing.getRealtimeBackgroundGray();
             const auto processingCore = processing.activeProcessingCoreIdentity();

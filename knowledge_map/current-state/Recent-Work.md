@@ -212,6 +212,13 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Full processing config in recordings** (2026-09-26, Contract 2 rollout
+  T0.2) — `/experiment_info` records the declared contract, difference
+  threshold, ring/area-ratio/Laplacian gates and the channel band
+  (`getEffectiveProcessingConfig()`); `Hdf5Service::readRecordedProcessingConfig`
+  reads them back. Research (wheel) builds record the executed contract, so a
+  Contract-2 `save_masks_to_hdf5` file now exports as Contract 2. See
+  [[../services/Hdf5Service#Processing-core provenance]].
 - **One contract per shipped core** (2026-09-26, ADR 0007, Contract 2 rollout
   T0.1) — the bundled kernel's contract is fixed by
   `MIB_PROCESSING_CORE_CONTRACT` (`1` default; `research` = both, Python wheel

@@ -710,6 +710,16 @@ ProcessingConfig ProcessingService::getProcessingConfig() const {
     return processingConfig_;
 }
 
+ProcessingConfig ProcessingService::getEffectiveProcessingConfig() const {
+    ProcessingConfig config = getProcessingConfig();
+    if (config.auto_roi_from_background) {
+        const Roi band = getChannelBand();
+        config.channel_band_y = band.h > 0 ? band.y : 0;
+        config.channel_band_h = band.h > 0 ? band.h : 0;
+    }
+    return config;
+}
+
 void ProcessingService::setPixelToMicronFactor(double factor) {
     pixelToMicronFactor_.store(factor, std::memory_order_relaxed);
 }

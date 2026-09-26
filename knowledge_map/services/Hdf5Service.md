@@ -112,6 +112,22 @@ that predates provenance. The writer records the bundled identity when no
 explicit identity is supplied, preserving deterministic metadata for older
 call sites.
 
+`processing_contract_version` is the **executed** contract. A shipped core
+runs only its own contract (ADR 0007), so its identity is recorded as-is. A
+research build (Python wheel, `bundledProcessingContract() == 0`, source
+`bundled`) records the config's contract instead.
+
+`/experiment_info` also records the full Contract-2 era config (T0.2):
+`processing_config_processing_contract_version` (the profile's declared
+contract), `processing_config_difference_threshold`, the ring, area-ratio and
+Laplacian gates (`processing_config_enable_*`, `*_min`/`*_max`), and the
+channel band (`processing_config_auto_roi_*`, `processing_config_channel_band_y/h`,
+frame coordinates). Recording callers pass
+`ProcessingService::getEffectiveProcessingConfig()`, which adds the detected
+band. The write is mandatory, like core provenance. `readRecordedProcessingConfig`
+reads every `processing_config_*` attribute back into a `ProcessingConfig`;
+attributes an older file lacks keep the caller's values.
+
 ## Run accounting (issue #367)
 
 `writeRunAccounting(RecordingAccountingSnapshot)` / `readRunAccounting(...)`
