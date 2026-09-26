@@ -84,9 +84,11 @@
   keeps the live signed publication gate open). ABI v1 owns mask generation
   and empty-frame classification; host metrics/tracking/orchestration remain
   outside it.
-- **Processing conformance reference** —
-  `scripts/gold_standard_dataset.json`, a deterministic full-parity output from
-  the installed wheel. `scripts/run_processing_conformance.py` fails on metric,
+- **Processing conformance reference** (gold reference) —
+  `scripts/gold_standard_dataset.json` (synthetic) and
+  `scripts/conformance/focus-50v-real-contract1.json` (real 50 V frames), each
+  a deterministic full-parity output from the installed wheel. Frozen per
+  contract (ADR 0007); changed only with the `gold-reference-change` label. `scripts/run_processing_conformance.py` fails on metric,
   mask, series-image, target-group, tracking, or record-accounting drift.
 
 ## Protocols & SDKs
