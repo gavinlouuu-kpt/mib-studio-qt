@@ -67,11 +67,17 @@ double timeMs(const std::vector<DensityPoint>& pts, double& sink) {
     return std::chrono::duration<double, std::milli>(t1 - t0).count();
 }
 
+// Best of three runs: a single scheduler hiccup must not flip a ratio gate.
 template <class F>
 double timeMs(F&& work) {
-    const auto t0 = std::chrono::steady_clock::now();
-    work();
-    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    double best = 0.0;
+    for (int run = 0; run < 3; ++run) {
+        const auto t0 = std::chrono::steady_clock::now();
+        work();
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        best = run == 0 ? ms : std::min(best, ms);
+    }
+    return best;
 }
 
 } // namespace

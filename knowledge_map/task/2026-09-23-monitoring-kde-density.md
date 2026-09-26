@@ -175,8 +175,12 @@ inside the busy app (profile: per-point pass 70 ms, normaliser 145 ms, grid
 ~20 ms), and the budget, charged on wall time, then waited 12 s. Fixes, each
 with a regression test that fails without it:
 - separable grid: `exp(-(dx²+dy²)/2) = exp(-dx²/2)·exp(-dy²/2)`, (nx+ny)·n
-  `exp()` calls + nx·ny·n multiply-adds (direct 42 ms → 7.4 ms uncontended,
-  max |diff| 3.6e-12);
+  `exp()` calls + nx·ny·n multiply-adds accumulated as per-row axpy updates
+  (vectorisable without -ffast-math; zero weights skipped): direct ~40 ms →
+  ~3.5 ms uncontended, max |diff| 3.6e-12. The first cut summed each cell as a
+  reduction (not vectorised): only 3.5× faster on the CI runner's fast
+  `exp()`, which failed the ≤ 1/4 gate on PR #456; the gates now take the
+  best of three runs;
 - one pairwise pass for densities and normaliser (`rawKdeAtPoints` +
   `normaliseByMaximum`) instead of a second full n² `rawKdeMaximum` pass;
 - budget charged on thread CPU time (`CLOCK_THREAD_CPUTIME_ID` /

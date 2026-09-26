@@ -210,27 +210,33 @@ inline DensityGrid gaussianKdeGrid(const std::vector<DensityPoint>& points, Dens
         sy.push_back(p.y * invY);
     }
     const std::size_t n = sx.size();
-    auto axisKernel = [n](const std::vector<double>& s, double g, double* out) {
-        for (std::size_t k = 0; k < n; ++k) {
-            const double d = g - s[k];
-            const double d2 = d * d;
-            out[k] = d2 > 50.0 ? 0.0 : std::exp(-0.5 * d2);
-        }
+    const auto axisKernel = [](double d) {
+        const double d2 = d * d;
+        return d2 > 50.0 ? 0.0 : std::exp(-0.5 * d2);
     };
-    std::vector<double> ex(static_cast<std::size_t>(nx) * n), ey(static_cast<std::size_t>(ny) * n);
-    for (int i = 0; i < nx; ++i)
-        axisKernel(sx, g.x(i) * invX, ex.data() + static_cast<std::size_t>(i) * n);
+    // ex is point-major (ex[k·nx + i]) so each grid row accumulates as an
+    // axpy over i — no floating-point reduction, which the compiler would
+    // not vectorise without -ffast-math — and points outside a row's
+    // per-axis cut (weight 0) are skipped.
+    std::vector<double> ex(n * static_cast<std::size_t>(nx)), ey(static_cast<std::size_t>(ny) * n);
+    for (std::size_t k = 0; k < n; ++k)
+        for (int i = 0; i < nx; ++i)
+            ex[k * nx + i] = axisKernel(g.x(i) * invX - sx[k]);
     for (int j = 0; j < ny; ++j)
-        axisKernel(sy, g.y(j) * invY, ey.data() + static_cast<std::size_t>(j) * n);
+        for (std::size_t k = 0; k < n; ++k)
+            ey[static_cast<std::size_t>(j) * n + k] = axisKernel(g.y(j) * invY - sy[k]);
     for (int j = 0; j < ny; ++j) {
-        const double* ky = ey.data() + static_cast<std::size_t>(j) * n;
-        for (int i = 0; i < nx; ++i) {
-            const double* kx = ex.data() + static_cast<std::size_t>(i) * n;
-            double sum = 0.0;
-            for (std::size_t k = 0; k < n; ++k)
-                sum += kx[k] * ky[k];
-            g.value[static_cast<std::size_t>(j) * nx + i] = sum * inv;
+        double* row = g.value.data() + static_cast<std::size_t>(j) * nx;
+        const double* wy = ey.data() + static_cast<std::size_t>(j) * n;
+        for (std::size_t k = 0; k < n; ++k) {
+            const double w = wy[k];
+            if (w == 0.0) continue;
+            const double* kx = ex.data() + k * nx;
+            for (int i = 0; i < nx; ++i)
+                row[i] += w * kx[i];
         }
+        for (int i = 0; i < nx; ++i)
+            row[i] *= inv;
     }
     return g;
 }
