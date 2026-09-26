@@ -86,7 +86,7 @@ class TestProcessBatch:
 
         assert len(results) == 1
         result = results[0]
-        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus"}
+        assert set(result.keys()) <= GOLD_STANDARD_KEYS | {"youngs_modulus", "laplacian_variance", "processing_contract_version", "bbox_xywh", "centroid_xy", "in_channel"}
         assert GOLD_STANDARD_KEYS - {"youngs_modulus"} <= set(result.keys())
         assert result["frame_type"] == "valid"
         assert result["is_valid"] is True
@@ -231,3 +231,120 @@ class TestHdf5AndFolderRoundTrip:
 
 def test_contract_version_exposed() -> None:
     assert mp.CONTRACT_VERSION == 1
+
+
+# --- Processing Contract v2 selection (ADR 0006) -----------------------------
+
+def _dark_object_frame():
+    bg = np.full((60, 80), 128, dtype=np.uint8)
+    frame = bg.copy()
+    frame[20:40, 30:50] = 88  # dark-on-bright object: invisible to saturating subtraction
+    return frame, bg
+
+
+def _contract_config(contract: int) -> dict:
+    cfg = dict(mp.DEFAULT_PROCESSING_CONFIG)
+    cfg.update(
+        processing_contract_version=contract,
+        enable_area_range_check=False,
+        enable_border_check=False,
+        require_single_inner_contour=False,
+        enable_ring_ratio_check=True,
+        bg_subtract_threshold=8,
+    )
+    return cfg
+
+
+def test_supported_contract_versions_exposed():
+    assert mp.CONTRACT_VERSION == 1
+    assert tuple(mp.SUPPORTED_CONTRACT_VERSIONS) == (1, 2)
+
+
+def test_contract_1_default_and_unchanged_surface():
+    frame, bg = _dark_object_frame()
+    cfg = _contract_config(1)
+    del cfg["processing_contract_version"]  # omitted -> Contract 1
+    r = mp.compute_processed_frame(frame, bg, cfg, (0, 0, 80, 60), 0, 0, 0.4886, False)
+    assert r["processing_contract_version"] == 1
+    assert r["object_count"] == 0  # saturating subtraction ignores a dark object
+    assert "ring_ratio" in r and not math.isnan(r["ring_ratio"])
+
+
+def test_contract_2_absdiff_no_ring_laplacian():
+    frame, bg = _dark_object_frame()
+    r = mp.compute_processed_frame(frame, bg, _contract_config(2), (0, 0, 80, 60), 0, 0, 0.4886, True)
+    assert r["processing_contract_version"] == 2
+    assert r["object_count"] == 1 and r["is_valid"]
+    assert "ring_ratio" not in r  # ring width abolished under Contract 2
+    assert math.isfinite(r["laplacian_variance"]) and r["laplacian_variance"] > 0
+    assert r["mask"].shape == frame.shape and int((r["mask"] > 0).sum()) > 0
+
+
+def test_contract_2_canonical_difference_threshold_key():
+    frame, bg = _dark_object_frame()
+    cfg = _contract_config(2)
+    del cfg["bg_subtract_threshold"]
+    cfg["difference_threshold"] = 200  # nothing exceeds this -> no object
+    r = mp.compute_processed_frame(frame, bg, cfg, (0, 0, 80, 60), 0, 0, 0.4886, False)
+    assert r["object_count"] == 0
+
+
+def test_unsupported_contract_fails_closed():
+    frame, bg = _dark_object_frame()
+    with pytest.raises(ValueError):
+        mp.compute_processed_frame(frame, bg, _contract_config(3), (0, 0, 80, 60), 0, 0, 0.4886, False)
+
+
+def test_compute_processed_objects_expands_per_object():
+    bg = np.full((80, 120), 128, dtype=np.uint8)
+    frame = bg.copy()
+    frame[20:40, 20:40] = 88   # dark object
+    frame[20:40, 70:90] = 168  # bright object
+    cfg = _contract_config(2)
+    objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 120, 80), 7, 0, 0.4886, True)
+    assert [o["object_id"] for o in objs] == [1, 2]
+    assert all(o["object_count"] == 2 and o["index"] == 7 for o in objs)
+    assert all(o["processing_contract_version"] == 2 and "ring_ratio" not in o for o in objs)
+    assert all(math.isfinite(o["laplacian_variance"]) for o in objs)
+    assert objs[0]["mask"].shape == frame.shape
+    # Contract 1 only sees the bright object.
+    objs1 = mp.compute_processed_objects(frame, bg, _contract_config(1), (0, 0, 120, 80))
+    assert [o["object_id"] for o in objs1] == [1] and objs1[0]["object_count"] == 1
+    # No detection -> single empty record.
+    empty = mp.compute_processed_objects(bg, bg, cfg, (0, 0, 120, 80))
+    assert len(empty) == 1 and empty[0]["object_id"] == -1
+
+
+def test_contract_2_objects_are_top_level_contours():
+    frame, bg = _dark_object_frame()
+    frame[28:32, 38:42] = 128  # hole inside the dark object
+    cfg = _contract_config(2)
+    cfg["require_single_inner_contour"] = True  # Contract-1 rule, ignored under Contract 2
+    objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 80, 60))
+    assert len(objs) == 1 and objs[0]["object_id"] == 1 and objs[0]["area"] > 300
+
+
+def test_object_geometry_is_in_frame_coordinates():
+    frame, bg = _dark_object_frame()  # dark object at rows 20:40, cols 30:50
+    objs = mp.compute_processed_objects(frame, bg, _contract_config(2), (10, 5, 60, 50))
+    assert len(objs) == 1
+    cx, cy = objs[0]["centroid_xy"]
+    assert abs(cx - 39.5) < 1.5 and abs(cy - 29.5) < 1.5
+    x, y, w, h = objs[0]["bbox_xywh"]
+    assert 28 <= x <= 31 and 18 <= y <= 21 and 18 <= w <= 22 and 18 <= h <= 22
+
+
+def test_channel_band_rejects_objects_outside_by_centroid():
+    bg = np.full((80, 120), 128, dtype=np.uint8)
+    frame = bg.copy()
+    frame[4:14, 20:40] = 88    # on the top wall (centroid row ~8.5)
+    frame[34:54, 70:90] = 88   # in the channel (centroid row ~43.5)
+    cfg = _contract_config(2)
+    cfg["enable_area_range_check"] = False
+    objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 120, 80))
+    assert len(objs) == 2 and all(o["in_channel"] and o["is_valid"] for o in objs)
+    cfg["channel_band_y"], cfg["channel_band_h"] = 20, 50  # rows 20..69
+    objs = mp.compute_processed_objects(frame, bg, cfg, (0, 0, 120, 80))
+    by_row = sorted(objs, key=lambda o: o["centroid_xy"][1])
+    assert not by_row[0]["in_channel"] and not by_row[0]["is_valid"]
+    assert by_row[1]["in_channel"] and by_row[1]["is_valid"]

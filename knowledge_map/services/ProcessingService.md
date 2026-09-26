@@ -9,8 +9,15 @@
 `src/backend/processing/BundledProcessingKernel.cpp`,
 `src/backend/processing/ProcessingCoreLoader.cpp`,
 `src/backend/processing/ProcessingCoreCache.cpp`,
+`src/backend/processing/ProcessingContract.cpp`,
+`src/backend/processing/ImageFilterPipeline.cpp`,
+`src/backend/processing/ChannelRoiDetect.cpp`,
 `include/backend/processing/ProcessingService.h`,
-`include/backend/processing/ProcessingCoreAbi.h`
+`include/backend/processing/ChannelRoiDetect.h`,
+`include/backend/processing/ProcessingContract.h`,
+`include/backend/processing/ImageFilterPipeline.h`,
+`include/backend/processing/ProcessingCoreAbi.h` (engine ABI v1 + v2),
+`include/backend/processing/ProcessingCoreCapabilities.h` (v2 negotiation)
 **Related:** [[CaptureService]], [[Hdf5Service]], [[AutofocusService]],
 [[TriggerService]], [[../architecture/Data-Flow]],
 [[../domain/Microscopy-Pipeline]]
@@ -153,11 +160,108 @@ All gates in one struct. Notable fields:
 - `empty_frame_pixel_threshold` — drives empty-frame skipping
 - `auto_background_enabled` + `auto_background_empty_frames`,
   `auto_background_cooldown_frames`
+- `auto_roi_from_background` (+ `auto_roi_wall_gradient_ratio`,
+  `auto_roi_wall_margin`) — see [[#Channel band from background]];
+  `channel_band_y`/`channel_band_h` are the runtime band the object filter
+  gates on (not persisted)
 - Target-group gate: `target_group_area_*`, `target_group_deformability_*`,
   `enable_target_group_emodulus` + `target_group_emodulus_*` (uses
   `EModulusLut`, which is now fed from the managed LUT cache prepared by
   `AppBackend` at startup)
 - Multi-image mode: `multi_image_enabled`, `multi_image_count`
+
+## Processing Contract versioning (v2)
+
+`backend::processing::contract` (`ProcessingContract.{h,cpp}`) is the Qt-free
+boundary between Contract v1 (the frozen `ProcessingConfig`/metrics contract
+above) and the new [[../domain/Glossary]] **Processing Contract v2**. It is
+deliberately in `mib_processing` so the backend-only CTest lane exercises it
+(`processing.contract_v2_migration`).
+
+- Version constants for both axes (`processing_contract_version`,
+  `config_schema_version`) — both `2` for v2, matched by equality.
+- `classifyConfigSchema(source, target)` → `Same` / `UpgradeNeeded` /
+  `Incompatible`, so a schema-1 document is never silently rewritten with
+  schema-2 keys and a newer/unknown schema fails closed.
+- `resolveDifferenceThreshold(...)` reads the canonical `difference_threshold`,
+  falling back to the legacy `bg_subtract_threshold`.
+- `migrateProfileConfigV1ToV2(...)` produces a v2 config: preserves unrelated
+  values, removes ring thresholds + their enable flag, renames the difference
+  threshold, installs an identity preprocessing chain, and leaves the Laplacian
+  gate disabled. It never selects or activates a core.
+
+Rationale and the full compatibility matrix:
+`docs/decisions/0006-processing-contract-v2.md`,
+`docs/architecture/processing-contract-compatibility.md`.
+
+## Preprocessing filters & shared difference path (v2)
+
+`ImageFilterPipeline` (`ImageFilterPipeline.{h,cpp}`) is a Qt-free, ordered
+Gray8→Gray8 preprocessing pipeline compiled and validated once from a config
+(`compile` fails closed on an unknown stage or an out-of-range parameter).
+Stages: `identity`, `invert`, `linear_contrast(alpha,beta)`, `gamma`, `clahe`.
+An empty pipeline is the identity.
+
+`buildDifferenceImage` (and its already-cropped variant
+`buildDifferenceImageCropped`) is the **single** background-difference
+implementation. Order: input stages applied symmetrically to the current and
+background ROI crops → Gaussian blur → difference → difference stages. The
+difference is `cv::absdiff` under Contract 2 (`absoluteBackgroundDifference`
+set) and saturating `cv::subtract` under Contract 1. A supplied-but-incompatible
+background is a hard error under Contract 2 and a current-only fallback under
+Contract 1 (legacy behavior).
+
+The bundled kernel routes **both** `processMask` and `isEmpty` through
+`buildDifferenceImage`, and the host empty-frame helpers (`isFrameEmpty`) route
+through the same helper, so mask generation and empty-frame classification can
+no longer diverge. Preprocessing pipelines are identity until an ABI-v2 core /
+v2 config supplies real stages (V2-5/V2-6). Contract-1 output is unchanged.
+
+## Object focus metric — Laplacian variance (v2)
+
+`calculateLaplacianVariance(originalImage, objectContour, kernelSize)`
+(ProcessingScience) is the Contract-2 replacement for ring width. It is computed
+**only after detection, once per emitted object**, from the object's own
+contour (the inner contour for nested candidates, the selected top-level contour
+otherwise — never the parent/halo). It fills an object mask, crops the Gray8
+image to the contour bbox plus kernel context (clipped to image bounds), runs
+`cv::Laplacian` on the **unmasked** crop (masking before convolution would forge
+an artificial boundary), and takes the variance with `meanStdDev` over the mask
+so only object pixels contribute. Unusable samples emit `NaN`.
+
+Result field `FilterResult::laplacianVariance` (`laplacian_variance`); config
+`laplacian_variance_min/max` + `enable_laplacian_variance_check` (in `filters`).
+The gate is **disabled by default** (thresholds calibrated in V2-7), so Contract
+1 is unaffected; `InvalidReasonCode::Laplacian` reports it when enabled. Ring
+width/ratio stays computed for Contract-1 compatibility.
+
+## Engine ABI v2 (v2)
+
+`ProcessingCoreAbi.h` now defines **engine ABI v2** additively — every ABI-v1
+type keeps its exact layout (pinned by `processing.core_abi_c`), so ABI-v1
+modules load unchanged. ABI v2 adds POD, size-versioned structs for the filter
+chain (`mib_processing_filter_stage` / `_filter_chain`), the v2 config
+(`mib_processing_kernel_config_v2`, canonical `difference_threshold`), and the
+full per-object result (`mib_processing_object_metrics` — carries
+`laplacian_variance`, no ring field) written into a host-owned
+`mib_processing_object_buffer` (a too-small buffer is a deterministic
+`BUFFER_TOO_SMALL`, allocation-free). `mib_processing_api_v2` adds
+`process_objects` (full pipeline) alongside the v1-compatible `process_mask` /
+`is_empty`, negotiated through `mib_processing_get_api_v2`.
+
+Capability flags (`MIB_PROCESSING_CAP_*`: full pipeline, absolute difference,
+filter chain, per-object Laplacian) are advertised in the descriptor.
+`ProcessingCoreCapabilities.h` holds the host negotiation:
+`coreSatisfiesContract2` (ABI ≥ 2, contract == 2, all required caps),
+`abiV1ServesContract` (ABI v1 → Contract 1 only), and `engineAbiForContract`.
+Tests: `processing.core_abi_v2_c`, `processing.core_capabilities`. The native
+`mib_processing_core` module now also exports `mib_processing_get_api_v2` whose
+`process_objects` compiles the filter chain, builds the absolute difference,
+runs the science, and returns full per-object metrics (finite Laplacian
+variance) with deterministic `BUFFER_TOO_SMALL`; the v1 `get_api` export is
+unchanged. End-to-end dlopen test: `processing.core_v2_plugin`. The loader's v2
+activation path (negotiating `get_api_v2` through the trust/lease machinery) and
+native signing remain follow-on.
 
 ## Accumulation modes
 
@@ -240,6 +344,40 @@ read path. Snapshot is immutable; readers are safe without extra locking.
 `configVersion_` is also bumped by `setRealtimeBackgroundGray` (in addition to
 `setProcessingConfig` / `setRealtimeRoi`), so the realtime loop's hoisted-config
 cache refreshes when the background changes.
+
+## Channel band from background
+
+Including the microfluidic **channel walls** in the processing ROI injects
+noise (spurious wall-edge contours, debris stuck on a wall), while cropping the
+ROI to clear them clips real cells near the walls via the border check (see
+issue #295 for the measured tradeoff on `gavinlouuu/512x96stream`).
+
+`auto_roi_from_background` (default **off**) resolves this without cropping.
+`detectChannelRoi` (`ChannelRoiDetect.{h,cpp}`, a pure OpenCV-only free
+function in `backend::processing`, part of the Qt-free `mib_processing` core)
+takes a captured background and returns the full-width channel band: it takes
+the mean vertical-gradient (`cv::Sobel` + `cv::reduce`) row profile, treats
+rows whose gradient exceeds `auto_roi_wall_gradient_ratio` × the
+central-third baseline as walls, picks the non-wall run bounded by walls on
+both sides with the strongest bounding walls (runs touching the frame edge are
+the glass outside a mid-frame channel), and trims `auto_roi_wall_margin` rows
+inward. Bands thinner than `minBandFraction` (0.15; the MIB channel is ~22% of
+1184x240) are rejected. It **fails safe** — empty, flat, or ambiguous input
+returns the full frame.
+
+Wiring: `setRealtimeBackgroundGray` is the single chokepoint every background
+capture (manual and auto-background, all loop variants) funnels through. When
+the flag is set it runs `computeAutoRoiFromBackground` and publishes the band
+(`getChannelBand()`, frame coordinates) *before* bumping the background
+generation, then fires `SuggestedRoiCallback` with the band. The ROI is never
+changed. The service's `filterProcessedObjects` wrapper expresses the band in
+the mask's coordinates (`maskOrigin`: the ROI-local realtime loops pass the
+ROI's top-left) as `ProcessingConfig::channel_band_y/h`, and the shared object
+filter sets `FilterResult::inChannel` from the object's centroid row. An
+object outside the band is invalid with `InvalidReasonCode::Channel` (tooltip
+"Wall"); its metrics are still computed. The Python wheel exposes the same
+gate: pass `channel_band_y`/`channel_band_h` (frame rows) in the config dict
+and read `in_channel` per object. Native ABI cores do not carry the band yet.
 
 ## Metrics exposed
 

@@ -135,6 +135,19 @@
 - Dataset shape discovery: `getDatasetInfo(path, count, H, W, channels)`;
   `getSeriesImageInfo(count, seriesCount, H, W)`.
 
+## Contract-2 focus metric
+
+- The per-object metadata compound (`ProcessedFrameMetadataRecord`) carries
+  `laplacianVariance` (the Contract-2 focus metric) **appended after** the prior
+  fields, so existing offsets are unchanged. Reading a Contract-1 file (no such
+  member) yields `NaN` — the read buffer is NaN-initialized and HDF5 fills the
+  member only when the on-disk type has it. `ringRatio` is still written for
+  Contract-1 compatibility. Round-trip: `recording.experiment_roundtrip`.
+- `scripts/export_hdf5.py` is contract-aware (keyed off the file's
+  `processing_contract_version` attribute): a Contract-2 export emits
+  `laplacian_variance` and omits `ring_ratio`; Contract 1 keeps ring. e2e review
+  test: `scripts.contract2_export_review`.
+
 ## Gotchas
 
 - `writeConfigJson` **must** be called after `writeExperimentInfo` — see

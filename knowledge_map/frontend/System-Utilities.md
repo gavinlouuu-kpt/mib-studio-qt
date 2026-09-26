@@ -114,6 +114,20 @@
   `processing_contract_version` is round-tripped through catalog/local
   metadata and marks the profile incompatible when it differs from the active
   core; it never selects a core.
+  - **Schema-aware loading:** `normalizeConfigForSchema` reads
+    `config_schema_version`, fails closed on a schema newer than this build
+    understands (`> config_schema_version 2`), and merges the shipped v1
+    defaults only into a schema-1 document so a schema-2 config is never
+    polluted with removed keys (e.g. ring thresholds). It no longer forces a
+    document back to schema 1.
+  - **Copy-upgrade:** `copyUpgradeConfigToV2` produces a Contract-2 document
+    from a v1 one by delegating to the Qt-free backend migrator
+    (`backend::processing::contract::migrateProfileConfigV1ToV2`, see
+    [[../services/ProcessingService]]); it never rewrites the source. See
+    `docs/architecture/processing-contract-compatibility.md`.
+- **`DeviceInitManager`** — runs [[../services/CameraControlService]]
+  `discoverCameras()` off the UI thread. Emits a signal when discovery
+  completes (including "no cameras found").
   `camera.frame_delivery_mode` is classified medium-risk in profile diffs
   (`isMediumRiskPath`), and `configSourceForPath` buckets `camera.*` paths as
   Config (not "Camera script", which only matches the `camera_script*` keys).

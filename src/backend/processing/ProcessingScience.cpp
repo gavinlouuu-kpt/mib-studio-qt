@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingScience.h"
+#include "backend/processing/ProcessingContract.h"
 
 #include "backend/processing/EModulusLut.h"
 
@@ -20,6 +21,8 @@
 #endif
 
 namespace backend::processing::science {
+
+namespace contract = backend::processing::contract;
 
 using services::BatchTrack;
 using services::BrightnessQuantiles;
@@ -139,6 +142,62 @@ double calculateRingRatio(const std::vector<cv::Point>& innerContour,
     double outerArea = cv::contourArea(outerContour);
     if (outerArea <= innerArea) return 0.0;
     return std::sqrt(outerArea - innerArea);
+}
+
+double calculateLaplacianVariance(const cv::Mat& originalImage,
+                                  const std::vector<cv::Point>& objectContour,
+                                  int laplacianKernelSize) {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    if (originalImage.empty() || objectContour.empty()) {
+        return nan;
+    }
+
+    // Operate on single-channel Gray8.
+    cv::Mat gray;
+    if (originalImage.channels() == 3) {
+        cv::cvtColor(originalImage, gray, cv::COLOR_BGR2GRAY);
+    } else {
+        gray = originalImage;
+    }
+    if (gray.type() != CV_8UC1) {
+        return nan;
+    }
+
+    int ksize = std::max(1, laplacianKernelSize);
+    if (ksize % 2 == 0) {
+        ++ksize; // cv::Laplacian requires an odd aperture
+    }
+    // Bounding box plus kernel context so the Laplacian over object pixels reads
+    // real neighbours instead of a padded crop border.
+    const int margin = ksize / 2 + 1;
+    const cv::Rect bbox = cv::boundingRect(objectContour);
+    cv::Rect crop(bbox.x - margin, bbox.y - margin, bbox.width + 2 * margin,
+                  bbox.height + 2 * margin);
+    crop &= cv::Rect(0, 0, gray.cols, gray.rows); // clip to image bounds
+    if (crop.width <= 0 || crop.height <= 0) {
+        return nan;
+    }
+
+    // Filled object mask in crop-local coordinates. Used only for the variance
+    // statistics, never applied to the image before convolution.
+    cv::Mat mask(crop.size(), CV_8UC1, cv::Scalar(0));
+    std::vector<cv::Point> shifted;
+    shifted.reserve(objectContour.size());
+    for (const cv::Point& p : objectContour) {
+        shifted.emplace_back(p.x - crop.x, p.y - crop.y);
+    }
+    const std::vector<std::vector<cv::Point>> polys{shifted};
+    cv::drawContours(mask, polys, 0, cv::Scalar(255), cv::FILLED);
+    if (cv::countNonZero(mask) == 0) {
+        return nan;
+    }
+
+    cv::Mat laplacian;
+    cv::Laplacian(gray(crop), laplacian, CV_64F, ksize);
+    cv::Scalar mean;
+    cv::Scalar stddev;
+    cv::meanStdDev(laplacian, mean, stddev, mask);
+    return stddev[0] * stddev[0]; // variance over the object's pixels
 }
 
 ContourAnalysis findContours(const cv::Mat& processedImage) {
@@ -262,6 +321,14 @@ bool contourTouchesRoiBorder(const std::vector<cv::Point>& contour,
     return false;
 }
 
+bool centroidInChannelBand(const FilterResult& result, const ProcessingConfig& config) {
+    if (config.channel_band_h <= 0) {
+        return true;
+    }
+    return result.centroidY >= config.channel_band_y &&
+           result.centroidY < config.channel_band_y + config.channel_band_h;
+}
+
 std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result,
                                                       const ProcessingConfig& config,
                                                       double pixelToMicronFactor) {
@@ -274,7 +341,8 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
     // contour touches the border, per-object metrics are not computed, so the
     // metric-range reasons below would read uninitialised gates. Report only
     // the early-exit reason in those cases (matches getInvalidReasons()).
-    if (config.require_single_inner_contour && result.innerContourCount == 0) {
+    if (contract::contractObjectsAreInnerContours(config.processing_contract_version) &&
+        config.require_single_inner_contour && result.innerContourCount == 0) {
         reasons.push_back(InvalidReasonCode::NoContour);
         return reasons;
     }
@@ -283,12 +351,16 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
         return reasons;
     }
 
+    if (!result.inChannel) {
+        reasons.push_back(InvalidReasonCode::Channel);
+    }
     const double areaUm = result.area * pixelToMicronFactor * pixelToMicronFactor;
     if (config.enable_area_range_check &&
         (areaUm < config.area_threshold_min || areaUm > config.area_threshold_max)) {
         reasons.push_back(InvalidReasonCode::Area);
     }
-    if (config.enable_ring_ratio_check &&
+    if (contract::contractHasRingWidth(config.processing_contract_version) &&
+        config.enable_ring_ratio_check &&
         (result.ringRatio <= config.ring_ratio_min || result.ringRatio >= config.ring_ratio_max)) {
         reasons.push_back(InvalidReasonCode::Ring);
     }
@@ -299,6 +371,12 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
     }
     if (config.enable_area_ratio_check && result.areaRatio > config.area_ratio_threshold_max) {
         reasons.push_back(InvalidReasonCode::AreaRatio);
+    }
+    if (config.enable_laplacian_variance_check &&
+        (!std::isfinite(result.laplacianVariance) ||
+         result.laplacianVariance < config.laplacian_variance_min ||
+         result.laplacianVariance > config.laplacian_variance_max)) {
+        reasons.push_back(InvalidReasonCode::Laplacian);
     }
     return reasons;
 }
@@ -336,11 +414,15 @@ FilterResult evaluateInnerContourObject(
             ? analysis.filteredContours[static_cast<size_t>(parentIdx)]
             : innerContour;
     populateGeometry(result, geometryContour);
+    result.inChannel = centroidInChannelBand(result, config);
     if (!originalImage.empty()) {
         const cv::Rect bbox(static_cast<int>(result.bboxX), static_cast<int>(result.bboxY),
                             static_cast<int>(result.bboxWidth),
                             static_cast<int>(result.bboxHeight));
         result.brightness = calculateBrightnessQuantiles(originalImage, objectMask, bbox);
+        // Object focus metric uses the inner contour (the object), never the
+        // parent/halo contour. Computed for every emitted candidate.
+        result.laplacianVariance = calculateLaplacianVariance(originalImage, innerContour);
     }
 
     if (config.enable_border_check && contourTouchesRoiBorder(innerContour, roi)) {
@@ -362,7 +444,10 @@ FilterResult evaluateInnerContourObject(
     result.deformability = 1.0 - circularity;
     result.area = hullArea;
 
-    if (parentIdx >= 0 && parentIdx < static_cast<int>(analysis.filteredContours.size())) {
+    if (!contract::contractHasRingWidth(config.processing_contract_version)) {
+        // Contract 2 abolishes ring width: not computed, never gated.
+        result.ringRatio = std::numeric_limits<double>::quiet_NaN();
+    } else if (parentIdx >= 0 && parentIdx < static_cast<int>(analysis.filteredContours.size())) {
         result.ringRatio = calculateRingRatio(innerContour, analysis.filteredContours[parentIdx]);
     }
 
@@ -373,6 +458,7 @@ FilterResult evaluateInnerContourObject(
         !config.enable_area_range_check ||
         (areaUm >= config.area_threshold_min && areaUm <= config.area_threshold_max);
     const bool ringRatioInRange =
+        !contract::contractHasRingWidth(config.processing_contract_version) ||
         !config.enable_ring_ratio_check ||
         (result.ringRatio > config.ring_ratio_min && result.ringRatio < config.ring_ratio_max);
     const bool deformabilityInRange = !config.enable_deformability_range_check ||
@@ -380,8 +466,14 @@ FilterResult evaluateInnerContourObject(
                                        result.deformability <= config.deformability_threshold_max);
     const bool areaRatioInRange =
         !config.enable_area_ratio_check || (result.areaRatio <= config.area_ratio_threshold_max);
+    const bool laplacianInRange =
+        !config.enable_laplacian_variance_check ||
+        (std::isfinite(result.laplacianVariance) &&
+         result.laplacianVariance >= config.laplacian_variance_min &&
+         result.laplacianVariance <= config.laplacian_variance_max);
 
-    if (areaInRange && ringRatioInRange && deformabilityInRange && areaRatioInRange) {
+    if (result.inChannel && areaInRange && ringRatioInRange && deformabilityInRange &&
+        areaRatioInRange && laplacianInRange) {
         result.inRange = true;
         result.isValid = true;
     }
@@ -410,6 +502,9 @@ FilterResult evaluateOuterContourObject(
     const cv::Mat& originalImage, double pixelToMicronFactor,
     const backend::EModulusLut* eModulusLut) {
     FilterResult result{};
+    if (!contract::contractHasRingWidth(config.processing_contract_version)) {
+        result.ringRatio = std::numeric_limits<double>::quiet_NaN(); // no ring under Contract 2
+    }
     // allContours is assigned once (shared) by filterProcessedObjects after all
     // objects are evaluated; hierarchy is no longer retained on the result.
     result.innerContourCount = static_cast<int>(analysis.innerContours.size());
@@ -425,11 +520,15 @@ FilterResult evaluateOuterContourObject(
     const cv::Mat objectMask = makeObjectMask(processedImage.size(), analysis.filteredContours,
                                               static_cast<int>(contourIdx), -1, false);
     populateGeometry(result, contour);
+    result.inChannel = centroidInChannelBand(result, config);
     if (!originalImage.empty()) {
         const cv::Rect bbox(static_cast<int>(result.bboxX), static_cast<int>(result.bboxY),
                             static_cast<int>(result.bboxWidth),
                             static_cast<int>(result.bboxHeight));
         result.brightness = calculateBrightnessQuantiles(originalImage, objectMask, bbox);
+        // Object focus metric uses the selected top-level contour in outer-only
+        // mode. Computed for every emitted candidate.
+        result.laplacianVariance = calculateLaplacianVariance(originalImage, contour);
     }
 
     if (config.enable_border_check && contourTouchesRoiBorder(contour, roi)) {
@@ -462,8 +561,14 @@ FilterResult evaluateOuterContourObject(
                                        result.deformability <= config.deformability_threshold_max);
     const bool areaRatioInRange =
         !config.enable_area_ratio_check || (result.areaRatio <= config.area_ratio_threshold_max);
+    const bool laplacianInRange =
+        !config.enable_laplacian_variance_check ||
+        (std::isfinite(result.laplacianVariance) &&
+         result.laplacianVariance >= config.laplacian_variance_min &&
+         result.laplacianVariance <= config.laplacian_variance_max);
 
-    if (areaInRange && deformabilityInRange && areaRatioInRange) {
+    if (result.inChannel && areaInRange && deformabilityInRange && areaRatioInRange &&
+        laplacianInRange) {
         result.inRange = true;
         result.isValid = true;
     }
@@ -505,17 +610,25 @@ std::vector<services::FilterResult> filterProcessedObjects(
 
     FilterResult emptyResult{};
     emptyResult.allContours = sharedContours;
+    if (!contract::contractHasRingWidth(config.processing_contract_version)) {
+        emptyResult.ringRatio = std::numeric_limits<double>::quiet_NaN();
+    }
     emptyResult.innerContourCount = static_cast<int>(analysis.innerContours.size());
     emptyResult.hasSingleInnerContour = (analysis.innerContours.size() == 1);
     if (!originalImage.empty()) {
         emptyResult.brightness = calculateBrightnessQuantiles(originalImage, processedImage);
     }
 
-    if (config.require_single_inner_contour && analysis.innerContours.empty()) {
+    // Contract 2 objects are top-level contours (no halo, no inner-contour rule).
+    const bool innerContourMode =
+        contract::contractObjectsAreInnerContours(config.processing_contract_version);
+    const bool requireSingleInner = innerContourMode && config.require_single_inner_contour;
+
+    if (requireSingleInner && analysis.innerContours.empty()) {
         return {std::move(emptyResult)};
     }
 
-    if (!analysis.innerContours.empty()) {
+    if (innerContourMode && !analysis.innerContours.empty()) {
         std::vector<size_t> objectOrder;
         objectOrder.reserve(analysis.innerContours.size());
         for (size_t i = 0; i < analysis.innerContours.size(); ++i) {
@@ -541,7 +654,7 @@ std::vector<services::FilterResult> filterProcessedObjects(
         return results;
     }
 
-    if (!analysis.filteredContours.empty() && !config.require_single_inner_contour) {
+    if (!analysis.filteredContours.empty() && !requireSingleInner) {
         std::vector<size_t> topLevelContours;
         for (size_t i = 0; i < analysis.filteredContours.size(); ++i) {
             const size_t origIdx =

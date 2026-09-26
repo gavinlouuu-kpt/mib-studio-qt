@@ -130,6 +130,18 @@ std::vector<InvalidReason> getInvalidReasons(
                                    .arg(result.areaRatio, 0, 'f', 2)
                                    .arg(config.area_ratio_threshold_max, 0, 'f', 2)});
             break;
+        case science::InvalidReasonCode::Laplacian:
+            reasons.push_back({"Focus",
+                               QString("Laplacian variance: %1 (range: %2-%3)")
+                                   .arg(result.laplacianVariance, 0, 'f', 1)
+                                   .arg(config.laplacian_variance_min, 0, 'f', 1)
+                                   .arg(config.laplacian_variance_max, 0, 'f', 1)});
+            break;
+        case science::InvalidReasonCode::Channel:
+            reasons.push_back({"Wall",
+                               QString("Centroid row %1 outside the channel band")
+                                   .arg(result.centroidY, 0, 'f', 1)});
+            break;
         }
     }
 

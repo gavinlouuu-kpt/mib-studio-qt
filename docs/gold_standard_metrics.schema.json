@@ -56,7 +56,6 @@
         "deformability",
         "area",
         "area_ratio",
-        "ring_ratio",
         "is_valid",
         "touches_border",
         "has_single_inner_contour",
@@ -139,7 +138,11 @@
         },
         "ring_ratio": {
           "type": "number",
-          "description": "sqrt(outer_area - inner_area); ring metric used for focus feedback."
+          "description": "Legacy Contract-1 focus metric: sqrt(outer_area - inner_area). Present in Contract-1 documents; omitted by Contract-2 documents (which carry laplacian_variance instead). Optional so both contracts validate."
+        },
+        "laplacian_variance": {
+          "type": "number",
+          "description": "Contract-2 per-object focus metric: variance of the Laplacian over the detected object (see ProcessingScience::calculateLaplacianVariance). Present in Contract-2 documents; omitted by Contract-1 documents. NaN is serialized as null. Optional so both contracts validate."
         },
         "is_valid": {
           "type": "boolean",

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -36,6 +37,11 @@ PIXEL_TO_MICRON = 0.4886
 FIXTURE_ID = "synthetic-ring-series-v1"
 DEFAULT_HDF5_DATASET = "/recorded_frames/images"
 DEFAULT_HDF5_FRAME_LIMIT = 3
+# Per-record wheel fields that are not gold-standard metrics: object geometry,
+# the channel-band flag, and the per-record contract version (the document
+# carries contract_version). Dropped by name so any other new field still
+# fails the strict schema.
+NON_GOLD_RECORD_KEYS = ("bbox_xywh", "centroid_xy", "in_channel", "processing_contract_version")
 
 
 def make_ring_frame(center_x: int, center_y: int = 40) -> np.ndarray:
@@ -182,7 +188,14 @@ def build_candidate(frames: Sequence[np.ndarray], fixture_id: str) -> dict[str, 
     )
     records: list[dict[str, Any]] = []
     for raw in raw_results:
-        record = dict(raw)
+        record = {key: value for key, value in raw.items() if key not in NON_GOLD_RECORD_KEYS}
+        # Contract-1 documents omit laplacian_variance (schema); it is also
+        # optional and NaN (no detection) is not valid JSON.
+        laplacian = record.get("laplacian_variance")
+        if raw.get("processing_contract_version", 1) == 1 or (
+            laplacian is not None and math.isnan(laplacian)
+        ):
+            record.pop("laplacian_variance", None)
         mask = record.pop("mask", None)
         series = record.pop("series_images", None)
         if mask is None or series is None:

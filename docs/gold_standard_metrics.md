@@ -33,7 +33,8 @@ Uniform JSON format for processing pipeline metrics so **mib-studio-qt** pipelin
 | `area` | number | Hull area in **pixels**. |
 | `area_um2` | number | Area in **µm²** (optional; = area × pixel_to_micron²). |
 | `area_ratio` | number | Hull area / contour area; dimensionless. |
-| `ring_ratio` | number | sqrt(outer_area − inner_area); ring metric. |
+| `ring_ratio` | number | **Legacy Contract 1** focus metric: sqrt(outer_area − inner_area). Present in Contract-1 documents; omitted by Contract-2 documents. Optional. |
+| `laplacian_variance` | number | **Contract 2** per-object focus metric: variance of the Laplacian over the detected object (`ProcessingScience::calculateLaplacianVariance`). Present in Contract-2 documents; omitted by Contract-1. `NaN` serialized as `null`. Optional. |
 | `youngs_modulus` | number | Young's modulus (kPa) from `EModulusLut` bilinear lookup on (area_um, deformability) (optional; omitted when the lookup falls outside LUT coverage or no LUT was loaded). |
 | `is_valid` | boolean | True if frame passed all validation checks. |
 | `is_target_group` | boolean | Target-group/trigger classification (optional). |

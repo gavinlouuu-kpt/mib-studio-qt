@@ -23,6 +23,16 @@
   ([[../services/TriggerService]]).
 - **ROI** — rectangular region of interest; applied pre-analysis by
   [[../services/ProcessingService]] and by display in [[../frontend/PreviewPage]].
+- **Channel wall** — the high-contrast top/bottom edges of the microfluidic
+  channel. Inside the processing ROI they produce spurious contours (noise) and
+  keep the empty-frame fast path awake; cells flow in the central band between
+  them. See issue #295.
+- **Channel band** — the rows between the channel walls, detected automatically
+  from a captured background (`detectChannelRoi`) by the walls'
+  vertical-gradient row profile. Objects whose **centroid** lies outside the
+  band (debris stuck on a wall) are rejected with invalid reason `Channel`; the
+  ROI is not cropped. Gated by `auto_roi_from_background`; see
+  [[../services/ProcessingService]].
 
 ## Portability
 
@@ -37,6 +47,24 @@
   config schema, or LUT format changes incompatibly. Currently declared
   independently in six places (`test_contract_version_consistency.py` guards
   against drift until/unless that's folded into one source of truth).
+- **Processing Contract v2** — a new, explicitly versioned science pipeline
+  that coexists with the frozen Contract v1. It uses `cv::absdiff` for
+  background comparison, adds a deterministic preprocessing filter stage, and
+  replaces ring width with a per-detected-object Laplacian variance focus
+  metric. Contract and config-schema versions are both `2` and matched by
+  equality, not ordering. See `docs/decisions/0006-processing-contract-v2.md`
+  and `docs/architecture/processing-contract-compatibility.md`. The Qt-free
+  versioning / migration / compatibility boundary is
+  `backend::processing::contract` (issue V2-1); later slices add the shared
+  absdiff path, the object metric, ABI v2, and persistence migration.
+- **`difference_threshold`** — the canonical Contract-v2 config key for the
+  background-difference binarization threshold. Replaces the v1
+  `bg_subtract_threshold`, which is accepted only through the v1→v2 migration /
+  compatibility adapter (`resolveDifferenceThreshold`).
+- **Laplacian variance (focus metric)** — the Contract-v2 replacement for ring
+  width: variance of the Laplacian computed per detected object (issue V2-3),
+  used as a peak-seeking autofocus focus score (V2-4). Ring width / ring ratio
+  is removed from the v2 contract entirely.
 - **Processing core registry** — versioned engine metadata published by
   `scripts/release/publish-processing-core.py`: a complete short-cache active pointer at
   `{channel}/processing-core/latest.json`, immutable manifests under

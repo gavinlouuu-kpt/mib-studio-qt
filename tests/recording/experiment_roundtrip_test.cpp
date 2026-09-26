@@ -38,6 +38,8 @@ ProcessedFrame makeFrame(uint64_t idx, unsigned char value, bool valid,
     f.validation.objectCount = 1;
     f.validation.area = area;
     f.validation.deformability = deform;
+    // Contract-2 per-object focus metric; must round-trip through HDF5.
+    f.validation.laplacianVariance = 12.5 + static_cast<double>(idx);
     return f;
 }
 
@@ -111,6 +113,9 @@ int main()
             MIB_EXPECT(near(meta[0].validation.area, 100.0), "area[0] round-trips");
             MIB_EXPECT(near(meta[1].validation.deformability, 0.30),
                        "deformability[1] round-trips");
+            MIB_EXPECT(near(meta[0].validation.laplacianVariance, 12.5) &&
+                           near(meta[1].validation.laplacianVariance, 13.5),
+                       "laplacian variance round-trips through HDF5");
         }
 
         std::vector<ProcessedFrame> full;

@@ -27,6 +27,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include <nlohmann/json.hpp>
+
+#include "backend/processing/ProcessingContract.h"
 #include "frontend/utils/ConfigPathManager.h"
 
 namespace {
@@ -715,17 +718,74 @@ std::optional<QJsonObject> ProfileManager::normalizeConfigForSchema(const QJsonD
         return std::nullopt;
     }
 
+    namespace contract = backend::processing::contract;
+
     QJsonObject root = input.object();
-    const auto defaultsDoc = loadJsonDocument(QStringLiteral(":/defaults/config.json"), errorOut);
-    if (defaultsDoc.has_value() && defaultsDoc->isObject()) {
-        mergeMissingDefaults(root, defaultsDoc->object());
+
+    int schemaVersion = root.value(QStringLiteral("config_schema_version")).toInt(0);
+    if (schemaVersion <= 0) {
+        schemaVersion = contract::kConfigSchemaVersionV1; // legacy files predate the schema field
     }
 
-    const int schemaVersion = root.value(QStringLiteral("config_schema_version")).toInt(0);
-    if (schemaVersion <= 0) {
-        root.insert(QStringLiteral("config_schema_version"), 1);
+    // Fail closed on a schema newer than this build understands; never load it
+    // by silently dropping unknown keys.
+    if (schemaVersion > contract::kConfigSchemaVersionV2) {
+        if (errorOut) {
+            *errorOut = QStringLiteral("Config schema version %1 is newer than this build understands (max %2).")
+                            .arg(schemaVersion)
+                            .arg(contract::kConfigSchemaVersionV2);
+        }
+        return std::nullopt;
     }
+
+    // Only a schema-1 document receives the shipped (v1) defaults. Merging them
+    // into a schema-2 document would re-introduce keys the contract removed
+    // (e.g. ring thresholds), so v2 documents are normalized in place.
+    if (schemaVersion == contract::kConfigSchemaVersionV1) {
+        const auto defaultsDoc = loadJsonDocument(QStringLiteral(":/defaults/config.json"), nullptr);
+        if (defaultsDoc.has_value() && defaultsDoc->isObject()) {
+            mergeMissingDefaults(root, defaultsDoc->object());
+        }
+    }
+
+    root.insert(QStringLiteral("config_schema_version"), schemaVersion);
     return root;
+}
+
+std::optional<QJsonDocument> ProfileManager::copyUpgradeConfigToV2(const QJsonDocument& v1Doc,
+                                                                   QString* errorOut) const {
+    namespace contract = backend::processing::contract;
+
+    if (!v1Doc.isObject()) {
+        if (errorOut) *errorOut = QStringLiteral("Config root must be a JSON object.");
+        return std::nullopt;
+    }
+
+    const QByteArray compact = v1Doc.toJson(QJsonDocument::Compact);
+    nlohmann::json v1 = nlohmann::json::parse(compact.toStdString(), nullptr, /*allow_exceptions=*/false);
+    if (v1.is_discarded()) {
+        if (errorOut) *errorOut = QStringLiteral("Config is not valid JSON.");
+        return std::nullopt;
+    }
+
+    std::string migrationError;
+    const auto migrated = contract::migrateProfileConfigV1ToV2(v1, &migrationError);
+    if (!migrated.has_value()) {
+        if (errorOut) *errorOut = QString::fromStdString(migrationError);
+        return std::nullopt;
+    }
+
+    const std::string dumped = migrated->dump();
+    QJsonParseError parseError{};
+    const QJsonDocument out = QJsonDocument::fromJson(
+        QByteArray(dumped.data(), static_cast<qsizetype>(dumped.size())), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !out.isObject()) {
+        if (errorOut) {
+            *errorOut = QStringLiteral("Failed to serialize upgraded config: %1").arg(parseError.errorString());
+        }
+        return std::nullopt;
+    }
+    return out;
 }
 
 void ProfileManager::flattenForDiff(const QJsonValue& value, const QString& path, QMap<QString, FlattenedValue>& out) {

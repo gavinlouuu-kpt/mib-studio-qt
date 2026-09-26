@@ -12,7 +12,11 @@
 
 #include <pybind11/pybind11.h>
 
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingService.h"
+
+#include <stdexcept>
+#include <string>
 
 namespace mib_processing_bindings {
 
@@ -29,8 +33,18 @@ inline T dictGet(const py::dict& d, const char* key, T fallback) {
 
 inline ProcessingConfig configFromDict(const py::dict& d) {
     ProcessingConfig c;  // start from struct defaults; dict only overrides what it sets
+    // Contract selection (ADR 0006). Fail closed on anything but 1 or 2.
+    c.processing_contract_version =
+        dictGet(d, "processing_contract_version", c.processing_contract_version);
+    if (!backend::processing::contract::isSupportedProcessingContract(c.processing_contract_version)) {
+        throw std::invalid_argument("unsupported processing_contract_version " +
+                                    std::to_string(c.processing_contract_version) +
+                                    " (supported: 1, 2)");
+    }
     c.gaussian_blur_size = dictGet(d, "gaussian_blur_size", c.gaussian_blur_size);
+    // v2 canonical `difference_threshold` wins over the legacy v1 key.
     c.bg_subtract_threshold = dictGet(d, "bg_subtract_threshold", c.bg_subtract_threshold);
+    c.bg_subtract_threshold = dictGet(d, "difference_threshold", c.bg_subtract_threshold);
     c.morph_kernel_size = dictGet(d, "morph_kernel_size", c.morph_kernel_size);
     c.morph_iterations = dictGet(d, "morph_iterations", c.morph_iterations);
     c.area_threshold_min = dictGet(d, "area_threshold_min", c.area_threshold_min);
@@ -45,11 +59,17 @@ inline ProcessingConfig configFromDict(const py::dict& d) {
     c.ring_ratio_min = dictGet(d, "ring_ratio_min", c.ring_ratio_min);
     c.ring_ratio_max = dictGet(d, "ring_ratio_max", c.ring_ratio_max);
     c.enable_ring_ratio_check = dictGet(d, "enable_ring_ratio_check", c.enable_ring_ratio_check);
+    c.laplacian_variance_min = dictGet(d, "laplacian_variance_min", c.laplacian_variance_min);
+    c.laplacian_variance_max = dictGet(d, "laplacian_variance_max", c.laplacian_variance_max);
+    c.enable_laplacian_variance_check =
+        dictGet(d, "enable_laplacian_variance_check", c.enable_laplacian_variance_check);
     c.require_single_inner_contour = dictGet(d, "require_single_inner_contour", c.require_single_inner_contour);
     c.empty_frame_pixel_threshold = dictGet(d, "empty_frame_pixel_threshold", c.empty_frame_pixel_threshold);
     c.auto_background_enabled = dictGet(d, "auto_background_enabled", c.auto_background_enabled);
     c.auto_background_empty_frames = dictGet(d, "auto_background_empty_frames", c.auto_background_empty_frames);
     c.auto_background_cooldown_frames = dictGet(d, "auto_background_cooldown_frames", c.auto_background_cooldown_frames);
+    c.channel_band_y = dictGet(d, "channel_band_y", c.channel_band_y);
+    c.channel_band_h = dictGet(d, "channel_band_h", c.channel_band_h);
     c.enable_target_group = dictGet(d, "enable_target_group", c.enable_target_group);
     c.target_group_area_min = dictGet(d, "target_group_area_min", c.target_group_area_min);
     c.target_group_area_max = dictGet(d, "target_group_area_max", c.target_group_area_max);
@@ -66,7 +86,12 @@ inline ProcessingConfig configFromDict(const py::dict& d) {
 inline py::dict configToDict(const ProcessingConfig& c) {
     py::dict d;
     d["gaussian_blur_size"] = c.gaussian_blur_size;
-    d["bg_subtract_threshold"] = c.bg_subtract_threshold;
+    d["processing_contract_version"] = c.processing_contract_version;
+    if (backend::processing::contract::contractHasRingWidth(c.processing_contract_version)) {
+        d["bg_subtract_threshold"] = c.bg_subtract_threshold;
+    } else {
+        d["difference_threshold"] = c.bg_subtract_threshold;
+    }
     d["morph_kernel_size"] = c.morph_kernel_size;
     d["morph_iterations"] = c.morph_iterations;
     d["area_threshold_min"] = c.area_threshold_min;
@@ -81,11 +106,16 @@ inline py::dict configToDict(const ProcessingConfig& c) {
     d["ring_ratio_min"] = c.ring_ratio_min;
     d["ring_ratio_max"] = c.ring_ratio_max;
     d["enable_ring_ratio_check"] = c.enable_ring_ratio_check;
+    d["laplacian_variance_min"] = c.laplacian_variance_min;
+    d["laplacian_variance_max"] = c.laplacian_variance_max;
+    d["enable_laplacian_variance_check"] = c.enable_laplacian_variance_check;
     d["require_single_inner_contour"] = c.require_single_inner_contour;
     d["empty_frame_pixel_threshold"] = c.empty_frame_pixel_threshold;
     d["auto_background_enabled"] = c.auto_background_enabled;
     d["auto_background_empty_frames"] = c.auto_background_empty_frames;
     d["auto_background_cooldown_frames"] = c.auto_background_cooldown_frames;
+    d["channel_band_y"] = c.channel_band_y;
+    d["channel_band_h"] = c.channel_band_h;
     d["enable_target_group"] = c.enable_target_group;
     d["target_group_area_min"] = c.target_group_area_min;
     d["target_group_area_max"] = c.target_group_area_max;

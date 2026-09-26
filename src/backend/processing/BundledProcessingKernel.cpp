@@ -1,4 +1,5 @@
 #include "backend/processing/IProcessingKernel.h"
+#include "backend/processing/ImageFilterPipeline.h"
 #include "backend/processing/ProcessingCoreAbi.h"
 #include "backend/processing/ProcessingScience.h"
 
@@ -90,22 +91,16 @@ public:
             const cv::Rect region = normalizedRoi(gray, roi);
             outputMask = cv::Mat::zeros(gray.rows, gray.cols, CV_8UC1);
 
-            cv::Mat blurredCurrent;
+            // One shared difference implementation for mask + empty-frame paths.
+            // Contract 1 (flag off) uses saturating subtraction; Contract 2
+            // (flag on) uses cv::absdiff. Filter pipelines are identity here
+            // until an ABI-v2 core / v2 config supplies stages.
             cv::Mat processingInput;
-            cv::GaussianBlur(gray(region), blurredCurrent,
-                             cv::Size(oddAtLeastOne(config.gaussianBlurSize),
-                                      oddAtLeastOne(config.gaussianBlurSize)),
-                             0);
-            if (!background.empty() && background.type() == CV_8UC1 &&
-                background.size() == gray.size()) {
-                cv::Mat blurredBackground;
-                cv::GaussianBlur(background(region), blurredBackground,
-                                 cv::Size(oddAtLeastOne(config.gaussianBlurSize),
-                                          oddAtLeastOne(config.gaussianBlurSize)),
-                                 0);
-                cv::subtract(blurredCurrent, blurredBackground, processingInput);
-            } else {
-                processingInput = blurredCurrent;
+            if (!buildDifferenceImage(gray, background, region, inputStages_, differenceStages_,
+                                      config.gaussianBlurSize, config.absoluteBackgroundDifference,
+                                      processingInput, error)) {
+                outputMask.release();
+                return false;
             }
 
             cv::Mat thresholded;
@@ -144,21 +139,12 @@ public:
                 return false;
             }
             const cv::Rect region = normalizedRoi(gray, roi);
-            cv::Mat blurredCurrent;
             cv::Mat difference;
-            const int blur = oddAtLeastOne(config.gaussianBlurSize);
-            cv::GaussianBlur(gray(region), blurredCurrent, cv::Size(blur, blur), 0);
-            if (!background.empty() && background.type() == CV_8UC1 &&
-                background.size() == gray.size()) {
-                cv::Mat blurredBackground;
-                cv::GaussianBlur(background(region), blurredBackground, cv::Size(blur, blur), 0);
-                if (config.absoluteBackgroundDifference) {
-                    cv::absdiff(blurredCurrent, blurredBackground, difference);
-                } else {
-                    cv::subtract(blurredCurrent, blurredBackground, difference);
-                }
-            } else {
-                difference = blurredCurrent;
+            if (!buildDifferenceImage(gray, background, region, inputStages_, differenceStages_,
+                                      config.gaussianBlurSize, config.absoluteBackgroundDifference,
+                                      difference, error)) {
+                outputIsEmpty = true;
+                return false;
             }
             cv::Mat thresholded;
             cv::threshold(difference, thresholded,
@@ -178,6 +164,10 @@ public:
 
 private:
     ProcessingCoreIdentity identity_;
+    // Identity (no-op) preprocessing until an ABI-v2 core / v2 config supplies
+    // stages. Owned by the kernel so stages compile once per context.
+    ImageFilterPipeline inputStages_;
+    ImageFilterPipeline differenceStages_;
 };
 
 } // namespace

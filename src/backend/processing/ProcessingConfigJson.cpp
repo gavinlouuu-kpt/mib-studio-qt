@@ -53,6 +53,9 @@ namespace backend::processing::config_json
             {"auto_background_enabled", c.auto_background_enabled},
             {"auto_background_empty_frames", c.auto_background_empty_frames},
             {"auto_background_cooldown_frames", c.auto_background_cooldown_frames},
+            {"auto_roi_from_background", c.auto_roi_from_background},
+            {"auto_roi_wall_gradient_ratio", c.auto_roi_wall_gradient_ratio},
+            {"auto_roi_wall_margin", c.auto_roi_wall_margin},
             {"filters",
              {
                  {"enable_border_check", c.enable_border_check},
@@ -110,6 +113,9 @@ namespace backend::processing::config_json
         ok &= assignIfPresent(json, "auto_background_enabled", c.auto_background_enabled, errorOut);
         ok &= assignIfPresent(json, "auto_background_empty_frames", c.auto_background_empty_frames, errorOut);
         ok &= assignIfPresent(json, "auto_background_cooldown_frames", c.auto_background_cooldown_frames, errorOut);
+        ok &= assignIfPresent(json, "auto_roi_from_background", c.auto_roi_from_background, errorOut);
+        ok &= assignIfPresent(json, "auto_roi_wall_gradient_ratio", c.auto_roi_wall_gradient_ratio, errorOut);
+        ok &= assignIfPresent(json, "auto_roi_wall_margin", c.auto_roi_wall_margin, errorOut);
 
         if (const auto filters = json.find("filters"); filters != json.end())
         {
