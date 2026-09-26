@@ -21,7 +21,7 @@ records the results. Companion documents:
 | Repository | `gavinlouuu-kpt/mib-studio-qt` |
 | Branch | `claude/hdf5-compression-impact-bc7zvq` (pushed; no PR opened yet) |
 | Base | `develop` at `2fe0282` |
-| Commits (oldest first) | `dc5bf2c` first plan draft · `fa2c83c` epic spec + ADR 0006 · `566d05a` PR 0: capability test, benchmark script, measurement howto · `7b2f9be` this handover · "build: make zlib a required dependency (ADR 0006)" (the commit after the handover) |
+| Commits (oldest first) | `dc5bf2c` first plan draft · `fa2c83c` epic spec + ADR 0006 · `566d05a` PR 0: capability test, benchmark script, measurement howto · `7b2f9be` this handover · `38c50b9` zlib made a required dependency · `c04fa12` scripted headroom e2e (soak tool + orchestrator) · "docs: compression headroom e2e results" (container evidence, the commit after `c04fa12`) |
 | Product behaviour change | **None.** Nothing in `src/` or `include/` changed. The branch adds one test, one script, documentation, and a direct zlib dependency that resolves to the package HDF5 already uses. |
 
 ## 2. What is on the branch
@@ -196,3 +196,21 @@ trees. Attach the JSON files to the PR instead.
 - **If Step 3 fails at every thread count**, or Step 4 fails: record the
   failure, set this handover to `Status: blocked` with the reason, and
   revisit D4/D6 (or D1 for Step 4) in the plan before any product code lands.
+
+## 7. Container results (2026-09-26, for comparison)
+
+The same step 3a ran in the Linux cloud container (4 vCPU, apt HDF5 1.10.10),
+with eight 300 s soaks at 1000 fps. Full tables are in the
+[container evidence](../../evidence/2026-09-26-compression-headroom-container/README.md).
+
+| Mode | Baseline wrote | gzip-1 during run, 1 / 2 / 3 threads | Result per T | Loss |
+|---|---|---|---|---|
+| experiment | 1.7 MB/s | 47 / 93 / 129 MB/s | PASS / PASS / FAIL (capture −1.12 %) | 0 |
+| recording | 19.2 MB/s | 47 / 93 / 125 MB/s | PASS / PASS / PASS | 0 |
+
+- **Provisional pool default:** 2 on a 4-core host
+  (`clamp(hw_concurrency / 2, 1, 4)`).
+- **What to look for on the rig:** does 2 still pass and cover the 49 MB/s
+  worst case with room to spare? Does the rig's larger core count let 3 pass?
+  If the rig has more cores, the rule gives more threads, so check that too.
+

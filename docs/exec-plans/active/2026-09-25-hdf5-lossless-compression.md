@@ -118,8 +118,8 @@ active.
 
 ### D6. Pool
 
-`threads` defaults to `auto = clamp(hw_concurrency / 4, 1, 4)`; PR 0 sets
-the rig default. Workers run at below-normal OS priority (Windows
+`threads` defaults to `auto = clamp(hw_concurrency / 2, 1, 4)`: 2 on a
+4-core host (PR 0 container e2e, 2026-09-26), pending the rig run. Workers run at below-normal OS priority (Windows
 `THREAD_PRIORITY_BELOW_NORMAL`, POSIX `nice +5` or `SCHED_BATCH`), so capture
 and processing threads win under contention. The pool is created at run start
 and joined at run end, never detached.
@@ -281,6 +281,31 @@ App config `storage.compression.*`:
     status), headroom under a live 1000 fps run (sets `threads`), and
     HDFView/MATLAB reads of `--emit-mixed`. The procedure is in
     [hdf5-compression-measurement](../../howto/hdf5-compression-measurement.md).
+- 2026-09-26 (PR 0 step 3a, cloud container, 4 vCPU): full headroom e2e, run
+  as `scripts/run_compression_headroom_e2e.py`. Each soak is 300 s at
+  1000 fps through the production save path, with the app's default gates.
+  Evidence: [container headroom](../../evidence/2026-09-26-compression-headroom-container/README.md).
+  - **Every run ended `complete` with zero loss:** 8 soaks, about 2.4 M
+    frames admitted.
+  - **Measured demand is far below the 49 MB/s worst case:** experiment
+    1.7 MB/s, recording 19.2 MB/s (39 % of frames non-empty).
+  - **Stored-frame gzip-1 ratio:** 1.57 for experiment files, 1.63 for
+    recordings.
+  - **gzip-1 throughput during a live run:** 47 / 93 / 127 MB/s on 1 / 2 / 3
+    threads. The smallest passing pool is **1** in both modes, and **2** also
+    covers the worst case ×1.3 with capture within 0.26 %.
+  - **3 threads on 4 vCPU harmed the run:** the mock camera lost 0.9–1.1 % of
+    its frame rate (experiment mode failed the 1 % rule), and algorithm
+    throughput dipped. No frame was lost.
+  - **Decision:** the provisional D6 default becomes
+    `auto = clamp(hw_concurrency / 2, 1, 4)`, which is 2 on a 4-core host.
+    The rig run confirms or replaces it.
+  - The 75 % budget (D4) is not stressed at these rates: one thread
+    compresses a 50-frame batch in about 50 ms at 47 MB/s, while batches
+    arrive every ~130 ms in recording mode.
+  - **Side finding, TD-16:** experiment files store a full frame and mask per
+    object record. That is about 1 record per frame with the default gates,
+    but 5.56 with wide-open gates.
 
 ## Phases (one PR each)
 
@@ -293,9 +318,10 @@ App config `storage.compression.*`:
   ctest lane, including Windows): prints `HDF5_CAPABILITY` (version,
   threadsafe, deflate) and `HDF5_S1`, and asserts mixed-chunk byte identity
   through `Hdf5Service::readImageByIndex`.
-- [ ] Rig CPU headroom: per-thread CPU during a 1000 fps, 5-min experiment and
-  recording with processing on. Sets `threads = auto` and validates the 75 %
-  budget.
+- [x] Headroom under a live 1000 fps run, scripted
+  (`run_compression_headroom_e2e.py`, `mock_experiment_soak_run`), done in
+  the cloud container. [ ] Repeat on the rig: 3a is scripted, 3b uses the
+  real camera. Sets `threads = auto` and validates the 75 % budget.
 - [x] **S1** (h5py prototype and the C++ guard above): a
   partial chunk written raw and rewritten 10×, then compressed. Final file size
   must be within 5 % of an h5repack of the same data. Pass → D3.4; fail → T2.
@@ -409,6 +435,8 @@ App config `storage.compression.*`:
 - [ ] PR 0: rig measurements, S1/S2 spikes, threadsafe audit
   - [x] 2026-09-26: benchmark script, C++ capability guard, measurement howto,
         VM numbers, and S1/S2 on HDF5 1.10.10, 1.14.6 and 2.0.0
+  - [x] 2026-09-26: headroom e2e in the container. 1 thread passes, 2 cover
+        the worst case, and 3 harm a 4-vCPU host. Zero loss in 8 soaks.
   - [ ] rig: Conan capability line, headroom under load (`threads`),
         HDFView/MATLAB; see the
         [rig handover](2026-09-26-hdf5-compression-rig-handover.md)

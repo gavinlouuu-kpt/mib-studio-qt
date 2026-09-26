@@ -18,6 +18,18 @@ PR 0 adds `scripts/bench_hdf5_compression.py`, the
 (mixed raw/compressed chunks readable) passed. Rig headroom is still open.
 Task note: [[../task/2026-09-26-hdf5-compression-pr0]].
 
+**Container headroom e2e (step 3a).** New tools:
+`mib_backend_tests mock_experiment_soak_run` and
+`scripts/run_compression_headroom_e2e.py`. Eight 300 s soaks at 1000 fps
+through the production save path all finished `complete` with zero loss.
+Measured demand was 1.7 MB/s (experiment) and 19.2 MB/s (recording).
+gzip-1 sustained 47 / 93 / 127 MB/s on 1 / 2 / 3 threads during the runs.
+One thread passes, two cover the 49 MB/s worst case, and three cost a
+4-vCPU host about 1 % of capture rate. The provisional pool default is
+`clamp(hw/2, 1, 4)`. Side finding TD-16: experiment files duplicate the
+frame and mask per object record. Evidence:
+`docs/evidence/2026-09-26-compression-headroom-container/`.
+
 zlib is now a guaranteed dependency. It is a direct Conan requirement
 (`zlib/[>=1.2.11 <2]`, the same 1.3.2 package HDF5 already resolved, so no
 new binaries), `find_package(ZLIB REQUIRED)` fails configure if it is

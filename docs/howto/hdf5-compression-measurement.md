@@ -109,4 +109,5 @@ and match the source. h5py was already verified byte-identical by `--spikes`.
 | Cloud VM, apt build (ctest) | 1.10.10, threadsafe=1 | capability pass; S1 growth 0.00 % |
 | Cloud VM, h5py 3.14 | 1.14.6 | S1 +0.65 %, S2 byte-identical |
 | Cloud VM, h5py 3.16 | 2.0.0 | S1 +0.65 %, S2 byte-identical |
+| Cloud container, 4 vCPU (step 3a, 8 × 300 s soaks) | 1.10.10 | all runs complete, zero loss. gzip-1 during the run: 47/93/127 MB/s on 1/2/3 threads, against the measured demand of 1.7 (experiment) and 19.2 (recording) MB/s. Smallest passing pool is 1; 2 covers the worst case. [Evidence](../evidence/2026-09-26-compression-headroom-container/README.md) |
 | Rig PC | Conan 1.14.6 | pending (steps 1–4) |

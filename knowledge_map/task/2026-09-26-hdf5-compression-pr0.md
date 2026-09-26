@@ -41,6 +41,26 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
 - apt HDF5 1.10.10: threadsafe=1, capability test pass, S1 growth 0.00 %.
 - h5py HDF5 1.14.6 and 2.0.0: S1 +0.65 %, S2 byte-identical.
 
+## Headroom e2e in the container (step 3a)
+
+- **`mock_experiment_soak_run`** (`tests/tools/`, a `mib_backend_tests`
+  entry) runs a headless experiment or recording through the production save
+  path. It prints the stored #367 accounting, stop time, file size and
+  process CPU as JSON.
+- **`scripts/run_compression_headroom_e2e.py`** runs, per mode, a baseline
+  soak, measures the stored-frame ratio, then runs one soak per pool size
+  with `bench_hdf5_compression.py --seconds` as the load.
+- **Result** (8 × 300 s at 1000 fps, 4 vCPU): every run complete with zero
+  loss.
+  - Demand is 1.7 MB/s (experiment) and 19.2 MB/s (recording).
+  - gzip-1 during the run: 47 / 93 / 127 MB/s on 1 / 2 / 3 threads.
+  - The smallest passing pool is 1. Two threads cover the worst case, and 3
+    harm a 4-vCPU host by −1.1 % capture.
+  - D6 default is now `clamp(hw/2, 1, 4)`.
+  - Evidence: `docs/evidence/2026-09-26-compression-headroom-container/`.
+- **TD-16:** experiment files write one full frame and mask per object
+  record (5.56 per frame with wide-open gates).
+
 ## Gotchas
 
 - `H5Dwrite_chunk` needs HDF5 ≥ 1.10.3 and `H5Dget_chunk_info_by_coord`
@@ -48,6 +68,9 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
   which is also the manylinux floor.
 - Raw and edge chunks are stored at the full chunk size (zero-padded), so a
   raw chunk's stored size equals `C × H × W`.
+- `mib_backend_tests` lands in `build/linux-backend/Release/` on the
+  backend-only preset (not the build root); the e2e script searches the
+  usual locations or takes `--runner`.
 - HDF5 2.x changes `H5Dread_chunk`'s signature. The test does not use it, but
   the PR 4 finish pass must guard it by version.
 
