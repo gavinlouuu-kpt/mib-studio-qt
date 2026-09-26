@@ -81,6 +81,11 @@ public:
     // false for legacy files that predate processing-core provenance.
     bool readProcessingCoreIdentity(
         backend::processing::ProcessingCoreIdentity& processingCore) const;
+    // Reads the processing_config_* attributes of /experiment_info into
+    // `config`. Attributes a file predates keep their struct defaults, so
+    // legacy files read as the Contract-1 config they ran. Returns false when
+    // the group is missing.
+    bool readRecordedProcessingConfig(ProcessingConfig& config) const;
 
     // Save raw config JSON as a string attribute on /experiment_info.
     // Precondition: writeExperimentInfo() must have been called first.

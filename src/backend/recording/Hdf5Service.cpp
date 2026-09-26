@@ -1,5 +1,6 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/diagnostics/CrashStateMirror.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingService.h"
 
 #include <spdlog/spdlog.h>
@@ -1524,8 +1525,59 @@ namespace backend::services
             H5Aclose(attrMI2);
         }
 
+        // Contract-2 era config (T0.2): the profile's declared contract, the
+        // canonical difference threshold, every object gate, and the channel
+        // band that gated objects (frame coordinates; callers pass
+        // ProcessingService::getEffectiveProcessingConfig()).
+        const auto writeScalar = [&](const char* name, hid_t type, const void* value) {
+            hid_t attribute = H5Acreate2(infoGroupId, name, type, scalarSpaceId,
+                                         H5P_DEFAULT, H5P_DEFAULT);
+            if (attribute < 0) return false;
+            const bool ok = H5Awrite(attribute, type, value) >= 0;
+            H5Aclose(attribute);
+            return ok;
+        };
+        const auto writeI32 = [&](const char* name, int value) {
+            const int32_t v = static_cast<int32_t>(value);
+            return writeScalar(name, H5T_NATIVE_INT32, &v);
+        };
+        const auto writeF64 = [&](const char* name, double value) {
+            return writeScalar(name, H5T_NATIVE_DOUBLE, &value);
+        };
+        const auto writeFlag = [&](const char* name, bool value) {
+            const uint8_t v = value ? 1 : 0;
+            return writeScalar(name, H5T_NATIVE_UINT8, &v);
+        };
+        const ProcessingConfig& pc = processingConfig;
+        const bool configOk =
+            writeI32("processing_config_processing_contract_version", pc.processing_contract_version) &&
+            writeI32("processing_config_difference_threshold", pc.bg_subtract_threshold) &&
+            writeFlag("processing_config_enable_ring_ratio_check", pc.enable_ring_ratio_check) &&
+            writeF64("processing_config_ring_ratio_min", pc.ring_ratio_min) &&
+            writeF64("processing_config_ring_ratio_max", pc.ring_ratio_max) &&
+            writeFlag("processing_config_enable_area_ratio_check", pc.enable_area_ratio_check) &&
+            writeF64("processing_config_area_ratio_threshold_max", pc.area_ratio_threshold_max) &&
+            writeFlag("processing_config_enable_laplacian_variance_check",
+                      pc.enable_laplacian_variance_check) &&
+            writeF64("processing_config_laplacian_variance_min", pc.laplacian_variance_min) &&
+            writeF64("processing_config_laplacian_variance_max", pc.laplacian_variance_max) &&
+            writeFlag("processing_config_auto_roi_from_background", pc.auto_roi_from_background) &&
+            writeF64("processing_config_auto_roi_wall_gradient_ratio", pc.auto_roi_wall_gradient_ratio) &&
+            writeI32("processing_config_auto_roi_wall_margin", pc.auto_roi_wall_margin) &&
+            writeI32("processing_config_channel_band_y", pc.channel_band_y) &&
+            writeI32("processing_config_channel_band_h", pc.channel_band_h);
+
         const auto defaultIdentity = backend::processing::bundledProcessingCoreIdentity();
-        const auto& coreIdentity = processingCore ? *processingCore : defaultIdentity;
+        auto coreIdentity = processingCore ? *processingCore : defaultIdentity;
+        // A shipped core runs only its own contract (ADR 0007), so its identity
+        // names the executed contract. A research build (Python wheel) runs the
+        // contract the config selects, so record that one instead.
+        if (coreIdentity.source == "bundled" &&
+            backend::processing::bundledProcessingContract() == 0 &&
+            backend::processing::contract::isSupportedProcessingContract(
+                pc.processing_contract_version)) {
+            coreIdentity.contractVersion = static_cast<uint32_t>(pc.processing_contract_version);
+        }
         const auto writeUint32Attribute = [&](const char* name, uint32_t value) {
             hid_t attribute = H5Acreate2(infoGroupId, name, H5T_NATIVE_UINT32, scalarSpaceId,
                                          H5P_DEFAULT, H5P_DEFAULT);
@@ -1564,7 +1616,7 @@ namespace backend::services
         H5Sclose(scalarSpaceId);
         H5Gclose(infoGroupId);
 
-        if (!provenanceOk) {
+        if (!provenanceOk || !configOk) {
             SPDLOG_ERROR("Failed to persist processing-core provenance");
             return false;
         }
@@ -2331,6 +2383,74 @@ namespace backend::services
 
 // New scalable read APIs
 namespace backend::services {
+
+    bool Hdf5Service::readRecordedProcessingConfig(ProcessingConfig& config) const
+    {
+        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0)
+            return false;
+        hid_t group = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        if (group < 0) return false;
+
+        // Missing attributes (older files) leave the struct default in place.
+        const auto readScalar = [&](const char* name, hid_t memType, void* out) {
+            if (H5Aexists(group, name) <= 0) return;
+            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
+            if (attribute < 0) return;
+            H5Aread(attribute, memType, out);
+            H5Aclose(attribute);
+        };
+        const auto readInt = [&](const char* name, int& field) {
+            int32_t v = static_cast<int32_t>(field);
+            readScalar(name, H5T_NATIVE_INT32, &v);
+            field = static_cast<int>(v);
+        };
+        const auto readDouble = [&](const char* name, double& field) {
+            readScalar(name, H5T_NATIVE_DOUBLE, &field);
+        };
+        const auto readFlag = [&](const char* name, bool& field) {
+            uint8_t v = field ? 1 : 0;
+            readScalar(name, H5T_NATIVE_UINT8, &v);
+            field = v != 0;
+        };
+
+        readInt("processing_config_gaussian_blur_size", config.gaussian_blur_size);
+        readInt("processing_config_bg_subtract_threshold", config.bg_subtract_threshold);
+        readInt("processing_config_difference_threshold", config.bg_subtract_threshold);
+        readInt("processing_config_morph_kernel_size", config.morph_kernel_size);
+        readInt("processing_config_morph_iterations", config.morph_iterations);
+        readInt("processing_config_area_threshold_min", config.area_threshold_min);
+        readInt("processing_config_area_threshold_max", config.area_threshold_max);
+        readFlag("processing_config_enable_border_check", config.enable_border_check);
+        readFlag("processing_config_enable_area_range_check", config.enable_area_range_check);
+        readDouble("processing_config_deformability_threshold_min", config.deformability_threshold_min);
+        readDouble("processing_config_deformability_threshold_max", config.deformability_threshold_max);
+        readFlag("processing_config_enable_deformability_range_check",
+                 config.enable_deformability_range_check);
+        readFlag("processing_config_require_single_inner_contour", config.require_single_inner_contour);
+        readInt("processing_config_empty_frame_pixel_threshold", config.empty_frame_pixel_threshold);
+        readInt("processing_config_processing_contract_version", config.processing_contract_version);
+        readFlag("processing_config_enable_ring_ratio_check", config.enable_ring_ratio_check);
+        readDouble("processing_config_ring_ratio_min", config.ring_ratio_min);
+        readDouble("processing_config_ring_ratio_max", config.ring_ratio_max);
+        readFlag("processing_config_enable_area_ratio_check", config.enable_area_ratio_check);
+        readDouble("processing_config_area_ratio_threshold_max", config.area_ratio_threshold_max);
+        readFlag("processing_config_enable_laplacian_variance_check",
+                 config.enable_laplacian_variance_check);
+        readDouble("processing_config_laplacian_variance_min", config.laplacian_variance_min);
+        readDouble("processing_config_laplacian_variance_max", config.laplacian_variance_max);
+        readFlag("processing_config_auto_roi_from_background", config.auto_roi_from_background);
+        readDouble("processing_config_auto_roi_wall_gradient_ratio", config.auto_roi_wall_gradient_ratio);
+        readInt("processing_config_auto_roi_wall_margin", config.auto_roi_wall_margin);
+        readInt("processing_config_channel_band_y", config.channel_band_y);
+        readInt("processing_config_channel_band_h", config.channel_band_h);
+        uint8_t multiImage = config.multi_image_enabled ? 1 : 0;
+        readScalar("multi_image_enabled", H5T_NATIVE_UINT8, &multiImage);
+        config.multi_image_enabled = multiImage != 0;
+        readInt("multi_image_count", config.multi_image_count);
+
+        H5Gclose(group);
+        return true;
+    }
 
     bool Hdf5Service::getDatasetInfo(const std::string& datasetPath,
                                      size_t& outCount,
