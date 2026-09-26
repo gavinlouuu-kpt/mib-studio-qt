@@ -1,6 +1,7 @@
 # Contract 2 safe rollout (absdiff + Laplacian variance)
 
-Status: proposed (2026-09-25)
+Status: active. Phase 0 merged 2026-09-26 (#455, #457, #458); T1.2 done
+(real-frame Contract 2 reference); T1.1 next.
 
 Builds on the [Processing Contract v2 plan](2026-07-21-processing-contract-v2.md),
 [ADR 0006](../../decisions/0006-processing-contract-v2.md) (what Contract 2

@@ -30,12 +30,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Gold-standard frame keys that are numeric (use tolerance)
 REQUIRED_NUMERIC_KEYS = [
-    "deformability", "area", "area_um2", "area_ratio", "ring_ratio",
+    "deformability", "area", "area_um2", "area_ratio",
     "brightness_q1", "brightness_q2", "brightness_q3", "brightness_q4",
 ]
 
-OPTIONAL_NUMERIC_KEYS = ["youngs_modulus"]
-NUMERIC_KEYS = REQUIRED_NUMERIC_KEYS + OPTIONAL_NUMERIC_KEYS
+# Focus metric per processing contract (ADR 0006): Contract 1 records always
+# carry ring_ratio; Contract 2 records never do and carry laplacian_variance
+# (omitted when NaN, i.e. no detection).
+CONTRACT_REQUIRED_NUMERIC_KEYS = {1: ["ring_ratio"], 2: []}
+
+OPTIONAL_NUMERIC_KEYS = ["youngs_modulus", "laplacian_variance"]
+NUMERIC_KEYS = REQUIRED_NUMERIC_KEYS + ["ring_ratio"] + OPTIONAL_NUMERIC_KEYS
 
 # Keys that must match exactly (boolean or integer)
 REQUIRED_EXACT_KEYS = [
@@ -173,11 +178,17 @@ def build_frame_index(frames: List[dict], match_by: str) -> Dict[Tuple[Any, ...]
     return out
 
 
+def required_compare_keys(contract_version: int = 1) -> set:
+    """Keys every record of a document with this contract_version must carry."""
+    return REQUIRED_COMPARE_KEYS | set(CONTRACT_REQUIRED_NUMERIC_KEYS.get(contract_version, []))
+
+
 def compare_frames(
     gold_frame: dict,
     cand_frame: dict,
     tolerances: Dict[str, float],
     default_tol: float,
+    contract_version: int = 1,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Compare one gold vs one candidate frame. Return (all_match, details).
@@ -186,7 +197,7 @@ def compare_frames(
     details: Dict[str, Any] = {}
     all_ok = True
 
-    keys_to_compare = REQUIRED_COMPARE_KEYS | {
+    keys_to_compare = required_compare_keys(contract_version) | {
         key for key in OPTIONAL_COMPARE_KEYS if key in gold_frame
     }
 
@@ -254,6 +265,7 @@ def run_comparison(
     cand_data = load_json(cand_path)
 
     gold_frames = gold_data.get("frames", [])
+    contract_version = int(gold_data.get("contract_version", 1))
     build_frame_index(gold_frames, match_by)  # validate reference identities too
     cand_index = build_frame_index(cand_data.get("frames", []), match_by)
     used_keys = set()
@@ -269,7 +281,7 @@ def run_comparison(
             continue
         matched_count += 1
         used_keys.add(key)
-        ok, details = compare_frames(gf, cf, tolerances, default_tol)
+        ok, details = compare_frames(gf, cf, tolerances, default_tol, contract_version)
         results.append((gf, cf, ok, details))
 
     for key, candidate_only in cand_index.items():

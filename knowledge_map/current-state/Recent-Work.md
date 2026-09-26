@@ -284,6 +284,15 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Real-frame Contract 2 reference** (2026-09-26, Contract 2 rollout T1.2) —
+  `run_processing_conformance.py --processing-contract 2` runs the 50 V
+  fixture under Contract 2 (same config, `difference_threshold` = the recorded
+  threshold) against `scripts/conformance/focus-50v-real-contract2.json` (407
+  records) in the wheel CI. The metrics schema's `contract_version` accepts 2,
+  and `compare_metrics.py` requires `ring_ratio` only in Contract-1 documents
+  (it rejected every Contract-2 record before). Finding for calibration (T2.2):
+  without the area gate, Contract 2 on full frames keeps noise blobs,
+  including on empty frames; see `docs/processing-contract-v2-validation.md`.
 - **Real-frame Contract 1 reference and reference change control**
   (2026-09-26, Contract 2 rollout T0.3/T0.4) — `scripts/conformance/focus-50v-real.npz`
   (13 real 1184x240 frames from the four 50 V focus recordings, with

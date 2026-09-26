@@ -57,10 +57,21 @@ this slice and remain open on the release gate:
       pending.
 - [ ] Calibrate the Laplacian gate, optional filter defaults, and autofocus
       sample/step parameters from that evidence; keep the gate disabled until
-      explicitly reviewed.
-- [ ] Establish v2 golden/conformance references (with fixture + core
+      explicitly reviewed. **Finding (2026-09-26, real-frame reference):** on
+      full 1184x240 frames with the recordings' Contract-1 config (difference
+      threshold 4, area and ring gates off), Contract 2 finds 407 objects in
+      13 frames versus 21 under Contract 1, including up to 8 on empty frames
+      and valid objects of 2.4 um2. Contract 1 was protected by the
+      single-inner-contour rule, which Contract 2 ignores; absdiff also keeps
+      both polarities of noise. A Contract-2 profile therefore needs the area
+      gate on (or a higher difference threshold) before rig use; calibrate it
+      here (rollout T2.2).
+- [~] Establish v2 golden/conformance references (with fixture + core
       provenance) for the native and bundled cores and the Python wheel; prove
-      native/bundled/Python equivalence.
+      native/bundled/Python equivalence. Wheel reference on real frames:
+      `scripts/conformance/focus-50v-real-contract2.json` (rollout T1.2,
+      2026-09-26), checked in the wheel CI. Native Contract-2 core equivalence
+      waits for the signed absdiff-laplacian core (T1.1).
 - [ ] Realtime/batch latency, allocation, queue, and frame-accounting budgets
       on representative data; stress / watchdog / TSan / fault-injection /
       long-run hardware autofocus.
