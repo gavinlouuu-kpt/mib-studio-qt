@@ -51,6 +51,12 @@ public:
     virtual ~IProcessingKernel() = default;
 
     virtual const ProcessingCoreIdentity& identity() const noexcept = 0;
+    // ADR 0007: a shipped core implements exactly one processing contract, the
+    // one its identity declares. The host refuses to process a config whose
+    // processing_contract_version this returns false for.
+    virtual bool servesContract(int contract) const noexcept {
+        return contract > 0 && identity().contractVersion == static_cast<uint32_t>(contract);
+    }
     virtual bool processMask(const cv::Mat& gray,
                              const cv::Mat& background,
                              const KernelConfig& config,
@@ -88,7 +94,15 @@ public:
                             std::string* error = nullptr);
 };
 
+// The bundled kernel's contract is fixed at build time
+// (MIB_PROCESSING_CORE_CONTRACT). 0 means a research build (Python wheel) that
+// serves every supported contract, selected per config.
+int bundledProcessingContract() noexcept;
 std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel();
+// A bundled kernel for one explicit contract (0 = research). The default
+// overload uses bundledProcessingContract(); this one exists for tests and
+// per-contract core builds.
+std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel(int contract);
 ProcessingCoreIdentity bundledProcessingCoreIdentity();
 
 } // namespace backend::processing

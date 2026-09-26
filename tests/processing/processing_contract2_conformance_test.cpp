@@ -147,12 +147,13 @@ void conformGateDefaultOff() {
     }
 }
 
-// C-7: contract selection is a ProcessingConfig property executed by the host
-// service (and therefore by the Python wheel): Contract 2 detects a dark-on-
-// bright object through cv::absdiff, abolishes ring width (NaN, gate ignored)
-// and carries a finite per-object Laplacian variance; Contract 1 on the same
-// frame is unchanged (saturating subtraction sees nothing, ring stays a
-// number); an unsupported contract fails closed.
+// C-7: a shipped core implements exactly one contract (ADR 0007). The service
+// runs a config only on a kernel that serves its processing_contract_version
+// and fails closed otherwise. A Contract-2 kernel detects a dark-on-bright
+// object through cv::absdiff, abolishes ring width (NaN, gate ignored) and
+// carries a finite per-object Laplacian variance; a Contract-1 kernel on the
+// same frame is unchanged (saturating subtraction sees nothing, ring stays a
+// number); an unsupported contract fails closed everywhere.
 void conformServiceContractSelection() {
     using backend::services::ProcessedFrame;
     using backend::services::ProcessingService;
@@ -170,14 +171,32 @@ void conformServiceContractSelection() {
     cfg.bg_subtract_threshold = 8;
     const ProcessingService::Roi roi{0, 0, 80, 60};
 
-    ProcessingService service;
+    // Contract-1 (subtract-ring) kernel.
+    ProcessingService c1;
+    MIB_REQUIRE(c1.activateProcessingKernel(proc::makeBundledProcessingKernel(1)),
+                "activate a Contract-1 bundled kernel");
     cfg.processing_contract_version = 1;
-    const ProcessedFrame v1 = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    c1.setProcessingConfig(cfg);
+    MIB_EXPECT(c1.processingContractMismatch().empty(), "contract 1 config matches a Contract-1 kernel");
+    const ProcessedFrame v1 = c1.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
     MIB_EXPECT(v1.validation.objectCount == 0, "contract 1: saturating subtraction ignores a dark object");
     MIB_EXPECT(!std::isnan(v1.validation.ringRatio), "contract 1: ring width stays a number");
 
     cfg.processing_contract_version = 2;
-    const ProcessedFrame v2 = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    c1.setProcessingConfig(cfg);
+    MIB_EXPECT(!c1.processingContractMismatch().empty(),
+               "contract 2 config on a Contract-1 kernel reports a mismatch");
+    const ProcessedFrame refused = c1.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    MIB_EXPECT(refused.processedImage.empty() && refused.validation.objectCount == 0,
+               "contract 2 config on a Contract-1 kernel is refused (no mask)");
+
+    // Contract-2 (absdiff-laplacian) kernel.
+    ProcessingService c2;
+    MIB_REQUIRE(c2.activateProcessingKernel(proc::makeBundledProcessingKernel(2)),
+                "activate a Contract-2 bundled kernel");
+    MIB_EXPECT(c2.activeProcessingCoreIdentity().contractVersion == 2,
+               "Contract-2 kernel identity declares Contract 2");
+    const ProcessedFrame v2 = c2.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
     MIB_REQUIRE(v2.validation.objectCount == 1, "contract 2: absdiff detects the dark object");
     MIB_EXPECT(v2.validation.isValid, "contract 2: ring gate is ignored (object valid)");
     MIB_EXPECT(std::isnan(v2.validation.ringRatio), "contract 2: ring width is NaN");
@@ -192,18 +211,34 @@ void conformServiceContractSelection() {
     cv::Mat holed = frame.clone();
     cv::rectangle(holed, cv::Rect(38, 28, 4, 4), cv::Scalar(128), cv::FILLED); // hole in the dark object
     cfg.require_single_inner_contour = true;
-    const ProcessedFrame v2h = service.computeProcessedFrame(holed, bg, cfg, roi, 0, 0);
+    const ProcessedFrame v2h = c2.computeProcessedFrame(holed, bg, cfg, roi, 0, 0);
     MIB_EXPECT(v2h.validation.objectCount == 1 && v2h.validation.area > 300.0,
                "contract 2: the top-level blob is the object, not the hole");
-    const ProcessedFrame v2s = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    const ProcessedFrame v2s = c2.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
     MIB_EXPECT(v2s.validation.objectCount == 1 && v2s.validation.isValid,
                "contract 2: hole-free blob is valid despite require_single_inner_contour");
     MIB_EXPECT(science::classifyInvalidReasons(v2s.validation, cfg, 0.5).empty(),
                "contract 2: no NoContour reason for a hole-free blob");
     cfg.require_single_inner_contour = false;
 
+    cfg.processing_contract_version = 1;
+    const ProcessedFrame v1on2 = c2.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    MIB_EXPECT(v1on2.processedImage.empty(), "contract 1 config on a Contract-2 kernel is refused");
+
+    // The default kernel serves exactly the build's contract.
+    ProcessingService fallback;
+    const int built = proc::bundledProcessingContract();
+    if (built == 1 || built == 2) {
+        cfg.processing_contract_version = built;
+        MIB_EXPECT(!fallback.computeProcessedFrame(frame, bg, cfg, roi, 0, 0).processedImage.empty(),
+                   "default kernel runs the build contract");
+        cfg.processing_contract_version = built == 1 ? 2 : 1;
+        MIB_EXPECT(fallback.computeProcessedFrame(frame, bg, cfg, roi, 0, 0).processedImage.empty(),
+                   "default kernel refuses the other contract");
+    }
+
     cfg.processing_contract_version = 3;
-    const ProcessedFrame v3 = service.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
+    const ProcessedFrame v3 = c2.computeProcessedFrame(frame, bg, cfg, roi, 0, 0);
     MIB_EXPECT(v3.processedImage.empty(), "unsupported contract fails closed (no mask)");
     MIB_EXPECT(v3.validation.objectCount == 0, "unsupported contract fails closed (no objects)");
 

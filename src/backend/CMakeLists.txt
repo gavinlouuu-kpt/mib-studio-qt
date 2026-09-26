@@ -72,6 +72,26 @@ target_link_libraries(mib_processing PUBLIC
 target_compile_definitions(mib_processing PUBLIC
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
 )
+
+# Contract of the bundled kernel (ADR 0007); 0 = research (any contract).
+if(MIB_PROCESSING_CORE_CONTRACT STREQUAL "1")
+    set(_mib_bundled_contract 1)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "2")
+    set(_mib_bundled_contract 2)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "research")
+    if(NOT MIB_BUILD_PYTHON_BINDINGS)
+        message(FATAL_ERROR
+            "MIB_PROCESSING_CORE_CONTRACT=research is only for the Python wheel "
+            "(MIB_BUILD_PYTHON_BINDINGS=ON); shipped builds run one contract (ADR 0007)")
+    endif()
+    set(_mib_bundled_contract 0)
+else()
+    message(FATAL_ERROR
+        "MIB_PROCESSING_CORE_CONTRACT must be 1, 2 or research (got '${MIB_PROCESSING_CORE_CONTRACT}')")
+endif()
+target_compile_definitions(mib_processing PUBLIC
+    MIB_PROCESSING_BUNDLED_CONTRACT=${_mib_bundled_contract}
+)
 if(WIN32)
     target_link_libraries(mib_processing PUBLIC wintrust crypt32)
 endif()
@@ -144,43 +164,56 @@ if(MIB_BUILD_OEABT_TOOLS)
     )
 endif()
 
-# Native hot-swap artifact. It deliberately links only the mask kernel and
+# Native hot-swap artifacts. They deliberately link only the mask kernel and
 # OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
-# Windows DLL before the registry publisher hashes it.
-add_library(mib_processing_core MODULE
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
-)
-target_include_directories(mib_processing_core PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(mib_processing_core PRIVATE spdlog::spdlog)
-# Header-only: ProcessingScience.cpp includes ProcessingContract.h. Without the
-# target, MSVC builds (Conan nlohmann_json) cannot find the header.
-if(TARGET nlohmann_json::nlohmann_json)
-    target_link_libraries(mib_processing_core PRIVATE nlohmann_json::nlohmann_json)
-endif()
-mib_link_opencv(mib_processing_core PRIVATE)
-target_compile_definitions(mib_processing_core PRIVATE
-    MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
-    MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
-)
-set_target_properties(mib_processing_core PROPERTIES
-    PREFIX ""
-    AUTOMOC OFF
-    AUTOUIC OFF
-    AUTORCC OFF
-    POSITION_INDEPENDENT_CODE ON
-    # MSVC only exports __declspec(dllexport) symbols; ELF must opt into the
-    # same discipline so the release audit sees exactly mib_processing_get_api
-    # and mib_processing_get_api_v2.
-    C_VISIBILITY_PRESET hidden
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
-    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
-)
+# Windows DLL before the registry publisher hashes it. Each plugin line
+# implements exactly one contract (ADR 0007) and exports only that contract's
+# entry point: subtract-ring (Contract 1, mib_processing_get_api) and
+# absdiff-laplacian (Contract 2, mib_processing_get_api_v2).
+function(mib_add_processing_core_plugin target contract)
+    add_library(${target} MODULE
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    )
+    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(${target} PRIVATE spdlog::spdlog)
+    # Header-only: ProcessingScience.cpp includes ProcessingContract.h. Without
+    # the target, MSVC builds (Conan nlohmann_json) cannot find the header.
+    if(TARGET nlohmann_json::nlohmann_json)
+        target_link_libraries(${target} PRIVATE nlohmann_json::nlohmann_json)
+    endif()
+    mib_link_opencv(${target} PRIVATE)
+    target_compile_definitions(${target} PRIVATE
+        MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
+        MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+        MIB_PROCESSING_BUNDLED_CONTRACT=${contract}
+    )
+    set_target_properties(${target} PROPERTIES
+        PREFIX ""
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        POSITION_INDEPENDENT_CODE ON
+        # MSVC only exports __declspec(dllexport) symbols; ELF must opt into
+        # the same discipline so the release audit sees exactly the one entry
+        # point of the plugin's contract.
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+        LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+    )
+endfunction()
+
+# subtract-ring (Contract 1): the released line (artifact naming, descriptor
+# and signing below are unchanged).
+mib_add_processing_core_plugin(mib_processing_core 1)
+# absdiff-laplacian (Contract 2): built for the ABI-v2 plugin tests. Release
+# naming, descriptor and signing arrive with the Contract 2 core line (T1.1).
+mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2)
 if(WIN32)
     set(_mib_processing_native_basename
         "mib_processing_core-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")

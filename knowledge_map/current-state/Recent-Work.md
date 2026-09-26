@@ -212,6 +212,18 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **One contract per shipped core** (2026-09-26, ADR 0007, Contract 2 rollout
+  T0.1) — the bundled kernel's contract is fixed by
+  `MIB_PROCESSING_CORE_CONTRACT` (`1` default; `research` = both, Python wheel
+  only). Native plugins are built per contract: `mib_processing_core`
+  (subtract-ring) exports only `get_api`, and
+  `mib_processing_core_absdiff_laplacian` exports only `get_api_v2`.
+  `ProcessingService` refuses a profile whose contract the active core does
+  not serve (`processingContractMismatch()`), so a recording's contract (from
+  the core identity) is the executed one. C-7 now activates explicit
+  Contract-1 and Contract-2 kernels; the loader test checks that the
+  Contract-1 plugin serves Contract 1 only. See
+  [[../services/ProcessingService#Processing-core selection]].
 - **Processing Contract v2 — runtime selection (V2-8)** (2026-09-24, epic
   #296) — the stack was merged with `develop` and Contract 2 became
   executable from a config: `ProcessingConfig::processing_contract_version`

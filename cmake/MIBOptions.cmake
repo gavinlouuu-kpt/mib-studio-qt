@@ -50,6 +50,13 @@ option(MIB_BUILD_PROCESSING_ONLY
     "Configure only the Qt-free mib_processing target and Python bindings"
     OFF)
 
+# ADR 0007: a shipped core implements exactly one processing contract. This
+# fixes the contract of the kernel bundled into this build. "research" (any
+# contract, selected per config) is allowed only for the Python wheel.
+set(MIB_PROCESSING_CORE_CONTRACT "1" CACHE STRING
+    "Contract of the bundled processing kernel: 1 (subtract-ring), 2 (absdiff-laplacian), research (wheel only)")
+set_property(CACHE MIB_PROCESSING_CORE_CONTRACT PROPERTY STRINGS 1 2 research)
+
 set(MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256 "" CACHE STRING
     "Approved Authenticode signer SubjectPublicKeyInfo SHA-256 for native processing cores")
 option(MIB_REQUIRE_PROCESSING_CORE_SIGNER_SPKI

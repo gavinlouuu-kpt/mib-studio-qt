@@ -15,6 +15,15 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+// ADR 0007: each plugin build implements exactly one contract and exports only
+// that contract's entry point. subtract-ring (Contract 1) exports
+// mib_processing_get_api (engine ABI v1); absdiff-laplacian (Contract 2)
+// exports mib_processing_get_api_v2 (engine ABI v2).
+#if !defined(MIB_PROCESSING_BUNDLED_CONTRACT) || \
+    (MIB_PROCESSING_BUNDLED_CONTRACT != 1 && MIB_PROCESSING_BUNDLED_CONTRACT != 2)
+#error "a native processing core plugin implements Contract 1 or Contract 2"
+#endif
+
 namespace {
 
 struct PluginContext {
@@ -78,6 +87,7 @@ cv::Mat borrowedMat(const mib_processing_image_view& view) {
                    const_cast<uint8_t*>(view.data), static_cast<size_t>(view.stride_bytes));
 }
 
+#if MIB_PROCESSING_BUNDLED_CONTRACT == 1
 const mib_processing_core_descriptor* MIB_PROCESSING_CALL descriptor() {
     static const backend::processing::ProcessingCoreIdentity identity =
         backend::processing::bundledProcessingCoreIdentity();
@@ -92,6 +102,7 @@ const mib_processing_core_descriptor* MIB_PROCESSING_CALL descriptor() {
         {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u}};
     return &value;
 }
+#endif
 
 mib_processing_status MIB_PROCESSING_CALL createContext(mib_processing_context* output,
                                                         char* error,
@@ -224,6 +235,7 @@ mib_processing_status MIB_PROCESSING_CALL isEmpty(
     }
 }
 
+#if MIB_PROCESSING_BUNDLED_CONTRACT == 1
 mib_processing_status MIB_PROCESSING_CALL selfTest(char* error, size_t errorCapacity) {
     try {
         auto kernel = backend::processing::makeBundledProcessingKernel();
@@ -243,7 +255,9 @@ mib_processing_status MIB_PROCESSING_CALL selfTest(char* error, size_t errorCapa
         return MIB_PROCESSING_STATUS_INTERNAL_ERROR;
     }
 }
+#endif
 
+#if MIB_PROCESSING_BUNDLED_CONTRACT == 2
 /* ---------------------------------------------------------------------------
  * Engine ABI v2: the full Contract-2 pipeline across the C boundary.
  * ------------------------------------------------------------------------- */
@@ -527,8 +541,11 @@ mib_processing_status MIB_PROCESSING_CALL selfTestV2(char* error, size_t errorCa
     }
 }
 
+#endif
+
 } // namespace
 
+#if MIB_PROCESSING_BUNDLED_CONTRACT == 1
 extern "C" MIB_PROCESSING_EXPORT mib_processing_status MIB_PROCESSING_CALL
 mib_processing_get_api(uint32_t requestedEngineAbi,
                        uint32_t hostApiStructSize,
@@ -555,7 +572,9 @@ mib_processing_get_api(uint32_t requestedEngineAbi,
     output->self_test = &selfTest;
     return MIB_PROCESSING_STATUS_OK;
 }
+#endif
 
+#if MIB_PROCESSING_BUNDLED_CONTRACT == 2
 extern "C" MIB_PROCESSING_EXPORT mib_processing_status MIB_PROCESSING_CALL
 mib_processing_get_api_v2(uint32_t requestedEngineAbi,
                           uint32_t hostApiStructSize,
@@ -583,3 +602,4 @@ mib_processing_get_api_v2(uint32_t requestedEngineAbi,
     output->self_test = &selfTestV2;
     return MIB_PROCESSING_STATUS_OK;
 }
+#endif

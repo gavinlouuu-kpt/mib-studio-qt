@@ -34,6 +34,10 @@ MIB_BUILD_PYTHON_BINDINGS = "ON"
 MIB_BUILD_BACKEND_ONLY = "ON"
 MIB_BUILD_PROCESSING_ONLY = "ON"
 BUILD_TESTING = "OFF"
+# Research build (ADR 0007): the wheel runs either contract, selected per call
+# by processing_contract_version, for offline comparison. Shipped desktop
+# builds fix one contract.
+MIB_PROCESSING_CORE_CONTRACT = "research"
 # Keep the release wheel's CMake graph Qt-free and avoid configuring desktop,
 # camera, native-plugin, and sentry targets that are not part of the package.
 MIB_USE_SENTRY = "OFF"

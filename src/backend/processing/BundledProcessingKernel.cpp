@@ -1,5 +1,6 @@
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ImageFilterPipeline.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingCoreAbi.h"
 #include "backend/processing/ProcessingScience.h"
 
@@ -10,6 +11,12 @@
 
 #ifndef MIB_PROCESSING_CORE_VERSION
 #define MIB_PROCESSING_CORE_VERSION "0.1.0"
+#endif
+
+// Set by CMake from MIB_PROCESSING_CORE_CONTRACT (ADR 0007): 1 or 2 for a
+// shipped core, 0 for the research (Python wheel) build.
+#ifndef MIB_PROCESSING_BUNDLED_CONTRACT
+#error "MIB_PROCESSING_BUNDLED_CONTRACT must be defined by the build"
 #endif
 
 namespace backend::processing {
@@ -76,7 +83,21 @@ std::string runtimeFingerprint() {
 
 class BundledProcessingKernel final : public IProcessingKernel {
 public:
-    BundledProcessingKernel() : identity_(bundledProcessingCoreIdentity()) {}
+    explicit BundledProcessingKernel(int contract)
+        : contract_(contract), identity_(bundledProcessingCoreIdentity()) {
+        // A research kernel keeps the Contract-1 identity it always had; a
+        // single-contract kernel declares its contract.
+        if (contract_ > 0) {
+            identity_.contractVersion = static_cast<uint32_t>(contract_);
+        }
+    }
+
+    bool servesContract(int contract) const noexcept override {
+        if (contract_ == 0) {
+            return contract::isSupportedProcessingContract(contract);
+        }
+        return contract == contract_;
+    }
 
     const ProcessingCoreIdentity& identity() const noexcept override { return identity_; }
 
@@ -163,6 +184,7 @@ public:
     bool reset(std::string*) override { return true; }
 
 private:
+    int contract_;
     ProcessingCoreIdentity identity_;
     // Identity (no-op) preprocessing until an ABI-v2 core / v2 config supplies
     // stages. Owned by the kernel so stages compile once per context.
@@ -180,10 +202,16 @@ bool ProcessingCoreIdentity::operator==(const ProcessingCoreIdentity& other) con
            buildId == other.buildId && runtimeFingerprint == other.runtimeFingerprint;
 }
 
+int bundledProcessingContract() noexcept {
+    return MIB_PROCESSING_BUNDLED_CONTRACT;
+}
+
 ProcessingCoreIdentity bundledProcessingCoreIdentity() {
     ProcessingCoreIdentity identity;
     identity.version = MIB_PROCESSING_CORE_VERSION;
-    identity.contractVersion = MIB_PROCESSING_CONTRACT_VERSION;
+    identity.contractVersion = MIB_PROCESSING_BUNDLED_CONTRACT > 0
+                                   ? static_cast<uint32_t>(MIB_PROCESSING_BUNDLED_CONTRACT)
+                                   : MIB_PROCESSING_CONTRACT_VERSION;
     identity.engineAbiVersion = MIB_PROCESSING_ENGINE_ABI_VERSION;
     identity.source = "bundled";
     identity.buildId = "mib-processing-" MIB_PROCESSING_CORE_VERSION;
@@ -192,7 +220,11 @@ ProcessingCoreIdentity bundledProcessingCoreIdentity() {
 }
 
 std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel() {
-    return std::make_shared<BundledProcessingKernel>();
+    return makeBundledProcessingKernel(bundledProcessingContract());
+}
+
+std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel(int contract) {
+    return std::make_shared<BundledProcessingKernel>(contract);
 }
 
 // Default science implementations: every kernel executes the shared bundled
