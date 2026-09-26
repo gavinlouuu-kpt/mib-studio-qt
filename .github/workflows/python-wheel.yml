@@ -18,6 +18,8 @@ on:
       - 'scripts/compare_metrics.py'
       - 'scripts/run_processing_conformance.py'
       - 'scripts/gold_standard_dataset.json'
+      - 'scripts/conformance/**'
+      - 'scripts/build_real_conformance_fixture.py'
       - 'scripts/z_adjustment_50v_reference.json'
       - 'scripts/test_compare_metrics.py'
       - 'scripts/test_run_processing_conformance.py'
@@ -55,6 +57,8 @@ on:
       - 'scripts/compare_metrics.py'
       - 'scripts/run_processing_conformance.py'
       - 'scripts/gold_standard_dataset.json'
+      - 'scripts/conformance/**'
+      - 'scripts/build_real_conformance_fixture.py'
       - 'scripts/z_adjustment_50v_reference.json'
       - 'scripts/test_compare_metrics.py'
       - 'scripts/test_run_processing_conformance.py'
@@ -232,6 +236,15 @@ jobs:
           set -euo pipefail
           python scripts/run_processing_conformance.py \
             --candidate-out artifacts/mib-processing-conformance.json
+
+      - name: Run real-frame Contract 1 conformance (50 V focus fixture)
+        if: matrix.full_test
+        run: |
+          set -euo pipefail
+          python scripts/run_processing_conformance.py \
+            --fixture-npz scripts/conformance/focus-50v-real.npz \
+            --reference scripts/conformance/focus-50v-real-contract1.json \
+            --candidate-out artifacts/mib-processing-conformance-real.json
 
       - name: Verify portable wheel in Biowork production base
         if: matrix.full_test && matrix.python-version == '3.12'

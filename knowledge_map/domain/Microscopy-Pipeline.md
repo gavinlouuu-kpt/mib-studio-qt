@@ -56,6 +56,14 @@ piezo nanopositioner to keep the cell in focus across the channel.
   `scripts/compare_metrics.py`.
 - `scripts/run_processing_conformance.py` — always-on installed-wheel parity
   check. It compares metrics, target/tracking metadata, and SHA-256 evidence for
-  masks + multi-image series against `scripts/gold_standard_dataset.json`.
+  masks + multi-image series against `scripts/gold_standard_dataset.json`
+  (synthetic). `--fixture-npz scripts/conformance/focus-50v-real.npz --reference
+  scripts/conformance/focus-50v-real-contract1.json` does the same on real
+  frames: 13 frames of the 50 V cells-in-different-focus recordings (C2C12,
+  HEK293, HeLa, PANC-1), each processed with its recording's background and
+  Contract-1 config (built by `scripts/build_real_conformance_fixture.py`). Both
+  run in the wheel CI. References and fixtures change only in a PR labelled
+  `gold-reference-change` (`.github/workflows/gold-reference-guard.yml`;
+  owners in `.github/CODEOWNERS`).
 - `scripts/empty_frame_detection.py` — offline Python pipeline (Kedro +
   MLflow at `mlflow.yofo.bio`). Not part of the Qt app's runtime.

@@ -176,41 +176,88 @@ def array_sha256(value: np.ndarray) -> str:
     return digest.hexdigest()
 
 
-def build_candidate(frames: Sequence[np.ndarray], fixture_id: str) -> dict[str, Any]:
+def load_real_fixture(
+    npz_path: Path,
+) -> tuple[list[tuple[list[np.ndarray], np.ndarray]], dict[str, Any], float, str]:
+    """Load a real-frame fixture written by build_real_conformance_fixture.py.
+
+    Returns one (frames, background) group per recording, in file order, plus
+    the recorded processing config and pixel size.
+    """
+    with np.load(npz_path, allow_pickle=False) as archive:
+        missing = {"frames", "backgrounds", "frame_background", "config_json",
+                   "pixel_to_micron"} - set(archive.files)
+        if missing:
+            raise ValueError(f"{npz_path}: real fixture lacks {sorted(missing)}")
+        frames = np.asarray(archive["frames"])
+        backgrounds = np.asarray(archive["backgrounds"])
+        owner = np.asarray(archive["frame_background"])
+        config = json.loads(str(archive["config_json"]))
+        pixel_to_micron = float(archive["pixel_to_micron"])
+    if frames.ndim != 3 or frames.dtype != np.uint8 or backgrounds.dtype != np.uint8:
+        raise ValueError(f"{npz_path}: frames/backgrounds must be uint8 N x H x W")
+    if owner.shape != (frames.shape[0],) or np.any(np.diff(owner) < 0):
+        raise ValueError(f"{npz_path}: frame_background must map frames to backgrounds in order")
+    groups = []
+    for background_index in range(backgrounds.shape[0]):
+        selected = [np.ascontiguousarray(f) for f in frames[owner == background_index]]
+        if selected:
+            groups.append((selected, np.ascontiguousarray(backgrounds[background_index])))
+    return groups, config, pixel_to_micron, f"npz-real:{npz_path.name}"
+
+
+def build_candidate(
+    frames: Sequence[np.ndarray],
+    fixture_id: str,
+    config: Optional[dict[str, Any]] = None,
+    pixel_to_micron: float = PIXEL_TO_MICRON,
+    groups: Optional[Sequence[tuple[Sequence[np.ndarray], Optional[np.ndarray]]]] = None,
+) -> dict[str, Any]:
+    """Run the wheel over the fixture. ``groups`` pairs frames with their own
+    background (real fixtures); record indices are made global across groups."""
     import mib_processing as mp
 
-    raw_results = mp.process_batch(
-        list(frames),
-        conformance_config(mp),
-        pixel_to_micron=PIXEL_TO_MICRON,
-        include_masks=True,
-        include_series_images=True,
-    )
+    if config is None:
+        config = conformance_config(mp)
+    if groups is None:
+        groups = [(list(frames), None)]
     records: list[dict[str, Any]] = []
-    for raw in raw_results:
-        record = {key: value for key, value in raw.items() if key not in NON_GOLD_RECORD_KEYS}
-        # Contract-1 documents omit laplacian_variance (schema); it is also
-        # optional and NaN (no detection) is not valid JSON.
-        laplacian = record.get("laplacian_variance")
-        if raw.get("processing_contract_version", 1) == 1 or (
-            laplacian is not None and math.isnan(laplacian)
-        ):
-            record.pop("laplacian_variance", None)
-        mask = record.pop("mask", None)
-        series = record.pop("series_images", None)
-        if mask is None or series is None:
-            raise RuntimeError("wheel did not return requested mask/series payloads")
-        record["mask_sha256"] = array_sha256(mask)
-        record["series_images_sha256"] = [array_sha256(image) for image in series]
-        records.append(record)
+    offset = 0
+    for group_frames, background in groups:
+        raw_results = mp.process_batch(
+            list(group_frames),
+            config,
+            background=background,
+            pixel_to_micron=pixel_to_micron,
+            include_masks=True,
+            include_series_images=True,
+        )
+        for raw in raw_results:
+            record = {key: value for key, value in raw.items() if key not in NON_GOLD_RECORD_KEYS}
+            # Contract-1 documents omit laplacian_variance (schema); it is also
+            # optional and NaN (no detection) is not valid JSON.
+            laplacian = record.get("laplacian_variance")
+            if raw.get("processing_contract_version", 1) == 1 or (
+                laplacian is not None and math.isnan(laplacian)
+            ):
+                record.pop("laplacian_variance", None)
+            mask = record.pop("mask", None)
+            series = record.pop("series_images", None)
+            if mask is None or series is None:
+                raise RuntimeError("wheel did not return requested mask/series payloads")
+            record["mask_sha256"] = array_sha256(mask)
+            record["series_images_sha256"] = [array_sha256(image) for image in series]
+            record["index"] = int(record["index"]) + offset
+            records.append(record)
+        offset += len(group_frames)
 
     return {
         "version": int(mp.CONTRACT_VERSION),
-        "contract_version": int(mp.CONTRACT_VERSION),
+        "contract_version": int(config.get("processing_contract_version", mp.CONTRACT_VERSION)),
         "wheel_version": str(mp.__version__),
         "fixture": fixture_id,
-        "input_frame_count": len(frames),
-        "pixel_to_micron": PIXEL_TO_MICRON,
+        "input_frame_count": offset,
+        "pixel_to_micron": pixel_to_micron,
         "source": "mib-processing-wheel-conformance",
         "frames": records,
     }
@@ -251,6 +298,13 @@ def build_parser() -> argparse.ArgumentParser:
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--frames-npz", type=Path, default=None)
     inputs.add_argument(
+        "--fixture-npz",
+        type=Path,
+        default=None,
+        help="Real-frame fixture (frames + per-recording backgrounds + config), "
+        "see build_real_conformance_fixture.py.",
+    )
+    inputs.add_argument(
         "--hdf5",
         type=Path,
         default=None,
@@ -289,15 +343,22 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        frames, fixture_id = load_frames(
-            args.frames_npz,
-            args.hdf5,
-            args.hdf5_dataset,
-            args.frame_offset,
-            args.frame_limit,
-            args.fixture_id,
-        )
-        candidate = build_candidate(frames, fixture_id)
+        if args.fixture_npz is not None:
+            groups, config, pixel_to_micron, fixture_id = load_real_fixture(args.fixture_npz)
+            candidate = build_candidate(
+                [], args.fixture_id or fixture_id, config=config,
+                pixel_to_micron=pixel_to_micron, groups=groups,
+            )
+        else:
+            frames, fixture_id = load_frames(
+                args.frames_npz,
+                args.hdf5,
+                args.hdf5_dataset,
+                args.frame_offset,
+                args.frame_limit,
+                args.fixture_id,
+            )
+            candidate = build_candidate(frames, fixture_id)
         validate_document(candidate)
     except (ImportError, OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: cannot generate conformance candidate: {exc}", file=sys.stderr)

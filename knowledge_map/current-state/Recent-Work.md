@@ -212,6 +212,18 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Real-frame Contract 1 reference and reference change control**
+  (2026-09-26, Contract 2 rollout T0.3/T0.4) — `scripts/conformance/focus-50v-real.npz`
+  (13 real 1184x240 frames from the four 50 V focus recordings, with
+  per-recording backgrounds and the recorded Contract-1 config, 2.2 MB) and its
+  gold `focus-50v-real-contract1.json` (21 records: 14 valid, 4 invalid, 3
+  border). `run_processing_conformance.py --fixture-npz` processes each
+  recording with its own background; the wheel CI runs it next to the synthetic
+  reference. A difference threshold +1 changes all 21 records. `.github/CODEOWNERS`
+  covers the processing science and references;
+  `gold-reference-guard.yml` fails a PR that changes a reference or fixture
+  without the `gold-reference-change` label. See
+  [[../domain/Microscopy-Pipeline]].
 - **Full processing config in recordings** (2026-09-26, Contract 2 rollout
   T0.2) — `/experiment_info` records the declared contract, difference
   threshold, ring/area-ratio/Laplacian gates and the channel band

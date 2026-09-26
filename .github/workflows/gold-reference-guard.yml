@@ -1,0 +1,43 @@
+name: Gold reference guard
+
+# ADR 0007 / Contract 2 rollout T0.4: a processing contract's gold reference
+# (and the fixtures it is computed from) may only change in a PR that carries
+# the `gold-reference-change` label, so a reference is never moved by
+# accident to make a failing conformance check pass.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Gold references change only with the label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check guarded paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'gold-reference-change') }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
+            scripts/gold_standard_dataset.json \
+            'scripts/conformance/*')"
+          if [ -z "$changed" ]; then
+            echo "No gold reference or fixture changed."
+            exit 0
+          fi
+          echo "Changed gold references / fixtures:"
+          echo "$changed"
+          if [ "$HAS_LABEL" != "true" ]; then
+            echo "::error::Gold references changed without the 'gold-reference-change' label. Explain the change in the PR and add the label (ADR 0007)."
+            exit 1
+          fi
+          echo "Label present: change accepted for review."

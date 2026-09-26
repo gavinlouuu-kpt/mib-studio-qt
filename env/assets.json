@@ -112,6 +112,55 @@
         "scripts/kedro_frame_detection/conf/base/parameters.yml"
       ],
       "notes": "Labelled parquet dataset consumed through the `datasets` library (load_dataset with revision). Not materialised by provision-assets.py."
+    },
+    {
+      "id": "cells-different-focus-50v-provenance",
+      "kind": "dataset",
+      "repo": "gavinlouuu/mib-cells-different-focus",
+      "repo_type": "dataset",
+      "revision": "ccbf944561d488a9b62859bd08699bc0ad4c23bb",
+      "visibility": "private",
+      "token_required": true,
+      "required": false,
+      "files": [
+        {
+          "path": "provenance/recordings/C2C12/50v/contract2_background.png",
+          "sha256": "1340ec27439bd216a991066818d7297ca195c636d56deb639c006f08ab44c46e"
+        },
+        {
+          "path": "provenance/recordings/HEK293/50v_in focus/contract2_background.png",
+          "sha256": "6708ef2893fab86441259142c5b70ee4012d99503ab1a52bccd0067b0df6bc55"
+        },
+        {
+          "path": "provenance/recordings/HeLa/50v/contract2_background.png",
+          "sha256": "3c4a98dba5e0b6688f6926d37a22b57af90cab3df5a0e06ba7dc004e6fbd3774"
+        },
+        {
+          "path": "provenance/recordings/PANC-1/50_in focus/contract2_background.png",
+          "sha256": "ad2999959d748cdead2e6ee88ab4b9d81b0f44b3a938f285c25dc25a713b1952"
+        },
+        {
+          "path": "provenance/recordings/C2C12/50v/mib_processing_results.json",
+          "sha256": "c761fbd1e52883e343989f5cb6e1915684bedb5c2458777a21114ee7e3c364f1"
+        },
+        {
+          "path": "provenance/recordings/HEK293/50v_in focus/mib_processing_results.json",
+          "sha256": "1cef44e4095e8bc6d10d77b4cf0d31058dcf89281c380b6c8ff65133656be3f0"
+        },
+        {
+          "path": "provenance/recordings/HeLa/50v/mib_processing_results.json",
+          "sha256": "5cd5d77fc73f3ff4d9258bc7f960130533800f070f493b902bd160fd97e75e0c"
+        },
+        {
+          "path": "provenance/recordings/PANC-1/50_in focus/mib_processing_results.json",
+          "sha256": "ff02df517481d29c69bd8d7f27935eb992fb4a1f43dffbfe187ae8f17a7452c3"
+        }
+      ],
+      "consumers": [
+        "scripts/build_real_conformance_fixture.py (--provenance-root: per-recording background + Contract-1 config)",
+        "scripts/conformance/focus-50v-real.npz (frozen fixture built from these files)"
+      ],
+      "notes": "Only needed to rebuild the real-frame conformance fixture. The 50 V raw frames come from the NAS recordings ('Cells in different focus'), which are not on the Hub. CI uses the committed fixture and never downloads this asset."
     }
   ]
 }
