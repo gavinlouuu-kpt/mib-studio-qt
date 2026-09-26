@@ -43,12 +43,28 @@ difference, filter chain, per-object Laplacian variance. A Contract-2 profile
 may activate a core only if the core advertises the capabilities the profile
 needs.
 
-## Runtime selection (V2-8)
+## One contract per shipped core (ADR 0007)
 
-The executed contract is `ProcessingConfig::processing_contract_version`
-(default `1`), set from a profile's root `processing_contract_version` by
-`AppConfigWatcher` or from a Python config dict. Only
-`backend::processing::contract` interprets it:
+A shipped core implements exactly one contract, fixed at build time. This
+covers the kernel bundled into a desktop build (`MIB_PROCESSING_CORE_CONTRACT`,
+default `1`) and each native plugin line: `mib_processing_core` is
+subtract-ring (Contract 1, exports only `mib_processing_get_api`), and
+`mib_processing_core_absdiff_laplacian` is absdiff-laplacian (Contract 2,
+exports only `mib_processing_get_api_v2`). A profile's root
+`processing_contract_version` is a requirement. `ProcessingService` refuses
+to generate masks or empty-frame decisions when the active core does not
+serve it (`processingContractMismatch()`), with no fallback. A profile without
+the key means Contract 1.
+
+Only the Python wheel is built with `MIB_PROCESSING_CORE_CONTRACT=research`,
+which runs either contract, selected per call.
+
+## Contract semantics (V2-8)
+
+A config's `ProcessingConfig::processing_contract_version` (default `1`) is set
+from a profile's root `processing_contract_version` by `AppConfigWatcher` or
+from a Python config dict. A core runs it only when it serves that contract
+(see above). Only `backend::processing::contract` interprets it:
 
 | Helper | 1 | 2 |
 |---|---|---|

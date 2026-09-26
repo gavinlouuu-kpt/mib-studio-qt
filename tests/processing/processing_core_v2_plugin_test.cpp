@@ -1,5 +1,5 @@
-// V2-5 follow-on: the native processing-core module exports a working engine
-// ABI v2. It negotiates get_api_v2, advertises the Contract-2 capabilities,
+// V2-5 follow-on: the absdiff-laplacian (Contract 2) processing-core module
+// exports a working engine ABI v2 and nothing else (ADR 0007). It negotiates get_api_v2, advertises the Contract-2 capabilities,
 // passes its v2 self-test, and process_objects returns per-object metrics
 // (including a finite Laplacian variance) with deterministic BUFFER_TOO_SMALL
 // handling — all across the plain-C boundary via dlopen.
@@ -37,6 +37,10 @@ int main(int argc, char** argv) {
     auto getApiV2 = reinterpret_cast<mib_processing_get_api_v2_fn>(
         dlsym(handle, MIB_PROCESSING_GET_API_V2_SYMBOL));
     MIB_REQUIRE(getApiV2 != nullptr, "module exports mib_processing_get_api_v2");
+    // ADR 0007: the absdiff-laplacian (Contract 2) line implements only
+    // Contract 2, so it must not offer the Contract-1 (ABI v1) entry point.
+    MIB_EXPECT(dlsym(handle, MIB_PROCESSING_GET_API_SYMBOL) == nullptr,
+               "Contract-2 module does not export mib_processing_get_api");
 
     // A Contract-1 request against the v2 entry point is rejected.
     mib_processing_api_v2 api{};

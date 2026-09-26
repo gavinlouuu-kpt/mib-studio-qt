@@ -67,6 +67,19 @@ same mask/empty-frame algorithm is used on both sides of the boundary.
   not invoke one plugin context concurrently.
 - Registry, cache, signature, and UI behavior live in
   [[../frontend/ProcessingCoreDialog]].
+- **One contract per core (ADR 0007).** Every kernel declares the contract it
+  implements (`IProcessingKernel::servesContract`, default: the identity's
+  `contractVersion`). `processMaskWithActiveKernel` and
+  `isImageEmptyWithActiveKernel` fail closed when the active kernel does not
+  serve `config.processing_contract_version`. The error names both contract
+  numbers, and `setProcessingConfig` logs it once as a warning.
+  `processingContractMismatch()` returns the same text for the UI (empty when
+  the contract matches). The bundled kernel's contract comes from the build
+  option `MIB_PROCESSING_CORE_CONTRACT` (`1` default, `2`, or `research` =
+  any contract, allowed only with `MIB_BUILD_PYTHON_BINDINGS`), exposed as
+  `bundledProcessingContract()`. `makeBundledProcessingKernel(contract)`
+  builds an explicit single-contract kernel for tests. A profile without a
+  declared contract means Contract 1, so a Contract-2 build refuses it.
 
 ## Threads
 
@@ -254,12 +267,16 @@ filter chain, per-object Laplacian) are advertised in the descriptor.
 `ProcessingCoreCapabilities.h` holds the host negotiation:
 `coreSatisfiesContract2` (ABI ≥ 2, contract == 2, all required caps),
 `abiV1ServesContract` (ABI v1 → Contract 1 only), and `engineAbiForContract`.
-Tests: `processing.core_abi_v2_c`, `processing.core_capabilities`. The native
-`mib_processing_core` module now also exports `mib_processing_get_api_v2` whose
-`process_objects` compiles the filter chain, builds the absolute difference,
-runs the science, and returns full per-object metrics (finite Laplacian
-variance) with deterministic `BUFFER_TOO_SMALL`; the v1 `get_api` export is
-unchanged. End-to-end dlopen test: `processing.core_v2_plugin`. The loader's v2
+Tests: `processing.core_abi_v2_c`, `processing.core_capabilities`. Native
+plugins are built per contract (ADR 0007, CMake
+`mib_add_processing_core_plugin`). `mib_processing_core` (subtract-ring,
+Contract 1, the released line) exports only `mib_processing_get_api`.
+`mib_processing_core_absdiff_laplacian` (Contract 2) exports only
+`mib_processing_get_api_v2`, whose `process_objects` compiles the filter
+chain, builds the absolute difference, runs the science, and returns full
+per-object metrics (finite Laplacian variance) with deterministic
+`BUFFER_TOO_SMALL`. End-to-end dlopen test: `processing.core_v2_plugin`,
+against the Contract-2 module, which also checks that `get_api` is absent. The loader's v2
 activation path (negotiating `get_api_v2` through the trust/lease machinery) and
 native signing remain follow-on.
 

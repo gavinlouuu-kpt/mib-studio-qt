@@ -132,6 +132,10 @@ public:
                                   ProcessingCoreActivationPreCommit preCommit = {});
     bool activateBundledProcessingKernel(std::string* error = nullptr);
     backend::processing::ProcessingCoreIdentity activeProcessingCoreIdentity() const;
+    // ADR 0007: empty when the active core implements the configured
+    // processing_contract_version; otherwise the reason processing is refused
+    // (both contract numbers), suitable for the UI.
+    std::string processingContractMismatch() const;
     std::string requiredProcessingCoreVersion() const { return requiredProcessingCoreVersion_; }
     bool isProcessingCorePinSatisfied() const;
     // Startup selection restoration failures fail closed until a verified
@@ -575,6 +579,10 @@ private:
                                    const FilterResult& detection,
                                    uint64_t frameIndex,
                                    int frameWidth) const;
+    // Fails closed (with *error) when the active kernel does not implement
+    // config.processing_contract_version. Caller holds processingKernelMutex_.
+    bool activeKernelServesContractLocked(const ProcessingConfig& config,
+                                          std::string* error) const;
     bool processMaskWithActiveKernel(const cv::Mat& gray,
                                      const cv::Mat& background,
                                      const ProcessingConfig& config,

@@ -722,6 +722,9 @@ void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
     }
     configVersion_.fetch_add(1, std::memory_order_release);
     refreshRealtimeBatchPipelineConfig();
+    if (const std::string mismatch = processingContractMismatch(); !mismatch.empty()) {
+        SPDLOG_WARN("Processing will be refused: {}", mismatch);
+    }
 }
 
 ProcessingConfig ProcessingService::getProcessingConfig() const {
@@ -1176,11 +1179,40 @@ bool ProcessingService::isImageEmptyWithActiveKernel(const cv::Mat& gray, const 
         }
         return false;
     }
-    if (!processingKernel_ ||
+    if (!processingKernel_ || !activeKernelServesContractLocked(config, error) ||
         !processingKernel_->isEmpty(gray, background, kernelConfig, kernelRoi, empty, error)) {
         return false;
     }
     return true;
+}
+
+bool ProcessingService::activeKernelServesContractLocked(const ProcessingConfig& config,
+                                                         std::string* error) const {
+    if (!processingKernel_) {
+        if (error) *error = "no active processing kernel";
+        return false;
+    }
+    if (processingKernel_->servesContract(config.processing_contract_version)) {
+        return true;
+    }
+    if (error) {
+        const auto& identity = processingKernel_->identity();
+        *error = "active processing core " + identity.version + " (" + identity.source +
+                 ") implements Processing Contract " + std::to_string(identity.contractVersion) +
+                 "; the profile requires Contract " +
+                 std::to_string(config.processing_contract_version) + " (ADR 0007)";
+    }
+    return false;
+}
+
+std::string ProcessingService::processingContractMismatch() const {
+    const ProcessingConfig config = getProcessingConfig();
+    std::shared_lock lock(processingKernelMutex_);
+    if (!processingKernel_) {
+        return "no active processing kernel";
+    }
+    std::string error;
+    return activeKernelServesContractLocked(config, &error) ? std::string{} : error;
 }
 
 bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
@@ -1207,6 +1239,9 @@ bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray, const c
     }
     if (!processingKernel_) {
         if (error) *error = "no active processing kernel";
+        return false;
+    }
+    if (!activeKernelServesContractLocked(config, error)) {
         return false;
     }
     if (!requiredProcessingCoreVersion_.empty() &&

@@ -36,6 +36,8 @@ int main(int argc, char** argv) {
     MIB_EXPECT(loaded.kernel->identity().version == bundledIdentity.version,
                "descriptor version copied into identity");
     MIB_EXPECT(loaded.kernel->identity().source == "plugin", "plugin source recorded");
+    MIB_EXPECT(loaded.kernel->servesContract(1) && !loaded.kernel->servesContract(2),
+               "subtract-ring plugin serves Contract 1 only (ADR 0007)");
     MIB_EXPECT(loaded.kernel->identity().artifactSha256 == requirements.artifactSha256,
                "artifact digest propagated");
 

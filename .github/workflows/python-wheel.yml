@@ -437,11 +437,10 @@ jobs:
               $matches[1]
             }
           })
-          # Engine ABI v1 entry point plus the Contract-2 ABI v2 entry point.
-          $expected = @('mib_processing_get_api', 'mib_processing_get_api_v2')
-          $actual = @($exportNames | Sort-Object)
-          if (($actual -join ',') -ne ($expected -join ',')) {
-            throw "Native plugin must export exactly $($expected -join ', '); found: $($exportNames -join ', ')"
+          # ADR 0007: the subtract-ring (Contract 1) core implements one
+          # contract and exports only its engine ABI v1 entry point.
+          if ($exportNames.Count -ne 1 -or $exportNames[0] -ne 'mib_processing_get_api') {
+            throw "Native plugin must export exactly mib_processing_get_api; found: $($exportNames -join ', ')"
           }
 
           $dependents = & $dumpbin.FullName /nologo /dependents '${{ steps.native-assets.outputs.dll }}'
@@ -560,12 +559,12 @@ jobs:
         run: |
           set -euo pipefail
           shared_library='${{ steps.native-assets.outputs.so }}'
-          exports="$(nm -D --defined-only "$shared_library" | awk '$2 == "T" {print $3}' | sort)"
+          exports="$(nm -D --defined-only "$shared_library" | awk '$2 == "T" {print $3}')"
           echo "Exports: $exports"
-          # Engine ABI v1 entry point plus the Contract-2 ABI v2 entry point.
-          expected="$(printf '%s\n' mib_processing_get_api mib_processing_get_api_v2)"
-          if [ "$exports" != "$expected" ]; then
-            echo "::error::Native plugin must export exactly mib_processing_get_api and mib_processing_get_api_v2"
+          # ADR 0007: the subtract-ring (Contract 1) core implements one
+          # contract and exports only its engine ABI v1 entry point.
+          if [ "$exports" != "mib_processing_get_api" ]; then
+            echo "::error::Native plugin must export exactly mib_processing_get_api"
             exit 1
           fi
           needed="$(readelf -d "$shared_library" | awk '/NEEDED/ {gsub(/[\[\]]/, "", $5); print $5}')"

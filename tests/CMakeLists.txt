@@ -403,9 +403,9 @@ add_test(NAME processing.core_loader
 set_tests_properties(processing.core_loader PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(processing_core_v2_plugin_test processing/processing_core_v2_plugin_test.cpp)
-add_dependencies(processing_core_v2_plugin_test mib_processing_core)
+add_dependencies(processing_core_v2_plugin_test mib_processing_core_absdiff_laplacian)
 add_test(NAME processing.core_v2_plugin
-    COMMAND $<TARGET_FILE:processing_core_v2_plugin_test> $<TARGET_FILE:mib_processing_core>)
+    COMMAND $<TARGET_FILE:processing_core_v2_plugin_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
 set_tests_properties(processing.core_v2_plugin PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_subdirectory(processing/fixtures)
