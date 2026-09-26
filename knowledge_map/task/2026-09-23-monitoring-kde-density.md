@@ -189,5 +189,4 @@ fps off vs 143.1 / 140.9 on; overlay lag 0.9–1.4 frames on; ~90 ms CPU per
 live record 900 of 1000 cells; GUI p99 ~97 ms on vs ~684 ms off (TD-16).
 The e2e's "≥ 6 estimates at 500 ms" gate became "≥ 2 estimates, interval +
 budget kept, lowest priority". Suites afterwards: backend 119/119, `frontend`
-27/27 (e2e included).
-
+27/27 (e2e included), TSan 85/85, ASan+UBSan 85/85.
