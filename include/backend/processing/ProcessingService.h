@@ -571,13 +571,16 @@ private:
                                        const cv::Mat& processedImage);
     bool appendExperimentFrame(ProcessedFrame&& frame, bool isValid);
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
-    FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi, 
-                                      const ProcessingConfig& config, const cv::Mat& originalImage);
+    FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
+                                      const ProcessingConfig& config, const cv::Mat& originalImage,
+                                      const cv::Mat& background = cv::Mat());
     // maskOrigin is the frame position of the mask's (0,0), so the frame-space
-    // channel band can be expressed in the mask's coordinates.
+    // channel band can be expressed in the mask's coordinates. `background`
+    // matches originalImage; an ABI v2 core needs it to run its own science.
     std::vector<FilterResult> filterProcessedObjects(const cv::Mat& processedImage, const cv::Rect& roi,
                                                      const ProcessingConfig& config, const cv::Mat& originalImage,
-                                                     cv::Point maskOrigin = {});
+                                                     cv::Point maskOrigin = {},
+                                                     const cv::Mat& background = cv::Mat());
     // Batch track matching routed through the selected kernel; -1 = new track.
     int matchTrackWithActiveKernel(const std::vector<BatchTrack>& tracks,
                                    const std::vector<bool>& matchedThisFrame,

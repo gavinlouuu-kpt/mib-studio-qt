@@ -37,6 +37,7 @@ set(MIB_STANDALONE_BACKEND_TESTS
     kin10_hf_dataset_pipeline_test      # uses argv[0]; the harness passes the binary path
     processing_core_loader_test         # add_dependencies on the plugin fixtures
     processing_core_v2_plugin_test      # add_dependencies on the plugin (Contract v2 dlopen test)
+    processing_core_contract2_equivalence_test # add_dependencies on the Contract-2 plugin
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
     processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
@@ -407,6 +408,12 @@ add_dependencies(processing_core_v2_plugin_test mib_processing_core_absdiff_lapl
 add_test(NAME processing.core_v2_plugin
     COMMAND $<TARGET_FILE:processing_core_v2_plugin_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
 set_tests_properties(processing.core_v2_plugin PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_contract2_equivalence_test processing/processing_core_contract2_equivalence_test.cpp)
+add_dependencies(processing_core_contract2_equivalence_test mib_processing_core_absdiff_laplacian)
+add_test(NAME processing.core_contract2_equivalence
+    COMMAND $<TARGET_FILE:processing_core_contract2_equivalence_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
+set_tests_properties(processing.core_contract2_equivalence PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_subdirectory(processing/fixtures)
 mib_add_backend_test_executable(processing_core_fixture_matrix_test processing/processing_core_fixture_matrix_test.cpp)

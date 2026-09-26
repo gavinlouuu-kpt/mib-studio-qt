@@ -59,6 +59,13 @@ the key means Contract 1.
 Only the Python wheel is built with `MIB_PROCESSING_CORE_CONTRACT=research`,
 which runs either contract, selected per call.
 
+The native loader pairs the engine ABI with the contract: ABI v1 loads only
+Contract-1 cores (`mib_processing_get_api`), ABI v2 loads only Contract-2
+cores (`mib_processing_get_api_v2` + Contract-2 capabilities). A Contract-2
+core owns its object science: the host sends the full config
+(`science_config_json`) and receives per-object metrics from
+`process_objects`.
+
 ## Contract semantics (V2-8)
 
 A config's `ProcessingConfig::processing_contract_version` (default `1`) is set

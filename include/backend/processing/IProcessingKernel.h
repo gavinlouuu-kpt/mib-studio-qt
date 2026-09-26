@@ -77,6 +77,9 @@ public:
     // science (ProcessingScience). ABI v1 dynamic cores inherit them because
     // the C ABI transports only mask/empty decisions; an ABI v2 core
     // overrides them to own the full pipeline across the plugin boundary.
+    // `background` is the background matching `originalImage` (empty when
+    // there is none); the bundled science ignores it, an ABI v2 core reruns
+    // its pipeline from originalImage + background (ADR 0007).
     virtual bool analyzeObjects(const cv::Mat& processedImage,
                                 const cv::Rect& roi,
                                 const services::ProcessingConfig& config,
@@ -84,7 +87,8 @@ public:
                                 double pixelToMicronFactor,
                                 const backend::EModulusLut* eModulusLut,
                                 std::vector<services::FilterResult>& results,
-                                std::string* error = nullptr);
+                                std::string* error = nullptr,
+                                const cv::Mat& background = cv::Mat());
     virtual bool matchTrack(const std::vector<services::BatchTrack>& tracks,
                             const std::vector<bool>& matchedThisFrame,
                             const services::FilterResult& detection,

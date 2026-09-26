@@ -284,6 +284,13 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Contract-2 native core owns its science** (2026-09-27, Contract 2 rollout
+  T1.1a) — the loader negotiates engine ABI v2 for Contract-2 cores; the
+  absdiff-laplacian core receives the full profile config as JSON and runs
+  the host's own Contract-2 object science (the V2-5 prototype used default
+  gates and the Contract-1 inner-contour rule). `processing.core_contract2_equivalence`
+  proves field-for-field equality with the bundled Contract-2 kernel. See
+  [[../services/ProcessingService#Engine ABI v2 (v2)]].
 - **Real-frame Contract 2 reference** (2026-09-26, Contract 2 rollout T1.2) —
   `run_processing_conformance.py --processing-contract 2` runs the 50 V
   fixture under Contract 2 (same config, `difference_threshold` = the recorded

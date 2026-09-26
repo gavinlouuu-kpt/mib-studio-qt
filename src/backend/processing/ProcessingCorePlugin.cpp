@@ -1,5 +1,6 @@
 #include "backend/processing/ProcessingCoreAbi.h"
 #include "backend/processing/IProcessingKernel.h"
+#include "backend/processing/ProcessingConfigJson.h"
 #include "backend/processing/ImageFilterPipeline.h"
 #include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingTypes.h"
@@ -12,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -346,6 +348,35 @@ void fillObjectMetrics(mib_processing_object_metrics& dst,
     dst.brightness_q2 = src.brightness.q2;
     dst.brightness_q3 = src.brightness.q3;
     dst.brightness_q4 = src.brightness.q4;
+    dst.in_range = src.inRange ? 1 : 0;
+    dst.in_channel = src.inChannel ? 1 : 0;
+}
+
+// The science config the host sent (config_json::toScienceJson). This core
+// implements Contract 2 only (ADR 0007): a config for another contract is
+// refused rather than run under the wrong science.
+bool scienceConfigFrom(const mib_processing_kernel_config_v2& config,
+                       backend::services::ProcessingConfig& science, std::string& error) {
+    science = backend::services::ProcessingConfig{};
+    science.processing_contract_version = 2;
+    if (config.science_config_json && config.science_config_json_size > 0) {
+        const auto json = nlohmann::json::parse(
+            config.science_config_json,
+            config.science_config_json + config.science_config_json_size, nullptr, false);
+        if (json.is_discarded() || !json.is_object()) {
+            error = "science config is not a JSON object";
+            return false;
+        }
+        if (!backend::processing::config_json::fromScienceJson(json, science, &error)) {
+            return false;
+        }
+    }
+    if (science.processing_contract_version != 2) {
+        error = "this processing core implements Contract 2 only; the config requires Contract " +
+                std::to_string(science.processing_contract_version);
+        return false;
+    }
+    return true;
 }
 
 // Build the Contract-2 mask (absolute difference + compiled filters) and the
@@ -353,6 +384,7 @@ void fillObjectMetrics(mib_processing_object_metrics& dst,
 std::vector<backend::services::FilterResult> runContract2Pipeline(
     const cv::Mat& gray, const cv::Mat& background, const cv::Rect& region,
     const mib_processing_kernel_config_v2& config,
+    const backend::services::ProcessingConfig& science,
     const backend::processing::ImageFilterPipeline& inputStages,
     const backend::processing::ImageFilterPipeline& differenceStages,
     double pixelToMicronFactor, cv::Mat& mask, std::string& error) {
@@ -373,13 +405,9 @@ std::vector<backend::services::FilterResult> runContract2Pipeline(
     cv::morphologyEx(thresholded, dst, cv::MORPH_CLOSE, kernel, cv::Point(-1, -1), iters);
     cv::morphologyEx(dst, dst, cv::MORPH_OPEN, kernel, cv::Point(-1, -1), iters);
 
-    backend::services::ProcessingConfig science;
-    science.require_single_inner_contour = false;
-    science.gaussian_blur_size = config.gaussian_blur_size;
-    science.bg_subtract_threshold = config.difference_threshold;
-    science.morph_kernel_size = config.morphology_kernel_size;
-    science.morph_iterations = config.morphology_iterations;
-    science.empty_frame_pixel_threshold = config.empty_frame_pixel_threshold;
+    // Object science runs exactly as the host's Contract 2 does: the shared
+    // filterProcessedObjects under the host's full config (gates, contract,
+    // channel band). No E-modulus LUT crosses the ABI; the host applies it.
     return backend::processing::science::filterProcessedObjects(mask, region, science, gray,
                                                                 pixelToMicronFactor, nullptr);
 }
@@ -433,9 +461,16 @@ mib_processing_status MIB_PROCESSING_CALL processObjects(
             }
         }
 
+        backend::services::ProcessingConfig science;
+        if (!scienceConfigFrom(*config, science, detail)) {
+            writeError(error, errorCapacity, detail);
+            return MIB_PROCESSING_STATUS_INVALID_ARGUMENT;
+        }
+
         const cv::Rect region = clampRegion(gray, *roi);
         cv::Mat mask;
-        const auto results = runContract2Pipeline(gray, backgroundMat, region, *config, inputStages,
+        const auto results = runContract2Pipeline(gray, backgroundMat, region, *config, science,
+                                                  inputStages,
                                                   differenceStages, pixelToMicronFactor, mask,
                                                   detail);
         if (mask.empty()) {
@@ -519,11 +554,13 @@ mib_processing_status MIB_PROCESSING_CALL selfTestV2(char* error, size_t errorCa
         config.morphology_iterations = 1;
         config.empty_frame_pixel_threshold = 1;
         const backend::processing::ImageFilterPipeline identity;
+        backend::services::ProcessingConfig science;
+        science.processing_contract_version = 2;
         cv::Mat mask;
         std::string detail;
         const auto results =
-            runContract2Pipeline(gray, background, cv::Rect(0, 0, 40, 40), config, identity,
-                                  identity, 0.5, mask, detail);
+            runContract2Pipeline(gray, background, cv::Rect(0, 0, 40, 40), config, science,
+                                 identity, identity, 0.5, mask, detail);
         bool found = false;
         for (const auto& r : results) {
             if (r.objectId >= 1 && std::isfinite(r.laplacianVariance) && r.laplacianVariance > 0.0) {

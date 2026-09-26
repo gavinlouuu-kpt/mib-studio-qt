@@ -1314,7 +1314,7 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
     }
 
     // Validation + contour/metric extraction (same helper as realtime)
-    out.validation = filterProcessedImage(mask, cvRoi, config, gray);
+    out.validation = filterProcessedImage(mask, cvRoi, config, gray, backgroundGray);
     out.processedImage = std::move(mask);
     return out;
 }
@@ -1386,8 +1386,8 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
             std::max(1, std::min(normalizedRoi.h, base.originalImage.rows - normalizedRoi.y));
         const cv::Rect cvRoi(normalizedRoi.x, normalizedRoi.y, normalizedRoi.w, normalizedRoi.h);
 
-        auto objectResults =
-            filterProcessedObjects(base.processedImage, cvRoi, config, base.originalImage);
+        auto objectResults = filterProcessedObjects(base.processedImage, cvRoi, config,
+                                                    base.originalImage, {}, background);
         if (objectResults.empty()) {
             results.emplace_back(std::move(base));
         } else {
@@ -1699,8 +1699,9 @@ void ProcessingService::batchWorkerLoop() {
                 const cv::Rect cvRoi(normalizedRoi.x, normalizedRoi.y, normalizedRoi.w,
                                      normalizedRoi.h);
 
-                auto objectResults = filterProcessedObjects(base.processedImage, cvRoi,
-                                                            config.processing, base.originalImage);
+                auto objectResults =
+                    filterProcessedObjects(base.processedImage, cvRoi, config.processing,
+                                           base.originalImage, {}, config.background);
                 if (objectResults.empty()) {
                     results.emplace_back(std::move(base));
                     continue;
@@ -1952,7 +1953,8 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
                                                                     const cv::Rect& roi,
                                                                     const ProcessingConfig& config,
                                                                     const cv::Mat& originalImage,
-                                                                    cv::Point maskOrigin) {
+                                                                    cv::Point maskOrigin,
+                                                                    const cv::Mat& background) {
     // The service owns the detected channel band (frame coordinates); express
     // it in the mask's coordinates for the object filter.
     ProcessingConfig bandConfig;
@@ -1979,7 +1981,8 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
     std::vector<FilterResult> results;
     std::string error;
     if (!kernel || !kernel->analyzeObjects(processedImage, roi, *effectiveConfig, originalImage,
-                                           pixelToMicronFactor, eModulusLut, results, &error)) {
+                                           pixelToMicronFactor, eModulusLut, results, &error,
+                                           background)) {
         SPDLOG_ERROR("filterProcessedObjects: kernel object analysis failed: {}", error);
         return {};
     }
@@ -1989,8 +1992,10 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
 FilterResult ProcessingService::filterProcessedImage(const cv::Mat& processedImage,
                                                      const cv::Rect& roi,
                                                      const ProcessingConfig& config,
-                                                     const cv::Mat& originalImage) {
-    auto results = filterProcessedObjects(processedImage, roi, config, originalImage);
+                                                     const cv::Mat& originalImage,
+                                                     const cv::Mat& background) {
+    auto results = filterProcessedObjects(processedImage, roi, config, originalImage, {},
+                                          background);
     if (results.empty()) {
         return {};
     }
@@ -2941,7 +2946,7 @@ void ProcessingService::realtimeInlineLoop() {
                 // mask is ROI-sized so contour coords are 0-based; use local roi for border check
                 cv::Rect localRoi(0, 0, roi.w, roi.h);
                 auto validations = filterProcessedObjects(mask, localRoi, config, grayROI,
-                                                          cv::Point(roi.x, roi.y));
+                                                          cv::Point(roi.x, roi.y), kernelBackground);
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }
@@ -3396,7 +3401,8 @@ void ProcessingService::realtimeInlineLoop() {
                     continue;
                 }
 
-                auto validations = filterProcessedObjects(mask, cvRoi, config, gray);
+                auto validations = filterProcessedObjects(mask, cvRoi, config, gray, {},
+                                                          hasBackground ? *bgShared : cv::Mat{});
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }
@@ -3839,7 +3845,8 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Rect localRoi(0, 0, cvRoi.width, cvRoi.height);
                 auto validations =
                     filterProcessedObjects(roiMaskForValidation, localRoi, config, roiCurr,
-                                           cvRoi.tl());
+                                           cvRoi.tl(),
+                                           hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }

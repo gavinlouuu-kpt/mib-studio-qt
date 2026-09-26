@@ -31,4 +31,16 @@ namespace backend::processing::config_json
                   services::ProcessingConfig &config,
                   std::string *errorOut = nullptr);
 
+    // The full science config handed to an engine-ABI-v2 core
+    // (mib_processing_kernel_config_v2::science_config_json): toJson() plus an
+    // "abi_v2" object with the fields the persisted schema does not carry
+    // (processing_contract_version, the Laplacian gate, the runtime channel
+    // band). Host and plugin both use these two functions, so the encoding
+    // cannot drift.
+    nlohmann::json toScienceJson(const services::ProcessingConfig &config);
+
+    bool fromScienceJson(const nlohmann::json &json,
+                         services::ProcessingConfig &config,
+                         std::string *errorOut = nullptr);
+
 } // namespace backend::processing::config_json
