@@ -72,6 +72,21 @@
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for
   older files. See [[../architecture/ExperimentCoordinator]].
+- **KDE core contour records (`kde_core_schema_version` = 1)** — JSON
+  documents produced/parsed by the Qt-free frontend codec
+  `include/backend/processing/KdeCoreRecord.h`, stored verbatim as UTF-8 string
+  attributes: `/monitoring @kde_live_json` (provisional: `provisional:true`,
+  `source:"live-buffer"`, a copy of the Monitoring tab's last on-screen core
+  contour, written by the coordinator at finalization only when KDE was on
+  during the run) and `/analysis @kde_core_json` (`provisional:false`,
+  `source:"full-run"`, computed on demand from the recorded valid frames
+  by the Review tab and written through `Hdf5Service::openFileForUpdate`). Each group also carries
+  `kde_core_schema_version`. Document members: `core_fraction`, `level`
+  (null when no level), `cell_count`, `population_count`,
+  `excluded_points`, bandwidth rule/factor/x (µm²)/y, `pixel_to_micron_factor`,
+  `axis_range`, `grid`, `contours` (closed polylines `[[x, y], ...]` in µm² /
+  deformability), `computed_at_ns`. Absent records mean "none"; readers
+  prefer the analysis record. See [[../frontend/ExperimentMonitoringTab]].
 
 ## Write paths
 

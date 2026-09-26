@@ -22,51 +22,127 @@
      <item row="0" column="0">
       <widget class="QLabel" name="kdeBandwidthLabel">
        <property name="text">
-        <string>KDE Bandwidth</string>
+        <string>KDE bandwidth factor</string>
        </property>
       </widget>
      </item>
      <item row="0" column="1">
       <widget class="QDoubleSpinBox" name="kdeBandwidthSpin">
        <property name="minimum">
-        <double>1.000000000000000</double>
+        <double>0.200000000000000</double>
        </property>
        <property name="maximum">
-        <double>1000.000000000000000</double>
+        <double>5.000000000000000</double>
        </property>
        <property name="singleStep">
-        <double>10.000000000000000</double>
+        <double>0.100000000000000</double>
        </property>
        <property name="decimals">
-        <number>1</number>
+        <number>2</number>
+       </property>
+       <property name="value">
+        <double>1.000000000000000</double>
        </property>
        <property name="toolTip">
-        <string>KDE bandwidth parameter (higher = smoother, lower = more detailed)</string>
+        <string>Multiplies the automatic per-axis (Silverman) bandwidth of the scatter density colouring: above 1 = smoother, below 1 = more detail</string>
        </property>
       </widget>
      </item>
      <item row="1" column="0">
-      <widget class="QLabel" name="kdeGridResolutionLabel">
+      <widget class="QLabel" name="kdeIntervalLabel">
        <property name="text">
-        <string>KDE Grid Resolution</string>
+        <string>KDE update interval</string>
        </property>
       </widget>
      </item>
      <item row="1" column="1">
-      <widget class="QSpinBox" name="kdeGridResolutionSpin">
+      <widget class="QSpinBox" name="kdeIntervalSpin">
+       <property name="suffix">
+        <string> ms</string>
+       </property>
        <property name="minimum">
-        <number>10</number>
+        <number>500</number>
        </property>
        <property name="maximum">
-        <number>200</number>
+        <number>60000</number>
        </property>
        <property name="singleStep">
-        <number>10</number>
+        <number>500</number>
+       </property>
+       <property name="value">
+        <number>2000</number>
        </property>
        <property name="toolTip">
-        <string>Grid resolution for KDE heat map (higher = more detailed but slower)</string>
+        <string>How often the scatter density (KDE) is recomputed while the Density (KDE) toggle is on</string>
        </property>
       </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="kdeCoreFractionLabel">
+       <property name="text">
+        <string>Core contour</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QSpinBox" name="kdeCoreFractionSpin">
+       <property name="suffix">
+        <string> %</string>
+       </property>
+       <property name="minimum">
+        <number>5</number>
+       </property>
+       <property name="maximum">
+        <number>100</number>
+       </property>
+       <property name="singleStep">
+        <number>5</number>
+       </property>
+       <property name="value">
+        <number>90</number>
+       </property>
+       <property name="toolTip">
+        <string>Share of the population enclosed by the solid contour drawn on the scatter while Density (KDE) is on</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="kdeReferenceLabel">
+       <property name="text">
+        <string>Reference contour</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <layout class="QHBoxLayout" name="kdeReferenceLayout">
+       <item>
+        <widget class="QPushButton" name="kdePinReferenceBtn">
+         <property name="text">
+          <string>Pin current</string>
+         </property>
+         <property name="toolTip">
+          <string>Keep the current core contour on the scatter as a dashed reference to compare against</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="kdeReferenceFromFileBtn">
+         <property name="text">
+          <string>From file…</string>
+         </property>
+         <property name="toolTip">
+          <string>Show the core contour stored in a previous experiment file (full-run if computed, else the live estimate) as the dashed reference</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="kdeClearReferenceBtn">
+         <property name="text">
+          <string>Clear</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </item>
     </layout>
    </item>

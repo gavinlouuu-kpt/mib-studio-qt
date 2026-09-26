@@ -45,6 +45,11 @@ public:
     // File operations
     bool openFile(const std::string& filePath);
     bool loadFile(const std::string& filePath); // Open existing file for reading
+    // Open an existing file read-write for post-run metadata only (e.g. the
+    // KDE analysis record). Never creates or truncates; frame datasets are
+    // not initialised, so append paths stay unavailable. Fails when the file
+    // is missing, read-only on disk, or already open elsewhere in-process.
+    bool openFileForUpdate(const std::string& filePath);
     void closeFile();
     bool flush(); // Explicit global flush — call before metadata writes to protect frame data on crash
     bool isFileOpen() const;
@@ -169,6 +174,20 @@ public:
     static long long globalOpenObjectCountForDiagnostics();
     long long openObjectCountForDiagnostics() const;
     bool readRunSnapshotJson(std::string& runSnapshotJson, std::string* readinessJson = nullptr) const;
+
+    // KDE core contour records (`kde_core_schema_version` = 1). The JSON
+    // documents are produced and parsed by the frontend codec
+    // (backend/processing/KdeCoreRecord.h) and stored verbatim as UTF-8 string
+    // attributes:
+    //   /monitoring @kde_live_json  — provisional, copy of the contour shown
+    //                                  live when the run stopped;
+    //   /analysis   @kde_core_json  — computed from the full recorded run.
+    // Writers refuse (false + warn) when no file is open or it was opened
+    // read-only; readers return false when the record is absent.
+    bool writeKdeLiveJson(const std::string& json);
+    bool readKdeLiveJson(std::string& json) const;
+    bool writeKdeAnalysisJson(const std::string& json);
+    bool readKdeAnalysisJson(std::string& json) const;
 
     // Acquisition time/telemetry provenance (issue #368, `timestamp_schema_version`
     // = 1): the session's TimestampDescriptor (what `timestampNs` really holds)

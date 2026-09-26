@@ -24,6 +24,8 @@
 #include <QComboBox>
 #include <QChartView>
 #include <QLineSeries>
+#include <QLegendMarker>
+#include <QPen>
 #include <QCoreApplication>
 #include <QDir>
 #include <map>
@@ -49,6 +51,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/processing/KdeCoreRecord.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/dialogs/BatchMaskDialog.h"
@@ -67,6 +70,8 @@
 #include <QPointer>
 #include <QProgressDialog>
 #include <QtConcurrent/QtConcurrent>
+#include <chrono>
+#include <cmath>
 
 #include <spdlog/spdlog.h>
 #include <opencv2/core.hpp>
@@ -393,6 +398,13 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
     
     scatterPlotView_ = new QChartView(scatterPlotChart_, ui->chartsTab);
     scatterPlotView_->setRenderHint(QPainter::Antialiasing);
+    // Right-click: compute the authoritative (full-run) KDE core contour.
+    scatterPlotView_->setContextMenuPolicy(Qt::ActionsContextMenu);
+    computeCoreAction_ = new QAction(tr("Compute core contour from full run"), scatterPlotView_);
+    computeCoreAction_->setObjectName(QStringLiteral("computeCoreAction"));
+    computeCoreAction_->setEnabled(false);
+    scatterPlotView_->addAction(computeCoreAction_);
+    connect(computeCoreAction_, &QAction::triggered, this, &HdfReviewTab::startFullRunCoreComputation);
     scatterPlotView_->setMinimumHeight(300);
     // Replace placeholder with actual chart view
     int scatterIndex = ui->chartsLayout->indexOf(ui->scatterPlotViewPlaceholder);
@@ -457,6 +469,12 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
 }
 
 HdfReviewTab::~HdfReviewTab() {
+    // The core job owns its input by value; only make sure it cannot call back.
+    if (coreWatcher_) {
+        coreWatcher_->disconnect(this);
+        coreWatcher_->waitForFinished();
+        coreWatcher_ = nullptr;
+    }
     // Issue #344: never destroy the tab under a running export job. The job
     // owns its own reader/request, so cancelling makes it stop within one
     // frame; the wait here is bounded by that.
@@ -530,6 +548,7 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
     }
 
     loadedHdfFilePath_ = filePath;
+    readStoredKdeRecords();
 
     // Detect recording-mode file. Recording files have no valid/invalid
     // categorization, no masks, no per-frame metrics — just raw frames
@@ -691,6 +710,9 @@ void HdfReviewTab::populateFrames(const std::vector<backend::services::Processed
 }
 
 void HdfReviewTab::clearDisplay() {
+    storedKdeLive_.clear();
+    storedKdeAnalysis_.clear();
+    drawStoredKdeContours(); // removes the previous file's contours
     validFrames_.clear();
     invalidFrames_.clear();
     selectedFrameIndex_ = -1;
@@ -2207,12 +2229,210 @@ void HdfReviewTab::updateCharts() {
     SPDLOG_INFO("HdfReviewTab::updateCharts: Generated charts from {} valid frames", validFrames_.size());
 }
 
+void HdfReviewTab::readStoredKdeRecords() {
+    storedKdeLive_.clear();
+    storedKdeAnalysis_.clear();
+    if (!hdfReader_) return;
+    auto readInto = [](const std::string& json, const char* which,
+                       std::vector<std::vector<std::pair<double, double>>>& out, double& fraction) {
+        std::string why;
+        const auto record = backend::monitoring::fromJson(json, &why);
+        if (!record) {
+            SPDLOG_WARN("HdfReviewTab: stored KDE {} record ignored: {}", which, why);
+            return;
+        }
+        fraction = record->coreFraction;
+        for (const auto& loop : record->contours) {
+            std::vector<std::pair<double, double>> pts;
+            pts.reserve(loop.size());
+            for (const auto& p : loop) pts.emplace_back(p.x, p.y);
+            out.push_back(std::move(pts));
+        }
+    };
+    std::string json;
+    if (hdfReader_->readKdeAnalysisJson(json)) readInto(json, "full-run", storedKdeAnalysis_, storedKdeAnalysisFraction_);
+    if (hdfReader_->readKdeLiveJson(json)) readInto(json, "live", storedKdeLive_, storedKdeLiveFraction_);
+    SPDLOG_INFO("HdfReviewTab: stored KDE core contours: full-run {} loop(s), live {} loop(s)",
+                storedKdeAnalysis_.size(), storedKdeLive_.size());
+}
+
+void HdfReviewTab::drawStoredKdeContours() {
+    if (!scatterPlotChart_) return;
+    for (auto* series : storedKdeSeries_) {
+        scatterPlotChart_->removeSeries(series);
+        delete series;
+    }
+    storedKdeSeries_.clear();
+    // Full-run solid blue, live (provisional) dashed orange: the same slots
+    // the Monitoring tab uses for live vs reference. One legend entry per
+    // record; further loops of the same record stay out of the legend.
+    auto drawFamily = [&](const std::vector<std::vector<std::pair<double, double>>>& loops, double fraction,
+                          bool provisional) {
+        QPen pen(provisional ? QColor(0xeb, 0x68, 0x34) : QColor(0x2a, 0x78, 0xd6));
+        pen.setWidthF(2.0);
+        pen.setCosmetic(true);
+        if (provisional) pen.setStyle(Qt::DashLine);
+        const QString name = provisional ? tr("Core %1% (live, provisional)").arg(std::lround(fraction * 100.0))
+                                         : tr("Core %1% (full run)").arg(std::lround(fraction * 100.0));
+        bool first = true;
+        for (const auto& loop : loops) {
+            auto* series = new QLineSeries();
+            series->setName(name);
+            series->setPen(pen);
+            QList<QPointF> pts;
+            pts.reserve(static_cast<qsizetype>(loop.size()));
+            for (const auto& p : loop) pts.append(QPointF(p.first, p.second));
+            series->append(pts);
+            scatterPlotChart_->addSeries(series);
+            series->attachAxis(scatterXAxis_);
+            series->attachAxis(scatterYAxis_);
+            if (!first) {
+                for (auto* marker : scatterPlotChart_->legend()->markers(series)) marker->setVisible(false);
+            }
+            first = false;
+            storedKdeSeries_.push_back(series);
+        }
+    };
+    drawFamily(storedKdeAnalysis_, storedKdeAnalysisFraction_, false);
+    drawFamily(storedKdeLive_, storedKdeLiveFraction_, true);
+}
+
+QString HdfReviewTab::statusTextForTests() const {
+    return ui->statusLabel->text();
+}
+
+void HdfReviewTab::updateComputeCoreActionState() {
+    if (!computeCoreAction_) return;
+    bool anyValid = false;
+    for (const auto& f : validFrames_) {
+        if (f.validation.isValid) { anyValid = true; break; }
+    }
+    computeCoreAction_->setEnabled(hdfReader_ && !isRecordingMode_ && anyValid && !coreWatcher_);
+}
+
+void HdfReviewTab::startFullRunCoreComputation() {
+    if (coreWatcher_ || !hdfReader_ || isRecordingMode_ || loadedHdfFilePath_.isEmpty()) return;
+    // Same axes as this scatter: area in µm² with the current factor.
+    const double factor = backend_.processing().getPixelToMicronFactor();
+    const double areaFactor = factor * factor;
+    std::vector<backend::monitoring::DensityPoint> points;
+    points.reserve(validFrames_.size());
+    for (const auto& f : validFrames_) {
+        if (f.validation.isValid) points.push_back({f.validation.area * areaFactor, f.validation.deformability});
+    }
+    if (points.empty()) {
+        ui->statusLabel->setText(tr("Core contour: no valid cells in this file"));
+        return;
+    }
+    // The core share follows the Monitoring setting (Monitoring Settings).
+    bool ok = false;
+    double fraction = QSettings().value(QStringLiteral("Monitoring/KdeCoreFraction"), 0.9).toDouble(&ok);
+    if (!ok || !std::isfinite(fraction)) fraction = 0.9;
+    fraction = std::clamp(fraction, 0.05, 1.0);
+    coreJobPath_ = loadedHdfFilePath_;
+    ui->statusLabel->setText(tr("Computing core contour from %1 cells…").arg(points.size()));
+    SPDLOG_INFO("HdfReviewTab: full-run core contour started ({} cells, {:.0f}%) for {}", points.size(), fraction * 100.0,
+                coreJobPath_.toStdString());
+    coreWatcher_ = new QFutureWatcher<backend::monitoring::KdeCoreRecord>(this);
+    connect(coreWatcher_, &QFutureWatcher<backend::monitoring::KdeCoreRecord>::finished, this,
+            &HdfReviewTab::onFullRunCoreFinished);
+    updateComputeCoreActionState();
+    coreWatcher_->setFuture(QtConcurrent::run([points = std::move(points), fraction, factor]() {
+        auto record = backend::monitoring::computeFullRunCoreRecord(points, fraction, factor);
+        record.computedAtNs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                             std::chrono::system_clock::now().time_since_epoch())
+                                                             .count());
+        return record;
+    }));
+}
+
+void HdfReviewTab::onFullRunCoreFinished() {
+    auto* watcher = coreWatcher_;
+    coreWatcher_ = nullptr;
+    if (!watcher) return;
+    const backend::monitoring::KdeCoreRecord record = watcher->result();
+    watcher->deleteLater();
+    updateComputeCoreActionState();
+    if (coreJobPath_ != loadedHdfFilePath_ || !hdfReader_) {
+        SPDLOG_INFO("HdfReviewTab: full-run core contour dropped (file changed while computing)");
+        return;
+    }
+    if (record.contours.empty()) {
+        ui->statusLabel->setText(tr("Core contour: too few cells for a contour (%1 estimated)").arg(record.populationCount));
+        return;
+    }
+    const QString summary = tr("Core %1%: %2 of %3 cells, %4 loop(s)")
+                                .arg(std::lround(record.coreFraction * 100.0))
+                                .arg(record.cellCount)
+                                .arg(record.populationCount)
+                                .arg(record.contours.size());
+    if (!storedKdeAnalysis_.empty()) {
+        bool replace = false;
+        if (overwriteAnswerForTests_) {
+            replace = *overwriteAnswerForTests_;
+        } else {
+            replace = QMessageBox::question(this, tr("Replace core contour"),
+                                            tr("This experiment already has a full-run core contour.\n"
+                                               "Replace it with the new one?\n\n%1").arg(summary),
+                                            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+        }
+        if (!replace) {
+            ui->statusLabel->setText(tr("Kept the existing full-run core contour"));
+            return;
+        }
+    }
+    // Save: the review reader holds the file read-only, so close it, write
+    // through a read-write handle, then reopen for review.
+    QString notSaved;
+    if (exportWatcher_) {
+        notSaved = tr("an export is running");
+    } else {
+        const std::string path = loadedHdfFilePath_.toStdString();
+        hdfReader_->closeFile();
+        {
+            backend::services::Hdf5Service updater;
+            if (!updater.openFileForUpdate(path)) {
+                notSaved = tr("the file cannot be opened for writing");
+            } else {
+                if (!updater.writeKdeAnalysisJson(backend::monitoring::toJson(record))) notSaved = tr("the write failed");
+                updater.closeFile();
+            }
+        }
+        if (!hdfReader_->loadFile(path)) {
+            SPDLOG_ERROR("HdfReviewTab: could not reopen {} after saving the core contour", path);
+            ui->statusLabel->setText(tr("Core contour saved, but the file could not be reopened; open it again"));
+            hdfReader_.reset();
+            updateComputeCoreActionState();
+            return;
+        }
+    }
+    storedKdeAnalysis_.clear();
+    for (const auto& loop : record.contours) {
+        std::vector<std::pair<double, double>> pts;
+        pts.reserve(loop.size());
+        for (const auto& p : loop) pts.emplace_back(p.x, p.y);
+        storedKdeAnalysis_.push_back(std::move(pts));
+    }
+    storedKdeAnalysisFraction_ = record.coreFraction;
+    drawStoredKdeContours();
+    if (notSaved.isEmpty()) {
+        ui->statusLabel->setText(tr("Full-run core contour saved. %1").arg(summary));
+        SPDLOG_INFO("HdfReviewTab: full-run core contour saved to {}", loadedHdfFilePath_.toStdString());
+    } else {
+        ui->statusLabel->setText(tr("Full-run core contour shown, not saved (%1). %2").arg(notSaved, summary));
+        SPDLOG_WARN("HdfReviewTab: full-run core contour not saved to {}: {}", loadedHdfFilePath_.toStdString(),
+                    notSaved.toStdString());
+    }
+}
+
 void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::ProcessedFrame>& validFrames) {
     if (!scatterSeries_ || !scatterXAxis_ || !scatterYAxis_) {
         return;
     }
 
     scatterSeries_->clear();
+    drawStoredKdeContours();
+    updateComputeCoreActionState();
 
     if (validFrames.empty()) {
         scatterXAxis_->setRange(0, 1000);

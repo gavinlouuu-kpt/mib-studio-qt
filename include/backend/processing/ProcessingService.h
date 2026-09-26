@@ -179,6 +179,18 @@ public:
     // Monitoring frames (accumulated only while active; gate with setMonitoringActive)
     std::vector<ProcessedFrame> getMonitoringValidFrames() const;
     std::vector<ProcessedFrame> getMonitoringInvalidFrames() const;
+    // Metrics-only copy of the valid ring (oldest -> newest): no image or
+    // contour references are taken, so the lock the processing thread also
+    // needs is held for a plain 1000-element copy (MonitoringDensityService).
+    struct MonitoringPoint {
+        uint64_t index{0};
+        double area{0.0}; // pixels
+        double deformability{0.0};
+    };
+    std::vector<MonitoringPoint> getMonitoringValidPoints() const;
+    // Test seam: append to the monitoring ring as the realtime path does,
+    // without the activity gate or images.
+    void appendMonitoringFrameForTests(const ProcessedFrame& frame);
     void clearMonitoringFrames();
     // Monitoring observability (BE-5): totals appended since start/clear so a
     // consumer can compute ring-buffer evictions (appended - currently held).
@@ -450,6 +462,7 @@ public:
         uint64_t maxQueueBytes{0};
         size_t batchSize{0};
         size_t workerCount{0};
+        size_t queueCapacity{0}; // configured maxQueuedFrames
         bool running{false};
     };
 
@@ -700,6 +713,15 @@ private:
             head_ = (head_ + 1) % capacity_;
             if (size_ < capacity_) {
                 ++size_;
+            }
+        }
+
+        // Visit oldest -> newest without copying frames.
+        template <class F>
+        void forEach(F&& visit) const {
+            const size_t start = (head_ + capacity_ - size_) % capacity_;
+            for (size_t i = 0; i < size_; ++i) {
+                visit(data_[(start + i) % capacity_]);
             }
         }
 

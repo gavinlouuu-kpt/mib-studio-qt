@@ -149,7 +149,11 @@ with source frames. See `docs/howto/pipeline-latency-diagnosis.md`.
 
 ## Shutdown
 
-`shutdown()` first calls `ExperimentCoordinator::shutdown()` so an active
+`shutdown()` first stops [[../services/MonitoringDensityService]] (its
+worker reads the monitoring ring and hands records to the coordinator; the
+service is built in the `AppBackend` constructor, idle until a shell enables
+it, and its record sink is wired to `ExperimentCoordinator::setLiveKdeCoreRecord`),
+then calls `ExperimentCoordinator::shutdown()` so an active
 run is finalized (file closed, accounting written) while every service it
 needs is still alive, then clears the target-group and background-capture
 callbacks (no new trigger requests are admitted), then stops capture **with the

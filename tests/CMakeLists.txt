@@ -190,6 +190,26 @@ mib_add_backend_test_executable(monitoring_roi_crop_test frontend/monitoring_roi
 add_test(NAME frontend.monitoring_roi_crop COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_roi_crop_test)
 set_tests_properties(frontend.monitoring_roi_crop PROPERTIES LABELS "frontend;safety" TIMEOUT 30)
 
+# Monitoring scatter density (KDE): invariants, per-axis bandwidth, degenerate
+# input, colour ramp and a ratio-gated cost budget (no Qt).
+mib_add_backend_test_executable(monitoring_density_test processing/monitoring_density_test.cpp)
+add_test(NAME processing.monitoring_density COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_test)
+set_tests_properties(processing.monitoring_density PROPERTIES LABELS "processing;monitoring;performance" TIMEOUT 60)
+
+# MonitoringDensityService (backend-owned live KDE): settings, lowest-priority
+# worker, fingerprint skip, load back-off, compute budget, record sink, stop,
+# and concurrent callers (TSan lane).
+mib_add_backend_test_executable(monitoring_density_service_test backend/monitoring_density_service_test.cpp)
+add_test(NAME backend.monitoring_density_service COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_service_test)
+set_tests_properties(backend.monitoring_density_service PROPERTIES LABELS "backend;monitoring;concurrency;safety" TIMEOUT 120)
+
+# The density worker never costs the processing pipeline throughput: real
+# computeProcessedFrame on every core, density service off vs on (ratio gate),
+# duty cycle within the compute budget when uncontended.
+mib_add_backend_test_executable(monitoring_density_contention_test performance/monitoring_density_contention_test.cpp)
+add_test(NAME performance.monitoring_density_contention COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_contention_test)
+set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 120)
+
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
 set_tests_properties(backend.pr4_monitoring_snapshot PROPERTIES LABELS "backend;processing;monitoring" TIMEOUT 30)
@@ -443,6 +463,18 @@ set_tests_properties(recording.hdf5_save_performance PROPERTIES LABELS "recordin
 mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_roundtrip_test.cpp)
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> experiment_roundtrip_test)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
+
+# KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
+# round-trip + fault injection for the save path and the frontend codec.
+mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
+add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
+set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)
+mib_add_backend_test_executable(kde_core_fault_test recording/kde_core_fault_test.cpp)
+add_test(NAME recording.kde_core_fault COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_fault_test)
+set_tests_properties(recording.kde_core_fault PROPERTIES LABELS "recording;backend;monitoring;safety" TIMEOUT 30)
+mib_add_backend_test_executable(kde_full_run_core_test recording/kde_full_run_core_test.cpp)
+add_test(NAME recording.kde_full_run_core COMMAND $<TARGET_FILE:mib_backend_tests> kde_full_run_core_test)
+set_tests_properties(recording.kde_full_run_core PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 60)
 
 # Issue #344: native Qt-free export service (round-trip, cancellation, faults,
 # bounded names, repeated runs with HDF5 open-object accounting). The

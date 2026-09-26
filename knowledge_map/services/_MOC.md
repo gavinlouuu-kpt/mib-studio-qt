@@ -7,6 +7,8 @@
 - [[CaptureService]] — dedicated thread; `camera->grabFrame()` → FrameStore
 - [[ProcessingService]] — worker pool + realtime loop; OpenCV pipeline
 - [[PlaybackService]] — UI-facing wrapper over FrameStore
+- [[MonitoringDensityService]] — live Monitoring scatter KDE + core contour on a
+  lowest-priority worker with load back-off and a compute budget
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata

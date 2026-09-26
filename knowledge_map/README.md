@@ -19,6 +19,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 ### Services (`src/backend/services/`)
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
+- Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
 - Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]

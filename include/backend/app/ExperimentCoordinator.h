@@ -63,6 +63,13 @@ public:
     // NotActive when there is no run.
     ExperimentStopOutcome requestStop(bool cancelled);
 
+    // Latest provisional KDE core contour record (JSON, frontend codec) that
+    // the Monitoring view is showing. Accepted only while a run is Active;
+    // cleared at Start; written to the run's file during finalization
+    // (Hdf5Service::writeKdeLiveJson) as a copy of what was on screen. Never
+    // blocks or fails the stop.
+    void setLiveKdeCoreRecord(std::string json);
+
     // Fatal save-error funnel (writer thread): marks the run Failed and
     // finalizes it so the file is closed and readable.
     void onFatalSaveError(const std::string& message);
@@ -158,6 +165,8 @@ private:
     bool fatalRequested_{false};
     std::string fatalMessage_;
     std::optional<RunConfigurationSnapshot> lastRun_;
+    // Provisional KDE core record for the active run (guarded by mutex_).
+    std::string liveKdeCoreJson_;
     // Multi-image series runs force inline realtime processing; restored on
     // finalize (moved here from the Qt window).
     bool restoreRealtimeMode_{false};

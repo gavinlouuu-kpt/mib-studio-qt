@@ -1,5 +1,77 @@
 # Recent Work
 
+## 2026-09-26 — Monitoring density (KDE) moved into the backend
+
+The live scatter KDE and core contour now run in the Qt-free backend
+([[../services/MonitoringDensityService]]) instead of a Qt worker job in the
+Monitoring tab, so the React/Tauri shell can read the same result and the
+estimate cannot compete with acquisition: one worker at the lowest OS
+priority (SCHED_IDLE / THREAD_PRIORITY_LOWEST), ticks skipped while frames
+are dropped or the batch queue is ≥ 25% full, next wake ≥ 20× the last
+compute (≤ ~5% of one core). Its input is a metrics-only copy of the
+processing monitoring ring (`ProcessingService::getMonitoringValidPoints`),
+and it hands the provisional record to the coordinator itself. The kernel
+and record codec moved to `include/backend/processing/` (namespace
+`backend::monitoring`). The Qt tab pushes settings/axes and polls for new
+results. Guards: `backend.monitoring_density_service` (policy, back-off,
+concurrency under TSan), `performance.monitoring_density_contention`
+(processing throughput with the service on ≥ 90% of off, duty cycle within
+budget), `e2e.experiment_coordinator` (service-supplied record in the file),
+`processing.monitoring_density` (renamed from `frontend.monitoring_density`).
+Before the PR the mock-camera e2e ran in the Linux container on the
+Hugging Face `512x96stream` frames: it exposed ~600 ms CPU per estimate in
+the busy app, fixed by a separable contour grid, a one-pass normaliser and
+a budget charged on thread CPU time (~90 ms, processing fps unchanged).
+Bridge + React consumption is the follow-up. See
+[[../task/2026-09-23-monitoring-kde-density]].
+
+## 2026-09-24 — KDE core contour: live contour, reference, stored records
+
+The Monitoring scatter shows a solid contour around the densest `Core %`
+(default 90%) of the population while Density (KDE) is on: a true KDE
+iso-line (mass-fraction level, 128×64 grid, marching squares) computed in the
+existing worker job. A dashed reference contour can be pinned or taken from a
+previous experiment file (Monitoring Settings). Each experiment run with
+Density on stores the on-screen contour as a provisional record
+(`/monitoring @kde_live_json`, written by the coordinator at stop); the Review
+tab draws stored contours and, on right-click, computes the authoritative
+full-run contour of all recorded cells and saves it into the file
+(`/analysis @kde_core_json`, via the new `Hdf5Service::openFileForUpdate`).
+Guards: `frontend.monitoring_density`, `recording.kde_core_roundtrip`,
+`recording.kde_core_fault`, `recording.kde_full_run_core`,
+`e2e.experiment_coordinator`,
+`frontend.monitoring_kde_density`, `frontend.hdf_review_core`,
+`integration.monitoring_kde_e2e`. See
+[[../task/2026-09-23-monitoring-kde-density]] and
+`docs/exec-plans/completed/2026-09-24-kde-core-region-split.md`.
+
+## 2026-09-23 — Monitoring scatter density (KDE) colouring
+
+The Monitoring tab's deformability-vs-area scatter can now be coloured by
+local population density (**Density (KDE)** toggle in the top row): a
+Gaussian KDE with a per-axis Silverman bandwidth, evaluated at every sample
+by the Qt-free `MonitoringDensity.h` kernel on the Qt thread pool
+(`QtConcurrent` + `QFutureWatcher`, one job at a time, unchanged buffers
+skipped) on its own periodic timer (default 2 s), and re-applied to the
+series through per-point `QXYSeries` configuration on the ordinary 500 ms
+refresh. Target-group points keep their identity by marker shape while the
+mode is on. The never-called isotropic `computeKDE` grid and the grid
+resolution setting were removed; the settings dialog now exposes a bandwidth
+factor and the update interval, and toggle/factor/interval persist in
+`QSettings`. Points are rendered through eight density-level series rather
+than Qt's per-point configuration, which the new mock-camera end-to-end
+(`integration.monitoring_kde_e2e`, real `MainWindow` on the
+`512x96stream` asset at 200 fps) measured at ≈ +220 ms GUI stall per
+refresh; with level series the KDE-on refresh is ~45 ms while capture,
+processing and overlay lag are unchanged. The same run shows the
+pre-existing plain 1000-point scatter refresh stalling the GUI ~380 ms
+(follow-up). Guards: `frontend.monitoring_density` (kernel invariants,
+per-axis separation, ratio-gated cost), `frontend.monitoring_kde_density`
+(offscreen widget: toggle, asynchronous estimate, late points, hide/show,
+persistence, dialog) and `integration.monitoring_kde_e2e`. See
+[[../frontend/ExperimentMonitoringTab]] and
+[[../task/2026-09-23-monitoring-kde-density]].
+
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
 
 Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,

@@ -12,6 +12,16 @@ Files larger than 2 GB are fine — frames load lazily as you browse.
   **←/→** to step frames.
 - **Metrics table** — every saved per-frame metric, with optional scatter
   and histogram charts over the whole dataset.
+- **Core contour** — if the experiment was recorded with Density (KDE) on,
+  its scatter shows the contour that was on screen at Stop as a dashed
+  orange line ("live, provisional"). Right-click the scatter and choose
+  **Compute core contour from full run** to trace the contour of the densest
+  90% of *all* recorded cells (the share set under Monitoring Settings); it
+  is drawn solid blue and saved into the file, after asking before it
+  replaces an earlier one. Close the file in other programs first; if the
+  file cannot be written, the contour is shown but not saved and the status
+  line says so. The saved full-run contour is what *From file…* in
+  Monitoring Settings uses as the reference for later runs.
 - **Overlays** — mask/contour overlays and the ROI rectangle can be toggled
   on the loaded frames.
 - **Close File** releases the file handle (do this before moving or

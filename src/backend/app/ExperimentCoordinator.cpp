@@ -693,6 +693,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     proc.startExperiment();
     activeRun_ = run;
     lastRun_ = run;
+    liveKdeCoreJson_.clear();
     stopRequested_ = cancelRequested_ = fatalRequested_ = false;
     fatalMessage_.clear();
     if (!worker_.joinable()) {
@@ -784,6 +785,13 @@ ExperimentStopOutcome ExperimentCoordinator::requestStop(bool cancelled)
     return ExperimentStopOutcome::Accepted;
 }
 
+void ExperimentCoordinator::setLiveKdeCoreRecord(std::string json)
+{
+    std::scoped_lock lk(mutex_);
+    if (state_ != ExperimentRunState::Active) return; // no run, or already finalizing
+    liveKdeCoreJson_ = std::move(json);
+}
+
 void ExperimentCoordinator::onFatalSaveError(const std::string& message)
 {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -863,6 +871,8 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     auto& hdf5 = backend_.hdf5();
     const bool restoreMode = restoreRealtimeMode_;
     restoreRealtimeMode_ = false;
+    const std::string liveKdeCoreJson = std::move(liveKdeCoreJson_);
+    liveKdeCoreJson_.clear();
     lk.unlock();
 
     bool ok = true;
@@ -921,6 +931,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             if (!cfgJson.empty()) hdf5.writeConfigJson(cfgJson);
         }
         SPDLOG_INFO("ExperimentCoordinator: metadata+accounting+provenance took {:.3f} ms", sinceMs(t0));
+        // Provisional KDE core contour (copy of the live view); best effort,
+        // never affects the run outcome.
+        if (!liveKdeCoreJson.empty()) {
+            if (hdf5.writeKdeLiveJson(liveKdeCoreJson)) {
+                SPDLOG_INFO("ExperimentCoordinator: stored provisional KDE core record ({} bytes)", liveKdeCoreJson.size());
+            } else {
+                SPDLOG_WARN("ExperimentCoordinator: provisional KDE core record could not be stored");
+            }
+        }
         const auto tClose = clock::now();
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
