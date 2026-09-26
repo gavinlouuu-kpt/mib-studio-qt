@@ -12,6 +12,7 @@ sevenzip
 # section: backend
 opencv
 hdf5
+# zlib: the macOS SDK ships libz; CMake FindZLIB uses it (no formula needed).
 spdlog
 fmt
 nlohmann-json

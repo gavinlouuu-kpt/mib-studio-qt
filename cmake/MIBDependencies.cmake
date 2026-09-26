@@ -235,3 +235,8 @@ find_package(HDF5 CONFIG QUIET)
 if(NOT HDF5_FOUND)
     find_package(HDF5 MODULE QUIET)
 endif()
+
+# zlib is a hard dependency (ADR 0006: the HDF5 compression writer calls zlib
+# directly). Conan: direct requirement in conanfile.py; apt: zlib1g-dev;
+# manylinux: zlib-devel; macOS: the SDK's libz. Fail here, not later.
+find_package(ZLIB REQUIRED)

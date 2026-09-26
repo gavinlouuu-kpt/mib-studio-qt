@@ -23,6 +23,7 @@ python3-venv
 # linux-backend-only: mib_processing + mib_backend + CTest, no Qt.
 libopencv-dev
 libhdf5-dev
+zlib1g-dev        # direct dependency (ADR 0006), not only via libhdf5-dev
 libspdlog-dev
 libfmt-dev
 nlohmann-json3-dev

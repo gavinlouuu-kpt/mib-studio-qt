@@ -22,6 +22,10 @@ class MibStudioQtDeps(ConanFile):
         self.requires("spdlog/1.17.0")
         self.requires("sqlite3/3.51.0")
         self.requires("hdf5/1.14.6")
+        # Direct zlib dependency (ADR 0006): the compression writer calls zlib
+        # itself, not only through HDF5's deflate filter. Same range the hdf5
+        # recipe declares, so it resolves to the package already in the graph.
+        self.requires("zlib/[>=1.2.11 <2]")
         self.requires("opencv/4.12.0")
         self.requires("nlohmann_json/3.11.3")
 

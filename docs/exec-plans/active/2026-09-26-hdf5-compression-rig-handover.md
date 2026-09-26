@@ -21,14 +21,14 @@ records the results. Companion documents:
 | Repository | `gavinlouuu-kpt/mib-studio-qt` |
 | Branch | `claude/hdf5-compression-impact-bc7zvq` (pushed; no PR opened yet) |
 | Base | `develop` at `2fe0282` |
-| Commits (oldest first) | `dc5bf2c` first plan draft · `fa2c83c` epic spec + ADR 0006 · `566d05a` PR 0: capability test, benchmark script, measurement howto · this handover |
-| Product behaviour change | **None.** Nothing in `src/` or `include/` changed. The branch adds one test, one script and documentation. |
+| Commits (oldest first) | `dc5bf2c` first plan draft · `fa2c83c` epic spec + ADR 0006 · `566d05a` PR 0: capability test, benchmark script, measurement howto · `7b2f9be` this handover · "build: make zlib a required dependency (ADR 0006)" (the commit after the handover) |
+| Product behaviour change | **None.** Nothing in `src/` or `include/` changed. The branch adds one test, one script, documentation, and a direct zlib dependency that resolves to the package HDF5 already uses. |
 
 ## 2. What is on the branch
 
 | Deliverable | Path | Purpose on the rig |
 |---|---|---|
-| Capability test `recording.hdf5_direct_chunk_capability` | `tests/recording/hdf5_direct_chunk_capability_test.cpp`, registered in `tests/CMakeLists.txt` (only when zlib is found) | Prints the Windows Conan HDF5 version and whether it is **threadsafe**. Proves mixed compressed/raw chunks read back byte-identical through `Hdf5Service`. |
+| Capability test `recording.hdf5_direct_chunk_capability` | `tests/recording/hdf5_direct_chunk_capability_test.cpp`, registered in `tests/CMakeLists.txt` (always built; zlib is a required dependency) | Prints the Windows Conan HDF5 version and whether it is **threadsafe**. Proves mixed compressed/raw chunks read back byte-identical through `Hdf5Service`. |
 | Benchmark script | `scripts/bench_hdf5_compression.py` | Compression throughput and ratio on the rig CPU and recording drive, idle and during a live run. |
 | Measurement procedure | `docs/howto/hdf5-compression-measurement.md` | The long form of §4 below. |
 | Epic spec + ADR | plan and ADR above | What the numbers feed into. |
@@ -57,10 +57,11 @@ Already verified off-rig on a 4-core cloud VM, 2026-09-26:
    cmake --build --preset windows-ninja-build
    ```
 
-   Look in the configure output for
-   `recording.hdf5_direct_chunk_capability skipped: zlib not found`. If it
-   appears, write that down: it is itself a result (PR 2 must add zlib as a
-   direct Conan requirement), and step 1 below cannot run.
+   zlib is a direct Conan requirement (`zlib/[>=1.2.11 <2]`, which resolves
+   to the 1.3.2 package HDF5 already uses), so `conan install` brings no new
+   binaries. `find_package(ZLIB REQUIRED)` stops the configure if it is
+   somehow missing. If that happens, record the error and fix the Conan
+   install before going on.
 
 3. Install the Python side and fetch the frames.
 
@@ -186,5 +187,3 @@ trees. Attach the JSON files to the PR instead.
 - **If Step 3 fails at every thread count**, or Step 4 fails: record the
   failure, set this handover to `Status: blocked` with the reason, and
   revisit D4/D6 (or D1 for Step 4) in the plan before any product code lands.
-- **If zlib was not found (§3, step 2):** PR 2 adds `zlib` as a direct
-  requirement in `conanfile.py`. Record it in the decision log.

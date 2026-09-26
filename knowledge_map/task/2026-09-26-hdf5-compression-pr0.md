@@ -17,7 +17,7 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
   The process runs at below-normal priority, like the planned pool.
 - `tests/recording/hdf5_direct_chunk_capability_test.cpp`
   (`recording.hdf5_direct_chunk_capability`, labels recording/backend/hdf5).
-  It is registered only when `find_package(ZLIB)` succeeds. It:
+  It is always built, because zlib is required (see below). It:
   - prints `HDF5_CAPABILITY` (version, threadsafe, deflate encode/decode,
     zlib) and `HDF5_S1` lines;
   - asserts that compressed, raw (filter mask 0x1) and padded edge chunks read
@@ -26,6 +26,13 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
 - `docs/howto/hdf5-compression-measurement.md`: the rig procedure, covering
   the capability line, the idle benchmark, headroom under a live 1000 fps run
   (sets `threads`), and the reader check.
+
+- **zlib is now a required dependency.** It is a direct Conan requirement
+  with the hdf5 recipe's range, which resolves to the same 1.3.2 package on
+  the Linux and Windows profiles. `find_package(ZLIB REQUIRED)` is in
+  `cmake/MIBDependencies.cmake`, and the package is declared as apt
+  `zlib1g-dev`, manylinux `zlib-devel` and macOS SDK `libz`. See
+  [[../build-and-run/Dependencies]].
 
 ## Results (cloud VM, 4 × 2.1 GHz Xeon)
 

@@ -303,7 +303,10 @@ windeployqt.exe --release build/Release/mib_studio_qt.exe
 ## Conan
 
 Dependencies resolved via Conan 2 (`conanfile.py`; host profiles in
-`conan/profiles/`). See [[Dependencies]]. Post-build hooks call
+`conan/profiles/`). See [[Dependencies]]. zlib is a direct requirement and
+`find_package(ZLIB REQUIRED)` (ADR 0006), so a host without it fails at
+configure time rather than silently skipping zlib-dependent code or tests.
+Post-build hooks call
 `windeployqt.exe` to copy Qt plugins and DLLs next to the exe. CMake resolves
 `windeployqt` and the `PATH` prefix from Conan CMakeDeps’ `qt_PACKAGE_FOLDER_*`
 so Release/Debug tools stay aligned with the linked Qt package (stale

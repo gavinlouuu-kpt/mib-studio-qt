@@ -438,16 +438,12 @@ set_tests_properties(recording.hdf5_exit_teardown PROPERTIES LABELS "recording;b
 
 # ADR 0006 (lossless compression) PR 0: deflate + H5Dwrite_chunk capability
 # guard on the lane's HDF5 (mixed compressed/raw chunks, tail-rewrite space).
-# Prints an HDF5_CAPABILITY line (version, threadsafe). Needs zlib headers.
-find_package(ZLIB QUIET)
-if(ZLIB_FOUND)
-    mib_add_backend_test_executable(hdf5_direct_chunk_capability_test recording/hdf5_direct_chunk_capability_test.cpp)
-    mib_backend_test_link(hdf5_direct_chunk_capability_test PRIVATE ZLIB::ZLIB)
-    add_test(NAME recording.hdf5_direct_chunk_capability COMMAND $<TARGET_FILE:mib_backend_tests> hdf5_direct_chunk_capability_test)
-    set_tests_properties(recording.hdf5_direct_chunk_capability PROPERTIES LABELS "recording;backend;hdf5" TIMEOUT 120)
-else()
-    message(STATUS "recording.hdf5_direct_chunk_capability skipped: zlib not found")
-endif()
+# Prints an HDF5_CAPABILITY line (version, threadsafe). zlib is REQUIRED in
+# cmake/MIBDependencies.cmake, so this test is always built.
+mib_add_backend_test_executable(hdf5_direct_chunk_capability_test recording/hdf5_direct_chunk_capability_test.cpp)
+mib_backend_test_link(hdf5_direct_chunk_capability_test PRIVATE ZLIB::ZLIB)
+add_test(NAME recording.hdf5_direct_chunk_capability COMMAND $<TARGET_FILE:mib_backend_tests> hdf5_direct_chunk_capability_test)
+set_tests_properties(recording.hdf5_direct_chunk_capability PROPERTIES LABELS "recording;backend;hdf5" TIMEOUT 120)
 
 mib_add_backend_test_executable(hdf5_save_performance_test recording/hdf5_save_performance_test.cpp)
 add_test(NAME recording.hdf5_save_performance COMMAND $<TARGET_FILE:mib_backend_tests> hdf5_save_performance_test)

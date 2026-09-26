@@ -18,6 +18,11 @@ PR 0 adds `scripts/bench_hdf5_compression.py`, the
 (mixed raw/compressed chunks readable) passed. Rig headroom is still open.
 Task note: [[../task/2026-09-26-hdf5-compression-pr0]].
 
+zlib is now a guaranteed dependency. It is a direct Conan requirement
+(`zlib/[>=1.2.11 <2]`, the same 1.3.2 package HDF5 already resolved, so no
+new binaries), `find_package(ZLIB REQUIRED)` fails configure if it is
+missing, and it is declared as apt `zlib1g-dev` and manylinux `zlib-devel`.
+
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
 
 Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,

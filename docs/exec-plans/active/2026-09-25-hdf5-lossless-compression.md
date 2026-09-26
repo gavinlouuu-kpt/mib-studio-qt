@@ -266,6 +266,17 @@ App config `storage.compression.*`:
     HDF5 2.0.0 (h5py 3.16) +0.65 %, pass.
   - **S1 passes on 1.10.10, 1.14.6 and 2.0.0, so D3.4 stands and T2 is not
     needed.**
+- 2026-09-26: **zlib can no longer be absent.**
+  - `conanfile.py` requires `zlib/[>=1.2.11 <2]`, the hdf5 recipe's own
+    range. `conan graph info` for `linux-gcc13` and `windows-msvc194-ninja`
+    shows one host zlib, 1.3.2, the same package HDF5, OpenCV and Qt already
+    use, so the rig's team remote needs no new binaries.
+  - `find_package(ZLIB REQUIRED)` in `cmake/MIBDependencies.cmake` fails
+    configure without zlib. This was checked with
+    `CMAKE_DISABLE_FIND_PACKAGE_ZLIB`.
+  - apt `zlib1g-dev` and the manylinux `zlib-devel` image package are
+    declared.
+  - The capability test is now always built, not skipped.
   - Still open (rig only): the Conan 1.14.6 capability line (threadsafe
     status), headroom under a live 1000 fps run (sets `threads`), and
     HDFView/MATLAB reads of `--emit-mixed`. The procedure is in
@@ -314,8 +325,10 @@ App config `storage.compression.*`:
 
 - New `include/backend/recording/ChunkWriter.h` (`ChunkAssembler`,
   `CompressionPool`, `ChunkBudget`, `ChunkWriteStats`) in `mib_processing`.
-  Link zlib explicitly (Conan `zlib`, apt `zlib1g-dev`, manylinux image), and
-  update [Build](../../../knowledge_map/build-and-run/Build.md) and
+  Link `ZLIB::ZLIB` to `mib_processing`. zlib itself is already guaranteed
+  since 2026-09-26: a direct Conan requirement, apt `zlib1g-dev`, manylinux
+  `zlib-devel`, and `find_package(ZLIB REQUIRED)`. See
+  [Build](../../../knowledge_map/build-and-run/Build.md) and
   [Dependencies](../../../knowledge_map/build-and-run/Dependencies.md).
 - `HdfWriteQueue::depth()` (lock-protected read) for D4 pressure.
 - `Hdf5Service` image append paths route through `ChunkWriter` when the
@@ -379,9 +392,9 @@ App config `storage.compression.*`:
   case is larger files, never lost frames.
 - **Free space fragmented by tail rewrites.** De-risked by S1, with T2 as the
   fallback. The finish pass rewrites compactly regardless.
-- **zlib in `mib_processing` changes the wheel and plugin build.** Check the
-  manylinux image and the signed-core ABI in PR 2. zlib is already a transitive
-  HDF5 dependency everywhere.
+- **zlib in `mib_processing` changes the wheel and plugin build.** The
+  availability part is closed: zlib is a declared, configure-checked dependency
+  in every environment (2026-09-26). PR 2 still checks the signed-core ABI.
 - **Existing concurrent HDF5 use by review and export threads.** Not widened by
   this epic (D5). PR 0 records threadsafe status and files debt if needed.
 - **Windows AV or indexers locking the file during replace.** The soft retry
