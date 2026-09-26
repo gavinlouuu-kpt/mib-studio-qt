@@ -8,7 +8,11 @@ Uniform JSON format for processing pipeline metrics so **mib-studio-qt** pipelin
 - **Top-level fields**:
   - `version`: Schema version (currently `1`).
   - `contract_version`: Optional explicit portable-processing contract version
-    (required in conformance references; currently `1`).
+    (required in conformance references): `1` (subtract-ring, the default) or
+    `2` (absdiff-laplacian). Each contract has its own references
+    (ADR 0007). `scripts/compare_metrics.py` reads it: Contract-1 records must
+    carry `ring_ratio`; Contract-2 records carry none and are compared on
+    `laplacian_variance` when present.
   - `wheel_version`: Optional `mib-processing` package version that produced a
     conformance candidate.
   - `fixture` / `input_frame_count`: Optional conformance-fixture identity and

@@ -61,8 +61,11 @@ piezo nanopositioner to keep the cell in focus across the channel.
   scripts/conformance/focus-50v-real-contract1.json` does the same on real
   frames: 13 frames of the 50 V cells-in-different-focus recordings (C2C12,
   HEK293, HeLa, PANC-1), each processed with its recording's background and
-  Contract-1 config (built by `scripts/build_real_conformance_fixture.py`). Both
-  run in the wheel CI. References and fixtures change only in a PR labelled
+  Contract-1 config (built by `scripts/build_real_conformance_fixture.py`).
+  `--processing-contract 2` runs the same fixture under Contract 2 against
+  `scripts/conformance/focus-50v-real-contract2.json`. All three run in the
+  wheel CI; `compare_metrics.py` is contract-aware (ring required only for
+  Contract 1). References and fixtures change only in a PR labelled
   `gold-reference-change` (`.github/workflows/gold-reference-guard.yml`;
   owners in `.github/CODEOWNERS`).
 - `scripts/empty_frame_detection.py` — offline Python pipeline (Kedro +

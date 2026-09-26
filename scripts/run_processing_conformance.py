@@ -206,6 +206,16 @@ def load_real_fixture(
     return groups, config, pixel_to_micron, f"npz-real:{npz_path.name}"
 
 
+def config_for_contract(config: dict[str, Any], contract: int) -> dict[str, Any]:
+    """The fixture's recorded config run under ``contract``. Contract 2 takes
+    the same threshold through its canonical ``difference_threshold`` key."""
+    config = dict(config)
+    config["processing_contract_version"] = contract
+    if contract == 2 and "bg_subtract_threshold" in config:
+        config["difference_threshold"] = config.pop("bg_subtract_threshold")
+    return config
+
+
 def build_candidate(
     frames: Sequence[np.ndarray],
     fixture_id: str,
@@ -304,6 +314,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Real-frame fixture (frames + per-recording backgrounds + config), "
         "see build_real_conformance_fixture.py.",
     )
+    parser.add_argument(
+        "--processing-contract",
+        type=int,
+        choices=(1, 2),
+        default=None,
+        help="Run the --fixture-npz config under this processing contract "
+        "(default: the fixture's recorded contract).",
+    )
     inputs.add_argument(
         "--hdf5",
         type=Path,
@@ -345,6 +363,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if args.fixture_npz is not None:
             groups, config, pixel_to_micron, fixture_id = load_real_fixture(args.fixture_npz)
+            if args.processing_contract is not None:
+                config = config_for_contract(config, args.processing_contract)
             candidate = build_candidate(
                 [], args.fixture_id or fixture_id, config=config,
                 pixel_to_micron=pixel_to_micron, groups=groups,

@@ -246,6 +246,16 @@ jobs:
             --reference scripts/conformance/focus-50v-real-contract1.json \
             --candidate-out artifacts/mib-processing-conformance-real.json
 
+      - name: Run real-frame Contract 2 conformance (50 V focus fixture)
+        if: matrix.full_test
+        run: |
+          set -euo pipefail
+          python scripts/run_processing_conformance.py \
+            --fixture-npz scripts/conformance/focus-50v-real.npz \
+            --processing-contract 2 \
+            --reference scripts/conformance/focus-50v-real-contract2.json \
+            --candidate-out artifacts/mib-processing-conformance-real-contract2.json
+
       - name: Verify portable wheel in Biowork production base
         if: matrix.full_test && matrix.python-version == '3.12'
         run: |

@@ -14,8 +14,8 @@
     },
     "contract_version": {
       "type": "integer",
-      "const": 1,
-      "description": "Optional explicit portable-processing contract version. Required by conformance references; omitted by older metrics-only exports."
+      "enum": [1, 2],
+      "description": "Optional explicit portable-processing contract version (1 = subtract-ring, 2 = absdiff-laplacian; ADR 0006/0007). Required by conformance references; omitted by older metrics-only exports."
     },
     "wheel_version": {
       "type": "string",
