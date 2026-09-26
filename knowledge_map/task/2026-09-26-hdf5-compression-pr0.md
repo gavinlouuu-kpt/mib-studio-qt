@@ -46,5 +46,8 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
 
 ## Open (rig)
 
+Handover with steps, pass criteria and the results table:
+`docs/exec-plans/active/2026-09-26-hdf5-compression-rig-handover.md`.
+
 The Conan 1.14.6 `HDF5_CAPABILITY` line (threadsafe status), headroom under
 load, and HDFView/MATLAB reads of `--emit-mixed`.

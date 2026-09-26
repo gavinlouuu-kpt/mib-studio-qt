@@ -397,7 +397,8 @@ App config `storage.compression.*`:
   - [x] 2026-09-26: benchmark script, C++ capability guard, measurement howto,
         VM numbers, and S1/S2 on HDF5 1.10.10, 1.14.6 and 2.0.0
   - [ ] rig: Conan capability line, headroom under load (`threads`),
-        HDFView/MATLAB
+        HDFView/MATLAB; see the
+        [rig handover](2026-09-26-hdf5-compression-rig-handover.md)
 - [ ] PR 1: fixed chunk geometry, chunk-aligned batches, reader chunk cache
 - [ ] PR 2: compressing chunk writer + raw fallback (default off)
 - [ ] PR 3: config, run snapshot, storage attributes, telemetry, bridge, Qt status
