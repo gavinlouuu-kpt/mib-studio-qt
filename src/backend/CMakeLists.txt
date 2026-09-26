@@ -175,6 +175,7 @@ function(mib_add_processing_core_plugin target contract)
         ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
     )

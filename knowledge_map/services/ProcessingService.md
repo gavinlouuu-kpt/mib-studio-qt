@@ -280,6 +280,25 @@ against the Contract-2 module, which also checks that `get_api` is absent. The l
 activation path (negotiating `get_api_v2` through the trust/lease machinery) and
 native signing remain follow-on.
 
+**Contract-2 cores own their science (T1.1a, 2026-09-27).** The loader
+accepts engine ABI v1 with Contract 1 or engine ABI v2 with Contract 2 and
+nothing else. For v2 it negotiates `mib_processing_get_api_v2`, requires
+`process_objects` and the Contract-2 capabilities, and the dynamic kernel
+overrides `analyzeObjects`: it sends the full profile config as JSON
+(`config_json::toScienceJson`, carried in
+`mib_processing_kernel_config_v2::science_config_json`) and the frame +
+background, and the core runs the same `filterProcessedObjects` the host's
+Contract 2 runs. The host only rebuilds display contours and the no-object
+record from the mask with `science::findContours`, and applies the E-modulus
+LUT. The object metrics struct carries `in_range`/`in_channel`. The service
+passes the matching background to `analyzeObjects` at every call site (the
+bundled science ignores it, so Contract 1 is unchanged). Test:
+`processing.core_contract2_equivalence` loads the real Contract-2 core
+through the loader and requires field-for-field equality with a bundled
+Contract-2 kernel across objects, holes, border, ROI, noise with and without
+the area gate, channel band, Laplacian gate, target group and empty frames;
+a Contract-1 config is refused.
+
 ## Accumulation modes
 
 - **Monitoring rings** — `monitoringValidFrames_` / `monitoringInvalidFrames_`,

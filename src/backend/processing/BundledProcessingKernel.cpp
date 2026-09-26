@@ -236,7 +236,8 @@ bool IProcessingKernel::analyzeObjects(const cv::Mat& processedImage,
                                        double pixelToMicronFactor,
                                        const backend::EModulusLut* eModulusLut,
                                        std::vector<services::FilterResult>& results,
-                                       std::string* error) {
+                                       std::string* error,
+                                       const cv::Mat& /*background*/) {
     try {
         results = science::filterProcessedObjects(processedImage, roi, config, originalImage,
                                                   pixelToMicronFactor, eModulusLut);

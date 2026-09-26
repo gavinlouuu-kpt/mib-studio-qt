@@ -216,6 +216,12 @@ typedef struct mib_processing_kernel_config_v2 {
     int32_t laplacian_kernel_size;
     uint32_t flags; /* MIB_PROCESSING_KERNEL_FLAG_* */
     const mib_processing_filter_chain* filters; /* NULL == identity */
+    /* Full science config as UTF-8 JSON (config_json::toScienceJson): the
+     * object gates, target group, processing_contract_version, Laplacian
+     * gate and channel band. The core runs its object science under exactly
+     * this config (ADR 0007: the core owns the science). NULL == defaults. */
+    const char* science_config_json;
+    uint64_t science_config_json_size;
     uint32_t reserved_u32[16];
 } mib_processing_kernel_config_v2;
 
@@ -243,6 +249,8 @@ typedef struct mib_processing_object_metrics {
     double brightness_q2;
     double brightness_q3;
     double brightness_q4;
+    int32_t in_range;   /* every enabled range gate passed */
+    int32_t in_channel; /* centroid inside the channel band (1 when no band) */
     uint32_t reserved_u32[8];
 } mib_processing_object_metrics;
 

@@ -1,11 +1,20 @@
 #include "backend/processing/ProcessingCoreLoader.h"
 
+#include "backend/processing/EModulusLut.h"
+#include "backend/processing/ProcessingConfigJson.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingCoreAbi.h"
+#include "backend/processing/ProcessingCoreCapabilities.h"
+#include "backend/processing/ProcessingScience.h"
+
+#include <nlohmann/json.hpp>
 
 #include <array>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -113,11 +122,15 @@ class DynamicProcessingKernel final : public IProcessingKernel {
     class ContextLease;
 
 public:
+    // `processObjects` is non-null for an engine-ABI-v2 (Contract 2) core,
+    // which then owns object science through analyzeObjects (ADR 0007).
     DynamicProcessingKernel(std::shared_ptr<Module> module,
                             mib_processing_api api,
                             mib_processing_context context,
-                            ProcessingCoreIdentity identity)
-        : module_(std::move(module)), api_(api), identity_(std::move(identity)) {
+                            ProcessingCoreIdentity identity,
+                            mib_processing_process_objects_fn processObjects = nullptr)
+        : module_(std::move(module)), api_(api), processObjects_(processObjects),
+          identity_(std::move(identity)) {
         contexts_.push_back(context);
     }
 
@@ -214,6 +227,148 @@ public:
         return true;
     }
 
+    // ABI v2: the core runs its whole Contract-2 pipeline (mask + object
+    // metrics) on originalImage/background under the host's full config. The
+    // host only rebuilds display contours and the no-object record from the
+    // mask with the shared contour helpers, and applies the E-modulus LUT
+    // (a host data asset), exactly as the bundled science does.
+    bool analyzeObjects(const cv::Mat& processedImage,
+                        const cv::Rect& roi,
+                        const services::ProcessingConfig& config,
+                        const cv::Mat& originalImage,
+                        double pixelToMicronFactor,
+                        const backend::EModulusLut* eModulusLut,
+                        std::vector<services::FilterResult>& results,
+                        std::string* error,
+                        const cv::Mat& background) override {
+        if (!processObjects_) {
+            return IProcessingKernel::analyzeObjects(processedImage, roi, config, originalImage,
+                                                     pixelToMicronFactor, eModulusLut, results,
+                                                     error, background);
+        }
+        results.clear();
+        if (originalImage.empty() || originalImage.type() != CV_8UC1 ||
+            processedImage.size() != originalImage.size()) {
+            if (error) *error = "ABI v2 core needs the CV_8UC1 frame matching the mask";
+            return false;
+        }
+        const auto input = imageView(originalImage);
+        const bool useBackground = !background.empty() && background.type() == CV_8UC1 &&
+                                   background.size() == originalImage.size();
+        const auto backgroundView = useBackground ? imageView(background)
+                                                  : mib_processing_image_view{};
+        const std::string scienceJson = config_json::toScienceJson(config).dump();
+        mib_processing_kernel_config_v2 configValue{};
+        configValue.struct_size = sizeof(configValue);
+        configValue.gaussian_blur_size = config.gaussian_blur_size;
+        configValue.difference_threshold = config.bg_subtract_threshold;
+        configValue.morphology_kernel_size = config.morph_kernel_size;
+        configValue.morphology_iterations = config.morph_iterations;
+        configValue.empty_frame_pixel_threshold = config.empty_frame_pixel_threshold;
+        configValue.laplacian_kernel_size = 3;
+        configValue.flags = MIB_PROCESSING_KERNEL_FLAG_ABSOLUTE_BACKGROUND_DIFFERENCE;
+        configValue.science_config_json = scienceJson.c_str();
+        configValue.science_config_json_size = scienceJson.size();
+        const auto roiValue = abiRoi(KernelRoi{roi.x, roi.y, roi.width, roi.height});
+
+        std::vector<mib_processing_object_metrics> storage(16);
+        mib_processing_object_buffer buffer{};
+        std::array<char, 512> detail{};
+        {
+            ContextLease context(*this, detail);
+            if (!context) {
+                if (error) *error = detail.data();
+                return false;
+            }
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                buffer = mib_processing_object_buffer{};
+                buffer.struct_size = sizeof(buffer);
+                buffer.capacity = static_cast<uint32_t>(storage.size());
+                buffer.objects = storage.data();
+                detail.fill(0);
+                const auto status = processObjects_(
+                    context.get(), &input, useBackground ? &backgroundView : nullptr,
+                    &configValue, &roiValue, pixelToMicronFactor, nullptr, &buffer,
+                    detail.data(), detail.size());
+                detail.back() = '\0';
+                if (status == MIB_PROCESSING_STATUS_BUFFER_TOO_SMALL && attempt == 0 &&
+                    buffer.required > buffer.capacity) {
+                    storage.resize(buffer.required);
+                    continue;
+                }
+                if (status != MIB_PROCESSING_STATUS_OK) {
+                    if (error) *error = detail.data();
+                    return false;
+                }
+                break;
+            }
+        }
+
+        const science::ContourAnalysis analysis = science::findContours(processedImage);
+        auto sharedContours =
+            std::make_shared<const std::vector<std::vector<cv::Point>>>(analysis.allContours);
+        const int innerCount = static_cast<int>(analysis.innerContours.size());
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        if (buffer.count == 0) {
+            services::FilterResult empty{};
+            empty.allContours = sharedContours;
+            empty.ringRatio = nan;
+            empty.innerContourCount = innerCount;
+            empty.hasSingleInnerContour = innerCount == 1;
+            empty.brightness = science::calculateBrightnessQuantiles(originalImage, processedImage);
+            results.push_back(std::move(empty));
+            return true;
+        }
+        const bool lut = eModulusLut && eModulusLut->isLoaded();
+        results.reserve(buffer.count);
+        for (uint32_t i = 0; i < buffer.count; ++i) {
+            const auto& m = storage[i];
+            services::FilterResult r{};
+            r.isValid = m.is_valid != 0;
+            r.touchesBorder = m.touches_border != 0;
+            r.inRange = m.in_range != 0;
+            r.inChannel = m.in_channel != 0;
+            r.innerContourCount = innerCount;
+            r.hasSingleInnerContour = innerCount == 1;
+            r.objectId = m.object_id;
+            r.objectCount = m.object_count;
+            r.bboxX = m.bbox_x;
+            r.bboxY = m.bbox_y;
+            r.bboxWidth = m.bbox_width;
+            r.bboxHeight = m.bbox_height;
+            r.centroidX = m.centroid_x;
+            r.centroidY = m.centroid_y;
+            r.deformability = m.deformability;
+            r.area = m.area;
+            r.areaRatio = m.area_ratio;
+            r.ringRatio = nan;
+            r.laplacianVariance = m.laplacian_variance;
+            r.youngsModulus = m.youngs_modulus;
+            r.brightness = {m.brightness_q1, m.brightness_q2, m.brightness_q3, m.brightness_q4};
+            r.isTargetGroup = m.is_target_group != 0;
+            r.allContours = sharedContours;
+            if (lut && !r.touchesBorder && r.area > 0.0) {
+                // Same LUT step the bundled science takes after metrics.
+                const double areaUm = r.area * pixelToMicronFactor * pixelToMicronFactor;
+                r.youngsModulus = eModulusLut->lookup(areaUm, r.deformability);
+                if (r.isValid && config.enable_target_group) {
+                    const bool tgArea = areaUm >= config.target_group_area_min &&
+                                        areaUm <= config.target_group_area_max;
+                    const bool tgDeform =
+                        r.deformability >= config.target_group_deformability_min &&
+                        r.deformability <= config.target_group_deformability_max;
+                    const bool tgEmod = !config.enable_target_group_emodulus ||
+                                        (!std::isnan(r.youngsModulus) &&
+                                         r.youngsModulus >= config.target_group_emodulus_min &&
+                                         r.youngsModulus <= config.target_group_emodulus_max);
+                    r.isTargetGroup = tgArea && tgDeform && tgEmod;
+                }
+            }
+            results.push_back(std::move(r));
+        }
+        return true;
+    }
+
     bool reset(std::string* error) override {
         std::array<char, 512> detail{};
         std::scoped_lock lock(contextsMutex_);
@@ -268,6 +423,7 @@ private:
     // Declared first so the module outlives API calls made by the destructor.
     std::shared_ptr<Module> module_;
     mib_processing_api api_{};
+    mib_processing_process_objects_fn processObjects_{nullptr};
     ProcessingCoreIdentity identity_;
     std::mutex contextsMutex_;
     std::vector<mib_processing_context> contexts_;
@@ -397,8 +553,13 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
     const ProcessingCoreLoadRequirements& requirements) {
     ProcessingCoreLoadResult result;
     const auto hostIdentity = bundledProcessingCoreIdentity();
-    if (requirements.expectedEngineAbiVersion != MIB_PROCESSING_ENGINE_ABI_VERSION ||
-        requirements.expectedContractVersion != MIB_PROCESSING_CONTRACT_VERSION) {
+    // ADR 0007: engine ABI v1 cores implement Contract 1 (subtract-ring),
+    // engine ABI v2 cores implement Contract 2 (absdiff-laplacian).
+    const bool wantsAbiV2 =
+        requirements.expectedEngineAbiVersion == MIB_PROCESSING_ENGINE_ABI_VERSION_2 &&
+        requirements.expectedContractVersion == MIB_PROCESSING_CONTRACT_VERSION_2;
+    if (!wantsAbiV2 && !abiV1ServesContract(requirements.expectedEngineAbiVersion,
+                                            requirements.expectedContractVersion)) {
         result.error = "processing core metadata is incompatible with the host ABI/contract";
         return result;
     }
@@ -447,28 +608,66 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
 
     auto module = openModule(absolutePluginPath, result.error);
     if (!module) return result;
-    const auto getApi = reinterpret_cast<mib_processing_get_api_fn>(
-        module->symbol(MIB_PROCESSING_GET_API_SYMBOL));
-    if (!getApi) {
-        result.error = "processing core does not export " MIB_PROCESSING_GET_API_SYMBOL;
-        return result;
-    }
 
     mib_processing_api api{};
+    mib_processing_process_objects_fn processObjects = nullptr;
     std::array<char, 512> detail{};
-    const auto status = getApi(requirements.expectedEngineAbiVersion, sizeof(api), &api,
-                               detail.data(), detail.size());
-    detail.back() = '\0';
-    if (status != MIB_PROCESSING_STATUS_OK) {
-        result.error = std::string("processing core ABI negotiation failed: ") + detail.data();
-        return result;
-    }
-    if (api.struct_size < sizeof(mib_processing_api) ||
-        api.engine_abi_version != requirements.expectedEngineAbiVersion || !api.descriptor ||
-        !api.create_context || !api.destroy_context || !api.reset_context || !api.process_mask ||
-        !api.is_empty || !api.self_test) {
-        result.error = "processing core returned an incomplete API table";
-        return result;
+    if (wantsAbiV2) {
+        const auto getApiV2 = reinterpret_cast<mib_processing_get_api_v2_fn>(
+            module->symbol(MIB_PROCESSING_GET_API_V2_SYMBOL));
+        if (!getApiV2) {
+            result.error = "processing core does not export " MIB_PROCESSING_GET_API_V2_SYMBOL;
+            return result;
+        }
+        mib_processing_api_v2 apiV2{};
+        const auto status = getApiV2(MIB_PROCESSING_ENGINE_ABI_VERSION_2, sizeof(apiV2), &apiV2,
+                                     detail.data(), detail.size());
+        detail.back() = '\0';
+        if (status != MIB_PROCESSING_STATUS_OK) {
+            result.error = std::string("processing core ABI negotiation failed: ") + detail.data();
+            return result;
+        }
+        if (apiV2.struct_size < sizeof(mib_processing_api_v2) ||
+            apiV2.engine_abi_version != MIB_PROCESSING_ENGINE_ABI_VERSION_2 ||
+            !apiV2.descriptor || !apiV2.create_context || !apiV2.destroy_context ||
+            !apiV2.reset_context || !apiV2.process_mask || !apiV2.is_empty ||
+            !apiV2.process_objects || !apiV2.self_test) {
+            result.error = "processing core returned an incomplete API table";
+            return result;
+        }
+        // The v2 table's shared entry points drive masks/empty decisions
+        // through the same kernel code as v1; process_objects owns objects.
+        api.struct_size = sizeof(api);
+        api.engine_abi_version = apiV2.engine_abi_version;
+        api.descriptor = apiV2.descriptor;
+        api.create_context = apiV2.create_context;
+        api.destroy_context = apiV2.destroy_context;
+        api.reset_context = apiV2.reset_context;
+        api.process_mask = apiV2.process_mask;
+        api.is_empty = apiV2.is_empty;
+        api.self_test = apiV2.self_test;
+        processObjects = apiV2.process_objects;
+    } else {
+        const auto getApi = reinterpret_cast<mib_processing_get_api_fn>(
+            module->symbol(MIB_PROCESSING_GET_API_SYMBOL));
+        if (!getApi) {
+            result.error = "processing core does not export " MIB_PROCESSING_GET_API_SYMBOL;
+            return result;
+        }
+        const auto status = getApi(requirements.expectedEngineAbiVersion, sizeof(api), &api,
+                                   detail.data(), detail.size());
+        detail.back() = '\0';
+        if (status != MIB_PROCESSING_STATUS_OK) {
+            result.error = std::string("processing core ABI negotiation failed: ") + detail.data();
+            return result;
+        }
+        if (api.struct_size < sizeof(mib_processing_api) ||
+            api.engine_abi_version != requirements.expectedEngineAbiVersion || !api.descriptor ||
+            !api.create_context || !api.destroy_context || !api.reset_context ||
+            !api.process_mask || !api.is_empty || !api.self_test) {
+            result.error = "processing core returned an incomplete API table";
+            return result;
+        }
     }
     const auto* descriptor = api.descriptor();
     if (!descriptor || descriptor->struct_size < sizeof(mib_processing_core_descriptor) ||
@@ -477,6 +676,12 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
         !equalsExpected(requirements.expectedVersion, descriptor->core_version) ||
         !equalsExpected(requirements.expectedRuntimeFingerprint, descriptor->runtime_fingerprint)) {
         result.error = "processing core descriptor does not satisfy the requested identity";
+        return result;
+    }
+    if (wantsAbiV2 && !coreSatisfiesContract2(descriptor->engine_abi_version,
+                                              descriptor->contract_version,
+                                              descriptor->capabilities)) {
+        result.error = "processing core lacks the Contract-2 capabilities";
         return result;
     }
     detail.fill(0);
@@ -507,7 +712,7 @@ ProcessingCoreLoadResult loadProcessingCorePlugin(
     identity.runtimeFingerprint =
         descriptor->runtime_fingerprint ? descriptor->runtime_fingerprint : "";
     result.kernel = std::make_shared<DynamicProcessingKernel>(
-        std::move(module), api, context, std::move(identity));
+        std::move(module), api, context, std::move(identity), processObjects);
     return result;
 }
 

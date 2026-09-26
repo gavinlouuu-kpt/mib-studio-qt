@@ -147,4 +147,35 @@ namespace backend::processing::config_json
         return ok;
     }
 
+    nlohmann::json toScienceJson(const services::ProcessingConfig &c)
+    {
+        nlohmann::json json = toJson(c);
+        json["abi_v2"] = {
+            {"processing_contract_version", c.processing_contract_version},
+            {"enable_laplacian_variance_check", c.enable_laplacian_variance_check},
+            {"laplacian_variance_min", c.laplacian_variance_min},
+            {"laplacian_variance_max", c.laplacian_variance_max},
+            {"channel_band_y", c.channel_band_y},
+            {"channel_band_h", c.channel_band_h},
+        };
+        return json;
+    }
+
+    bool fromScienceJson(const nlohmann::json &json,
+                         services::ProcessingConfig &c,
+                         std::string *errorOut)
+    {
+        bool ok = fromJson(json, c, errorOut);
+        if (const auto abi = json.find("abi_v2"); abi != json.end())
+        {
+            ok &= assignIfPresent(*abi, "processing_contract_version", c.processing_contract_version, errorOut);
+            ok &= assignIfPresent(*abi, "enable_laplacian_variance_check", c.enable_laplacian_variance_check, errorOut);
+            ok &= assignIfPresent(*abi, "laplacian_variance_min", c.laplacian_variance_min, errorOut);
+            ok &= assignIfPresent(*abi, "laplacian_variance_max", c.laplacian_variance_max, errorOut);
+            ok &= assignIfPresent(*abi, "channel_band_y", c.channel_band_y, errorOut);
+            ok &= assignIfPresent(*abi, "channel_band_h", c.channel_band_h, errorOut);
+        }
+        return ok;
+    }
+
 } // namespace backend::processing::config_json
