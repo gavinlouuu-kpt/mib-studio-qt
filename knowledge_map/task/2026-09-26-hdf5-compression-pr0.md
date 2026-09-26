@@ -61,7 +61,33 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
 - **TD-16:** experiment files write one full frame and mask per object
   record (5.56 per frame with wide-open gates).
 
+## Rig PC (2026-09-26)
+
+The rig is an i9-13900 (8 P + 16 E cores, 32 logical) with 32 GB RAM, and it
+records to a `D:` SATA HDD. Evidence:
+`docs/evidence/2026-09-26-compression-headroom-rig/`; handover §8.
+
+- **Conan HDF5 1.14.6 is `threadsafe=0`,** so TD-17 is filed. The
+  capability test passes, and S1 growth is 0.00 %.
+- **Idle gzip-1** at C = 10: 84 / 127 / 256 MB/s on 1 / 2 / 4 threads. One
+  thread varies from 56 to 84. Writing to the HDD: 63 / 129 / 242 MB/s.
+- **Step 3a:** 12 × 300 s soaks, all complete with zero loss. Demand is the
+  same as in the container: 1.7 and 19.3 MB/s.
+  - gzip-1 during the run: 35 / 68 / 99 / 129 MB/s on 1 / 2 / 3 / 4 threads.
+  - Every T passes in both modes. **D6 `clamp(hw/2, 1, 4)` = 4 is
+    confirmed.**
+- **The soak keeps 16–18 of 32 logical CPUs busy** (about 2 of 4 in the
+  container), so a pool thread gets about 33 MB/s instead of 47. This is not
+  investigated yet.
+- **Readers:** HDFView and MATLAB are not installed on the rig, and 3b (real
+  camera) was skipped.
+
 ## Gotchas
+
+- An old `build-ninja` Conan output (from before zlib became a direct
+  requirement) configures fine but fails with `C1083 'zlib.h'`. Re-run
+  `conan install`. The rig resolves zlib 1.3.1 from its cache.
+- `bench_hdf5_compression.py --write-dir` does not create the directory.
 
 - `H5Dwrite_chunk` needs HDF5 ≥ 1.10.3 and `H5Dget_chunk_info_by_coord`
   needs ≥ 1.10.5. The mask assertions are behind `H5_VERSION_GE(1, 10, 5)`,
@@ -79,5 +105,6 @@ Decision: `docs/decisions/0006-hdf5-lossless-compression.md`. Storage note:
 Handover with steps, pass criteria and the results table:
 `docs/exec-plans/active/2026-09-26-hdf5-compression-rig-handover.md`.
 
-The Conan 1.14.6 `HDF5_CAPABILITY` line (threadsafe status), headroom under
-load, and HDFView/MATLAB reads of `--emit-mixed`.
+The Conan capability line and headroom under load were done on 2026-09-26
+(above). Still open: HDFView and MATLAB reads of `--emit-mixed` on a machine
+that has them, and the optional 3b real-camera check. Next is PR 1.

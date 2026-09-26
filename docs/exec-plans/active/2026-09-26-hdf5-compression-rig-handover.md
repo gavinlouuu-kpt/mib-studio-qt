@@ -170,21 +170,28 @@ stored raw):
 
 | Measurement | Result | Pass? |
 |---|---|---|
-| Rig CPU / cores / RAM / recording drive | | – |
-| Step 1: `HDF5_CAPABILITY` line | | |
-| Step 1: `HDF5_S1` line | | |
-| Step 2: level 1, C = 10 compress MB/s @ 1 / 2 / 4 threads | | – |
-| Step 2: write-to-disk MB/s @ 1 / 2 / 4 threads | | – |
-| Step 2: S1 / S2 | | |
-| Step 3: baseline run accounting (completion, persisted/admitted, drops) | | – |
-| Step 3: under-load MB/s @ 1 / 2 / 3 threads | | |
-| Step 3: with-benchmark run accounting | | |
-| Step 3: chosen default `threads` | | – |
-| Step 4: HDFView | | |
-| Step 4: MATLAB | | |
+Results from 2026-09-26, commit `3eb6e61`. Details are in §8 and the
+[rig evidence](../../evidence/2026-09-26-compression-headroom-rig/README.md).
 
-Do not commit `rig-*.json`, `mixed.h5`, the `bench\` directory or build
-trees. Attach the JSON files to the PR instead.
+| Measurement | Result | Pass? |
+|---|---|---|
+| Rig CPU / cores / RAM / recording drive | Intel Core i9-13900 (8 P + 16 E), 24 cores / 32 logical; 32 GB; recordings on `D:`, a WD20EZBX 2 TB SATA HDD (system `C:` is NVMe) | – |
+| Step 1: `HDF5_CAPABILITY` line | `HDF5_CAPABILITY version=1.14.6 threadsafe=0 deflate_encode=1 deflate_decode=1 zlib=1.3.1` (not threadsafe, so TD-17 is filed) | pass |
+| Step 1: `HDF5_S1` line | `HDF5_S1 raw_bytes=19660800 direct_bytes=15200776 tail_bytes=15200776 growth_pct=0.00 ratio=1.29` | pass |
+| Step 2: level 1, C = 10 compress MB/s @ 1 / 2 / 4 threads | 84 / 127 / 256, ratio 1.64. One thread varies from 56 to 84 between attempts (P-core vs E-core). | – |
+| Step 2: write-to-disk MB/s @ 1 / 2 / 4 threads | 63 / 129 / 242 to `D:\bench` | – |
+| Step 2: S1 / S2 | S1 +0.65 % PASS / S2 PASS (h5py 3.16, HDF5 2.0.0) | pass |
+| Step 3: baseline run accounting (completion, persisted/admitted, drops) | experiment: complete, 5,095/5,095 persisted of 300,694 admitted, loss 0, 1.7 MB/s. recording: complete, 117,827/117,827 persisted of 300,604 admitted, loss 0, 19.3 MB/s. | – |
+| Step 3: under-load MB/s @ 1 / 2 / 3 threads | 35 / 68 / 99 in both modes; 129 at 4 threads | pass (all T) |
+| Step 3: with-benchmark run accounting | all 8 loaded runs complete with extra loss 0; capture Δ ≤ 0.04 % | pass |
+| Step 3: chosen default `threads` | `auto = clamp(hw_concurrency / 2, 1, 4)`, which gives 4 on the rig; 4 passes in both modes. The smallest passing pool is 1. | – |
+| Step 3b: real camera | skipped (nobody at the rig) | – |
+| Step 4: HDFView | not available (not installed) | – |
+| Step 4: MATLAB | not available (not installed) | – |
+
+Do not commit `mixed.h5`, the `bench\` directory, build trees or any `.h5`
+file. The `rig-*.json` reports go into the rig evidence directory, with local
+absolute paths replaced by placeholders.
 
 ## 6. What happens next
 
@@ -213,4 +220,56 @@ with eight 300 s soaks at 1000 fps. Full tables are in the
 - **What to look for on the rig:** does 2 still pass and cover the 49 MB/s
   worst case with room to spare? Does the rig's larger core count let 3 pass?
   If the rig has more cores, the rule gives more threads, so check that too.
+
+## 8. Rig results (2026-09-26)
+
+Rig PC: Intel Core i9-13900, 24 cores (8 P + 16 E) / 32 logical, 32 GB RAM,
+recordings on `D:` (SATA HDD), Conan HDF5 1.14.6, commit `3eb6e61`. Full
+tables are in the
+[rig evidence](../../evidence/2026-09-26-compression-headroom-rig/README.md).
+
+| Mode | Baseline wrote | gzip-1 during run, 1 / 2 / 3 / 4 threads | Result per T | Loss |
+|---|---|---|---|---|
+| experiment | 1.7 MB/s | 35 / 68 / 99 / 129 MB/s | PASS / PASS / PASS / PASS | 0 |
+| recording | 19.3 MB/s | 35 / 68 / 99 / 130 MB/s | PASS / PASS / PASS / PASS | 0 |
+
+Compared with the container (§7):
+
+- **Demand and ratio are the same:** 1.7 and 19.3 MB/s written; stored-frame
+  ratio 1.57 (experiment) and 1.63 (recording).
+- **Per-thread gzip during a run is lower:** about 33 MB/s per thread,
+  against 47 on the container. Idle on the rig it is 56–84 MB/s. The headless
+  soak keeps 16–18 of the rig's 32 logical CPUs busy (about 2 of 4 on the
+  container) at the same frame and algo rates. The below-normal pool threads
+  therefore most likely run on E-cores. Scaling stays linear up to 4 threads.
+- **More threads fit:** T = 3 passes on the rig (capture Δ 0.01 %), where it
+  failed on the container (−1.12 %). T = 4, the value `clamp(hw/2, 1, 4)`
+  gives here, passes with capture within 0.04 %. The only visible cost is the
+  algo fps minimum, which drops from about 347 to 318–326 at T ≥ 3; the mean
+  stays at 392 and no frame is lost.
+- **2 threads still cover the worst case:** 68 MB/s against the 64 MB/s
+  needed (49 MB/s × 1.3). The margin is smaller than on the container
+  (93 MB/s). 4 threads give 2.6× the worst case.
+- **The Conan HDF5 is not threadsafe** (`threadsafe=0`, unlike apt 1.10.10).
+  TD-17 is filed. D5 keeps the epic from widening the sharing.
+- **Step 3b (real camera) was skipped**, because nobody was at the rig.
+  **Step 4:** HDFView and MATLAB are not installed on the rig ("not
+  available", not pass). h5py reads the mixed file with 34 of 100 chunks raw.
+- **Setup notes for the next rig run:**
+  - A `build-ninja` whose Conan output predates the zlib requirement
+    configures fine (`ZLIBConfig.cmake` already exists as a transitive
+    dependency of HDF5) but fails to compile the capability test with
+    `C1083: Cannot open include file: 'zlib.h'`. Re-running `conan install`
+    fixes it.
+  - Conan resolved zlib 1.3.1 here, not 1.3.2. It is the package HDF5 itself
+    links, so nothing new was downloaded.
+  - `bench_hdf5_compression.py --write-dir` does not create the directory.
+  - The rig has no `py` launcher; the miniconda `python` was used.
+  - Step 3a's soak files go to `build\compression-e2e` (NVMe) unless
+    `--work-dir` is given.
+
+**Decision:** keep `threads = auto = clamp(hw_concurrency / 2, 1, 4)` (4 on
+the rig). PR 0 is complete apart from the optional real-camera check and the
+HDFView/MATLAB reads, which need those tools on a machine that has them. The
+next step is PR 1.
 

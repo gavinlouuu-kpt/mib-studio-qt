@@ -119,7 +119,8 @@ active.
 ### D6. Pool
 
 `threads` defaults to `auto = clamp(hw_concurrency / 2, 1, 4)`: 2 on a
-4-core host (PR 0 container e2e, 2026-09-26), pending the rig run. Workers run at below-normal OS priority (Windows
+4-core host (PR 0 container e2e, 2026-09-26) and 4 on the rig PC (32 logical
+CPUs; confirmed by the PR 0 rig e2e, 2026-09-26). Workers run at below-normal OS priority (Windows
 `THREAD_PRIORITY_BELOW_NORMAL`, POSIX `nice +5` or `SCHED_BATCH`), so capture
 and processing threads win under contention. The pool is created at run start
 and joined at run end, never detached.
@@ -306,6 +307,43 @@ App config `storage.compression.*`:
   - **Side finding, TD-16:** experiment files store a full frame and mask per
     object record. That is about 1 record per frame with the default gates,
     but 5.56 with wide-open gates.
+- 2026-09-26 (PR 0, rig): the rig PC is an Intel Core i9-13900 (8 P + 16 E
+  cores, 32 logical) with 32 GB RAM. Recordings go to `D:`, a SATA HDD. The
+  build is `windows-ninja` Release with Conan HDF5 1.14.6, at commit `3eb6e61`.
+  Evidence: [rig headroom](../../evidence/2026-09-26-compression-headroom-rig/README.md).
+  - **Capability:** the test passes.
+    `HDF5_CAPABILITY version=1.14.6 threadsafe=0 deflate_encode=1 deflate_decode=1 zlib=1.3.1`
+    and `HDF5_S1 ... growth_pct=0.00`. The Conan build is **not
+    threadsafe**, so TD-17 is filed. D5 still holds: the epic does not widen
+    the sharing.
+  - **Idle (step 2):** gzip-1 at C = 10 runs at 84 / 127 / 256 MB/s on
+    1 / 2 / 4 threads, ratio 1.64. One thread varies from 56 to 84 between
+    attempts (P-core vs E-core). `H5Dwrite_chunk` to the `D:` HDD runs at
+    63 / 129 / 242 MB/s. Inflating a chunk takes 2.0–2.2 ms at C = 10 and
+    11 ms at C = 50. S1 +0.65 % and S2 pass (h5py 3.16 / HDF5 2.0.0).
+  - **Headroom (step 3a):** 12 soaks of 300 s at 1000 fps, all `complete`
+    with zero loss.
+    - Demand: experiment 1.7 MB/s (stored-frame ratio 1.57), recording
+      19.3 MB/s (1.63). This is the same as the container.
+    - gzip-1 during the run: 35 / 68 / 99 / 129 MB/s on 1 / 2 / 3 / 4
+      threads. **Every T passes in both modes**, with capture Δ ≤ 0.04 %.
+    - Per-thread throughput under load (about 33 MB/s) is below the
+      container's 47, because the soak keeps 16–18 of 32 logical CPUs busy.
+    - Algo fps minimum dips from about 347 to 318–326 at T ≥ 3; the mean is
+      unchanged.
+  - **Readers (step 4):** HDFView and MATLAB are not installed on the rig, so
+    neither is checked. h5py reads the mixed file (34/100 chunks raw).
+    Step 3b (real camera) was skipped, because nobody was at the rig.
+  - **Decision: D6 confirmed.** `auto = clamp(hw_concurrency / 2, 1, 4)`
+    gives 4 on the rig, which passes at 2.6× the 49 MB/s worst case. 2
+    threads (68 MB/s) would just cover the worst case ×1.3.
+  - **Side finding:** the headless soak uses about 16–18 cores on a 32-thread
+    host, against about 2 on 4 vCPU, at the same algo rate. This needs a look
+    before the PR 5 rig soak, because it is the load the compression pool
+    competes with.
+  - Build note: an old `build-ninja` Conan output configures but fails with
+    `C1083 'zlib.h'` until `conan install` is re-run. The rig resolved zlib
+    1.3.1, not 1.3.2, from its cache (the package HDF5 links).
 
 ## Phases (one PR each)
 
@@ -313,22 +351,26 @@ App config `storage.compression.*`:
 
 - [x] Check in `scripts/bench_hdf5_compression.py` (codec × level × threads ×
   chunk frames; ratio, compress/decompress MB/s, `--write-dir`, `--spikes`,
-  `--emit-mixed`). [ ] Run it on the rig PC.
+  `--emit-mixed`). [x] Run it on the rig PC (2026-09-26).
 - [x] `recording.hdf5_direct_chunk_capability` (C++ guard, runs on every
   ctest lane, including Windows): prints `HDF5_CAPABILITY` (version,
   threadsafe, deflate) and `HDF5_S1`, and asserts mixed-chunk byte identity
   through `Hdf5Service::readImageByIndex`.
 - [x] Headroom under a live 1000 fps run, scripted
   (`run_compression_headroom_e2e.py`, `mock_experiment_soak_run`), done in
-  the cloud container. [ ] Repeat on the rig: 3a is scripted, 3b uses the
-  real camera. Sets `threads = auto` and validates the 75 % budget.
+  the cloud container. [x] Repeat on the rig, 3a (scripted): done
+  2026-09-26, every T from 1 to 4 passes and `auto` stays
+  `clamp(hw/2, 1, 4)`. [ ] 3b uses the real camera; it is optional and was
+  skipped because nobody was at the rig. Sets `threads = auto` and validates
+  the 75 % budget.
 - [x] **S1** (h5py prototype and the C++ guard above): a
   partial chunk written raw and rewritten 10×, then compressed. Final file size
   must be within 5 % of an h5repack of the same data. Pass → D3.4; fail → T2.
 - [x] **S2** in h5py (no plugin). [ ] HDFView and MATLAB on the rig
-  (`--emit-mixed`).
-- [x] apt 1.10.10: threadsafe. [ ] Conan 1.14.6 (Windows CI/rig
-  `HDF5_CAPABILITY` line). [ ] manylinux 1.10.5 (the wheel does not write
+  (`--emit-mixed`): neither is installed on the rig PC (2026-09-26), so this
+  needs a machine that has them.
+- [x] apt 1.10.10: threadsafe. [x] Conan 1.14.6 (rig, 2026-09-26):
+  `threadsafe=0`, so TD-17 is filed. [ ] manylinux 1.10.5 (the wheel does not write
   live files, so this is informational). Record `H5is_library_threadsafe()`
   for each build. Add a tech-debt row if review/export threads share a
   non-threadsafe library with the writer.
@@ -437,9 +479,13 @@ App config `storage.compression.*`:
         VM numbers, and S1/S2 on HDF5 1.10.10, 1.14.6 and 2.0.0
   - [x] 2026-09-26: headroom e2e in the container. 1 thread passes, 2 cover
         the worst case, and 3 harm a 4-vCPU host. Zero loss in 8 soaks.
-  - [ ] rig: Conan capability line, headroom under load (`threads`),
-        HDFView/MATLAB; see the
-        [rig handover](2026-09-26-hdf5-compression-rig-handover.md)
+  - [x] 2026-09-26, rig: Conan capability line (1.14.6, `threadsafe=0`,
+        TD-17), idle benchmark, and headroom under load. Every T from 1 to 4
+        passes with zero loss, and D6 `clamp(hw/2, 1, 4)` (4 on the rig) is
+        confirmed. See the
+        [rig handover](2026-09-26-hdf5-compression-rig-handover.md) §8.
+  - [ ] rig, not done: HDFView/MATLAB are not installed on the rig, and the
+        optional 3b real-camera check was skipped because nobody was at the rig
 - [ ] PR 1: fixed chunk geometry, chunk-aligned batches, reader chunk cache
 - [ ] PR 2: compressing chunk writer + raw fallback (default off)
 - [ ] PR 3: config, run snapshot, storage attributes, telemetry, bridge, Qt status

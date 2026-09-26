@@ -1,5 +1,26 @@
 # Recent Work
 
+## 2026-09-26 — HDF5 compression PR 0: rig PC measurements (ADR 0006)
+
+These are the PR 0 measurements on the rig PC: an i9-13900 with 24 cores /
+32 logical, 32 GB RAM, recording to a `D:` SATA HDD.
+
+- **Conan HDF5 1.14.6 is `threadsafe=0`,** so TD-17 is filed. The
+  capability test passes and S1 growth is 0.00 %.
+- **Headroom:** twelve 300 s, 1000 fps soaks all ended `complete` with zero
+  loss.
+  - gzip-1 during a run: 35 / 68 / 99 / 129 MB/s on 1 / 2 / 3 / 4 threads,
+    against demand of 1.7 (experiment) and 19.3 (recording) MB/s.
+  - Every pool size passes, so the D6 default `clamp(hw/2, 1, 4)`, which is
+    4 on the rig, is confirmed.
+- **Side finding:** the headless soak keeps 16–18 cores busy on the rig
+  (about 2 in the container), which cuts per-thread gzip to about 33 MB/s.
+- **Not checked:** HDFView and MATLAB are not installed on the rig, and the
+  real-camera check was skipped.
+- **Next:** PR 1.
+- Evidence: `docs/evidence/2026-09-26-compression-headroom-rig/`. Task note:
+  [[../task/2026-09-26-hdf5-compression-pr0]].
+
 ## 2026-09-26 — Lossless HDF5 compression: epic spec + PR 0 measurements (ADR 0006)
 
 Inline gzip on the single HDF5 writer cannot keep up with 1000 fps, and a full
