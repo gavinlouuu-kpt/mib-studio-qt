@@ -297,7 +297,10 @@ bundled science ignores it, so Contract 1 is unchanged). Test:
 through the loader and requires field-for-field equality with a bundled
 Contract-2 kernel across objects, holes, border, ROI, noise with and without
 the area gate, channel band, Laplacian gate, target group and empty frames;
-a Contract-1 config is refused.
+a Contract-1 config is refused. The adapter hands the core back its own
+`process_mask` output (`mib_processing_kernel_config_v2::precomputed_mask`),
+so the mask is built once per frame; both sides then analyse exactly the same
+mask, including the cropped-ROI realtime loop.
 
 ## Accumulation modes
 

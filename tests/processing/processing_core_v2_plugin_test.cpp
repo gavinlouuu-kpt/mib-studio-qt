@@ -8,6 +8,7 @@
 
 #include <dlfcn.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -132,6 +133,55 @@ int main(int argc, char** argv) {
                    out.objects[0].laplacian_variance > 0.0,
                "per-object Laplacian variance crosses the ABI as a finite focus score");
     MIB_EXPECT(out.objects[0].area > 0.0, "object area is reported");
+
+    // Handing back this core's own process_mask output gives the same objects
+    // without rebuilding the mask (single mask computation per frame).
+    std::vector<uint8_t> maskBytes(static_cast<size_t>(W) * H, 0);
+    mib_processing_mutable_image_view maskOut{};
+    maskOut.struct_size = sizeof(maskOut);
+    maskOut.width = W;
+    maskOut.height = H;
+    maskOut.stride_bytes = W;
+    maskOut.data = maskBytes.data();
+    maskOut.data_size_bytes = maskBytes.size();
+    mib_processing_kernel_config maskConfig{};
+    maskConfig.struct_size = sizeof(maskConfig);
+    maskConfig.gaussian_blur_size = config.gaussian_blur_size;
+    maskConfig.background_subtract_threshold = config.difference_threshold;
+    maskConfig.morphology_kernel_size = config.morphology_kernel_size;
+    maskConfig.morphology_iterations = config.morphology_iterations;
+    maskConfig.empty_frame_pixel_threshold = config.empty_frame_pixel_threshold;
+    maskConfig.flags = MIB_PROCESSING_KERNEL_FLAG_ABSOLUTE_BACKGROUND_DIFFERENCE;
+    std::memset(err, 0, sizeof(err));
+    MIB_REQUIRE(api.process_mask(ctx, &input, &bg, &maskConfig, &roi, &maskOut, err, sizeof(err)) ==
+                    MIB_PROCESSING_STATUS_OK,
+                std::string("process_mask: ") + err);
+    mib_processing_image_view maskIn = viewOf(maskBytes, W, H);
+    auto withMask = config;
+    withMask.precomputed_mask = &maskIn;
+    std::vector<mib_processing_object_metrics> reused(probe.required);
+    mib_processing_object_buffer reusedOut{};
+    reusedOut.struct_size = sizeof(reusedOut);
+    reusedOut.capacity = probe.required;
+    reusedOut.objects = reused.data();
+    std::memset(err, 0, sizeof(err));
+    MIB_REQUIRE(api.process_objects(ctx, &input, &bg, &withMask, &roi, 0.5, nullptr, &reusedOut,
+                                    err, sizeof(err)) == MIB_PROCESSING_STATUS_OK,
+                std::string("process_objects with precomputed mask: ") + err);
+    MIB_EXPECT(reusedOut.count == out.count, "same object count with a precomputed mask");
+    for (uint32_t i = 0; i < std::min(reusedOut.count, out.count); ++i) {
+        MIB_EXPECT(reused[i].area == slots[i].area &&
+                       reused[i].laplacian_variance == slots[i].laplacian_variance &&
+                       reused[i].centroid_x == slots[i].centroid_x &&
+                       reused[i].is_valid == slots[i].is_valid,
+                   "object " + std::to_string(i) + " identical with a precomputed mask");
+    }
+    std::vector<uint8_t> wrongSize(4, 0);
+    mib_processing_image_view badMask = viewOf(wrongSize, 2, 2);
+    withMask.precomputed_mask = &badMask;
+    MIB_EXPECT(api.process_objects(ctx, &input, &bg, &withMask, &roi, 0.5, nullptr, &reusedOut, err,
+                                   sizeof(err)) == MIB_PROCESSING_STATUS_INVALID_ARGUMENT,
+               "a precomputed mask of the wrong size is rejected");
 
     api.destroy_context(ctx);
     dlclose(handle);

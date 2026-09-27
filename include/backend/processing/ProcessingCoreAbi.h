@@ -222,6 +222,10 @@ typedef struct mib_processing_kernel_config_v2 {
      * this config (ADR 0007: the core owns the science). NULL == defaults. */
     const char* science_config_json;
     uint64_t science_config_json_size;
+    /* Optional mask this core already produced for `input` (process_mask,
+     * same config and ROI). process_objects then runs its object science on
+     * it instead of rebuilding the mask. NULL == build the mask. */
+    const mib_processing_image_view* precomputed_mask;
     uint32_t reserved_u32[16];
 } mib_processing_kernel_config_v2;
 

@@ -284,6 +284,12 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Contract-2 core builds its mask once per frame** (2026-09-27) — the ABI v2
+  adapter passes the core's own `process_mask` output as
+  `precomputed_mask`, so `process_objects` runs object science only.
+  Measured on real 1184x240 frames, the rebuilt mask had cost ~10-13% of a
+  Contract-2 frame. `processing.core_v2_plugin` checks identical objects with
+  and without the precomputed mask and rejects a wrong-size mask.
 - **Contract-2 native core owns its science** (2026-09-27, Contract 2 rollout
   T1.1a) — the loader negotiates engine ABI v2 for Contract-2 cores; the
   absdiff-laplacian core receives the full profile config as JSON and runs
