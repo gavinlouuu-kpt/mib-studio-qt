@@ -2,11 +2,17 @@
 
 Status: active
 
-Date: 2026-09-30. Scope: the Qt Review tab only (`HdfReviewTab`, Charts
-view). Companion notes: `knowledge_map/frontend/HdfReviewTab.md`,
+Date: 2026-09-30. Scope: the Review tab Charts view in **both shells** —
+Qt (`HdfReviewTab`) and React + Tauri (`desktop/`, UI-3 #268 / UI-4 #269).
+Density science and review data plumbing live in the backend behind
+`BackendFacade` so both shells consume one implementation (decoupling plan
+[`2026-07-15-qt-decoupling-and-tauri-migration.md`](2026-07-15-qt-decoupling-and-tauri-migration.md),
+principle 3). Companion notes: `knowledge_map/frontend/HdfReviewTab.md`,
 `knowledge_map/frontend/System-Utilities.md` (`ZoomableChartView`),
 `knowledge_map/frontend/ExperimentMonitoringTab.md`,
-`knowledge_map/task/2026-09-23-monitoring-kde-density.md`.
+`knowledge_map/task/2026-09-23-monitoring-kde-density.md`,
+ADR [0004](../../decisions/0004-bridge-contract-and-operation-state.md)
+(bridge contract governance).
 Interactive prototype of the interactions (browser mock, not the widget):
 https://claude.ai/artifact/RvgErR7JqnFtYFzQVfNYbz
 
@@ -19,6 +25,9 @@ single left click on a point highlights that cell, selects its row in the
 Valid Frames table and shows its image in a **docked frame pane beside the
 scatter**, so the image never covers the plot. Dragging pans and never
 selects. Exports, file reload and the Monitoring tab behave as before.
+The density levels, the core contour and the scatter data come from one
+backend job exposed over the bridge, so the React Charts view has the same
+behaviour with no science in TypeScript.
 
 ## Current state (what the spec builds on)
 
@@ -60,6 +69,23 @@ selects. Exports, file reload and the Monitoring tab behave as before.
 - Export (`renderChartSnapshots`, `:1986`; `chartToPixmap`, `:2628`)
   re-runs `generateScatterPlot` (with *another file's* data during batch
   export), resizes the view to a fixed size, grabs it and restores the size.
+- `MonitoringDensityService` (`include/backend/services/MonitoringDensityService.h`)
+  already runs the kernel off the GUI thread for the live Monitoring scatter:
+  `MonitoringDensityInput` is `frameIndices` + µm² `points` +
+  `pixelToMicron`; `MonitoringDensityResult` carries per-frame normalised
+  `density`, `coreLevel`, `contours` and the grid range. It is not exposed
+  through `BackendFacade` and has no review (one-shot, file-fed) mode.
+- React + Tauri shell: review is paged over the bridge —
+  `fetch_review_metadata`, `fetch_review_metrics_page(valid, offset, count)`
+  (`MonitoringRow`: frame_index, area, deformability, ring_ratio, …) and
+  `fetch_review_frame_packet(dataset, index)` (image/mask bytes through the
+  frame-pull transport; datasets `ValidImage`/`ValidMask`/… in
+  `crates/mib-bridge/contract/bridge-contract.json`). The Charts tab is a
+  placeholder ("Chart rendering lands with UI-3 (#268)"); no chart library in
+  `desktop/package.json`; nothing about KDE crosses the bridge. Contract is
+  `abi_version` 14; changes are additive and checked by
+  `crates/mib-bridge/tests/contract.rs`, `static_assert`s in `shim.cpp` and
+  `scripts/gen_bridge_contract.py --check`.
 
 ## Behaviour
 
@@ -95,10 +121,12 @@ selects. Exports, file reload and the Monitoring tab behave as before.
   point's density is bilinearly interpolated from the grid and normalised by
   the grid maximum. The two paths must agree within 5 % (level assignment
   within one level) on the 4000-cell fixture; test both.
-- **One KDE job per file load** on `QtConcurrent` (same idiom and
-  file-changed guard as the full-run core job): it returns the per-point
-  density levels and, when the file has **no stored full-run record**, a
-  freshly computed `KdeCoreRecord`. The contour is drawn as "Core 90 %
+- **One backend density job per file load** (`BackendFacade` review
+  density operation, run by `MonitoringDensityService` in a one-shot review
+  mode on its low-priority thread; file-changed guard by review session
+  id): it returns the per-frame density levels and, when the file has **no
+  stored full-run record**, a freshly computed `KdeCoreRecord`. Shells
+  never run the kernel themselves. The contour is drawn as "Core 90 %
   (computed, unsaved)" dashed grey-blue; the context-menu action becomes
   **Save core contour to file** (same confirm/overwrite/read-only
   behaviour as today's compute action) and the label reverts to
@@ -106,8 +134,10 @@ selects. Exports, file reload and the Monitoring tab behave as before.
   today and not recomputed; the stored live record stays dashed orange.
 - While the job runs the scatter shows the plain blue series; the status
   text says "Estimating density (n cells)…". Toggling the checkbox re-routes
-  the cached densities without recomputing; a bandwidth change in
-  Monitoring Settings invalidates the cache on the next load.
+  the cached densities without recomputing. Bandwidth factor and core
+  fraction are the density service's current `MonitoringDensitySettings`
+  (each shell pushes its Monitoring settings there); a change takes effect
+  on the next file load.
 - Chart export and batch export render the scatter as displayed (density
   colours and contours), at full extent, without the highlight.
 - Recording files (no metrics): no density, no contour, nothing to click.
@@ -166,10 +196,50 @@ selects. Exports, file reload and the Monitoring tab behave as before.
   restore both after (batch already calls `updateCharts()` afterwards;
   restore after that). The pane is untouched by export.
 
+## Tauri parity
+
+The split between what is shared and what each shell owns:
+
+| Concern | Qt shell | React + Tauri shell | Shared source |
+|---|---|---|---|
+| Scatter data (frame index, µm² area, deformability, target flag) | `fetchReviewScatter` via facade | `fetch_review_scatter` | Facade reads `/valid_frames` metadata once per file |
+| Point ↔ frame maps | built from the facade array | built from the bridge array | Same array, same order (valid set, `isValid` only) |
+| Density levels, core contour, grid path > 5000 cells | consumes facade result | `fetch_review_density` + `ReviewDensity` operation event | `MonitoringDensityService` review mode |
+| Stored full-run / live KDE records | facade read | `fetch_review_kde_records` | `Hdf5Service::readKdeAnalysisJson` / `readKdeLiveJson` |
+| Save computed contour | facade command (confirm in shell) | `review_save_core_contour(overwrite)` | Facade → `Hdf5Service::openFileForUpdate` |
+| Frame image / mask for the pane | `loadFrameForDisplay` (reads via facade in a later step; `hdfReader_` today) | `fetch_review_frame_packet` (exists) | `Hdf5Service` hyperslab reads |
+| Click-vs-drag, wheel zoom, pan, double-click reset, pixel hit test, hover | `ZoomableChartView` + tab slots | pointer events on a `<canvas>` | **Rules** in this plan (thresholds, tolerance, tie-break) + a shared fixture of expected hits |
+| Docked frame pane, Prev/Next, "Open in window" | splitter + embedded `FrameViewerDialog` | CSS grid panel + overlay component | Behaviour spec only |
+| Density colour ramp | `densityRampColor` | ramp stops emitted into `bridgeContract.ts` by the generator | `MonitoringDensity.h` is the source of the stops |
+| Chart snapshot export | `renderChartSnapshots` (Qt widget grab) | out of scope here (follow-up: shell PNG or backend rasteriser) | — |
+| Preferences (KDE on/off, splitter) | `QSettings` `Review/*` | Tauri store | Shell-local by design |
+
+Bridge additions (one additive contract bump, `abi_version` 14 → 15 at
+time of writing; take the next free number when the PR lands):
+
+- `fetch_review_scatter() -> BridgeReviewScatter { valid, session_id, frame_index[], area_um2[], deformability[], target_group[], pixel_to_micron }`
+  — columnar, valid set only, `isValid` rows only, in `validFrames_`
+  order. 10⁵ cells ≈ 2.5 MB columnar; if IPC time exceeds the review
+  budget, move it onto the binary frame-packet transport (packet kind
+  appended to the contract).
+- `fetch_review_density() -> BridgeReviewDensity { valid, session_id, ready, levels: u8[] (parallel to the scatter), level_count, bandwidth_factor, core_fraction, computed_record_json }`
+  — `ready = false` while the job runs; `computed_record_json` empty when a
+  stored full-run record exists.
+- `fetch_review_kde_records() -> { analysis_json, live_json }` (empty when
+  absent or unreadable; reason in `BackendError`).
+- `review_save_core_contour(overwrite: bool) -> CommandResult` — refuses
+  with a distinct code when a record exists and `overwrite = false`, when
+  the file is read-only, or while an export job runs.
+- `operation_kinds`: append `ReviewDensity`; completion/failure through the
+  existing `OperationStatus` event, polled by `poll_events`.
+- `density_ramp` table appended to the contract JSON (8 RGB stops) so the
+  generated `bridgeContract.ts` carries the same colours.
+
 ## Non-goals
 
-- React/Tauri shell: its review screen has no chart yet ("Chart rendering
-  lands with UI-3 (#268)"); follow up after #268.
+- Chart snapshot export from the Tauri shell (the Qt export keeps using
+  its widget grab); separate follow-up once the React chart exists.
+- A backend chart rasteriser.
 - TD-17 (µm² factor from the recorded calibration): unaffected, mapping is
   by index. The density is estimated in the same µm² the scatter shows, so
   it follows TD-17's fix automatically.
@@ -205,6 +275,19 @@ selects. Exports, file reload and the Monitoring tab behave as before.
   interpolation above 5000 cells to bound the cost; auto-compute the
   full-run contour when the file has none but never write the file without
   the explicit save action.
+- 2026-09-30: **Density job and review scatter data live in the backend,
+  not in `HdfReviewTab`** (user: how does this work with React + Tauri?).
+  A Qt-only `QtConcurrent` job would have to be rewritten in the Tauri
+  shell and the two could drift on bandwidth, levels and core fraction.
+  `MonitoringDensityService` already has the kernel, the low-priority
+  thread and a result type carrying per-frame density and contours; a
+  one-shot review mode plus facade/bridge commands costs about the same as
+  the Qt job. Gestures, the pane and preferences stay shell code; their
+  rules are specified here and exercised by a shared hit-test fixture.
+- 2026-09-30: **Bridge payload is columnar and valid-set only**, fetched
+  once per file, rather than rebuilding the scatter from paged
+  `fetch_review_metrics_page` calls (10⁵ cells would be hundreds of page
+  round trips, and paging order is not a contract for point indices).
 - 2026-09-30: **Double-click reset stays**, restricted to pairs where neither
   click hit a point, plus a menu entry. With the pane there is no modal race;
   the rule only prevents a double-click on a point from zooming out.
@@ -215,7 +298,11 @@ selects. Exports, file reload and the Monitoring tab behave as before.
 
 ## Implementation plan
 
-Three PRs; the first is shared infrastructure with no user-visible feature.
+Five PRs. PR 1 and PR 3a are infrastructure with no user-visible feature;
+PR 2 and PR 3b are the Qt shell; PR 4 is the React + Tauri shell. Order:
+PR 1 → PR 2 (Qt interaction ships without density); PR 3a can run in
+parallel with PR 2; PR 3b needs PR 2 + PR 3a; PR 4 needs PR 3a and the
+chart groundwork of #268.
 
 ### PR 1 — `ZoomableChartView`: click/drag disambiguation
 
@@ -293,13 +380,16 @@ new `tests/frontend/hdf_review_scatter_test.cpp` (fixture helpers from
    larger marker + contrasting border, legend marker hidden, added **after**
    every other series so it draws on top; re-add after any code path that
    appends series later (`drawStoredKdeContours`, `loadIsoelasticCurves`,
-   PR 3's level series). `setScatterHighlight(std::optional<int> frame)`
+   PR 3b's level series). `setScatterHighlight(std::optional<int> frame)`
    uses `frameToScatterPoint_`; hide when −1. Cleared in `clearDisplay()`.
 6. **Hit test.** `std::optional<int> scatterPointAt(QPointF viewPos) const`:
    pixel positions from the axis ranges and `plotArea()` (linear map, no
    per-point `mapToPosition`), skip points outside the visible ranges,
    nearest within `max(markerSize, 8)` px, ties → lowest frame index. O(n)
-   per call; see the performance gate in step 9.
+   per call; see the performance gate in step 9. Put the pure part (ranges,
+   plot rect, points, position → point index) in a Qt-free function and
+   add the shared fixture `tests/fixtures/review_scatter_hits.json`; PR 4's
+   TypeScript hit test runs against the same file.
 7. **Slots.** `onScatterClicked(QPointF, Qt::MouseButton)`: ignore unless
    left; ignore while an export job runs; hit → `selectScatterFrame(frame)`
    = `setScatterHighlight` + `setSelectedFrame(frame, true)` +
@@ -349,61 +439,164 @@ new `tests/frontend/hdf_review_scatter_test.cpp` (fixture helpers from
     `scripts/check_screenshots.py`. `Recent-Work.md` dated entry. Run
     `python3 scripts/check_docs.py`.
 
-### PR 3 — Review scatter: KDE density colour and auto-computed contour
+### PR 3a — Backend review density + bridge commands (no UI)
+
+Files: `include/backend/processing/MonitoringDensity.h`,
+`include/backend/services/MonitoringDensityService.h` +
+`src/backend/services/MonitoringDensityService.cpp`,
+`include/backend/app/BackendFacade.h` + `src/backend/app/BackendFacade.cpp`,
+`crates/mib-bridge/contract/bridge-contract.json`,
+`crates/mib-bridge/src/{lib.rs,shim.h,shim.cpp}`,
+`crates/mib-bridge/tests/contract.rs`, `desktop/src-tauri/src/lib.rs`
+(command registration), `desktop/src/bridge.ts`, generated
+`desktop/src/bridgeContract.ts`, `tests/backend/monitoring_density_test.cpp`,
+new `tests/backend/review_density_test.cpp`, `tests/CMakeLists.txt`,
+`knowledge_map/services/` note for the density service,
+`knowledge_map/task/2026-09-23-monitoring-kde-density.md`,
+`docs/exec-plans/active/2026-07-15-qt-decoupling-and-tauri-migration.md`
+(parity matrix row), this plan.
+
+1. **Grid interpolation helper.** `densityAtPointsFromGrid(const
+   DensityGrid&, const std::vector<DensityPoint>&) -> std::vector<double>`
+   (bilinear, clamped to the grid, normalised by the grid maximum) next to
+   `gaussianKdeGrid`. Backend test: on a 4000-point two-cluster set, grid
+   path vs `normalizedDensity` agree within 5 % RMS and the 8-level
+   assignment differs by at most one level for ≥ 99 % of points; degenerate
+   input (all points equal, non-finite) yields zeros without throwing.
+   `levelForDensity(double, int levels)` moves here from the Monitoring tab
+   so both shells and the service share the bucketing.
+2. **Review mode in `MonitoringDensityService`.** `requestReviewEstimate(
+   ReviewDensityRequest{sessionId, frameIndices, points, pixelToMicron,
+   bandwidthFactor, coreFraction, wantCoreRecord})`: one-shot, runs on the
+   service's existing lowest-priority thread between live ticks (never
+   concurrently with a live estimate; live Monitoring keeps priority while
+   an experiment is Active), n ≤ 5000 → at samples, else fixed-seed 5000
+   subsample → grid → interpolate. Result: `ReviewDensityResult{sessionId,
+   levels (u8, parallel to input), levelCount, record (optional
+   KdeCoreRecord via computeFullRunCoreRecord's parameters)}`. A request
+   for a newer session supersedes an older pending one. Service test:
+   supersede, cancel on shutdown, parity with the helper, no effect on the
+   live path's `MonitoringDensityStats` budget.
+3. **Facade.** On review load (`loadRecording` of an experiment file) the
+   facade builds the columnar valid-set scatter from `readValidMetadata`
+   (same filter and order as `HdfReviewTab::generateScatterPlot`, µm² with
+   the facade's pixel-to-micron factor), reads the stored KDE records, and
+   always submits the review density request (levels are always
+   computed; `wantCoreRecord` is false when a stored full-run record
+   exists), taking bandwidth factor and core fraction from the service's
+   current `MonitoringDensitySettings`. New facade
+   methods: `reviewScatter()`, `reviewDensity()`, `reviewKdeRecords()`,
+   `saveReviewCoreContour(bool overwrite)` (closes the review reader, writes
+   through `Hdf5Service::openFileForUpdate`, reopens; refuses while an
+   export job runs), plus a `ReviewDensity` operation reported through the
+   existing operation-state machinery (ADR 0004). Recording files: no
+   scatter, no job.
+4. **Bridge contract bump** (additive, next free `abi_version`): commands,
+   structs, `operation_kinds.ReviewDensity`, `density_ramp` table exactly as
+   listed under "Tauri parity". Regenerate `bridgeContract.ts`
+   (`scripts/gen_bridge_contract.py`), extend `shim.cpp` `static_assert`s.
+5. **Tests.** `backend.review_density` (facade on the population fixture:
+   scatter array order equals the valid-set `isValid` order; levels
+   parallel; stored-record file → no computed record; recording file → no
+   job; save/overwrite/read-only/export-running refusals). Bridge
+   `contract.rs`: `fetch_review_scatter` / `fetch_review_density` round
+   trip on a fixture file, `ready` goes false → true, event observed via
+   `poll_events`. Linux backend lane + `bridge-ci.yml`; TSan lane for the
+   service change (it touches a thread).
+6. **Docs.** Service note (review mode, supersede rule, priority vs live);
+   KDE task note paragraph; decoupling plan parity matrix: Review row notes
+   "scatter/density contract landed"; `Recent-Work.md`.
+
+### PR 3b — Qt Review scatter: KDE colour and contour from the facade
 
 Files: `src/frontend/tabs/HdfReviewTab.cpp` (+ header, `.ui`),
-`include/backend/processing/MonitoringDensity.h` (grid interpolation
-helper), `tests/backend/monitoring_density_test.cpp`,
 `tests/frontend/hdf_review_scatter_test.cpp`,
 `knowledge_map/frontend/HdfReviewTab.md`,
-`knowledge_map/task/2026-09-23-monitoring-kde-density.md`,
 `docs/manual/review-and-postprocess.md`, `Recent-Work.md`, this plan.
 
-1. **Backend helper.** `densityAtPointsFromGrid(const DensityGrid&, const
-   std::vector<DensityPoint>&) -> std::vector<double>` (bilinear, clamped to
-   the grid, normalised by the grid maximum) next to `gaussianKdeGrid`.
-   Backend test: on a 4000-point two-cluster set, grid path vs
-   `normalizedDensity` agree within 5 % RMS and the 8-level assignment
-   differs by at most one level for ≥ 99 % of points; degenerate input
-   (all points equal, non-finite) yields zeros without throwing.
-2. **Review KDE job.** `startReviewKdeJob()` after `generateScatterPlot`
-   on load: copies the µm² points, the bandwidth factor and core fraction,
-   runs on `QtConcurrent` (`kdeWatcher_`, file-changed guard, drained in the
-   destructor like `coreWatcher_`), returns `{levels per point,
-   optional<KdeCoreRecord>}` (record only when no stored full-run record).
-   `onReviewKdeFinished`: cache levels, `routeScatterByLevel()`, draw the
-   computed contour, update the menu action label, status text.
-3. **Level series.** Create `kKdeLevels` level series once (Monitoring
-   idiom: colour `kdeLevelColor`, legend markers hidden, hidden until KDE is
-   on). `routeScatterByLevel()` moves points between the plain series and
-   the level series from the cache without touching the maps
-   (`scatterPointToFrame_` is by point, not by series). Re-add the highlight
-   series last. Checkbox "Density (KDE)" in the Charts view →
-   `Review/KdeEnabled` (+ `Review/KdeVersion`).
-4. **Contour and save action.** Draw the computed record with
-   `drawStoredKdeContours`'s series style but dashed grey-blue and legend
-   text "Core 90 % (computed, unsaved)". Rename `computeCoreAction_`
-   dynamically: "Save core contour to file" when a computed record exists
-   (skips the compute, goes straight to the confirm/write path), "Compute
-   core contour from full run" otherwise. Stored full-run record present →
-   no recompute, label as today.
-5. **Export.** Snapshots include level colours and both contours (they are
-   chart series; nothing extra), highlight hidden as PR 2.
-6. **Tests** (extend `frontend.hdf_review_scatter`): two-cluster fixture →
-   cluster centres land in higher levels than the outliers; toggling the
-   checkbox off restores one plain series with all points and on re-routes
-   without a new job (watcher stays null); file without full-run record →
-   computed contour series present with the "unsaved" name and the action
-   reads "Save…"; file with stored record → no computed contour, action
-   unchanged; click hit-test still resolves point k → frame_k with KDE on
-   (points spread over level series); recording file → no job started.
-   Performance: the job on the 20 000-cell fixture finishes under the
-   ratio gate (grid path), and the GUI thread is never blocked by it
-   (5 ms-tick p99 under 60 ms during the job, as the KDE e2e measures).
-7. **Docs.** `HdfReviewTab.md` "Density colouring" section; the KDE task
-   note gets a "Review tab" paragraph (grid path threshold, unsaved
-   contour); manual paragraph + the Charts screenshot from PR 2 regenerated;
-   `Recent-Work.md`.
+1. **Scatter from the facade.** `generateScatterPlot` builds the maps and
+   points from `backend_.facade().reviewScatter()` (identical order to
+   today's loop, now asserted by the PR 3a test). Batch export keeps its
+   per-file reader path for snapshots.
+2. **Levels.** Poll `reviewDensity()` on the `ReviewDensity` operation
+   event (queued to the GUI thread); on `ready`, cache the levels and
+   `routeScatterByLevel()`. Create `kKdeLevels` level series once
+   (Monitoring idiom: `kdeLevelColor`, legend markers hidden, hidden until
+   KDE is on). Routing moves points between the plain series and the level
+   series without touching the maps. Re-add the highlight series last.
+   Checkbox "Density (KDE)" → `Review/KdeEnabled` (+ `Review/KdeVersion`);
+   toggling re-routes from the cache, never re-requests.
+3. **Contour and save action.** Draw the computed record with
+   `drawStoredKdeContours`'s series style but dashed grey-blue, legend
+   "Core 90 % (computed, unsaved)". `computeCoreAction_` reads "Save core
+   contour to file" when a computed record exists (confirm dialog →
+   `saveReviewCoreContour(overwrite)`), "Compute core contour from full run"
+   otherwise; the tab's own `QtConcurrent` compute path is removed in
+   favour of the facade job (`computeFullRunCoreForTests` hook re-pointed).
+4. **Export.** Snapshots include level colours and both contours;
+   highlight hidden as PR 2.
+5. **Tests** (extend `frontend.hdf_review_scatter`): two-cluster fixture →
+   cluster centres in higher levels than outliers; toggle off → one plain
+   series with all points, on → re-routed with no new request; file without
+   full-run record → "unsaved" contour series and "Save…" action; stored
+   record → no computed contour; click hit test still resolves point k →
+   frame_k with KDE on; recording file → nothing. GUI 5 ms-tick p99 under
+   60 ms while the 20 000-cell job runs. Existing `frontend.hdf_review_core`
+   updated for the moved compute path, same assertions.
+6. **Docs.** `HdfReviewTab.md` "Density colouring" section; manual
+   paragraph; Charts screenshot regenerated; `Recent-Work.md`.
+
+### PR 4 — React + Tauri Charts view (tracked under UI-3 #268 / UI-4 #269)
+
+Files: `desktop/src/App.tsx` (Charts tab), new
+`desktop/src/review/ReviewScatter.tsx`, `desktop/src/review/scatterGestures.ts`,
+`desktop/src/review/scatterHitTest.ts`, `desktop/src/review/FramePane.tsx`,
+their `*.test.ts`, `desktop/src/bridge.ts` (typed wrappers from PR 3a),
+shared fixture `tests/fixtures/review_scatter_hits.json`,
+`knowledge_map/frontend/` React review note, decoupling plan parity row,
+`Recent-Work.md`, this plan.
+
+1. **Data.** On review load: `fetch_review_scatter()` once; build maps in
+   TS. Subscribe to `ReviewDensity` operation events from `poll_events`;
+   on completion `fetch_review_density()` and `fetch_review_kde_records()`.
+   Session id guards against a stale response after reload.
+2. **Rendering.** One `<canvas>` (not SVG: 10⁵ points), device-pixel-ratio
+   aware; points drawn per level with the `density_ramp` stops from
+   `bridgeContract.ts` (plain colour while `ready = false` or KDE off);
+   contours as polylines from the record JSON (stored full-run solid blue,
+   live dashed orange, computed dashed grey-blue); highlight drawn last.
+   Isoelastic curves: add them to the contract's static data or a bridge
+   read in this PR if the React view needs parity; otherwise note as a gap
+   in the parity matrix.
+3. **Gestures** (`scatterGestures.ts`, pure state machine over pointer
+   events, unit-tested without a DOM): same rules as the Qt view —
+   drag threshold 10 CSS px (the web has no `startDragDistance`; 10 matches
+   Qt's default), left/middle pan, wheel zoom at cursor with Ctrl/Shift and
+   axis-region rules, double-click reset only when neither click hit,
+   right-click menu with "Reset zoom" / "Save core contour to file"
+   (`review_save_core_contour`, overwrite confirm in-app since
+   `window.confirm` is not used in the shell), pan cleared on
+   `pointerleave`/`blur`/`pointercancel`.
+4. **Hit test** (`scatterHitTest.ts`): same algorithm — visible points
+   only, pixel distance ≤ max(marker, 8), ties → lowest frame index. The
+   shared fixture `tests/fixtures/review_scatter_hits.json` (axis ranges,
+   plot rect, points, click positions → expected frame or none) is
+   consumed by both a vitest test and a C++ case in
+   `frontend.hdf_review_scatter`, so the two shells cannot drift.
+5. **Frame pane.** CSS grid column beside the canvas (stacks under it
+   below ~900 px width); image via `fetchReviewImage(ValidImage, idx)` and
+   mask via `ValidMask` through the existing `framePullScheduler`
+   ("review" slot, latest-wins); Prev/Next and ←/→; "Open in window" =
+   in-app overlay component, not a native window.
+6. **Preferences.** KDE toggle and column split in the Tauri store.
+7. **Tests.** vitest: gesture state machine (click vs drag, double-click
+   rule, leave/blur), hit-test fixture, level colouring falls back to plain
+   while not ready, stale-session response ignored. Desktop Xvfb smoke
+   (`desktop-ci.yml`): load the fixture file, click a known point, assert
+   the pane requested the expected frame index.
+8. **Docs.** React review note; decoupling plan parity row → "Review
+   charts: scatter, density, click-to-view"; chart export noted as the
+   remaining gap.
 
 ## Acceptance criteria
 
@@ -426,18 +619,35 @@ helper), `tests/backend/monitoring_density_test.cpp`,
       auto-computed (unsaved) and saveable from the context menu; files
       with > 5000 cells use the grid path and stay within the performance
       gate; the GUI thread is not blocked by the estimate.
-- [ ] Recording files: no density, no contour, no click/hover effect.
+- [ ] Density levels, computed contour and scatter data come from the
+      backend review density job via `BackendFacade`; neither shell runs the
+      kernel; bridge contract bump is additive and `contract.rs`,
+      `gen_bridge_contract.py --check` and the `shim.cpp` asserts pass.
+- [ ] React Charts view: same click/drag/zoom/reset/pane behaviour; the
+      shared hit-test fixture passes in vitest and in the C++ test; density
+      colours match the contract ramp.
+- [ ] Recording files: no density, no contour, no click/hover effect (both
+      shells).
 - [ ] Hit test and pan meet the performance gate at 20 k points, or the
       documented fallback is in place.
-- [ ] `frontend.zoomable_chart_view`, `frontend.hdf_review_scatter` and the
-      backend density test pass on the Linux backend lane; existing
-      `frontend.hdf_review_core` and `frontend.monitoring_kde_*` unchanged.
-- [ ] Vault notes, manual, screenshot harness and `Recent-Work.md` updated;
-      `check_docs.py` and `check_screenshots.py` clean.
+- [ ] `frontend.zoomable_chart_view`, `frontend.hdf_review_scatter`,
+      `backend.review_density`, the backend density test and the bridge
+      contract tests pass on their lanes; TSan clean for the service change;
+      existing `frontend.hdf_review_core` and `frontend.monitoring_kde_*`
+      unchanged in what they assert.
+- [ ] Vault notes, manual, screenshot harness, decoupling-plan parity row and
+      `Recent-Work.md` updated; `check_docs.py` and `check_screenshots.py`
+      clean.
 
 ## Progress
 
 - [ ] PR 1 — `ZoomableChartView` click/drag disambiguation + test
-- [ ] PR 2 — Review tab zoomable scatter, click-to-view, docked frame pane,
-      export save/restore
-- [ ] PR 3 — KDE density colouring, auto-computed contour, save action
+- [ ] PR 2 — Qt Review tab zoomable scatter, click-to-view, docked frame
+      pane, export save/restore
+- [ ] PR 3a — Backend review density mode, facade methods, bridge contract
+      bump + contract tests (no UI)
+- [ ] PR 3b — Qt KDE colouring, computed contour and save action from the
+      facade
+- [ ] PR 4 — React + Tauri Charts view (#268 / #269): canvas scatter,
+      shared gesture/hit-test rules, frame pane
+- [ ] Follow-up issue: chart snapshot export from the Tauri shell
