@@ -87,7 +87,15 @@ model. None of the classical science has run on a board.
    only what MIB would have kept. HDF5 assembly (metadata live from records, images from the
    store drain) runs on the PS after the run and is not on any frame deadline.
 
-9. **Host surface removed on the instrument.** EGrabber/MindVision, the eGrabber camera
+9. **Two ROIs, and the frame rate is shown before it is chosen.** ROI 1 (sensor window,
+   GenICam geometry) is acquired, previewed and recorded; ROI 2 (fixed 512x96 processing
+   window inside it, a profile parameter) is the only region processed. Default ROI 1 = ROI 2;
+   observation mode enlarges ROI 1 for multi-image context. Because the sensor's frame rate
+   falls with ROI 1 height, the achievable rate and its binding limit (sensor geometry,
+   processing profile or store bandwidth) are shown to the operator while ROI 1 is placed,
+   and a rate above it cannot be applied or pass readiness.
+
+10. **Host surface removed on the instrument.** EGrabber/MindVision, the eGrabber camera
    script, `PulseGeneratorService` (RS485 acquisition-trigger train; the PL times XVS and
    the strobe itself), `TriggerService`'s pulse thread (the PL times the sort output),
    `YoloService`, and Sentry upload.
