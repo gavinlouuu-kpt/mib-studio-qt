@@ -297,6 +297,36 @@ time of writing; take the next free number when the PR lands):
   the series signal gives coordinates, not a frame, would arrive from
   whichever level series holds the point, and its marker-geometry test would
   not match a pixel tolerance.
+- 2026-09-30 (PR 1 + PR 2 implementation): **Synthesized input, no QtTest.**
+  The tree does not link Qt6::Test; widget tests send `QMouseEvent` /
+  `QWheelEvent` through `tests/support/qt_mouse.h` and count signals with
+  lambdas. Tests register in `src/frontend/qt/CMakeLists.txt` (shared
+  `mib_frontend_tests` runner), not `tests/CMakeLists.txt` as the issues said.
+- 2026-09-30: **Leave only cancels a gesture when no button is held.** Qt can
+  deliver a leave mid-drag; the Monitoring pan survived the cursor leaving
+  the chart before and still does. A leave with no button down means the
+  release was lost (a dialog took it), which is the case the plan targets.
+- 2026-09-30: **Scatter filled with `QXYSeries::replace()`.** Found while
+  gating 20 000 cells: on Qt 6.4 `append()` (per point and the `QList`
+  overload) emits `pointAdded` per point and rebuilds the series geometry
+  each time, O(n²); a 20 000-cell file did not open within two minutes,
+  with `replace()` it opens in ~1.6 s. The Monitoring scatter still uses
+  `append(QList)`; recorded as the lead for TD-16, not changed here.
+- 2026-09-30: **Pane refresh is lazy.** Any valid-row selection moves the
+  highlight, but the pane reads the frame (one HDF5 hyperslab) only while
+  the Charts tab is visible, and catches up on tab switch.
+- 2026-09-30: **Pan repaint at 20 000 points is tracked, not fixed (TD-18).**
+  At a realistic chart width the repaint is ~200–260 ms (Qt Charts paints
+  one item per marker on the CPU; antialiasing off saves only ~20 %). The
+  axis/geometry update the gesture owns is ~9 ms and is gated at 60 ms;
+  `setUseOpenGL` would break `grab()`-based chart export and cannot be
+  verified offscreen, so it is left to TD-18. An earlier 9–13 ms "pan step"
+  was measured on a scatter squeezed to ~200 px by the embedded viewer's
+  long control row; the layout fix (scatter ≥ 420 px, 60 % start, compact
+  embedded controls) came from looking at the rendered screenshot.
+- 2026-09-30: **The hit fixture lives in `tests/fixtures/`** (not
+  `tests/frontend/fixtures/`) because the React test in `desktop/` reads it
+  too.
 
 ## Implementation plan
 
@@ -643,9 +673,10 @@ shared fixture `tests/fixtures/review_scatter_hits.json`,
 
 ## Progress
 
-- [ ] PR 1 (#466) — `ZoomableChartView` click/drag disambiguation + test
-- [ ] PR 2 (#467) — Qt Review tab zoomable scatter, click-to-view, docked frame
-      pane, export save/restore
+- [x] PR 1 (#466) — `ZoomableChartView` click/drag disambiguation + test
+- [x] PR 2 (#467) — Qt Review tab zoomable scatter, click-to-view, docked frame
+      pane, export save/restore (landed together with PR 1 in one PR, branch
+      `feat/review-scatter-click-to-view`)
 - [ ] PR 3a (#468) — Backend review density mode, facade methods, bridge contract
       bump + contract tests (no UI)
 - [ ] PR 3b (#469) — Qt KDE colouring, computed contour and save action from the

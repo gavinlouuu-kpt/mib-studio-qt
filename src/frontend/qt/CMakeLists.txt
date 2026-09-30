@@ -259,6 +259,13 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.hdf_review_core PROPERTIES LABELS "frontend;monitoring;recording" TIMEOUT 120)
 
+    # Issue #467: Review scatter click-to-view with the docked frame pane, zoom/
+    # pan, export save/restore, the shared hit fixture, 20 000-cell cost.
+    mib_test_runner_add(mib_frontend_tests hdf_review_scatter_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_review_scatter_test.cpp)
+    add_test(NAME frontend.hdf_review_scatter COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_scatter_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.hdf_review_scatter PROPERTIES LABELS "frontend;recording;safety" TIMEOUT 180)
+
     # End-to-end: real MainWindow on the mock-camera pipeline with synthetic
     # cells; KDE off / on / off phases gated on ratios (capture, processing,
     # monitoring ring, overlay lag, GUI responsiveness). ~25 s, integration lane.

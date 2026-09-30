@@ -1,5 +1,25 @@
 # Recent Work
 
+## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
+
+The Review tab's Charts scatter is now a `ZoomableChartView` and a single
+click on a point shows that cell in a frame pane docked beside the plot
+(never over it), highlights the point and selects its Valid Frames row;
+prev/next walk the valid set, "Open in window…" opens the modal viewer.
+`ZoomableChartView` tells a click from a drag by `startDragDistance()`
+(issue #466); the Review tab builds point ↔ frame maps (frames failing
+validation have no point), names the dataset explicitly (the Charts tab
+reads as "invalid" to `isShowingValid_`), and keeps the user's zoom and
+selection out of exported chart images. The hit rule is Qt-free and shared
+with the React shell through `tests/fixtures/review_scatter_hits.json`.
+Found on the way: filling the scatter with `append()` was O(n²) on Qt 6.4
+(20 000 cells never finished opening); `replace()` opens it in ~1.6 s —
+TD-16 gets the lead. Guards: `frontend.zoomable_chart_view`,
+`frontend.hdf_review_scatter`. Plan:
+[`2026-09-30-review-scatter-click-to-view`](../../docs/exec-plans/active/2026-09-30-review-scatter-click-to-view.md)
+(PR 1 + PR 2 of #465); task note
+[[../task/2026-09-30-review-scatter-click-to-view]].
+
 ## 2026-09-26 — Monitoring density (KDE) moved into the backend
 
 The live scatter KDE and core contour now run in the Qt-free backend

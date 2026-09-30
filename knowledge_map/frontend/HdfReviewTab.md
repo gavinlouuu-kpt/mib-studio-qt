@@ -16,7 +16,9 @@
 - On scroll/selection, fetch image payloads by index using
   `readImageByIndex` / `readImagesRange` (hyperslab reads — bounded memory).
 - Display metrics in a `QTableView` backed by `HdfMetricsModel`.
-- Optional charts: scatter + histograms over the saved dataset.
+- Optional charts: scatter + histograms over the saved dataset; click a
+  scatter point to view the cell in the docked frame pane (see "Scatter
+  interaction and frame pane").
 - **Bounded file row** (issue #358): the `.ui` file row is now two rows
   (`fileRowLayout`: Select/Close/Export Metrics/Export All + a native
   **More…** `QToolButton` menu holding Batch Metrics, Batch Export All,
@@ -132,6 +134,60 @@ cannot be written (read-only, export running) the contour is still drawn and
 the status says it was not saved. A result for a file that is no longer open
 is dropped; the destructor drains the job. Guard: `frontend.hdf_review_core`
 (compute, save, decline/confirm overwrite, read-only).
+
+## Scatter interaction and frame pane (issue #467)
+
+The Charts view is a splitter: scatter | (frame pane over histogram), sizes
+persisted as `Review/ChartsSplitter` / `Review/ChartsRightSplitter`. The pane
+sits beside the plot and never covers it.
+
+- **Scatter view** is a `ZoomableChartView` ([[System-Utilities]]): wheel
+  zoom, left/middle-drag pan, single click selects, double-click resets only
+  on empty space (`setResetOnDoubleClick(false)` + `onScatterDoubleClicked`),
+  "Reset zoom" in the right-click menu after "Compute core contour…".
+  `generateScatterPlot` registers the data extent with `setDefaultRange`.
+- **Point ≠ frame.** `generateScatterPlot` skips `!validation.isValid`, so it
+  builds `scatterPoints_` (µm², deformability, frame), `scatterPointToFrame_`
+  and `frameToScatterPoint_` (−1 when a frame has no point). It sets
+  `scatterShowsLiveFile_` only when drawing `validFrames_`; batch-export
+  snapshots draw other files, and clicks then select nothing.
+- **Dataset is explicit.** `setSelectedFrame(int, bool valid)` and
+  `showFrameViewer(int, bool valid)`: `isShowingValid_` is false on the
+  Charts tab. `onTableSelectionChanged` uses the sending table, not the tab.
+  `loadFrameForDisplay(int, bool)` is the one image/mask/series read shared
+  by the modal viewer and the pane.
+- **Hit test** (`include/frontend/utils/ScatterHitTest.h`, Qt-free): visible
+  points only, pixel distance ≤ max(marker, 8 px), ties → lowest frame index.
+  `tests/fixtures/review_scatter_hits.json` is the shared contract with the
+  React shell (#470). Hover uses the same function (cursor + tooltip).
+- **Selection** (`setSelectedFrame(frame, true)`) moves the one-point
+  `scatterHighlight_` (kept last in the chart's series by
+  `raiseScatterHighlight()`, hidden for frames without a point) and refreshes
+  the pane, which reads the frame only while the Charts tab is visible
+  (`refreshFramePane`, lazily on tab switch). Pane prev/next and ←/→ walk
+  `validFrames_` with wrap; "Open in window…" opens the modal viewer on the
+  selected frame. Close/reload clears maps, highlight and pane.
+- **Exports** (`renderChartSnapshots`, Export Charts, batch) save the axes
+  and highlight (`saveScatterView`), draw full extent without the highlight,
+  then restore; batch restores once after the final `updateCharts()`.
+- **Cost:** the scatter is filled with `QXYSeries::replace()`. On Qt 6.4
+  `append()` (per point and the `QList` overload) emits `pointAdded` per
+  point and rebuilds the series geometry each time — O(n²): a 20 000-cell
+  file did not finish opening in two minutes; with `replace()` it opens in
+  ~1.6 s. At 20 000 points the hit rule costs 0.14–0.18 ms per call, hover
+  (hit + tooltip) 1.2–3.2 ms median, a pan step's axis/geometry update
+  ~8–9 ms, but its repaint ~200–260 ms: Qt Charts draws one item per marker
+  on the CPU (TD-18). Linux container, system Qt 6.4, scatter ~800 px wide.
+  Gates: hit rule < 2 ms, hover < 5 ms, pan update < 60 ms, pan with
+  repaint < 1.5 s (catches O(n²)-class regressions only).
+- **Layout:** the scatter keeps ≥ 420 px and starts with 60 % of the width;
+  the embedded viewer hides its overlay / ROI / zoom in-out controls (the
+  tab's toolbar drives overlay and ROI) so its one control row stays short.
+- Test hooks: `scatterViewForTests`, `scatterHighlightForTests`,
+  `framePaneForTests`, `framePaneFrameForTests`, `scatterPointToFrameForTests`,
+  `scatterPointViewPosForTests`, `setFrameViewerSinkForTests` (replaces the
+  modal `exec()`), `stepScatterSelectionForTests`, `renderChartSnapshotsForTests`.
+  Guard: `frontend.hdf_review_scatter`.
 
 ## Run accounting (issue #367)
 
