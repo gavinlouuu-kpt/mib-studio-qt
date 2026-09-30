@@ -53,6 +53,10 @@
      run only); publish `Active`. Before step 2 a multi-image series run
      switches the realtime mode `AsyncBatch -> Inline` (so the frozen
      snapshot records the mode actually used); the finalization restores it.
+  6. Arm the [[../services/ReplayClipRecorder]] with the frozen run, its
+     JSON, the canonical processing config, raw `config.json`, background
+     and the FrameStore's committed count (issue #463). `arm()` only starts
+     a worker; a clip can never fail or delay the Start.
 - `requestStop(cancelled)` returns `ExperimentStopOutcome::Accepted` and
   hands the finalization to the worker; `Busy` while Starting/Stopping or a
   stop is already queued; `NotActive` when there is no run. Completion is
@@ -93,7 +97,9 @@ append only, never renumber.
 
 ## Finalization sequence (worker, on `requestStop` / fatal / shutdown)
 
-1. Publish `Stopping` (or `Failed` for a fatal save error).
+1. Publish `Stopping` (or `Failed` for a fatal save error), then
+   `ReplayClipRecorder::notifyRunEnded()` closes the run's clip window if it
+   is still open.
 2. `flushBufferedFrames(hdf5)` + `finishFlush()`: drain the async write
    queue; the writer thread has stopped afterwards.
 3. `endExperiment()`; `resetRealtimeMetrics()`.

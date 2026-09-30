@@ -21,6 +21,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
 - Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
+- Start-of-run replay clip (rerunnable frames + config): [[services/ReplayClipRecorder]]
 - Playback: [[services/PlaybackService]]
 - Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],

@@ -7,6 +7,7 @@
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/ReplayClipRecorder.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/TriggerService.h"
 
@@ -676,7 +677,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         return result;
     }
     // Provenance first: a run without its frozen snapshot cannot be Complete.
-    if (!hdf5.writeRunSnapshotJson(runSnapshotToJson(run), readinessToJson(result.readiness))) {
+    const std::string runJson = runSnapshotToJson(run);
+    if (!hdf5.writeRunSnapshotJson(runJson, readinessToJson(result.readiness))) {
         hdf5.closeFile();
         std::error_code ec;
         std::filesystem::remove(path, ec);
@@ -701,6 +703,22 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         worker_ = std::thread([this] { worker(); });
     }
     state_ = ExperimentRunState::Active;
+
+    // Start-of-run replay clip (issue #463): hand over the frozen run and
+    // the reprocessing inputs as they are now. arm() only starts a worker;
+    // a clip can never fail or delay the Start.
+    if (auto* clips = backend_.replayClips()) {
+        recording::ReplayClipArm clip;
+        clip.store = backend_.getFrameStore();
+        clip.firstWriteIndex = clip.store ? clip.store->committedCount() : 0;
+        clip.run = run;
+        clip.runSnapshotJson = runJson;
+        clip.canonicalProcessingConfig = canonicalProcessingConfig(proc.getProcessingConfig());
+        clip.configJson = backend_.getLastConfigJson();
+        clip.background = proc.getRealtimeBackgroundGrayShared();
+        clips->arm(std::move(clip));
+    }
+
     result.outcome = ExperimentStartOutcome::Started;
     result.message = "experiment started";
     result.run = run;
@@ -874,6 +892,11 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     const std::string liveKdeCoreJson = std::move(liveKdeCoreJson_);
     liveKdeCoreJson_.clear();
     lk.unlock();
+
+    // The run's frames end here: close its replay clip window if still open.
+    if (auto* clips = backend_.replayClips()) {
+        clips->notifyRunEnded(run.startGeneration);
+    }
 
     bool ok = true;
     bool flushOk = true;

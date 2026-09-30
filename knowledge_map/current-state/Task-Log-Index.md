@@ -32,6 +32,9 @@
 - `task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix.md`
 - `task/2026-05-05-hdf5-exporter-linux-macos-build.md`
 
+### Recording / replay
+- [[../task/2026-09-30-replay-clip-capture]] — start-of-run replay clip (first 1000 frames or 1 s + config/background), backend-only (#463)
+
 ### Mock camera / dev workflow
 - `task/mock_camera_dev_mode.md`
 

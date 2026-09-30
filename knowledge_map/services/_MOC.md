@@ -14,6 +14,8 @@
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
 - [[HdfExportService]] — Qt-free bounded/cancellable CSV+TIFF export job (issue #344)
 - [[SqliteService]] — small metadata DB
+- [[ReplayClipRecorder]] — silent start-of-run clip (first 1000 frames or
+  1 s + config/background) for small-scale reruns (#463)
 
 ## Hardware I/O
 - [[DeviceDiscoveryService]] — backend discovery **jobs** (bounded, cancellable,

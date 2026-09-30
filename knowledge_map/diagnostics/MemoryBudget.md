@@ -48,6 +48,7 @@ an upper bound on what those owners keep resident together.
 | `processing.batchQueue` | Measured | `maxQueuedFrames` and `maxQueuedBytes` (default 256 MiB) | async batch pipeline |
 | `processing.flushQueue` | Measured | 3 batches in flight | `HdfWriteQueue<ExperimentBatch>` |
 | `processing.snapshot` | Measured | 1 | latest realtime snapshot mask |
+| `recording.replayClip` | Measured | `maxBytes` (512 MB) and `maxFrames` (1000) | [[../services/ReplayClipRecorder]] start-of-run clip, released as frames are written |
 | `export.jobs` | Estimated (0: streams one frame at a time, #344) | n/a | `HdfExportService` / Python exporter |
 
 ## `ExperimentFrameBuffer`

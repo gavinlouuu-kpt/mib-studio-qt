@@ -45,7 +45,12 @@ triggerService_, yoloService_, syringePumpService_,
 pulseGeneratorService_,
 deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
+replayClips_  // #463: declared before experimentCoordinator_ so it outlives it
 ```
+
+`replayClips()` returns the [[../services/ReplayClipRecorder]] (null before
+`initialize()`), created in `initialize()` with root
+`<dataDir>/replay-clips`; `MIB_REPLAY_CLIP=0` disables capture.
 
 ## `initialize(dataDir)` — what it wires
 
@@ -155,7 +160,9 @@ service is built in the `AppBackend` constructor, idle until a shell enables
 it, and its record sink is wired to `ExperimentCoordinator::setLiveKdeCoreRecord`),
 then calls `ExperimentCoordinator::shutdown()` so an active
 run is finalized (file closed, accounting written) while every service it
-needs is still alive, then clears the target-group and background-capture
+needs is still alive, then `ReplayClipRecorder::shutdown()` (the run's clip
+drains for at most 5 s while the FrameStore is alive, see
+[[../services/ReplayClipRecorder]]), then clears the target-group and background-capture
 callbacks (no new trigger requests are admitted), then stops capture **with the
 camera-ready callback still wired** so that [[../services/TriggerService]]
 unbinds (waiting for any in-flight pulse) and stops while the camera object
@@ -318,7 +325,8 @@ NotActive afterwards, Starting/Active/Stopping/Idle event sequence).
 platform helper), `capture.sdkBuffers` (Estimated from the telemetry
 input-buffer count × the latest frame payload while capture runs, otherwise
 Unknown — never a measured zero), `FrameStore::memoryStats()`, every
-`ProcessingService::memoryStats()` owner, and the streaming exporter entry.
+`ProcessingService::memoryStats()` owner, the replay clip buffer
+(`recording.replayClip`), and the streaming exporter entry.
 Consumed by the [[../frontend/MainWindow]] Diagnostics dialog and the
 memory benchmark evidence.
 

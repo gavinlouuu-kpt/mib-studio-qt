@@ -1,5 +1,24 @@
 # Recent Work
 
+## 2026-09-30 — Start-of-run replay clip (#463, slice 1)
+
+Every experiment now silently keeps its first **1000 frames or 1 s**
+(whichever comes first, 512 MB cap) under `<dataDir>/replay-clips/`, with
+the frozen run snapshot, canonical processing config, raw `config.json` and
+background, each verified against the hashes in the run snapshot
+([[../services/ReplayClipRecorder]]). The clip is armed by
+[[../architecture/ExperimentCoordinator]] inside the Start transaction, so Qt
+and React/Tauri both get it with no shell work; a worker copies frames by
+write index and writes lossless PNGs rate-limited, and a clip can never
+fail, delay or touch the experiment (no HDF5 access, free-space preflight,
+errors only in the clip manifest). The `frames/` folder replays directly
+through the mock camera. Guard: `e2e.replay_clip` (mock camera over
+ID-stamped frames: exact count, pixel-exact order, hashes, replay, duration
+limit, early stop, no space, disabled, rapid start/stop, shutdown mid-clip),
+verified to fail when frames are dropped or the saved config differs.
+Next: live per-frame results for the clip frames and paced replay (plan
+`docs/exec-plans/active/2026-09-30-replay-clip-capture.md`).
+
 ## 2026-09-26 — Monitoring density (KDE) moved into the backend
 
 The live scatter KDE and core contour now run in the Qt-free backend

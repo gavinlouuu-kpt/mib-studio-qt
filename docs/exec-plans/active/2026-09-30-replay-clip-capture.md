@@ -1,6 +1,7 @@
 # Replay clip capture at experiment start (#463)
 
-Status: active (2026-09-30) — plan only; no code has landed.
+Status: active (2026-09-30) — slice 1 recorder + mock-camera e2e landed;
+live per-frame results, latency ratio test and paced replay next.
 
 Rescopes issue #463. The issue asked for a study recorder (user-action
 timeline, sampled camera images, GUI screenshots). Review against `develop`
@@ -40,11 +41,11 @@ moves to its own issue, sequenced with #395.
 | First frame | First write index committed after the transition (recorded) |
 | Stop at | 1000 frames, **or** 1 s of host time since the first frame (`hostTimestampUs`), **or** the byte safety cap, whichever comes first |
 | Byte safety cap | Proposed 512 MB (open decision) |
-| Early stop | Experiment stops before the window closes → clip ends there, marked `truncated` |
+| Early stop | Experiment stops before the window closes → clip ends there, state `incomplete`, `end_reason: run_ended` |
 
 The clip is contiguous by write index. A frame the reader could not copy
 (`FrameReadOutcome::Overwritten` etc.) becomes an explicit gap record; the
-clip is then marked `non_contiguous`, never silently shortened.
+clip is then marked `contiguous: false`, never silently shortened.
 
 Expected sizes (Mono8): 512×96 → 49 MB for 1000 frames; 1184×240 → 284 MB.
 At 200 fps the 1 s bound gives 200 frames; at ≥1000 fps the 1000-frame bound
@@ -80,8 +81,8 @@ ExperimentCoordinator ──(Running, snapshot)──▶ ReplayClipRecorder::arm
 - **Config/background:** saved from the same state the coordinator froze in
   `RunConfigurationSnapshot`. The snapshot stores hashes, not content, so the
   recorder saves the content and verifies it against
-  `processingConfigSha256` and `backgroundSha256`; a mismatch marks the clip
-  `config_unverified`.
+  `processingConfigSha256`, `configJsonSha256` and `backgroundSha256`; a
+  mismatch sets `config_verified: false`.
 - **Live results:** per write index in the clip: processed or intentionally
   discarded (LatestFrame policy), valid/invalid object counts and object
   metrics. A rerun processes every frame, so comparison is restricted to
@@ -99,22 +100,27 @@ ExperimentCoordinator ──(Running, snapshot)──▶ ReplayClipRecorder::arm
 
 ```
 data/replay-clips/<utc-start>-g<startGeneration>/
-  manifest.json        schema version, app/build/core/contract identity, run link
-                       (output path, start generation, start wall clock), capture
-                       rule + actual bounds hit, counts (copied / gaps / written /
-                       failed), state (complete | truncated | non_contiguous |
-                       config_unverified | failed), end reason
-  frames/000000.png …  lossless Mono8, sorted names → usable as MIB_MOCK_CAMERA_DIR
-  frames.jsonl         write index, device timestamp + descriptor, hostTimestampUs,
-                       width/height/pitch/pixelFormat, gap records
-  processing_config.json
+  manifest.json          schema version, run link (output path, generations, wall
+                         clock), core/contract identity, capture rule, counts
+                         (window / copied / gaps / written / write failures / bytes),
+                         state (complete | incomplete | failed), end_reason
+                         (frame_limit | duration_limit | byte_limit | run_ended |
+                         shutdown), contiguous, config_verified + hashes
+  frames/000000.png …    lossless Mono8, named by offset → usable as MIB_MOCK_CAMERA_DIR
+  frames.jsonl           per index: write index, device timestamp, hostTimestampUs,
+                         width/height/pitch/pixelFormat, status (written | gap
+                         reason | write failure | abandoned)
+  run_snapshot.json      runSnapshotToJson(run)
+  processing_config.txt  canonical ProcessingConfig (hashes to the snapshot)
+  config.json            raw config.json as last applied
   background.png
-  live_results.jsonl
+  live_results.jsonl     (slice 1b, not yet)
 ```
 
-`manifest.json` is written at arm (state `capturing`) and atomically replaced
-at the end; a clip left in `capturing` after a crash is reported as
-`incomplete` by the reader tools.
+`manifest.json` is written in state `writing` before any frame and
+atomically replaced at the end; a clip left in `writing` means the process
+died mid-clip. Skipped clips (disabled, busy, no space, no frames) write
+nothing.
 
 ## Replay
 
@@ -127,26 +133,30 @@ at the end; a clip left in `capturing` after a crash is reported as
 
 ## Acceptance criteria
 
-- [ ] A mock-camera experiment produces a clip whose frames, metadata, config
+- [x] A mock-camera experiment produces a clip whose frames, metadata, config
       and background round-trip; config/background hashes match the run
-      snapshot.
+      snapshot (`e2e.replay_clip`).
 - [ ] Mock run → clip → headless rerun → per-frame results equal live results
       on processed frames (pipeline e2e).
-- [ ] Clip ends at exactly 1000 frames at high fps and at 1 s at low fps;
-      early experiment stop yields `truncated`.
-- [ ] Forced ring overrun yields explicit gap records and `non_contiguous`;
-      copied + gaps = frames in window.
-- [ ] Disk full, unwritable directory, encoder failure, allocation failure and
-      shutdown during write: experiment output and accounting unchanged, clip
-      state truthful (fault injection).
+- [x] Clip ends at the frame bound and at the duration bound (tested with
+      scaled bounds: 200 frames, 150 ms); early experiment stop yields
+      `incomplete` / `run_ended` with the copied frames kept.
+- [ ] Forced ring overrun yields explicit gap records and `contiguous: false`;
+      copied + gaps = frames in window (code path exists, no forced-overrun
+      test yet).
+- [ ] Fault injection: insufficient free space and shutdown during capture
+      are covered; disk full mid-write, unwritable directory, encoder failure
+      and allocation failure still need injection seams.
 - [ ] Start→Running latency and steady-state throughput with clips on vs off
       stay within an agreed ratio at the highest supported fps and largest
       frame size (latency budget).
 - [ ] Rapid start/stop/restart and shutdown during capture pass the stress
-      test and the TSan lane with watchdog-bounded joins.
-- [ ] Clip buffer reported through `MemoryOwnerStats` with a declared bound.
-- [ ] Service vault note, Threading-Model, user manual disclosure and
-      Recent-Work updated; `check_docs.py` and `check_screenshots.py` pass.
+      test and the TSan lane with watchdog-bounded joins (stress scenario in
+      `e2e.replay_clip`; clean under a local TSan build together with
+      `e2e.experiment_coordinator`; CI sanitizer lane still to confirm).
+- [x] Clip buffer reported through `MemoryOwnerStats` with a declared bound.
+- [ ] Service vault note, Threading-Model and Recent-Work updated (done);
+      user manual disclosure still to write; `check_docs.py` passes.
 
 ## Decision log
 
@@ -156,6 +166,11 @@ at the end; a clip left in `capturing` after a crash is reported as
   operator.
 - 2026-09-30: clip = first 1000 frames or 1 s, whichever comes first.
 - 2026-09-30: backend-only, armed by `ExperimentCoordinator`; no shell work.
+- 2026-09-30: a Start while the previous clip is still writing skips the new
+  clip (logged) rather than waiting; Start must never block on a clip.
+- 2026-09-30: proposed defaults adopted in code pending confirmation: 512 MB
+  byte cap, 512 MB free-space reserve, 64 MB/s write throttle, 5 s shutdown
+  drain, `MIB_REPLAY_CLIP=0` opt-out.
 
 ## Open decisions
 
@@ -169,9 +184,13 @@ at the end; a clip left in `capturing` after a crash is reported as
 
 ## Progress
 
-- [ ] 1. Recorder: coordinator hook, reader/writer, manifest, budgets,
-      free-space floor, live-result hook; round-trip, fault-injection,
-      concurrency and latency tests.
+- [x] 1a. Recorder: coordinator hook, reader/writer, manifest, budgets,
+      free-space floor, memory owner; `e2e.replay_clip` (mock camera:
+      frame/duration limits, pixel-exact order, hashes, replay through the
+      mock camera, early stop, no space, disabled, rapid start/stop, shutdown
+      mid-clip).
+- [ ] 1b. Live per-frame results for the clip range (`live_results.jsonl`);
+      on/off latency-ratio test at the highest fps and largest frame size.
 - [ ] 2. Replay: mock camera loads a clip with recorded pacing; headless
       rerun script; e2e equality test.
 - [ ] 3. Docs: service vault note, Threading-Model, manual disclosure,

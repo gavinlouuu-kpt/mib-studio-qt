@@ -46,6 +46,7 @@ namespace camera::mock
 }
 
 namespace backend::app { class ExperimentCoordinator; }
+namespace backend::recording { class ReplayClipRecorder; }
 namespace backend::discovery
 {
     class DeviceDiscoveryService;
@@ -181,6 +182,9 @@ namespace backend
 
         // Backend-owned experiment readiness + Start transaction (issue #369).
         app::ExperimentCoordinator& experiment();
+        // Start-of-run replay clip (issue #463): armed by the coordinator on
+        // every experiment start. Null before initialize().
+        recording::ReplayClipRecorder* replayClips();
         // Live Monitoring scatter density (KDE) and core contour: the shells
         // push settings and read results; the provisional record goes to the
         // experiment coordinator from the backend worker.
@@ -286,6 +290,9 @@ namespace backend
         std::string requestedCameraSource_{"unknown"};
         std::string effectiveCameraSource_{"unknown"};
         std::string cameraFallbackReason_;
+        // Declared before the coordinator so it outlives it: the coordinator
+        // arms clips and notifies run end.
+        std::unique_ptr<recording::ReplayClipRecorder> replayClips_;
         std::unique_ptr<app::ExperimentCoordinator> experimentCoordinator_;
         // Declared after the coordinator and processing so it is destroyed
         // first: its worker reads the monitoring ring and feeds the coordinator.

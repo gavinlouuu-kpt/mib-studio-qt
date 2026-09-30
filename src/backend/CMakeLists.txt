@@ -277,6 +277,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/CameraControlService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/RecorderService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReplayClipRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/PlaybackService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp

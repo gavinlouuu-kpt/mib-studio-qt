@@ -313,6 +313,14 @@ mib_add_backend_test_executable(experiment_coordinator_test backend/experiment_c
 add_test(NAME e2e.experiment_coordinator COMMAND $<TARGET_FILE:mib_backend_tests> experiment_coordinator_test)
 set_tests_properties(e2e.experiment_coordinator PROPERTIES LABELS "backend;bridge;e2e" TIMEOUT 180)
 
+# Issue #463: start-of-run replay clip — pipeline e2e with the mock camera
+# (frame/duration limits, lossless in-order frames, config/background hash
+# verification, replay through the mock camera) plus fault injection
+# (no free space, disabled, early stop, shutdown mid-clip).
+mib_add_backend_test_executable(e2e_replay_clip_test integration/e2e_replay_clip_test.cpp)
+add_test(NAME e2e.replay_clip COMMAND $<TARGET_FILE:mib_backend_tests> e2e_replay_clip_test)
+set_tests_properties(e2e.replay_clip PROPERTIES LABELS "backend;e2e;recording;fault-injection" TIMEOUT 180)
+
 mib_add_backend_test_executable(mindvision_selection_state_test backend/mindvision_selection_state_test.cpp)
 add_test(NAME backend.mindvision_selection_state COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_selection_state_test)
 set_tests_properties(backend.mindvision_selection_state PROPERTIES LABELS "backend;camera")

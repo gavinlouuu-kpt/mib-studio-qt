@@ -13,6 +13,7 @@
 #include "backend/database/SqliteService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/HdfWriteQueue.h"
+#include "backend/recording/ReplayClipRecorder.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/recording/RoiCrop.h"
 #include "backend/services/CaptureService.h"
@@ -286,6 +287,11 @@ namespace backend
         if (experimentCoordinator_) {
             experimentCoordinator_->shutdown();
         }
+        // The run has ended, so its replay clip stops copying; the writer
+        // drains within a bounded time while the FrameStore is still alive.
+        if (replayClips_) {
+            replayClips_->shutdown();
+        }
 
         // Stop admitting new trigger requests before anything is torn down.
         if (processingService_) {
@@ -372,6 +378,18 @@ namespace backend
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
         processingService_ = std::make_unique<services::ProcessingService>();
+        {
+            // Start-of-run replay clip (issue #463). MIB_REPLAY_CLIP=0 disables
+            // capture (admin opt-out); the default is on.
+            recording::ReplayClipOptions clipOptions;
+            if (const char *clipEnv = std::getenv("MIB_REPLAY_CLIP"))
+            {
+                const std::string value(clipEnv);
+                if (value == "0" || value == "false" || value == "off") clipOptions.enabled = false;
+            }
+            replayClips_ = std::make_unique<recording::ReplayClipRecorder>(
+                std::filesystem::path(dataDir) / "replay-clips", clipOptions);
+        }
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
         // Funnel experiment flush-write failures to the coordinator (which
         // finalizes the run as Failed) and to the fatal-save-error sink the UI
@@ -1394,6 +1412,8 @@ namespace backend
 
     app::ExperimentCoordinator &AppBackend::experiment() { return *experimentCoordinator_; }
 
+    recording::ReplayClipRecorder *AppBackend::replayClips() { return replayClips_.get(); }
+
     services::MonitoringDensityService &AppBackend::monitoringDensity() { return *monitoringDensity_; }
 
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
@@ -1845,6 +1865,7 @@ namespace backend
         }
         // 2) FrameStore ring.
         if (frameStore_) s.owners.push_back(frameStore_->memoryStats());
+        if (replayClips_) s.owners.push_back(replayClips_->memoryStats());
         // 3) Processing: experiment buffer, monitoring rings, batch queue,
         //    persistence queue, presentation snapshot.
         if (processingService_) {
