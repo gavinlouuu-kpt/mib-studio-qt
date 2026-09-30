@@ -125,6 +125,13 @@ these changes:
 - Timestamps from chunk data (`ChunkFrameID`, `ChunkTimestamp`) -> `timestampDescriptor()` =
   device ticks at `timestamp_hz`; the `frame_id` is carried into `Frame` so previews and records
   correlate.
+- Frame rate: `arv_camera_set_frame_rate` silently clamps to the feature bounds (no error;
+  measured in the board's GenTL spike, pz7035-imx426 `gentl/README.md`). Read
+  `AcquisitionFrameRate` max and `PzFrameRateLimitReason` before applying, read the rate back
+  after, and fail readiness on a mismatch; never rely on an error.
+- Keep at least one buffer returned to the stream: Aravis 0.9's GenTL stream loop re-queues
+  buffers only between events (the producer polls to avoid a deadlock, but holding every
+  buffer still stalls delivery until one is returned).
 - `CameraControlService` writes `ExposureTime`, `AcquisitionFrameRate`, `PzStrobe*` through
   `arv_device_set_*_feature_value`; the eGrabber script path is not used on the instrument.
 **Tests**: existing 5 Aravis tests on the fake camera plus `camera.aravis_gentl_pattern`
