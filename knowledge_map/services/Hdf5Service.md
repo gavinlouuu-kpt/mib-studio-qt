@@ -83,7 +83,10 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
 - **Sort trigger events**: `appendTriggerEvents(records)` creates or extends
   `/trigger_events` (compound, one row per `TriggerEventRecord`; the extent
   is read from disk so a reopened file appends correctly);
-  `readTriggerEvents(out)` reads every row (false when absent). Guards:
+  `readTriggerEvents(out)` reads every row (false when absent).
+  `writeRfGeneratorProvenance` / `readRfGeneratorProvenance` — the sort
+  generator's readback as `rf_generator_*` attributes on the run-info group
+  (needs `writeExperimentInfo` first; rewrites replace). Guards:
   `recording.trigger_alignment_roundtrip` (round-trip + fault injection:
   closed/read-only writes fail, pre-feature files read false with cleared
   outputs, out-of-range rows rejected).

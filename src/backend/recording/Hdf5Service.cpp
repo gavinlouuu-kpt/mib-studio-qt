@@ -4205,6 +4205,132 @@ namespace backend::services {
         return ok;
     }
 
+    // ---- RF sort generator provenance --------------------------------------
+
+    bool Hdf5Service::writeRfGeneratorProvenance(const backend::recording::RfGeneratorProvenance& p)
+    {
+        if (!isFileOpen() || !impl_->writable_) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        auto writeU64 = [&](const std::string& name, uint64_t value) {
+            if (H5Aexists(group, name.c_str()) > 0) H5Adelete(group, name.c_str());
+            hid_t attr = H5Acreate2(group, name.c_str(), H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        auto writeF64 = [&](const std::string& name, double value) {
+            if (H5Aexists(group, name.c_str()) > 0) H5Adelete(group, name.c_str());
+            hid_t attr = H5Acreate2(group, name.c_str(), H5T_NATIVE_DOUBLE, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_DOUBLE, &value) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        auto writeStr = [&](const std::string& name, const std::string& value) {
+            if (H5Aexists(group, name.c_str()) > 0) H5Adelete(group, name.c_str());
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, name.c_str(), type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = value.c_str();
+                if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+        };
+        writeU64("rf_generator_schema_version", backend::recording::RfGeneratorProvenance::kSchemaVersion);
+        writeStr("rf_generator_identity", p.identity);
+        writeStr("rf_generator_link", p.link);
+        writeU64("rf_generator_rf_output", p.rfOutputOn ? 1 : 0);
+        writeU64("rf_generator_pulse_mod", p.pulseModOn ? 1 : 0);
+        writeStr("rf_generator_pulse_source", p.pulseSource);
+        writeStr("rf_generator_pulse_mode", p.pulseMode);
+        writeStr("rf_generator_trigger_mode", p.triggerMode);
+        writeStr("rf_generator_trigger_slope", p.triggerSlope);
+        writeF64("rf_generator_trigger_delay_s", p.triggerDelayS);
+        writeF64("rf_generator_pulse_width_s", p.pulseWidthS);
+        writeF64("rf_generator_pulse_period_s", p.pulsePeriodS);
+        writeU64("rf_generator_pulse_out", p.pulseOutOn ? 1 : 0);
+        writeF64("rf_generator_frequency_hz", p.frequencyHz);
+        writeF64("rf_generator_power_dbm", p.powerDbm);
+        writeU64("rf_generator_sampled_host_us", p.sampledHostUs);
+        H5Sclose(scalar);
+        H5Gclose(group);
+        if (!ok) SPDLOG_ERROR("writeRfGeneratorProvenance: one or more attributes failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readRfGeneratorProvenance(backend::recording::RfGeneratorProvenance& out) const
+    {
+        out = {};
+        if (!isFileOpen()) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        if (H5Aexists(group, "rf_generator_schema_version") <= 0) {
+            H5Gclose(group);
+            return false;
+        }
+        auto readU64 = [&](const std::string& name, uint64_t& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            const bool ok = H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0;
+            H5Aclose(attr);
+            return ok;
+        };
+        auto readF64 = [&](const std::string& name, double& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            const bool ok = H5Aread(attr, H5T_NATIVE_DOUBLE, &v) >= 0;
+            H5Aclose(attr);
+            return ok;
+        };
+        auto readStr = [&](const std::string& name, std::string& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            hid_t type = H5Aget_type(attr);
+            bool ok = false;
+            if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                char* ptr = nullptr;
+                ok = H5Aread(attr, type, &ptr) >= 0;
+                if (ok) v = ptr ? ptr : "";
+                if (ptr) H5free_memory(ptr);
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attr);
+            return ok;
+        };
+        uint64_t u = 0;
+        readStr("rf_generator_identity", out.identity);
+        readStr("rf_generator_link", out.link);
+        if (readU64("rf_generator_rf_output", u)) out.rfOutputOn = u != 0;
+        if (readU64("rf_generator_pulse_mod", u)) out.pulseModOn = u != 0;
+        readStr("rf_generator_pulse_source", out.pulseSource);
+        readStr("rf_generator_pulse_mode", out.pulseMode);
+        readStr("rf_generator_trigger_mode", out.triggerMode);
+        readStr("rf_generator_trigger_slope", out.triggerSlope);
+        readF64("rf_generator_trigger_delay_s", out.triggerDelayS);
+        readF64("rf_generator_pulse_width_s", out.pulseWidthS);
+        readF64("rf_generator_pulse_period_s", out.pulsePeriodS);
+        if (readU64("rf_generator_pulse_out", u)) out.pulseOutOn = u != 0;
+        readF64("rf_generator_frequency_hz", out.frequencyHz);
+        readF64("rf_generator_power_dbm", out.powerDbm);
+        readU64("rf_generator_sampled_host_us", out.sampledHostUs);
+        H5Gclose(group);
+        return true;
+    }
+
     bool Hdf5Service::readAcquisitionProvenance(::camera::common::TimestampDescriptor& d,
                                                 AcquisitionTelemetrySnapshot& t) const
     {

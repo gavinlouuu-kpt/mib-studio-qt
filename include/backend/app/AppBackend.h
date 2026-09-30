@@ -26,6 +26,7 @@ namespace backend::services
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
+    class RfGeneratorService;
     class MonitoringDensityService;
     namespace serialbus
     {
@@ -90,6 +91,10 @@ namespace backend
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
+        // SIGLENT SSG3021X sort generator: SCPI readback/provenance link
+        // (never timing). Configured by the `rf_generator` block of the
+        // application config JSON; consulted by the experiment readiness gate.
+        services::RfGeneratorService &rfGenerator();
         // Device discovery job service (issue #419, ADR 0005): every camera /
         // nanopositioner / pulse-generator scan runs through it. Frontends
         // start jobs and poll snapshots; they never enumerate hardware.
@@ -253,6 +258,7 @@ namespace backend
         std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
         std::unique_ptr<services::SyringePumpService> syringePumpService_;
         std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
+        std::unique_ptr<services::RfGeneratorService> rfGeneratorService_;
         // Declared after every service the providers/hooks reference so the
         // discovery workers and the coordinator are destroyed first.
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;

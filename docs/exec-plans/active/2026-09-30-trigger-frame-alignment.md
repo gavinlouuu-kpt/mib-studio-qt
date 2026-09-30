@@ -1,8 +1,8 @@
 # Sort trigger ↔ frame alignment (multi-image mode, Euresys and MindVision rigs)
 
 Status: active. Software layer (series identity, `/trigger_events`, line-event
-hook, mock loopback) landed 2026-09-30; hardware loopback on Coaxlink and the
-SSG3021X provenance service are next.
+hook, mock loopback) and the SSG3021X SCPI service (readback, readiness gate,
+provenance) landed 2026-09-30; hardware loopback on Coaxlink is next.
 
 ## Problem
 
@@ -61,14 +61,14 @@ and only the host receipt stamp and a hardware loopback can bridge the gap.
 - [ ] **CIC cycle events (Euresys):** exposure-start stamps from the camera
       /illumination controller so a pulse is placed against exposure, not
       transport receipt.
-- [ ] **`RfGeneratorService` (SSG3021X over USB/USBTMC, LAN later):**
-      readback-first SCPI client — `*IDN?`, RF frequency/power/output state,
-      pulse-mod mode (must be external trigger), pulse width, trigger delay,
-      slope — snapshotted into the run's provenance at start; preflight gate
-      refuses a sorting run when the generator is not armed; optional set of
-      width/delay from the experiment config. Timing never goes over USB.
-      Pattern: [[PulseGeneratorService]]-style verify-before-write; tests on
-      a simulated instrument.
+- [x] **`RfGeneratorService` (SSG3021X over USBTMC or LAN):** readback-first
+      SCPI client (`*IDN?` gate, `:OUTPut?`, `:PULM:STATe/SOURce/MODE?`,
+      `:PULM:TRIGger:MODE?`, `:PULM:DELay?`, `:PULM:WIDTh?`, …), `rf.generator`
+      readiness gate, `rf_generator_*` provenance attributes,
+      `applySortWindow` with readback verification. NI-VISA is loaded at
+      runtime on Windows (not compiled in Linux CI — verify on the rig).
+      Not yet: setting the window from the experiment profile; Review tab
+      display; frontend config UI for the `rf_generator` block.
 - [ ] **MindVision rig:** camera-tick ↔ host-clock fit with an error bound,
       stored in the file; loopback only via an LED in the field of view or a
       scope (no stamped inputs).
@@ -91,11 +91,23 @@ and only the host receipt stamp and a hardware loopback can bridge the gap.
   (a batch whose first series is partial must not shrink earlier rows).
 - 2026-09-30: The SSG3021X USB link is control/provenance only. Sub-ms
   timing comes from TTL and, where possible, hardware-stamped loopback.
+- 2026-09-30: SCPI set taken from the current SSG3000X Series Programming
+  Guide (the 2018 guide predates `PULM:TRIGger:MODE` / `PULM:DELay`); NI-VISA
+  is loaded at runtime rather than linked so a PC without VISA still starts.
+- 2026-09-30: the readiness gate never writes to the instrument — an
+  unarmed generator is reported with the menu/SCPI remedy, not fixed
+  silently.
 
 ## Progress
 
 - [x] Software layer (this plan's first PR).
-- [ ] Rig wiring: PULSE OUT → Coaxlink input; confirm TTLIO12 → TRIG IN.
+- [ ] Rig wiring: confirm which rear BNC takes the Ext-Trig input (manual
+      §rear panel says TRIG IN/OUT, §8.4.4.13 says PULSE IN/OUT with Trigger
+      Out auto-off). If PULSE OUT is free: PULSE OUT → Coaxlink LIN input;
+      else a T off the TTL line → Coaxlink LIN input (PC→grabber edge is
+      hardware-stamped; add `rf_generator_trigger_delay_s` for the burst).
 - [ ] EGrabber line-event implementation + on-rig evidence
       (`docs/evidence/`), scope check of PC edge vs PULSE OUT.
-- [ ] RfGeneratorService + provenance attributes.
+- [x] RfGeneratorService + provenance attributes (2026-09-30).
+- [ ] On-rig: USB (NI-VISA) link check, `*IDN?`, readiness gate green with
+      the real instrument; decide whether the profile sets the sort window.

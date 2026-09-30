@@ -14,6 +14,7 @@
 // out-of-range series index returns false.
 
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/RfGeneratorProvenance.h"
 #include "backend/recording/TriggerEventRecord.h"
 
 #include "support/assert.h"
@@ -24,6 +25,7 @@
 #include <string>
 #include <vector>
 
+using backend::recording::RfGeneratorProvenance;
 using backend::recording::TriggerEventRecord;
 using backend::recording::TriggerOutcome;
 using backend::services::Hdf5Service;
@@ -127,6 +129,33 @@ int main()
         MIB_REQUIRE(hdf5.appendTriggerEvents(events1), "appendTriggerEvents (create)");
         MIB_REQUIRE(hdf5.appendFrames(batch2, {}), "appendFrames batch2 (extends series datasets)");
         MIB_REQUIRE(hdf5.appendTriggerEvents(events2), "appendTriggerEvents (extend)");
+        // Sorter provenance lives on the run-info group; needs the group to
+        // exist (writeExperimentInfo) like the acquisition provenance.
+        RfGeneratorProvenance rfNone;
+        MIB_EXPECT(hdf5.readRfGeneratorProvenance(rfNone) == false, "no rf provenance before write");
+        backend::services::ProcessingConfig cfg;
+        backend::services::ProcessingService::Roi roi{0, 0, 6, 4};
+        MIB_REQUIRE(hdf5.writeExperimentInfo(1, 2, 3, 0, cfg, roi, nullptr, nullptr), "writeExperimentInfo");
+        RfGeneratorProvenance rf;
+        rf.identity = "Siglent Technologies,SSG3021X,SSG3XBAX1R0001,3.1.21";
+        rf.link = "usb /dev/usbtmc0";
+        rf.rfOutputOn = true;
+        rf.pulseModOn = true;
+        rf.pulseSource = "INTernal";
+        rf.pulseMode = "SINGle";
+        rf.triggerMode = "EXTernal";
+        rf.triggerSlope = "POSitive";
+        rf.triggerDelayS = 2.5e-6;
+        rf.pulseWidthS = 20e-6;
+        rf.pulsePeriodS = 10e-3;
+        rf.pulseOutOn = false;
+        rf.frequencyHz = 1.2e9;
+        rf.powerDbm = -3.0;
+        rf.sampledHostUs = 123456789;
+        MIB_REQUIRE(hdf5.writeRfGeneratorProvenance(rf), "writeRfGeneratorProvenance");
+        // Rewrite (a later run on the same handle) replaces, never duplicates.
+        rf.triggerDelayS = 3.0e-6;
+        MIB_REQUIRE(hdf5.writeRfGeneratorProvenance(rf), "rewrite rf provenance");
         hdf5.closeFile();
     }
 
@@ -189,8 +218,23 @@ int main()
                        ev[1].fireUs == 0,
                    "a non-fired outcome keeps its zero fire stamp");
 
+        RfGeneratorProvenance rfOut;
+        MIB_REQUIRE(r.readRfGeneratorProvenance(rfOut), "readRfGeneratorProvenance");
+        MIB_EXPECT(rfOut.identity == "Siglent Technologies,SSG3021X,SSG3XBAX1R0001,3.1.21" &&
+                       rfOut.link == "usb /dev/usbtmc0",
+                   "rf identity/link round-trip");
+        MIB_EXPECT(rfOut.rfOutputOn && rfOut.pulseModOn && !rfOut.pulseOutOn, "rf booleans round-trip");
+        MIB_EXPECT(rfOut.pulseSource == "INTernal" && rfOut.pulseMode == "SINGle" &&
+                       rfOut.triggerMode == "EXTernal" && rfOut.triggerSlope == "POSitive",
+                   "rf enumerations round-trip");
+        MIB_EXPECT(rfOut.triggerDelayS == 3.0e-6 && rfOut.pulseWidthS == 20e-6 && rfOut.pulsePeriodS == 10e-3,
+                   "rf window round-trips (last write wins)");
+        MIB_EXPECT(rfOut.frequencyHz == 1.2e9 && rfOut.powerDbm == -3.0 && rfOut.sampledHostUs == 123456789,
+                   "rf frequency/power/stamp round-trip");
+
         // Fault: read-only handle must refuse writes without corrupting.
         MIB_EXPECT(!r.appendTriggerEvents(events1), "append on a read-only file fails");
+        MIB_EXPECT(!r.writeRfGeneratorProvenance(rfOut), "rf provenance write on a read-only file fails");
         r.closeFile();
     }
 
@@ -213,6 +257,10 @@ int main()
         MIB_EXPECT(!r.readSeriesMeta(0, info) && info.empty(), "no series_meta -> false, output cleared");
         std::vector<TriggerEventRecord> ev{TriggerEventRecord{}};
         MIB_EXPECT(!r.readTriggerEvents(ev) && ev.empty(), "no trigger_events -> false, output cleared");
+        RfGeneratorProvenance rfLegacy;
+        rfLegacy.identity = "stale";
+        MIB_EXPECT(!r.readRfGeneratorProvenance(rfLegacy) && rfLegacy.identity.empty(),
+                   "no rf provenance -> false, output reset");
         r.closeFile();
     }
 

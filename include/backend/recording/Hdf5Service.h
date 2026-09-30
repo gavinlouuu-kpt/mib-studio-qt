@@ -18,6 +18,7 @@ namespace backend::services {
 
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/recording/RfGeneratorProvenance.h"
 #include "backend/recording/TriggerEventRecord.h"
 #include "backend/services/TelemetrySample.h"
 
@@ -149,6 +150,12 @@ public:
     bool appendTriggerEvents(const std::vector<backend::recording::TriggerEventRecord>& events);
     // Read every row back (false when the file has none).
     bool readTriggerEvents(std::vector<backend::recording::TriggerEventRecord>& out) const;
+
+    // --- RF sort generator provenance (rf_generator_* attributes on the
+    // run-info group, schema version RfGeneratorProvenance::kSchemaVersion) ---
+    bool writeRfGeneratorProvenance(const backend::recording::RfGeneratorProvenance& p);
+    // False (and `out` reset) when the file predates the attributes.
+    bool readRfGeneratorProvenance(backend::recording::RfGeneratorProvenance& out) const;
 
     // --- Frame recording mode (images + basic metadata, no contour processing) ---
 

@@ -23,15 +23,18 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/RfGeneratorService.h"
 #include "backend/camera/mock/MockCamera.h"
 
 #include "support/assert.h"
+#include "support/fake_ssg.h"
 #include "support/frames.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -141,6 +144,7 @@ int main()
         MIB_EXPECT(statusOf(r, "camera.deliveryMode") == GateStatus::Unavailable, "delivery mode unknown when idle");
         MIB_EXPECT(statusOf(r, "camera.source") == GateStatus::Warn, "explicit mock is a warning, not a failure");
         MIB_EXPECT(statusOf(r, "trigger.output") == GateStatus::NotRequired, "sorting disabled -> trigger not required");
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::NotRequired, "sorting disabled -> RF generator not required");
         ExperimentStartRequest req;
         req.outputPath = out1;
         req.readinessGeneration = r.generation;
@@ -150,6 +154,62 @@ int main()
         MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Idle, "still idle");
         const auto again = coord.evaluateReadiness(out1);
         MIB_EXPECT(again.generation == r.generation, "stable state keeps its generation");
+    }
+
+    // ---- 1b. RF sort generator gate (SSG3021X over the LAN transport) --------
+    // Sorting on: no link configured is a warning (settings unverified), a
+    // configured link that is down or mis-armed fails closed, an armed
+    // instrument passes and its readback lands in the candidate snapshot.
+    {
+        wd.mark("rf gate");
+        auto cfgSort = proc.getProcessingConfig();
+        cfgSort.enable_target_group = true;
+        proc.setProcessingConfig(cfgSort);
+        auto r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::Warn, "sorting on, no rf_generator block -> warn");
+        MIB_EXPECT(!r.candidate.rfGeneratorConfigured, "candidate: not configured");
+
+        backend.setLastConfigJson("{\"rf_generator\":{\"enabled\":true,\"transport\":\"lan\",\"resource\":\"127.0.0.1:1\",\"timeout_ms\":200}}");
+        r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::Fail, "configured but unreachable -> fail");
+        MIB_EXPECT(r.candidate.rfGeneratorConfigured && !r.candidate.rfGeneratorConnected &&
+                       !r.candidate.rfGeneratorError.empty(),
+                   "candidate carries the link error");
+#ifndef _WIN32
+        mib::test::FakeSsg ssg;
+        mib::test::LoopbackSsgServer server(ssg);
+        MIB_REQUIRE(server.start(), "loopback SSG up");
+        backend.setLastConfigJson("{\"rf_generator\":{\"enabled\":true,\"transport\":\"lan\",\"resource\":\"127.0.0.1:" +
+                                  std::to_string(server.port()) + "\",\"timeout_ms\":500}}");
+        r = coord.evaluateReadiness(out1);
+        dumpGates(r);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::Pass, "armed instrument -> pass");
+        MIB_EXPECT(r.candidate.rfGeneratorConnected && r.candidate.rfGeneratorIdentity == ssg.idn &&
+                       r.candidate.rfGeneratorTriggerMode == "EXTernal" &&
+                       std::fabs(r.candidate.rfGeneratorPulseWidthS - 50e-6) < 1e-12,
+                   "candidate carries identity, trigger mode and window");
+        {
+            std::lock_guard<std::mutex> lk(ssg.m);
+            ssg.trigMode = "AUTO";
+            ssg.rfOn = false;
+        }
+        r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::Fail, "mis-armed instrument -> fail");
+        MIB_EXPECT(r.candidate.rfGeneratorIssues.size() == 2, "both blocking issues listed");
+        const auto* g = r.gate("rf.generator");
+        MIB_EXPECT(g && g->reason.find("rf.triggerMode") != std::string::npos &&
+                       g->reason.find("rf.output") != std::string::npos,
+                   "gate reason names the issues");
+        server.stop();
+        backend.rfGenerator().disconnect();
+#endif
+        // Restore: link disabled, sorting off, so the remaining sections see
+        // the same backend as before.
+        backend.setLastConfigJson("{}");
+        cfgSort.enable_target_group = false;
+        proc.setProcessingConfig(cfgSort);
+        r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::NotRequired, "restored: not required");
     }
 
     // ---- 2. Running mock camera: ready; stale preflight refused ---------------

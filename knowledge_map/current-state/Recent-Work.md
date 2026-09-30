@@ -17,9 +17,17 @@ fired record (FIFO), and [[../camera/MockCamera]] emulates the loopback so
 the whole path runs headless. Guards: `backend.trigger_event_log`,
 `recording.trigger_alignment_roundtrip` (round-trip + fault injection),
 `integration.e2e_series_alignment` (every fired pulse names a saved series
-member; contiguous series are consecutive frames). Hardware follow-ups
-(Coaxlink loopback of the SIGLENT SSG3021X PULSE OUT, SSG provenance over
-USB, MindVision clock fit) are in
+member; contiguous series are consecutive frames). The sorter itself is now on record too:
+[[../services/RfGeneratorService]] talks SCPI to the SIGLENT SSG3021X
+(USBTMC via NI-VISA on Windows / `/dev/usbtmc` on Linux, or LAN 5025),
+identifies before any command, reads back trigger mode / delay / width /
+RF state, gates a sorting run on an armed instrument (`rf.generator`
+readiness gate, [[../architecture/ExperimentCoordinator]]) and stores the
+readback as `rf_generator_*` attributes. Guards:
+`backend.rf_generator_service` (fake instrument + real LAN transport over
+loopback), the readiness test, the round-trip test. Hardware follow-ups
+(Coaxlink loopback of the SSG PULSE OUT — or a T off the TTL if that BNC is
+the trigger input — and the MindVision clock fit) are in
 `docs/exec-plans/active/2026-09-30-trigger-frame-alignment.md`.
 
 ## 2026-09-26 — Monitoring density (KDE) moved into the backend

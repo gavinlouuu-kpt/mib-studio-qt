@@ -273,6 +273,13 @@ mib_backend_test_link(trigger_event_log_test PRIVATE Threads::Threads)
 add_test(NAME backend.trigger_event_log COMMAND $<TARGET_FILE:mib_backend_tests> trigger_event_log_test)
 set_tests_properties(backend.trigger_event_log PROPERTIES LABELS "backend;camera;trigger" TIMEOUT 60)
 
+# RF sort generator (SSG3021X) SCPI service: identify-first, readback,
+# preflight, verified writes, link faults, real LAN transport over loopback.
+mib_add_backend_test_executable(rf_generator_service_test backend/rf_generator_service_test.cpp)
+mib_backend_test_link(rf_generator_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.rf_generator_service COMMAND $<TARGET_FILE:mib_backend_tests> rf_generator_service_test)
+set_tests_properties(backend.rf_generator_service PROPERTIES LABELS "backend;trigger;safety" TIMEOUT 60)
+
 # Issue #368: timestamp semantics + per-metric telemetry validity/freshness.
 mib_add_backend_test_executable(timestamp_telemetry_test backend/timestamp_telemetry_test.cpp)
 mib_backend_test_link(timestamp_telemetry_test PRIVATE Threads::Threads)

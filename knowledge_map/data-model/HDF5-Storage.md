@@ -69,6 +69,17 @@
   `readRunAccounting` returns `false` (completion `unknown`) for files that
   predate the schema; legacy `total_recorded_frames` /
   `total_filtered_empty_frames` are never reinterpreted.
+- **RF sort generator provenance (`rf_generator_schema_version` = 1)** —
+  `Hdf5Service::writeRfGeneratorProvenance` stores, on the run-info group,
+  what the SIGLENT SSG3021X was set to as read back over SCPI at readiness
+  time ([[../services/RfGeneratorService]]): `rf_generator_identity` (raw
+  `*IDN?`), `_link`, `_rf_output`, `_pulse_mod`, `_pulse_source`,
+  `_pulse_mode`, `_trigger_mode`, `_trigger_slope`, `_trigger_delay_s`,
+  `_pulse_width_s`, `_pulse_period_s`, `_pulse_out`, `_frequency_hz`,
+  `_power_dbm`, `_sampled_host_us`. With `/trigger_events` this places the
+  RF burst: it starts `trigger_delay_s` after the TTL edge (`fireUs`, or
+  `lineEdgeTimestamp` where a loopback exists) and lasts `pulse_width_s`.
+  `readRfGeneratorProvenance` returns false on files without the schema.
 - **Acquisition time/telemetry provenance (issue #368,
   `timestamp_schema_version` = 1)** — `Hdf5Service::writeAcquisitionProvenance`
   stores `timestamp_clock_domain`, `timestamp_ticks_per_second`,

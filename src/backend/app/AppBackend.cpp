@@ -29,6 +29,7 @@
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/RfGeneratorService.h"
 #include "backend/services/MonitoringDensityService.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
@@ -334,6 +335,7 @@ namespace backend
             SPDLOG_INFO("AppBackend: shutdown disconnecting pulse generator");
             pulseGeneratorService_->disconnect();
         }
+        if (rfGeneratorService_) rfGeneratorService_->disconnect();
         // All pipeline threads are stopped now, so the dump is an exact
         // snapshot of the recorded latency data.
         dumpPipelineTimingIfEnabled();
@@ -388,6 +390,7 @@ namespace backend
         serialBusManager_ = std::make_unique<services::serialbus::SerialBusManager>();
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
+        rfGeneratorService_ = std::make_unique<services::RfGeneratorService>();
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
 
         // Device discovery (issue #419, ADR 0005): one job service, compiled-in
@@ -957,6 +960,7 @@ namespace backend
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
+    services::RfGeneratorService &AppBackend::rfGenerator() { return *rfGeneratorService_; }
     discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
     discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
 
@@ -1807,8 +1811,29 @@ namespace backend
     }
 
     void AppBackend::setLastConfigJson(const std::string& json) {
-        std::lock_guard<std::mutex> lk(configJsonMutex_);
-        lastConfigJson_ = json;
+        {
+            std::lock_guard<std::mutex> lk(configJsonMutex_);
+            lastConfigJson_ = json;
+        }
+        // Optional `rf_generator` block: {"enabled":true,"transport":"usb"|"lan",
+        // "resource":"auto"|"/dev/usbtmc0"|"USB0::...::INSTR"|"host[:port]",
+        // "timeout_ms":1000}. Absent or malformed = link disabled (logged).
+        if (!rfGeneratorService_) return;
+        services::RfGeneratorService::Config cfg;
+        try {
+            const auto parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            if (parsed.is_object() && parsed.contains("rf_generator") && parsed["rf_generator"].is_object()) {
+                const auto& rf = parsed["rf_generator"];
+                cfg.enabled = rf.value("enabled", false);
+                cfg.transport = rf.value("transport", std::string("usb"));
+                cfg.resource = rf.value("resource", std::string("auto"));
+                cfg.timeoutMs = rf.value("timeout_ms", 1000);
+            }
+        } catch (const std::exception& ex) {
+            SPDLOG_WARN("AppBackend: rf_generator config ignored: {}", ex.what());
+            cfg = {};
+        }
+        rfGeneratorService_->setConfig(cfg);
     }
 
     std::string AppBackend::getLastConfigJson() const {

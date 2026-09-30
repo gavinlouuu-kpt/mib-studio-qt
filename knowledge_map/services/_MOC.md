@@ -30,6 +30,8 @@
 - [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
   source) via Modbus RTU over serial; addressed device on a shared bus
+- [[RfGeneratorService]] — SIGLENT SSG3021X RF sort generator over SCPI
+  (USBTMC / LAN): readback, preflight gate, provenance — never timing
 
 ## Optional / specialised
 - [[YoloService]] — ONNX Runtime session (segmentation; placeholder-ish)
