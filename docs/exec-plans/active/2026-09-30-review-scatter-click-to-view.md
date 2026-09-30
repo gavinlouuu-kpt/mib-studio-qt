@@ -2,6 +2,8 @@
 
 Status: active
 
+Tracking issue: #465 (sub-issues #466–#470).
+
 Date: 2026-09-30. Scope: the Review tab Charts view in **both shells** —
 Qt (`HdfReviewTab`) and React + Tauri (`desktop/`, UI-3 #268 / UI-4 #269).
 Density science and review data plumbing live in the backend behind
@@ -641,13 +643,13 @@ shared fixture `tests/fixtures/review_scatter_hits.json`,
 
 ## Progress
 
-- [ ] PR 1 — `ZoomableChartView` click/drag disambiguation + test
-- [ ] PR 2 — Qt Review tab zoomable scatter, click-to-view, docked frame
+- [ ] PR 1 (#466) — `ZoomableChartView` click/drag disambiguation + test
+- [ ] PR 2 (#467) — Qt Review tab zoomable scatter, click-to-view, docked frame
       pane, export save/restore
-- [ ] PR 3a — Backend review density mode, facade methods, bridge contract
+- [ ] PR 3a (#468) — Backend review density mode, facade methods, bridge contract
       bump + contract tests (no UI)
-- [ ] PR 3b — Qt KDE colouring, computed contour and save action from the
+- [ ] PR 3b (#469) — Qt KDE colouring, computed contour and save action from the
       facade
-- [ ] PR 4 — React + Tauri Charts view (#268 / #269): canvas scatter,
+- [ ] PR 4 (#470) — React + Tauri Charts view (#268 / #269): canvas scatter,
       shared gesture/hit-test rules, frame pane
 - [ ] Follow-up issue: chart snapshot export from the Tauri shell
