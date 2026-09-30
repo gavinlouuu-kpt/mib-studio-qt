@@ -51,6 +51,7 @@ namespace backend::services
         hsize_t validFramesWritten_{0};
         hsize_t invalidFramesWritten_{0};
         hsize_t seriesImagesWritten_{0}; // tracks /valid_frames/series_images row count
+        hsize_t triggerEventsWritten_{0}; // tracks /trigger_events row count
 
         // Time-interval flush state: append paths flush at most once per
         // flushInterval_ instead of every batch, so hot-path I/O stays cheap.
@@ -329,6 +330,7 @@ namespace backend::services
         impl_->validFramesWritten_ = 0;
         impl_->invalidFramesWritten_ = 0;
         impl_->seriesImagesWritten_ = 0;
+        impl_->triggerEventsWritten_ = 0;
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance();
             m.hdf5.fileOpen.store(true);
@@ -1099,6 +1101,210 @@ namespace backend::services
         return true;
     }
 
+    // ---- series identity (/valid_frames/series_meta, series_contiguous) ----
+    // series_meta is a 2D compound dataset (N, seriesCount) parallel to
+    // series_images; series_contiguous is a 1D uint8 (N). Both are written
+    // in lock-step with series_images (same row count) so a row index means
+    // the same series in all three.
+    struct SeriesMetaRecord
+    {
+        uint64_t frameIndex;
+        uint64_t timestampNs;
+        uint64_t hostTimestampUs;
+    };
+
+    static hid_t createSeriesMetaType()
+    {
+        hid_t t = H5Tcreate(H5T_COMPOUND, sizeof(SeriesMetaRecord));
+        H5Tinsert(t, "frameIndex", HOFFSET(SeriesMetaRecord, frameIndex), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "timestampNs", HOFFSET(SeriesMetaRecord, timestampNs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "hostTimestampUs", HOFFSET(SeriesMetaRecord, hostTimestampUs), H5T_NATIVE_UINT64);
+        return t;
+    }
+
+    // Flatten the series frames of a batch into (rows x seriesCount) records,
+    // padding members a partial series never collected with the absent
+    // sentinel so a reader never mistakes padding for frame 0.
+    static void collectSeriesMeta(const std::vector<ProcessedFrame>& frames, size_t seriesCount,
+                                  std::vector<SeriesMetaRecord>& records, std::vector<uint8_t>& contiguous)
+    {
+        for (const auto& f : frames)
+        {
+            if (f.seriesImages.empty()) continue;
+            contiguous.push_back(f.seriesContiguous ? 1u : 0u);
+            for (size_t s = 0; s < seriesCount; ++s)
+            {
+                SeriesMetaRecord r{Hdf5Service::kAbsentSeriesFrame, 0, 0};
+                if (s < f.seriesInfo.size() && s < f.seriesImages.size())
+                {
+                    r.frameIndex = f.seriesInfo[s].frameIndex;
+                    r.timestampNs = f.seriesInfo[s].timestampNs;
+                    r.hostTimestampUs = f.seriesInfo[s].hostTimestampUs;
+                }
+                records.push_back(r);
+            }
+        }
+    }
+
+    static bool writeSeriesMetaDatasets(hid_t fileId, const std::vector<ProcessedFrame>& frames,
+                                        size_t seriesCount)
+    {
+        std::vector<SeriesMetaRecord> records;
+        std::vector<uint8_t> contiguous;
+        collectSeriesMeta(frames, seriesCount, records, contiguous);
+        if (contiguous.empty()) return true;
+        const hsize_t rows = static_cast<hsize_t>(contiguous.size());
+
+        bool ok = true;
+        {
+            hid_t typeId = createSeriesMetaType();
+            hsize_t dims[2] = {rows, static_cast<hsize_t>(seriesCount)};
+            hsize_t maxDims[2] = {H5S_UNLIMITED, static_cast<hsize_t>(seriesCount)};
+            hid_t spaceId = H5Screate_simple(2, dims, maxDims);
+            hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
+            hsize_t chunk[2] = {std::min<hsize_t>(256, rows), static_cast<hsize_t>(seriesCount)};
+            H5Pset_chunk(propId, 2, chunk);
+            hid_t dsId = H5Dcreate2(fileId, "/valid_frames/series_meta", typeId, spaceId, H5P_DEFAULT, propId,
+                                    H5P_DEFAULT);
+            H5Pclose(propId);
+            H5Sclose(spaceId);
+            if (dsId < 0 || H5Dwrite(dsId, typeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, records.data()) < 0)
+            {
+                SPDLOG_ERROR("Failed to create/write /valid_frames/series_meta");
+                ok = false;
+            }
+            if (dsId >= 0) H5Dclose(dsId);
+            H5Tclose(typeId);
+        }
+        if (ok)
+        {
+            hsize_t dims[1] = {rows};
+            hsize_t maxDims[1] = {H5S_UNLIMITED};
+            hid_t spaceId = H5Screate_simple(1, dims, maxDims);
+            hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
+            hsize_t chunk[1] = {std::min<hsize_t>(1024, rows)};
+            H5Pset_chunk(propId, 1, chunk);
+            hid_t dsId = H5Dcreate2(fileId, "/valid_frames/series_contiguous", H5T_NATIVE_UINT8, spaceId,
+                                    H5P_DEFAULT, propId, H5P_DEFAULT);
+            H5Pclose(propId);
+            H5Sclose(spaceId);
+            if (dsId < 0 ||
+                H5Dwrite(dsId, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, contiguous.data()) < 0)
+            {
+                SPDLOG_ERROR("Failed to create/write /valid_frames/series_contiguous");
+                ok = false;
+            }
+            if (dsId >= 0) H5Dclose(dsId);
+        }
+        return ok;
+    }
+
+    static bool appendSeriesMetaDatasets(hid_t fileId, const std::vector<ProcessedFrame>& frames,
+                                         hsize_t currentRows)
+    {
+        bool ok = true;
+        std::vector<SeriesMetaRecord> records;
+        std::vector<uint8_t> contiguous;
+        hsize_t rows = 0;
+        {
+            hid_t dsId = H5Dopen2(fileId, "/valid_frames/series_meta", H5P_DEFAULT);
+            if (dsId < 0)
+            {
+                SPDLOG_ERROR("Failed to open /valid_frames/series_meta for appending");
+                return false;
+            }
+            // The row width was fixed when the dataset was created; a batch
+            // whose first series is partial must not shrink it (set_extent
+            // would truncate every earlier row).
+            hid_t existing = H5Dget_space(dsId);
+            hsize_t currentDims[2] = {0, 0};
+            H5Sget_simple_extent_dims(existing, currentDims, nullptr);
+            H5Sclose(existing);
+            const size_t seriesCount = static_cast<size_t>(currentDims[1]);
+            collectSeriesMeta(frames, seriesCount, records, contiguous);
+            if (contiguous.empty())
+            {
+                H5Dclose(dsId);
+                return true;
+            }
+            rows = static_cast<hsize_t>(contiguous.size());
+            hid_t typeId = createSeriesMetaType();
+            hsize_t newDims[2] = {currentRows + rows, static_cast<hsize_t>(seriesCount)};
+            hid_t fileSpace = H5I_INVALID_HID;
+            hid_t memSpace = H5I_INVALID_HID;
+            if (H5Dset_extent(dsId, newDims) < 0)
+            {
+                ok = false;
+            }
+            else
+            {
+                fileSpace = H5Dget_space(dsId);
+                hsize_t start[2] = {currentRows, 0};
+                hsize_t count[2] = {rows, static_cast<hsize_t>(seriesCount)};
+                H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+                memSpace = H5Screate_simple(2, count, nullptr);
+                if (H5Dwrite(dsId, typeId, memSpace, fileSpace, H5P_DEFAULT, records.data()) < 0) ok = false;
+            }
+            if (memSpace >= 0) H5Sclose(memSpace);
+            if (fileSpace >= 0) H5Sclose(fileSpace);
+            H5Tclose(typeId);
+            H5Dclose(dsId);
+            if (!ok) SPDLOG_ERROR("Failed to append /valid_frames/series_meta");
+        }
+        if (ok)
+        {
+            hid_t dsId = H5Dopen2(fileId, "/valid_frames/series_contiguous", H5P_DEFAULT);
+            if (dsId < 0)
+            {
+                SPDLOG_ERROR("Failed to open /valid_frames/series_contiguous for appending");
+                return false;
+            }
+            hsize_t newDims[1] = {currentRows + rows};
+            hid_t fileSpace = H5I_INVALID_HID;
+            hid_t memSpace = H5I_INVALID_HID;
+            if (H5Dset_extent(dsId, newDims) < 0)
+            {
+                ok = false;
+            }
+            else
+            {
+                fileSpace = H5Dget_space(dsId);
+                hsize_t start[1] = {currentRows};
+                hsize_t count[1] = {rows};
+                H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+                memSpace = H5Screate_simple(1, count, nullptr);
+                if (H5Dwrite(dsId, H5T_NATIVE_UINT8, memSpace, fileSpace, H5P_DEFAULT, contiguous.data()) < 0)
+                    ok = false;
+            }
+            if (memSpace >= 0) H5Sclose(memSpace);
+            if (fileSpace >= 0) H5Sclose(fileSpace);
+            H5Dclose(dsId);
+            if (!ok) SPDLOG_ERROR("Failed to append /valid_frames/series_contiguous");
+        }
+        return ok;
+    }
+
+    // ---- sort trigger events (/trigger_events) ----
+    static hid_t createTriggerEventType()
+    {
+        using R = backend::recording::TriggerEventRecord;
+        hid_t t = H5Tcreate(H5T_COMPOUND, sizeof(R));
+        H5Tinsert(t, "sequence", HOFFSET(R, sequence), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "frameIndex", HOFFSET(R, frameIndex), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "grabUs", HOFFSET(R, grabUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "objectId", HOFFSET(R, objectId), H5T_NATIVE_INT32);
+        H5Tinsert(t, "trackId", HOFFSET(R, trackId), H5T_NATIVE_INT32);
+        H5Tinsert(t, "generation", HOFFSET(R, generation), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "requestUs", HOFFSET(R, requestUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "wakeUs", HOFFSET(R, wakeUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "fireUs", HOFFSET(R, fireUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "pulseDoneUs", HOFFSET(R, pulseDoneUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "lineEdgeTimestamp", HOFFSET(R, lineEdgeTimestamp), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "lineEdgeHostUs", HOFFSET(R, lineEdgeHostUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "outcome", HOFFSET(R, outcome), H5T_NATIVE_UINT8);
+        return t;
+    }
+
     bool Hdf5Service::initializeDatasets()
     {
         if (!isFileOpen())
@@ -1201,18 +1407,33 @@ namespace backend::services
             }
             if (hasSeriesImages) {
                 const auto tSeries = lag_clock::now();
+                // The series count is fixed by the first batch (dataset extent).
+                size_t seriesCount = 0;
+                for (const auto &f : validFrames) {
+                    if (!f.seriesImages.empty()) { seriesCount = f.seriesImages.size(); break; }
+                }
                 if (impl_->seriesImagesWritten_ == 0) {
                     if (!writeSeriesImageDataset(impl_->fileId_, "/valid_frames/series_images", validFrames)) {
                         SPDLOG_WARN("Failed to write series_images dataset (non-fatal)");
                     } else {
+                        // Identity rows are written only when the image rows
+                        // were, so the two datasets never disagree on N.
+                        if (!writeSeriesMetaDatasets(impl_->fileId_, validFrames, seriesCount)) {
+                            SPDLOG_WARN("Failed to write series_meta datasets (non-fatal)");
+                        }
                         // Count how many frames had series data
                         for (const auto &f : validFrames) {
                             if (!f.seriesImages.empty()) ++impl_->seriesImagesWritten_;
                         }
                     }
                 } else {
+                    const hsize_t rowsBefore = impl_->seriesImagesWritten_;
                     if (!appendSeriesImageDataset(impl_->fileId_, "/valid_frames/series_images", validFrames, impl_->seriesImagesWritten_)) {
                         SPDLOG_WARN("Failed to append series_images dataset (non-fatal)");
+                    } else if (H5Lexists(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT) > 0) {
+                        if (!appendSeriesMetaDatasets(impl_->fileId_, validFrames, rowsBefore)) {
+                            SPDLOG_WARN("Failed to append series_meta datasets (non-fatal)");
+                        }
                     }
                 }
                 msSeries = elapsedMs(tSeries);
@@ -3086,6 +3307,168 @@ namespace backend::services {
         H5Sclose(spaceId);
         H5Dclose(dsId);
         return true;
+    }
+
+    bool Hdf5Service::readSeriesMeta(size_t index, std::vector<SeriesImageInfo>& outInfo,
+                                     bool* outContiguous) const
+    {
+        outInfo.clear();
+        if (!isFileOpen()) return false;
+        if (H5Lexists(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT) <= 0) return false;
+
+        hid_t dsId = H5Dopen2(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT);
+        if (dsId < 0) return false;
+        hid_t spaceId = H5Dget_space(dsId);
+        if (H5Sget_simple_extent_ndims(spaceId) != 2)
+        {
+            H5Sclose(spaceId);
+            H5Dclose(dsId);
+            return false;
+        }
+        hsize_t dims[2];
+        H5Sget_simple_extent_dims(spaceId, dims, nullptr);
+        if (static_cast<hsize_t>(index) >= dims[0])
+        {
+            H5Sclose(spaceId);
+            H5Dclose(dsId);
+            return false;
+        }
+        const size_t seriesCount = static_cast<size_t>(dims[1]);
+        std::vector<SeriesMetaRecord> records(seriesCount);
+        hsize_t start[2] = {static_cast<hsize_t>(index), 0};
+        hsize_t count[2] = {1, dims[1]};
+        H5Sselect_hyperslab(spaceId, H5S_SELECT_SET, start, nullptr, count, nullptr);
+        hid_t memSpace = H5Screate_simple(2, count, nullptr);
+        hid_t typeId = createSeriesMetaType();
+        const herr_t st = H5Dread(dsId, typeId, memSpace, spaceId, H5P_DEFAULT, records.data());
+        H5Tclose(typeId);
+        H5Sclose(memSpace);
+        H5Sclose(spaceId);
+        H5Dclose(dsId);
+        if (st < 0) return false;
+        outInfo.reserve(seriesCount);
+        for (const auto& r : records) outInfo.push_back(SeriesImageInfo{r.frameIndex, r.timestampNs, r.hostTimestampUs});
+
+        if (outContiguous)
+        {
+            *outContiguous = true;
+            if (H5Lexists(impl_->fileId_, "/valid_frames/series_contiguous", H5P_DEFAULT) > 0)
+            {
+                hid_t cId = H5Dopen2(impl_->fileId_, "/valid_frames/series_contiguous", H5P_DEFAULT);
+                if (cId >= 0)
+                {
+                    hid_t cSpace = H5Dget_space(cId);
+                    hsize_t cStart[1] = {static_cast<hsize_t>(index)};
+                    hsize_t cCount[1] = {1};
+                    H5Sselect_hyperslab(cSpace, H5S_SELECT_SET, cStart, nullptr, cCount, nullptr);
+                    hid_t cMem = H5Screate_simple(1, cCount, nullptr);
+                    uint8_t flag = 1;
+                    if (H5Dread(cId, H5T_NATIVE_UINT8, cMem, cSpace, H5P_DEFAULT, &flag) >= 0)
+                        *outContiguous = flag != 0;
+                    H5Sclose(cMem);
+                    H5Sclose(cSpace);
+                    H5Dclose(cId);
+                }
+            }
+        }
+        return true;
+    }
+
+    bool Hdf5Service::appendTriggerEvents(const std::vector<backend::recording::TriggerEventRecord>& events)
+    {
+        if (events.empty()) return true;
+        if (!isFileOpen() || !impl_->writable_)
+        {
+            SPDLOG_ERROR("appendTriggerEvents: HDF5 file is not open for writing");
+            return false;
+        }
+        const char* path = "/trigger_events";
+        hid_t typeId = createTriggerEventType();
+        const hsize_t rows = static_cast<hsize_t>(events.size());
+        bool ok = true;
+        if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0)
+        {
+            hsize_t dims[1] = {rows};
+            hsize_t maxDims[1] = {H5S_UNLIMITED};
+            hid_t spaceId = H5Screate_simple(1, dims, maxDims);
+            hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
+            hsize_t chunk[1] = {std::min<hsize_t>(1024, rows)};
+            H5Pset_chunk(propId, 1, chunk);
+            hid_t dsId = H5Dcreate2(impl_->fileId_, path, typeId, spaceId, H5P_DEFAULT, propId, H5P_DEFAULT);
+            H5Pclose(propId);
+            H5Sclose(spaceId);
+            if (dsId < 0 || H5Dwrite(dsId, typeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, events.data()) < 0)
+            {
+                SPDLOG_ERROR("Failed to create/write {}", path);
+                ok = false;
+            }
+            if (dsId >= 0) H5Dclose(dsId);
+            if (ok) impl_->triggerEventsWritten_ = rows;
+        }
+        else
+        {
+            hid_t dsId = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
+            if (dsId < 0)
+            {
+                H5Tclose(typeId);
+                SPDLOG_ERROR("Failed to open {} for appending", path);
+                return false;
+            }
+            // Trust the on-disk extent (a reopened file has no cached count).
+            hid_t fileSpace = H5Dget_space(dsId);
+            hsize_t currentDims[1];
+            H5Sget_simple_extent_dims(fileSpace, currentDims, nullptr);
+            H5Sclose(fileSpace);
+            hsize_t newDims[1] = {currentDims[0] + rows};
+            hid_t memSpace = H5I_INVALID_HID;
+            fileSpace = H5I_INVALID_HID;
+            if (H5Dset_extent(dsId, newDims) < 0)
+            {
+                ok = false;
+            }
+            else
+            {
+                fileSpace = H5Dget_space(dsId);
+                hsize_t start[1] = {currentDims[0]};
+                hsize_t count[1] = {rows};
+                H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+                memSpace = H5Screate_simple(1, count, nullptr);
+                if (H5Dwrite(dsId, typeId, memSpace, fileSpace, H5P_DEFAULT, events.data()) < 0) ok = false;
+            }
+            if (memSpace >= 0) H5Sclose(memSpace);
+            if (fileSpace >= 0) H5Sclose(fileSpace);
+            H5Dclose(dsId);
+            if (!ok) SPDLOG_ERROR("Failed to append {}", path);
+            else impl_->triggerEventsWritten_ = newDims[0];
+        }
+        H5Tclose(typeId);
+        if (ok) maybeIntervalFlush();
+        return ok;
+    }
+
+    bool Hdf5Service::readTriggerEvents(std::vector<backend::recording::TriggerEventRecord>& out) const
+    {
+        out.clear();
+        if (!isFileOpen()) return false;
+        const char* path = "/trigger_events";
+        if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0) return false;
+        hid_t dsId = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
+        if (dsId < 0) return false;
+        hid_t spaceId = H5Dget_space(dsId);
+        hsize_t dims[1] = {0};
+        if (H5Sget_simple_extent_ndims(spaceId) == 1) H5Sget_simple_extent_dims(spaceId, dims, nullptr);
+        H5Sclose(spaceId);
+        bool ok = true;
+        if (dims[0] > 0)
+        {
+            out.resize(static_cast<size_t>(dims[0]));
+            hid_t typeId = createTriggerEventType();
+            ok = H5Dread(dsId, typeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, out.data()) >= 0;
+            H5Tclose(typeId);
+            if (!ok) out.clear();
+        }
+        H5Dclose(dsId);
+        return ok;
     }
 
     // --- Frame recording mode implementation ---

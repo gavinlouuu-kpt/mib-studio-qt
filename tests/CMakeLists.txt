@@ -266,6 +266,13 @@ mib_backend_test_link(trigger_session_test PRIVATE Threads::Threads)
 add_test(NAME backend.trigger_session COMMAND $<TARGET_FILE:mib_backend_tests> trigger_session_test)
 set_tests_properties(backend.trigger_session PROPERTIES LABELS "backend;camera" TIMEOUT 60)
 
+# TriggerService canonical pulse records (/trigger_events source): one record
+# per request with its real outcome, bounded buffer, loopback edge pairing.
+mib_add_backend_test_executable(trigger_event_log_test backend/trigger_event_log_test.cpp)
+mib_backend_test_link(trigger_event_log_test PRIVATE Threads::Threads)
+add_test(NAME backend.trigger_event_log COMMAND $<TARGET_FILE:mib_backend_tests> trigger_event_log_test)
+set_tests_properties(backend.trigger_event_log PROPERTIES LABELS "backend;camera;trigger" TIMEOUT 60)
+
 # Issue #368: timestamp semantics + per-metric telemetry validity/freshness.
 mib_add_backend_test_executable(timestamp_telemetry_test backend/timestamp_telemetry_test.cpp)
 mib_backend_test_link(timestamp_telemetry_test PRIVATE Threads::Threads)
@@ -518,6 +525,12 @@ mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_r
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> experiment_roundtrip_test)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
 
+# Series identity (/valid_frames/series_meta, series_contiguous) and sort
+# pulse records (/trigger_events): round-trip + fault injection.
+mib_add_backend_test_executable(trigger_alignment_roundtrip_test recording/trigger_alignment_roundtrip_test.cpp)
+add_test(NAME recording.trigger_alignment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> trigger_alignment_roundtrip_test)
+set_tests_properties(recording.trigger_alignment_roundtrip PROPERTIES LABELS "recording;backend;hdf5;trigger" TIMEOUT 30)
+
 # KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
 # round-trip + fault injection for the save path and the frontend codec.
 mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
@@ -629,6 +642,13 @@ mib_add_backend_test_executable(e2e_pipeline_timing_test integration/e2e_pipelin
 mib_backend_test_link(e2e_pipeline_timing_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_pipeline_timing COMMAND $<TARGET_FILE:mib_backend_tests> e2e_pipeline_timing_test)
 set_tests_properties(integration.e2e_pipeline_timing PROPERTIES LABELS "integration;e2e;trigger;diagnostics" TIMEOUT 120)
+
+# Invariant: multi-image series members carry their frame identity and every
+# fired sort pulse names a saved series member (pipeline -> HDF5 -> reload).
+mib_add_backend_test_executable(e2e_series_alignment_test integration/e2e_series_alignment_test.cpp)
+mib_backend_test_link(e2e_series_alignment_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_series_alignment COMMAND $<TARGET_FILE:mib_backend_tests> e2e_series_alignment_test)
+set_tests_properties(integration.e2e_series_alignment PROPERTIES LABELS "integration;e2e;trigger;recording" TIMEOUT 120)
 
 # Manual diagnosis harness (no add_test: needs a local frames folder).
 # Full mock pipeline dry-run with latency instrumentation — see

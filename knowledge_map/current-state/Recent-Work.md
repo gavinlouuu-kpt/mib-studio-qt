@@ -1,5 +1,27 @@
 # Recent Work
 
+## 2026-09-30 — Sort pulses and multi-image series placed in the frame clock
+
+A sort decision left no trace in the data file beyond `isTargetGroup`, and
+multi-image series members were anonymous images. Now
+[[../services/TriggerService]] keeps a canonical, always-on record per
+request (`TriggerEventRecord`: source frame + host stamps for request/wake/
+fire/done + the real outcome, bounded buffer, `drainEvents`), which the
+experiment flush carries into `/trigger_events`; every series member is
+appended with its `SeriesImageInfo` (frame index, camera stamp, host stamp)
+and a series that skipped frames is flagged `series_contiguous = 0`
+(`/valid_frames/series_meta`, see [[../data-model/HDF5-Storage]]).
+[[../camera/ICamera]] gained `setLineEventCallback` for hardware-stamped
+input edges; the trigger service pairs a looped-back pulse edge with its
+fired record (FIFO), and [[../camera/MockCamera]] emulates the loopback so
+the whole path runs headless. Guards: `backend.trigger_event_log`,
+`recording.trigger_alignment_roundtrip` (round-trip + fault injection),
+`integration.e2e_series_alignment` (every fired pulse names a saved series
+member; contiguous series are consecutive frames). Hardware follow-ups
+(Coaxlink loopback of the SIGLENT SSG3021X PULSE OUT, SSG provenance over
+USB, MindVision clock fit) are in
+`docs/exec-plans/active/2026-09-30-trigger-frame-alignment.md`.
+
 ## 2026-09-26 — Monitoring density (KDE) moved into the backend
 
 The live scatter KDE and core contour now run in the Qt-free backend

@@ -754,6 +754,24 @@ bool ProcessingService::loadEModulusLut(const std::string& path) {
     return eModulusLut_.loadFromFile(path);
 }
 
+// Attach one member to a multi-image series together with its source
+// identity, and keep the contiguity flag honest: a member whose index is not
+// its predecessor's +1 means the consumer skipped frames mid-series, so the
+// saved series is not N consecutive exposures.
+static inline void appendSeriesMember(backend::services::ProcessedFrame& series, cv::Mat image,
+                                      const backend::playback::Frame& f, uint64_t idx) {
+    if (!series.seriesInfo.empty() && idx != series.seriesInfo.back().frameIndex + 1) {
+        if (series.seriesContiguous) {
+            SPDLOG_WARN("Multi-image series at frame {} is not contiguous: member {} follows {}",
+                        series.index, idx, series.seriesInfo.back().frameIndex);
+        }
+        series.seriesContiguous = false;
+    }
+    series.seriesImages.push_back(std::move(image));
+    series.seriesInfo.push_back(
+        backend::services::SeriesImageInfo{idx, f.timestamp, f.hostTimestampUs});
+}
+
 static inline cv::Mat makeGrayCopy(const backend::playback::Frame& frame) {
     if (frame.data.empty() || frame.width == 0 || frame.height == 0) {
         return cv::Mat();
@@ -1356,6 +1374,10 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
                 input.convertTo(gray, CV_8UC1);
             }
             frame.seriesImages.push_back(std::move(gray));
+            // Offline reanalysis: identity is the position in the input list
+            // (consecutive by construction); no acquisition stamps exist.
+            frame.seriesInfo.push_back(
+                SeriesImageInfo{static_cast<uint64_t>(triggerIndex + offset), 0, 0});
         }
     };
 
@@ -1868,6 +1890,14 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
     framesSinceLastFlush_.store(0, std::memory_order_relaxed);
     const size_t n = batch.valid.size() + batch.invalid.size();
     if (n == 0) return 0;
+    {
+        TriggerEventSource source;
+        {
+            std::scoped_lock slk(triggerEventSourceMutex_);
+            source = triggerEventSource_;
+        }
+        if (source) batch.triggerEvents = source();
+    }
     uint64_t batchBytes = 0;
     for (const auto& f : batch.valid) batchBytes += processedFrameBytes(f);
     for (const auto& f : batch.invalid) batchBytes += processedFrameBytes(f);
@@ -1877,6 +1907,12 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
         Hdf5Service* h = &hdf5;
         auto writeFn = [this, h](const ExperimentBatch& b) -> bool {
             const bool ok = h->appendFrames(b.valid, b.invalid);
+            // Trigger records ride the same writer; losing them is a
+            // diagnostics loss, not a data loss, so it never fails the run.
+            if (ok && !b.triggerEvents.empty() && !h->appendTriggerEvents(b.triggerEvents)) {
+                SPDLOG_WARN("Experiment flush: {} trigger event(s) could not be persisted",
+                            b.triggerEvents.size());
+            }
             uint64_t bytes = 0;
             for (const auto& f : b.valid) bytes += processedFrameBytes(f);
             for (const auto& f : b.invalid) bytes += processedFrameBytes(f);
@@ -1920,6 +1956,11 @@ bool ProcessingService::finishFlush() {
 
 void ProcessingService::setFlushErrorCallback(std::function<void(const std::string&)> cb) {
     flushErrorCb_ = std::move(cb);
+}
+
+void ProcessingService::setTriggerEventSource(TriggerEventSource source) {
+    std::scoped_lock lk(triggerEventSourceMutex_);
+    triggerEventSource_ = std::move(source);
 }
 
 void ProcessingService::setFlushInterval(size_t frames) {
@@ -3067,7 +3108,7 @@ void ProcessingService::realtimeInlineLoop() {
 
                     if (multiImagePending) {
                         // Collecting series images for pending multi-image trigger
-                        pendingMultiImageFrame.seriesImages.push_back(makeFullGray());
+                        appendSeriesMember(pendingMultiImageFrame, makeFullGray(), f, idx);
                         --multiImageRemaining;
                         SPDLOG_TRACE(
                             "Multi-image series (ROI path): captured frame {} (remaining={})", idx,
@@ -3096,11 +3137,12 @@ void ProcessingService::realtimeInlineLoop() {
                                 pendingMultiImageFrame = ProcessedFrame{};
                                 pendingMultiImageFrame.index = idx;
                                 pendingMultiImageFrame.timestampNs = f.timestamp;
+                                pendingMultiImageFrame.hostTimestampUs = f.hostTimestampUs;
                                 pendingMultiImageFrame.validation = *triggerAnchor;
                                 pendingMultiImageFrame.originalImage =
                                     fullGray; // shallow refcount share
                                 pendingMultiImageFrame.processedImage = std::move(fullMask);
-                                pendingMultiImageFrame.seriesImages.push_back(std::move(fullGray));
+                                appendSeriesMember(pendingMultiImageFrame, std::move(fullGray), f, idx);
                                 multiImageRemaining =
                                     static_cast<size_t>(config.multi_image_count - 1);
                                 multiImagePending = true;
@@ -3123,6 +3165,7 @@ void ProcessingService::realtimeInlineLoop() {
                             ProcessedFrame frame;
                             frame.index = idx;
                             frame.timestampNs = f.timestamp;
+                            frame.hostTimestampUs = f.hostTimestampUs;
                             frame.validation = triggerAnchor ? *triggerAnchor : validation;
                             cv::Mat fullGray = makeFullGray();
                             cv::Mat fullMask(fullGray.rows, fullGray.cols, CV_8UC1, cv::Scalar(0));
@@ -3496,6 +3539,7 @@ void ProcessingService::realtimeInlineLoop() {
                         ProcessedFrame frame;
                         frame.index = idx;
                         frame.timestampNs = f.timestamp;
+                        frame.hostTimestampUs = f.hostTimestampUs;
                         frame.validation = validation;
                         frame.originalImage = gray;  // shallow refcount share
                         frame.processedImage = mask; // shallow (mask used for snapshot below)
@@ -3780,8 +3824,8 @@ void ProcessingService::realtimeInlineLoop() {
                     // Even on empty frames, capture series images if multi-image collection is
                     // active
                     if (multiImagePending && experimentActive_.load()) {
-                        pendingMultiImageFrame.seriesImages.push_back(
-                            gray); // shallow refcount share (frozen-mats invariant)
+                        // shallow refcount share (frozen-mats invariant)
+                        appendSeriesMember(pendingMultiImageFrame, gray, f, idx);
                         --multiImageRemaining;
                         SPDLOG_TRACE("Multi-image series: captured empty frame {} (remaining={})",
                                      idx, multiImageRemaining);
@@ -3956,8 +4000,7 @@ void ProcessingService::realtimeInlineLoop() {
 
                     if (multiImagePending) {
                         // We're collecting series images for a pending multi-image trigger frame
-                        pendingMultiImageFrame.seriesImages.push_back(
-                            gray); // shallow refcount share
+                        appendSeriesMember(pendingMultiImageFrame, gray, f, idx); // shallow share
                         --multiImageRemaining;
                         SPDLOG_TRACE(
                             "Multi-image series: captured frame {} for series (remaining={})", idx,
@@ -3990,13 +4033,13 @@ void ProcessingService::realtimeInlineLoop() {
                                 pendingMultiImageFrame = ProcessedFrame{};
                                 pendingMultiImageFrame.index = idx;
                                 pendingMultiImageFrame.timestampNs = f.timestamp;
+                                pendingMultiImageFrame.hostTimestampUs = f.hostTimestampUs;
                                 pendingMultiImageFrame.validation = *triggerAnchor;
                                 pendingMultiImageFrame.originalImage =
                                     gray; // shallow refcount share
                                 pendingMultiImageFrame.processedImage =
                                     mask; // shallow (mask used for snapshot below)
-                                pendingMultiImageFrame.seriesImages.push_back(
-                                    gray); // shallow refcount share
+                                appendSeriesMember(pendingMultiImageFrame, gray, f, idx); // shallow
                                 multiImageRemaining =
                                     static_cast<size_t>(config.multi_image_count - 1);
                                 multiImagePending = true;
@@ -4018,6 +4061,7 @@ void ProcessingService::realtimeInlineLoop() {
                                     ProcessedFrame frame;
                                     frame.index = idx;
                                     frame.timestampNs = f.timestamp;
+                                    frame.hostTimestampUs = f.hostTimestampUs;
                                     frame.validation = objectValidation;
                                     frame.originalImage =
                                         gray; // shallow (mask used for snapshot below)

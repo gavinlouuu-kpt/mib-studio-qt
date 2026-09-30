@@ -23,7 +23,30 @@
 - `/valid_frames/` — per-field datasets (images, masks, metrics).
 - `/invalid_frames/` — same shape; populated only at
   `invalidFrameSamplingRate` sampling.
-- `/series_images` — 4D `(N, seriesCount, H, W)` for multi-image mode.
+- `/valid_frames/series_images` — 4D `(N, seriesCount, H, W)` for multi-image mode.
+- `/valid_frames/series_meta` — 2D compound `(N, seriesCount)` parallel to
+  `series_images`: `frameIndex` (FrameStore write index), `timestampNs`
+  (camera stamp, raw unit per the timestamp provenance), `hostTimestampUs`
+  (host receipt). Members a partial series never collected hold
+  `frameIndex = 2^64-1` (`Hdf5Service::kAbsentSeriesFrame`), never 0.
+  `/valid_frames/series_contiguous` — uint8 `(N)`: 0 when the series has a
+  gap (realtime consumer skipped frames mid-series). Offline reanalysis
+  writes positions with zero stamps.
+- `/trigger_events` — compound `(M)`, one row per sort-trigger request from
+  [[../services/TriggerService]]: `sequence`, `frameIndex`, `grabUs`,
+  `objectId`, `trackId`, `generation`, `requestUs`, `wakeUs`, `fireUs`,
+  `pulseDoneUs`, `lineEdgeTimestamp`, `lineEdgeHostUs`, `outcome`
+  (0 Fired, 1 DroppedNoCamera, 2 DroppedSetFailed, 3 DroppedStale,
+  4 DroppedQueueFull; a non-fired row keeps zero fire/done stamps). All `*Us`
+  stamps are host monotonic µs (the `timestamp_host_receipt_domain`
+  provenance), comparable with `series_meta.hostTimestampUs` and, on grabbers
+  whose frame clock is that domain (Coaxlink on Windows), with `timestampNs`
+  directly. `lineEdgeTimestamp` is in the frame clock (0 when no loopback).
+  To place a pulse: `frameIndex` names the classified frame; `fireUs` vs the
+  members' `hostTimestampUs` bounds which exposures the PC-side edge fell
+  between; `lineEdgeTimestamp` vs `timestampNs` gives the hardware truth
+  where available. Rows fired after the run's last flush are appended at
+  stop, so a file can hold pulses for frames after its last series.
 - `/recorded_frames/` — used by frame-recording mode (images + basic
   metadata only; no contour metrics).
 - `/recording_info` — raw-recording totals/config plus the same nine

@@ -23,6 +23,7 @@
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/HdfWriteQueue.h"
+#include "backend/recording/TriggerEventRecord.h"
 
 namespace backend { namespace playback { class FrameStore; struct Frame; } }
 
@@ -51,6 +52,10 @@ struct TargetGroupEvent {
 struct ExperimentBatch {
     std::vector<ProcessedFrame> valid;
     std::vector<ProcessedFrame> invalid;
+    // Sort trigger records drained from TriggerService with this batch; the
+    // writer thread appends them to /trigger_events alongside the frames so
+    // every HDF5 write stays on the one writer thread.
+    std::vector<backend::recording::TriggerEventRecord> triggerEvents;
 };
 
 class ProcessingService {
@@ -223,6 +228,12 @@ public:
     // Fatal flush-error sink: invoked (on the writer thread) when an experiment
     // flush write fails or the queue overflows. The experiment should stop.
     void setFlushErrorCallback(std::function<void(const std::string&)> cb);
+
+    // Source of sort trigger records to persist with each flushed batch
+    // (AppBackend wires TriggerService::drainEvents). Called on the flushing
+    // thread; unset = no /trigger_events dataset.
+    using TriggerEventSource = std::function<std::vector<backend::recording::TriggerEventRecord>()>;
+    void setTriggerEventSource(TriggerEventSource source);
 
     // Configuration for round-robin buffer
     void setFlushInterval(size_t frames); // Flush every N frames (default: 1000)
@@ -688,6 +699,8 @@ private:
     // Bytes of batches submitted to the writer and not yet written (issue #370).
     backend::diagnostics::ByteAccountant flushQueueBytes_;
     std::function<void(const std::string&)> flushErrorCb_;
+    mutable std::mutex triggerEventSourceMutex_;
+    TriggerEventSource triggerEventSource_;
     std::atomic<bool> experimentActive_{false};
     // Issue #367: per-experiment frame accounting + lifetime processing
     // failure counter. Written by the realtime thread, the flush writer, and

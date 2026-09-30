@@ -148,6 +148,13 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `lifecycle.fault` | unresolved fault reported | — |
 | `telemetry.transportLoss` | no active session | backend cannot / has not reported transport loss |
 
+Trigger records: start discards whatever [[../services/TriggerService]] had
+buffered before the run (test pulses, a previous run's tail); each periodic
+flush carries the drained records inside the batch (see
+[[../services/ProcessingService]] `setTriggerEventSource`); stop drains once
+more after `finishFlush()` and appends the tail single-threaded before the
+metadata writes, so `/trigger_events` is complete for the run.
+
 ## RunConfigurationSnapshot (schema v1)
 
 Frozen at Start and never mutated: readiness/start/capture generations,

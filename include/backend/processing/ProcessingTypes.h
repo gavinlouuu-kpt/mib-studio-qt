@@ -128,6 +128,13 @@ struct FilterResult {
     std::shared_ptr<const std::vector<std::vector<cv::Point>>> allContours;
 };
 
+// Source identity of one multi-image series member (see ProcessedFrame).
+struct SeriesImageInfo {
+    uint64_t frameIndex{0};      // FrameStore write index of the member
+    uint64_t timestampNs{0};     // camera timestamp (Frame::timestamp, raw unit)
+    uint64_t hostTimestampUs{0}; // host monotonic receipt stamp (0 if unknown)
+};
+
 // One analysed frame (or one object of a frame — several ProcessedFrames can
 // share the same source index). Image members are read-only after
 // publication (frozen-Mats invariant): every consumer shares them by
@@ -144,6 +151,16 @@ struct ProcessedFrame {
     // seriesImages[0] is the trigger image (same as originalImage), followed by subsequent frames.
     // Empty when multi-image mode is disabled.
     std::vector<cv::Mat> seriesImages;
+    // Identity of each series image, parallel to seriesImages (same size).
+    // Without it a series member is an anonymous picture: nothing says which
+    // camera frame it was or when it was exposed, so the series cannot be
+    // aligned against a sort pulse. Persisted as /valid_frames/series_meta.
+    std::vector<SeriesImageInfo> seriesInfo;
+    // False when a series member is not the frame that immediately followed
+    // its predecessor (the realtime consumer fell behind the ring and skipped
+    // frames mid-series). A gapped series is still saved, but flagged: its
+    // members are not N consecutive exposures.
+    bool seriesContiguous{true};
 };
 
 struct BufferedFrameCounts {

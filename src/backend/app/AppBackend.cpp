@@ -656,10 +656,17 @@ namespace backend
                     triggerService_->onTargetGroupResult(signal);
                 }
             });
+            // Pulse records ride the experiment flush into /trigger_events so
+            // every sort decision is stored against its source frame.
+            processingService_->setTriggerEventSource([this]() {
+                return triggerService_ ? triggerService_->drainEvents()
+                                       : std::vector<recording::TriggerEventRecord>{};
+            });
         }
         else
         {
             processingService_->setTargetGroupCallback({});
+            processingService_->setTriggerEventSource({});
             if (!bootTrigger)
             {
                 SPDLOG_WARN("AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES");

@@ -690,6 +690,9 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
 
     // 6-7. Acquire processing ownership and enter Active.
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
+    // Pulse records from before the run (manual/periodic test pulses, a
+    // previous run's tail) are not this experiment's: discard them.
+    (void)backend_.trigger().drainEvents();
     proc.startExperiment();
     activeRun_ = run;
     lastRun_ = run;
@@ -901,6 +904,14 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                     submitted, remainder.valid, remainder.invalid, remOk, sinceMs(t0));
     }
     if (!flushOk) ok = false;
+    // Pulses fired after the last batch drain (writer is stopped now, so this
+    // append is single-threaded like the metadata writes below).
+    if (fileOpen) {
+        auto tail = backend_.trigger().drainEvents();
+        if (!tail.empty() && !hdf5.appendTriggerEvents(tail)) {
+            SPDLOG_WARN("ExperimentCoordinator: {} trailing trigger event(s) not persisted", tail.size());
+        }
+    }
     const uint64_t endNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     auto accounting = proc.experimentAccountingSnapshot();
