@@ -35,6 +35,7 @@ What becomes easier/harder; what future agents must respect.
 | [0005](0005-device-discovery-service.md) | Device discovery is a backend job service with providers | accepted |
 | [0006](0006-processing-contract-v2.md) | Processing Contract v2 | accepted |
 | [0007](0007-one-contract-per-shipped-core.md) | A shipped processing core implements exactly one contract | proposed |
+| [0008](0008-motion-stage-device-class.md) | Motorized stages are a separate device class behind `IMotionStage` | proposed |
 
 Decisions made before this index existed live implicitly in
 [`../architecture/`](../architecture/) and the vault
