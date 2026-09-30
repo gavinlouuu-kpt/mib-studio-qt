@@ -33,6 +33,8 @@ What becomes easier/harder; what future agents must respect.
 | [0003](0003-rust-cxx-bridge.md) | Rust ↔ C++ bridge uses `cxx` over the `BackendFacade` seam | accepted |
 | [0004](0004-bridge-contract-and-operation-state.md) | Bridge contract governance and serialized operation state | accepted |
 | [0005](0005-device-discovery-service.md) | Device discovery is a backend job service with providers | accepted |
+| 0006, 0007 | Processing contract v2; one contract per shipped core (on `develop`; the E0 branch also uses 0006 for the Zynq-7035 target ADR — renumber on merge) | see develop |
+| [0008](0008-yofo-studio-pl-instrument.md) | YOFO Studio: PZ7035 runs per-frame science in the PL; PS runs the headless backend, preview-only camera path and remote React UI | proposed |
 
 Decisions made before this index existed live implicitly in
 [`../architecture/`](../architecture/) and the vault
