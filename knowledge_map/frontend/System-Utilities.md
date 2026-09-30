@@ -242,8 +242,21 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
 
 ## Widgets (`src/frontend/widgets/`)
 
-- **`ZoomableChartView`** — subclass of `QChartView` with scroll/zoom.
+- **`ZoomableChartView`** — subclass of `QChartView`: wheel zoom around the
+  cursor (Ctrl = X only, Shift = Y only, over an axis's labels = that axis
+  only), left- or middle-drag pan, double-click reset to `setDefaultRange`.
   Used by [[ExperimentMonitoringTab]] and [[HdfReviewTab]].
+  **Click vs drag (issue #466):** a press only becomes a pan once the
+  pointer travels `QApplication::startDragDistance()`; a release before that
+  emits `plotClicked(viewPos, button)` (inside `plotArea()` only) and never
+  moves the axes. `hoverMoved` fires when no press is pending.
+  `setResetOnDoubleClick(false)` hands double-click to the owner
+  (`plotDoubleClicked`); `resetZoomAction()` is a "Reset zoom" `QAction` for
+  context menus; `cancelGesture()` drops a pending press or pan (a leave with
+  no button held does the same, so a release swallowed by a dialog never
+  leaves a "sticky" pan). Only a left double-click resets. Guard:
+  `frontend.zoomable_chart_view` (synthesized events via
+  `tests/support/qt_mouse.h`; the tree has no QtTest).
 - **`RunStatusWidget`** (issue #363) — glyph + `ElidingLabel` bound to a
   `RunStatusModel` (`bind`); text carries the state, color is only a
   secondary cue; accessible name "Run state: …"; bounded width (≤ 260 px).

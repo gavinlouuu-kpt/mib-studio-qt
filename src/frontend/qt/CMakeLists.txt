@@ -247,6 +247,12 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_kde_density PROPERTIES LABELS "frontend;monitoring;concurrency;safety" TIMEOUT 240)
 
+    # Issue #466: ZoomableChartView tells a click from a drag (startDragDistance),
+    # optional double-click reset, lost-release recovery.
+    mib_test_runner_add(mib_frontend_tests zoomable_chart_view_test ${PROJECT_SOURCE_DIR}/tests/frontend/zoomable_chart_view_test.cpp)
+    add_test(NAME frontend.zoomable_chart_view COMMAND $<TARGET_FILE:mib_frontend_tests> zoomable_chart_view_test)
+    set_tests_properties(frontend.zoomable_chart_view PROPERTIES LABELS "frontend;utility" TIMEOUT 60)
+
     # Review tab draws the stored KDE core contours (full-run solid, live dashed).
     mib_test_runner_add(mib_frontend_tests hdf_review_core_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_review_core_test.cpp)
     add_test(NAME frontend.hdf_review_core COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_core_test

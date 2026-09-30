@@ -18,7 +18,10 @@
   `getMonitoringInvalidFrames()` on a timer (ring buffer of 1000 frames
   each).
 - Render via `QtCharts`: `QScatterSeries`, `QHistogramSeries`,
-  `QBarSeries`, etc. `frontend::ZoomableChartView` adds scroll/zoom.
+  `QBarSeries`, etc. `frontend::ZoomableChartView` adds scroll/zoom. Since
+  issue #466 its closed-hand cursor appears once the drag passes
+  `startDragDistance()` rather than on press, and middle-drag also pans;
+  the tab ignores the new click signals.
 - Live totals: valid count, invalid count, algo FPS, valid FPS.
 - `showEvent` / `hideEvent` pause rendering when the tab isn't visible **and**
   gate the backend accumulation: `showEvent` calls

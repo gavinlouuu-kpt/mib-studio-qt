@@ -1,5 +1,7 @@
 #include "frontend/widgets/ZoomableChartView.h"
 
+#include <QAction>
+#include <QApplication>
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QChart>
@@ -13,6 +15,10 @@ ZoomableChartView::ZoomableChartView(QChart* chart, QWidget* parent)
     : QChartView(chart, parent)
 {
     setRubberBand(QChartView::NoRubberBand);
+    setMouseTracking(true);
+    resetZoomAction_ = new QAction(tr("Reset zoom"), this);
+    resetZoomAction_->setObjectName(QStringLiteral("resetZoomAction"));
+    connect(resetZoomAction_, &QAction::triggered, this, &ZoomableChartView::resetZoom);
 }
 
 void ZoomableChartView::setDefaultRange(QValueAxis* axis, double min, double max)
@@ -35,6 +41,16 @@ void ZoomableChartView::resetZoom()
     }
     isUserZoomed_ = false;
     emit zoomReset();
+}
+
+void ZoomableChartView::cancelGesture()
+{
+    pressPending_ = false;
+    pressButton_ = Qt::NoButton;
+    if (isPanning_) {
+        isPanning_ = false;
+        unsetCursor();
+    }
 }
 
 void ZoomableChartView::wheelEvent(QWheelEvent* event)
@@ -107,64 +123,108 @@ void ZoomableChartView::wheelEvent(QWheelEvent* event)
 
 void ZoomableChartView::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    resetZoom();
+    if (event->button() != Qt::LeftButton) {
+        QChartView::mouseDoubleClickEvent(event);
+        return;
+    }
+    // The double-click replaces the second press; there is no pending click.
+    cancelGesture();
+    emit plotDoubleClicked(event->position());
+    if (resetOnDoubleClick_)
+        resetZoom();
     event->accept();
 }
 
 void ZoomableChartView::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton) {
-        isPanning_ = true;
+    if (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton) {
+        // A click until the pointer travels startDragDistance(); only then a pan.
+        pressPending_ = true;
+        pressButton_ = event->button();
+        pressPos_ = event->position();
         lastPanPoint_ = event->position();
-        setCursor(Qt::ClosedHandCursor);
         event->accept();
     } else {
         QChartView::mousePressEvent(event);
     }
 }
 
+void ZoomableChartView::panTo(const QPointF& pos)
+{
+    QAbstractSeries* series = nullptr;
+    if (!chart()->series().isEmpty())
+        series = chart()->series().first();
+
+    QPointF oldVal = chart()->mapToValue(lastPanPoint_, series);
+    QPointF newVal = chart()->mapToValue(pos, series);
+    QPointF delta = oldVal - newVal;
+
+    for (auto* axis : chart()->axes()) {
+        auto* valueAxis = qobject_cast<QValueAxis*>(axis);
+        if (!valueAxis)
+            continue;
+
+        double shift;
+        if (axis->alignment() == Qt::AlignBottom || axis->alignment() == Qt::AlignTop)
+            shift = delta.x();
+        else
+            shift = delta.y();
+
+        valueAxis->setRange(valueAxis->min() + shift, valueAxis->max() + shift);
+    }
+
+    lastPanPoint_ = pos;
+    isUserZoomed_ = true;
+}
+
 void ZoomableChartView::mouseMoveEvent(QMouseEvent* event)
 {
-    if (isPanning_) {
-        QAbstractSeries* series = nullptr;
-        if (!chart()->series().isEmpty())
-            series = chart()->series().first();
-
-        QPointF oldVal = chart()->mapToValue(lastPanPoint_, series);
-        QPointF newVal = chart()->mapToValue(event->position(), series);
-        QPointF delta = oldVal - newVal;
-
-        for (auto* axis : chart()->axes()) {
-            auto* valueAxis = qobject_cast<QValueAxis*>(axis);
-            if (!valueAxis)
-                continue;
-
-            double shift;
-            if (axis->alignment() == Qt::AlignBottom || axis->alignment() == Qt::AlignTop)
-                shift = delta.x();
-            else
-                shift = delta.y();
-
-            valueAxis->setRange(valueAxis->min() + shift, valueAxis->max() + shift);
+    if (pressPending_) {
+        const QPointF travel = event->position() - pressPos_;
+        if (travel.manhattanLength() < QApplication::startDragDistance()) {
+            event->accept();
+            return;
         }
-
-        lastPanPoint_ = event->position();
-        isUserZoomed_ = true;
-        event->accept();
-    } else {
-        QChartView::mouseMoveEvent(event);
+        pressPending_ = false;
+        isPanning_ = true;
+        setCursor(Qt::ClosedHandCursor);
     }
+    if (isPanning_) {
+        panTo(event->position());
+        event->accept();
+        return;
+    }
+    emit hoverMoved(event->position());
+    QChartView::mouseMoveEvent(event);
 }
 
 void ZoomableChartView::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && isPanning_) {
-        isPanning_ = false;
-        setCursor(Qt::ArrowCursor);
-        event->accept();
-    } else {
+    if (event->button() != pressButton_ || (!pressPending_ && !isPanning_)) {
         QChartView::mouseReleaseEvent(event);
+        return;
     }
+    const bool wasClick = pressPending_;
+    const Qt::MouseButton button = pressButton_;
+    cancelGesture();
+    event->accept();
+    if (wasClick && chart() && chart()->plotArea().contains(event->position()))
+        emit plotClicked(event->position(), button);
+}
+
+void ZoomableChartView::leaveEvent(QEvent* event)
+{
+    // A release that happened elsewhere (a dialog, another window) never
+    // reaches this view; never leave a pan armed once no button is held.
+    if (QApplication::mouseButtons() == Qt::NoButton)
+        cancelGesture();
+    QChartView::leaveEvent(event);
+}
+
+void ZoomableChartView::focusOutEvent(QFocusEvent* event)
+{
+    cancelGesture();
+    QChartView::focusOutEvent(event);
 }
 
 } // namespace frontend
