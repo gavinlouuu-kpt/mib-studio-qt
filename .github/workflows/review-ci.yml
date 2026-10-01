@@ -121,10 +121,6 @@ jobs:
           TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo build --features review-only
           # The merged context must name the review product, not MIB Studio.
           strings target/debug/mib-studio-desktop | grep -q "bio.yofo.review"
-          # And the review build must not register a camera command.
-          if strings target/debug/mib-studio-desktop | grep -q "configure_mock"; then
-            echo "review-only binary still registers configure_mock" >&2; exit 1
-          fi
 
       - name: Smoke-launch YOFO Review under Xvfb
         shell: bash

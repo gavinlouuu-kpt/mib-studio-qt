@@ -1501,7 +1501,7 @@ mod tests {
 
 /// MIB Studio: every bridged command.
 #[cfg(not(feature = "review-only"))]
-fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         abi_version,
         is_initialized,
@@ -1593,7 +1593,7 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
 /// services. No camera, experiment or hardware commands exist in this
 /// product (plan 2026-10-01-standalone-review-app).
 #[cfg(feature = "review-only")]
-fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         abi_version,
         is_initialized,
