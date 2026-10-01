@@ -101,11 +101,12 @@ void FrameViewerDialog::setEmbedded(bool embedded) {
         ui->frameInfoLabel->setWordWrap(false);
     }
     // The host owns overlay mode and ROI (setOverlayMode / setShowRoiOverlay)
-    // and the pane must stay narrow beside a chart: keep one short row
+    // and exports (Export All), and the pane must stay narrow beside a chart:
+    // keep one short row — Prev, Next, Fit to Window, Open in window…
     // (Ctrl+wheel still zooms, Fit resets).
     for (QWidget* w : {static_cast<QWidget*>(ui->overlayModeLabel), static_cast<QWidget*>(ui->overlayModeCombo),
                        static_cast<QWidget*>(ui->roiOverlayCheck), static_cast<QWidget*>(ui->zoomOutButton),
-                       static_cast<QWidget*>(ui->zoomInButton)}) {
+                       static_cast<QWidget*>(ui->zoomInButton), static_cast<QWidget*>(ui->exportButton)}) {
         w->setVisible(!embedded);
     }
 }

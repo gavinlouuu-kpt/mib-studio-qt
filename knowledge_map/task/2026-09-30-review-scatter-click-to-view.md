@@ -57,15 +57,37 @@ save/restore is deliberate; revisit if a third redraw path appears), and
 the controller's status update can only arrive through the event loop,
 which the fixed assertion no longer runs).
 
+## End-to-end with the real app (2026-10-01)
+
+`integration.review_scatter_e2e` (`tests/frontend/review_scatter_e2e_test.cpp`)
+boots the real `MainWindow` on the mock camera with the public 512x96 cell
+stream (`python scripts/provision-assets.py --asset 512x96stream-mock-frames
+--count 1000`), relaxes the acceptance criteria, records an 8 s experiment
+through `ExperimentCoordinator` (~3700 valid cells), opens the file in
+Review and drives the Charts scatter with synthesized input, saving a
+screenshot per state (`MIB_REVIEW_E2E_OUT`). Looking at the screenshots
+found two things the widget tests had not: the embedded viewer's control
+row was clipped at a 400 px pane (its Export button is now hidden there,
+Export All covers it), and **every exported chart TIFF had red and blue
+swapped** — `renderChartSnapshots` converted the grabbed `Format_RGB32`
+(B,G,R,A in memory) as RGBA; pre-existing, fixed with `COLOR_BGRA2BGR`, and
+the e2e now asserts the snapshot's point colour. Also: with the asset
+provisioned, `integration.monitoring_kde_e2e` passes here; its earlier
+failure was the missing frames (synthetic fallback), not a regression.
+
 ## Verification (Linux container, Ubuntu 24.04, system Qt 6.4.2, `linux-system-release`)
 
 - `frontend.zoomable_chart_view`, `frontend.hdf_review_scatter`,
   `frontend.hdf_review_core`, `frontend.monitoring_kde_density` and the other
   runner-hosted frontend tests pass.
-- `integration.monitoring_kde_e2e` ("cells reach the monitoring ring") and
-  `frontend.device_discovery` ("camera probe entered after the initial
-  delay") fail in this container **with and without** these changes
+- `frontend.device_discovery` ("camera probe entered after the initial
+  delay") fails in this container **with and without** these changes
   (checked by stashing the change and rebuilding); not caused here.
+  `integration.monitoring_kde_e2e` failed for the same reason at first; with
+  the asset it then failed its capture gate at an identical 200 fps because
+  the gate compared raw frame counts over phases of unequal wall time (the
+  KDE-off phase overruns while the GUI stalls, TD-16: 9.1 s vs 7.9 s). The
+  capture and ring-fill gates now compare rates (`PhaseMetrics::seconds`).
 - 20 000 cells: see the numbers in [[../frontend/HdfReviewTab]] ("Cost").
 - `frontend.ui_layout` became flaky (5 of 14 runs failed, 0 of 10 before):
   its long-status check raced the camera controller's late "Camera

@@ -2050,9 +2050,12 @@ namespace frontend
                                    const_cast<uchar*>(scatterPlotQImage.constBits()),
                                    scatterPlotQImage.bytesPerLine()).clone();
 
-        // Convert from RGBA to BGR
-        cv::cvtColor(histogramImage, histogramImage, cv::COLOR_RGBA2BGR);
-        cv::cvtColor(scatterPlotImage, scatterPlotImage, cv::COLOR_RGBA2BGR);
+        // Format_RGB32 is B,G,R,A in memory (0xAARRGGBB): BGRA to OpenCV.
+        // Read as RGBA this swapped red and blue in every stored chart
+        // snapshot (same bug as the Review export, found by
+        // integration.review_scatter_e2e).
+        cv::cvtColor(histogramImage, histogramImage, cv::COLOR_BGRA2BGR);
+        cv::cvtColor(scatterPlotImage, scatterPlotImage, cv::COLOR_BGRA2BGR);
 
         SPDLOG_DEBUG("Captured chart snapshots: histogram {}x{}, scatter plot {}x{}",
                      histogramImage.cols, histogramImage.rows,
@@ -2085,9 +2088,9 @@ namespace frontend
                     const_cast<uchar*>(qImage.constBits()), 
                     qImage.bytesPerLine());
         
-        // Convert from RGBA to BGR
+        // Format_RGB32 is B,G,R,A in memory: BGRA to OpenCV (see above).
         cv::Mat bgrMat;
-        cv::cvtColor(mat, bgrMat, cv::COLOR_RGBA2BGR);
+        cv::cvtColor(mat, bgrMat, cv::COLOR_BGRA2BGR);
 
         // Save as TIFF with compression
         std::vector<int> compression_params;

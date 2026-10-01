@@ -2008,9 +2008,13 @@ std::map<std::string, cv::Mat> HdfReviewTab::renderChartSnapshots(
         cv::Mat bgr;
         if (pixmap.isNull()) return bgr;
         QImage image = pixmap.toImage().convertToFormat(QImage::Format_RGB32);
-        cv::Mat rgba(image.height(), image.width(), CV_8UC4, const_cast<uchar*>(image.constBits()),
+        // Format_RGB32 is 0xAARRGGBB, i.e. B,G,R,A bytes in memory: BGRA to
+        // OpenCV. Converting it as RGBA swapped red and blue in every
+        // exported chart (blue points came out orange) until
+        // integration.review_scatter_e2e looked at the snapshot.
+        cv::Mat bgra(image.height(), image.width(), CV_8UC4, const_cast<uchar*>(image.constBits()),
                      static_cast<size_t>(image.bytesPerLine()));
-        cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR); // deep copy; independent of the QImage
+        cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR); // deep copy; independent of the QImage
         return bgr;
     };
     snapshots["scatter_plot.tiff"] = toBgr(chartToPixmap(scatterPlotView_));

@@ -274,6 +274,15 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(integration.monitoring_kde_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring;performance" TIMEOUT 300)
 
+    # End-to-end (#467): real MainWindow records an experiment on the real
+    # 512x96 cell stream, then Review opens it and the Charts scatter is
+    # driven (click → docked pane, zoom, pan, prev/next, open in window,
+    # export). Screenshots to MIB_REVIEW_E2E_OUT. Skips (77) without the asset.
+    mib_test_runner_add(mib_frontend_tests review_scatter_e2e_test ${PROJECT_SOURCE_DIR}/tests/frontend/review_scatter_e2e_test.cpp)
+    add_test(NAME integration.review_scatter_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> review_scatter_e2e_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(integration.review_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;recording" TIMEOUT 300 SKIP_RETURN_CODE 77)
+
     mib_test_runner_add(mib_frontend_tests app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp)
     add_test(NAME frontend.config_apply COMMAND $<TARGET_FILE:mib_frontend_tests> app_config_apply_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

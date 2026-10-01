@@ -43,6 +43,16 @@
     needing live target-group classifications. See
     [[../services/TriggerService]].
 
+## Chart snapshots
+
+The chart snapshots stored in each experiment file at Stop and the chart
+TIFF export grab the `QChartView`, convert to `Format_RGB32` (B,G,R,A in
+memory) and hand the bytes to OpenCV as **BGRA** (`COLOR_BGRA2BGR`). Until
+2026-10-01 they were read as RGBA, so every stored/exported chart had red
+and blue swapped (blue points orange); the Review tab's export had the
+same bug, found by `integration.review_scatter_e2e`. Files written before
+the fix carry swapped snapshots; the metrics are unaffected.
+
 ## Scatter density (KDE) colouring
 
 The **Density (KDE)** checkbox in the top row (`kdeToggleCheck`) colours every

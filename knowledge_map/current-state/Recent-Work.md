@@ -14,8 +14,11 @@ selection out of exported chart images. The hit rule is Qt-free and shared
 with the React shell through `tests/fixtures/review_scatter_hits.json`.
 Found on the way: filling the scatter with `append()` was O(n²) on Qt 6.4
 (20 000 cells never finished opening); `replace()` opens it in ~1.6 s —
-TD-16 gets the lead. Guards: `frontend.zoomable_chart_view`,
-`frontend.hdf_review_scatter`. Plan:
+TD-16 gets the lead. An end-to-end on the real app and real cells
+(`integration.review_scatter_e2e`, screenshots per state) then exposed a
+pre-existing export bug: chart TIFFs had red and blue swapped (RGB32 read
+as RGBA); fixed. Guards: `frontend.zoomable_chart_view`,
+`frontend.hdf_review_scatter`, `integration.review_scatter_e2e`. Plan:
 [`2026-09-30-review-scatter-click-to-view`](../../docs/exec-plans/active/2026-09-30-review-scatter-click-to-view.md)
 (PR 1 + PR 2 of #465); task note
 [[../task/2026-09-30-review-scatter-click-to-view]].

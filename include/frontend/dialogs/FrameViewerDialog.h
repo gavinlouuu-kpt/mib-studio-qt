@@ -43,7 +43,8 @@ public:
     // Charts frame pane). It never closes itself (done() is a no-op, Esc and
     // Enter do nothing), the Close button becomes "Open in window…"
     // (requestOpenInWindow), the info line wraps, and the overlay / ROI /
-    // zoom in-out controls are hidden (the host drives overlay and ROI).
+    // zoom in-out / export controls are hidden (the host drives overlay, ROI
+    // and exports).
     void setEmbedded(bool embedded);
     bool isEmbedded() const { return embedded_; }
 

@@ -193,8 +193,18 @@ once, in the destructor). The pane sits beside the plot and never covers it.
   Gates: hit rule < 2 ms, hover < 5 ms, pan update < 60 ms, pan with
   repaint < 1.5 s (catches O(n²)-class regressions only).
 - **Layout:** the scatter keeps ≥ 420 px and starts with 60 % of the width;
-  the embedded viewer hides its overlay / ROI / zoom in-out controls (the
-  tab's toolbar drives overlay and ROI) so its one control row stays short.
+  the embedded viewer hides its overlay / ROI / zoom in-out / export
+  controls (the tab's toolbar and Export All cover those) so its one
+  control row — Prev, Next, Fit to Window, Open in window… — fits a 400 px
+  pane.
+- **Chart export colours** (pre-existing bug fixed with #467):
+  `renderChartSnapshots` read the grabbed `Format_RGB32` image (B,G,R,A in
+  memory) as RGBA, so every exported chart TIFF had red and blue swapped —
+  blue points came out orange. Now `COLOR_BGRA2BGR`. Caught by
+  `integration.review_scatter_e2e`: the real `MainWindow` records a run on
+  the real 512x96 cells, opens it in Review and drives the scatter (click,
+  zoom, pan, prev/next, open in window, export), writing a screenshot of
+  every state to `MIB_REVIEW_E2E_OUT`; it skips (77) without the asset.
 - Test hooks: `scatterViewForTests`, `scatterHighlightForTests`,
   `framePaneForTests`, `framePaneFrameForTests`, `scatterPointToFrameForTests`,
   `scatterPointViewPosForTests`, `setFrameViewerSinkForTests` (replaces the
