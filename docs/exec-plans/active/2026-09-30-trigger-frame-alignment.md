@@ -109,7 +109,7 @@ and only the host receipt stamp and a hardware loopback can bridge the gap.
 - [x] Software layer (this plan's first PR).
 - [x] Rig wiring decided (2026-10-01, rear-panel photo): the sort coax is in
       TRIG IN/OUT and PULSE IN/OUT is free → PULSE OUT → Coaxlink Internal
-      I/O TTLIO11: 1625 DB25 breakout pin 22 (GND 10); on an HD26 breakout pin 25 (GND 24) — see the hand-over for how to tell which.
+      I/O TTLIO11: the rig breakout is an HL-DB26T-mini on External I/O (HD26) → terminal 25, GND terminal 24 (photos in `docs/evidence/2026-10-01-trigger-loopback-wiring/`).
       LAN chosen for the SCPI link. Hand-over for the rig agent:
       [`2026-10-01-trigger-frame-alignment-rig-handoff.md`](2026-10-01-trigger-frame-alignment-rig-handoff.md).
 - [ ] Rig: cable + scope confirmation that PULSE OUT pulses once per

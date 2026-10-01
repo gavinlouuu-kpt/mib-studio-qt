@@ -73,10 +73,17 @@ identical for the PC1633 Quad G3 and PC3603 Quad CXP-12):
 | Card bracket **External I/O** directly, or the **3304 HD26F adapter cable** from Internal I/O 1 | 26 pins, **3 rows**, smaller shell | HD26 pin 17 (gnd 18) | **HD26 pin 25** | **HD26 pin 24** |
 | Bare **Internal I/O 1** header on the card | 26-pin 2-row 0.1" header | header pin 21 (gnd 22) | **header pin 19** | **header pin 20** |
 
-The user reports a **DB25** breakout, i.e. row 1 → **DB25 pin 22 / ground
-pin 10**. Cross-check before wiring: the existing sort wire must be on DB25
-pin 23; if it is on pin 17 of a 3-row connector instead, use row 2. Confirm
-pin 22 ↔ TTLIO11 with a continuity check to the card end of the cable.
+**Rig breakout identified from a photo (2026-10-01): HL-DB26T-mini**, a
+26-pin **HD26** terminal board on the Coaxlink **External I/O** connector —
+row 2 of the table, not DB25. The existing red/black sort pair sits on
+terminals 17/18 (TTLIO12 + GND), which confirms it. So the loopback goes to
+**terminal 25 (TTLIO11, BNC centre)** and **terminal 24 (GND, BNC shield)**.
+Annotated photos: [`docs/evidence/2026-10-01-trigger-loopback-wiring/`](../../evidence/2026-10-01-trigger-loopback-wiring/README.md).
+
+**Check first:** a green and a yellow wire already land near terminals 23–25
+(pen-marked "+"/"−"). If one is on 25, TTLIO11 is already used; identify that
+wire before reusing the pin. Fallback input: isolated IIN11 (HD26 pin 3 +,
+pin 12 −; `LineInputToolSource = IIN11`, current-sense, TTL-compatible).
 
 Electrical (manual §3.9/3.10, TTL Input/Output): 5 V-compliant 3.3 V LVTTL
 receiver, HIGH > 2.0 V, LOW < 0.8 V, **absolute maximum 0 V … 5 V**. Look at
