@@ -230,6 +230,24 @@ pub fn init(app: tauri::AppHandle, state: State<AppState>, data_dir: String) -> 
     Ok(guard.pin_mut().initialize(&dir))
 }
 
+/// The HDF5 file the app was launched with (`yofo-review run.h5`, the
+/// Windows / Linux file association), or "" when none. macOS delivers
+/// Finder opens as `RunEvent::Opened`; see `run()`.
+#[tauri::command]
+pub fn review_launch_path() -> String {
+    launch_path_from(std::env::args().skip(1))
+}
+
+pub fn launch_path_from(args: impl Iterator<Item = String>) -> String {
+    for a in args {
+        let lower = a.to_ascii_lowercase();
+        if (lower.ends_with(".h5") || lower.ends_with(".hdf5")) && std::path::Path::new(&a).is_file() {
+            return a;
+        }
+    }
+    String::new()
+}
+
 #[tauri::command]
 pub fn review_abi_version() -> u32 {
     review_ffi::review_bridge_abi_version()
@@ -624,6 +642,17 @@ mod tests {
     //! C++-written fixture through it in both feature configurations.
     use mib_bridge::review_ffi;
     use serial_test::serial;
+
+    #[test]
+    fn launch_path_picks_the_first_existing_hdf5_argument() {
+        let path = std::env::temp_dir().join(format!("mib_launch_{}.H5", std::process::id()));
+        std::fs::write(&path, b"x").unwrap();
+        let p = path.to_string_lossy().into_owned();
+        let args = vec!["--flag".to_string(), "missing.h5".to_string(), p.clone(), "other.h5".to_string()];
+        assert_eq!(super::launch_path_from(args.into_iter()), p);
+        assert_eq!(super::launch_path_from(vec!["notes.txt".to_string()].into_iter()), "");
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     #[serial]

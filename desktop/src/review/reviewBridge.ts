@@ -189,6 +189,8 @@ async function command(name: string, args?: Record<string, unknown>): Promise<Re
 
 export const reviewBridge = {
   abiVersion: () => invoke<number>("review_abi_version"),
+  /** File passed on the command line / by a file association ("" = none). */
+  launchPath: () => invoke<string>("review_launch_path"),
   open: async (path: string) => {
     generation++;
     try {

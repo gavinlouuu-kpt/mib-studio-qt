@@ -255,7 +255,8 @@ pub mod review_ffi {
         ) -> ReviewFrame;
         /// `count` thumbnails from `offset`, letterboxed into `size` px
         /// tiles, packed as one frame of width `size` and height
-        /// `size × count` (tile k at rows k·size..(k+1)·size).
+        /// `size × count` (tile k at rows k·size..(k+1)·size). Refused when
+        /// `size × count` exceeds the packet's max_dimension (8192).
         fn fetch_review_thumbnails(
             self: Pin<&mut ReviewBridge>,
             valid: bool,

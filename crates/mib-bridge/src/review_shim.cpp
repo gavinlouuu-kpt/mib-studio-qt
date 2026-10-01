@@ -341,7 +341,13 @@ ReviewFrame ReviewBridge::fetch_review_series_frame(std::uint64_t index, std::ui
 ReviewFrame ReviewBridge::fetch_review_thumbnails(bool valid, std::uint64_t offset, std::uint64_t count,
                                                   std::uint32_t size, std::uint32_t overlay,
                                                   bool roi_overlay) {
-    if (overlay > kMaxOverlay || size == 0 || size > 512 || count == 0 || count > 1000) return ReviewFrame{};
+    // One strip is one frame packet: size × (size·count) must stay within the
+    // contract's max_dimension (8192).
+    constexpr std::uint64_t kMaxDimension = 8192;
+    if (overlay > kMaxOverlay || size == 0 || size > 512 || count == 0 ||
+        static_cast<std::uint64_t>(size) * count > kMaxDimension) {
+        return ReviewFrame{};
+    }
     try {
         br::ThumbnailStrip strip;
         if (!impl_->session.thumbnails(valid, offset, count, size, static_cast<br::OverlayMode>(overlay),

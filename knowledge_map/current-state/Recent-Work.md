@@ -1,5 +1,20 @@
 # Recent Work
 
+## 2026-10-01 — YOFO Review frames view (PR 2)
+
+The shared review panel now has the Qt tab's frames layout: a virtualised
+thumbnail grid fed by 64-tile packed strips from `ReviewSession` (aspect-
+true cells, bounded LRU, keyboard selection), the selected frame's preview
+over a 100-row paged metrics table with every Qt column and a persisted
+column chooser, and an in-app frame viewer with frame / series navigation
+and zoom. Files open from the command line (file associations) or `?open=`.
+Found by driving the real app on real 512×96 cells: a 100-tile strip
+(12 800 px) exceeded the frame packet's 8192 px limit, so pages are 64 tiles
+and the bridge refuses taller strips. New dev tool
+`crates/mib-bridge/examples/review_fixture.rs` writes a synthetic or
+real-cell (regenerate-masks job over a frame folder) review file. Note:
+[[../frontend/YofoReview]].
+
 ## 2026-10-01 — Review jobs in the review core (YOFO Review PR 1b)
 
 `ReviewJobs` (`mib_review_core`, [[../services/ReviewSession]]) runs the

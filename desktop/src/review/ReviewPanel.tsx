@@ -2,19 +2,24 @@
 //
 // One React tree serves two products: MIB Studio mounts this panel in its
 // Review tab, YOFO Review (`review.html` → `ReviewApp.tsx`) mounts it as the
-// whole window. The panel owns its review state and the "review" slot of the
-// shared FramePullScheduler, and talks only to the review bridge
-// (`reviewBridge.ts` → src-tauri/src/review.rs → ReviewSession), so the
-// review-only product needs no backend bridge at all.
+// whole window. The panel owns its review state and the "review" and
+// "viewer" slots of the shared FramePullScheduler, and talks only to the
+// review bridge (`reviewBridge.ts` → src-tauri/src/review.rs →
+// ReviewSession), so the review-only product needs no backend bridge at all.
 //
-// Scope today: open/close, info line, raw / valid / invalid scrubbing with
-// backend-composed overlays, the metrics table. Thumbnails, charts, exports
-// and jobs arrive with the plan's PR 2–4.
+// Layout (the Qt HdfReviewTab): per set (Valid / Invalid, or "Frames" for a
+// recording file) a virtualised thumbnail grid on the left, the selected
+// frame's preview over the paged metrics table on the right; selection is
+// shared by grid, table and preview; double-click / Enter opens the frame
+// viewer (series, zoom, prev/next). Charts arrive with the plan's PR 3,
+// export dialogs with progress / cancel / series range with PR 4.
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FramePacket } from "../framePacket";
 import type { FramePullScheduler } from "../framePullScheduler";
+import { FrameViewer } from "./FrameViewer";
+import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
 import {
   OVERLAY,
   REGENERATE_SOURCE,
@@ -24,11 +29,14 @@ import {
   type OverlayMode,
   type ReviewCmdResult,
   type ReviewInfo,
+  type ReviewRow,
   type ReviewRows,
 } from "./reviewBridge";
+import { ThumbnailGrid } from "./ThumbnailGrid";
 
 export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
-export const METRICS_PAGE_SIZE = 50;
+export const METRICS_PAGE_SIZE = 100;
+const COLUMNS_KEY = "yofo.review.columns";
 
 // Jobs run in the backend as tracked operations (one at a time); the host's
 // event drain logs their outcome. Dialogs with series ranges, progress and
@@ -46,7 +54,7 @@ const OVERLAY_LABELS: { mode: OverlayMode; label: string }[] = [
 export interface ReviewPanelProps {
   /** Backend initialized (open is refused otherwise). */
   ready: boolean;
-  /** Shared scheduler; the panel mounts its own "review" slot on it. */
+  /** Shared scheduler; the panel mounts its "review" and "viewer" slots. */
   scheduler: FramePullScheduler;
   /** Image scaling preference shared with the host's live canvases. */
   fitWindow: boolean;
@@ -64,26 +72,55 @@ export interface ReviewPanelProps {
 export interface ReviewPanelHandle {
   /** The File ▸ Open… action. */
   openFile: () => Promise<void>;
+  /** Open a known path (command line, file association, test harness). */
+  openPath: (path: string) => Promise<void>;
   /** The File ▸ Close action. */
   closeFile: () => Promise<void>;
 }
 
-type ReviewTab = "raw" | "valid" | "invalid" | "charts";
+type ReviewTab = "valid" | "invalid" | "charts";
+
+function loadColumns(): string[] {
+  try {
+    const raw = localStorage.getItem(COLUMNS_KEY);
+    const ids = raw ? (JSON.parse(raw) as unknown) : null;
+    if (Array.isArray(ids) && ids.every((x) => typeof x === "string") && ids.length > 0) {
+      const known = new Set(METRIC_COLUMNS.map((c) => c.id));
+      const kept = ids.filter((x) => known.has(x));
+      if (kept.length > 0) return kept;
+    }
+  } catch {
+    // Private window or blocked storage: defaults.
+  }
+  return DEFAULT_COLUMNS;
+}
 
 export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(function ReviewPanel(props, ref) {
   const { ready, scheduler, fitWindow, log, beforeLoad, onFileChange, onInfo } = props;
 
   const [info, setInfo] = useState<ReviewInfo | null>(null);
-  const [reviewTab, setReviewTab] = useState<ReviewTab>("raw");
+  const [fileKey, setFileKey] = useState("");
+  const [reviewTab, setReviewTab] = useState<ReviewTab>("valid");
   const [rows, setRows] = useState<ReviewRows | null>(null);
   const [rowsOffset, setRowsOffset] = useState(0);
-  const [imgIndex, setImgIndex] = useState(0);
+  const [selected, setSelected] = useState(-1);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [overlay, setOverlay] = useState<OverlayMode>(OVERLAY.None);
   const [roiOverlay, setRoiOverlay] = useState(false);
+  const [columns, setColumns] = useState<string[]>(loadColumns);
+  const [showColumns, setShowColumns] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rowsRef = useRef<ReviewRows | null>(null);
+  rowsRef.current = rows;
 
   const reviewing = !!info?.file_open;
-  const total = Number(rows?.total ?? 0);
+  const isRecording = !!info?.recording_file;
+  const validSet = reviewTab !== "invalid";
+  const setTotal = !info ? 0 : Number(validSet ? info.valid_images.count || info.recorded_images.count : info.invalid_images.count);
+  const rowTotal = Number(rows?.total ?? 0);
+  const selectedRow: ReviewRow | null =
+    rows && selected >= rowsOffset && selected < rowsOffset + rows.rows.length ? rows.rows[selected - rowsOffset] : null;
+  const shownColumns = visibleColumns(columns, isRecording);
 
   // Draw only the pixels owned by this exact immutable pull response.
   const draw = useCallback((p: FramePacket) => {
@@ -91,35 +128,18 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     if (!p.valid || !canvas) return;
     canvas.width = p.width;
     canvas.height = p.height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.putImageData(packetToImageData(p), 0, 0);
+    canvas.getContext("2d")?.putImageData(packetToImageData(p), 0, 0);
   }, []);
+
+  useEffect(() => scheduler.mount("review", draw, (e) => log(`review frame error: ${e}`)), [scheduler, draw, log]);
 
   useEffect(() => {
-    return scheduler.mount("review", draw, (e) => log(`review frame error: ${e}`));
-  }, [scheduler, draw, log]);
-
-  const datasetFor = useCallback((tab: ReviewTab): number => {
-    if (tab === "raw") return REVIEW_DATASET.RecordedImage;
-    return tab === "invalid" ? REVIEW_DATASET.InvalidImage : REVIEW_DATASET.ValidImage;
-  }, []);
-
-  const imageCount = useCallback(
-    (tab: ReviewTab): number => {
-      if (!info) return 0;
-      if (tab === "raw") return Number(info.recorded_images.count);
-      return Number(tab === "invalid" ? info.invalid_images.count : info.valid_images.count);
-    },
-    [info],
-  );
-
-  const drawImage = useCallback(
-    (tab: ReviewTab, index: number, mode: OverlayMode, roi: boolean) => {
-      scheduler.request("review", () => reviewBridge.frame(datasetFor(tab), index, mode, roi));
-    },
-    [scheduler, datasetFor],
-  );
+    try {
+      localStorage.setItem(COLUMNS_KEY, JSON.stringify(columns));
+    } catch {
+      // Storage unavailable: the choice lasts for this session only.
+    }
+  }, [columns]);
 
   const loadRows = useCallback(
     async (valid: boolean, offset: number) => {
@@ -136,15 +156,45 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     [log],
   );
 
+  // Preview follows the selection and the overlay / ROI choice.
+  useEffect(() => {
+    if (!reviewing || reviewTab === "charts" || selected < 0 || selected >= setTotal) return;
+    scheduler.request("review", () =>
+      reviewBridge.frame(validSet ? REVIEW_DATASET.ValidImage : REVIEW_DATASET.InvalidImage, selected, overlay, roiOverlay),
+    );
+  }, [reviewing, reviewTab, selected, setTotal, validSet, overlay, roiOverlay, scheduler]);
+
+  // The table page follows the selection.
+  const select = useCallback(
+    (index: number) => {
+      setSelected(index);
+      const offset = pageOffsetFor(index, METRICS_PAGE_SIZE);
+      const current = rowsRef.current;
+      if (!current || offset !== Number(current.offset)) void loadRows(validSet, offset);
+    },
+    [loadRows, validSet],
+  );
+
+  const resetView = useCallback(() => {
+    scheduler.invalidate("review");
+    scheduler.invalidate("viewer");
+    setRows(null);
+    setRowsOffset(0);
+    setSelected(-1);
+    setViewerOpen(false);
+    const canvas = canvasRef.current;
+    canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+  }, [scheduler]);
+
   const selectTab = useCallback(
     async (tab: ReviewTab) => {
+      resetView();
       setReviewTab(tab);
-      setImgIndex(0);
       if (tab === "charts") return;
       await loadRows(tab !== "invalid", 0);
-      if (imageCount(tab) > 0) drawImage(tab, 0, overlay, roiOverlay);
+      setSelected(0);
     },
-    [drawImage, imageCount, loadRows, overlay, roiOverlay],
+    [loadRows, resetView],
   );
 
   const closeFile = useCallback(async () => {
@@ -153,42 +203,46 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     } catch (e) {
       log(`close error: ${e}`);
     }
-    scheduler.invalidate("review");
+    resetView();
     setInfo(null);
-    setRows(null);
-    setRowsOffset(0);
-    setImgIndex(0);
-    setReviewTab("raw");
+    setFileKey("");
+    setReviewTab("valid");
     onInfo?.(null);
     onFileChange?.("");
-    const canvas = canvasRef.current;
-    canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
-  }, [log, onFileChange, onInfo, scheduler]);
+  }, [log, onFileChange, onInfo, resetView]);
+
+  const openPath = useCallback(
+    async (path: string) => {
+      beforeLoad?.();
+      resetView();
+      onFileChange?.(path);
+      try {
+        const res = await reviewBridge.open(path);
+        if (!res.ok) {
+          log(`open failed: ${res.message}`);
+          return;
+        }
+        const fresh = await reviewBridge.info();
+        setInfo(fresh);
+        setFileKey(`${path}#${Date.now()}`);
+        onInfo?.(fresh);
+        log(`opened ${path}${fresh.accounting_summary}`);
+        setReviewTab("valid");
+        await loadRows(true, 0);
+        setSelected(0);
+      } catch (e) {
+        log(`open error: ${e}`);
+      }
+    },
+    [beforeLoad, loadRows, log, onFileChange, onInfo, resetView],
+  );
 
   const openFile = useCallback(async () => {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
-    if (typeof picked !== "string") return;
-    beforeLoad?.();
-    onFileChange?.(picked);
-    try {
-      const res = await reviewBridge.open(picked);
-      if (!res.ok) return log(`open failed: ${res.message}`);
-      const fresh = await reviewBridge.info();
-      setInfo(fresh);
-      onInfo?.(fresh);
-      log(`opened ${picked}${fresh.accounting_summary}`);
-      const tab: ReviewTab = fresh.recording_file ? "raw" : "valid";
-      setReviewTab(tab);
-      setImgIndex(0);
-      await loadRows(true, 0);
-      const count = fresh.recording_file ? Number(fresh.recorded_images.count) : Number(fresh.valid_images.count);
-      if (count > 0) drawImage(tab, 0, overlay, roiOverlay);
-    } catch (e) {
-      log(`open error: ${e}`);
-    }
-  }, [beforeLoad, drawImage, loadRows, log, onFileChange, onInfo, overlay, roiOverlay]);
+    if (typeof picked === "string") await openPath(picked);
+  }, [openPath]);
 
-  useImperativeHandle(ref, () => ({ openFile, closeFile }), [openFile, closeFile]);
+  useImperativeHandle(ref, () => ({ openFile, openPath, closeFile }), [openFile, openPath, closeFile]);
 
   // ---- jobs -----------------------------------------------------------------
   const report = useCallback(
@@ -251,17 +305,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     }
   }, [info, log, report]);
 
-  const onOverlayChange = (mode: OverlayMode) => {
-    setOverlay(mode);
-    if (reviewing && reviewTab !== "charts" && imageCount(reviewTab) > 0) drawImage(reviewTab, imgIndex, mode, roiOverlay);
-  };
-  const onRoiChange = (on: boolean) => {
-    setRoiOverlay(on);
-    if (reviewing && reviewTab !== "charts" && imageCount(reviewTab) > 0) drawImage(reviewTab, imgIndex, overlay, on);
-  };
-
-  const count = reviewing && reviewTab !== "charts" ? imageCount(reviewTab) : 0;
-  const isRecording = !!info?.recording_file;
+  const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
 
   return (
     <>
@@ -291,7 +335,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           value={overlay}
           disabled={!reviewing || isRecording}
           title={isRecording ? "Recording files carry no masks" : "Overlay drawn by the backend"}
-          onChange={(e) => onOverlayChange(Number(e.target.value) as OverlayMode)}
+          onChange={(e) => setOverlay(Number(e.target.value) as OverlayMode)}
           aria-label="Overlay mode"
         >
           {OVERLAY_LABELS.map((o) => (
@@ -299,7 +343,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           ))}
         </select>
         <label title={isRecording ? "Recording files carry no ROI" : "Draw the recorded ROI"}>
-          <input type="checkbox" checked={roiOverlay} disabled={!reviewing || isRecording} onChange={(e) => onRoiChange(e.target.checked)} /> ROI
+          <input type="checkbox" checked={roiOverlay} disabled={!reviewing || isRecording} onChange={(e) => setRoiOverlay(e.target.checked)} /> ROI
         </label>
         <span className="legend">
           <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
@@ -314,121 +358,143 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
       </div>
       <div className="subtabs" role="tablist" aria-label="Review views">
         <button
-          className={reviewTab === "raw" ? "active" : ""}
-          disabled={!info?.recorded_images.present}
-          title={info?.recorded_images.present ? undefined : "No recorded raw frames in this file"}
-          onClick={() => void selectTab("raw")}
-        >
-          Raw Frames
-        </button>
-        <button
           className={reviewTab === "valid" ? "active" : ""}
-          disabled={!info?.valid_images.present}
-          title={info?.valid_images.present ? undefined : "No valid-frame images in this file"}
+          disabled={!reviewing || setTotalFor(info, true) === 0}
           onClick={() => void selectTab("valid")}
         >
-          {isRecording ? "Frames" : "Valid Frames"}
+          {isRecording ? "Frames" : "Valid Frames"} {reviewing ? `(${setTotalFor(info, true)})` : ""}
         </button>
         {!isRecording && (
           <button
             className={reviewTab === "invalid" ? "active" : ""}
-            disabled={!info?.invalid_images.present}
-            title={info?.invalid_images.present ? undefined : "No invalid-frame images in this file"}
+            disabled={!reviewing || setTotalFor(info, false) === 0}
             onClick={() => void selectTab("invalid")}
           >
-            Invalid Frames
+            Invalid Frames {reviewing ? `(${setTotalFor(info, false)})` : ""}
           </button>
         )}
         <button disabled title="Chart rendering lands with the plan's PR 3">Charts</button>
       </div>
       <div className="subtab-body">
-        <div className="review-split">
-          <div className="frames">
-            <div className="canvas-wrap">
-              {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
-              <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
-            </div>
-            {count > 0 && (
-              <>
-                <input
-                  type="range"
-                  className="scrub"
-                  min={0}
-                  max={Math.max(0, count - 1)}
-                  value={imgIndex}
-                  onChange={(e) => {
-                    const idx = Number(e.target.value);
-                    setImgIndex(idx);
-                    drawImage(reviewTab, idx, overlay, roiOverlay);
-                  }}
-                  aria-label="Review image scrubber"
-                />
-                <span className="mono">
-                  image {imgIndex + 1} of {count}
-                </span>
-              </>
-            )}
+        {!reviewing ? (
+          <div className="review-empty">
+            <p>No recording loaded.</p>
+            <button onClick={openFile} disabled={!ready}>Select HDF File…</button>
           </div>
-          <div className="table-panel">
-            <table className="metrics-table">
-              <thead>
-                <tr>
-                  <th>Index</th>
-                  <th>Object Id</th>
-                  <th>Track Id</th>
-                  <th>Area (px²)</th>
-                  <th>Area (µm²)</th>
-                  <th>Deformability</th>
-                  <th>Ring ratio</th>
-                  <th>E (kPa)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(rows?.rows ?? []).map((r) => (
-                  <tr key={`${r.frame_index}:${r.object_id}`}>
-                    <td>{r.frame_index}</td>
-                    <td>{r.object_id}</td>
-                    <td>{r.track_id}</td>
-                    <td>{r.area.toFixed(1)}</td>
-                    <td>{r.area_um2.toFixed(2)}</td>
-                    <td>{r.deformability.toFixed(3)}</td>
-                    <td>{r.ring_ratio.toFixed(3)}</td>
-                    <td>{r.youngs_modulus.toFixed(2)}</td>
-                  </tr>
-                ))}
-                {(rows?.rows?.length ?? 0) === 0 && (
-                  <tr>
-                    <td colSpan={8} style={{ color: "#777" }}>
-                      {reviewing ? "No metric rows in this table." : "Load a file to see frame/object metrics."}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            {reviewing && total > METRICS_PAGE_SIZE && (
-              <div className="toolbar" style={{ padding: 4 }}>
-                <button
-                  className="btn"
-                  disabled={rowsOffset === 0}
-                  onClick={() => loadRows(reviewTab !== "invalid", Math.max(0, rowsOffset - METRICS_PAGE_SIZE))}
-                >
-                  ◀ Prev
-                </button>
-                <span className="mono">
-                  {rowsOffset + 1}–{Math.min(total, rowsOffset + METRICS_PAGE_SIZE)} of {total}
+        ) : (
+          <div className="review-frames">
+            <ThumbnailGrid
+              valid={validSet}
+              total={setTotal}
+              overlay={isRecording ? OVERLAY.None : overlay}
+              roiOverlay={!isRecording && roiOverlay}
+              selected={selected}
+              fileKey={fileKey}
+              imageWidth={imageDims(info, validSet).w}
+              imageHeight={imageDims(info, validSet).h}
+              onSelect={select}
+              onOpen={(i) => {
+                select(i);
+                setViewerOpen(true);
+              }}
+              log={log}
+            />
+            <div className="review-side">
+              <div className="canvas-wrap preview" onDoubleClick={() => selected >= 0 && setViewerOpen(true)} title="Double-click to open the viewer">
+                <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
+                <span className="preview-caption mono">
+                  {selected >= 0 ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}` : "—"}
                 </span>
-                <button
-                  className="btn"
-                  disabled={rowsOffset + METRICS_PAGE_SIZE >= total}
-                  onClick={() => loadRows(reviewTab !== "invalid", rowsOffset + METRICS_PAGE_SIZE)}
-                >
-                  Next ▶
-                </button>
               </div>
-            )}
+              <div className="table-toolbar">
+                <span className="mono">
+                  {rowTotal > 0 ? `${rowsOffset + 1}–${Math.min(rowTotal, rowsOffset + METRICS_PAGE_SIZE)} of ${rowTotal}` : "no rows"}
+                </span>
+                <button disabled={rowsOffset === 0} onClick={() => pageTo(rowsOffset - METRICS_PAGE_SIZE)}>◀</button>
+                <button disabled={rowsOffset + METRICS_PAGE_SIZE >= rowTotal} onClick={() => pageTo(rowsOffset + METRICS_PAGE_SIZE)}>▶</button>
+                <span className="right" />
+                {!isRecording && (
+                  <div className="column-chooser">
+                    <button aria-expanded={showColumns} onClick={() => setShowColumns((s) => !s)}>Columns…</button>
+                    {showColumns && (
+                      <div className="menu-popup column-popup" role="menu">
+                        {METRIC_COLUMNS.filter((c) => !c.recording || c.id === "frame_index").map((c) => (
+                          <label key={c.id}>
+                            <input type="checkbox" checked={columns.includes(c.id)} onChange={() => setColumns((ids) => toggleColumn(ids, c.id))} /> {c.label}
+                          </label>
+                        ))}
+                        <button onClick={() => setColumns(DEFAULT_COLUMNS)}>Reset</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="table-panel">
+                <table className="metrics-table">
+                  <thead>
+                    <tr>
+                      {shownColumns.map((c) => (
+                        <th key={c.id}>{c.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(rows?.rows ?? []).map((r, k) => {
+                      const index = rowsOffset + k;
+                      return (
+                        <tr
+                          key={index}
+                          className={index === selected ? "selected" : r.target_group ? "target" : ""}
+                          onClick={() => select(index)}
+                          onDoubleClick={() => {
+                            select(index);
+                            setViewerOpen(true);
+                          }}
+                        >
+                          {shownColumns.map((c) => (
+                            <td key={c.id}>{c.format(r)}</td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                    {(rows?.rows?.length ?? 0) === 0 && (
+                      <tr>
+                        <td colSpan={shownColumns.length} style={{ color: "#777" }}>No metric rows in this set.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
+      {viewerOpen && reviewing && selected >= 0 && (
+        <FrameViewer
+          scheduler={scheduler}
+          valid={validSet}
+          index={selected}
+          total={setTotal}
+          overlay={isRecording ? OVERLAY.None : overlay}
+          roiOverlay={!isRecording && roiOverlay}
+          row={selectedRow}
+          onIndexChange={select}
+          onClose={() => setViewerOpen(false)}
+          log={log}
+        />
+      )}
     </>
   );
 });
+
+function imageDims(info: ReviewInfo | null, valid: boolean): { w: number; h: number } {
+  if (!info) return { w: 0, h: 0 };
+  const d = valid ? (info.recording_file ? info.recorded_images : info.valid_images) : info.invalid_images;
+  return { w: d.width, h: d.height };
+}
+
+function setTotalFor(info: ReviewInfo | null, valid: boolean): number {
+  if (!info) return 0;
+  if (valid) return Number(info.recording_file ? info.recorded_images.count : info.valid_images.count);
+  return Number(info.invalid_images.count);
+}

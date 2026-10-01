@@ -109,6 +109,7 @@ fn review_bridge_reads_the_fixture_file() {
     assert!(colour.valid && colour.pixel_format == RGB8 && colour.height == 48 && colour.stride_bytes == 48);
     assert!(!bridge.pin_mut().fetch_review_thumbnails(true, 0, 3, 0, 0, false).valid, "size 0");
     assert!(!bridge.pin_mut().fetch_review_thumbnails(true, 0, 0, 16, 0, false).valid, "count 0");
+    assert!(!bridge.pin_mut().fetch_review_thumbnails(true, 0, 65, 128, 0, false).valid, "taller than max_dimension");
 
     // Scatter: isValid rows only, µm² with the recorded factor.
     let sc = bridge.pin_mut().fetch_review_scatter();

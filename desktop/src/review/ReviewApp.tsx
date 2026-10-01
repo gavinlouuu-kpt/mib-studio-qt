@@ -62,6 +62,9 @@ export default function ReviewApp() {
   const scheduler = useRef(new FramePullScheduler());
   const panel = useRef<ReviewPanelHandle>(null);
   const tickBusy = useRef(false);
+  // React StrictMode runs the boot effect twice in development; open the
+  // launch file once.
+  const launched = useRef(false);
 
   const append = useCallback((line: string) => {
     setLog((l) => [`${new Date().toLocaleTimeString()} ${line}`, ...l].slice(0, 50));
@@ -101,6 +104,14 @@ export default function ReviewApp() {
         const ok = already || (await bridge.init(""));
         setReady(ok);
         append(ok ? "backend initialized" : "backend init failed");
+        // A file from the command line / file association, or `?open=` (dev
+        // and the screenshot harness), opens straight away.
+        if (ok && !launched.current) {
+          launched.current = true;
+          const fromQuery = new URLSearchParams(window.location.search).get("open") ?? "";
+          const launch = fromQuery || (await reviewBridge.launchPath().catch(() => ""));
+          if (launch) await panel.current?.openPath(launch);
+        }
       } catch (e) {
         append(`init error: ${e}`);
       }

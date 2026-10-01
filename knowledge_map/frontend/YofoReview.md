@@ -65,6 +65,39 @@ host's event drain logs their outcome. Progress/cancel dialogs and the
 series-range prompt arrive with PR 4; thumbnails, charts and the viewer
 with PR 2–3.
 
+## Frames view (PR 2)
+
+The Qt tab's layout per set (Valid / Invalid, or "Frames" for a recording):
+
+- **`ThumbnailGrid.tsx`** — virtualised: only rows in view (+2 overscan) are
+  in the DOM; tiles come as packed strips (`fetch_review_thumbnails_packet`,
+  pull kind 5) of `THUMB_PAGE` = 64 tiles × 128 px — 64 × 128 = 8192 is the
+  frame packet's `max_dimension`, the bridge refuses taller strips. Pages
+  live in a 12-page LRU (`PageCache`), invalidated on file / set / overlay /
+  ROI change. Cells follow the image aspect (`imageBand`: a 512×96 frame is a
+  128×24 band of the letterboxed tile; the Qt KeepAspectRatio rule). Arrow
+  keys move the selection, Enter opens the viewer.
+- **Preview + table** (`ReviewPanel.tsx`) — the selected frame at full
+  resolution with the backend overlay / ROI over the paged metrics table
+  (100 rows per page, `metricsColumns.ts`: every Qt column, default set,
+  "Columns…" chooser persisted in `localStorage` key `yofo.review.columns`;
+  recording files show index + timestamp only). Grid, table and preview
+  share one selection; the table pages to follow it.
+- **`FrameViewer.tsx`** — in-app overlay (scheduler slot "viewer"): frame
+  prev/next (←/→, wraps), multi-image series (↑/↓; frame → series 1…n),
+  zoom Fit / 1× / 2× / 4×, the frame's key metrics, Esc closes.
+- **Launch file** — `review_launch_path` returns the first existing
+  `.h5`/`.hdf5` argument (`yofo-review run.h5`, the Windows/Linux file
+  association); `?open=<path>` does the same for dev and the screenshot
+  harness. macOS Finder opens (`RunEvent::Opened`) land with PR 5.
+
+Pure helpers are unit-tested in `src/review/review.test.ts`. Manual / visual
+check: `cargo run --example review_fixture -- out.h5 --from-folder
+build/vendor/assets/datasets/512x96stream-mock-frames` (in
+`crates/mib-bridge`, `--features review-only`) regenerates a real-cell
+experiment file through the review job, then launch the review build on it
+under Xvfb with the dev server running.
+
 ## `ReviewApp` (the product shell)
 
 Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`),

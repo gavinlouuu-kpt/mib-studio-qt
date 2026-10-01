@@ -589,7 +589,13 @@ accounting text and the same saved core record; the differences list in
       mode of `MonitoringDensityService` (which is in `mib_backend`, which the
       review-only product must not link); it reuses the same
       `MonitoringDensity.h` kernel and bucketing.
-- [ ] PR 2 — Frames view, viewer, overlays, series, recording files
+- [x] PR 2 — Frames view, viewer, overlays, series, recording files
+      (landed 2026-10-01). Verified by driving the review build on a
+      real-cell file under Xvfb (screenshots), not yet by tauri-driver:
+      the WebDriver e2e (`desktop/e2e/review_frames.spec.ts`) moves to PR 8
+      with the screenshot harness, since `webkit2gtk-driver` is not in the
+      CI image yet. Raw Frames tab dropped: recording files show their
+      frames as the "Frames" set (the Qt behaviour).
 - [ ] PR 3 — Charts view, gestures, click-to-view pane (absorbs scatter
       plan PR 4 / #470)
 - [ ] PR 4 — exports, regenerate masks, core contour, preferences
