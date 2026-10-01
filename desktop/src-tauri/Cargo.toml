@@ -30,6 +30,8 @@ hex = "0.4"
 tempfile = "3.27.0"
 cxx = "1"
 mib-bridge = { path = "../../crates/mib-bridge" }
+# The command layer, shared with the YOFO Studio WebSocket server (mib-bridge-server).
+mib-app-commands = { path = "../../crates/mib-app-commands" }
 
 # Desktop-only: an rlib consumed by the binary (main.rs) that links the C++
 # backend archives into an executable. The mobile crate-types (cdylib/staticlib)

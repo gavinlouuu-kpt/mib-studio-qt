@@ -76,7 +76,7 @@ mod tests {
         let events = mib_bridge::ffi::contract_fixture_events();
         let actual = serde_json::to_value(encode(events)).unwrap();
         let expected: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../crates/mib-bridge/contract/fixtures/events-v1.json")).unwrap();
+            "../../mib-bridge/contract/fixtures/events-v1.json")).unwrap();
         assert_eq!(actual, expected);
     }
     #[test]

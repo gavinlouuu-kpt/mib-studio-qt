@@ -30,9 +30,17 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   toggle + px→µm, review load/scrub); controls whose backend surface is not
   bridged yet render disabled with a tooltip naming the blocking issue
   (BE-2…BE-9, #272–#279) — backend/hardware state is never simulated.
-- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` holds `AppState`
-  (`Mutex<UniquePtr<BackendBridge>>` + a cached last-frame buffer) and the
-  `#[tauri::command]` layer; `main.rs` calls `run()`.
+- `crates/mib-app-commands/` — the transport-neutral command layer (YOFO
+  Studio S5): `AppState` (`Mutex<UniquePtr<BackendBridge>>`), the DTOs, every
+  backend command as a plain function over `&AppState`, the event JSON and
+  frame-packet encoders, and `dispatch::dispatch(state, host, name, args)` for
+  non-Tauri transports (camelCase argument keys, exactly what `invoke` sends;
+  `Reply::Json` or `Reply::Binary`). `dispatch::tests` asserts every Tauri
+  command except the desktop-only ones is dispatchable.
+- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` exposes the shared
+  commands as typed one-line `#[tauri::command]` shims and keeps the
+  desktop-only pieces (app paths, preferences, updater, installers);
+  `main.rs` calls `run()`.
 - `desktop/scripts/xvfb-smoke.sh` — headless GUI smoke launcher.
 - `desktop/src/workflow.ts` — pure guided-workflow stage derivation (UX-1),
   with `desktop/src/workflow.test.ts` vitest coverage.
@@ -122,7 +130,8 @@ reveal-in-dir actions go through `tauri-plugin-opener`, capability-scoped to
 
 ## Command layer
 
-Thin wrappers over the bridge (all take the managed `AppState`):
+Thin wrappers over the bridge (all take the managed `AppState`; bodies in
+`crates/mib-app-commands`, Tauri shims in `desktop/src-tauri/src/lib.rs`):
 
 - **Live capture:** existing lifecycle commands remain serialized through
   `AppState.bridge`. `fetch_frame_packet` returns one owned binary response.
