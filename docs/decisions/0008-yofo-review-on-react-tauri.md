@@ -75,7 +75,8 @@ The full survey, decision log and PR breakdown are in
   config overlay, never in `#ifdef`s or duplicated sources; the Linux
   lane cannot bundle, so macOS and Windows jobs own packaging and must
   stay green.
-- **Prerequisites outside the repository:** an Apple Developer ID with
-  notarisation credentials, a publicly trusted Windows Authenticode
-  certificate and a minisign key pair for the updater. Until they exist,
-  artefacts are unsigned and for internal testing only.
+- **Not signed, not notarised** (decision 2026-10-01): the app is not
+  distributed through a store, so artefacts ship unsigned and the manual
+  documents the one-time Gatekeeper / SmartScreen step. The only key is
+  the self-issued minisign pair that `tauri-plugin-updater` verifies
+  downloads against.

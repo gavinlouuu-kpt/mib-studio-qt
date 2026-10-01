@@ -197,6 +197,13 @@ What is missing or wrong today (evidence in the agent survey of
   (`TAURI_SIGNING_PRIVATE_KEY`). PR 7 is blocked until these exist as
   repository secrets; earlier PRs produce installable unsigned artefacts
   for internal testing.
+- 2026-10-01: **No code signing or notarisation** (user decision: the app
+  is not distributed through a store). Artefacts ship unsigned; the manual
+  documents the one-time Gatekeeper step on macOS (right-click ▸ Open, or
+  `xattr -d com.apple.quarantine`) and the SmartScreen "More info ▸ Run
+  anyway" step on Windows. PR 7 is removed; the minisign key pair for
+  `tauri-plugin-updater` is still generated (it is a self-issued key, not
+  a certificate) so updates are verified against our own key.
 - 2026-10-01 (PR 0): **The Tauri CLI's `--config` overlay is applied by
   setting `TAURI_CONFIG`** to the overlay's JSON for a plain `cargo build`,
   which is how `tauri-build` receives it from the CLI. The Linux lane
@@ -480,19 +487,11 @@ too), `.github/workflows/review-ci.yml` (job `windows-2022`), `.github/workflows
 `docs/howto/auto-update-r2.md`, `docs/howto/build-installer.md`, vault,
 this plan.
 
-### PR 7 — Signing and notarisation (blocked on certificates)
+### PR 7 — removed (no signing; decision log 2026-10-01)
 
-Files: `.github/workflows/{review-ci,release}.yml` (Tauri signing env:
-`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`,
-`APPLE_PASSWORD`, `APPLE_TEAM_ID`, `TAURI_SIGNING_PRIVATE_KEY`,
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, Windows certificate secret),
-`desktop/src-tauri/tauri.review.conf.json` (`bundle.macOS.signingIdentity`,
-hardened runtime entitlements, `bundle.windows.signCommand`),
-`deploy/signing/README.md`, `docs/howto/build-installer.md`.
-
-Exit: `spctl --assess` passes on the DMG; SmartScreen does not warn on the
-installer; the updater accepts only artefacts signed with the project
-minisign key.
+Unsigned artefacts are the shipped form. The manual (PR 8) documents the
+Gatekeeper and SmartScreen one-time steps. Only the updater's self-issued
+minisign key is set up, in PR 6.
 
 ### PR 8 — Manual, screenshots, parity sign-off, hand-over
 
@@ -542,8 +541,9 @@ accounting text and the same saved core record; the differences list in
       a newer `review-stable/latest.json` release and relaunches.
 - [ ] One `vX.Y.Z` tag publishes MIB Studio Qt and YOFO Review artefacts
       to GitHub Releases and their R2 channels.
-- [ ] Signed and notarised artefacts open without Gatekeeper or SmartScreen
-      warnings (PR 7; reported in the tracker if v1 ships unsigned).
+- [ ] Unsigned artefacts install after the documented one-time Gatekeeper /
+      SmartScreen step; the updater verifies its downloads against the
+      project minisign key.
 - [ ] ADR 0008 accepted; manual page, howtos, vault notes, screenshot
       harness and the decoupling-plan parity matrix updated;
       `check_docs.py` and `check_screenshots.py` clean.
@@ -582,5 +582,5 @@ accounting text and the same saved core record; the differences list in
 - [ ] PR 5 — macOS Conan profile, preset, bridge manifest, DMG, CI job
 - [ ] PR 6 — Windows preset, NSIS, updater plugin, R2 review channels,
       release workflow
-- [ ] PR 7 — notarisation and Authenticode (blocked on certificates)
+- [x] PR 7 — removed: no signing (user decision 2026-10-01)
 - [ ] PR 8 — manual, screenshots, parity sign-off, tracker, plan → completed
