@@ -117,6 +117,15 @@ cmake --preset linux-armv7-yocto && cmake --build --preset linux-armv7-yocto-bui
 scripts/yofo/deploy_target.sh 20   # strips, copies to the PS, runs scripts/yofo/target_smoke.sh
 ```
 
+The YOFO Studio server cross-compiles the same way after the CMake tree:
+`YOFO_SDK=<sdk> scripts/yofo/cargo-armv7.sh build --release --manifest-path
+crates/mib-bridge-server/Cargo.toml` (needs `rustup target add
+armv7-unknown-linux-gnueabihf`). The script maps the SDK compilers to cargo's
+target-specific variables (the generic `CC`/`CFLAGS` would hit host build
+scripts) and points the bridge at `build/linux-armv7-yocto`
+(`MIB_BRIDGE_BUILD_DIR`, `MIB_BRIDGE_SYSROOT`); `crates/mib-bridge/build.rs`
+links the Aravis libraries recorded in that tree's `CMakeCache.txt`.
+
 `cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
 HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
 dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the

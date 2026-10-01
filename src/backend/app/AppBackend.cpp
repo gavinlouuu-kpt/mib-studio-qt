@@ -43,6 +43,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstring>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -786,6 +787,22 @@ namespace backend
                     const auto fakeValue = toLower(envFake);
                     options.useFake = fakeValue == "1" || fakeValue == "true" ||
                                       fakeValue == "yes";
+                }
+                // Interim deployment settings until the UI's camera controls drive the
+                // Aravis features (YOFO Studio S5): rate, exposure, sensor window. The adapter
+                // reads every value back and reports clamps (AravisCamera::sessionInfo).
+                if (const char *envFps = std::getenv("MIB_ARAVIS_FPS"))
+                    options.frameRateHz = std::atof(envFps);
+                if (const char *envExposure = std::getenv("MIB_ARAVIS_EXPOSURE_US"))
+                    options.exposureUs = std::atof(envExposure);
+                if (const char *envRegion = std::getenv("MIB_ARAVIS_REGION"))
+                {
+                    ::camera::aravis::AravisRegion region;
+                    if (std::sscanf(envRegion, "%d,%d,%d,%d", &region.x, &region.y, &region.width,
+                                    &region.height) == 4)
+                        options.region = region;
+                    else
+                        SPDLOG_WARN("AppBackend: ignoring MIB_ARAVIS_REGION='{}' (expected X,Y,W,H)", envRegion);
                 }
                 if (const char *envGige = std::getenv("MIB_ARAVIS_GIGE"))
                 {

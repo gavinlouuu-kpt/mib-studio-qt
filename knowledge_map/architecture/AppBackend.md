@@ -21,7 +21,9 @@ reference so they are destroyed first.
 `MIB_CAMERA_MODE=aravis` configures the optional [[../camera/AravisCamera]]
 factory. `MIB_ARAVIS_DEVICE_ID` selects a device, `MIB_ARAVIS_FAKE` is an
 explicit Fake-interface opt-in and `MIB_ARAVIS_GIGE` re-enables GigE Vision
-discovery (off by default). If Aravis is disabled at build time, the
+discovery (off by default). `MIB_ARAVIS_FPS`, `MIB_ARAVIS_EXPOSURE_US` and
+`MIB_ARAVIS_REGION=X,Y,W,H` set the rate, exposure and sensor window applied at
+start (interim, until the UI's camera controls drive the Aravis features). If Aravis is disabled at build time, the
 request records an unavailable effective source and a null factory so capture
 reports the configuration error; it does not silently substitute MockCamera.
 

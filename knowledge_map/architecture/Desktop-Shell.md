@@ -172,6 +172,14 @@ dialog/opener plugins: native in Tauri, prompts for instrument paths and
 hidden. Verified in headless Chromium: the full UI, live mock frames at 30 fps
 over the socket.
 
+On the PZ7035 PS (2026-10-01): the ARMv7 server with `MIB_CAMERA_MODE=aravis`,
+`MIB_ARAVIS_FPS=1000`, `MIB_ARAVIS_EXPOSURE_US=900` served the UI to a browser
+on the bench PC, which showed live lit 512x96 IMX426 previews at the UI's
+30 fps pull rate. Server footprint: ~2 % CPU and 12-15 MiB RSS idle; with
+capture running ~90 % CPU (the backend takes every preview the producer
+delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
+(desktop-sized buffers; a target profile is open in impl spec S6).
+
 `desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
 capture over the socket, wrong token refused, client loss and quick reconnect).
 

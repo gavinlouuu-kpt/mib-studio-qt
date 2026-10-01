@@ -170,7 +170,15 @@ fn main() {
 
     #[cfg(not(windows))]
     {
-        let build_dir = repo.join("build/linux-backend");
+        // MIB_BRIDGE_BUILD_DIR selects another CMake tree (e.g. build/linux-armv7-yocto for the
+        // YOFO Studio server on the PZ7035 PS); MIB_BRIDGE_SYSROOT is the target sysroot when
+        // cross-compiling (the Yocto SDK's OECORE_TARGET_SYSROOT).
+        println!("cargo:rerun-if-env-changed=MIB_BRIDGE_BUILD_DIR");
+        println!("cargo:rerun-if-env-changed=MIB_BRIDGE_SYSROOT");
+        let build_dir = std::env::var("MIB_BRIDGE_BUILD_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| repo.join("build/linux-backend"));
+        let sysroot = std::env::var("MIB_BRIDGE_SYSROOT").unwrap_or_default();
         ensure_backend_built(&repo, &build_dir);
 
         // Compile the cxx bridge + shim.
@@ -182,7 +190,7 @@ fn main() {
             .file("src/shim.cpp")
             .flag_if_supported("-std=c++17")
             .include(&include_dir)
-            .include("/usr/include/opencv4")
+            .include(format!("{sysroot}/usr/include/opencv4"))
             .compile("mib_bridge_shim");
 
         // Relink when the backend archives change (e.g. a facade edit) so a stale
@@ -215,8 +223,29 @@ fn main() {
         // MinidumpUploader (CMake links CURL::libcurl when found).
         println!("cargo:rustc-link-lib=dylib=curl");
 
+        // Aravis (MIB_ENABLE_ARAVIS=ON): the libraries pkg-config resolved for CMake.
+        let cache = std::fs::read_to_string(build_dir.join("CMakeCache.txt")).unwrap_or_default();
+        let cached = |key: &str| {
+            cache
+                .lines()
+                .find_map(|l| l.strip_prefix(&format!("{key}:INTERNAL=")))
+                .map(|v| v.split(';').filter(|x| !x.is_empty()).map(str::to_owned).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        for dir in cached("MIB_ARAVIS_LIBRARY_DIRS") {
+            println!("cargo:rustc-link-search=native={dir}");
+        }
+        for lib in cached("MIB_ARAVIS_LIBRARIES") {
+            println!("cargo:rustc-link-lib=dylib={lib}");
+        }
+        println!("cargo:rerun-if-changed={}/CMakeCache.txt", build_dir.display());
+
         // System shared dependencies pulled in by the backend.
-        let hdf5_dir = "/usr/lib/x86_64-linux-gnu/hdf5/serial";
+        let hdf5_dir = if sysroot.is_empty() {
+            "/usr/lib/x86_64-linux-gnu/hdf5/serial".to_string()
+        } else {
+            format!("{sysroot}/usr/lib")
+        };
         println!("cargo:rustc-link-search=native={hdf5_dir}");
         for lib in [
             "opencv_core",
