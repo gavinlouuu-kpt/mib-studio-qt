@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,13 @@ struct _ArvCamera;
 struct _ArvStream;
 
 namespace camera::aravis {
+
+struct AravisRegion {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
 
 /** Options for the optional Aravis consumer.
  *
@@ -34,6 +42,45 @@ struct AravisCameraOptions {
     // its generation but before taking SDK ownership, allowing deterministic
     // stop-during-start coverage without timing sleeps.
     std::function<void()> beforeStartHook;
+    // Auto-selection (empty deviceId) prefers a device of this vendor; "YOFO"
+    // is the PZ7035 GenTL producer. Other devices remain selectable by id.
+    std::string preferredVendor = "YOFO";
+    // GigE Vision discovery resolves device names with getaddrinfo, which on
+    // the isolated PZ7035 network costs seconds per open. Off unless a GigE
+    // camera is actually wanted.
+    bool enableGigEVision = false;
+    // Optional settings applied at start in this order (the frame-rate and
+    // exposure maxima depend on the region). Every value is read back:
+    // devices clamp silently, so sessionInfo() reports what was applied.
+    std::optional<AravisRegion> region;
+    std::optional<double> frameRateHz;
+    std::optional<double> exposureUs;
+};
+
+/** Settings read back from the device after start(), with the PZ7035
+ *  producer's rate model when the device exposes it. The frame rate is the
+ *  sensor rate; a producer that reads full-field images out in bands delivers
+ *  fewer images per second (deliveredFrameRateHz), and the UI must say so. */
+struct AravisSessionInfo {
+    std::string deviceId;
+    std::string vendor;
+    std::string model;
+    AravisRegion region;
+    double requestedFrameRateHz = 0.0; // 0 = not requested
+    double frameRateHz = 0.0;
+    double frameRateMinHz = 0.0;
+    double frameRateMaxHz = 0.0;
+    bool frameRateClamped = false;     // requested rate differs from the applied one
+    double requestedExposureUs = 0.0;  // 0 = not requested
+    double exposureUs = 0.0;
+    double exposureMaxUs = 0.0;
+    bool exposureClamped = false;
+    // PZ7035 extension features (PzBandCount, PzDeliveredFrameRate, ...).
+    bool pzFeatures = false;
+    int64_t bandCount = 1;
+    double deliveredFrameRateHz = 0.0;
+    std::string deliveredFrameRateLimit; // "SensorRate" or "BandReadout"
+    std::string frameRateLimitReason;    // "SensorGeometry", "Profile", "StoreBandwidth"
 };
 
 class AravisCamera final : public common::ICamera {
@@ -61,9 +108,14 @@ public:
     common::CameraFailure lastFailure() const override;
     common::TimestampDescriptor timestampDescriptor() const override;
 
+    /** Read-back of the running (or last) session; empty before the first start. */
+    AravisSessionInfo sessionInfo() const;
+
 private:
     bool failLocked(const char* code, const std::string& message);
     bool openAndConfigureLocked();
+    bool applySettingsLocked();
+    void readSessionInfoLocked(const std::string& deviceId);
     void releaseResourcesLocked();
     bool setFailure(const char* code, const std::string& message);
 
@@ -90,6 +142,10 @@ private:
     common::TimestampDescriptor timestampDescriptor_{};
     uint64_t sessionGeneration_ = 0;
     uint64_t deliveredFrames_ = 0;
+    // Mode of the running session; written by start() under both locks and
+    // read by grabFrame() under sdkMutex_.
+    common::FrameDeliveryMode activeMode_ = common::FrameDeliveryMode::EveryFrame;
+    AravisSessionInfo sessionInfo_{};
 };
 
 } // namespace camera::aravis

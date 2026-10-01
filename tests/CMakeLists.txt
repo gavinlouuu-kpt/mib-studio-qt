@@ -82,6 +82,18 @@ if(MIB_HAS_ARAVIS)
     mib_backend_test_link(aravis_camera_stress_test PRIVATE Threads::Threads)
     add_test(NAME camera.aravis_stress COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_stress_test)
     set_tests_properties(camera.aravis_stress PROPERTIES LABELS "camera;aravis;concurrency;stress" TIMEOUT 90)
+    # The PZ7035 GenTL producer's pattern device (pz7035-imx426 gentl/); opt-in
+    # because the producer lives in another repository.
+    set(MIB_PZ7035_GENTL_CTI "" CACHE FILEPATH "PZ7035 GenTL producer (.cti) for camera.aravis_pz7035_pattern")
+    mib_add_backend_test_executable(aravis_pz7035_pattern_test camera/aravis_pz7035_pattern_test.cpp)
+    if(MIB_PZ7035_GENTL_CTI)
+        get_filename_component(_mib_pz7035_cti_dir "${MIB_PZ7035_GENTL_CTI}" DIRECTORY)
+        add_test(NAME camera.aravis_pz7035_pattern
+                 COMMAND $<TARGET_FILE:mib_backend_tests> aravis_pz7035_pattern_test)
+        set_tests_properties(camera.aravis_pz7035_pattern PROPERTIES
+                             LABELS "camera;aravis;pz7035" TIMEOUT 90
+                             ENVIRONMENT "GENICAM_GENTL64_PATH=${_mib_pz7035_cti_dir};PZ_GENTL_PATTERN=1")
+    endif()
     mib_add_backend_test_executable(aravis_pipeline_e2e integration/aravis_pipeline_e2e_test.cpp)
     mib_backend_test_link(aravis_pipeline_e2e PRIVATE Threads::Threads)
     add_test(NAME integration.aravis_pipeline_e2e

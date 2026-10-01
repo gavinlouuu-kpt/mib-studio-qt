@@ -97,8 +97,11 @@ disabled), then configure with `MIB_ENABLE_ARAVIS=ON` and set
 `PKG_CONFIG_PATH` to that prefix. Build `mib_backend_tests` and run the
 `camera.aravis_*` plus `backend.aravis_*` CTest cases. `MIB_CAMERA_MODE=aravis`
 requires `MIB_ARAVIS_FAKE=1` for the Fake device; it never silently falls back
-to the folder replay camera. See [[../camera/AravisCamera]] and
-[[../task/2026-09-27-aravis-framework]].
+to the folder replay camera. Adding
+`-DMIB_PZ7035_GENTL_CTI=<pz7035-imx426>/gentl/build/libpz7035_gentl.cti`
+registers `camera.aravis_pz7035_pattern`, which runs the adapter against the
+PZ7035 producer's pattern device (no hardware). See [[../camera/AravisCamera]]
+and [[../task/2026-09-27-aravis-framework]].
 
 | Target | Kind | Purpose |
 |---|---|---|

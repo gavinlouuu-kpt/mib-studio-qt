@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -32,6 +33,34 @@ std::string errorText(GError* error, const char* fallback)
 bool isFakeDeviceId(const char* id)
 {
     return id != nullptr && std::string(id).rfind("Fake", 0) == 0;
+}
+
+std::string textOrEmpty(const char* text)
+{
+    return text != nullptr ? std::string(text) : std::string();
+}
+
+bool hasFeature(ArvCamera* camera, const char* name)
+{
+    GError* error = nullptr;
+    const gboolean available = arv_camera_is_feature_available(camera, name, &error);
+    if (error != nullptr) {
+        g_error_free(error);
+        return false;
+    }
+    return available;
+}
+
+// The PZ7035 producer stamps buffers with CLOCK_MONOTONIC in this process,
+// which is the clock behind std::chrono::steady_clock on Linux.
+bool producerStampsHostMonotonic(const std::string& vendor)
+{
+#if defined(__linux__)
+    return vendor == "YOFO";
+#else
+    (void)vendor;
+    return false;
+#endif
 }
 
 } // namespace
@@ -76,9 +105,6 @@ void AravisCamera::applyConfig(const common::CameraConfig& config)
     options_.streamBuffers = static_cast<std::size_t>(config_.numBuffers);
     if (config_.bufferPartCount != 1) {
         failLocked("aravis.unsupported_parts", "Aravis consumer supports exactly one image part");
-    } else if (config_.deliveryMode == common::FrameDeliveryMode::LatestFrame) {
-        failLocked("aravis.unsupported_delivery_mode",
-                   "Aravis consumer currently supports EveryFrame delivery only");
     } else {
         failure_ = {};
     }
@@ -104,6 +130,10 @@ bool AravisCamera::openAndConfigureLocked()
     std::lock_guard<std::mutex> globalLock(aravisGlobalMutex());
     if (options_.useFake)
         arv_enable_interface("Fake");
+    if (options_.enableGigEVision)
+        arv_enable_interface("GigEVision");
+    else
+        arv_disable_interface("GigEVision");
 
     const std::string requestedId = options_.useFake && options_.deviceId.empty()
                                         ? std::string("Fake_1")
@@ -114,13 +144,21 @@ bool AravisCamera::openAndConfigureLocked()
     std::string selectedId = requestedId;
     if (selectedId.empty()) {
         arv_update_device_list();
+        std::string firstPhysical;
         for (unsigned int i = 0; i < arv_get_n_devices(); ++i) {
             const char* id = arv_get_device_id(i);
-            if (id != nullptr && !isFakeDeviceId(id)) {
+            if (id == nullptr || isFakeDeviceId(id))
+                continue;
+            if (firstPhysical.empty())
+                firstPhysical = id;
+            if (!options_.preferredVendor.empty() &&
+                textOrEmpty(arv_get_device_vendor(i)) == options_.preferredVendor) {
                 selectedId = id;
                 break;
             }
         }
+        if (selectedId.empty())
+            selectedId = firstPhysical;
         if (selectedId.empty())
             return failLocked("aravis.no_device", "No Aravis camera was discovered");
     }
@@ -144,6 +182,9 @@ bool AravisCamera::openAndConfigureLocked()
             return failLocked("aravis.software_trigger",
                               errorText(error, "Cannot configure Aravis software trigger"));
     }
+
+    if (!applySettingsLocked())
+        return false;
 
     gint x = 0, y = 0, width = 0, height = 0;
     arv_camera_get_region(camera_, &x, &y, &width, &height, &error);
@@ -180,7 +221,124 @@ bool AravisCamera::openAndConfigureLocked()
     timestampDescriptor_.semantic = common::TimestampSemantic::DeviceCapture;
     timestampDescriptor_.validity = common::TimestampValidity::Unsupported;
     timestampDescriptor_.sessionGeneration = sessionGeneration_;
+    readSessionInfoLocked(selectedId);
+    if (producerStampsHostMonotonic(sessionInfo_.vendor)) {
+        // The YOFO producer completes a buffer when the PL has delivered the
+        // image, so the stamp is a transport receipt on the host steady clock.
+        timestampDescriptor_.domain = common::ClockDomain::HostSteadyNs;
+        timestampDescriptor_.semantic = common::TimestampSemantic::TransportReceipt;
+        timestampDescriptor_.ticksPerSecond = 1000000000ULL;
+        timestampDescriptor_.validity = common::TimestampValidity::Valid;
+    }
     return true;
+}
+
+bool AravisCamera::applySettingsLocked()
+{
+    GError* error = nullptr;
+    if (options_.region) {
+        const AravisRegion& r = *options_.region;
+        arv_camera_set_region(camera_, r.x, r.y, r.width, r.height, &error);
+        if (error != nullptr)
+            return failLocked("aravis.region", errorText(error, "Cannot set the Aravis region"));
+        gint x = 0, y = 0, width = 0, height = 0;
+        arv_camera_get_region(camera_, &x, &y, &width, &height, &error);
+        if (error != nullptr)
+            return failLocked("aravis.region", errorText(error, "Cannot read the Aravis region back"));
+        if (x != r.x || y != r.y || width != r.width || height != r.height) {
+            // A different window would silently change what the science
+            // stage sees; geometry is never clamped.
+            return failLocked("aravis.region_rejected",
+                              "Device applied region " + std::to_string(width) + "x" + std::to_string(height) +
+                                  "+" + std::to_string(x) + "+" + std::to_string(y) + " instead of " +
+                                  std::to_string(r.width) + "x" + std::to_string(r.height) + "+" +
+                                  std::to_string(r.x) + "+" + std::to_string(r.y));
+        }
+    }
+    if (options_.frameRateHz) {
+        // Frame-rate enable is optional in SFNC; the PZ7035 producer has none.
+        if (hasFeature(camera_, "AcquisitionFrameRateEnable"))
+            arv_camera_set_frame_rate_enable(camera_, TRUE, nullptr);
+        arv_camera_set_frame_rate(camera_, *options_.frameRateHz, &error);
+        if (error != nullptr)
+            return failLocked("aravis.frame_rate", errorText(error, "Cannot set the Aravis frame rate"));
+    }
+    if (options_.exposureUs) {
+        arv_camera_set_exposure_time(camera_, *options_.exposureUs, &error);
+        if (error != nullptr)
+            return failLocked("aravis.exposure", errorText(error, "Cannot set the Aravis exposure time"));
+    }
+    return true;
+}
+
+void AravisCamera::readSessionInfoLocked(const std::string& deviceId)
+{
+    AravisSessionInfo info;
+    info.deviceId = deviceId;
+    GError* error = nullptr;
+    info.vendor = textOrEmpty(arv_camera_get_vendor_name(camera_, &error));
+    g_clear_error(&error);
+    info.model = textOrEmpty(arv_camera_get_model_name(camera_, &error));
+    g_clear_error(&error);
+    arv_camera_get_region(camera_, &info.region.x, &info.region.y, &info.region.width,
+                          &info.region.height, &error);
+    g_clear_error(&error);
+
+    info.frameRateHz = arv_camera_get_frame_rate(camera_, &error);
+    g_clear_error(&error);
+    arv_camera_get_frame_rate_bounds(camera_, &info.frameRateMinHz, &info.frameRateMaxHz, &error);
+    g_clear_error(&error);
+    if (options_.frameRateHz) {
+        info.requestedFrameRateHz = *options_.frameRateHz;
+        // Devices clamp a rate above the maximum without an error.
+        info.frameRateClamped = std::abs(info.frameRateHz - info.requestedFrameRateHz) >
+                                1e-3 * std::max(1.0, info.requestedFrameRateHz);
+    }
+    info.exposureUs = arv_camera_get_exposure_time(camera_, &error);
+    g_clear_error(&error);
+    double exposureMin = 0.0;
+    arv_camera_get_exposure_time_bounds(camera_, &exposureMin, &info.exposureMaxUs, &error);
+    g_clear_error(&error);
+    if (options_.exposureUs) {
+        info.requestedExposureUs = *options_.exposureUs;
+        info.exposureClamped = std::abs(info.exposureUs - info.requestedExposureUs) >
+                               1e-3 * std::max(1.0, info.requestedExposureUs);
+    }
+
+    info.pzFeatures = hasFeature(camera_, "PzBandCount") && hasFeature(camera_, "PzDeliveredFrameRate");
+    if (info.pzFeatures) {
+        info.bandCount = arv_camera_get_integer(camera_, "PzBandCount", &error);
+        g_clear_error(&error);
+        info.deliveredFrameRateHz = arv_camera_get_float(camera_, "PzDeliveredFrameRate", &error);
+        g_clear_error(&error);
+        if (hasFeature(camera_, "PzDeliveredFrameRateLimit")) {
+            info.deliveredFrameRateLimit =
+                textOrEmpty(arv_camera_get_string(camera_, "PzDeliveredFrameRateLimit", &error));
+            g_clear_error(&error);
+        }
+        if (hasFeature(camera_, "PzFrameRateLimitReason")) {
+            info.frameRateLimitReason =
+                textOrEmpty(arv_camera_get_string(camera_, "PzFrameRateLimitReason", &error));
+            g_clear_error(&error);
+        }
+    } else {
+        info.deliveredFrameRateHz = info.frameRateHz;
+    }
+
+    if (info.frameRateClamped)
+        SPDLOG_WARN("AravisCamera: requested {:.3f} Hz, device runs {:.3f} Hz (maximum {:.3f} Hz, limit {})",
+                    info.requestedFrameRateHz, info.frameRateHz, info.frameRateMaxHz,
+                    info.frameRateLimitReason.empty() ? "unreported" : info.frameRateLimitReason);
+    if (info.pzFeatures && info.bandCount > 1)
+        SPDLOG_INFO("AravisCamera: {} bands per image, ~{:.1f} images/s delivered at {:.1f} Hz sensor rate",
+                    info.bandCount, info.deliveredFrameRateHz, info.frameRateHz);
+    sessionInfo_ = std::move(info);
+}
+
+AravisSessionInfo AravisCamera::sessionInfo() const
+{
+    std::lock_guard<std::mutex> lock(lifecycleMutex_);
+    return sessionInfo_;
 }
 
 bool AravisCamera::start()
@@ -199,9 +357,6 @@ bool AravisCamera::start()
         return true;
     if (config_.bufferPartCount != 1)
         return failLocked("aravis.unsupported_parts", "Aravis consumer supports exactly one image part");
-    if (config_.deliveryMode == common::FrameDeliveryMode::LatestFrame)
-        return failLocked("aravis.unsupported_delivery_mode",
-                          "Aravis consumer currently supports EveryFrame delivery only");
 
     releaseResourcesLocked();
     // A completed stop leaves cancellation set. A new start owns the new
@@ -220,6 +375,7 @@ bool AravisCamera::start()
         return result;
     }
     stopRequested_.store(false, std::memory_order_release);
+    activeMode_ = config_.deliveryMode;
     running_.store(true, std::memory_order_release);
     deliveredFrames_ = 0;
     failure_ = {};
@@ -304,6 +460,15 @@ bool AravisCamera::grabFrame(common::Frame& out)
                                                        static_cast<guint64>(timeoutMs) * 1000ULL);
     if (buffer == nullptr)
         return false;
+    if (activeMode_ == common::FrameDeliveryMode::LatestFrame) {
+        // Preview consumers want the newest image only: hand older completed
+        // buffers straight back to the producer and count them as discarded.
+        while (ArvBuffer* newer = arv_stream_try_pop_buffer(stream_)) {
+            arv_stream_push_buffer(stream_, buffer);
+            buffer = newer;
+            ++queueStats_.intentionallyDiscardedFrames;
+        }
+    }
 
     bool valid = false;
     if (arv_buffer_get_status(buffer) != ARV_BUFFER_STATUS_SUCCESS) {
@@ -365,7 +530,7 @@ common::FrameDeliveryCapabilities AravisCamera::deliveryCapabilities() const
 {
     common::FrameDeliveryCapabilities caps;
     caps.supportsEveryFrame = true;
-    caps.supportsLatestFrame = false;
+    caps.supportsLatestFrame = true;
     caps.modeChangeRequiresRestart = true;
     caps.timestampsHostComparable = false;
     return caps;

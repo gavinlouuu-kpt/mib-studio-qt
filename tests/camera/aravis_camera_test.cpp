@@ -4,6 +4,8 @@
 #include "support/watchdog.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <thread>
@@ -84,11 +86,55 @@ int main()
     MIB_EXPECT(timeoutAfter.data == deliveredBytes, "timeout does not overwrite the previous frame");
     triggered.stop();
 
-    AravisCamera unsupported(options);
+    // LatestFrame (preview) delivery: completed buffers that queued up while
+    // the consumer was busy are returned to the producer, newest one wins.
+    AravisCamera latest(options);
     config.deliveryMode = FrameDeliveryMode::LatestFrame;
-    unsupported.applyConfig(config);
-    MIB_EXPECT(!unsupported.start(), "LatestFrame is rejected");
-    MIB_EXPECT(unsupported.lastFailure().code == "aravis.unsupported_delivery_mode", "unsupported mode is structured");
+    latest.applyConfig(config);
+    MIB_EXPECT(latest.deliveryCapabilities().supportsLatestFrame, "LatestFrame is advertised");
+    MIB_REQUIRE(latest.start(), "LatestFrame session starts");
+    MIB_EXPECT(latest.activeDeliveryMode() == FrameDeliveryMode::LatestFrame, "LatestFrame is active");
+    Frame newest;
+    MIB_REQUIRE(latest.grabFrame(newest), "LatestFrame delivers");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300)); // let several Fake frames complete
+    MIB_REQUIRE(latest.grabFrame(newest), "LatestFrame delivers after a stall");
+    camera::common::AcquisitionQueueStats latestStats;
+    MIB_REQUIRE(latest.pollAcquisitionQueueStats(latestStats), "queue stats available");
+    MIB_EXPECT(latestStats.intentionallyDiscardedFrames > 0, "stale frames are discarded, not queued");
+    latest.stop();
+    config.deliveryMode = FrameDeliveryMode::EveryFrame;
+
+    // Settings are applied in region -> rate -> exposure order and read back;
+    // a rate above the maximum is clamped by the device and reported.
+    AravisCameraOptions tuned = options;
+    tuned.region = camera::aravis::AravisRegion{16, 8, 256, 128};
+    tuned.frameRateHz = 1.0e6;
+    tuned.exposureUs = 1000.0;
+    AravisCamera tunedCamera(tuned);
+    tunedCamera.applyConfig(config);
+    MIB_REQUIRE(tunedCamera.start(), "camera starts with explicit settings");
+    const auto info = tunedCamera.sessionInfo();
+    MIB_EXPECT(info.deviceId == "Fake_1", "session names the device");
+    MIB_EXPECT(info.region.x == 16 && info.region.y == 8 && info.region.width == 256 && info.region.height == 128,
+               "region is applied exactly");
+    MIB_EXPECT(info.frameRateClamped && info.frameRateHz <= info.frameRateMaxHz + 1e-6,
+               "frame-rate clamp is reported");
+    MIB_EXPECT(std::abs(info.exposureUs - 1000.0) < 1.0 && !info.exposureClamped, "exposure is applied");
+    MIB_EXPECT(!info.pzFeatures && info.deliveredFrameRateHz == info.frameRateHz,
+               "devices without the PZ7035 model deliver at the sensor rate");
+    Frame tunedFrame;
+    MIB_REQUIRE(tunedCamera.grabFrame(tunedFrame), "tuned camera delivers");
+    MIB_EXPECT(tunedFrame.width == 256 && tunedFrame.height == 128, "frame has the requested region");
+    tunedCamera.stop();
+
+    AravisCameraOptions badRegion = options;
+    badRegion.region = camera::aravis::AravisRegion{0, 0, 1 << 20, 1 << 20};
+    AravisCamera badRegionCamera(badRegion);
+    badRegionCamera.applyConfig(config);
+    // The Fake device stores any region and then reports no payload; a
+    // strict device fails at the region read-back instead.
+    MIB_EXPECT(!badRegionCamera.start(), "an impossible region does not start");
+    MIB_EXPECT(badRegionCamera.lastFailure().code.rfind("aravis.", 0) == 0, "region failure is structured");
 
     AravisCamera missing({"Aravis-does-not-exist", true, 4, 50});
     missing.applyConfig(CameraConfig{});

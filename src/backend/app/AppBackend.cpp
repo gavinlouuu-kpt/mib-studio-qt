@@ -787,6 +787,12 @@ namespace backend
                     options.useFake = fakeValue == "1" || fakeValue == "true" ||
                                       fakeValue == "yes";
                 }
+                if (const char *envGige = std::getenv("MIB_ARAVIS_GIGE"))
+                {
+                    const auto gigeValue = toLower(envGige);
+                    options.enableGigEVision = gigeValue == "1" || gigeValue == "true" ||
+                                               gigeValue == "yes";
+                }
                 aravisDeviceId_ = options.deviceId;
                 aravisFake_ = options.useFake;
                 captureService_->setCameraFactory([options]() mutable {
