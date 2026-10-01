@@ -57,18 +57,31 @@ Current state on the SSG3021X rear panel: LAN cable in **LAN**; the
 grabber's sort TTL coax is in **TRIG IN/OUT** (bottom BNC); **PULSE IN/OUT**
 carries only an empty BNC adapter; USB DEVICE unused.
 
-Add one cable — the loopback:
+Add one cable — the loopback: SSG **PULSE IN/OUT** → Coaxlink **TTLIO11**.
 
-| From | To | Pin |
-|---|---|---|
-| SSG **PULSE IN/OUT** centre | Coaxlink Internal I/O 1 **TTLIO11** | header pin **19**; on the **1625 DB25 breakout: DB25 pin 22** |
-| SSG PULSE IN/OUT shield | TTLIO11 ground | header pin **20**; **DB25 pin 10** |
+TTLIO11 and TTLIO12 are the same two lines on every Coaxlink I/O connector,
+so the loopback goes on **the same breakout as the existing TTLIO12 sort
+wire**. Which pin that is depends on what the breakout is plugged into —
+identify it from where the sort wire already sits (Euresys Coaxlink Hardware
+Manual 12.5, D205: "Internal I/O 1 Connector" p.40, "External I/O Connector"
+p.31, "1625 DB25F I/O Adapter Cable" p.111, "3304 HD26F I/O Adapter Cable";
+identical for the PC1633 Quad G3 and PC3603 Quad CXP-12):
 
-For reference the existing sort output `TTLIO12` is header pin 21 / DB25
-pin 23 (ground 22 / DB25 11) — same connector, adjacent pair. Source:
-Euresys Coaxlink hardware manual, Internal I/O 1 connector and the 1625 DB25F
-adapter cable page. Confirm the DB25 pin with a continuity check before
-powering anything: the breakout wiring is the one thing not verified here.
+| Breakout plugged into | Connector you see | Sort wire TTLIO12 is on | **TTLIO11 (loopback signal)** | **TTLIO11 ground** |
+|---|---|---|---|---|
+| **1625 DB25F I/O adapter cable** (ribbon from Internal I/O 1 to a DB25 on a bracket) | 25 pins, **2 rows** (13 + 12) | DB25 pin 23 (gnd 11) | **DB25 pin 22** | **DB25 pin 10** |
+| Card bracket **External I/O** directly, or the **3304 HD26F adapter cable** from Internal I/O 1 | 26 pins, **3 rows**, smaller shell | HD26 pin 17 (gnd 18) | **HD26 pin 25** | **HD26 pin 24** |
+| Bare **Internal I/O 1** header on the card | 26-pin 2-row 0.1" header | header pin 21 (gnd 22) | **header pin 19** | **header pin 20** |
+
+The user reports a **DB25** breakout, i.e. row 1 → **DB25 pin 22 / ground
+pin 10**. Cross-check before wiring: the existing sort wire must be on DB25
+pin 23; if it is on pin 17 of a 3-row connector instead, use row 2. Confirm
+pin 22 ↔ TTLIO11 with a continuity check to the card end of the cable.
+
+Electrical (manual §3.9/3.10, TTL Input/Output): 5 V-compliant 3.3 V LVTTL
+receiver, HIGH > 2.0 V, LOW < 0.8 V, **absolute maximum 0 V … 5 V**. Look at
+the SSG PULSE OUT on the scope first: it must stay within 0–5 V (no negative
+undershoot, nothing above 5 V); a 5 V TTL or 3.3 V source is fine.
 
 On the SSG (front panel or SCPI over LAN):
 
