@@ -128,6 +128,34 @@ manifests fail-closed (SHA-256 pinning, unit tested). Native open-URL /
 reveal-in-dir actions go through `tauri-plugin-opener`, capability-scoped to
 `https://**` and directory reveals only.
 
+## Remote server (YOFO Studio)
+
+`crates/mib-bridge-server` (`yofo-studio-server`) runs the same command layer
+in a headless process for a browser UI, e.g. on the PZ7035 PS (ADR 0008, impl
+spec S5). Protocol on `/ws`, token on the upgrade (`?token=` or
+`Authorization: Bearer`, from `/etc/yofo-studio/token`; `--no-token` only on
+loopback):
+
+- request `{"request_id", "cmd", "args"}` with the `invoke` name and camelCase
+  arguments; reply `{"request_id", "ok"}` / `{"request_id", "error"}`;
+- binary replies: 8-byte little-endian request id, then the unchanged bytes
+  (MIBF frame packets); frames stay client-pulled;
+- events: the server alone drains the backend queue every 20 ms and pushes
+  `{"event": EventEnvelope}` to every client; `poll_events_exact` from a client
+  fails with `SERVER_OWNS_EVENTS` (two pollers would steal each other's
+  events). Live frames emit no FrameReady (they are pulled);
+- `init` is idempotent; commands of one connection run in order, each on a
+  blocking thread;
+- client loss: pings every 2 s, a connection silent for 5 s is dropped; when
+  the last client has been gone for 5 s the server stops and saves (active
+  experiment -> `experiment_stop`, raw recording -> `stop_recording`; capture
+  keeps running). The desktop close guard refuses to close instead; a remote
+  operator who lost the link cannot see the run. SIGTERM does the same, then
+  shuts the backend down. `/healthz` reports clients and passes.
+
+`desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
+capture over the socket, wrong token refused, client loss and quick reconnect).
+
 ## Command layer
 
 Thin wrappers over the bridge (all take the managed `AppState`; bodies in

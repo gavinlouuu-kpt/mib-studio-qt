@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-10-01 — Shared command layer and the YOFO Studio WebSocket server
+
+The Tauri command bodies moved to `crates/mib-app-commands` (Tauri keeps typed
+shims and the desktop-only commands); `dispatch` runs any of them by name.
+`crates/mib-bridge-server` serves them over a WebSocket with server-pushed
+events, binary frame packets and stop-and-save on client loss. See
+[[../architecture/Desktop-Shell]].
+
 ## 2026-10-01 — Backend on the PZ7035 PS (YOFO Studio S6)
 
 `linux-armv7-yocto` cross-builds the backend with the YOFO Yocto SDK;
