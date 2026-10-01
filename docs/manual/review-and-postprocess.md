@@ -12,6 +12,16 @@ Files larger than 2 GB are fine — frames load lazily as you browse.
   **←/→** to step frames.
 - **Metrics table** — every saved per-frame metric, with optional scatter
   and histogram charts over the whole dataset.
+- **Charts: find a cell from the scatter** — on the **Charts** tab, click a
+  point on the deformability-vs-area scatter to show that cell in the panel
+  to the right of the plot (it never covers the scatter). The point is
+  ringed in orange and its row is selected in **Valid Frames**. Use
+  **Prev/Next** (or **←/→**) in the panel to step through frames, and
+  **Open in window…** for a large view. Scroll to zoom around the pointer
+  (Ctrl: area only, Shift: deformability only), drag to pan, and
+  double-click empty space or right-click → **Reset zoom** to see the whole
+  run again. Hovering a point shows its frame, area and deformability.
+  Exported chart images always show the whole run without the orange ring.
 - **Core contour** — if the experiment was recorded with Density (KDE) on,
   its scatter shows the contour that was on screen at Stop as a dashed
   orange line ("live, provisional"). Right-click the scatter and choose

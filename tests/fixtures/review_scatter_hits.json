@@ -1,0 +1,46 @@
+{
+  "$comment": "Review scatter hit test shared by both shells (issues #467, #470). The Qt test (frontend.hdf_review_scatter, include/frontend/utils/ScatterHitTest.h) and the React test (desktop/src/review/scatterHitTest.ts) must return `expect` for every click. Pixels: plot rect in the pointer's coordinate system, y grows downwards. Rule: visible points only, nearest within tolerance_px, equal distances go to the lowest frame index. expect = frame index, or null for no hit.",
+  "tolerance_px": 8,
+  "points": [
+    { "x": 200.0, "y": 0.50, "frame": 3 },
+    { "x": 216.0, "y": 0.50, "frame": 7 },
+    { "x": 600.0, "y": 0.25, "frame": 5 },
+    { "x": 600.0, "y": 0.25, "frame": 2 },
+    { "x": 1000.5, "y": 0.50, "frame": 11 },
+    { "x": 100.0, "y": 0.90, "frame": 4 }
+  ],
+  "cases": [
+    {
+      "name": "full extent",
+      "viewport": { "x0": 0.0, "x1": 1000.0, "y0": 0.0, "y1": 1.0, "left": 50.0, "top": 20.0, "width": 500.0, "height": 400.0 },
+      "clicks": [
+        { "px": 151.0, "py": 221.0, "expect": 3, "why": "nearest point" },
+        { "px": 155.0, "py": 220.0, "expect": 7, "why": "3 px from frame 7, 5 px from frame 3" },
+        { "px": 154.0, "py": 220.0, "expect": 3, "why": "4 px from both: lowest frame index" },
+        { "px": 350.0, "py": 320.0, "expect": 2, "why": "two points on one pixel: lowest frame index" },
+        { "px": 549.0, "py": 220.0, "expect": null, "why": "frame 11 is 1.25 px away but outside the visible x range" },
+        { "px": 100.0, "py": 69.0, "expect": null, "why": "9 px from frame 4, beyond the 8 px tolerance" },
+        { "px": 100.0, "py": 67.0, "expect": 4, "why": "7 px from frame 4" },
+        { "px": 30.0, "py": 220.0, "expect": null, "why": "left of the plot rect (axis labels)" },
+        { "px": 300.0, "py": 120.0, "expect": null, "why": "empty space" }
+      ]
+    },
+    {
+      "name": "zoomed in",
+      "viewport": { "x0": 180.0, "x1": 240.0, "y0": 0.45, "y1": 0.55, "left": 50.0, "top": 20.0, "width": 500.0, "height": 400.0 },
+      "clicks": [
+        { "px": 217.0, "py": 220.0, "expect": 3, "why": "frame 3 at 216.7 px once zoomed" },
+        { "px": 350.0, "py": 221.0, "expect": 7, "why": "frame 7 at 350 px once zoomed; 16 px apart from frame 3 now" },
+        { "px": 300.0, "py": 220.0, "expect": null, "why": "between the two, beyond tolerance of both" },
+        { "px": 545.0, "py": 400.0, "expect": null, "why": "frames 2/5 are outside the zoomed ranges" }
+      ]
+    },
+    {
+      "name": "degenerate viewport",
+      "viewport": { "x0": 5.0, "x1": 5.0, "y0": 0.0, "y1": 1.0, "left": 50.0, "top": 20.0, "width": 500.0, "height": 400.0 },
+      "clicks": [
+        { "px": 151.0, "py": 221.0, "expect": null, "why": "empty x range selects nothing" }
+      ]
+    }
+  ]
+}
