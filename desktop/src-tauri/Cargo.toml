@@ -5,6 +5,14 @@ edition = "2021"
 description = "MIB Studio desktop shell (React + Tauri v2) — Phase 3 of epic #246"
 publish = false
 
+[features]
+# YOFO Review (plan 2026-10-01-standalone-review-app, ADR 0008): the same
+# crate built as the review-only product. Registers only the review, platform
+# and dialog commands; `tauri.review.conf.json` supplies the product identity.
+# The review-only bridge (no mib_backend in the link) arrives with the plan's
+# PR 1 and will be forwarded here as `mib-bridge/review-only`.
+review-only = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

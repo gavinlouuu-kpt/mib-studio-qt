@@ -63,16 +63,16 @@ is the 7 `frontend;utility` tests that link `Qt6::Core` directly
 
 Behavioural parity is the target; deliberate UX changes are tracked separately.
 
-| Workflow | Manual page | Qt | Tauri |
-|----------|-------------|----|-------|
-| Install + update | getting-started | ships | not started |
-| Connect: EGrabber / MindVision / mock | connect | ships | not started |
-| Live view, zoom/pan, ROI, overlays, status | acquire-and-record | ships | not started |
-| Processing settings, profiles, trust gates, preview | acquire-and-record | ships | not started |
-| Experiment lifecycle, monitoring charts, HDF5 recording | acquire-and-record | ships | not started |
-| Review, playback, metrics, image/CSV export, reanalysis | review-and-postprocess | ships | not started |
-| Autofocus, nanopositioner, syringe pump, trigger | (hardware dialogs) | ships | not started |
-| Logs, crash reports, docs, problem reporting | troubleshooting | ships | not started |
+| Workflow | Manual page | Qt | Tauri | YOFO Review (ADR 0008) |
+|----------|-------------|----|-------|------------------------|
+| Install + update | getting-started | ships | not started | planned (PR 5–7 of `2026-10-01-standalone-review-app.md`) |
+| Connect: EGrabber / MindVision / mock | connect | ships | not started | n/a |
+| Live view, zoom/pan, ROI, overlays, status | acquire-and-record | ships | not started | n/a |
+| Processing settings, profiles, trust gates, preview | acquire-and-record | ships | not started | n/a |
+| Experiment lifecycle, monitoring charts, HDF5 recording | acquire-and-record | ships | not started | n/a |
+| Review, playback, metrics, image/CSV export, reanalysis | review-and-postprocess | ships | not started | PR 0 scaffold landed; PR 1–4 build the module both shells mount |
+| Autofocus, nanopositioner, syringe pump, trigger | (hardware dialogs) | ships | not started | n/a |
+| Logs, crash reports, docs, problem reporting | troubleshooting | ships | not started | logs: shell log sink; crash reports: non-goal v1 |
 
 ## Baseline performance budgets
 

@@ -23,6 +23,10 @@ must be closed before using the new build. See [[../frontend/DesktopInstance]].
   needs the vendor device driver installed.
 - **`screenshot_tour.exe`** — headless mock-mode UI tour that regenerates
   the user-manual screenshots. See [[../frontend/Screenshot-Tour]].
+- **`yofo-review`** (React + Tauri) — the standalone review product built
+  from `desktop/` with `--features review-only` and
+  `tauri.review.conf.json`; no camera, hardware or experiment code. See
+  [[../frontend/YofoReview]].
 
 ## Mock camera env vars
 

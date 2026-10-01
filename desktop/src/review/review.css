@@ -1,0 +1,28 @@
+/* YOFO Review window: the review panel fills the window between the menu
+   row and the status bar. Shared widget styles come from App.css. */
+.review-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.review-app .review-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 6px;
+}
+
+.review-app .review-main .subtab-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.review-app .product-name {
+  padding: 0 10px;
+  font-weight: 600;
+  opacity: 0.8;
+}

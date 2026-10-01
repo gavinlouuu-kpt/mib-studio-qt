@@ -1,5 +1,4 @@
 import { formatMetric } from "./eventAdapter";
-import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -19,7 +18,6 @@ import {
   type ProcessingStats,
   type PumpStatus,
   type ReviewMetadata,
-  type ReviewMetricsPage,
   type TriggerStatus,
 } from "./bridge";
 import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
@@ -34,6 +32,7 @@ import {
   DEFAULT_MODE,
   type OperatingMode,
 } from "./commissioning";
+import { ReviewPanel, type ReviewPanelHandle } from "./review/ReviewPanel";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -50,7 +49,6 @@ const PENDING = {
   profiles: "Profile management is not bridged yet — BE-3 (#273) follow-up",
   saveBuffer: "Preview buffer save is not bridged yet — UI-3 (#268)",
   monitoring: "Monitoring data is not bridged yet — backend issue BE-5 (#275)",
-  review: "HDF5 metadata/metrics/export are not bridged yet — backend issue BE-6 (#276)",
   autofocus: "Autofocus/nanopositioner control is not bridged yet — BE-8 (#278)",
   platform: "Platform/shell services are not migrated yet — BE-9 (#279)",
   background: "Background image control is not bridged yet — backend issue BE-3 (#273)",
@@ -197,22 +195,16 @@ export default function App() {
   const [backgroundSet, setBackgroundSet] = useState(false);
   const [roiFields, setRoiFields] = useState({ x: "0", y: "0", w: "0", h: "0" });
 
-  // Review.
+  // Review. The panel itself lives in src/review/ReviewPanel.tsx (shared with
+  // YOFO Review); the shell keeps only what the workflow and status bar read.
   const [reviewPath, setReviewPath] = useState("");
   const [reviewing, setReviewing] = useState(false);
-  const [reviewTab, setReviewTab] = useState<"raw" | "valid" | "invalid" | "charts">("raw");
   const [range, setRange] = useState({ earliest: "0", latest: "0", count: "0" });
-  const [reviewIndex, setReviewIndex] = useState("0");
-  // Paged review (bridge schema v9, BE-6).
   const [reviewMeta, setReviewMeta] = useState<ReviewMetadata | null>(null);
-  const [metricsPage, setMetricsPage] = useState<ReviewMetricsPage | null>(null);
-  const [metricsOffset, setMetricsOffset] = useState(0);
-  const [reviewImgIndex, setReviewImgIndex] = useState(0);
-  const METRICS_PAGE_SIZE = 50;
+  const reviewPanel = useRef<ReviewPanelHandle>(null);
 
   const liveCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const reviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const loopRef = useRef<number | null>(null);
   const previewLoopRef = useRef<number | null>(null);
   const framePulls = useRef(new FramePullScheduler());
@@ -281,7 +273,7 @@ export default function App() {
       if (!ctx) return;
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
       const { data: _pixels, ...metadata } = meta;
-      if (canvas !== reviewCanvasRef.current && performance.now() - lastMetadataRenderMs.current >= 200) {
+      if (performance.now() - lastMetadataRenderMs.current >= 200) {
         lastMetadataRenderMs.current = performance.now();
         setLastMeta(metadata);
       }
@@ -331,9 +323,7 @@ export default function App() {
 
   useEffect(() => {
     const scheduler = framePulls.current;
-    const live = scheduler.mount("live", p => draw(p, activeLiveCanvas()), e => append(`frame error: ${e}`));
-    const review = scheduler.mount("review", p => draw(p, reviewCanvasRef.current), e => append(`review frame error: ${e}`));
-    return () => { live(); review(); };
+    return scheduler.mount("live", p => draw(p, activeLiveCanvas()), e => append(`frame error: ${e}`));
   }, [draw, activeLiveCanvas, append]);
 
   // Navigation/config/source changes retire presentation replies only.
@@ -644,82 +634,21 @@ export default function App() {
 
   // ---- Review ----
 
-  const onScrub = useCallback((input: number | string) => {
-    const idx = decimalU64(input);
-    setReviewIndex(idx);
-    framePulls.current.request("review", async () => {
-      const result = await bridge.seekIndex(idx);
-      if (!result.ok) throw new Error(result.message);
-      return bridge.fetchFrameByIndex(idx);
-    });
-  }, []);
-
-  const loadMetricsPage = useCallback(
-    async (valid: boolean, offset: number) => {
-      try {
-        const page = await bridge.fetchReviewMetricsPage(valid, offset, METRICS_PAGE_SIZE);
-        if (page.valid) {
-          setMetricsPage(page);
-          setMetricsOffset(offset);
-        }
-      } catch (e) {
-        append(`metrics page error: ${e}`);
-      }
-    },
-    [append],
-  );
-
-  const drawReviewImage = useCallback((dataset: number, index: number) => {
-    framePulls.current.request("review", () => bridge.fetchReviewImage(dataset, index));
-  }, []);
-
-  const onSelectHdf = useCallback(async () => {
-    const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
-    if (typeof picked !== "string") return;
+  // Loading a file replaces the live source: stop the preview loop first.
+  const beforeReviewLoad = useCallback(() => {
     stopLoop();
     setRunning(false);
-    setReviewPath(picked);
-    try {
-      const res = await bridge.loadRecording(picked);
-      if (!res.ok) return append(`load failed: ${res.message}`);
-      setReviewing(true);
-      append(`loaded ${picked}`);
-      applyEvents(await bridge.pollEvents());
-      const meta = await bridge.fetchReviewMetadata();
-      setReviewMeta(meta);
-      setReviewTab(meta.recording_file ? "raw" : "valid");
-      setReviewImgIndex(0);
-      await loadMetricsPage(true, 0);
-      if (meta.recording_file) {
-        await onScrub(range.earliest);
-      } else if (meta.valid_images.present && meta.valid_images.count > 0) {
-        await drawReviewImage(0, 0);
-      }
-    } catch (e) {
-      append(`load error: ${e}`);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage]);
+  }, [stopLoop]);
 
-  const onExportCsv = useCallback(async () => {
-    try {
-      const picked = await save({
-        title: "Export Metrics to CSV",
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-        defaultPath: "metrics.csv",
-      });
-      if (!picked) return;
-      const res = await bridge.reviewExportCsv(picked);
-      append(res.ok ? `CSV export started (operation ${res.operation_id})` : `export failed: ${res.message}`);
-    } catch (e) {
-      append(`export error: ${e}`);
-    }
-  }, [append]);
+  const onReviewMetadata = useCallback((meta: ReviewMetadata) => {
+    setReviewMeta(meta);
+    setReviewing(meta.file_open);
+  }, []);
 
   const openReviewFromMenu = useCallback(() => {
     setTab("review");
-    void onSelectHdf();
-  }, [onSelectHdf]);
+    void reviewPanel.current?.openFile();
+  }, []);
 
   const r = ratesRef.current;
   const displayFps = running ? r.displayFps : 0;
@@ -1750,180 +1679,20 @@ export default function App() {
               </>
             )}
 
-            {/* ---- Review ---- */}
+            {/* ---- Review (shared module, UI-4) ---- */}
             {tab === "review" && (
-              <>
-                <div className="toolbar">
-                  <button onClick={onSelectHdf} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
-                    Select HDF File…
-                  </button>
-                  <button disabled title="Loading a new file replaces the current one">Close File</button>
-                  <button
-                    onClick={onExportCsv}
-                    disabled={!reviewMeta?.file_open}
-                    title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
-                  >
-                    Export Metrics to CSV…
-                  </button>
-                  <button disabled title={PENDING.review}>Export All…</button>
-                  <button disabled title={PENDING.review}>Batch Metrics…</button>
-                  <button disabled title={PENDING.review}>Regenerate masks…</button>
-                  <span className="legend">
-                    <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
-                    <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
-                    <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
-                  </span>
-                  <span className="path-label right">
-                    {reviewing
-                      ? `${reviewPath}${reviewMeta?.valid ? ` · ${reviewMeta.recording_file ? "recording" : "experiment"} · valid ${reviewMeta.total_valid}, invalid ${reviewMeta.total_invalid}${reviewMeta.has_core_identity ? ` · core v${reviewMeta.core_version}` : ""}` : ""}`
-                      : "No file selected"}
-                  </span>
-                </div>
-                <div className="subtabs" role="tablist" aria-label="Review views">
-                  <button className={reviewTab === "raw" ? "active" : ""} onClick={() => setReviewTab("raw")}>
-                    Raw Frames
-                  </button>
-                  <button
-                    className={reviewTab === "valid" ? "active" : ""}
-                    disabled={!reviewMeta?.valid_images.present}
-                    title={reviewMeta?.valid_images.present ? undefined : "No valid-frame images in this file"}
-                    onClick={async () => {
-                      setReviewTab("valid");
-                      setReviewImgIndex(0);
-                      await loadMetricsPage(true, 0);
-                      await drawReviewImage(0, 0);
-                    }}
-                  >
-                    Valid Frames
-                  </button>
-                  <button
-                    className={reviewTab === "invalid" ? "active" : ""}
-                    disabled={!reviewMeta?.invalid_images.present}
-                    title={reviewMeta?.invalid_images.present ? undefined : "No invalid-frame images in this file"}
-                    onClick={async () => {
-                      setReviewTab("invalid");
-                      setReviewImgIndex(0);
-                      await loadMetricsPage(false, 0);
-                      await drawReviewImage(1, 0);
-                    }}
-                  >
-                    Invalid Frames
-                  </button>
-                  <button disabled title="Chart rendering lands with UI-4 (#269)">Charts</button>
-                </div>
-                <div className="subtab-body">
-                  <div className="review-split">
-                    <div className="frames">
-                      <div className="canvas-wrap">
-                        {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
-                        <canvas ref={reviewCanvasRef} className={fitWindow ? "fit" : ""} />
-                      </div>
-                      {reviewing && reviewTab === "raw" && BigInt(range.count) > 0n && (
-                        <>
-                          <input
-                            type="range"
-                            className="scrub"
-                            min={range.earliest}
-                            max={range.latest}
-                            value={reviewIndex}
-                            onChange={(e) => onScrub(e.target.value)}
-                            disabled={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
-                            title={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
-                            aria-label="Frame scrubber"
-                          />
-                          <span className="mono">
-                            frame {reviewIndex} of [{range.earliest}…{range.latest}] ({range.count} available)
-                          </span>
-                        </>
-                      )}
-                      {reviewing && (reviewTab === "valid" || reviewTab === "invalid") && (
-                        <>
-                          <input
-                            type="range"
-                            className="scrub"
-                            min={0}
-                            max={Math.max(
-                              0,
-                              (reviewTab === "valid"
-                                ? reviewMeta?.valid_images.count ?? 0
-                                : reviewMeta?.invalid_images.count ?? 0) - 1,
-                            )}
-                            value={reviewImgIndex}
-                            onChange={async (e) => {
-                              const idx = Number(e.target.value);
-                              setReviewImgIndex(idx);
-                              await drawReviewImage(reviewTab === "valid" ? 0 : 1, idx);
-                            }}
-                            aria-label="Review image scrubber"
-                          />
-                          <span className="mono">
-                            image {reviewImgIndex + 1} of{" "}
-                            {reviewTab === "valid"
-                              ? reviewMeta?.valid_images.count ?? 0
-                              : reviewMeta?.invalid_images.count ?? 0}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                    <div className="table-panel">
-                      <table className="metrics-table">
-                        <thead>
-                          <tr>
-                            <th>Index</th>
-                            <th>Object Id</th>
-                            <th>Track Id</th>
-                            <th>Area (px²)</th>
-                            <th>Deformability</th>
-                            <th>Ring ratio</th>
-                            <th>E (kPa)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(metricsPage?.rows ?? []).map((r) => (
-                            <tr key={`${r.frame_index}:${r.object_id}`}>
-                              <td>{r.frame_index}</td>
-                              <td>{r.object_id}</td>
-                              <td>{r.track_id}</td>
-                              <td>{r.area.toFixed(1)}</td>
-                              <td>{r.deformability.toFixed(3)}</td>
-                              <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
-                            </tr>
-                          ))}
-                          {(metricsPage?.rows?.length ?? 0) === 0 && (
-                            <tr>
-                              <td colSpan={7} style={{ color: "#777" }}>
-                                {reviewing ? "No metric rows in this table." : "Load a file to see frame/object metrics."}
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                      {reviewing && (metricsPage?.total ?? 0) > METRICS_PAGE_SIZE && (
-                        <div className="toolbar" style={{ padding: 4 }}>
-                          <button
-                            className="btn"
-                            disabled={metricsOffset === 0}
-                            onClick={() => loadMetricsPage(reviewTab !== "invalid", Math.max(0, metricsOffset - METRICS_PAGE_SIZE))}
-                          >
-                            ◀ Prev
-                          </button>
-                          <span className="mono">
-                            {metricsOffset + 1}–{Math.min(metricsPage?.total ?? 0, metricsOffset + METRICS_PAGE_SIZE)} of {metricsPage?.total ?? 0}
-                          </span>
-                          <button
-                            className="btn"
-                            disabled={metricsOffset + METRICS_PAGE_SIZE >= (metricsPage?.total ?? 0)}
-                            onClick={() => loadMetricsPage(reviewTab !== "invalid", metricsOffset + METRICS_PAGE_SIZE)}
-                          >
-                            Next ▶
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </>
+              <ReviewPanel
+                ref={reviewPanel}
+                ready={ready}
+                scheduler={framePulls.current}
+                range={range}
+                fitWindow={fitWindow}
+                log={append}
+                applyEvents={applyEvents}
+                beforeLoad={beforeReviewLoad}
+                onFileChange={setReviewPath}
+                onMetadata={onReviewMetadata}
+              />
             )}
           </div>
         </main>

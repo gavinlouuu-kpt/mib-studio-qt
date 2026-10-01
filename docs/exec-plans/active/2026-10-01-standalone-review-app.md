@@ -197,6 +197,11 @@ What is missing or wrong today (evidence in the agent survey of
   (`TAURI_SIGNING_PRIVATE_KEY`). PR 7 is blocked until these exist as
   repository secrets; earlier PRs produce installable unsigned artefacts
   for internal testing.
+- 2026-10-01 (PR 0): **The Tauri CLI's `--config` overlay is applied by
+  setting `TAURI_CONFIG`** to the overlay's JSON for a plain `cargo build`,
+  which is how `tauri-build` receives it from the CLI. The Linux lane
+  builds the review context that way (no bundler on Linux) and checks the
+  binary carries `bio.yofo.review`.
 - 2026-10-01: **Headless end-to-end on Linux, native bundles on macOS and
   Windows.** The review module is driven under Xvfb with `tauri-driver`
   (WebDriver, Linux and Windows only) against fixture files; macOS CI
@@ -559,8 +564,15 @@ accounting text and the same saved core record; the differences list in
 
 ## Progress
 
-- [ ] PR 0 — scaffolding: review entry, config overlay, `review-only`
-      feature, bundling on, ADR 0008, `review-ci.yml` (Linux)
+- [x] PR 0 — scaffolding: review entry, config overlay, `review-only`
+      feature, bundling on, ADR 0008, `review-ci.yml` (Linux). Landed
+      2026-10-01 on `plan/standalone-review-app`. Deviations from the PR 0
+      file list: no `capabilities/review.json` (the review window keeps
+      label `main`, so `capabilities/default.json` covers both products);
+      `tauri-plugin-updater` / `tauri-plugin-process` wait for PR 6 (the
+      updater plugin needs the minisign public key in the config at build
+      time); bundling is on only in the review overlay (`dmg`, `nsis`),
+      the MIB Studio config is unchanged.
 - [ ] PR 1 — `ReviewSession` / `mib_review_core`, facade delegation,
       review bridge, contract 15, density job (absorbs scatter plan PR 3a)
 - [ ] PR 2 — Frames view, viewer, overlays, series, recording files

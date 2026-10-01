@@ -5,6 +5,13 @@
 //! vertical slice is the **mock camera end to end**: configure a mock camera,
 //! start capture, pull frames (raw Mono8 bytes — no per-frame base64), and
 //! drain status/frame events.
+//!
+//! The same crate also builds **YOFO Review** (feature `review-only`, config
+//! `tauri.review.conf.json`; plan 2026-10-01-standalone-review-app, ADR 0008):
+//! the review product registers only the review, platform and dialog
+//! commands, so the camera / experiment / hardware commands below are dead
+//! code in that build.
+#![cfg_attr(feature = "review-only", allow(dead_code))]
 
 use std::sync::Mutex;
 
@@ -1492,6 +1499,123 @@ mod tests {
     }
 }
 
+/// MIB Studio: every bridged command.
+#[cfg(not(feature = "review-only"))]
+fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        abi_version,
+        is_initialized,
+        init,
+        configure_mock,
+        start_capture,
+        stop_capture,
+        seek_latest,
+        poll_events,
+        poll_events_exact,
+        fetch_frame_packet,
+        fetch_indexed_frame_packet,
+        fetch_review_frame_packet,
+        fetch_background_packet,
+        fetch_frame,
+        frame_bytes,
+        start_recording,
+        stop_recording,
+        load_recording,
+        seek_index,
+        fetch_frame_by_index,
+        apply_processing,
+        fetch_processing_stats,
+        cancel_operation,
+        queue_overflow_total,
+        platform::app_paths,
+        platform::get_preferences,
+        platform::set_preferences,
+        platform::shell_log,
+        experiment_start,
+        experiment_stop,
+        experiment_cancel,
+        fetch_experiment_status,
+        fetch_experiment_readiness,
+        autofocus_connect,
+        autofocus_disconnect,
+        autofocus_set_enabled,
+        autofocus_jog,
+        autofocus_set_config,
+        fetch_autofocus_status,
+        fetch_autofocus_config,
+        pump_connect,
+        pump_disconnect,
+        pump_set_flow_rate,
+        pump_set_direction,
+        pump_start,
+        pump_stop,
+        pump_purge,
+        pump_stop_purge,
+        pump_set_syringe_volume,
+        pump_poll_status,
+        fetch_pump_status,
+        pump_scan_addresses,
+        fetch_review_metadata,
+        fetch_review_metrics_page,
+        fetch_review_image,
+        review_image_bytes,
+        review_export_csv,
+        fetch_processing_config_json,
+        apply_processing_config_json,
+        set_processing_roi,
+        fetch_background,
+        background_bytes,
+        set_background_from_current_frame,
+        clear_background_image,
+        fetch_processing_core_status,
+        start_device_discovery,
+        start_camera_discovery,
+        fetch_device_discovery,
+        cancel_device_discovery,
+        fetch_camera_selection,
+        select_hardware_camera,
+        select_mindvision_camera,
+        apply_camera_script,
+        reset_hardware_camera,
+        monitoring_set_active,
+        monitoring_clear,
+        fetch_monitoring_snapshot,
+        trigger_set_pulse_duration,
+        trigger_manual_pulse,
+        trigger_periodic_start,
+        trigger_periodic_stop,
+        fetch_trigger_status,
+    ]
+}
+
+/// YOFO Review: the review surface only — file load, paged metadata and
+/// metrics, frame pulls, the CSV export job, operation control, platform
+/// services. No camera, experiment or hardware commands exist in this
+/// product (plan 2026-10-01-standalone-review-app).
+#[cfg(feature = "review-only")]
+fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        abi_version,
+        is_initialized,
+        init,
+        poll_events,
+        poll_events_exact,
+        fetch_indexed_frame_packet,
+        fetch_review_frame_packet,
+        load_recording,
+        seek_index,
+        cancel_operation,
+        queue_overflow_total,
+        platform::app_paths,
+        platform::get_preferences,
+        platform::set_preferences,
+        platform::shell_log,
+        fetch_review_metadata,
+        fetch_review_metrics_page,
+        review_export_csv,
+    ]
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1500,90 +1624,7 @@ pub fn run() {
         .manage(AppState {
             bridge: Mutex::new(ffi::new_backend_bridge()),
         })
-        .invoke_handler(tauri::generate_handler![
-            abi_version,
-            is_initialized,
-            init,
-            configure_mock,
-            start_capture,
-            stop_capture,
-            seek_latest,
-            poll_events,
-            poll_events_exact,
-            fetch_frame_packet,
-            fetch_indexed_frame_packet,
-            fetch_review_frame_packet,
-            fetch_background_packet,
-            fetch_frame,
-            frame_bytes,
-            start_recording,
-            stop_recording,
-            load_recording,
-            seek_index,
-            fetch_frame_by_index,
-            apply_processing,
-            fetch_processing_stats,
-            cancel_operation,
-            queue_overflow_total,
-            platform::app_paths,
-            platform::get_preferences,
-            platform::set_preferences,
-            platform::shell_log,
-            experiment_start,
-            experiment_stop,
-            experiment_cancel,
-            fetch_experiment_status,
-            fetch_experiment_readiness,
-            autofocus_connect,
-            autofocus_disconnect,
-            autofocus_set_enabled,
-            autofocus_jog,
-            autofocus_set_config,
-            fetch_autofocus_status,
-            fetch_autofocus_config,
-            pump_connect,
-            pump_disconnect,
-            pump_set_flow_rate,
-            pump_set_direction,
-            pump_start,
-            pump_stop,
-            pump_purge,
-            pump_stop_purge,
-            pump_set_syringe_volume,
-            pump_poll_status,
-            fetch_pump_status,
-            pump_scan_addresses,
-            fetch_review_metadata,
-            fetch_review_metrics_page,
-            fetch_review_image,
-            review_image_bytes,
-            review_export_csv,
-            fetch_processing_config_json,
-            apply_processing_config_json,
-            set_processing_roi,
-            fetch_background,
-            background_bytes,
-            set_background_from_current_frame,
-            clear_background_image,
-            fetch_processing_core_status,
-            start_device_discovery,
-            start_camera_discovery,
-            fetch_device_discovery,
-            cancel_device_discovery,
-            fetch_camera_selection,
-            select_hardware_camera,
-            select_mindvision_camera,
-            apply_camera_script,
-            reset_hardware_camera,
-            monitoring_set_active,
-            monitoring_clear,
-            fetch_monitoring_snapshot,
-            trigger_set_pulse_duration,
-            trigger_manual_pulse,
-            trigger_periodic_start,
-            trigger_periodic_stop,
-            fetch_trigger_status,
-        ])
+        .invoke_handler(invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

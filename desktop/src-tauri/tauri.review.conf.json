@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "YOFO Review",
+  "identifier": "bio.yofo.review",
+  "mainBinaryName": "yofo-review",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "YOFO Review",
+        "url": "review.html",
+        "width": 1200,
+        "height": 800,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "nsis"],
+    "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
+    "fileAssociations": [
+      {
+        "ext": ["h5", "hdf5"],
+        "name": "HDF5 recording",
+        "description": "MIB Studio HDF5 recording",
+        "role": "Viewer"
+      }
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

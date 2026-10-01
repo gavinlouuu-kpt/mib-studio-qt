@@ -1,5 +1,23 @@
 # Recent Work
 
+## 2026-10-01 — YOFO Review: the Review tab as a React + Tauri product (PR 0)
+
+Decision (ADR 0008, plan
+[`2026-10-01-standalone-review-app`](../../docs/exec-plans/active/2026-10-01-standalone-review-app.md)):
+the standalone review product ships on the React + Tauri shell, not Qt.
+PR 0 lands the product split with no behaviour change: the Review panel
+moved out of `App.tsx` into `desktop/src/review/ReviewPanel.tsx` (mounted
+by MIB Studio's Review tab and by the new `review.html` →
+`ReviewApp.tsx` window), a second Vite page, the cargo feature
+`review-only` that registers only the review / platform / dialog commands,
+the config overlay `tauri.review.conf.json` (name, `bio.yofo.review`,
+`yofo-review`, dmg + nsis targets, `.h5` association, `.icns`), the
+version stamp `scripts/release/stamp-tauri-version.py` (both Tauri
+products carry the repository version) and `review-ci.yml` (Linux build of
+the review context under `TAURI_CONFIG`, Xvfb boot). Vault:
+[[../frontend/YofoReview]]. Next: PR 1 moves review into a Qt-free
+`ReviewSession` behind the bridge.
+
 ## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
 
 The Review tab's Charts scatter is now a `ZoomableChartView` and a single

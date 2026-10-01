@@ -15,6 +15,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[architecture/Data-Flow]]
 - [[architecture/Rust-Bridge]] — Rust ↔ C++ bridge (React + Tauri migration)
 - [[architecture/Desktop-Shell]] — React + Tauri v2 desktop app (Phase 3)
+- [[frontend/YofoReview]] — YOFO Review, the standalone review product built from `desktop/`
 
 ### Services (`src/backend/services/`)
 - [[services/_MOC|Services MOC]]

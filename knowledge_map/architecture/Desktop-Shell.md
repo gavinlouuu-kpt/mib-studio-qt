@@ -30,6 +30,12 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   toggle + px→µm, review load/scrub); controls whose backend surface is not
   bridged yet render disabled with a tooltip naming the blocking issue
   (BE-2…BE-9, #272–#279) — backend/hardware state is never simulated.
+- `desktop/src/review/` — the HDF5 review module (`ReviewPanel`), mounted
+  by `App.tsx` in the Review tab **and** as the whole window of **YOFO
+  Review**, the standalone review product built from this tree
+  (`review.html` → `src/review/main.tsx` → `ReviewApp.tsx`; cargo feature
+  `review-only`; config overlay `src-tauri/tauri.review.conf.json`). See
+  [[../frontend/YofoReview]] and ADR 0008.
 - `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` holds `AppState`
   (`Mutex<UniquePtr<BackendBridge>>` + a cached last-frame buffer) and the
   `#[tauri::command]` layer; `main.rs` calls `run()`.
@@ -156,7 +162,11 @@ explicit backend prerequisites and executed versus pending evidence.
 ## Build & run
 
 - Frontend: `npm install && npm run build` in `desktop/` → `desktop/dist`
-  (Tauri's `frontendDist`). `tsc` typechecks under strict mode.
+  (Tauri's `frontendDist`): two pages, `index.html` (MIB Studio) and
+  `review.html` (YOFO Review). `tsc` typechecks under strict mode.
+- Version: `tauri.conf.json` and `package.json` carry the repository
+  version, stamped by `scripts/release/stamp-tauri-version.py` from
+  `cmake/MIBVersion.cmake` (`--check` runs in `review-ci.yml`).
 - App: `cargo build` in `desktop/src-tauri` (needs `dist/` to exist — Tauri
   validates `frontendDist` at compile time). Links the bridge via
   `MIB_BRIDGE_NO_CMAKE=1` when the archives are prebuilt.
