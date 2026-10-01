@@ -8,11 +8,13 @@
 // id) through a mutex-protected snapshot and an optional callback. It never
 // touches the capture or realtime processing threads: like the realtime
 // drop-frames mode it jumps straight to the newest frame, so its cost is one
-// frame copy plus one decode per interval. See
+// frame copy plus one decode per interval. With a design registry it decodes
+// against every registered design and the pose names the design it found. See
 // knowledge_map/services/DotGridService.md.
 
 #include "backend/processing/DotGridCodebook.h"
 #include "backend/processing/DotGridDecoder.h"
+#include "backend/processing/DotGridRegistry.h"
 
 #include <opencv2/core.hpp>
 
@@ -41,9 +43,12 @@ public:
         double umPerPxHint{0.293};
         int minVotes{3};
         double minAgreement{0.9};
-        // Codebook source: a codebook.json from scripts/dot_grid (with chip
-        // table) when non-empty, otherwise generated from `codebook`.
+        // Codebook source, first match wins:
+        //  1. codebookPath non-empty: that one codebook.json (explicit override);
+        //  2. registry non-empty: every registered design (the normal case);
+        //  3. otherwise one codebook generated from `codebook`.
         std::string codebookPath;
+        std::shared_ptr<const dotgrid::Registry> registry;
         dotgrid::CodebookParams codebook;
     };
 
@@ -57,6 +62,8 @@ public:
         double umPerPx{0.0};
         bool mirrored{false};
         std::string chip;
+        std::string designId; // registered design the frame belongs to
+        std::string designName;
         int votes{0};
         int dots{0};
         double agreement{0.0};
@@ -85,6 +92,8 @@ public:
     bool setConfig(const Config& config, std::string* errorOut = nullptr);
     Config getConfig() const;
     bool hasCodebook() const;
+    // Designs the decoder currently tries (1 in single-codebook mode, 0 before setConfig).
+    std::shared_ptr<const dotgrid::Registry> activeRegistry() const;
     bool isEnabled() const { return enabled_.load(std::memory_order_acquire); }
 
     void start();
@@ -115,7 +124,7 @@ private:
 
     mutable std::mutex configMutex_;
     Config config_;
-    std::shared_ptr<const dotgrid::Codebook> codebook_;
+    std::shared_ptr<const dotgrid::Registry> registry_; // what decoder_ was built from
     std::shared_ptr<const dotgrid::Decoder> decoder_;
 
     std::thread thread_;

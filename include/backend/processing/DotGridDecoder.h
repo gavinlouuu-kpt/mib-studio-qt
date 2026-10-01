@@ -8,8 +8,15 @@
 // codebook lookup under all eight dihedral transforms (the camera may view the
 // chip through the glass, i.e. mirrored) -> vote -> bit-agreement check ->
 // pixel-to-wafer affine. Mirrors scripts/dot_grid/dotgrid/decode.py.
+//
+// With a Registry the decoder tries every registered design: dot detection and
+// the lattice fit run once per dot geometry, the code vote and verification
+// once per design. Exactly one design must decode; the result names it
+// (designId) together with the chip. Two or more is reported as "ambiguous
+// design", never as a pose.
 
 #include "backend/processing/DotGridCodebook.h"
+#include "backend/processing/DotGridRegistry.h"
 
 #include <opencv2/core.hpp>
 
@@ -41,6 +48,9 @@ struct DecodeResult {
     double agreement{0.0};
     double residualPx{0.0};          // rms lattice fit residual
     std::string chip;                // chip name from the codebook table, empty if none
+    std::string designId;            // registered design that decoded (empty in single-codebook mode)
+    std::string designName;
+    int designsTried{0};
     double pixelToWafer[6]{};        // row-major 2x3: X = m0*u + m1*v + m2, Y = m3*u + m4*v + m5
     std::vector<cv::Point2f> dotsPx; // detected dot centroids (for overlays)
     double decodeMs{0.0};
@@ -49,8 +59,9 @@ struct DecodeResult {
 class Decoder {
 public:
     explicit Decoder(std::shared_ptr<const Codebook> codebook);
+    explicit Decoder(std::shared_ptr<const Registry> registry);
 
-    const Codebook& codebook() const { return *codebook_; }
+    const Registry& registry() const { return *registry_; }
 
     // gray: 8-bit single channel (other depths are normalised to 8-bit).
     DecodeResult decode(const cv::Mat& gray, const DecoderConfig& config) const;
@@ -59,7 +70,7 @@ public:
     static std::vector<cv::Point2f> detectDots(const cv::Mat& gray, double expectedDiameterPx);
 
 private:
-    std::shared_ptr<const Codebook> codebook_;
+    std::shared_ptr<const Registry> registry_;
 };
 
 // Synthetic view for tests and the mock camera: renders the dots visible from a pose.

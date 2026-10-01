@@ -5,18 +5,21 @@ a PDMS chip moulded from it) from a fiducial pattern fabricated on the chip
 itself, in the style of the dot patterns on smart-pen notebooks. The camera
 sees a small patch of dots; the decoder returns the wafer coordinates of the
 image centre, the rotation, the measured scale, whether the view is mirrored
-(chip viewed through the glass side), and which chip the view is on.
+(chip viewed through the glass side), which **design** the chip is (from the
+design registry) and which chip (die) of that wafer the view is on.
 
 | Piece | Where |
 |---|---|
 | Codebook (pattern definition, shared with the mask generator) | `include/backend/processing/DotGridCodebook.h`, `src/backend/processing/DotGridCodebook.cpp` |
 | Decoder + synthetic renderer (Qt-free, OpenCV) | `include/backend/processing/DotGridDecoder.h`, `src/backend/processing/DotGridDecoder.cpp` |
+| Design registry (Qt-free; every design, one seed each) | `include/backend/processing/DotGridRegistry.h`, `src/backend/processing/DotGridRegistry.cpp`, `scripts/dot_grid/dotgrid/registry.py` |
 | Live service (samples FrameStore, publishes poses) | `include/backend/services/DotGridService.h`, `src/backend/services/DotGridService.cpp` — [vault note](../../knowledge_map/services/DotGridService.md) |
 | Preview overlay + "Wafer Grid" toggle | `src/frontend/system/PlaybackPanel.cpp` |
 | Mask generator, reference decoder, simulator (Python) | `scripts/dot_grid/` — see [howto/dot-grid-mask-generation.md](../howto/dot-grid-mask-generation.md) |
-| Shipped codebook for the Wafer_soRT design | `resources/defaults/dot_grid/wafer_soRT_2025-03-16_seed7_p30.json` |
-| Tests | `processing.dot_grid_codebook`, `processing.dot_grid_decoder`, `backend.dot_grid_service`, `scripts.dot_grid_reference` |
-| Decision record | [ADR 0006](../decisions/0006-dot-grid-localization.md) |
+| Bundled registry (compiled into the app as `:/defaults/dot_grid_registry.json`) | `resources/defaults/dot_grid/registry.json` |
+| Archived full codebook of the Wafer_soRT design | `resources/defaults/dot_grid/wafer_soRT_2025-03-16_seed7_p30.json` |
+| Tests | `processing.dot_grid_codebook`, `processing.dot_grid_decoder`, `processing.dot_grid_registry`, `backend.dot_grid_service`, `scripts.dot_grid_reference` |
+| Decision records | [ADR 0006](../decisions/0006-dot-grid-localization.md) (pattern, decoder, service), [ADR 0007](../decisions/0007-dot-grid-design-registry.md) (design registry) |
 
 ## Pattern
 
@@ -123,6 +126,45 @@ The C++ decoder runs the same algorithm; `processing.dot_grid_decoder` prints
 its per-frame time (about 80 ms for a 1920 × 1200 frame with ~200 dots on the
 dev machine, Release), well inside the 250 ms sampling interval.
 
+## Design registry
+
+Every chip design that carries a grid is registered once
+(`resources/defaults/dot_grid/registry.json`, [ADR 0007](../decisions/0007-dot-grid-design-registry.md)):
+
+```json
+{"version": 1, "designs": [
+  {"id": "wafer-sort-rt", "name": "Wafer_soRT DC sorting chip (30 um channels)",
+   "revision": "2025-03-16", "status": "active", "seed": 7,
+   "columns": 3501, "rows": 3501, "pitch_um": 30.0, "dot_diameter_um": 12.0,
+   "displacement_um": 5.0, "origin_um": [0.0, 0.0], "design_scale": 1.015,
+   "keepout": {"channel_um": 50.0, "...": "..."},
+   "source": {"file": "Wafer_soRT.dxf", "sha256": null},
+   "chips": [{"name": "R0C1", "x_min_um": 30053.6, "...": "..."}]}]}
+```
+
+- **The seed is the design identity.** The codebook is regenerated from the
+  entry, so the file holds parameters only (about 4 KB per design). Seeds and
+  ids are unique; a seed is never reused (new = highest + 1; retired designs
+  keep theirs). Both loaders reject the whole file when that is violated.
+- **Decoding against all designs.** A frame decodes under the codebook it was
+  made from and under no other: the vote, the cross-phase checks and the
+  bit-agreement verification all have to agree (0 of 120 cross-seed attempts
+  decoded in synthetic trials; `processing.dot_grid_registry` and the
+  `register` cross-check keep proving it). The decoder groups designs by dot
+  geometry (dot diameter, shift/pitch ratio): detection and the lattice fit run
+  once per group, the code vote and verification once per design. Exactly one
+  design must decode; two would be `ambiguous design (a, b)`.
+- **Cost.** Designs sharing the geometry add no measurable time (1, 2, 4 and
+  8 designs all decode in 120–160 ms on the cloud container). Each extra
+  geometry adds one detection pass (two geometries took 360–420 ms there), so
+  keep 30/12/5 µm unless the process needs otherwise; `register` warns.
+- **Where the app gets it.** The bundled file is compiled in; `dot_grid.
+  registry_path` merges a local registry (relative to the config directory)
+  for designs not yet shipped. Clashing local entries are skipped with a
+  warning.
+- **Adding a design** is `dotgrid_cli.py register` + a PR; see the
+  [how-to](../howto/dot-grid-mask-generation.md).
+
 ## Live service and UI
 
 `DotGridService` owns one thread that, every `intervalMs` (250 ms default),
@@ -136,13 +178,15 @@ given frame index at most once. `MIB_DISABLED_SERVICES=dot_grid` skips it.
 Configuration lives under `dot_grid` in `config.json` (applied by
 `AppConfigWatcher`, live-reloaded): `enabled`, `interval_ms`,
 `um_per_px_hint` (0 = use `pixel_to_micron_factor`), `min_votes`,
-`min_agreement`, `codebook_path` (a `codebook.json` from the generator, with
-the chip table) or `codebook` (`seed`, `columns`, `rows`, `pitch_um`,
-`dot_diameter_um`, `displacement_um`, `origin_x_um`, `origin_y_um`).
+`min_agreement`, and the codebook source, first match wins:
+`codebook_path` (one `codebook.json` from the generator, an explicit
+override), the design registry (bundled + `registry_path`, the normal case),
+or `codebook` (`seed`, `columns`, `rows`, `pitch_um`, `dot_diameter_um`,
+`displacement_um`, `origin_x_um`, `origin_y_um`) when the registry is empty.
 
 The Preview page's **Wafer Grid** button toggles `enabled` at runtime. While
 on, the canvas draws the detected dots, a cross at the image centre and a
-text box with X/Y (µm), θ, µm/px, direct/mirrored, chip, dot and vote counts
+text box with X/Y (µm), θ, µm/px, direct/mirrored, design name and chip, dot and vote counts
 and decode time, or the failure reason.
 
 ## Fabrication notes

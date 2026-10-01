@@ -1,5 +1,21 @@
 # Recent Work
 
+## 2026-10-01 — Dot-grid design registry: the app knows which chip design it sees
+
+Every chip design with a dot grid is now registered once in
+`resources/defaults/dot_grid/registry.json` (bundled into the app) with a
+unique, never-reused seed; the seed is the design identity (ADR 0007).
+Developers run `scripts/dot_grid/dotgrid_cli.py register DESIGN.dxf --id …`
+(registry entry + GDS/DXF/CSV mask layer, after a synthetic cross-design
+check) and open a PR; `mask` regenerates a registered layer, `list` / `check`
+inspect the registry. `backend::dotgrid::Registry` (Qt-free) loads it; the
+decoder tries every design (detection once per dot geometry) and
+[[../services/DotGridService]] poses carry `designId` / `designName`; the
+Preview overlay shows them with the chip. `dot_grid.registry_path` merges a
+local registry for designs not yet shipped. New test
+`processing.dot_grid_registry`; service and Python tests extended. Task
+record: [[../task/2026-10-01-dot-grid-design-registry]].
+
 ## 2026-09-17 — Dot-grid wafer localization (fiducial pattern + decoder + overlay)
 
 The camera can now tell where on the Wafer_soRT wafer, and on which chip, it

@@ -32,9 +32,17 @@ and overlay integrated in MIB Studio.
 - [ ] Pose persisted per frame in HDF5 (new compound dataset, see
       `Hdf5Service` metadata pattern) when recording.
 - [ ] CAD channel overlay from the decoded pose; chip-relative coordinates.
+- [x] Design registry: several designs, one seed each; the app reports which
+      design it sees ([ADR 0007](../../decisions/0007-dot-grid-design-registry.md)).
+- [ ] In-app "add design" dialog (today: `dotgrid_cli.py register` + PR, or
+      a local `registry_path`).
 
 ## Decision log
 
+- 2026-10-01: multiple designs are told apart by seed, decoding against all
+  registered codebooks (0/120 cross-seed false decodes in synthetic trials);
+  reserving code space per design was rejected — the 2-symbol windows have
+  no room left on a 100 mm wafer.
 - 2026-09-17: 50 µm pitch rejected — a 20x view centred on a channel with a
   50 µm keep-out never contains enough dots on one side; 30 µm pitch passes
   (28–29/30 synthetic). Lookup window shortened to 2 delta symbols (3
@@ -47,6 +55,8 @@ and overlay integrated in MIB Studio.
 
 ## Progress
 
+- [x] 2026-10-01 — Design registry (`registry.json`, `register`/`mask`/`list`/
+      `check`, multi-design decoder, `designId` in the pose and overlay).
 - [x] 2026-09-17 — Design, Python reference + generator, C++ port, service,
       UI, tests, docs (this PR).
 - [ ] Order mask; generate mock-frame set from the shipped codebook for the

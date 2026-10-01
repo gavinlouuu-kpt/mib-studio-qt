@@ -80,6 +80,7 @@
         "um_per_px_hint": 0.0,
         "min_votes": 3,
         "min_agreement": 0.9,
+        "registry_path": "",
         "codebook_path": "",
         "codebook": {
             "seed": 7,

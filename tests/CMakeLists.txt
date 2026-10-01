@@ -323,6 +323,11 @@ mib_add_backend_test_executable(dot_grid_decoder_test processing/dot_grid_decode
 add_test(NAME processing.dot_grid_decoder COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_decoder_test)
 set_tests_properties(processing.dot_grid_decoder PROPERTIES LABELS "processing;backend" TIMEOUT 120)
 
+mib_add_backend_test_executable(dot_grid_registry_test processing/dot_grid_registry_test.cpp)
+add_test(NAME processing.dot_grid_registry COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_registry_test
+         ${PROJECT_SOURCE_DIR}/resources/defaults/dot_grid/registry.json)
+set_tests_properties(processing.dot_grid_registry PROPERTIES LABELS "processing;backend" TIMEOUT 120)
+
 mib_add_backend_test_executable(dot_grid_service_test backend/dot_grid_service_test.cpp)
 mib_backend_test_link(dot_grid_service_test PRIVATE Threads::Threads)
 add_test(NAME backend.dot_grid_service COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_service_test)

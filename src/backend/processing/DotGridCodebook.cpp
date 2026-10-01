@@ -112,7 +112,8 @@ bool Codebook::bitsForDirection(int dx, int dy, int& xBit, int& yBit) {
     return false;
 }
 
-Codebook Codebook::generate(const CodebookParams& params, std::vector<Chip> chips) {
+Codebook Codebook::generate(const CodebookParams& params, std::vector<Chip> chips,
+                            std::string designName) {
     if (params.columns < kWindowDots || params.rows < kWindowDots)
         throw std::invalid_argument("dot-grid codebook: too few columns/rows");
     if (params.displacementUm * 2.0 + params.dotDiameterUm >= params.pitchUm)
@@ -121,6 +122,7 @@ Codebook Codebook::generate(const CodebookParams& params, std::vector<Chip> chip
     Codebook cb;
     cb.params_ = params;
     cb.chips_ = std::move(chips);
+    cb.designName_ = std::move(designName);
     cb.mns_ = mSequence();
     cb.phi_ = phasesFromDeltas(deltaSequence(params.seed, 0, params.columns - 1));
     cb.psi_ = phasesFromDeltas(deltaSequence(params.seed, 1, params.rows - 1));

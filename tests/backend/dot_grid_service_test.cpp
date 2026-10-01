@@ -177,6 +177,49 @@ int main() {
     missingFile.codebookPath = "/nonexistent/dotgrid/codebook.json";
     MIB_EXPECT(!service.setConfig(missingFile, &err), "missing codebook file rejected");
 
+    // Registry mode: the pose names the design the frame belongs to; an explicit
+    // codebook_path still overrides the registry; the same registry contents do
+    // not rebuild the decoder.
+    wd.mark("registry");
+    {
+        auto registry = std::make_shared<Registry>();
+        CodebookParams other = cfg.codebook;
+        other.seed = 8;
+        Design a, b;
+        a.id = "chip-a";
+        a.name = "Chip A";
+        a.codebook = std::make_shared<const Codebook>(cb);
+        b.id = "chip-b";
+        b.name = "Chip B";
+        b.codebook = std::make_shared<const Codebook>(Codebook::generate(other, {}, "chip-b"));
+        MIB_REQUIRE(registry->add(a, &err) && registry->add(b, &err), "registry built: " + err);
+        DotGridService::Config withRegistry = cfg;
+        withRegistry.registry = registry;
+        MIB_REQUIRE(service.setConfig(withRegistry, &err), "registry config accepted: " + err);
+        const auto active = service.activeRegistry();
+        MIB_EXPECT(active && active->size() == 2, "both designs active");
+        const auto pb = service.decodeImage(frameAt(*b.codebook, 30000.0, 30000.0, 70.0, 6));
+        MIB_EXPECT(pb.valid && pb.designId == "chip-b" && pb.designName == "Chip B",
+                   "frame attributed to chip-b: '" + pb.designId + "' " + pb.reason);
+        const auto pa = service.decodeImage(frameAt(cb, 30000.0, 30000.0, 70.0, 7));
+        MIB_EXPECT(pa.valid && pa.designId == "chip-a", "frame attributed to chip-a");
+        MIB_REQUIRE(service.setConfig(withRegistry, &err), "same registry re-applied");
+        MIB_EXPECT(service.activeRegistry() == active, "unchanged registry keeps its decoder");
+
+        DotGridService::Config fileOverride = withRegistry;
+        fileOverride.codebookPath = "/nonexistent/dotgrid/codebook.json";
+        MIB_EXPECT(!service.setConfig(fileOverride, &err), "codebook_path takes precedence");
+        MIB_EXPECT(service.activeRegistry() == active, "rejected override keeps the registry");
+
+        DotGridService::Config emptyRegistry = cfg;
+        emptyRegistry.registry = std::make_shared<Registry>();
+        MIB_REQUIRE(service.setConfig(emptyRegistry, &err), "empty registry falls back");
+        const auto fallback = service.decodeImage(frameAt(cb, 30000.0, 30000.0, 70.0, 8));
+        MIB_EXPECT(fallback.valid && fallback.designId.empty(),
+                   "empty registry -> inline codebook params, no design id");
+        MIB_REQUIRE(service.setConfig(cfg, &err), "back to the plain config");
+    }
+
     // A frame without a pattern yields an invalid pose with a reason, not a stale valid one.
     wd.mark("blank frame");
     {

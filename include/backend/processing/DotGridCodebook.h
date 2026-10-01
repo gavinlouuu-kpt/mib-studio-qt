@@ -52,7 +52,8 @@ public:
     Codebook() = default;
 
     // Deterministic generation from the seed (matches the Python generator).
-    static Codebook generate(const CodebookParams& params, std::vector<Chip> chips = {});
+    static Codebook generate(const CodebookParams& params, std::vector<Chip> chips = {},
+                             std::string designName = {});
 
     // Load a codebook.json written by scripts/dot_grid (includes chip table).
     // Returns false and fills errorOut when the file is missing or malformed.

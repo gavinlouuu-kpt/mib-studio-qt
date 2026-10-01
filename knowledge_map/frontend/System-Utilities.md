@@ -127,7 +127,7 @@
     [[../services/DotGridService]]; `updateDotGridOverlay()` runs every tick,
     mirrors the service's `isEnabled()` (config.json can enable it too) and
     copies the latest `Pose` into `DotGridOverlay` (detected dots, image-centre
-    cross, pose text or failure reason) which `ImageCanvas::paintEvent` draws
+    cross, pose text with design name + chip, or failure reason) which `ImageCanvas::paintEvent` draws
     after the contours. No decoding happens on the GUI thread.
   - The Space-bar shortcut / key press does **not** start or stop capture
     itself: `onToggleCapture()` emits `captureToggleRequested()`, which

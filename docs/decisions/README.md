@@ -34,6 +34,7 @@ What becomes easier/harder; what future agents must respect.
 | [0004](0004-bridge-contract-and-operation-state.md) | Bridge contract governance and serialized operation state | accepted |
 | [0005](0005-device-discovery-service.md) | Device discovery is a backend job service with providers | accepted |
 | [0006](0006-dot-grid-localization.md) | Dot-grid wafer localization as a Qt-free decoder plus a polling service | accepted |
+| [0007](0007-dot-grid-design-registry.md) | Dot-grid design registry: the seed is the design identity | accepted |
 
 Decisions made before this index existed live implicitly in
 [`../architecture/`](../architecture/) and the vault

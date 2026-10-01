@@ -11,9 +11,15 @@ namespace backend::services {
 
 namespace {
 
+bool useRegistry(const DotGridService::Config& c) {
+    return c.codebookPath.empty() && c.registry && !c.registry->empty();
+}
+
 bool sameCodebookSource(const DotGridService::Config& a, const DotGridService::Config& b) {
     if (a.codebookPath != b.codebookPath) return false;
     if (!a.codebookPath.empty()) return true;
+    if (useRegistry(a) != useRegistry(b)) return false;
+    if (useRegistry(a)) return a.registry->fingerprint() == b.registry->fingerprint();
     const auto& p = a.codebook;
     const auto& q = b.codebook;
     return p.seed == q.seed && p.columns == q.columns && p.rows == q.rows &&
@@ -36,15 +42,15 @@ void DotGridService::setFrameStore(std::shared_ptr<playback::FrameStore> store) 
 }
 
 bool DotGridService::setConfig(const Config& config, std::string* errorOut) {
-    std::shared_ptr<const dotgrid::Codebook> codebook;
+    std::shared_ptr<const dotgrid::Registry> registry;
     {
         std::lock_guard<std::mutex> lock(configMutex_);
-        if (codebook_ && sameCodebookSource(config_, config)) codebook = codebook_;
+        if (registry_ && sameCodebookSource(config_, config)) registry = registry_;
     }
-    if (!codebook) {
+    if (!registry) {
         try {
-            dotgrid::Codebook cb;
             if (!config.codebookPath.empty()) {
+                dotgrid::Codebook cb;
                 std::string err;
                 if (!dotgrid::Codebook::loadJson(config.codebookPath, cb, &err)) {
                     SPDLOG_WARN("DotGridService: cannot load codebook '{}': {}",
@@ -52,27 +58,36 @@ bool DotGridService::setConfig(const Config& config, std::string* errorOut) {
                     if (errorOut) *errorOut = err;
                     return false;
                 }
+                registry = std::make_shared<const dotgrid::Registry>(dotgrid::Registry::single(
+                    std::make_shared<const dotgrid::Codebook>(std::move(cb))));
+            } else if (useRegistry(config)) {
+                registry = config.registry;
             } else {
-                cb = dotgrid::Codebook::generate(config.codebook);
+                registry = std::make_shared<const dotgrid::Registry>(dotgrid::Registry::single(
+                    std::make_shared<const dotgrid::Codebook>(
+                        dotgrid::Codebook::generate(config.codebook))));
             }
-            codebook = std::make_shared<const dotgrid::Codebook>(std::move(cb));
         } catch (const std::exception& e) {
             SPDLOG_WARN("DotGridService: invalid codebook parameters: {}", e.what());
             if (errorOut) *errorOut = e.what();
             return false;
         }
-        const auto& p = codebook->params();
-        SPDLOG_INFO("DotGridService: codebook ready (seed={}, {}x{} nodes, pitch={}um, dot={}um, "
-                    "shift={}um, chips={})",
-                    p.seed, p.columns, p.rows, p.pitchUm, p.dotDiameterUm, p.displacementUm,
-                    codebook->chips().size());
+        for (const auto& d : registry->designs()) {
+            const auto& p = d.codebook->params();
+            SPDLOG_INFO("DotGridService: design '{}' ready (seed={}, {}x{} nodes, pitch={}um, "
+                        "dot={}um, shift={}um, chips={})",
+                        d.id.empty() ? d.codebook->designName() : d.id, p.seed, p.columns, p.rows,
+                        p.pitchUm, p.dotDiameterUm, p.displacementUm, d.codebook->chips().size());
+        }
     }
     {
         std::lock_guard<std::mutex> lock(configMutex_);
         config_ = config;
-        codebook_ = codebook;
+        if (registry_ != registry) {
+            registry_ = registry;
+            decoder_ = std::make_shared<const dotgrid::Decoder>(registry_);
+        }
         enabled_.store(config.enabled, std::memory_order_release);
-        decoder_ = std::make_shared<const dotgrid::Decoder>(codebook_);
     }
     wakeCv_.notify_all();
     return true;
@@ -85,7 +100,12 @@ DotGridService::Config DotGridService::getConfig() const {
 
 bool DotGridService::hasCodebook() const {
     std::lock_guard<std::mutex> lock(configMutex_);
-    return static_cast<bool>(codebook_);
+    return registry_ && !registry_->empty();
+}
+
+std::shared_ptr<const dotgrid::Registry> DotGridService::activeRegistry() const {
+    std::lock_guard<std::mutex> lock(configMutex_);
+    return registry_;
 }
 
 void DotGridService::start() {
@@ -163,6 +183,8 @@ DotGridService::Pose DotGridService::decodeImage(const cv::Mat& gray, uint64_t f
     pose.umPerPx = r.umPerPx;
     pose.mirrored = r.mirrored;
     pose.chip = r.chip;
+    pose.designId = r.designId;
+    pose.designName = r.designName;
     pose.votes = r.votes;
     pose.dots = r.dots;
     pose.agreement = r.agreement;

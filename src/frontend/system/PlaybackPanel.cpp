@@ -1615,7 +1615,14 @@ void PlaybackPanel::updateDotGridOverlay()
     for (const auto &d : pose.dotsPx)
         dotGridOverlay_.dots.append(QPointF(d.x, d.y));
     dotGridOverlay_.centre = QPointF(pose.imageWidth / 2.0, pose.imageHeight / 2.0);
-    const QString chip = pose.chip.empty() ? QString() : tr("chip %1   ").arg(QString::fromStdString(pose.chip));
+    // "<design>   chip R3C2" tells the operator which chip design is under the
+    // objective, not only where on the wafer.
+    QString chip;
+    if (!pose.designName.empty() || !pose.designId.empty())
+        chip = QString::fromStdString(pose.designName.empty() ? pose.designId : pose.designName) +
+               QStringLiteral("   ");
+    if (!pose.chip.empty())
+        chip += tr("chip %1   ").arg(QString::fromStdString(pose.chip));
     dotGridOverlay_.text =
         QStringLiteral("Wafer X %1 \u00B5m   Y %2 \u00B5m\n\u03B8 %3\u00B0   %4 \u00B5m/px   %5\n%6%7 dots   votes %8   %9 ms")
             .arg(QString::number(pose.centreXUm, 'f', 1))

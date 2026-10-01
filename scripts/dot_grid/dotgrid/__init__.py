@@ -6,13 +6,17 @@ y-plane bit).  Column i of the x-plane holds a 63-period m-sequence cyclically
 shifted by phi[i]; row j of the y-plane holds the same m-sequence shifted by
 psi[j].  Phase differences between neighbouring columns (rows) form a random
 symbol sequence whose short windows are unique, so any 6x6 dot window decodes
-to an absolute lattice index. See docs/architecture/dot-grid-localization.md.
+to an absolute lattice index. The registry (registry.py) holds every design
+that carries a grid, one unique seed each, so a frame also identifies the
+design. See docs/architecture/dot-grid-localization.md.
 """
 from .codebook import Codebook, generate_codebook, MNS_PERIOD, WINDOW_SYMBOLS
 from .decode import decode_image, DecodeResult
 from .render import render_view
+from .registry import Design, Registry, decode_registry
 
 __all__ = [
     "Codebook", "generate_codebook", "MNS_PERIOD", "WINDOW_SYMBOLS",
     "decode_image", "DecodeResult", "render_view",
+    "Design", "Registry", "decode_registry",
 ]

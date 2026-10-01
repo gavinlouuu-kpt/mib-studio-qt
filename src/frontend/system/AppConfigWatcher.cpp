@@ -60,6 +60,42 @@ namespace frontend
 			// Development: use ../include/ relative to executable
 			return QDir(appDir).absoluteFilePath("../include");
 		}
+
+		// Dot-grid design registry: the bundled one (resources/defaults/dot_grid/
+		// registry.json) plus, when dot_grid.registry_path is set, a local file
+		// for designs not yet shipped with a build (relative paths resolve
+		// against the config directory). Clashing local entries are skipped.
+		std::shared_ptr<const backend::dotgrid::Registry> loadDotGridRegistry(const QString &extraPath)
+		{
+			backend::dotgrid::Registry registry;
+			QFile bundled(QStringLiteral(":/defaults/dot_grid_registry.json"));
+			if (bundled.open(QIODevice::ReadOnly))
+			{
+				std::string err;
+				if (!backend::dotgrid::Registry::parse(bundled.readAll().toStdString(), registry, &err))
+					SPDLOG_WARN("AppConfigWatcher: bundled dot-grid registry rejected: {}", err);
+			}
+			if (!extraPath.isEmpty())
+			{
+				const QString path = QDir::isAbsolutePath(extraPath)
+										 ? extraPath
+										 : QDir(getUserConfigDir()).absoluteFilePath(extraPath);
+				backend::dotgrid::Registry local;
+				std::string err;
+				if (backend::dotgrid::Registry::loadFile(path.toStdString(), local, &err))
+				{
+					std::vector<std::string> warnings;
+					registry.merge(local, &warnings);
+					for (const auto &w : warnings)
+						SPDLOG_WARN("AppConfigWatcher: dot-grid registry '{}': {}", path.toStdString(), w);
+				}
+				else
+				{
+					SPDLOG_WARN("AppConfigWatcher: dot-grid registry '{}' rejected: {}", path.toStdString(), err);
+				}
+			}
+			return std::make_shared<const backend::dotgrid::Registry>(std::move(registry));
+		}
 	}
 
 	AppConfigWatcher::AppConfigWatcher(backend::AppBackend &backend,
@@ -467,6 +503,7 @@ namespace frontend
 			cfg.minVotes = dg.value("min_votes").toInt(cfg.minVotes);
 			cfg.minAgreement = dg.value("min_agreement").toDouble(cfg.minAgreement);
 			cfg.codebookPath = dg.value("codebook_path").toString().toStdString();
+			cfg.registry = loadDotGridRegistry(dg.value("registry_path").toString());
 			if (dg.contains("codebook") && dg.value("codebook").isObject())
 			{
 				const QJsonObject cb = dg.value("codebook").toObject();
@@ -483,8 +520,8 @@ namespace frontend
 			std::string err;
 			if (backend_.dotGrid().setConfig(cfg, &err))
 			{
-				SPDLOG_INFO("AppConfigWatcher: applied dot_grid (enabled={}, interval_ms={}, pitch={}um, codebook='{}')",
-							cfg.enabled, cfg.intervalMs, cfg.codebook.pitchUm, cfg.codebookPath);
+				SPDLOG_INFO("AppConfigWatcher: applied dot_grid (enabled={}, interval_ms={}, designs={}, codebook='{}')",
+							cfg.enabled, cfg.intervalMs, cfg.registry ? cfg.registry->size() : 0, cfg.codebookPath);
 			}
 			else
 			{

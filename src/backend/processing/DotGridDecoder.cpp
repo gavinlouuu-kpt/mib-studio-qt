@@ -209,13 +209,12 @@ bool fitLattice(const std::vector<cv::Point2f>& pts, double dispRatio, LatticeFi
 }
 
 // Phase candidates for one line of bits (-1 = unknown).
-std::vector<int> linePhases(const Codebook& cb, const std::vector<int8_t>& line) {
+std::vector<int> linePhases(const std::vector<int>& mns, const std::vector<int8_t>& line) {
     std::vector<int> known;
     for (size_t s = 0; s < line.size(); ++s)
         if (line[s] >= 0) known.push_back(static_cast<int>(s));
     std::vector<int> cands;
     if (known.size() < static_cast<size_t>(kMnsOrder)) return cands;
-    const auto& mns = cb.mns();
     for (int q = 0; q < kMnsPeriod; ++q) {
         bool okAll = true;
         for (int s : known) {
@@ -285,9 +284,15 @@ struct GridDecode {
     cv::Point2i tmin;
 };
 
-GridDecode decodeGrid(const Codebook& cb, const std::vector<cv::Point2i>& idx,
-                      const std::vector<cv::Point2i>& dirs) {
-    GridDecode best;
+// One GridDecode per codebook. The bit grids and line phases depend only on the
+// lattice and the (shared) m-sequence, so they are built once per transform and
+// only the codebook lookup and vote run per design.
+std::vector<GridDecode> decodeGrid(const std::vector<const Codebook*>& cbs,
+                                   const std::vector<cv::Point2i>& idx,
+                                   const std::vector<cv::Point2i>& dirs) {
+    std::vector<GridDecode> best(cbs.size());
+    if (cbs.empty()) return best;
+    const auto& mns = cbs.front()->mns();
     const size_t n = idx.size();
     std::vector<cv::Point2i> ti(n), td(n);
     for (int t = 0; t < 8; ++t) {
@@ -317,49 +322,128 @@ GridDecode decodeGrid(const Codebook& cb, const std::vector<cv::Point2i>& idx,
             line.assign(static_cast<size_t>(H), -1);
             for (int v = 0; v < H; ++v)
                 line[static_cast<size_t>(v)] = xb[static_cast<size_t>(v * W + u)];
-            colQ[static_cast<size_t>(u)] = linePhases(cb, line);
+            colQ[static_cast<size_t>(u)] = linePhases(mns, line);
         }
         for (int v = 0; v < H; ++v) {
             line.assign(static_cast<size_t>(W), -1);
             for (int u = 0; u < W; ++u)
                 line[static_cast<size_t>(u)] = yb[static_cast<size_t>(v * W + u)];
-            rowQ[static_cast<size_t>(v)] = linePhases(cb, line);
+            rowQ[static_cast<size_t>(v)] = linePhases(mns, line);
         }
-        const VoteMap colVotes = voteAxis(colQ, cb.phi(), cb, true);  // (I0, J0 mod 63)
-        const VoteMap rowVotes = voteAxis(rowQ, cb.psi(), cb, false); // (J0, I0 mod 63)
-        VoteMap combined;
-        for (const auto& [ck, nc] : colVotes)
-            for (const auto& [rk, nr] : rowVotes) {
-                const int I0 = ck.first, j0m = ck.second, J0 = rk.first, i0m = rk.second;
-                if (((I0 % kMnsPeriod) + kMnsPeriod) % kMnsPeriod != i0m) continue;
-                if (((J0 % kMnsPeriod) + kMnsPeriod) % kMnsPeriod != j0m) continue;
-                if (I0 < 0 || I0 >= cb.params().columns || J0 < 0 || J0 >= cb.params().rows)
-                    continue;
-                combined[{I0, J0}] += nc + nr;
-            }
-        for (const auto& [key, votes] : combined) {
-            best.candidates += votes;
-            if (!best.found || votes > best.votes) {
-                if (best.found) best.runnerUp = std::max(best.runnerUp, best.votes);
-                best.found = true;
-                best.transform = t;
-                best.I0 = key.first;
-                best.J0 = key.second;
-                best.votes = votes;
-                best.tmin = mn;
-            } else {
-                best.runnerUp = std::max(best.runnerUp, votes);
+        for (size_t c = 0; c < cbs.size(); ++c) {
+            const Codebook& cb = *cbs[c];
+            GridDecode& b = best[c];
+            const VoteMap colVotes = voteAxis(colQ, cb.phi(), cb, true);  // (I0, J0 mod 63)
+            const VoteMap rowVotes = voteAxis(rowQ, cb.psi(), cb, false); // (J0, I0 mod 63)
+            VoteMap combined;
+            for (const auto& [ck, nc] : colVotes)
+                for (const auto& [rk, nr] : rowVotes) {
+                    const int I0 = ck.first, j0m = ck.second, J0 = rk.first, i0m = rk.second;
+                    if (((I0 % kMnsPeriod) + kMnsPeriod) % kMnsPeriod != i0m) continue;
+                    if (((J0 % kMnsPeriod) + kMnsPeriod) % kMnsPeriod != j0m) continue;
+                    if (I0 < 0 || I0 >= cb.params().columns || J0 < 0 || J0 >= cb.params().rows)
+                        continue;
+                    combined[{I0, J0}] += nc + nr;
+                }
+            for (const auto& [key, votes] : combined) {
+                b.candidates += votes;
+                if (!b.found || votes > b.votes) {
+                    if (b.found) b.runnerUp = std::max(b.runnerUp, b.votes);
+                    b.found = true;
+                    b.transform = t;
+                    b.I0 = key.first;
+                    b.J0 = key.second;
+                    b.votes = votes;
+                    b.tmin = mn;
+                } else {
+                    b.runnerUp = std::max(b.runnerUp, votes);
+                }
             }
         }
     }
     return best;
 }
 
+// How far a decode attempt got; the deepest failure is the one reported.
+enum Stage : int {
+    kStageDots = 0,
+    kStageLattice,
+    kStageCode,
+    kStageAmbiguousWindow,
+    kStageAgreement,
+    kStagePoseFit,
+    kStageOk
+};
+
+// Verification and pose for one design whose grid decode is in g. Fills r.
+Stage finishDesign(const Codebook& cb, const GridDecode& g, const std::vector<cv::Point2f>& pts,
+                   const LatticeFit& fit, const cv::Size& image, const DecoderConfig& config,
+                   DecodeResult& r) {
+    const auto& P = cb.params();
+    r.candidates = g.candidates;
+    r.votes = g.votes;
+    if (!g.found || g.votes < config.minVotes) {
+        r.reason = "no consistent code window";
+        return kStageCode;
+    }
+    if (g.runnerUp * 2 > g.votes) {
+        r.reason = "ambiguous code windows";
+        return kStageAmbiguousWindow;
+    }
+    const auto& T = kDihedral[static_cast<size_t>(g.transform)];
+    std::vector<cv::Point2d> nodePx, nodeUm;
+    int agree = 0;
+    const size_t n = pts.size();
+    for (size_t k = 0; k < n; ++k) {
+        const int I = T[0] * fit.idx[k].x + T[1] * fit.idx[k].y - g.tmin.x + g.I0;
+        const int J = T[2] * fit.idx[k].x + T[3] * fit.idx[k].y - g.tmin.y + g.J0;
+        const int dx = T[0] * fit.dirs[k].x + T[1] * fit.dirs[k].y;
+        const int dy = T[2] * fit.dirs[k].x + T[3] * fit.dirs[k].y;
+        if (I < 0 || I >= P.columns || J < 0 || J >= P.rows) continue;
+        if (cb.direction(I, J) != std::make_pair(dx, dy)) continue;
+        ++agree;
+        nodePx.push_back(fit.M.apply(fit.idx[k].x, fit.idx[k].y));
+        const auto um = cb.nodeUm(I, J);
+        nodeUm.emplace_back(um.first, um.second);
+    }
+    r.agreement = double(agree) / double(n);
+    if (r.agreement < config.minAgreement || agree < config.minAgreeingDots) {
+        r.reason = "bit agreement too low";
+        return kStageAgreement;
+    }
+    Affine Pw;
+    if (!fitAffine(nodePx, nodeUm, Pw)) {
+        r.reason = "pose fit failed";
+        return kStagePoseFit;
+    }
+    r.pixelToWafer[0] = Pw.a;
+    r.pixelToWafer[1] = Pw.b;
+    r.pixelToWafer[2] = Pw.tx;
+    r.pixelToWafer[3] = Pw.c;
+    r.pixelToWafer[4] = Pw.d;
+    r.pixelToWafer[5] = Pw.ty;
+    r.mirrored = Pw.det() < 0;
+    r.umPerPx = std::hypot(Pw.a, Pw.c);
+    const double sgn = r.mirrored ? -1.0 : 1.0;
+    r.thetaDeg = std::atan2(sgn * Pw.c, sgn * Pw.a) * 180.0 / CV_PI;
+    const auto centre = Pw.apply(image.width / 2.0, image.height / 2.0);
+    r.centreXUm = centre.x;
+    r.centreYUm = centre.y;
+    if (const Chip* chip = cb.chipAt(centre.x, centre.y)) r.chip = chip->name;
+    r.reason.clear();
+    r.ok = true;
+    return kStageOk;
+}
+
 } // namespace
 
 // ------------------------------------------------------------------ Decoder
 
-Decoder::Decoder(std::shared_ptr<const Codebook> codebook) : codebook_(std::move(codebook)) {}
+Decoder::Decoder(std::shared_ptr<const Codebook> codebook)
+    : registry_(std::make_shared<const Registry>(Registry::single(std::move(codebook)))) {}
+
+Decoder::Decoder(std::shared_ptr<const Registry> registry)
+    : registry_(registry ? std::move(registry) : std::make_shared<const Registry>()) {}
 
 std::vector<cv::Point2f> Decoder::detectDots(const cv::Mat& input, double expectedDiameterPx) {
     cv::Mat gray;
@@ -398,94 +482,101 @@ std::vector<cv::Point2f> Decoder::detectDots(const cv::Mat& input, double expect
 
 DecodeResult Decoder::decode(const cv::Mat& gray, const DecoderConfig& config) const {
     const auto t0 = std::chrono::steady_clock::now();
-    DecodeResult r;
-    auto finish = [&](DecodeResult& res) -> DecodeResult& {
+    auto finish = [&](DecodeResult res) {
         res.decodeMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
                 .count();
         return res;
     };
-    if (!codebook_ || !codebook_->valid()) {
-        r.reason = "no codebook";
-        return finish(r);
+    DecodeResult failure;
+    if (registry_->empty()) {
+        failure.reason = "no codebook";
+        return finish(failure);
     }
     if (gray.empty()) {
-        r.reason = "empty image";
-        return finish(r);
+        failure.reason = "empty image";
+        return finish(failure);
     }
-    const auto& P = codebook_->params();
-    const double diamPx = P.dotDiameterUm / std::max(1e-6, config.umPerPxHint);
-    std::vector<cv::Point2f> pts = detectDots(gray, diamPx);
-    r.dots = static_cast<int>(pts.size());
-    if (pts.size() < static_cast<size_t>(kWindowDots * kMnsOrder)) {
-        r.reason = "too few dots";
-        return finish(r);
+    const auto& designs = registry_->designs();
+    failure.designsTried = static_cast<int>(designs.size());
+
+    // Designs sharing dot diameter and displacement/pitch ratio share the dot
+    // detection and lattice fit; usually every design is in one group.
+    std::vector<bool> done(designs.size(), false);
+    std::vector<DecodeResult> hits;
+    int failStage = -1;
+    auto noteFailure = [&](const DecodeResult& r, int stage) {
+        if (stage > failStage || (stage == failStage && r.votes > failure.votes)) {
+            failStage = stage;
+            failure = r;
+        }
+    };
+    for (size_t g0 = 0; g0 < designs.size(); ++g0) {
+        if (done[g0]) continue;
+        const auto& P0 = designs[g0].codebook->params();
+        const double dispRatio = P0.displacementUm / P0.pitchUm;
+        std::vector<size_t> group;
+        for (size_t k = g0; k < designs.size(); ++k) {
+            const auto& P = designs[k].codebook->params();
+            if (!done[k] && P.dotDiameterUm == P0.dotDiameterUm &&
+                std::abs(P.displacementUm / P.pitchUm - dispRatio) < 1e-9) {
+                group.push_back(k);
+                done[k] = true;
+            }
+        }
+        DecodeResult base;
+        base.designsTried = static_cast<int>(designs.size());
+        const double diamPx = P0.dotDiameterUm / std::max(1e-6, config.umPerPxHint);
+        std::vector<cv::Point2f> pts = detectDots(gray, diamPx);
+        base.dots = static_cast<int>(pts.size());
+        if (pts.size() < static_cast<size_t>(kWindowDots * kMnsOrder)) {
+            base.reason = "too few dots";
+            noteFailure(base, kStageDots);
+            continue;
+        }
+        if (pts.size() > static_cast<size_t>(config.maxDots)) {
+            base.reason = "too many blobs";
+            noteFailure(base, kStageDots);
+            continue;
+        }
+        LatticeFit fit;
+        if (!fitLattice(pts, dispRatio, fit)) {
+            base.reason = "lattice fit failed";
+            noteFailure(base, kStageLattice);
+            continue;
+        }
+        base.residualPx = fit.rms;
+        base.dotsPx = pts;
+        std::vector<const Codebook*> cbs;
+        for (size_t k : group)
+            cbs.push_back(designs[k].codebook.get());
+        const std::vector<GridDecode> grids = decodeGrid(cbs, fit.idx, fit.dirs);
+        for (size_t c = 0; c < group.size(); ++c) {
+            DecodeResult r = base;
+            const Stage stage = finishDesign(*cbs[c], grids[c], pts, fit, gray.size(), config, r);
+            if (stage == kStageOk) {
+                r.designId = designs[group[c]].id;
+                r.designName = designs[group[c]].name;
+                hits.push_back(std::move(r));
+            } else {
+                noteFailure(r, stage);
+            }
+        }
     }
-    if (pts.size() > static_cast<size_t>(config.maxDots)) {
-        r.reason = "too many blobs";
-        return finish(r);
+    if (hits.size() == 1) return finish(std::move(hits.front()));
+    if (hits.size() > 1) {
+        DecodeResult r = hits.front();
+        std::string names;
+        for (const auto& h : hits)
+            names += (names.empty() ? "" : ", ") + h.designId;
+        r.ok = false;
+        r.reason = "ambiguous design (" + names + ")";
+        r.designId.clear();
+        r.designName.clear();
+        r.chip.clear();
+        return finish(std::move(r));
     }
-    const double dispRatio = P.displacementUm / P.pitchUm;
-    LatticeFit fit;
-    if (!fitLattice(pts, dispRatio, fit)) {
-        r.reason = "lattice fit failed";
-        return finish(r);
-    }
-    r.residualPx = fit.rms;
-    r.dotsPx = pts;
-    const GridDecode g = decodeGrid(*codebook_, fit.idx, fit.dirs);
-    r.candidates = g.candidates;
-    r.votes = g.votes;
-    if (!g.found || g.votes < config.minVotes) {
-        r.reason = "no consistent code window";
-        return finish(r);
-    }
-    if (g.runnerUp * 2 > g.votes) {
-        r.reason = "ambiguous code windows";
-        return finish(r);
-    }
-    const auto& T = kDihedral[static_cast<size_t>(g.transform)];
-    std::vector<cv::Point2d> nodePx, nodeUm;
-    int agree = 0;
-    const size_t n = pts.size();
-    for (size_t k = 0; k < n; ++k) {
-        const int I = T[0] * fit.idx[k].x + T[1] * fit.idx[k].y - g.tmin.x + g.I0;
-        const int J = T[2] * fit.idx[k].x + T[3] * fit.idx[k].y - g.tmin.y + g.J0;
-        const int dx = T[0] * fit.dirs[k].x + T[1] * fit.dirs[k].y;
-        const int dy = T[2] * fit.dirs[k].x + T[3] * fit.dirs[k].y;
-        if (I < 0 || I >= P.columns || J < 0 || J >= P.rows) continue;
-        if (codebook_->direction(I, J) != std::make_pair(dx, dy)) continue;
-        ++agree;
-        nodePx.push_back(fit.M.apply(fit.idx[k].x, fit.idx[k].y));
-        const auto um = codebook_->nodeUm(I, J);
-        nodeUm.emplace_back(um.first, um.second);
-    }
-    r.agreement = double(agree) / double(n);
-    if (r.agreement < config.minAgreement || agree < config.minAgreeingDots) {
-        r.reason = "bit agreement too low";
-        return finish(r);
-    }
-    Affine Pw;
-    if (!fitAffine(nodePx, nodeUm, Pw)) {
-        r.reason = "pose fit failed";
-        return finish(r);
-    }
-    r.pixelToWafer[0] = Pw.a;
-    r.pixelToWafer[1] = Pw.b;
-    r.pixelToWafer[2] = Pw.tx;
-    r.pixelToWafer[3] = Pw.c;
-    r.pixelToWafer[4] = Pw.d;
-    r.pixelToWafer[5] = Pw.ty;
-    r.mirrored = Pw.det() < 0;
-    r.umPerPx = std::hypot(Pw.a, Pw.c);
-    const double sgn = r.mirrored ? -1.0 : 1.0;
-    r.thetaDeg = std::atan2(sgn * Pw.c, sgn * Pw.a) * 180.0 / CV_PI;
-    const auto centre = Pw.apply(gray.cols / 2.0, gray.rows / 2.0);
-    r.centreXUm = centre.x;
-    r.centreYUm = centre.y;
-    if (const Chip* chip = codebook_->chipAt(centre.x, centre.y)) r.chip = chip->name;
-    r.ok = true;
-    return finish(r);
+    return finish(std::move(failure));
 }
 
 // ------------------------------------------------------------------ synthetic view
