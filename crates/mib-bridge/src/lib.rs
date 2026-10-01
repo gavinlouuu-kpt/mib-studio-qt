@@ -505,6 +505,13 @@ pub mod ffi {
         pub data: Vec<u8>,
     }
 
+    extern "Rust" {
+        /// One bulk copy of C++ bytes into a Rust `Vec<u8>`. cxx's `rust::Vec::push_back`
+        /// is an FFI call per element: filling a 509 KB full-field frame that way cost ~75 ms
+        /// on the PZ7035's Cortex-A9 and held the browser Overview at ~10 fps.
+        fn bytes_to_vec(bytes: &[u8]) -> Vec<u8>;
+    }
+
     unsafe extern "C++" {
         include!("mib-bridge/src/shim.h");
 
@@ -890,3 +897,7 @@ const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<std::sync::Mutex<cxx::UniquePtr<ffi::BackendBridge>>>();
 };
+
+fn bytes_to_vec(bytes: &[u8]) -> Vec<u8> {
+    bytes.to_vec()
+}

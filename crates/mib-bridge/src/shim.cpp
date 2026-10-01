@@ -168,6 +168,13 @@ static_assert(static_cast<std::uint32_t>(bb::BackendOperationState::TimedOut) ==
 
 std::string toStd(rust::Str s) { return std::string(s.data(), s.size()); }
 
+// One FFI call per buffer: rust::Vec::push_back crosses the bridge per byte.
+template <typename Bytes>
+rust::Vec<std::uint8_t> bytesToVec(const Bytes& bytes) {
+    return bytes_to_vec(rust::Slice<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
+}
+
 BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     BridgeFrame out{};
     out.valid = true;
@@ -179,10 +186,7 @@ BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     out.height = frame.height;
     out.pixel_format = frame.pixelFormat;
     out.stride_bytes = static_cast<std::uint64_t>(frame.strideBytes);
-    out.data.reserve(frame.data.size());
-    for (std::uint8_t byte : frame.data) {
-        out.data.push_back(byte);
-    }
+    out.data = bytesToVec(frame.data);
     return out;
 }
 
@@ -1155,11 +1159,7 @@ void BackendBridge::set_processed_preview_enabled(bool enabled) {
 }
 rust::Vec<std::uint8_t> BackendBridge::fetch_processed_preview() {
     const auto bytes = impl_->facade.fetchProcessedPreviewPacket();
-    rust::Vec<std::uint8_t> out;
-    out.reserve(bytes.size());
-    for (const auto byte : bytes)
-        out.push_back(byte);
-    return out;
+    return bytesToVec(bytes);
 }
 
 BridgeCommandResult BackendBridge::background_calibration_command(rust::Str json) { return toBridgeResult(impl_->facade.backgroundCalibrationCommandJson(toStd(json))); }
@@ -1180,9 +1180,8 @@ rust::String BackendBridge::pulse_generator_status() {
     return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
 }
 rust::Vec<uint8_t> BackendBridge::render_review_overlay(rust::Str json) {
-    rust::Vec<uint8_t> output;
-    try {for(const auto byte:impl_->facade.renderReviewOverlayJson(toStd(json)))output.push_back(byte);}catch(const std::exception&) {}
-    return output;
+    try {return bytesToVec(impl_->facade.renderReviewOverlayJson(toStd(json)));}catch(const std::exception&) {}
+    return {};
 }
 
 BridgeFrame BackendBridge::fetch_review_reanalysis_preview(rust::Str json) {

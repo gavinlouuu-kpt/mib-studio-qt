@@ -339,3 +339,10 @@ MindVision keeps its profile-based overview; Aravis cameras gained one (see
 `camera_alignment_commands_without_overview_camera` covers a camera without
 an overview (mock).
 
+**Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
+processed previews, review overlays) through the Rust function
+`bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`
+crosses the bridge per element: a 509 KB full-field frame took ~75 ms on the
+PZ7035's Cortex-A9 that way (88 ms per pull, ~10 fps in the browser; now
+27 ms per pull, display ~26 fps = all delivered images).
+

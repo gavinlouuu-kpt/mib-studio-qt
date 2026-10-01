@@ -195,8 +195,10 @@ release saves, as Qt saves on move) and X/Y/W/H fields with "Save camera ROI";
 limit) -> >= M images/s here (limit, bands)". For other cameras the fields keep
 setting the processing ROI. Verified on the PZ7035 through the browser:
 816x624 lit overview, window dragged to (232, 356) and saved, Experiment
-showed that 512x96 window. The browser displays the full field at ~10 fps
-(509 KB packets over the socket) although ~25 images/s are delivered.
+showed that 512x96 window. The browser shows the full field at ~26 fps (all
+the producer delivers at the 830 Hz preset) and the preview at the 30 fps
+display rate. Before `bytes_to_vec` (see [[Rust-Bridge]]) the full field was
+held at ~10 fps by per-byte frame copies in the bridge.
 `vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
 `src-tauri/target`'s cxx symlink loop hung `vitest run`.
 
