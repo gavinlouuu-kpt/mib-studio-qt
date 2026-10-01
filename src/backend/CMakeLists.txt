@@ -53,6 +53,8 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/Tools.cpp
 )
+# Where the science runs (SciencePlacement.cpp is in this library): ON for the PZ7035 PS.
+target_compile_definitions(mib_processing PUBLIC MIB_PL_SCIENCE=$<BOOL:${MIB_PL_SCIENCE}>)
 
 # No Q_OBJECT usage in this target, and it must not require the Qt moc
 # toolchain to build standalone (e.g. for a Qt-less Python wheel build --
@@ -333,7 +335,6 @@ set_target_properties(mib_backend PROPERTIES
 )
 
 target_compile_definitions(mib_backend PUBLIC
-    MIB_PL_SCIENCE=$<BOOL:${MIB_PL_SCIENCE}>
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
     MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
     MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"
