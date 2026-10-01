@@ -376,3 +376,120 @@ that no sandbox session can hold. Order matters: 1–3 are prerequisites for
   nm/readelf/openssl rehearsal of every new CI step.
 - Still open: the runbook above (A12, A13-live, B12, B13) and A7's ABI v2
   object-record marshalling.
+
+## Worker pass-off — 2026-07-15 (session 3): live gates executed
+
+This session provisioned the credentials, shipped the first real signed
+releases, ran the live desktop and Biowork rehearsals, and verified the
+Windows trust chain on real hardware. Both epic PRs
+([mib #244](https://github.com/KPT1020/mib-studio-qt/pull/244),
+[Biowork #118](https://github.com/gavinlouuu-kpt/Biowork-monorepo/pull/118))
+are **merged to `main`**.
+
+### Credentials and governance (provisioned, operator-owned)
+
+- **Linux Ed25519 signing identity** generated offline; private key in the
+  `Production` environment secret `LINUX_ED25519_SIGNING_KEY_PEM`; pin
+  variable `MIB_PROCESSING_CORE_ED25519_SPKI_SHA256` =
+  `94172d4c0651b1e1511b4e243e0acb8e005cd3aacedbac77a3a4609b76668946`.
+- **Windows Authenticode identity**: KPT organizational root CA + code-signing
+  leaf. Public root committed at `deploy/signing/kpt-mib-studio-root-ca.cer`
+  (thumbprint `4E932550441EC14691E4C3388CBF7B4F18A84862`; fleet installs it per
+  `deploy/signing/README.md`). PFX + password in `Production` secrets
+  `WINDOWS_SIGNING_CERTIFICATE_BASE64` / `_PASSWORD`; pin variable
+  `MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256` =
+  `0db49e05875c3ad96d52b84876bff1f44b68affede46282b98cfb663e6a8ba5f`. Offline
+  key material lives under the operator's `~/.mib-signing/`; **move it to
+  durable secure storage** — the GitHub secrets are write-only, so those files
+  are the only rotation/recovery copy.
+- **Governance**: `main` is branch-protected (5 always-run required checks,
+  1 review, no force-push, `enforce_admins` off as the single-maintainer
+  emergency path). The `Production` environment requires operator approval and
+  only deploys from `main` or `mib-processing-v*` tags. Recorded on #240.
+
+### A13 — Linux Production signing lane (landed)
+
+`python-wheel.yml` gained `sign-native-plugin-linux`: a tag-only,
+`Production`-gated job that refuses to sign unless the key's DER-SPKI matches
+the repository pin, produces and verifies the detached RFC 8032 signature over
+the exact artifact bytes, and replaces the rehearsal envelope in the sidecar
+with the production one. The release job now requires the signed `.so`/`.json`
+pair in both flat-asset allowlists. The Windows sign job imports the committed
+org root into the ephemeral runner via .NET `X509Store` (never `certutil` —
+it hangs on hosted images). Spec updated in
+`docs/architecture/processing-core-linux-signing.md`.
+
+### A12 — first real signed releases (published, verified)
+
+- **`mib-processing-v0.1.0`** and **`mib-processing-v0.2.0`** published to the
+  immutable R2 registry (`https://updates.yofo.bio`), channel-active 0.2.0,
+  history `[0.2.0, 0.1.0]`. Each carries a signed Windows DLL and a signed
+  Linux `.so`.
+- Both offline-verified: manifest SHA-256 and size match; the Linux `.so`
+  Ed25519 signature verifies against the compiled pin with stock OpenSSL; the
+  Windows DLL signer SPKI matched the repository pin in CI.
+- **Promote/rollback proven**: rolled the stable pointer to 0.1.0 then back to
+  0.2.0 via `processing-core-promote.yml` (byte-for-byte immutable promote),
+  history preserved throughout. Recorded on #240.
+- **Beta desktop rehearsal succeeded end-to-end on a Windows runner**
+  (`v1.0.6-beta.68e618b` + R2 beta channel). The **stable** desktop entrypoint
+  rehearsal remains open: it pushes a version commit to protected `main`, so it
+  needs the branch-protection ruleset swap the operator has not yet approved.
+
+### Windows verification on real hardware (2026-07-15)
+
+Verified the Authenticode trust decision on an actual Windows 11 VM — the one
+thing neither Linux nor a hosted CI runner can exercise as a clean
+first-trust: fail-closed (`UnknownError`) before the org root is trusted,
+`Valid` after, chain builds to the committed root, RFC 3161 timestamp intact,
+tamper rejected. The beta installer installs silently and the app backend
+boots with the processing subsystem enabled. **Finding: the beta desktop
+installer `.exe` is itself `NotSigned`** — only the core DLL is signed; confirm
+the stable installer is signed. Full evidence on #240. Not done: interactive
+Processing Core selector activation (GUI automation over the hypervisor console
+was unreliable; its trust primitive is the WinVerifyTrust proven above) and the
+true A12 steps 3–6 (live capture/experiment/replay) which need the microscope.
+
+### Biowork B12/B13 (complete)
+
+Ran the full live rehearsal against the real registry, real releases, MLflow,
+Docker, and a real 1.5 GB HDF5 dataset from the **unchanged** baked-v1
+orchestration image (no redeployment between version selections): concurrent
+channel-active v2 and exact-pin v1 with correct provenance and
+`drift=False`; two content-addressed cache generations cold, warm reuse with no
+repair generation; channel rollback affected only new unpinned runs; the
+scheduled bump workflow opened its first real draft PR
+([#119](https://github.com/gavinlouuu-kpt/Biowork-monorepo/pull/119)). Full
+evidence on [Biowork #116](https://github.com/gavinlouuu-kpt/Biowork-monorepo/issues/116).
+
+### Defects found and fixed by the live rehearsals
+
+Each was invisible to the Linux sandbox and only surfaced under real execution:
+
+1. Publisher CLI tests were coupled to the repository version, so the first
+   real version bump broke release CI (registry unharmed — fail-closed
+   ordering held). Fixed with a per-fixture pyproject.
+2. Desktop entrypoints installed no numpy for the conformance test.
+3. Two Conan-Qt offscreen-QPA deadlocks in `QApplication` bring-up on Windows
+   runners (the dialog test and the screenshot step) — both moved to the native
+   platform, screenshot step bounded + `continue-on-error`.
+4. The registry WAF rejects the default `Python-urllib` user-agent; the Biowork
+   version-check script was the only consumer missing a product UA.
+5. The Biowork bump workflow ran the orchestration image without its deployment
+   source mount, and lacked `actions: write` to dispatch the harness.
+6. A stray blank line in `mib_processing/__init__.py` made the bump tool treat
+   every no-op bump as changed, blocking `--create-tag`.
+
+### Residual (hand-off)
+
+- **Stable desktop rehearsal** — needs the operator's decision on swapping
+  `main`'s classic protection for an equivalent ruleset with an admin/Actions
+  bypass, so CI can push its version commit.
+- **A12 steps 3–6** — live microscope-hardware verification (capture,
+  experiment, replay overlays) and interactive selector activation.
+- **A13 residual** — distro-baseline validation of the dynamic OpenCV/spdlog
+  link surface.
+- **A7** — ABI v2 object-record marshalling for a fully swappable
+  science-changing core.
+- **Infra** — the Cloudflare WAF rule blocking `Python-urllib/*` on
+  `updates.yofo.bio`; keep the product-UA convention or add a WAF exception.

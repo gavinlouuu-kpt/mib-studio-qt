@@ -175,6 +175,21 @@ stubbing `MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL`, so `AppBackend::initialize`
 performed a real synchronous LUT-manifest fetch whose Windows proxy
 resolution exceeded the 30 s CTest timeout.
 
+## Live gates executed (2026-07-15, session 3)
+
+Both epic PRs (mib #244, Biowork #118) are merged to `main`. The first real
+signed releases `mib-processing-v0.1.0` and `v0.2.0` are published to the
+immutable R2 registry (channel-active 0.2.0), each with a signed Windows DLL
+and Linux Ed25519 `.so`, all offline-verified; promote/rollback was proven on
+the stable channel. The beta desktop rehearsal succeeded end-to-end on a
+Windows runner (`v1.0.6-beta.68e618b`). The Authenticode trust chain was
+verified on a real Windows 11 VM (fail-closed before the org root is trusted,
+`Valid` after, chain to the committed root, tamper rejected) — with the finding
+that the beta desktop installer `.exe` is itself unsigned. Biowork B12/B13 ran
+fully against real infrastructure. The full narrative, evidence links, the six
+rehearsal-surfaced defects, and the residual gates are in the runbook's
+**Worker pass-off — 2026-07-15 (session 3)** section.
+
 ## Pass-off pointer (2026-07-14)
 
 The exact branch/worktrees, implementation commits, active Windows CI run and
