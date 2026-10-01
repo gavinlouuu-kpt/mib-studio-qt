@@ -152,6 +152,12 @@ these changes:
 (board-owned pattern producer on x86 through Aravis's GenTL consumer).
 **Exit**: `AravisCamera` streams from the pattern producer at 25 fps on x86; then from the board
 producer on the PS. Evidence: target-software, then physical.
+**Status 2026-10-01** (`feat/yofo-aravis-camera`, e15b115, 62f68b1): adapter done except chunk
+timestamps and `frame_id` (the producer has no chunk data; its buffers carry CLOCK_MONOTONIC
+receipt stamps, declared `HostSteadyNs` / `TransportReceipt`) and the `CameraControlService`
+feature path (S5). `sessionInfo()` reports applied region, rate, exposure, clamps, limit reason,
+bands and the delivered model. `camera.aravis_pz7035_pattern` covers the contract on x86. Exit
+met physically on the PS (see S6 status).
 
 ## S5. Remote UI transport and rebrand — 3 weeks
 
@@ -187,6 +193,31 @@ cross-compiling with the SDK container; RSS and idle CPU measured on the board a
 the E0 manifest (`process_rss_budget_bytes`).
 **Exit**: `backend.lifecycle_smoke` and `integration.e2e_headless_experiment_smoke` (mock camera,
 replay provider) pass on the board. Evidence: target-software (ARM).
+**Status 2026-10-01** (decided with the Fable agent: S6 before the S5 server): preset
+`linux-armv7-yocto` + `cmake/toolchains/yocto-armv7.cmake` against the SDK from
+`bitbake yofo-image -c populate_sdk` (pz7035-imx426 meta-yofo b69881c: runtime libraries in the
+image, OpenCV trimmed to core/imgproc/imgcodecs/videoio with TIFF/PNG/JPEG). HDF5 comes from the
+SDK (the backend's recording service needs it); `MIB_ENABLE_PZ_MIB`, the `FrameStore` target
+profile and the CI lane are not done. `armv7` is in the native-core name table.
+On the PS (Cortex-A9, yofo-image RAM root, live camera through the producer's UIO backend),
+`scripts/yofo/target_smoke.sh` passes all 11 steps: `backend_lifecycle_smoke_test`,
+`experiment_coordinator_test`, `mock_camera_smoke_test`, `processing_pipeline_smoke_test`, the
+four Aravis runner tests, `mib_backend_smoke_test`, and `yofo_preview_soak` on the preview and the
+Overview. There is no `e2e_headless_experiment_smoke` target on `dev/react-tauri`;
+`experiment_coordinator_test` stands in.
+10-minute soaks on the PS (`yofo_preview_soak`, LatestFrame, one process holding the producer):
+
+| Stream | Images/s | Producer model | Lost / underruns | RSS | CPU (both cores = 200 %) |
+|---|---|---|---|---|---|
+| ROI 1 preview 512x96 at 1 kHz | 387.5 (232,481 in 600 s) | 333.4 | 0 / 0 | 7.0 MiB, flat after the first minute | 84 % |
+| Overview 816x624 at 830 Hz | 25.9 (15,522) | 25.2 | 0 / 0 | 11.4 MiB, flat | 64 % |
+
+Most of the CPU is the producer copying bands out of the PL window (uncached reads); the largest
+gap between previews was ~27 ms. Idle RSS of the full backend is not measured yet (needs the S5
+server process).
+Producer fix found on the way (pz7035-imx426 7988317): the capture held the producer lock, so a
+LatestFrame consumer got 40 % of the delivered rate; the delivered-rate model was recalibrated on
+16 measured points (never above the measurement).
 
 ## S7. Manifests (W1) — 0.5 week
 
