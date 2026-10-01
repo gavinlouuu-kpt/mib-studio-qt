@@ -45,6 +45,9 @@ The default build remains dependency-free.
 The Fake consumer validates the Aravis side. The PZ7035 producer
 (`pz7035-imx426` `gentl/`) runs on x86 as a pattern device
 (`PZ_GENTL_PATTERN=1`, `GENICAM_GENTL64_PATH` pointing at its `.cti`) and on
-the PS against the PL over UIO.
+the PS against the PL over UIO. `tools/yofo_preview_soak` (built with Aravis)
+is the on-target smoke/soak: it prints the applied settings and the producer's
+rate model, then reports delivered images/s against the model, queue
+telemetry, RSS and CPU as JSON lines (see [[../build-and-run/Build]]).
 
 **Related:** [[ICamera]], [[../services/CaptureService]], [[../architecture/AppBackend]]

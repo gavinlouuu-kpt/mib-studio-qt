@@ -49,10 +49,11 @@ int main()
     MIB_EXPECT(!info.exposureClamped && std::abs(info.exposureUs - 900.0) < 1.0, "900 us is applied");
     MIB_EXPECT(info.pzFeatures && info.bandCount == 1, "a ROI 1 image is one band");
     // Previews are samples while the PL processes every frame: at 1 kHz the
-    // 1.6 ms readout outlasts the blanking, so every other frame is caught
-    // (1 / (2 x 1 ms + 1.4 ms); 293 images/s measured on hardware).
+    // PS copy and re-arm (1.9 ms) plus the active time spans three frame
+    // periods, so the producer reports at least 333 images/s (417 measured on
+    // the PS, pz7035-imx426 gentl/README.md).
     MIB_EXPECT(info.deliveredFrameRateLimit == "BandReadout", "readout binds the preview rate");
-    MIB_EXPECT(std::abs(info.deliveredFrameRateHz - 294.0) < 5.0, "about 294 preview images/s");
+    MIB_EXPECT(std::abs(info.deliveredFrameRateHz - 333.4) < 2.0, "at least 333 preview images/s");
     // 96 lines would allow ~5.3 kHz; the classical profile caps the sensor at 5 kHz.
     MIB_EXPECT(std::abs(info.frameRateMaxHz - 5000.0) < 1.0, "96-line maximum is the 5 kHz profile cap");
     MIB_EXPECT(info.frameRateLimitReason == "Profile", "the limit reason is reported");
@@ -109,7 +110,7 @@ int main()
     MIB_EXPECT(!info.frameRateClamped, "830 Hz is within the full-field maximum");
     MIB_EXPECT(info.deliveredFrameRateLimit == "BandReadout", "band readout binds at the preset");
     MIB_EXPECT(info.deliveredFrameRateHz > 15.0 && info.deliveredFrameRateHz < 30.0,
-               "about 23 full-field images/s are delivered (measured on hardware)");
+               "about 25 full-field images/s are delivered (25.9 measured on the PS)");
     Frame image;
     MIB_REQUIRE(field.grabFrame(image), "full-field image delivered");
     MIB_EXPECT(image.width == 816 && image.height == 624, "image has the full field");

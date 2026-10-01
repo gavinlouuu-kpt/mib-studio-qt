@@ -103,6 +103,30 @@ registers `camera.aravis_pz7035_pattern`, which runs the adapter against the
 PZ7035 producer's pattern device (no hardware). See [[../camera/AravisCamera]]
 and [[../task/2026-09-27-aravis-framework]].
 
+### ARMv7 cross-build for the PZ7035 PS (YOFO Studio)
+
+The `linux-armv7-yocto` preset cross-compiles the backend, the CTest runner and
+`yofo_preview_soak` for the Cortex-A9 with the YOFO Yocto SDK
+(pz7035-imx426 `yocto/meta-yofo`: `bitbake yofo-image -c populate_sdk`; the
+image carries the matching runtime libraries). Aravis on; Sentry and MindVision
+off; OpenCV, spdlog, SQLite, OpenSSL and HDF5 from the SDK sysroot.
+
+```bash
+. <sdk>/environment-setup-cortexa9t2hf-neon-amd-linux-gnueabi   # in a clean shell
+cmake --preset linux-armv7-yocto && cmake --build --preset linux-armv7-yocto-build -j16
+scripts/yofo/deploy_target.sh 20   # strips, copies to the PS, runs scripts/yofo/target_smoke.sh
+```
+
+`cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
+HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
+dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the
+host's `h5cc` and compile against host headers, so the toolchain skips the
+config and gives FindHDF5 a failing wrapper, which makes it search the sysroot.
+`target_smoke.sh` runs the backend and Aravis lifecycle tests from the runner,
+then `yofo_preview_soak` against the live producer (preview and Overview);
+`deploy_target.sh` reads `YOFO_TARGET`, `YOFO_SSH_OPTS` and
+`YOFO_SUDO_PASSWORD_FILE`.
+
 | Target | Kind | Purpose |
 |---|---|---|
 | `mib_processing` | STATIC library | Qt-free processing core: `ProcessingService`, `EModulusLut`, `BatchMaskSources`, `Hdf5Service`, `FrameStore`, `Tools`, `CrashStateMirror`. Links only OpenCV + HDF5 + spdlog + STL. |

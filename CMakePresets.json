@@ -67,6 +67,29 @@
       }
     },
     {
+      "name": "linux-armv7-yocto",
+      "displayName": "Linux ARMv7 backend (YOFO Yocto SDK)",
+      "description": "Backend + CTest runner cross-compiled for the PZ7035 PS (YOFO Studio impl spec S6). Source the SDK's environment-setup-* first. Aravis on; Sentry and MindVision off; HDF5 from the SDK (hdf5-dev).",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/linux-armv7-yocto",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/yocto-armv7.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "BUILD_TESTING": "ON",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_ARAVIS": "ON",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
       "name": "linux-sentry-release",
       "displayName": "Linux Release (Conan, sentry-native)",
       "description": "linux-release with its own binary dir and Conan toolchain under build/linux-sentry (sentry-native variant).",
@@ -134,6 +157,11 @@
       "name": "linux-backend-only-build",
       "displayName": "Build Linux Backend-only",
       "configurePreset": "linux-backend-only"
+    },
+    {
+      "name": "linux-armv7-yocto-build",
+      "displayName": "Build Linux ARMv7 backend",
+      "configurePreset": "linux-armv7-yocto"
     },
     {
       "name": "linux-sentry-release-build",
