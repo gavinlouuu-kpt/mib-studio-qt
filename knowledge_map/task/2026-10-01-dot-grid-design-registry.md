@@ -37,5 +37,13 @@ Verification:
 - Timing (cloud container, Release): 1/2/4/8 same-geometry designs all decode
   in 120–160 ms; a second dot geometry gives 360–420 ms.
 
+- Sanitizers: the dot-grid tests now pass the TSan lane. OpenCV's TBB
+  `parallel_for_` produced false races (worker alloc vs caller free); new
+  `tests/support/opencv_tsan.h` serializes OpenCV under TSan only. The
+  service burst check became a ratio gate (burst time < half of decoding
+  every frame) instead of "> 20 frames in 150 ms".
+- Real app: `screenshot_tour` on Wafer_soRT mock frames shows the overlay
+  "Wafer_soRT DC sorting chip (30 um channels)   chip R4C2" with the pose.
+
 Follow-ups:
 - In-app "add design" dialog; persist `designId` with the pose in HDF5.

@@ -10,6 +10,7 @@
 #include "backend/processing/DotGridDecoder.h"
 #include "backend/processing/DotGridRegistry.h"
 #include "support/assert.h"
+#include "support/opencv_tsan.h"
 
 #include <cmath>
 #include <cstdio>
@@ -48,6 +49,7 @@ bool rejects(const std::string& text, const std::string& expectFragment) {
 } // namespace
 
 int main(int argc, char** argv) {
+    mib::test::serializeOpenCvUnderTsan();
     const std::string chips =
         R"(, "chips": [{"name": "R0C0", "x_min_um": 5000, "y_min_um": 5000, "x_max_um": 15000, "y_max_um": 15000},
                        {"name": "R0C1", "x_min_um": 20000, "y_min_um": 5000, "x_max_um": 30000, "y_max_um": 15000}])";

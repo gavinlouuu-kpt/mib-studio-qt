@@ -4,6 +4,7 @@
 #include "backend/processing/DotGridCodebook.h"
 #include "backend/processing/DotGridDecoder.h"
 #include "support/assert.h"
+#include "support/opencv_tsan.h"
 
 #include <cmath>
 #include <cstdio>
@@ -39,6 +40,7 @@ bool checkPose(const DecodeResult& r, const ViewPose& pose, double tolUm, const 
 } // namespace
 
 int main() {
+    mib::test::serializeOpenCvUnderTsan();
     CodebookParams p;
     p.seed = 7;
     p.columns = 3700;

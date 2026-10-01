@@ -6,6 +6,7 @@
 #include "backend/processing/DotGridDecoder.h"
 #include "backend/services/DotGridService.h"
 #include "support/assert.h"
+#include "support/opencv_tsan.h"
 #include "support/watchdog.h"
 
 #include <atomic>
@@ -59,6 +60,7 @@ void push(backend::playback::FrameStore& store, const cv::Mat& img, uint64_t ts)
 } // namespace
 
 int main() {
+    mib::test::serializeOpenCvUnderTsan();
     mib::test::Watchdog wd(30);
     wd.mark("setup");
 
@@ -117,24 +119,35 @@ int main() {
     MIB_EXPECT(service.lastDecodeMs() > 0.0, "decode time recorded");
 
     // Burst of frames from a producer thread: the service samples the latest,
-    // never blocks the producer, and its pose follows the newest frame.
+    // never blocks the producer, and its pose follows the newest frame. The
+    // gate is a ratio, not a frame count per wall-clock window (sanitizer
+    // builds copy a 1920x1200 frame far slower): the burst must finish in
+    // well under the time a decode of every frame would take.
     wd.mark("burst");
+    constexpr int kBurst = 60;
+    const double decodeMs = service.lastDecodeMs();
+    const uint64_t writtenBefore = store->totalWritten();
+    double burstMs = 0.0;
     {
-        std::atomic<bool> stopProducer{false};
         const cv::Mat burstFrame = frameAt(cb, 40000.0, 52000.0, 12.0, 2); // render once, push many
+        const auto t0 = std::chrono::steady_clock::now();
         std::thread producer([&] {
             uint64_t ts = 2000;
-            while (!stopProducer.load()) {
+            for (int k = 0; k < kBurst; ++k) {
                 push(*store, burstFrame, ts++);
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         });
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
-        stopProducer.store(true);
         producer.join();
+        burstMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                      .count();
     }
     const uint64_t written = store->totalWritten();
-    MIB_EXPECT(written > 20, "producer was never blocked by the decoder");
+    MIB_EXPECT(written == writtenBefore + kBurst, "every burst frame was committed");
+    MIB_EXPECT(burstMs < 0.5 * kBurst * decodeMs,
+               "producer was never blocked by the decoder: burst " + std::to_string(burstMs) +
+                   " ms vs " + std::to_string(kBurst) + " decodes of " +
+                   std::to_string(decodeMs) + " ms");
     push(*store, frameAt(cb, 61000.0, 22000.0, -33.0, 3), 9999);
     const size_t before = [&] {
         std::lock_guard<std::mutex> lock(sink.m);
