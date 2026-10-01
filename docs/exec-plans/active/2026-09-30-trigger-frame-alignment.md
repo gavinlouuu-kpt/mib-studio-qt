@@ -97,15 +97,24 @@ and only the host receipt stamp and a hardware loopback can bridge the gap.
 - 2026-09-30: the readiness gate never writes to the instrument — an
   unarmed generator is reported with the menu/SCPI remedy, not fixed
   silently.
+- 2026-10-01: SCPI over LAN (port 5025), not USB — no NI-VISA dependency on
+  the rig PC; the VISA transport stays as an option. Loopback input is
+  TTLIO11 (same Internal I/O 1 header as the TTLIO12 sort output, TTL
+  levels, valid `LineInputToolSource`). EGrabber delivery must use
+  `processEvent<IoToolboxData>` on a dedicated thread because the camera
+  holds `EGrabber<CallbackOnDemand>` and pops frames.
 
 ## Progress
 
 - [x] Software layer (this plan's first PR).
-- [ ] Rig wiring: confirm which rear BNC takes the Ext-Trig input (manual
-      §rear panel says TRIG IN/OUT, §8.4.4.13 says PULSE IN/OUT with Trigger
-      Out auto-off). If PULSE OUT is free: PULSE OUT → Coaxlink LIN input;
-      else a T off the TTL line → Coaxlink LIN input (PC→grabber edge is
-      hardware-stamped; add `rf_generator_trigger_delay_s` for the burst).
+- [x] Rig wiring decided (2026-10-01, rear-panel photo): the sort coax is in
+      TRIG IN/OUT and PULSE IN/OUT is free → PULSE OUT → Coaxlink Internal
+      I/O 1 TTLIO11 (header pin 19 / 1625 DB25 breakout pin 22, GND 20 / 10).
+      LAN chosen for the SCPI link. Hand-over for the rig agent:
+      [`2026-10-01-trigger-frame-alignment-rig-handoff.md`](2026-10-01-trigger-frame-alignment-rig-handoff.md).
+- [ ] Rig: cable + scope confirmation that PULSE OUT pulses once per
+      trigger in Ext-Trig mode (manual is ambiguous); fallback = BNC T off
+      TTLIO12.
 - [ ] EGrabber line-event implementation + on-rig evidence
       (`docs/evidence/`), scope check of PC edge vs PULSE OUT.
 - [x] RfGeneratorService + provenance attributes (2026-09-30).

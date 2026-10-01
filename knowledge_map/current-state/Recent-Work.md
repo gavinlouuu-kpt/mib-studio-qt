@@ -26,9 +26,12 @@ readiness gate, [[../architecture/ExperimentCoordinator]]) and stores the
 readback as `rf_generator_*` attributes. Guards:
 `backend.rf_generator_service` (fake instrument + real LAN transport over
 loopback), the readiness test, the round-trip test. Hardware follow-ups
-(Coaxlink loopback of the SSG PULSE OUT — or a T off the TTL if that BNC is
-the trigger input — and the MindVision clock fit) are in
-`docs/exec-plans/active/2026-09-30-trigger-frame-alignment.md`.
+(Coaxlink loopback of the SSG PULSE OUT into TTLIO11 — wiring decided
+2026-10-01 — the `EGrabberCamera::setLineEventCallback` implementation and
+the MindVision clock fit) are in
+`docs/exec-plans/active/2026-09-30-trigger-frame-alignment.md`; the rig
+agent's hand-over with pins, SSG settings, config and acceptance evidence is
+`docs/exec-plans/active/2026-10-01-trigger-frame-alignment-rig-handoff.md`.
 
 ## 2026-09-26 — Monitoring density (KDE) moved into the backend
 
