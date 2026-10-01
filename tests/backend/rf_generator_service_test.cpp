@@ -256,7 +256,12 @@ int main()
         MIB_EXPECT(!none.connect() && none.lastError() == LinkError::OpenFailed, "refused port -> OpenFailed");
         RfGeneratorService bad;
         bad.setConfig(cfg("lan", ""));
-        MIB_EXPECT(!bad.connect() && bad.lastError() == LinkError::OpenFailed, "empty host -> OpenFailed");
+        MIB_EXPECT(!bad.connect() && bad.lastError() == LinkError::NotConfigured,
+                   "empty LAN address (bundled default) -> NotConfigured");
+        MIB_EXPECT(bad.lastErrorMessage().find("IP address") != std::string::npos,
+                   "message tells the operator to set the SSG IP");
+        bad.setConfig(cfg("lan", ":5025"));
+        MIB_EXPECT(!bad.connect() && bad.lastError() == LinkError::OpenFailed, "port without host -> OpenFailed");
         // Unplugged / mis-addressed instrument: a non-routable address must
         // fail within the transport's connect bound, not the OS timeout (a
         // readiness poll blocks on this).

@@ -73,5 +73,11 @@
     "display_fps": 60,
     "safe_shutdown_voltage": 0.0,
     "focus_direction": true,
-    "pixel_to_micron_factor": 0.4886
+    "pixel_to_micron_factor": 0.4886,
+    "rf_generator": {
+        "enabled": false,
+        "transport": "lan",
+        "resource": "",
+        "timeout_ms": 1000
+    }
 }

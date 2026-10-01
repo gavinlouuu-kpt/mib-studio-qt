@@ -42,6 +42,14 @@ attributes so the file says what the sorter actually did.
   from the `rf_generator` block of the application config JSON
   ([[../architecture/AppBackend]]`::setLastConfigJson`):
   `{"rf_generator":{"enabled":true,"transport":"usb","resource":"auto","timeout_ms":1000}}`.
+  The bundled `resources/defaults/config.json` ships the block **disabled**
+  (`"transport":"lan","resource":""`); the default-merge in
+  `AppConfigWatcher` adds it to existing user configs on upgrade, and the
+  Config tab shows it as an editable `rf_generator` section (generic
+  flattened-JSON tables — no dedicated UI). To enable on a rig: set
+  `enabled` true and `resource` to `"<SSG IP>:5025"` (SSG: System >
+  Interface > LAN). Enabled with an empty LAN address reports
+  NotConfigured with that instruction instead of a failed connect.
   `resource`: `"auto"` (first USBTMC instrument), a VISA string
   (`USB0::0xF4EC::…::INSTR`), a device path (`/dev/usbtmc0`), or
   `host[:port]` (LAN raw socket, default 5025).

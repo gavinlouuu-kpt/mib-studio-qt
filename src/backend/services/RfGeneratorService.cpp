@@ -144,6 +144,14 @@ bool RfGeneratorService::connect() {
         fail(LinkError::NotConfigured, "RF generator link is not enabled in the configuration");
         return false;
     }
+    if ((config_.transport == "lan" || config_.transport == "tcp" || config_.transport == "socket") &&
+        trim(config_.resource).empty()) {
+        // The bundled default ships the block with an empty address; say
+        // what to fill in rather than reporting a failed connect.
+        fail(LinkError::NotConfigured,
+             "rf_generator.resource is empty: set it to the SSG's IP address (e.g. \"192.168.1.50:5025\")");
+        return false;
+    }
     link_ = factory_(config_.transport);
     if (!link_) {
         fail(LinkError::TransportUnavailable, "unknown RF generator transport '" + config_.transport + "'");

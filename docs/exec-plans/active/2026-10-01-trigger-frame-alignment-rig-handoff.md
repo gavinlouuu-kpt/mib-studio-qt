@@ -105,8 +105,9 @@ On the SSG (front panel or SCPI over LAN):
 
 ## 4. Application config
 
-Add to the application config JSON (the one `AppBackend::setLastConfigJson`
-receives; the frontend passes the whole config):
+The bundled default config now carries a **disabled** `rf_generator` block
+and the app merges it into the existing user `config.json` on first start of
+this build. In MIB Studio's **Config tab**, section `rf_generator`, set:
 
 ```json
 {"rf_generator":{"enabled":true,"transport":"lan","resource":"<SSG IP>:5025","timeout_ms":1000}}
@@ -116,7 +117,17 @@ The SSG's IP is under its System > Interface > LAN. With sorting enabled
 (`enable_target_group`), the readiness panel's `rf.generator` gate must read
 `pass` with the `*IDN?` string, `trigger EXTernal`, delay and width in the
 detail. A `fail` names the link error or the mis-armed setting with its menu
-path. There is no frontend UI for this block yet (§7).
+path. `enabled: true` with an empty address reports "set it to the SSG's IP
+address". No dedicated UI beyond the Config-tab table (§7).
+
+**Loopback status (2026-10-01):** on this rig both TTL lines are taken —
+TTLIO12 (terminals 17/18) drives the SSG TRIG IN, TTLIO11 (terminals 25/24,
+yellow/green) drives the LED — so the loopback is **parked**; the user chose
+to only make MIB Studio aware of the generator for now. When resumed, the
+candidates are: isolated input IIN11 (HD26 pins 3 + / 12 −, ≥ 10 µs pulses,
+≤ 50 kHz, opto delay), or TTLIO21 on the card's Internal I/O 2 header via a
+1625/3304 cable (full-speed TTL, needs the PC opened). §3/§5/§6 below still
+describe the TTLIO11 plan and must be re-targeted to the chosen input.
 
 ## 5. The job: `EGrabberCamera::setLineEventCallback`
 
