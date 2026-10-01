@@ -182,6 +182,21 @@ CMake project/targets, `mib_processing_*`, `MIB_*`, `MIBF`.
 mock WS server; `frontend.review_parity` unchanged.
 **Exit**: browser on the bench PC runs a full mock experiment against the backend on x86, then on
 the PS. Evidence: target-software, then physical.
+**Status 2026-10-01** (`feat/yofo-remote-server`, f3e30f0..ec560bb; decided with the Fable agent:
+one command layer, two transports): the Tauri command bodies are in `crates/mib-app-commands`
+(Tauri keeps typed shims; `dispatch` runs any command by name with the `invoke` arguments);
+`crates/mib-bridge-server` (`yofo-studio-server`, axum) implements the protocol above with
+server-pushed events (the server alone drains the backend queue), binary replies prefixed by the
+request id, stop-and-save after 5 s without clients, and the desktop platform commands answered
+from its data directory. The frontend reaches either transport through `desktop/src/transport`
+(dialogs become prompts for instrument paths in a browser). Verified: the full UI in headless
+Chromium against the x86 server (mock frames at 30 fps), and against the ARMv7 server on the PS
+with live, lit IMX426 previews through Aravis. Not done: the Overview rate UI and ROI 1 editor,
+the rebrand, a camera-feature path in `CameraControlService` (interim `MIB_ARAVIS_FPS` /
+`MIB_ARAVIS_EXPOSURE_US` / `MIB_ARAVIS_REGION`), a full experiment over the socket. Found: the
+backend pulls every delivered preview (~400/s, ~90 % of the PS's CPU) while the UI shows 30/s, so
+the producer needs a preview-rate cap; after a UI session the server holds 266 MiB
+(desktop-sized buffers).
 
 ## S6. ARMv7 build (E1 #445) — 1.5 weeks
 
