@@ -251,6 +251,9 @@ namespace frontend
         FrameViewerDialog *framePane_ = nullptr;
         QLabel *framePaneTitle_ = nullptr;
         int paneFrame_ = -1; // frame the pane currently shows (valid set)
+        bool paneStale_ = false;      // a selection changed behind the modal viewer
+        bool modalViewerOpen_ = false;
+        bool settingSelection_ = false;
         std::function<void(int, bool)> frameViewerSinkForTests_;
         // Stored KDE core contours of the open file (loops in µm² /
         // deformability) and the series drawing them on the scatter.

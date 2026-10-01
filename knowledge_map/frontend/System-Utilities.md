@@ -252,9 +252,12 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   moves the axes. `hoverMoved` fires when no press is pending.
   `setResetOnDoubleClick(false)` hands double-click to the owner
   (`plotDoubleClicked`); `resetZoomAction()` is a "Reset zoom" `QAction` for
-  context menus; `cancelGesture()` drops a pending press or pan (a leave with
-  no button held does the same, so a release swallowed by a dialog never
-  leaves a "sticky" pan). Only a left double-click resets. Guard:
+  context menus; `cancelGesture()` drops a pending press or pan; a leave with
+  no button held, or a move whose `buttons()` no longer include the pressed
+  one (release taken by a context menu or modal while the pointer stayed
+  over the view), does the same, so a lost release never leaves a "sticky"
+  pan. `markUserZoomed()` lets an owner that restored axis ranges itself
+  re-arm the user-zoomed state. Only a left double-click resets. Guard:
   `frontend.zoomable_chart_view` (synthesized events via
   `tests/support/qt_mouse.h`; the tree has no QtTest).
 - **`RunStatusWidget`** (issue #363) — glyph + `ElidingLabel` bound to a

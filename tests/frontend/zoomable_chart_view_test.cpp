@@ -166,6 +166,21 @@ int main(int argc, char* argv[])
     mouse::move(&view, centre + QPointF(threshold * 9.0, threshold * 2.0));
     MIB_EXPECT(same(rangeOf(x, y), afterLeave), "a later move without a button does not pan");
 
+    // A release lost while the pointer stays over the view (context menu,
+    // modal): the next move with the button up ends the gesture, no pan.
+    view.resetZoom();
+    clicked.clear();
+    mouse::press(&view, centre);
+    mouse::move(&view, centre + QPointF(threshold * 3.0, 0), Qt::LeftButton);
+    MIB_EXPECT(view.isPanning(), "pan armed");
+    const Range beforeLost = rangeOf(x, y);
+    mouse::move(&view, centre + QPointF(threshold * 8.0, threshold * 4.0)); // no button held
+    MIB_EXPECT(!view.isPanning() && same(rangeOf(x, y), beforeLost), "button-up move ends the pan without panning");
+    mouse::press(&view, centre);
+    mouse::move(&view, centre + QPointF(threshold * 5.0, 0)); // release lost before the threshold
+    MIB_EXPECT(!view.isPanning() && same(rangeOf(x, y), beforeLost) && clicked.isEmpty(),
+               "a pending press with the button up neither pans nor clicks");
+
     // cancelGesture() before a dialog takes input.
     clicked.clear();
     mouse::press(&view, centre);

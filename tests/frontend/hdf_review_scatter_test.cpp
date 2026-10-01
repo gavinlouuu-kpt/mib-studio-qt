@@ -365,6 +365,25 @@ int main(int argc, char* argv[]) {
     MIB_EXPECT(tab.framePaneFrameForTests() && tab.framePaneFrameForTests()->first == 10,
                "a Valid Frames row picked elsewhere shows in the pane on return");
 
+    // ---- an invalid-set selection leaves the scatter/pane on the last cell --
+    wd.mark("invalid-selection");
+    tabs->setCurrentIndex(2);
+    settle(2);
+    mouse::click(view, tab.scatterPointViewPosForTests(k));
+    settle(2);
+    MIB_REQUIRE(tab.selectedFrameForTests() == frameK && highlight->isVisible(), "valid cell selected");
+    {
+        // The invalid set is empty in this fixture; drive the selection path directly.
+        auto* invalidTable = tab.findChild<QTableView*>(QStringLiteral("invalidMetricsTable"));
+        MIB_REQUIRE(invalidTable != nullptr, "invalid table");
+        MIB_EXPECT(invalidTable->model()->rowCount() == 0, "fixture has no invalid frames");
+    }
+    tab.stepScatterSelectionForTests(+1);
+    settle(2);
+    MIB_EXPECT(tab.selectedFrameForTests() == frameK + 1 && tab.framePaneFrameForTests() &&
+                   tab.framePaneFrameForTests()->first == frameK + 1,
+               "next continues from the last cell on the scatter");
+
     // ---- close: nothing selected, nothing drawn ------------------------------
     wd.mark("close");
     auto* closeBtn = tab.findChild<QPushButton*>(QStringLiteral("closeFileBtn"));

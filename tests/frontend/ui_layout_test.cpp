@@ -160,10 +160,11 @@ int main(int argc, char* argv[])
         auto* reviewPath = window->findChild<frontend::ElidingLabel*>(QStringLiteral("reviewFilePathLabel"));
         if (reviewPath) reviewPath->setText(QStringLiteral("/very/long/") + QString(1500, QLatin1Char('p')) + QStringLiteral("/recording.h5"));
         settle(6);
-        // Visiting Overview auto-started the camera, whose controller reports
-        // "Camera running" asynchronously and may replace the text during the
-        // settle above. Re-apply it, lay out and paint with no other events
-        // in between, so the checks see the long text.
+        // Visiting Overview auto-started the camera; its controller reports
+        // "Camera running" from a GUI-thread timer poll, i.e. only through
+        // the event loop, and may replace the text during the settle above.
+        // Re-apply it, then lay out (LayoutRequest only) and paint
+        // synchronously: no timer or queued event can run before the checks.
         status->setText(longStatus);
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         status->repaint();

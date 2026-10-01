@@ -38,6 +38,25 @@ Notes: [[../frontend/HdfReviewTab]] ("Scatter interaction and frame pane"),
 - No QtTest in the tree: `tests/support/qt_mouse.h` sends mouse/wheel events
   to the view's viewport; `QSignalSpy` replaced by lambda counters.
 
+## Review pass (2026-10-01)
+
+`/code-review` on the branch found nine items; fixed: a lost release with
+the pointer still over the chart could start a button-less pan (now a move
+with the button up ends the gesture); double-click lacked the export guards
+and the export restore dropped the user-zoomed flag; an invalid-set
+selection cleared the pane but left the highlight (both now follow the last
+valid cell); the modal viewer's prev/next read each frame twice (pane is
+stale behind the modal, catches up on close) and `setSelectedFrame`
+re-entered itself via `selectionChanged`; Export Charts duplicated
+`renderChartSnapshots`; tooltip and pane title numbered cells by valid-set
+position while the viewer and CSV use `ProcessedFrame::index`; splitter
+state was written to disk per drag pixel; a redundant coordinate vector.
+Not taken: rendering snapshots on an offscreen chart (the plan's
+save/restore is deliberate; revisit if a third redraw path appears), and
+"disable the camera in `ui_layout`" (the race was in the test's wait, and
+the controller's status update can only arrive through the event loop,
+which the fixed assertion no longer runs).
+
 ## Verification (Linux container, Ubuntu 24.04, system Qt 6.4.2, `linux-system-release`)
 
 - `frontend.zoomable_chart_view`, `frontend.hdf_review_scatter`,

@@ -22,6 +22,8 @@ public:
     bool isUserZoomed() const { return isUserZoomed_; }
     void resetZoom();
     void setDefaultRange(QValueAxis* axis, double min, double max);
+    // The owner restored a user zoom by setting the axis ranges itself.
+    void markUserZoomed();
 
     // Double-click resets the zoom (default). A view that gives double-click
     // its own meaning turns this off and handles plotDoubleClicked itself.

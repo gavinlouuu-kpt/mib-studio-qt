@@ -490,6 +490,11 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
 }
 
 HdfReviewTab::~HdfReviewTab() {
+    if (chartsSplitter_ && chartsRightSplitter_) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("Review/ChartsSplitter"), chartsSplitter_->saveState());
+        settings.setValue(QStringLiteral("Review/ChartsRightSplitter"), chartsRightSplitter_->saveState());
+    }
     // The core job owns its input by value; only make sure it cannot call back.
     if (coreWatcher_) {
         coreWatcher_->disconnect(this);
@@ -1200,6 +1205,11 @@ void HdfReviewTab::onTableSelectionChanged() {
 }
 
 void HdfReviewTab::setSelectedFrame(int frameIndex, bool valid) {
+    // Selecting the table row below re-enters through selectionChanged.
+    if (settingSelection_) return;
+    settingSelection_ = true;
+    struct Reset { bool& f; ~Reset() { f = false; } } reset{settingSelection_};
+
     if (frameIndex < 0) {
         selectedFrameIndex_ = -1;
         return;
@@ -1212,7 +1222,8 @@ void HdfReviewTab::setSelectedFrame(int frameIndex, bool valid) {
 
     selectedFrameIndex_ = frameIndex;
     selectedFrameValid_ = valid;
-    // The scatter and the frame pane follow the valid selection.
+    // The scatter highlight and the frame pane show the last *valid* cell
+    // chosen; an invalid-set selection changes neither.
     if (valid && !isRecordingMode_) {
         setScatterHighlight(frameIndex);
         refreshFramePane();
@@ -1712,9 +1723,12 @@ void HdfReviewTab::showFrameViewer(int frameIndex, bool valid) {
     connect(dialog, &FrameViewerDialog::requestPreviousFrame, this, [step]() { step(-1); });
     connect(dialog, &FrameViewerDialog::requestNextFrame, this, [step]() { step(+1); });
 
-    // Show dialog
+    // Show dialog. The pane (if the Charts tab is showing) catches up once.
     dialog->setAttribute(Qt::WA_DeleteOnClose);
+    modalViewerOpen_ = true;
     dialog->exec();
+    modalViewerOpen_ = false;
+    if (paneStale_) refreshFramePane();
 }
 
 void HdfReviewTab::onExportAll() {
@@ -2122,59 +2136,18 @@ void HdfReviewTab::onExportCharts() {
         return;
     }
 
-    QDir dir(dirPath);
+    // The same snapshots Export All embeds, written as files.
+    const QDir dir(dirPath);
     bool success = true;
-
-    // Full extent, no selection highlight; the user's view comes back below.
-    const ScatterViewState savedView = saveScatterView();
-    generateScatterPlot(validFrames_);
-    generateHistogram(validFrames_);
-    if (scatterHighlight_) scatterHighlight_->setVisible(false);
-    
-    // Export scatter plot
-    QString scatterPath = dir.filePath("scatter_plot.tiff");
-    QPixmap scatterPixmap = chartToPixmap(scatterPlotView_);
-    if (!scatterPixmap.isNull()) {
-        QImage scatterImage = scatterPixmap.toImage();
-        // Convert to RGB32 format for consistent handling
-        scatterImage = scatterImage.convertToFormat(QImage::Format_RGB32);
-        cv::Mat scatterMat(scatterImage.height(), scatterImage.width(), CV_8UC4, 
-                          const_cast<uchar*>(scatterImage.constBits()), 
-                          scatterImage.bytesPerLine());
-        cv::Mat scatterBGR;
-        cv::cvtColor(scatterMat, scatterBGR, cv::COLOR_RGBA2BGR);
-        if (!cv::imwrite(scatterPath.toStdString(), scatterBGR)) {
-            SPDLOG_WARN("Failed to write scatter plot TIFF: {}", scatterPath.toStdString());
+    for (const auto& [name, image] : renderChartSnapshots(validFrames_)) {
+        const QString path = dir.filePath(QString::fromStdString(name));
+        if (image.empty() || !cv::imwrite(path.toStdString(), image)) {
+            SPDLOG_WARN("Failed to write chart TIFF: {}", path.toStdString());
             success = false;
         } else {
-            SPDLOG_INFO("Exported scatter plot {}x{} to {}", scatterBGR.cols, scatterBGR.rows, scatterPath.toStdString());
+            SPDLOG_INFO("Exported chart {}x{} to {}", image.cols, image.rows, path.toStdString());
         }
-    } else {
-        success = false;
     }
-    
-    // Export histogram
-    QString histogramPath = dir.filePath("ring_width_histogram.tiff");
-    QPixmap histogramPixmap = chartToPixmap(histogramView_);
-    if (!histogramPixmap.isNull()) {
-        QImage histogramImage = histogramPixmap.toImage();
-        // Convert to RGB32 format for consistent handling
-        histogramImage = histogramImage.convertToFormat(QImage::Format_RGB32);
-        cv::Mat histogramMat(histogramImage.height(), histogramImage.width(), CV_8UC4, 
-                            const_cast<uchar*>(histogramImage.constBits()), 
-                            histogramImage.bytesPerLine());
-        cv::Mat histogramBGR;
-        cv::cvtColor(histogramMat, histogramBGR, cv::COLOR_RGBA2BGR);
-        if (!cv::imwrite(histogramPath.toStdString(), histogramBGR)) {
-            SPDLOG_WARN("Failed to write histogram TIFF: {}", histogramPath.toStdString());
-            success = false;
-        } else {
-            SPDLOG_INFO("Exported histogram {}x{} to {}", histogramBGR.cols, histogramBGR.rows, histogramPath.toStdString());
-        }
-    } else {
-        success = false;
-    }
-    restoreScatterView(savedView);
 
     if (success) {
         QMessageBox::information(this, tr("Export Complete"),
@@ -2468,8 +2441,8 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
     // Area conversion: pixels² to microns² = pixels² * (microns/pixel)²
     const double areaConversionFactor = conversionFactor * conversionFactor;
 
-    // Collect points
-    std::vector<std::pair<double, double>> points;
+    // Collect points: scatterPoints_ for hit tests, seriesPoints for the chart.
+    QList<QPointF> seriesPoints;
     double minArea = std::numeric_limits<double>::max();
     double maxArea = std::numeric_limits<double>::lowest();
     double minDeform = std::numeric_limits<double>::max();
@@ -2482,10 +2455,10 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
             double areaPixels = frame.validation.area;
             double areaMicrons = areaPixels * areaConversionFactor;
             double deform = frame.validation.deformability;
-            frameToScatterPoint_[i] = static_cast<int>(points.size());
+            frameToScatterPoint_[i] = static_cast<int>(scatterPoints_.size());
             scatterPointToFrame_.push_back(static_cast<int>(i));
             scatterPoints_.push_back({areaMicrons, deform, static_cast<int>(i)});
-            points.push_back({areaMicrons, deform});
+            seriesPoints.append(QPointF(areaMicrons, deform));
 
             minArea = std::min(minArea, areaMicrons);
             maxArea = std::max(maxArea, areaMicrons);
@@ -2494,7 +2467,7 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
         }
     }
 
-    if (points.empty()) {
+    if (seriesPoints.isEmpty()) {
         setHome(0, 1000, 0, 1);
         return;
     }
@@ -2503,9 +2476,6 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
     // once, while append() (per point, and QList append on Qt 6.4) emits
     // pointAdded per point and rebuilds the series geometry each time —
     // O(n²); a 20 000-cell file took minutes to open.
-    QList<QPointF> seriesPoints;
-    seriesPoints.reserve(static_cast<qsizetype>(points.size()));
-    for (const auto& p : points) seriesPoints.append(QPointF(p.first, p.second));
     scatterSeries_->replace(seriesPoints);
 
     // Axis ranges with padding
@@ -2688,7 +2658,7 @@ void HdfReviewTab::setupChartsLayout() {
     connect(framePane_, &FrameViewerDialog::requestPreviousFrame, this, [this]() { stepScatterSelection(-1); });
     connect(framePane_, &FrameViewerDialog::requestNextFrame, this, [this]() { stepScatterSelection(+1); });
     connect(framePane_, &FrameViewerDialog::requestOpenInWindow, this, [this]() {
-        if (selectedFrameValid_ && selectedFrameIndex_ >= 0) showFrameViewer(selectedFrameIndex_, true);
+        if (highlightFrame_ >= 0) showFrameViewer(highlightFrame_, true);
     });
 
     // scatter | (frame pane over histogram); the pane never covers the plot.
@@ -2717,12 +2687,7 @@ void HdfReviewTab::setupChartsLayout() {
     QSettings settings;
     chartsSplitter_->restoreState(settings.value(QStringLiteral("Review/ChartsSplitter")).toByteArray());
     chartsRightSplitter_->restoreState(settings.value(QStringLiteral("Review/ChartsRightSplitter")).toByteArray());
-    connect(chartsSplitter_, &QSplitter::splitterMoved, this, [this]() {
-        QSettings().setValue(QStringLiteral("Review/ChartsSplitter"), chartsSplitter_->saveState());
-    });
-    connect(chartsRightSplitter_, &QSplitter::splitterMoved, this, [this]() {
-        QSettings().setValue(QStringLiteral("Review/ChartsRightSplitter"), chartsRightSplitter_->saveState());
-    });
+    // Saved once in the destructor; splitterMoved fires per pixel of a drag.
 }
 
 bool HdfReviewTab::chartsTabVisible() const {
@@ -2763,6 +2728,10 @@ void HdfReviewTab::onScatterClicked(QPointF viewPos, Qt::MouseButton button) {
 }
 
 void HdfReviewTab::onScatterDoubleClicked(QPointF viewPos) {
+    // Same guards as a click: an export is redrawing the scatter (batch:
+    // with other files' data), and a reset there would also drop the
+    // user-zoomed flag the restore relies on.
+    if (exportInProgress() || !scatterShowsLiveFile_ || !hdfReader_ || isRecordingMode_) return;
     // Its first click already selected; a double-click on a point never
     // zooms out from under the user.
     if (scatterPointAt(viewPos)) return;
@@ -2780,7 +2749,7 @@ void HdfReviewTab::onScatterHover(QPointF viewPos) {
     const auto& p = scatterPoints_[*hit];
     QToolTip::showText(scatterPlotView_->mapToGlobal(viewPos.toPoint()),
                        tr("Frame %1 · %2 µm² · deformability %3")
-                           .arg(p.frame)
+                           .arg(static_cast<qulonglong>(validFrames_[static_cast<size_t>(p.frame)].index))
                            .arg(p.x, 0, 'f', 1)
                            .arg(p.y, 0, 'f', 4),
                        scatterPlotView_);
@@ -2793,7 +2762,7 @@ void HdfReviewTab::selectScatterFrame(int frameIndex) {
 void HdfReviewTab::stepScatterSelection(int delta) {
     if (validFrames_.empty() || isRecordingMode_) return;
     const int n = static_cast<int>(validFrames_.size());
-    const int from = (selectedFrameValid_ && selectedFrameIndex_ >= 0) ? selectedFrameIndex_ : (delta > 0 ? -1 : 0);
+    const int from = highlightFrame_ >= 0 ? highlightFrame_ : (delta > 0 ? -1 : 0);
     selectScatterFrame(((from + delta) % n + n) % n);
 }
 
@@ -2829,24 +2798,35 @@ void HdfReviewTab::raiseScatterHighlight() {
 
 void HdfReviewTab::refreshFramePane() {
     if (!framePane_ || !framePaneStack_) return;
-    const bool hasSelection = selectedFrameValid_ && selectedFrameIndex_ >= 0 &&
-                              selectedFrameIndex_ < static_cast<int>(validFrames_.size()) && !isRecordingMode_;
-    if (!hasSelection) {
+    const bool hasCell = highlightFrame_ >= 0 && highlightFrame_ < static_cast<int>(validFrames_.size()) &&
+                         !isRecordingMode_;
+    if (!hasCell) {
         paneFrame_ = -1;
         framePaneStack_->setCurrentIndex(0);
         return;
     }
-    // One HDF5 read per shown frame, and only while the Charts tab shows it.
-    if (!chartsTabVisible() || paneFrame_ == selectedFrameIndex_) return;
-    paneFrame_ = selectedFrameIndex_;
+    // One HDF5 read per shown frame, only while the Charts tab shows the pane
+    // and no modal viewer hides it (its prev/next would read every frame twice).
+    if (!chartsTabVisible() || paneFrame_ == highlightFrame_) return;
+    if (modalViewerOpen_) {
+        paneStale_ = true;
+        return;
+    }
+    paneFrame_ = highlightFrame_;
+    paneStale_ = false;
     framePane_->setRoi(roi_);
     framePane_->setFrame(loadFrameForDisplay(paneFrame_, true));
+    // Recorded frame index (what the viewer and the metrics CSV show) first;
+    // the 1-based position in the valid set second.
+    const auto& frame = validFrames_[static_cast<size_t>(paneFrame_)];
     const bool onScatter = paneFrame_ < static_cast<int>(frameToScatterPoint_.size()) &&
                            frameToScatterPoint_[static_cast<size_t>(paneFrame_)] >= 0;
-    framePaneTitle_->setText(onScatter ? tr("Valid frame %1 of %2").arg(paneFrame_).arg(validFrames_.size())
-                                       : tr("Valid frame %1 of %2 · failed validation, not on the scatter")
-                                             .arg(paneFrame_)
-                                             .arg(validFrames_.size()));
+    QString title = tr("Frame %1 · valid row %2 of %3")
+                        .arg(static_cast<qulonglong>(frame.index))
+                        .arg(paneFrame_ + 1)
+                        .arg(validFrames_.size());
+    if (!onScatter) title += tr(" · failed validation, not on the scatter");
+    framePaneTitle_->setText(title);
     framePaneStack_->setCurrentIndex(1);
 }
 
@@ -2865,6 +2845,7 @@ void HdfReviewTab::restoreScatterView(const ScatterViewState& st) {
     if (st.userZoomed) {
         scatterXAxis_->setRange(st.x0, st.x1);
         scatterYAxis_->setRange(st.y0, st.y1);
+        if (scatterPlotView_) scatterPlotView_->markUserZoomed();
     }
     setScatterHighlight(st.highlightFrame);
 }

@@ -43,6 +43,11 @@ void ZoomableChartView::resetZoom()
     emit zoomReset();
 }
 
+void ZoomableChartView::markUserZoomed()
+{
+    isUserZoomed_ = true;
+}
+
 void ZoomableChartView::cancelGesture()
 {
     pressPending_ = false;
@@ -179,6 +184,10 @@ void ZoomableChartView::panTo(const QPointF& pos)
 
 void ZoomableChartView::mouseMoveEvent(QMouseEvent* event)
 {
+    // The release went elsewhere (context menu, modal, window switch) while
+    // the pointer stayed here: a move with that button up ends the gesture.
+    if ((pressPending_ || isPanning_) && !(event->buttons() & pressButton_))
+        cancelGesture();
     if (pressPending_) {
         const QPointF travel = event->position() - pressPos_;
         if (travel.manhattanLength() < QApplication::startDragDistance()) {

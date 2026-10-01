@@ -138,8 +138,8 @@ is dropped; the destructor drains the job. Guard: `frontend.hdf_review_core`
 ## Scatter interaction and frame pane (issue #467)
 
 The Charts view is a splitter: scatter | (frame pane over histogram), sizes
-persisted as `Review/ChartsSplitter` / `Review/ChartsRightSplitter`. The pane
-sits beside the plot and never covers it.
+persisted as `Review/ChartsSplitter` / `Review/ChartsRightSplitter` (written
+once, in the destructor). The pane sits beside the plot and never covers it.
 
 - **Scatter view** is a `ZoomableChartView` ([[System-Utilities]]): wheel
   zoom, left/middle-drag pan, single click selects, double-click resets only
@@ -163,13 +163,25 @@ sits beside the plot and never covers it.
 - **Selection** (`setSelectedFrame(frame, true)`) moves the one-point
   `scatterHighlight_` (kept last in the chart's series by
   `raiseScatterHighlight()`, hidden for frames without a point) and refreshes
-  the pane, which reads the frame only while the Charts tab is visible
-  (`refreshFramePane`, lazily on tab switch). Pane prev/next and ←/→ walk
-  `validFrames_` with wrap; "Open in window…" opens the modal viewer on the
-  selected frame. Close/reload clears maps, highlight and pane.
-- **Exports** (`renderChartSnapshots`, Export Charts, batch) save the axes
-  and highlight (`saveScatterView`), draw full extent without the highlight,
-  then restore; batch restores once after the final `updateCharts()`.
+  the pane. Highlight and pane show the **last valid cell chosen**
+  (`highlightFrame_`); an invalid-set selection changes neither, and pane
+  prev/next continue from that cell. The pane reads a frame only while the
+  Charts tab is visible and no modal viewer covers it (`refreshFramePane`
+  marks it stale behind the modal and catches up when it closes, so the
+  modal's prev/next read each frame once). `setSelectedFrame` guards against
+  re-entry through the table's `selectionChanged`. Pane prev/next and ←/→
+  walk `validFrames_` with wrap; "Open in window…" opens the modal viewer on
+  that cell. Pane title and hover tooltip name the **recorded**
+  `ProcessedFrame::index` (what the viewer and the metrics CSV show), with
+  the 1-based valid-set position second. Close/reload clears maps,
+  highlight and pane.
+- **Exports**: `renderChartSnapshots` (Export All, Export Charts, batch)
+  saves the axes, the user-zoomed flag and the highlight
+  (`saveScatterView`), draws full extent without the highlight, then
+  restores (`restoreScatterView`, re-arming `markUserZoomed`); batch restores
+  once after the final `updateCharts()`. Export Charts writes those same
+  snapshots as TIFFs. While an export redraws the scatter, click, hover and
+  double-click are all ignored.
 - **Cost:** the scatter is filled with `QXYSeries::replace()`. On Qt 6.4
   `append()` (per point and the `QList` overload) emits `pointAdded` per
   point and rebuilds the series geometry each time — O(n²): a 20 000-cell
