@@ -1,5 +1,17 @@
 # Recent Work
 
+## 2026-10-01 — Windows (MSVC) build of `develop` restored
+
+Every `develop` push since 2026-09-26 failed the Build Windows workflow, so
+no beta was cut after `v1.1.2-beta.973463e`. Two MSVC-only breaks that the
+Linux PR lanes cannot see: a local named `far` in
+`include/backend/processing/MonitoringDensity.h` (`<windows.h>` defines `far`
+and `near` as empty macros; reached through `AppBackend.cpp`), and
+`tests/processing/processing_core_v2_plugin_test.cpp` including POSIX
+`<dlfcn.h>` (now a Win32 `LoadLibrary` shim). The same fixes were first made
+on `feat/trigger-frame-alignment` (73a0f232). Root cause of the escape: the
+Windows build runs only on `develop` pushes, not on PRs.
+
 ## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
 
 The Review tab's Charts scatter is now a `ZoomableChartView` and a single
