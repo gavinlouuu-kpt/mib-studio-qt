@@ -1,404 +1,574 @@
-# MIB Review: the Review tab as its own application on macOS and Windows
+# YOFO Review: the Review tab as its own React + Tauri application on macOS and Windows
 
 Status: active
 
-Date: 2026-10-01. Companion notes: `knowledge_map/frontend/HdfReviewTab.md`,
-`knowledge_map/build-and-run/Build.md`, `docs/howto/build-installer.md`,
-`docs/howto/auto-update-r2.md`, ADR
+Date: 2026-10-01 (rewritten the same day: shell changed from Qt to
+React + Tauri, product named **YOFO Review**). Companion notes:
+`knowledge_map/architecture/Desktop-Shell.md`, `knowledge_map/architecture/Rust-Bridge.md`,
+`knowledge_map/frontend/HdfReviewTab.md` (the behaviour to reproduce),
+`docs/architecture/frontend-neutral-backend-bridge.md`, ADRs
 [0001](../../decisions/0001-react-tauri-migration.md) (React + Tauri is the
-long-term shell), decoupling plan
-[`2026-07-15-qt-decoupling-and-tauri-migration.md`](2026-07-15-qt-decoupling-and-tauri-migration.md),
+target shell), [0003](../../decisions/0003-rust-cxx-bridge.md) (cxx bridge),
+[0004](../../decisions/0004-bridge-contract-and-operation-state.md) (contract
+governance); decoupling plan
+[`2026-07-15-qt-decoupling-and-tauri-migration.md`](2026-07-15-qt-decoupling-and-tauri-migration.md);
 review scatter plan
-[`2026-09-30-review-scatter-click-to-view.md`](2026-09-30-review-scatter-click-to-view.md).
+[`2026-09-30-review-scatter-click-to-view.md`](2026-09-30-review-scatter-click-to-view.md)
+(its PR 3a and PR 4 are absorbed here); issues #269 (UI-4 HDF5 review),
+#276 (BE-6 review jobs), #279 (BE-9 platform/updater), #465/#468/#470.
 
 ## Goal
 
-A second shipped desktop product, **MIB Review**, that opens the HDF5 files
-MIB Studio records and offers everything today's Review tab offers (browse
-valid/invalid frames, metrics table, charts with zoom/pan/click-to-view,
-KDE core contour, single and batch export, regenerate masks) on
-**macOS (Apple Silicon) and Windows x64**, with no camera, no hardware SDK
-and no experiment pipeline in the binary. It installs from a signed
-Windows installer and a signed, notarised macOS DMG, updates from the
-existing R2 channel layout, and is built and tested in CI on both
-platforms. MIB Studio's own Review tab keeps working and is built from the
-same source files.
+A second shipped desktop product, **YOFO Review**, built on the React +
+Tauri v2 shell and the Qt-free C++ backend, that opens the HDF5 files MIB
+Studio records and offers everything today's Qt Review tab offers: browse
+valid/invalid/recorded frames with thumbnails, the full metrics table,
+overlay and ROI rendering, charts (scatter, histogram, isoelastic curves,
+KDE colouring and core contour) with zoom/pan/click-to-view, single and
+batch export through `HdfExportService`, chart export, regenerate masks,
+compute/save core contour, recording-mode files, multi-image series and
+run accounting. It ships for **macOS (Apple Silicon) and Windows x64** as
+a signed, notarised DMG and a signed NSIS installer, updates itself on
+both platforms, and is built and tested in CI on both. The binary
+contains no camera, serial, discovery or experiment code. The same React
+review module becomes MIB Studio's Review tab in the Tauri shell (UI-4),
+so YOFO Review is also the delivery vehicle for that parity item.
 
 ## What the survey found (2026-10-01)
 
-Why the Review tab is a good candidate to split out:
+Why React + Tauri is the right base despite the gap:
 
-- **Its only link to the app is one reference.** `HdfReviewTab` takes
-  `backend::AppBackend&` (`include/frontend/tabs/HdfReviewTab.h:81`) and
-  calls nothing on it but `backend_.processing()` (pixel-to-micron factor
-  at 7 sites, `getProcessingConfig()` once for the histogram range). It
-  hands the same reference to `BatchMaskDialog`, which uses
-  `getProcessingConfig`, `activeProcessingCoreIdentity` and `processBatch`.
-  `MainWindow` creates it at `src/frontend/core/MainWindow.cpp:524` and
-  connects no signal or slot to it; it is not even a member.
-- **Every backend service it touches is in the Qt-free `mib_processing`
-  library**: `Hdf5Service` (constructed directly, not through
-  `AppBackend::hdf5()`), `HdfExportService`, `ProcessingService`,
-  `BatchMaskSources`, `KdeCoreRecord` (header-only). It does not use
-  `BackendFacade`, `PlaybackService`, `YoloService`, `FrameStore` or the
-  `ExperimentCoordinator`.
-- **Eight frontend units make up the feature**: `HdfReviewTab`,
-  `BatchMaskDialog`, `FrameViewerDialog`, `HdfMetricsModel`,
-  `OverlayRenderer`, `HdfReviewExportPaths`, `ElidingLabel`,
-  `ZoomableChartView` (+ `RoiDrawCanvas`, header-only `ScatterHitTest`),
-  about 5 500 lines, all compiled today into `mib_frontend_common`
-  together with `MainWindow` and every other tab.
-- **Runtime data it needs outside CMake**: the isoelastic curve file
-  `resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt`
-  (resolved relative to `applicationDirPath()`,
-  `HdfReviewTab.cpp:2921-2931`) and, for regenerate masks, the bundled
-  processing kernel or a signed processing-core plugin.
-- **Settings it reads**: `HdfReviewTab/lastExportDir`,
-  `Review/ChartsSplitter`, `Review/ChartsRightSplitter`,
-  `Monitoring/KdeCoreFraction`, under the QSettings identity set by
-  `frontend::applicationsettings::initialize()` (org "MIB Studio", app
-  "MIB Studio Qt").
-- **Tests**: `frontend.hdf_review_core`, `frontend.hdf_review_scatter`,
-  `frontend.hdf_review_export_paths` build the tab on a bare
-  `AppBackend` (`MIB_DISABLED_SERVICES=auto_update,autofocus,trigger,yolo,
-  syringe_pump`); `integration.review_scatter_e2e` needs the whole
-  `MainWindow` and stays with MIB Studio.
+- **The direction is already decided.** ADR 0001 names React + Tauri as the
+  one supported shell once parity is reached; the Qt shell is
+  transitional. Building YOFO Review on Qt would create a second product
+  to migrate later.
+- **The Qt-free backend already holds the science.** `Hdf5Service`,
+  `HdfExportService`, `ProcessingService::processBatch`,
+  `BatchMaskSources`, `KdeCoreRecord`, `MonitoringDensity` and
+  `MonitoringDensityService` are all in `mib_processing`/`mib_backend`
+  with no Qt. The Qt tab is 3 000 lines of widget code over them; what
+  moves is presentation, not science.
+- **The bridge, contract and shell scaffolding exist.** cxx bridge (ABI
+  14), additive contract with a drift gate, binary frame-packet transport
+  (`fetch_review_frame_packet`, pull kind 3), `FramePullScheduler` with a
+  review slot, native file dialogs, preferences and log sinks
+  (`platform.rs`), a fail-closed update-manifest verifier
+  (`updater.rs`), headless Linux CI (`desktop-ci.yml`, Xvfb smoke).
+- **Review already crosses the bridge, partially.** `load_recording`,
+  `fetch_review_metadata`, `fetch_review_metrics_page`,
+  `fetch_review_frame_packet` (datasets ValidImage/InvalidImage/
+  RecordedImage/ValidMask/InvalidMask), `review_export_csv` as a tracked
+  operation; `desktop/src/App.tsx:1753-1927` renders a Review panel with
+  valid/invalid scrubbing and a 7-column paged metrics table.
 
-What stands in the way:
+What is missing or wrong today (evidence in the agent survey of
+2026-10-01):
 
-- **No macOS build exists.** No CMake preset, no Conan profile, no
-  `MACOSX_BUNDLE`, no `macos-*` CI runner. `env/brew-packages.txt` and
-  `scripts/doctor.sh` / `bootstrap.sh` already know Homebrew but say "no
-  CMake preset yet". Apple-specific gates: OpenSSL (Ed25519 verification
-  of processing cores) is required only `UNIX AND NOT APPLE`
-  (`src/backend/CMakeLists.txt:103`); the native processing-core descriptor
-  is generated only for `WIN32` or `UNIX AND NOT APPLE`
-  (`src/backend/CMakeLists.txt:218-232`); two tests exclude Apple.
-- **Packaging and updates are Windows-only.** Inno Setup (`resources/
-  installers/*.iss`, AppId `{A1B2C3D4-…}`, AppName "MIB Studio Qt"),
-  `windeployqt` from the Conan package, `release.yml` / `build-windows.yml`
-  publish to GitHub Releases and R2 (`updates.yofo.bio/<channel>/
-  latest.json`). `AutoUpdater` runs the installer with `ShellExecuteW
-  runas`; the non-Windows branch returns "only implemented on Windows".
-  Nothing shipped is code-signed except the processing-core DLL
-  (`python-wheel.yml`, internal KPT root CA). There is no Apple signing or
-  notarisation anywhere.
-- **The React + Tauri shell is not ready to be the review product**: its
-  Charts tab is a placeholder, chart export is a listed non-goal, Tauri
-  bundling is off (`"bundle": {"active": false}`), `crates/mib-bridge/
-  build.rs` has no macOS link path, and its updater reads a manifest
-  format that does not match the Qt one.
+- **Review state lives in the wrong place.** `BackendFacade` serves review
+  from `AppBackend::hdf5()`, the same handle the experiment writer uses
+  (load refused while an experiment is active), and the Raw Frames view
+  scrubs the **live FrameStore** through `PlaybackService`, not the file
+  (`PlaybackService.cpp:30-45`). Multi-image series, run accounting, KDE
+  records, chart snapshots, recorded config and the 16 other metric
+  columns are not exposed. Export uses `review::writeMetricsCsv`, not
+  `HdfExportService`; Export All, batch, chart export, regenerate masks
+  and core contour are disabled placeholders (`App.tsx:1768-1770`).
+- **No charts.** The Charts sub-tab is a placeholder; `desktop/package.json`
+  has no chart library; nothing KDE-related crosses the bridge. The
+  scatter plan already specifies the React Charts view (its PR 4) and the
+  backend density job (PR 3a) with bridge calls `fetch_review_scatter`,
+  `fetch_review_density`, `fetch_review_kde_records`,
+  `review_save_core_contour`; none exist yet.
+- **No thumbnails, no overlays, no ROI drawing, no Close File, no modal
+  frame viewer.** Masks are addressable but never requested.
+- **One product, one monolith.** `App.tsx` is a single 2 045-line component
+  with camera/experiment/monitoring menus; `lib.rs` registers 81 commands;
+  `tauri.conf.json` is "MIB Studio" with `bundle.active: false` and no
+  `.icns`; there is no mode or product notion.
+- **The bridge build has no macOS path.** `build.rs` treats every
+  non-Windows host as Linux: runs the `linux-backend-only` preset (host
+  condition Linux), hardcodes `/usr/include/opencv4` and
+  `/usr/lib/x86_64-linux-gnu/hdf5/serial`, links `mib_backend` +
+  `oeabt_*` + sentry + curl + sqlite. Windows links through a generated
+  ~190-entry manifest from the Conan tree. `BackendBridge` always
+  constructs a full `AppBackend` (cameras, serial, discovery, YOLO stub).
+- **No packaging or updates.** Bundling is off, there is no `.icns`, the
+  `updater.rs` verifier is not wired to any command, its manifest format
+  (`url`, `sha256`) differs from the Qt one (`installer_url`,
+  `installer_sha256`), no `tauri-plugin-updater`, no macOS or Windows
+  Tauri CI job, no signing or notarisation anywhere in the repo.
 
 ## Decision log
 
-- 2026-10-01: **Ship MIB Review v1 on the Qt shell, reusing `HdfReviewTab`
-  unchanged in behaviour.** The Qt tab is complete, tested and documented;
-  the React Charts view (#268/#470) does not exist yet and the Tauri shell
-  cannot be bundled or updated today. ADR 0001 keeps the Qt shell building
-  until Tauri passes the epic's exit gate, so a Qt review product is inside
-  that transitional state. Record this in **ADR 0008** with the exit
-  condition: when the Tauri review slices (PR 3a/PR 4 of the scatter plan,
-  chart export, bundling, updater) reach parity, MIB Review switches shell
-  under the same product name, installer identity and update channel. The
-  decoupling plan's parity matrix gets a "MIB Review" column so the switch
-  is measurable.
-- 2026-10-01: **Narrow the constructor, do not fork the tab.** `HdfReviewTab`
-  and `BatchMaskDialog` take a `backend::services::ProcessingService&`
-  instead of `AppBackend&`. MIB Studio passes `backend_.processing()`; MIB
-  Review owns one `ProcessingService` directly. One source tree, two
-  executables; no `#ifdef MIB_REVIEW_APP` in the tab.
-- 2026-10-01: **New static library `mib_review_common`** holding the eight
-  review units plus `ApplicationSettings`, linked by both
-  `mib_frontend_common` (which stops compiling those files itself) and the
-  new `mib_review` executable. `mib_review` links `mib_processing`,
-  `Qt6::Widgets Charts Concurrent`, spdlog and OpenCV, and **not
-  `mib_backend`**, so the binary carries no camera, serial, SQLite, ONNX
-  or discovery code. Crash reporting (`CrashReporter` lives in
-  `mib_backend`) is therefore out of v1; a follow-up can move the
-  reporter into its own small library if field crash data is wanted.
-- 2026-10-01: **Separate product identity, shared version.** Product name
-  "MIB Review", executable `mib_review`, QSettings application name
-  "MIB Review" (reads the `Review/*` keys of "MIB Studio Qt" as a one-time
-  fallback so an operator who has both keeps their splitter and export
-  directory), bundle id `bio.yofo.mib-review`, a new Inno Setup AppId,
-  update channels `review-stable/` and `review-beta/` on the same R2
-  bucket. The version number is the repo's `PROJECT_VERSION`
-  (`cmake/MIBVersion.cmake`): one tag `vX.Y.Z` releases both products, so
-  a file recorded by MIB Studio X.Y and opened in MIB Review X.Y is an
-  exact pairing and there is one changelog. Independent cadence can come
-  later with a `review-v*` tag prefix if the products drift.
-- 2026-10-01: **Pixel-to-micron factor is a MIB Review setting, pending
-  TD-17.** Today the tab scales with the live backend's factor. MIB Review
-  has no live backend, so v1 exposes the factor in a Preferences dialog
-  (default from the file's run snapshot when present, else the last used
-  value) and shows it in the status line. Fixing TD-17 (read the recorded
-  factor) benefits both products and is scheduled as its own step here
-  because the standalone app makes the gap visible on every file.
-- 2026-10-01: **Regenerate masks ships in v1 with the bundled kernel; plugin
-  cores on macOS wait for the Apple signing story.** The bundled kernel
-  needs no signature check. Loading a `.dylib` core needs Ed25519
-  verification (OpenSSL, currently not required on Apple) and a
-  `macos`/`arm64` descriptor, which `publish-processing-core.py` already
-  anticipates (`.dylib` extension). Enable OpenSSL on Apple and generate
-  the descriptor in the macOS PR; publishing signed macOS cores is a
-  separate follow-up.
-- 2026-10-01: **macOS targets Apple Silicon only (arm64) in v1.** One Conan
-  profile, one runner (`macos-14`), one DMG. An x86_64 or universal build
-  is a later decision if an Intel Mac turns up in the field.
-- 2026-10-01: **Signing is a user-side prerequisite.** The Windows installer
-  is unsigned today; MIB Review's installer stays unsigned until an
-  Authenticode certificate trusted outside KPT is available (the internal
-  root CA used for the core DLL does not help SmartScreen). macOS requires
-  an Apple Developer ID certificate and notarisation for the DMG to open
-  without Gatekeeper warnings; PR 4 is blocked until the secrets exist.
-  PR 2 and PR 3 produce installable but unsigned artefacts for internal
-  testing.
+- 2026-10-01: **Ship on React + Tauri; product name YOFO Review.** (User
+  decision, superseding the same-day Qt proposal.) Record as **ADR 0008**:
+  YOFO Review is the first product shipped on the Tauri shell and the
+  reference for MIB Studio's Review tab (UI-4). The Qt tab keeps shipping
+  in MIB Studio Qt until the Tauri cutover; it changes only where TD-17
+  needs it.
+- 2026-10-01: **One review implementation in the backend: `ReviewSession`.**
+  A Qt-free class in a new static library `mib_review_core` (built from
+  `mib_processing`, no `mib_backend`) owns the open file: its own
+  `Hdf5Service` reader (never the experiment writer's handle), cached
+  metadata, image/mask/series hyperslab reads, thumbnail strips, overlay
+  composition, run accounting, KDE records, the isoelastic curves, the
+  scatter/density job (`MonitoringDensityService` review mode from the
+  scatter plan's PR 3a), export jobs over `HdfExportService`, mask
+  regeneration over `ProcessingService::processBatch`, and core-contour
+  compute/save. `BackendFacade` delegates every review pull and command
+  to a `ReviewSession` it owns, which fixes the shared-handle and
+  live-FrameStore defects for MIB Studio too. Shells never re-implement
+  science; overlays are composed in the backend and returned as RGB in
+  the frame packet so the Qt `OverlayRenderer` has one Qt-free
+  counterpart.
+- 2026-10-01: **Two bridge roots, one crate.** `crates/mib-bridge` gains a
+  cargo feature `review-only` that exposes a `ReviewBridge` (over
+  `ReviewSession` + one `ProcessingService`) and links only
+  `mib_review_core` + `mib_processing` and their third-party libraries.
+  Without the feature the crate is unchanged (`BackendBridge` over
+  `AppBackend`), and `BackendBridge` also exposes the same review calls by
+  delegation, so the contract is identical for both products. Rationale:
+  the review binary must not carry cameras, serial, discovery, SQLite,
+  curl or Sentry, and `AppBackend::initialize` always constructs them.
+- 2026-10-01: **One Tauri crate, one React tree, two products by
+  configuration.** `desktop/src-tauri` gains the cargo feature
+  `review-only` (registers only the review, platform, dialog, opener and
+  updater commands; sets `mib-bridge/review-only`) and a config overlay
+  `desktop/src-tauri/tauri.review.conf.json` (`productName` "YOFO Review",
+  `identifier` `bio.yofo.review`, `mainBinaryName` `yofo-review`, window
+  title, icons, bundle targets, updater endpoints), applied with
+  `tauri build --config tauri.review.conf.json --features review-only`.
+  The React side gets a second Vite entry (`desktop/review.html` →
+  `src/review/main.tsx`) that mounts only the review module; MIB Studio's
+  `App.tsx` mounts the same module in its Review tab. A separate `review/`
+  app directory was considered and rejected: it would fork `bridge.ts`,
+  `framePacket.ts`, `eventAdapter.ts` and the scheduler within weeks.
+- 2026-10-01: **Static third-party libraries for the review products.**
+  OpenCV, HDF5, spdlog, fmt, nlohmann_json and OpenSSL are consumed as
+  static Conan packages on macOS and Windows for `mib_review_core`, so the
+  Tauri binary is self-contained and the bundle carries no dylib/DLL
+  rpath work. Linux CI keeps system packages. The Windows link manifest
+  generator (`tools/gen_bridge_link_manifest.py`) gains a `--review-only`
+  mode over a `mib_review_core`-only reference target; macOS gets a
+  CMake-written link manifest of the same shape instead of hardcoded
+  paths, so `build.rs` reads one manifest format on both bundled
+  platforms.
+- 2026-10-01: **Charts on `<canvas>` with no chart library**, as the scatter
+  plan's PR 4 specifies (10⁵ points, device-pixel-ratio aware, points per
+  density level with the contract's `density_ramp`, contours as polylines,
+  highlight last). Histogram and isoelastic curves draw on the same
+  canvas module. Chart export renders the same drawing code to an
+  offscreen canvas at a fixed size and sends the PNG bytes to the backend
+  over the binary transport as the `HdfExportRequest` chart snapshots, so
+  exported TIFFs show what the screen shows (the Qt tab's rule).
+- 2026-10-01: **Updater: `tauri-plugin-updater` with minisign-signed
+  `latest.json`**, served from the existing R2 bucket under
+  `review-stable/` and `review-beta/`. It installs in place on macOS and
+  Windows, which neither the Qt `AutoUpdater` (Windows only) nor the
+  unwired `updater.rs` does. `publish-update.py --product review` writes
+  the Tauri manifest shape (`platforms.darwin-aarch64`,
+  `platforms.windows-x86_64`, `signature`, `url`); the existing SHA-256
+  verifier stays as a second check on the downloaded bytes. MIB Studio's
+  Qt manifests are untouched.
+- 2026-10-01: **Separate product identity, shared version.** Identifier
+  `bio.yofo.review`, binary `yofo-review`, app-config/app-data dirs under
+  that identifier, preferences in `platform.rs`'s JSON document. The
+  version is the repo's `PROJECT_VERSION` injected into the Tauri config
+  at build time (`scripts/release/stamp-tauri-version.py` from
+  `cmake/MIBVersion.cmake`), so one `vX.Y.Z` tag releases MIB Studio and
+  YOFO Review together and a file recorded by X.Y opens in X.Y.
+- 2026-10-01: **Pixel-to-micron factor is a YOFO Review preference, pending
+  TD-17.** With no live backend the factor comes from the file's run
+  snapshot when present, else the last-used preference; shown in the
+  status bar. TD-17 (read the recorded factor for scatter and contour) is
+  fixed in `ReviewSession` so both products benefit.
+- 2026-10-01: **Regenerate masks uses the bundled kernel on both platforms
+  in v1.** Signed plugin cores on macOS wait for published `.dylib` cores
+  and the Apple signing story (OpenSSL Ed25519 verification is enabled on
+  Apple in PR 5; a `macos`/`arm64` descriptor is generated; publishing
+  cores is a follow-up).
+- 2026-10-01: **macOS targets Apple Silicon only.** One Conan profile, one
+  runner (`macos-14`), one DMG. Intel or universal is a later decision.
+- 2026-10-01: **Signing is a user-side prerequisite.** Apple Developer ID +
+  notarisation (`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`,
+  `APPLE_TEAM_ID` as Tauri expects) and a publicly trusted Windows
+  Authenticode certificate (the internal KPT CA used for the core DLL
+  does not satisfy SmartScreen), plus the updater's minisign key pair
+  (`TAURI_SIGNING_PRIVATE_KEY`). PR 7 is blocked until these exist as
+  repository secrets; earlier PRs produce installable unsigned artefacts
+  for internal testing.
+- 2026-10-01: **Headless end-to-end on Linux, native bundles on macOS and
+  Windows.** The review module is driven under Xvfb with `tauri-driver`
+  (WebDriver, Linux and Windows only) against fixture files; macOS CI
+  builds, runs the cargo and vitest suites and the DMG smoke only. Parity
+  with the Qt tab is checked on data, not pixels: `metrics.csv` and
+  exported image TIFFs byte-for-byte, chart snapshots by point count,
+  axis ranges and legend entries.
 
 ## Design
 
-### Executable and library layout
+### Backend: `mib_review_core` and `ReviewSession`
 
 ```
-src/frontend/qt/CMakeLists.txt
-  mib_review_common   STATIC  (new)  review units + ApplicationSettings
-  mib_frontend_common STATIC         links mib_review_common; drops the 9 files
-  mib_studio_qt                      unchanged
-  mib_review                         (new) src/frontend/review/main.cpp + ReviewWindow
+include/backend/review/ReviewSession.h      src/backend/review/ReviewSession.cpp
+include/backend/review/ReviewTypes.h        (metadata, metric rows (all 23 columns),
+                                             thumbnail strip, overlay mode, series info,
+                                             accounting, kde records, scatter, density)
+include/backend/review/ReviewJobs.h         (export / batch / regenerate / core-contour
+                                             operations with OperationStatus semantics, ADR 0004)
+src/backend/review/OverlayCompose.cpp       (OpenCV port of frontend/utils/OverlayRenderer)
 ```
 
-`mib_review` main (`src/frontend/review/main.cpp`), modelled on
-`src/frontend/core/main.cpp:188-291` minus backend boot:
+`ReviewSession` API (synchronous reads, bounded memory; jobs on their own
+thread with cancel token, reporting through the existing operation-state
+machinery):
 
-1. `QApplication`, `applicationsettings::initializeFor("MIB Review")` (the
-   function gains a product parameter; the default stays "MIB Studio Qt").
-2. Logging to `<app data>/MIB_Review/logs/review.log`. `Logger.cpp` is in
-   `mib_backend` (`src/backend/CMakeLists.txt:273`), so either move it into
-   `mib_processing` (it is spdlog-only) or give `mib_review` a plain
-   spdlog rotating sink; prefer the move so both products log the same way.
-3. One `ProcessingService` with the config loaded from the Preferences
-   (pixel-to-micron, ROI unset, bundled kernel; processing core catalog
-   reused from `ProcessingCoreDialog` only if it links without
-   `mib_backend`, else deferred).
-4. `ReviewWindow` (`QMainWindow`): menu bar (File: Open…, Open Recent,
-   Close, Export submenu mirroring the tab's actions, Quit; Edit:
-   Preferences…; Help: About, Check for updates…), the `HdfReviewTab` as
-   central widget, a status bar showing the factor and file. File
-   association `.h5`/`.hdf5` opened from the command line or Finder
-   (`QFileOpenEvent` on macOS).
-5. Standard exit; no `DesktopInstance` lock (several review windows are
-   fine; opening a second file opens a second window is a non-goal for
-   v1, the window just switches file).
+- `open(path)`, `close()`, `metadata()`, `accounting()`, `kdeRecords()`,
+  `runSnapshot()` (recorded pixel-to-micron, config), `isoelasticCurves()`.
+- `metricsPage(dataset, offset, count)` with the full `ProcessedFrame`
+  metric set the Qt `HdfMetricsModel` shows.
+- `frame(dataset, index, overlayMode, roiOverlay)` → RGB8 composed image
+  (+ raw Mono8 and mask on request); `seriesInfo(dataset, index)`,
+  `seriesFrame(dataset, index, k, …)` for 4D datasets and the recording
+  multi-image window.
+- `thumbnails(dataset, offset, count, size)` → one packed Mono8 strip
+  (count × size × size) so a 200-thumbnail page is one IPC pull.
+- `scatter()` columnar valid-set arrays, `requestDensity()` /
+  `density()` (the scatter plan's PR 3a, moved here), `saveCoreContour(overwrite)`.
+- `startExport(HdfExportRequest)`, `startBatch(sources, root, metricsOnly)`,
+  `startRegenerateMasks(request)` (bundled kernel, `processBatch`),
+  `startComputeCore()`; all return an operation id; progress and terminal
+  state through `OperationStatus`; partial outputs discarded on cancel.
+
+`BackendFacade` keeps its public review methods but implements them by
+delegating to a `ReviewSession` member; the `RecordingLoad` command opens
+the session and no longer touches `AppBackend::hdf5()` or the FrameStore
+for file frames (`RecordedImage` serves raw frames). Existing facade and
+bridge tests keep passing; `record_then_load_and_review` gains an
+assertion that the recorded frames come from the file.
+
+### Bridge and contract
+
+- Contract bump **14 → 15** (additive): `review_metric_columns` enum,
+  `overlay_modes`, `review_datasets` extended with series kinds, pull kind
+  `thumbnails` (5) and `chart_snapshot_upload` (push, 6) on the binary
+  transport, commands `review_close`, `fetch_review_frame_packet(dataset,
+  index, overlay, roi)`, `fetch_review_thumbnails`, `fetch_review_series_info`,
+  `fetch_review_accounting`, `fetch_review_kde_records`,
+  `fetch_review_scatter`, `fetch_review_density`, `fetch_review_run_snapshot`,
+  `fetch_isoelastic_curves`, `review_export_all`, `review_export_charts`,
+  `review_batch_export`, `review_regenerate_masks`, `review_compute_core`,
+  `review_save_core_contour`; `operation_kinds` implements the reserved
+  `BatchMetrics`, `MaskRegeneration` and adds `ReviewDensity`,
+  `CoreContour`; `density_ramp` table. Regenerate `bridgeContract.ts`,
+  `frame_packet_contract.rs`, extend `shim.cpp` asserts and `contract.rs`.
+- `crates/mib-bridge` feature `review-only`: `src/review_bridge.rs` +
+  `src/review_shim.{h,cpp}` expose `ReviewBridge` (`new_review_bridge(data_dir,
+  pixel_to_micron)`, the calls above, `poll_events`); `BackendBridge`
+  forwards the same calls to its facade. `build.rs` reads a link manifest
+  on every platform (`build/<preset>/mib-bridge-link-manifest.json`,
+  written by CMake for the chosen root target) and, with `review-only`,
+  links `mib_review_core`, `mib_processing` and their static third-party
+  libraries only.
+
+### Shell: products by configuration
+
+```
+desktop/
+  index.html                 MIB Studio entry (unchanged)
+  review.html                YOFO Review entry → src/review/main.tsx
+  src/review/                the review module, mounted by both entries
+    ReviewApp.tsx            menu bar (File: Open…, Open Recent, Close, Export ▸, Quit;
+                             Edit: Preferences…; Help: About, Check for updates…),
+                             status bar (file, factor, accounting)
+    FramesView.tsx           thumbnails grid (virtualised, 200 + 100 pages), metrics
+                             table (virtualised, all columns, row ↔ thumbnail selection)
+    FrameViewer.tsx          image + overlay/ROI controls, zoom, series prev/next,
+                             modal "Open in window" overlay and the docked pane variant
+    charts/                  ReviewScatter.tsx, Histogram.tsx, scatterGestures.ts,
+                             scatterHitTest.ts (shared fixture), chartCanvas.ts,
+                             chartExport.ts (offscreen render → PNG bytes)
+    exports/                 ExportDialogs.tsx (series range prompt, batch summary),
+                             operations.ts (progress/cancel over OperationStatus)
+    RegenerateMasks.tsx      source picker (current file / whole file / AVI / folder),
+                             ROI, background, progress
+    preferences.ts           pixel-to-micron, last dirs, KDE toggle, splitter sizes
+    *.test.ts(x)             vitest
+  src-tauri/
+    tauri.conf.json          MIB Studio (bundle on, nsis+dmg targets)
+    tauri.review.conf.json   YOFO Review overlay
+    icons/                   icon.icns added (both products)
+    src/lib.rs               `#[cfg(feature = "review-only")]` command set;
+                             updater plugin registered for both
+    capabilities/default.json + capabilities/review.json
+    Cargo.toml               feature review-only = ["mib-bridge/review-only"],
+                             tauri-plugin-updater, tauri-plugin-process
+```
 
 ### Platform build matrix
 
-| | Windows x64 | macOS arm64 |
-|---|---|---|
-| Preset | `windows-review` (inherits `windows-ninja-ci`, `MIB_BUILD_REVIEW_ONLY=ON`) | `macos-review` (new; Conan toolchain, `MIB_BUILD_REVIEW_ONLY=ON`) |
-| Deps | Conan `windows-msvc194` | Conan profile `macos-appleclang-arm64` (new), same `conanfile.py` requires; `onnxruntime` already Windows-only |
-| Qt deploy | existing `mib_configure_windows_deployment` | `macdeployqt` from the Conan Qt package, `MACOSX_BUNDLE`, `Info.plist.in`, `resources/icons/mib_review.icns` |
-| Package | Inno Setup `resources/installers/mib-review.iss` → `build/dist/MIB_Review_Setup_vX.Y.Z.exe` | `hdiutil` DMG (`build/dist/MIB_Review_vX.Y.Z.dmg`) via `scripts/release/package-macos.sh` |
-| Sign | signtool (when a cert exists) | `codesign --deep --options runtime` + `notarytool submit --wait` + `stapler` (when a Developer ID exists) |
-| Update | `AutoUpdater` pointed at `review-<channel>/latest.json`, silent Inno Setup run | v1: "Check for updates…" opens the DMG download URL from `latest.json`; in-app replace is a follow-up (Sparkle is the candidate) |
-| CI | `build-review.yml` job `windows-2022` | `build-review.yml` job `macos-14` |
-
-`MIB_BUILD_REVIEW_ONLY=ON` configures `mib_processing`, `mib_review_common`,
-`mib_review` and the review tests; it does not configure cameras,
-`mib_backend`, `mib_studio_qt`, the Tauri bridge or Sentry. A full build
-(`windows-default`, `linux-release`) builds `mib_review` too, so the Linux
-lanes catch compile breaks early even though Linux is not a release
-target.
-
-### Sharing the review tests
-
-`frontend.hdf_review_core`, `frontend.hdf_review_scatter` and
-`frontend.hdf_review_export_paths` are re-pointed at
-`ProcessingService&` and registered in a `mib_review_tests` runner that
-builds under `MIB_BUILD_REVIEW_ONLY`, so the macOS job runs them
-offscreen (`QT_QPA_PLATFORM=offscreen`) as the first Apple test lane in
-the repo. A new `review.app_smoke` test launches `mib_review` with a fixture
-file on the command line, waits for the window, takes a screenshot and
-quits (same pattern as `screenshot_tour`).
+| | Linux (CI only) | macOS arm64 | Windows x64 |
+|---|---|---|---|
+| Backend archives | `linux-backend-only` (system packages) | new `macos-review-core` preset: Conan profile `macos-appleclang-arm64`, static deps, target `mib_review_core` | new `windows-review-core` preset (inherits `windows-ninja-ci`, static deps, `mib_review_core`) |
+| Link into Rust | manifest written by CMake | manifest written by CMake | `gen_bridge_link_manifest.py --review-only` until the CMake writer replaces it |
+| WebView | WebKitGTK | WKWebView (system) | WebView2 Evergreen (NSIS bootstrapper downloads it) |
+| Bundle | none | `tauri build` → `.app` + `.dmg` | `tauri build` → NSIS `.exe` (per-user, no admin) |
+| Sign | — | Developer ID + notarytool via Tauri env vars | signtool via `bundle.windows.signCommand` |
+| Update | — | `tauri-plugin-updater`, `review-<channel>/latest.json` | same |
+| CI job (`review-ci.yml`) | build + vitest + cargo tests + tauri-driver e2e under Xvfb | build + cargo/vitest + DMG mount smoke | build + cargo/vitest + tauri-driver e2e + installer smoke |
 
 ## Implementation plan
 
-Five PRs. PR 1 is the structural change and lands first; PR 2 (macOS) and
-PR 3 (Windows) are independent and can run in parallel; PR 4 needs the
-signing secrets; PR 5 closes documentation. Every PR carries its vault
-updates and passes `python3 scripts/check_docs.py`.
+Nine PRs. PR 0 and PR 1 are structural and land first; PR 2, 3, 4 (UI) are
+sequential on the review module; PR 5 (macOS) and PR 6 (Windows) depend on
+PR 1 and can run in parallel with the UI PRs; PR 7 is blocked on secrets;
+PR 8 closes documentation and parity. Every PR carries vault updates and
+passes `python3 scripts/check_docs.py` and
+`python3 scripts/gen_bridge_contract.py --check`.
 
-### PR 1 — Decouple the tab and add the `mib_review` target (Linux + Windows CI)
+### PR 0 — Product scaffolding, ADR 0008, bundling on
 
-Files: `include/frontend/tabs/HdfReviewTab.h`, `src/frontend/tabs/HdfReviewTab.cpp`,
-`include/frontend/dialogs/BatchMaskDialog.h`, `src/frontend/dialogs/BatchMaskDialog.cpp`,
-`src/frontend/core/MainWindow.cpp:524`, `include/frontend/utils/ApplicationSettings.h`
-(+ `.cpp`), new `src/frontend/review/{main.cpp,ReviewWindow.cpp,ReviewPreferencesDialog.cpp}`
-(+ headers under `include/frontend/review/`, `.ui` under `resources/ui/`),
-`src/frontend/qt/CMakeLists.txt`, `cmake/MIBOptions.cmake`, root `CMakeLists.txt`,
-`CMakePresets.json` (`linux-review`), `tests/frontend/hdf_review_{core,scatter}_test.cpp`,
-new `tests/frontend/review_app_smoke_test.cpp`, `.github/workflows/backend-ci.yml`
-(or a new `review-ci.yml` on `ubuntu-24.04`), new ADR
-`docs/decisions/0008-standalone-review-app.md`, vault:
-`knowledge_map/frontend/HdfReviewTab.md`, new `knowledge_map/frontend/ReviewApp.md`
-(+ `_MOC.md`, `README`, `Agent-Onboarding`), `knowledge_map/build-and-run/{Build,Run-Modes}.md`,
-`knowledge_map/current-state/Recent-Work.md`, this plan.
+Files: new `docs/decisions/0008-yofo-review-on-react-tauri.md`,
+`desktop/review.html`, `desktop/src/review/{main.tsx,ReviewApp.tsx}`
+(renders today's Review panel extracted from `App.tsx:1753-1927` and
+mounted in both entries), `desktop/vite.config.ts` (two inputs),
+`desktop/package.json` (`build:review`, `test`), `desktop/src-tauri/Cargo.toml`
+(feature `review-only`, `tauri-plugin-updater`, `tauri-plugin-process`),
+`desktop/src-tauri/tauri.conf.json` (`bundle.active: true`, targets
+`["nsis","dmg"]`, icns), new `desktop/src-tauri/tauri.review.conf.json`,
+`desktop/src-tauri/icons/icon.icns`, `desktop/src-tauri/capabilities/review.json`,
+`desktop/src-tauri/src/lib.rs` (cfg-gated handler list), new
+`scripts/release/stamp-tauri-version.py`, new `.github/workflows/review-ci.yml`
+(Linux job: build both entries, `cargo build --features review-only`,
+cargo/vitest, Xvfb smoke of `yofo-review`), `desktop/scripts/xvfb-smoke.sh`
+(binary name parameter already), vault: `Desktop-Shell.md`, new
+`knowledge_map/frontend/YofoReview.md` (+ `_MOC.md`, `README`,
+`Agent-Onboarding`), `Build.md`, `Run-Modes.md`, `Recent-Work.md`,
+decoupling-plan parity matrix (new "YOFO Review" column), this plan.
 
-1. Change both constructors to `ProcessingService&`; MainWindow and the
-   tests pass `backend.processing()`. No behaviour change; the three
-   review tests and `integration.review_scatter_e2e` pass unchanged.
-2. Make the isoelastic-curve lookup take the resource directory from one
-   helper (`frontend::review::resourceDir()`), used by both products, and
-   install `resources/isoelastic_curve/` next to the executable in CMake
-   so neither product depends on the working directory.
-3. `applicationsettings::initialize(product)`; "MIB Review" with the
-   one-time `Review/*` fallback read. Test: `frontend.application_settings`
-   gains a case for the product parameter and the fallback.
-4. `mib_review_common` + `mib_review` targets; `MIB_BUILD_REVIEW_ONLY`
-   option; `linux-review` preset that configures with no `mib_backend`.
-   `ReviewWindow` with the menu, status bar and the Preferences dialog
-   (pixel-to-micron factor, output defaults). Command-line file argument.
-5. Tests moved into `mib_review_tests`; `review.app_smoke` added.
-6. ADR 0008 (shell choice, exit condition to Tauri); vault notes; a line in
-   the decoupling plan's parity matrix.
+Exit: `yofo-review` boots under Xvfb showing today's review panel with the
+YOFO Review title; MIB Studio's shell unchanged; `tauri build` on Linux
+produces a `.deb`/AppImage as proof the bundler runs (not shipped).
 
-### PR 2 — macOS build, bundle and DMG (unsigned)
+### PR 1 — `ReviewSession`, `mib_review_core`, review bridge, contract 15
 
-Files: `conan/profiles/macos-appleclang-arm64`, `CMakePresets.json`
-(`macos-review`, `macos-review-build`, `macos-review-test`), `cmake/MIBDependencies.cmake`
-(Qt component lookup under Conan on Apple), `src/backend/CMakeLists.txt:103,218-232`
-(OpenSSL and native-core descriptor on Apple), `src/frontend/qt/CMakeLists.txt`
-(`MACOSX_BUNDLE`, `MACOSX_BUNDLE_INFO_PLIST`, icon, `macdeployqt` post-build),
-new `resources/macos/Info.plist.in`, `resources/icons/mib_review.icns`,
-new `scripts/release/package-macos.sh`, `scripts/doctor.sh`, `scripts/bootstrap.sh`
-(drop the "no preset yet" warning, add the Conan step), `env/brew-packages.txt`,
-`.github/workflows/build-review.yml` (job `macos-14`), new `docs/howto/macos-build.md`,
-vault: `Build.md`, `Dependencies.md`, `Assets.md` if an asset is needed, this plan.
+Files: `src/backend/review/*`, `include/backend/review/*`,
+`src/backend/CMakeLists.txt` (`mib_review_core` target; link-manifest
+writer `cmake/MIBBridgeLinkManifest.cmake`), `cmake/MIBOptions.cmake`
+(`MIB_BUILD_REVIEW_CORE_ONLY`), `CMakePresets.json` (`linux-review-core`),
+`include/backend/app/BackendFacade.h` + `src/backend/app/BackendFacade.cpp`
+(delegate), `include/backend/services/MonitoringDensityService.h` + `.cpp`
+(review mode, from the scatter plan PR 3a), `include/backend/processing/MonitoringDensity.h`
+(`densityAtPointsFromGrid`, `levelForDensity`), `crates/mib-bridge/{Cargo.toml,build.rs,src/lib.rs,src/shim.cpp,src/review_bridge.rs,src/review_shim.{h,cpp}}`,
+`crates/mib-bridge/contract/bridge-contract.json` (ABI 15),
+`crates/mib-bridge/tests/{contract.rs,review_contract.rs}`,
+`scripts/gen_bridge_contract.py`, generated `desktop/src/bridgeContract.ts`
+and `frame_packet_contract.rs`, `desktop/src-tauri/src/lib.rs` (review
+commands over either bridge), `desktop/src/bridge.ts` (typed wrappers),
+tests: new `tests/backend/review_session_test.cpp` (open/close, metadata,
+pages equal `Hdf5Service::readValidMetadata` order, series reads, overlay
+compose equals the Qt `OverlayRenderer` output on the fixture within one
+grey level, thumbnails, accounting, KDE records, TD-17 recorded factor),
+`tests/backend/review_jobs_test.cpp` (export equals `HdfExportService`
+direct run byte-for-byte, batch continues after a failing file, cancel
+discards partials, regenerate masks on the population fixture, compute
+and save core record with overwrite/read-only refusals),
+`tests/backend/review_density_test.cpp` (scatter plan PR 3a cases),
+`tests/CMakeLists.txt` (labels `recording;review`, round-trip + fault
+injection per the coverage matrix, TSan lane for the density service),
+vault: new `knowledge_map/services/ReviewSession.md`,
+`MonitoringDensityService.md`, `Rust-Bridge.md`, `HDF5-Storage.md` if
+paths move, `HdfReviewTab.md` (TD-17 note), this plan.
 
-1. Conan profile and preset; first green configure + build of `mib_review`
-   on `macos-14`. Expect to fix: Apple-only compiler warnings as errors,
-   `<windows.h>` style guards already present, HDF5 shared-library
-   rpaths inside the bundle (`macdeployqt` handles Qt; Conan HDF5/OpenCV
-   dylibs need `install_name_tool` or `BUILD_RPATH`, decide from the
-   first failure).
-2. Bundle: `MIB Review.app` with Info.plist (bundle id, version from
-   `PROJECT_VERSION_FULL`, `CFBundleDocumentTypes` for `.h5`/`.hdf5`,
-   `LSMinimumSystemVersion` 13.0), icon, resources folder containing the
-   isoelastic file and the bundled kernel.
-3. `package-macos.sh`: `macdeployqt` → optional codesign (no-op without
-   identity) → `hdiutil create` DMG with an Applications symlink.
-4. CI: build, run `mib_review_tests` offscreen, run `review.app_smoke`,
-   upload the DMG as an artifact.
-5. Apple gates: require OpenSSL on Apple (Homebrew/Conan `openssl`),
-   generate the `macos`/`arm64` core descriptor, unexclude the two Apple
-   test skips if they pass.
-6. `docs/howto/macos-build.md` and the vault.
+Exit: `cargo test --features review-only` runs the review contract against
+fixture files with no `mib_backend` in the link (`nm` check in CI);
+MIB Studio facade tests green; `record_then_load_and_review` proves raw
+frames come from the file.
 
-### PR 3 — Windows installer, R2 channel and auto-update
+### PR 2 — Frames view: open/close, thumbnails, full metrics table, viewer, overlays, series, recording files
 
-Files: `resources/installers/mib-review.iss`, `cmake/MIBWindowsPackaging.cmake`
-(`package_review_installer` target), `src/frontend/system/AutoUpdater.{h,cpp}`
-(channel prefix parameter and product name), `src/frontend/review/ReviewWindow.cpp`
-(Check for updates…), `scripts/release/publish-update.py` (`--product review`
-→ `review-stable/`, `review-beta/`), `scripts/release/release.ps1`
-(build both installers), `.github/workflows/build-review.yml` (job
-`windows-2022`), `.github/workflows/release.yml` (attach the review
-installer to the same tag release and publish to R2), `docs/howto/
-build-installer.md`, `docs/howto/auto-update-r2.md`, vault `Build.md`,
-`System-Utilities.md` (AutoUpdater), this plan.
+Files: `desktop/src/review/{ReviewApp,FramesView,FrameViewer}.tsx`,
+`desktop/src/review/thumbnails.ts` (strip decode + virtual paging, pure),
+`desktop/src/review/metricsColumns.ts`, `desktop/src/review/preferences.ts`,
+`desktop/src/framePullScheduler.ts` (thumbnail slot), `desktop/src/App.tsx`
+(Review tab mounts the module; delete the old panel), vitest for the pure
+modules, new `desktop/e2e/review_frames.spec.ts` (tauri-driver under Xvfb:
+open fixture, thumbnails page in on scroll, click thumbnail → viewer →
+prev/next, overlay switch changes pixels, recording fixture hides
+Invalid and relabels Frames, Close clears), `review-ci.yml` (tauri-driver
+step), vault `YofoReview.md`, `docs/manual/` draft page, this plan.
 
-1. `mib-review.iss`: new AppId, AppName "MIB Review", no EGrabber or VC++
-   redist bundling beyond what Qt/OpenCV need, `.h5` file association,
-   output `MIB_Review_Setup_vX.Y.Z.exe` (and the update-only variant).
-2. `AutoUpdater` learns the channel prefix and product name; MIB Studio
-   behaviour is unchanged (test: `frontend.update_catalog` with both
-   prefixes).
-3. `publish-update.py --product review` writes `latest.json` /
-   `index.json` under the review channels with the Windows installer and
-   the macOS DMG URL + SHA-256 (the Mac "Check for updates…" reads the
-   same manifest).
-4. CI: Windows job builds, runs the review tests, builds the installer,
-   uploads it. `release.yml` on `v*` tags attaches both products and
-   publishes both channels.
+Behaviour to match: `HdfReviewTab.md` Responsibility, Recording-mode
+files, Run accounting, Scalability (virtualised; > 2 GB files; never all
+images at once), Gotchas (series via the series reader).
 
-### PR 4 — Signing and notarisation (blocked on certificates)
+### PR 3 — Charts: scatter, histogram, isoelastic, KDE, contour, click-to-view pane
 
-Files: `.github/workflows/build-review.yml`, `.github/workflows/release.yml`,
-`scripts/release/package-macos.sh`, `resources/installers/mib-review.iss`
-(`SignTool` directive), `deploy/signing/README.md`, `docs/howto/build-installer.md`.
+Files: `desktop/src/review/charts/*`, shared fixture
+`tests/fixtures/review_scatter_hits.json` (already shared with the C++
+test), `desktop/src/review/preferences.ts` (KDE toggle, pane split),
+vitest (gesture state machine, hit-test fixture, level colouring falls
+back while not ready, stale session ignored, histogram binning equals the
+Qt `generateHistogram` on the fixture), e2e `review_charts.spec.ts` (click
+a known point → pane shows the expected frame; drag pans; double-click on
+empty space resets; 20 000-cell fixture opens under the gate), vault,
+this plan; scatter plan progress rows for PR 3a/PR 4 marked done here.
 
-1. macOS: import the Developer ID certificate from a secret into a
-   temporary keychain, `codesign` the bundle and every dylib with the
-   hardened runtime, `notarytool submit --wait`, `stapler staple` the DMG.
-2. Windows: `signtool` on `mib_review.exe` and the installer with a
-   publicly trusted certificate (the internal KPT CA is not sufficient for
-   SmartScreen; this is a purchase, outside the repo).
-3. Verify Gatekeeper (`spctl --assess`) and SmartScreen on clean machines;
-   record the procedure in the howto.
+Behaviour to match: scatter plan "Behaviour" and "Tauri parity" sections
+(drag threshold 10 CSS px, left/middle pan, wheel with Ctrl/Shift and
+axis regions, pixel hit test ≤ max(marker, 8), ties → lowest frame,
+highlight drawn last, pane never covers the plot, Prev/Next and ←/→,
+"Open in window" as an in-app overlay).
 
-Blocked until `APPLE_DEVELOPER_ID_CERT_P12`, `APPLE_NOTARY_*` and a
-Windows signing certificate exist as repository secrets.
+### PR 4 — Exports, regenerate masks, core contour, preferences
 
-### PR 5 — Manual, screenshots, TD-17 and hand-over
+Files: `desktop/src/review/exports/*`, `desktop/src/review/charts/chartExport.ts`,
+`desktop/src/review/RegenerateMasks.tsx`, `desktop/src/review/ReviewApp.tsx`
+(menu wiring, status), `desktop/src-tauri/src/lib.rs` (chart snapshot
+upload command on the binary transport), vitest (default naming
+`<basename>_metrics.csv` with `_2`, `_3` suffixes, batch summary text,
+series range parsing `9-15`), e2e `review_exports.spec.ts` (Export
+Metrics equals the Qt tab's CSV byte-for-byte on the fixture; Export All
+folder layout `<root>/<basename>/`; cancel mid-export leaves no partial;
+Export Charts writes TIFFs; regenerate masks produces a file the viewer
+reloads; compute core then save writes `/analysis @kde_core_json`),
+`docs/manual/`, vault, this plan.
 
-Files: new `docs/manual/mib-review.md` (install on Mac and Windows, open a
-file, differences from the Review tab: Preferences, no live factor),
-`docs/manual/review-and-postprocess.md` (cross-link), `mkdocs.yml`,
-`src/frontend/tools/screenshot_tour_main.cpp` (or a `review_screenshot_tour`
-mode) + `scripts/check_screenshots.py`, `src/frontend/tabs/HdfReviewTab.cpp`
-(TD-17: read the recorded `pixel_to_micron` from the run snapshot, fall
-back to the service factor), `tests/frontend/hdf_review_core_test.cpp`
-(file recorded at another factor), `docs/exec-plans/tech-debt-tracker.md`,
-decoupling plan parity matrix, `Recent-Work.md`, this plan → `completed/`.
+Behaviour to match: `HdfReviewTab.md` export rules (one job at a time,
+progress + cancel, partial discarded, folders published on success, last
+directories remembered, series prompt applies one range across all
+records) and Regenerate masks section.
+
+### PR 5 — macOS build chain and DMG (unsigned)
+
+Files: `conan/profiles/macos-appleclang-arm64`, `conanfile.py` (static
+options under `tools.build:…` for the review profile; no Qt requirement
+when `MIB_BUILD_REVIEW_CORE_ONLY`), `CMakePresets.json`
+(`macos-review-core`, build/test companions), `cmake/MIBDependencies.cmake`,
+`src/backend/CMakeLists.txt:103,218-232` (OpenSSL on Apple; `macos`/`arm64`
+core descriptor), `crates/mib-bridge/build.rs` (macOS manifest path),
+`desktop/src-tauri/tauri.review.conf.json` (`bundle.macOS.minimumSystemVersion`
+13.0, `fileAssociations` for `.h5`/`.hdf5`), `scripts/doctor.sh`,
+`scripts/bootstrap.sh` (replace the "no preset yet" warning with the
+Conan + preset steps), `env/brew-packages.txt` (rust, node), new
+`docs/howto/macos-build.md`, `.github/workflows/review-ci.yml` (job
+`macos-14`: Conan cache, preset build, `cargo test --features review-only`,
+`npm test`, `tauri build --config tauri.review.conf.json --features review-only`,
+mount the DMG and launch `yofo-review --version`), vault `Build.md`,
+`Dependencies.md`, this plan.
+
+### PR 6 — Windows installer, updater, R2 channels, release workflow
+
+Files: `CMakePresets.json` (`windows-review-core`), `tools/gen_bridge_link_manifest.py`
+(`--review-only`), `desktop/src-tauri/tauri.review.conf.json` (NSIS
+per-user install, WebView2 bootstrapper, `.h5` association, `plugins.updater`
+endpoints `https://updates.yofo.bio/review-stable/latest.json` and the
+public minisign key), `desktop/src-tauri/src/lib.rs` (`check_for_updates`
+command: plugin check → SHA-256 re-verify via `updater.rs` → install →
+`tauri-plugin-process` relaunch), `desktop/src/review/ReviewApp.tsx`
+("Check for updates…", channel in Preferences), `scripts/release/publish-update.py`
+(`--product review --format tauri`: `latest.json` with `platforms`,
+`index.json` history), `scripts/release/release.ps1` (build YOFO Review
+too), `.github/workflows/review-ci.yml` (job `windows-2022`), `.github/workflows/release.yml`
+(on `v*` tags: build and attach `YOFO_Review_vX.Y.Z_x64-setup.exe` and
+`YOFO_Review_vX.Y.Z_aarch64.dmg`, publish both review channels),
+`docs/howto/auto-update-r2.md`, `docs/howto/build-installer.md`, vault,
+this plan.
+
+### PR 7 — Signing and notarisation (blocked on certificates)
+
+Files: `.github/workflows/{review-ci,release}.yml` (Tauri signing env:
+`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`,
+`APPLE_PASSWORD`, `APPLE_TEAM_ID`, `TAURI_SIGNING_PRIVATE_KEY`,
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, Windows certificate secret),
+`desktop/src-tauri/tauri.review.conf.json` (`bundle.macOS.signingIdentity`,
+hardened runtime entitlements, `bundle.windows.signCommand`),
+`deploy/signing/README.md`, `docs/howto/build-installer.md`.
+
+Exit: `spctl --assess` passes on the DMG; SmartScreen does not warn on the
+installer; the updater accepts only artefacts signed with the project
+minisign key.
+
+### PR 8 — Manual, screenshots, parity sign-off, hand-over
+
+Files: new `docs/manual/yofo-review.md` (install on Mac and Windows, open
+a file, every workflow of `review-and-postprocess.md` in YOFO Review
+terms, Preferences, updates), `docs/manual/review-and-postprocess.md`
+(cross-link), `mkdocs.yml`, a tauri-driver screenshot harness
+(`desktop/e2e/screenshots.spec.ts`) registered in `scripts/check_screenshots.py`,
+`docs/exec-plans/tech-debt-tracker.md` (TD-17 closed; TD-18 noted as not
+applicable to the canvas scatter; new entries for anything deferred),
+decoupling plan parity matrix (Review row → ships in both), scatter plan
+→ completed, `Recent-Work.md`, this plan → `completed/`.
+
+Parity sign-off: on the `z-adjustment-50v` conformance corpus and the
+512x96 recorded run used by `integration.review_scatter_e2e`, YOFO Review
+and the Qt tab produce identical `metrics.csv` and image TIFFs, the same
+scatter point count and axis extents, the same histogram bins, the same
+accounting text and the same saved core record; the differences list in
+`YofoReview.md` is empty or every item is accepted in the decision log.
 
 ## Acceptance criteria
 
-- [ ] `HdfReviewTab` and `BatchMaskDialog` take `ProcessingService&`; MIB
-      Studio's Review tab behaves exactly as before
-      (`frontend.hdf_review_*` and `integration.review_scatter_e2e` pass
-      unchanged).
-- [ ] `mib_review` builds under `MIB_BUILD_REVIEW_ONLY` with no
-      `mib_backend`, camera SDK, SQLite, ONNX or Sentry in the link; the
-      Linux lane proves it on every PR.
-- [ ] Opening an experiment file and a recording file in MIB Review shows
-      the same frames, metrics, charts, click-to-view, contour, exports
-      and regenerate-masks results as the Review tab for the same file
-      and factor (compare the `metrics.csv` and chart TIFFs byte-for-byte
-      in `review.app_smoke` against the tab's output).
-- [ ] macOS: `macos-review` preset configures and builds on `macos-14`;
-      `mib_review_tests` and `review.app_smoke` pass offscreen; the DMG
-      installs by drag-and-drop and opens `.h5` files by double-click.
-- [ ] Windows: the Inno Setup installer installs MIB Review beside MIB
-      Studio without touching it (separate AppId, directory, settings);
-      `.h5` association works; "Check for updates…" finds a newer
-      `review-stable/latest.json` and installs it silently.
-- [ ] One `vX.Y.Z` tag publishes MIB Studio and MIB Review installers to
-      GitHub Releases and both R2 channels.
-- [ ] Signed and notarised artefacts open without Gatekeeper or
-      SmartScreen warnings (PR 4; blocked until certificates exist and
-      reported as such in the tracker if v1 ships unsigned).
-- [ ] ADR 0008 accepted; the decoupling plan's parity matrix carries the
-      MIB Review column and the Tauri exit condition.
-- [ ] Manual page, howtos, vault notes, screenshot harness updated;
+- [ ] `ReviewSession` in `mib_review_core` serves every review read and job
+      for both products; `BackendFacade` delegates to it; MIB Studio's
+      Tauri Review tab no longer reads the live FrameStore for file frames.
+- [ ] Contract 15 is additive; `gen_bridge_contract.py --check`,
+      `shim.cpp` asserts, `contract.rs` and the new `review_contract.rs`
+      pass on Linux, macOS and Windows.
+- [ ] `yofo-review` links no `mib_backend`, camera SDK, serial, SQLite,
+      curl or Sentry symbols (CI `nm`/`dumpbin` check).
+- [ ] Frames, viewer, overlays, ROI, series, thumbnails, full metrics
+      table, recording files and accounting behave as `HdfReviewTab.md`
+      specifies; e2e `review_frames` green on Linux and Windows.
+- [ ] Charts: scatter with KDE colouring and contour, histogram,
+      isoelastic curves, zoom/pan/click-to-view pane, shared hit fixture
+      passes in vitest and C++; 20 000-cell fixture opens within the
+      gate; the scatter plan's acceptance criteria for the React view hold.
+- [ ] Exports (metrics, all, batch, charts), regenerate masks, compute and
+      save core contour run as tracked operations with progress and
+      cancel; outputs equal the Qt tab's byte-for-byte where the data is
+      deterministic.
+- [ ] macOS: `macos-review-core` + `tauri build` produce a DMG on
+      `macos-14`; cargo and vitest suites pass there; `.h5` opens by
+      double-click.
+- [ ] Windows: NSIS installer installs per-user beside MIB Studio Qt
+      without touching it; `.h5` association; "Check for updates…" installs
+      a newer `review-stable/latest.json` release and relaunches.
+- [ ] One `vX.Y.Z` tag publishes MIB Studio Qt and YOFO Review artefacts
+      to GitHub Releases and their R2 channels.
+- [ ] Signed and notarised artefacts open without Gatekeeper or SmartScreen
+      warnings (PR 7; reported in the tracker if v1 ships unsigned).
+- [ ] ADR 0008 accepted; manual page, howtos, vault notes, screenshot
+      harness and the decoupling-plan parity matrix updated;
       `check_docs.py` and `check_screenshots.py` clean.
 
 ## Non-goals (v1)
 
-- A React + Tauri MIB Review (tracked by ADR 0008's exit condition and the
-  scatter plan's PR 4).
-- Intel macOS or universal binaries; Linux installers.
-- Crash reporting / Sentry in MIB Review (needs `CrashReporter` out of
-  `mib_backend`).
-- Loading signed `.dylib` processing cores on macOS (needs published
-  macOS cores; bundled kernel only in v1).
-- Multi-window or multi-file sessions; live capture of any kind.
-- In-app DMG replacement on macOS (Sparkle is the follow-up candidate).
+- Any change to the Qt Review tab beyond TD-17 (it keeps shipping in MIB
+  Studio Qt until the Tauri cutover).
+- Intel macOS or universal binaries; Linux installers (Linux is a CI
+  target only).
+- Crash reporting in YOFO Review (Sentry lives in `mib_backend`; a
+  Qt-free, backend-free reporter is a follow-up under #279).
+- Signed plugin processing cores on macOS (bundled kernel only).
+- Multi-window sessions; live capture of any kind; the MIB Studio
+  experiment, monitoring or hardware panels.
+- A backend chart rasteriser (the shell renders charts; export sends its
+  pixels).
 
 ## Progress
 
-- [ ] PR 1 — decouple `HdfReviewTab`/`BatchMaskDialog`, `mib_review_common`,
-      `mib_review`, `linux-review` preset, ADR 0008
-- [ ] PR 2 — macOS Conan profile, preset, bundle, `macdeployqt`, DMG, CI job
-- [ ] PR 3 — Windows Inno Setup, R2 review channels, `AutoUpdater` prefix,
+- [ ] PR 0 — scaffolding: review entry, config overlay, `review-only`
+      feature, bundling on, ADR 0008, `review-ci.yml` (Linux)
+- [ ] PR 1 — `ReviewSession` / `mib_review_core`, facade delegation,
+      review bridge, contract 15, density job (absorbs scatter plan PR 3a)
+- [ ] PR 2 — Frames view, viewer, overlays, series, recording files
+- [ ] PR 3 — Charts view, gestures, click-to-view pane (absorbs scatter
+      plan PR 4 / #470)
+- [ ] PR 4 — exports, regenerate masks, core contour, preferences
+- [ ] PR 5 — macOS Conan profile, preset, bridge manifest, DMG, CI job
+- [ ] PR 6 — Windows preset, NSIS, updater plugin, R2 review channels,
       release workflow
-- [ ] PR 4 — Apple notarisation and Windows Authenticode (blocked on
-      certificates)
-- [ ] PR 5 — manual, screenshots, TD-17, tracker, plan → completed
+- [ ] PR 7 — notarisation and Authenticode (blocked on certificates)
+- [ ] PR 8 — manual, screenshots, parity sign-off, tracker, plan → completed
