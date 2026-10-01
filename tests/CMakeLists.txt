@@ -526,6 +526,12 @@ set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording
 mib_add_backend_test_executable(review_session_test review/review_session_test.cpp)
 add_test(NAME review.session COMMAND $<TARGET_FILE:mib_backend_tests> review_session_test)
 set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
+# regenerate masks, core contour, density (grid ≈ direct), single flight.
+mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)
+mib_backend_test_link(review_jobs_test PRIVATE Threads::Threads)
+add_test(NAME review.jobs COMMAND $<TARGET_FILE:mib_backend_tests> review_jobs_test)
+set_tests_properties(review.jobs PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 300)
 
 mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
 add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)

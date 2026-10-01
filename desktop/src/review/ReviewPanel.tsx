@@ -12,15 +12,17 @@
 // and jobs arrive with the plan's PR 2–4.
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FramePacket } from "../framePacket";
 import type { FramePullScheduler } from "../framePullScheduler";
 import {
   OVERLAY,
+  REGENERATE_SOURCE,
   REVIEW_DATASET,
   packetToImageData,
   reviewBridge,
   type OverlayMode,
+  type ReviewCmdResult,
   type ReviewInfo,
   type ReviewRows,
 } from "./reviewBridge";
@@ -28,8 +30,10 @@ import {
 export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
 export const METRICS_PAGE_SIZE = 50;
 
-// Jobs (exports, batch, regenerate masks) are bridged with the plan's PR 1b.
-const PENDING_JOBS = "Export and regeneration jobs arrive with the next review bridge step (PR 1b)";
+// Jobs run in the backend as tracked operations (one at a time); the host's
+// event drain logs their outcome. Dialogs with series ranges, progress and
+// cancel arrive with the plan's PR 4.
+const H5_MULTI = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
 
 const OVERLAY_LABELS: { mode: OverlayMode; label: string }[] = [
   { mode: OVERLAY.None, label: "Overlay: None" },
@@ -186,6 +190,67 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   useImperativeHandle(ref, () => ({ openFile, closeFile }), [openFile, closeFile]);
 
+  // ---- jobs -----------------------------------------------------------------
+  const report = useCallback(
+    (what: string, r: ReviewCmdResult) => log(r.ok ? `${what} started (operation ${r.operation_id})` : `${what} refused: ${r.message}`),
+    [log],
+  );
+  const baseName = (p: string) => p.replace(/\\/g, "/").split("/").pop()?.replace(/\.(h5|hdf5)$/i, "") ?? "export";
+
+  const onExportMetrics = useCallback(async () => {
+    try {
+      const picked = await save({
+        title: "Export Metrics to CSV",
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+        defaultPath: `${baseName(info?.file_path ?? "")}_metrics.csv`,
+      });
+      if (!picked) return;
+      report("Metrics export", await reviewBridge.exportMetrics(picked));
+    } catch (e) {
+      log(`export error: ${e}`);
+    }
+  }, [info, log, report]);
+
+  const onExportAll = useCallback(async () => {
+    try {
+      const root = await open({ title: "Export All — choose the output root", directory: true, multiple: false });
+      if (typeof root !== "string") return;
+      report("Export All", await reviewBridge.exportAll(root));
+    } catch (e) {
+      log(`export error: ${e}`);
+    }
+  }, [log, report]);
+
+  const onBatch = useCallback(
+    async (metricsOnly: boolean) => {
+      try {
+        const picked = await open({ title: metricsOnly ? "Batch Metrics — choose files" : "Batch Export All — choose files", filters: H5_MULTI, multiple: true });
+        const sources = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+        if (sources.length === 0) return;
+        const root = await open({ title: "Choose the output root", directory: true, multiple: false });
+        if (typeof root !== "string") return;
+        report(metricsOnly ? "Batch metrics" : "Batch export", await reviewBridge.batchExport(sources, root, metricsOnly));
+      } catch (e) {
+        log(`batch error: ${e}`);
+      }
+    },
+    [log, report],
+  );
+
+  const onRegenerate = useCallback(async () => {
+    try {
+      const out = await save({
+        title: "Regenerate masks — output file",
+        filters: [{ name: "HDF5", extensions: ["h5"] }],
+        defaultPath: `${baseName(info?.file_path ?? "")}_remasked.h5`,
+      });
+      if (!out) return;
+      report("Regenerate masks", await reviewBridge.regenerateMasks({ source: REGENERATE_SOURCE.WholeFile, outputPath: out }));
+    } catch (e) {
+      log(`regenerate error: ${e}`);
+    }
+  }, [info, log, report]);
+
   const onOverlayChange = (mode: OverlayMode) => {
     setOverlay(mode);
     if (reviewing && reviewTab !== "charts" && imageCount(reviewTab) > 0) drawImage(reviewTab, imgIndex, mode, roiOverlay);
@@ -207,10 +272,21 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         <button onClick={closeFile} disabled={!reviewing} title={reviewing ? "Close the current file" : "No file loaded"}>
           Close File
         </button>
-        <button disabled title={PENDING_JOBS}>Export Metrics to CSV…</button>
-        <button disabled title={PENDING_JOBS}>Export All…</button>
-        <button disabled title={PENDING_JOBS}>Batch Metrics…</button>
-        <button disabled title={PENDING_JOBS}>Regenerate masks…</button>
+        <button onClick={onExportMetrics} disabled={!reviewing || isRecording} title={isRecording ? "Recording files carry no metrics" : "Write the metrics CSV (recorded px→µm factor)"}>
+          Export Metrics to CSV…
+        </button>
+        <button onClick={onExportAll} disabled={!reviewing} title="Metrics, images and series into <root>/<file>/">
+          Export All…
+        </button>
+        <button onClick={() => void onBatch(true)} disabled={!ready} title="Metrics CSV for several files">
+          Batch Metrics…
+        </button>
+        <button onClick={() => void onBatch(false)} disabled={!ready} title="Export All for several files">
+          Batch Export All…
+        </button>
+        <button onClick={onRegenerate} disabled={!reviewing} title="Re-run the bundled kernel on every image with the recorded config, ROI and background">
+          Regenerate masks…
+        </button>
         <select
           value={overlay}
           disabled={!reviewing || isRecording}

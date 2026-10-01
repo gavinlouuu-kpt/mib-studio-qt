@@ -19,6 +19,8 @@ struct ReviewInfo;
 struct ReviewRows;
 struct ReviewScatter;
 struct ReviewEvent;
+struct ReviewChartSnapshot;
+struct ReviewDensity;
 
 class ReviewBridge {
 public:
@@ -46,6 +48,21 @@ public:
                                         std::uint32_t size, std::uint32_t overlay, bool roi_overlay);
     ReviewScatter fetch_review_scatter();
     ReviewResult review_save_core_record(rust::Str json, bool overwrite);
+
+    ReviewResult review_export_metrics(rust::Str output_path);
+    ReviewResult review_export_all(rust::Str output_root, bool export_series, std::uint64_t series_start,
+                                   std::uint64_t series_end, rust::Vec<ReviewChartSnapshot> charts);
+    ReviewResult review_batch_export(rust::Vec<rust::String> sources, rust::Str output_root, bool metrics_only,
+                                     bool export_series, std::uint64_t series_start, std::uint64_t series_end);
+    ReviewResult review_regenerate_masks(std::uint32_t source, rust::Str source_path, std::uint64_t start_index,
+                                         std::uint64_t count, rust::Str output_path, bool use_recorded_config,
+                                         bool synthesize_background);
+    ReviewResult review_compute_core(double core_fraction);
+    rust::String fetch_review_computed_core_json();
+    ReviewResult review_request_density(double bandwidth_factor, double core_fraction, std::uint32_t levels,
+                                        bool want_core_record);
+    ReviewDensity fetch_review_density();
+    bool review_jobs_busy() const;
 
     rust::Vec<ReviewEvent> poll_review_events();
     ReviewResult cancel_review_operation(std::uint64_t operation_id);

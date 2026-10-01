@@ -40,6 +40,7 @@ ENUM_GROUPS = [
     ("review_image_datasets", "REVIEW_IMAGE_DATASETS"),
     ("overlay_modes", "OVERLAY_MODES"),
     ("review_operation_kinds", "REVIEW_OPERATION_KINDS"),
+    ("review_regenerate_sources", "REVIEW_REGENERATE_SOURCES"),
     ("pump_ids", "PUMP_IDS"),
     ("pump_run_states", "PUMP_RUN_STATES"),
     ("pump_directions", "PUMP_DIRECTIONS"),
@@ -74,6 +75,8 @@ def render(contract: dict) -> str:
             lines.append(f"  {name}: {value},")
         lines.append("} as const;")
         lines.append("")
+    lines.append("export const REVIEW_DENSITY = " + json.dumps(contract["review_density"], indent=2) + " as const;")
+    lines.append("")
     lines.append("export const REVIEW_PIXEL_FORMATS = " + json.dumps(contract["review_pixel_formats"], indent=2) + " as const;")
     lines.append("")
     lines.append("export const FRAME_PACKET = " + json.dumps(contract["frame_packet"], indent=2) + " as const;")

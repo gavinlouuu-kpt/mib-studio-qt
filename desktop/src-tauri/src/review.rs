@@ -457,6 +457,140 @@ pub fn review_save_core_record(
     Ok(guard.pin_mut().review_save_core_record(&json, overwrite).into())
 }
 
+#[derive(Serialize, Clone, Default)]
+pub struct ReviewDensity {
+    transport_version: u32,
+    valid: bool,
+    ready: bool,
+    levels: Vec<u8>,
+    level_count: u32,
+    bandwidth_factor: f64,
+    core_fraction: f64,
+    computed_record_json: String,
+}
+
+/// A chart snapshot rendered by the shell for Export All: `name` is the
+/// file written beside the images, `encoded` PNG/TIFF bytes.
+#[derive(serde::Deserialize, Clone, Default)]
+pub struct ChartSnapshotArg {
+    name: String,
+    encoded: Vec<u8>,
+}
+
+fn series_range(export_series: bool, start: &str, end: &str) -> Result<(bool, u64, u64), String> {
+    let s = parse_u64(start)?;
+    let e = if end.is_empty() { u64::MAX } else { parse_u64(end)? };
+    Ok((export_series, s, e))
+}
+
+#[tauri::command]
+pub fn review_export_metrics(state: State<AppState>, output_path: String) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_metrics(&output_path).into())
+}
+
+#[tauri::command]
+pub fn review_export_all(
+    state: State<AppState>,
+    output_root: String,
+    export_series: bool,
+    series_start: String,
+    series_end: String,
+    charts: Vec<ChartSnapshotArg>,
+) -> Result<ReviewCmdResult, String> {
+    let (es, s, e) = series_range(export_series, &series_start, &series_end)?;
+    let snaps: Vec<review_ffi::ReviewChartSnapshot> = charts
+        .into_iter()
+        .map(|c| review_ffi::ReviewChartSnapshot { name: c.name, encoded: c.encoded })
+        .collect();
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_all(&output_root, es, s, e, snaps).into())
+}
+
+#[tauri::command]
+pub fn review_batch_export(
+    state: State<AppState>,
+    sources: Vec<String>,
+    output_root: String,
+    metrics_only: bool,
+    export_series: bool,
+    series_start: String,
+    series_end: String,
+) -> Result<ReviewCmdResult, String> {
+    let (es, s, e) = series_range(export_series, &series_start, &series_end)?;
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_batch_export(sources, &output_root, metrics_only, es, s, e).into())
+}
+
+#[tauri::command]
+pub fn review_regenerate_masks(
+    state: State<AppState>,
+    source: u32,
+    source_path: String,
+    start_index: String,
+    count: String,
+    output_path: String,
+    use_recorded_config: bool,
+    synthesize_background: bool,
+) -> Result<ReviewCmdResult, String> {
+    let start = parse_u64(&start_index)?;
+    let n = parse_u64(&count)?;
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard
+        .pin_mut()
+        .review_regenerate_masks(source, &source_path, start, n, &output_path, use_recorded_config, synthesize_background)
+        .into())
+}
+
+#[tauri::command]
+pub fn review_compute_core(state: State<AppState>, core_fraction: f64) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_compute_core(core_fraction).into())
+}
+
+#[tauri::command]
+pub fn fetch_review_computed_core_json(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_review_computed_core_json())
+}
+
+#[tauri::command]
+pub fn review_request_density(
+    state: State<AppState>,
+    bandwidth_factor: f64,
+    core_fraction: f64,
+    levels: u32,
+    want_core_record: bool,
+) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard
+        .pin_mut()
+        .review_request_density(bandwidth_factor, core_fraction, levels, want_core_record)
+        .into())
+}
+
+#[tauri::command]
+pub fn fetch_review_density(state: State<AppState>) -> Result<ReviewDensity, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    let d = guard.pin_mut().fetch_review_density();
+    Ok(ReviewDensity {
+        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+        valid: d.valid,
+        ready: d.ready,
+        levels: d.levels,
+        level_count: d.level_count,
+        bandwidth_factor: d.bandwidth_factor,
+        core_fraction: d.core_fraction,
+        computed_record_json: d.computed_record_json,
+    })
+}
+
+#[tauri::command]
+pub fn review_jobs_busy(state: State<AppState>) -> Result<bool, String> {
+    let guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.review_jobs_busy())
+}
+
 #[tauri::command]
 pub fn poll_review_events(state: State<AppState>) -> Result<ReviewEvents, String> {
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;

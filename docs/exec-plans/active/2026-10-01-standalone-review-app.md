@@ -583,8 +583,12 @@ accounting text and the same saved core record; the differences list in
       review-only binary must not compile the AppBackend shim; MIB Studio's
       Tauri shell holds both bridges and its Review tab uses only the
       review one.
-- [ ] PR 1b — review jobs (export, batch, regenerate masks, core contour)
-      and the density review mode (absorbs scatter plan PR 3a)
+- [x] PR 1b — review jobs (export, batch, regenerate masks, core contour)
+      and the density review mode (landed 2026-10-01). Deviation: the
+      density job lives in `ReviewJobs` (review core) rather than as a review
+      mode of `MonitoringDensityService` (which is in `mib_backend`, which the
+      review-only product must not link); it reuses the same
+      `MonitoringDensity.h` kernel and bucketing.
 - [ ] PR 2 — Frames view, viewer, overlays, series, recording files
 - [ ] PR 3 — Charts view, gestures, click-to-view pane (absorbs scatter
       plan PR 4 / #470)

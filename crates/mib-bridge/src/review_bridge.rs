@@ -175,6 +175,29 @@ pub mod review_ffi {
         pub message: String,
     }
 
+    /// A chart snapshot the shell rendered (PNG/TIFF bytes) for Export All,
+    /// written as `name` beside the images.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewChartSnapshot {
+        pub name: String,
+        pub encoded: Vec<u8>,
+    }
+
+    /// The last density job's result, parallel to `fetch_review_scatter`
+    /// (one level per point, contract `review_density.level_count` levels).
+    /// `computed_record_json` is empty when the file has a stored full-run
+    /// record or the job asked for none.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewDensity {
+        pub valid: bool,
+        pub ready: bool,
+        pub levels: Vec<u8>,
+        pub level_count: u32,
+        pub bandwidth_factor: f64,
+        pub core_fraction: f64,
+        pub computed_record_json: String,
+    }
+
     unsafe extern "C++" {
         include!("mib-bridge/src/review_shim.h");
 
@@ -250,6 +273,55 @@ pub mod review_ffi {
             json: &str,
             overwrite: bool,
         ) -> ReviewResult;
+
+        /// Jobs (ADR 0004 semantics: one tracked operation each, Started /
+        /// Progress / one terminal state through `poll_review_events`,
+        /// partial outputs never published, one job at a time). Each returns
+        /// the operation id in `ReviewResult::operation_id` or `ok = false`.
+        fn review_export_metrics(self: Pin<&mut ReviewBridge>, output_path: &str) -> ReviewResult;
+        fn review_export_all(
+            self: Pin<&mut ReviewBridge>,
+            output_root: &str,
+            export_series: bool,
+            series_start: u64,
+            series_end: u64,
+            charts: Vec<ReviewChartSnapshot>,
+        ) -> ReviewResult;
+        fn review_batch_export(
+            self: Pin<&mut ReviewBridge>,
+            sources: Vec<String>,
+            output_root: &str,
+            metrics_only: bool,
+            export_series: bool,
+            series_start: u64,
+            series_end: u64,
+        ) -> ReviewResult;
+        /// `source` is a contract `review_regenerate_sources` value; with
+        /// `use_recorded_config` the open file's recorded config, ROI and
+        /// background drive the bundled kernel.
+        fn review_regenerate_masks(
+            self: Pin<&mut ReviewBridge>,
+            source: u32,
+            source_path: &str,
+            start_index: u64,
+            count: u64,
+            output_path: &str,
+            use_recorded_config: bool,
+            synthesize_background: bool,
+        ) -> ReviewResult;
+        fn review_compute_core(self: Pin<&mut ReviewBridge>, core_fraction: f64) -> ReviewResult;
+        /// The record the last ComputeCore / Density job produced (JSON;
+        /// empty when none). Save it with `review_save_core_record`.
+        fn fetch_review_computed_core_json(self: Pin<&mut ReviewBridge>) -> String;
+        fn review_request_density(
+            self: Pin<&mut ReviewBridge>,
+            bandwidth_factor: f64,
+            core_fraction: f64,
+            levels: u32,
+            want_core_record: bool,
+        ) -> ReviewResult;
+        fn fetch_review_density(self: Pin<&mut ReviewBridge>) -> ReviewDensity;
+        fn review_jobs_busy(&self) -> bool;
 
         /// Drain job lifecycle events (bounded queue, drop-oldest).
         fn poll_review_events(self: Pin<&mut ReviewBridge>) -> Vec<ReviewEvent>;

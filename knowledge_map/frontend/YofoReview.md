@@ -59,9 +59,11 @@ recorded pixel-to-micron factor with a "(fallback)" marker — TD-17),
 deformability, ring ratio, E), `frame(dataset, index, overlay, roi)` with the
 overlay composed in the backend (Mono8 or RGB8 packets,
 `packetToImageData`). Raw Frames scrub the file's `/recorded_frames`
-dataset, never the live FrameStore. Export / batch / regenerate buttons are
-disabled until PR 1b bridges the jobs; thumbnails, charts and the viewer
-arrive with PR 2–3.
+dataset, never the live FrameStore. Export Metrics, Export All, Batch Metrics, Batch Export All and
+Regenerate masks start backend jobs (`ReviewJobs`) with native pickers; the
+host's event drain logs their outcome. Progress/cancel dialogs and the
+series-range prompt arrive with PR 4; thumbnails, charts and the viewer
+with PR 2–3.
 
 ## `ReviewApp` (the product shell)
 

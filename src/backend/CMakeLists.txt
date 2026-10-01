@@ -128,8 +128,10 @@ mib_link_hdf5(mib_processing PUBLIC)
 add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewJobs.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewSession.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewJobs.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewTypes.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/OverlayCompose.h
 )

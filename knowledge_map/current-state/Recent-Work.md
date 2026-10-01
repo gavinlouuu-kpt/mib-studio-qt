@@ -1,5 +1,19 @@
 # Recent Work
 
+## 2026-10-01 — Review jobs in the review core (YOFO Review PR 1b)
+
+`ReviewJobs` (`mib_review_core`, [[../services/ReviewSession]]) runs the
+review's long work as single-flight tracked operations on their own
+readers: metrics / Export All / batch exports through `HdfExportService`
+with the recorded factor and shell-rendered chart snapshots, mask
+regeneration through the bundled kernel with the recorded config, the
+full-run core contour, and the review density estimate (grid path above
+5000 cells). Exposed on the review bridge (`review_export_*`,
+`review_batch_export`, `review_regenerate_masks`, `review_compute_core`,
+`review_request_density`, contract groups `review_regenerate_sources`,
+`review_density`) and wired to the React panel's export / batch /
+regenerate buttons. Guards: `review.jobs`, `tests/review_bridge.rs`.
+
 ## 2026-10-01 — ReviewSession and the review bridge (YOFO Review PR 1a/1c)
 
 One Qt-free review implementation now sits behind every shell

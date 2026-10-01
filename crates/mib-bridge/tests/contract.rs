@@ -65,7 +65,8 @@ fn abi_version_is_stable() {
     // stop outcomes, run completion states, readiness gate statuses, typed
     // ExperimentStatus companions and fetch_experiment_readiness.
     // v14 the asynchronous device-discovery jobs (#419, ADR 0005).
-    assert_eq!(ffi::bridge_abi_version(), 14);
+    // v15 the review bridge over ReviewSession (ADR 0008).
+    assert_eq!(ffi::bridge_abi_version(), 15);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the

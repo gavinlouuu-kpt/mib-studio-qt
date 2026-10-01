@@ -126,6 +126,33 @@ export interface ReviewEvent {
   message: string;
 }
 
+export interface ReviewDensity {
+  valid: boolean;
+  ready: boolean;
+  levels: number[];
+  level_count: number;
+  bandwidth_factor: number;
+  core_fraction: number;
+  computed_record_json: string;
+}
+
+export interface ChartSnapshot {
+  name: string;
+  encoded: number[];
+}
+
+export interface SeriesRange {
+  exportSeries: boolean;
+  /** 0-based inclusive; `end` empty = to the last image. */
+  start: number | string;
+  end: number | string | "";
+}
+
+export const ALL_SERIES: SeriesRange = { exportSeries: true, start: 0, end: "" };
+
+/** Contract review_regenerate_sources. */
+export const REGENERATE_SOURCE = { CurrentValid: 0, CurrentInvalid: 1, WholeFile: 2, Avi: 3, Folder: 4 } as const;
+
 export interface ReviewCmdResult {
   ok: boolean;
   command: number;
@@ -192,6 +219,49 @@ export const reviewBridge = {
     pull("fetch_review_thumbnails_packet", PULL_REVIEW_THUMBNAILS, { valid, offset: decimalU64(offset), count, size, overlay, roiOverlay }),
   scatter: () => invoke<ReviewScatter>("fetch_review_scatter"),
   saveCoreRecord: (json: string, overwrite: boolean) => command("review_save_core_record", { json, overwrite }),
+  // Jobs (tracked operations; outcomes through pollEvents).
+  exportMetrics: (outputPath: string) => command("review_export_metrics", { outputPath }),
+  exportAll: (outputRoot: string, series: SeriesRange = ALL_SERIES, charts: ChartSnapshot[] = []) =>
+    command("review_export_all", {
+      outputRoot,
+      exportSeries: series.exportSeries,
+      seriesStart: decimalU64(series.start),
+      seriesEnd: series.end === "" ? "" : decimalU64(series.end),
+      charts,
+    }),
+  batchExport: (sources: string[], outputRoot: string, metricsOnly: boolean, series: SeriesRange = ALL_SERIES) =>
+    command("review_batch_export", {
+      sources,
+      outputRoot,
+      metricsOnly,
+      exportSeries: series.exportSeries,
+      seriesStart: decimalU64(series.start),
+      seriesEnd: series.end === "" ? "" : decimalU64(series.end),
+    }),
+  regenerateMasks: (args: {
+    source: number;
+    sourcePath?: string;
+    startIndex?: number | string;
+    count?: number | string;
+    outputPath: string;
+    useRecordedConfig?: boolean;
+    synthesizeBackground?: boolean;
+  }) =>
+    command("review_regenerate_masks", {
+      source: args.source,
+      sourcePath: args.sourcePath ?? "",
+      startIndex: decimalU64(args.startIndex ?? 0),
+      count: decimalU64(args.count ?? 0),
+      outputPath: args.outputPath,
+      useRecordedConfig: args.useRecordedConfig ?? true,
+      synthesizeBackground: args.synthesizeBackground ?? false,
+    }),
+  computeCore: (coreFraction: number) => command("review_compute_core", { coreFraction }),
+  computedCoreJson: () => invoke<string>("fetch_review_computed_core_json"),
+  requestDensity: (bandwidthFactor = 1.0, coreFraction = 0.9, levels = 8, wantCoreRecord = true) =>
+    command("review_request_density", { bandwidthFactor, coreFraction, levels, wantCoreRecord }),
+  density: () => invoke<ReviewDensity>("fetch_review_density"),
+  jobsBusy: () => invoke<boolean>("review_jobs_busy"),
   pollEvents: async () => (await invoke<{ events: ReviewEvent[] }>("poll_review_events")).events ?? [],
   cancel: (operationId: string) => command("cancel_review_operation", { operationId }),
 };

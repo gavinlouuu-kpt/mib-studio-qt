@@ -58,6 +58,38 @@ later the Qt [[../frontend/HdfReviewTab]] (TD-17)
 - `loadFrameForDisplay(valid, index)`: the full `ProcessedFrame` (image,
   mask, series) the Qt viewer loads — shared by viewer, pane and jobs.
 
+## Jobs (`ReviewJobs`, PR 1b)
+
+`include/backend/review/ReviewJobs.h` / `src/backend/review/ReviewJobs.cpp`,
+same library. One job at a time (a second start is refused), each a tracked
+operation (ADR 0004 semantics: Started, bounded Progress, exactly one
+terminal Completed / Failed / Cancelled through the `ReviewJobSink`), each
+opening its own reader so session reads never block:
+
+- `startExportMetrics(path)` / `startExportAll(root, series, charts)` /
+  `startBatchExport(sources, root, metricsOnly, series)`: run
+  [[HdfExportService]] with the **recorded** factor; chart snapshots arrive
+  encoded (PNG/TIFF) from the shell and are written beside the images; batch
+  continues after per-file failures and reports them in the terminal
+  message; recording files export images only.
+- `startRegenerateMasks(request)`: current valid / invalid range, whole file,
+  AVI or folder → `ProcessingService::processBatch` (bundled kernel) with the
+  recorded config, ROI and background by default (optional median
+  synthetic background) → `batch_masks::saveMasksToHdf5`; HDF5 sources keep
+  recorded indices and normalise timestamps to the first image.
+- `startComputeCore(fraction)`: `computeFullRunCoreRecord` over the scatter
+  (recorded factor, fixed seed); `computedCoreJson()` hands the record to the
+  shell, which saves it with `saveCoreRecordJson`.
+- `startDensity({bandwidthFactor, coreFraction, levels, wantCoreRecord})`:
+  per-point density → `levelForDensity` (same bucketing as the Monitoring
+  tab); above 5000 cells a fixed-seed 5000-cell subsample → 256×128 grid →
+  bilinear interpolation (`densityAtPoints`, within one level of the direct
+  path for ≥ 95 % of a 4000-point population); a computed full-run record
+  only when the file has none. This is the scatter plan's PR 3a "review
+  density" in the review core instead of `MonitoringDensityService`.
+
+Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`).
+
 ## Threading
 
 Every public call takes one mutex (`Hdf5Service` is not thread-safe).

@@ -282,7 +282,12 @@ separate from `ffi::BackendBridge`:
   `fetch_review_thumbnails` (one frame of `size × (size·count)`),
   `fetch_review_scatter` (columnar), `review_save_core_record`,
   `poll_review_events` (job lifecycle, `review_operation_kinds` ×
-  `operation_states`; jobs land with PR 1b), `cancel_review_operation`,
+  `operation_states`), `cancel_review_operation`, the jobs
+  `review_export_metrics/all`, `review_batch_export`,
+  `review_regenerate_masks` (`review_regenerate_sources`),
+  `review_compute_core` + `fetch_review_computed_core_json`,
+  `review_request_density` + `fetch_review_density` (contract
+  `review_density` constants), `review_jobs_busy`,
   `review_bridge_abi_version()` (same number as `bridge_abi_version()`),
   and the test fixture `review_fixture_write_experiment(path)`.
 - **Contract.** `bridge-contract.json` 15 adds `overlay_modes`,

@@ -121,6 +121,14 @@ export const REVIEW_OPERATION_KINDS = {
   Density: 5,
 } as const;
 
+export const REVIEW_REGENERATE_SOURCES = {
+  CurrentValid: 0,
+  CurrentInvalid: 1,
+  WholeFile: 2,
+  Avi: 3,
+  Folder: 4,
+} as const;
+
 export const PUMP_IDS = {
   Sample: 0,
   Sheath: 1,
@@ -235,6 +243,14 @@ export const RECORDING_STATES = {
   Stopped: 3,
   Loaded: 4,
   Error: 5,
+} as const;
+
+export const REVIEW_DENSITY = {
+  "level_count": 8,
+  "grid_above_points": 5000,
+  "sample_seed": 20260924,
+  "grid_nx": 256,
+  "grid_ny": 128
 } as const;
 
 export const REVIEW_PIXEL_FORMATS = {

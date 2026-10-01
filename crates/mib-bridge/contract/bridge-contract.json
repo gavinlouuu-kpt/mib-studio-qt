@@ -52,6 +52,20 @@
     "ComputeCore": 4,
     "Density": 5
   },
+  "review_regenerate_sources": {
+    "CurrentValid": 0,
+    "CurrentInvalid": 1,
+    "WholeFile": 2,
+    "Avi": 3,
+    "Folder": 4
+  },
+  "review_density": {
+    "level_count": 8,
+    "grid_above_points": 5000,
+    "sample_seed": 20260924,
+    "grid_nx": 256,
+    "grid_ny": 128
+  },
   "camera_types": {
     "EGrabber": 0,
     "MindVision": 1,

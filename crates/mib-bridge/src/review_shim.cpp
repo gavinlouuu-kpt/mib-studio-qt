@@ -7,7 +7,9 @@
 #include "backend/processing/KdeCoreRecord.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/review/ReviewJobs.h"
 #include "backend/review/ReviewSession.h"
+#include "backend/processing/ProcessingService.h"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -37,6 +39,12 @@ static_assert(static_cast<std::uint32_t>(br::OverlayMode::AllContour) == 1);
 static_assert(static_cast<std::uint32_t>(br::OverlayMode::OuterInnerColorCoded) == 2);
 static_assert(static_cast<std::uint32_t>(br::OverlayMode::AllMask) == 3);
 static_assert(static_cast<std::uint32_t>(br::OverlayMode::FilteredMask) == 4);
+static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportMetrics) == 0);
+static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::Density) == 5);
+static_assert(static_cast<std::uint32_t>(br::ReviewJobState::Started) == 0);
+static_assert(static_cast<std::uint32_t>(br::ReviewJobState::TimedOut) == 5);
+static_assert(static_cast<std::uint32_t>(br::RegenerateSource::CurrentValid) == 0);
+static_assert(static_cast<std::uint32_t>(br::RegenerateSource::Folder) == 4);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Unknown) == 4);
 
@@ -90,17 +98,45 @@ ReviewDatasetInfo toInfo(const br::DatasetInfo& in) {
 
 } // namespace
 
+constexpr std::size_t kEventQueueCapacity = 4096;
+
 struct ReviewBridge::Impl {
     br::ReviewSession session;
+    // The bundled kernel for regenerate masks (ProcessingService owns no
+    // threads until start(), which review never calls).
+    backend::services::ProcessingService processing;
     bool initialized{false};
     std::mutex eventMutex;
     std::deque<ReviewEvent> events;
+    std::unique_ptr<br::ReviewJobs> jobs;
+
+    Impl() {
+        jobs = std::make_unique<br::ReviewJobs>(session, &processing, [this](const br::ReviewJobEvent& e) {
+            // Runs on the job thread: convert + enqueue, bounded drop-oldest.
+            ReviewEvent out{};
+            out.operation_id = e.operationId;
+            out.kind = static_cast<std::uint32_t>(e.kind);
+            out.state = static_cast<std::uint32_t>(e.state);
+            out.progress = e.progress;
+            out.total = e.total;
+            out.message = rust::String(e.message);
+            std::scoped_lock lock(eventMutex);
+            events.push_back(std::move(out));
+            while (events.size() > kEventQueueCapacity) events.pop_front();
+        });
+    }
+
+    ReviewResult started(std::uint64_t id, const std::string& error, const char* what) {
+        if (id == 0) return fail(error.empty() ? std::string(what) + " refused" : error);
+        return ok(std::string(what) + " started", id);
+    }
 };
 
 ReviewBridge::ReviewBridge() : impl_(std::make_unique<Impl>()) {}
 
 ReviewBridge::~ReviewBridge() {
     try {
+        impl_->jobs->shutdown();
         impl_->session.close();
     } catch (...) {
     }
@@ -114,6 +150,7 @@ bool ReviewBridge::initialize(rust::Str data_dir) {
 
 void ReviewBridge::shutdown() {
     try {
+        impl_->jobs->shutdown();
         impl_->session.close();
     } catch (...) {
     }
@@ -368,9 +405,126 @@ rust::Vec<ReviewEvent> ReviewBridge::poll_review_events() {
 }
 
 ReviewResult ReviewBridge::cancel_review_operation(std::uint64_t operation_id) {
-    (void)operation_id;
+    if (impl_->jobs->cancel(operation_id)) return ok("Cancellation requested", operation_id);
     return fail("No such review operation");
 }
+
+ReviewResult ReviewBridge::review_export_metrics(rust::Str output_path) {
+    try {
+        std::string error;
+        return impl_->started(impl_->jobs->startExportMetrics(toStd(output_path), &error), error, "Metrics export");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_export_metrics: ") + e.what());
+    }
+}
+
+ReviewResult ReviewBridge::review_export_all(rust::Str output_root, bool export_series, std::uint64_t series_start,
+                                             std::uint64_t series_end, rust::Vec<ReviewChartSnapshot> charts) {
+    try {
+        br::ExportAllRequest req;
+        req.outputRoot = toStd(output_root);
+        req.series.exportSeries = export_series;
+        req.series.startInclusive = series_start;
+        req.series.endInclusive = series_end;
+        for (const auto& c : charts) {
+            br::ChartSnapshot snap;
+            snap.name = std::string(c.name);
+            snap.encoded.assign(c.encoded.begin(), c.encoded.end());
+            req.charts.push_back(std::move(snap));
+        }
+        std::string error;
+        return impl_->started(impl_->jobs->startExportAll(req, &error), error, "Export All");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_export_all: ") + e.what());
+    }
+}
+
+ReviewResult ReviewBridge::review_batch_export(rust::Vec<rust::String> sources, rust::Str output_root,
+                                               bool metrics_only, bool export_series, std::uint64_t series_start,
+                                               std::uint64_t series_end) {
+    try {
+        br::BatchExportRequest req;
+        for (const auto& s : sources) req.sources.push_back(std::string(s));
+        req.outputRoot = toStd(output_root);
+        req.metricsOnly = metrics_only;
+        req.series.exportSeries = export_series;
+        req.series.startInclusive = series_start;
+        req.series.endInclusive = series_end;
+        std::string error;
+        return impl_->started(impl_->jobs->startBatchExport(req, &error), error, "Batch export");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_batch_export: ") + e.what());
+    }
+}
+
+ReviewResult ReviewBridge::review_regenerate_masks(std::uint32_t source, rust::Str source_path,
+                                                   std::uint64_t start_index, std::uint64_t count,
+                                                   rust::Str output_path, bool use_recorded_config,
+                                                   bool synthesize_background) {
+    if (source > static_cast<std::uint32_t>(br::RegenerateSource::Folder)) return fail("Unknown regenerate source");
+    try {
+        br::RegenerateMasksRequest req;
+        req.source = static_cast<br::RegenerateSource>(source);
+        req.sourcePath = toStd(source_path);
+        req.startIndex = start_index;
+        req.count = count;
+        req.outputPath = toStd(output_path);
+        req.useRecordedConfig = use_recorded_config;
+        req.synthesizeBackground = synthesize_background;
+        std::string error;
+        return impl_->started(impl_->jobs->startRegenerateMasks(req, &error), error, "Regenerate masks");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_regenerate_masks: ") + e.what());
+    }
+}
+
+ReviewResult ReviewBridge::review_compute_core(double core_fraction) {
+    try {
+        std::string error;
+        return impl_->started(impl_->jobs->startComputeCore(core_fraction, &error), error, "Core contour");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_compute_core: ") + e.what());
+    }
+}
+
+rust::String ReviewBridge::fetch_review_computed_core_json() {
+    return rust::String(impl_->jobs->computedCoreJson());
+}
+
+ReviewResult ReviewBridge::review_request_density(double bandwidth_factor, double core_fraction,
+                                                  std::uint32_t levels, bool want_core_record) {
+    try {
+        br::DensityRequest req;
+        req.bandwidthFactor = bandwidth_factor;
+        req.coreFraction = core_fraction;
+        req.levels = static_cast<int>(std::min<std::uint32_t>(levels, 64));
+        req.wantCoreRecord = want_core_record;
+        std::string error;
+        return impl_->started(impl_->jobs->startDensity(req, &error), error, "Density estimate");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_request_density: ") + e.what());
+    }
+}
+
+ReviewDensity ReviewBridge::fetch_review_density() {
+    ReviewDensity out{};
+    try {
+        const br::DensityResult d = impl_->jobs->density();
+        out.valid = true;
+        out.ready = d.ready;
+        out.level_count = static_cast<std::uint32_t>(d.levelCount);
+        out.bandwidth_factor = d.bandwidthFactor;
+        out.core_fraction = d.coreFraction;
+        out.computed_record_json = rust::String(d.computedRecordJson);
+        out.levels.reserve(d.levels.size());
+        for (auto l : d.levels) out.levels.push_back(l);
+    } catch (...) {
+        out = ReviewDensity{};
+    }
+    return out;
+}
+
+bool ReviewBridge::review_jobs_busy() const { return impl_->jobs->busy(); }
 
 std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<ReviewBridge>(); }
 

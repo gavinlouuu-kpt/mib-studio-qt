@@ -126,9 +126,53 @@ fn review_bridge_reads_the_fixture_file() {
     assert!(bridge.pin_mut().fetch_review_info().kde_analysis_json.contains("99"));
     assert!(bridge.pin_mut().fetch_review_frame(0, 1, 0, false).valid);
 
-    // No jobs yet: the event queue is empty and cancel fails safely.
+    // Jobs (PR 1b): tracked operations through poll_review_events.
     assert!(bridge.pin_mut().poll_review_events().is_empty());
-    assert!(!bridge.pin_mut().cancel_review_operation(1).ok);
+    assert!(!bridge.pin_mut().cancel_review_operation(12345).ok);
+    let wait_terminal = |bridge: &mut cxx::UniquePtr<ffi::ReviewBridge>, id: u64| -> ffi::ReviewEvent {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
+            for e in bridge.pin_mut().poll_review_events() {
+                if e.operation_id == id && e.state >= 2 {
+                    return e;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("operation {id} did not finish");
+    };
+    // Export metrics: Completed, CSV written with the Qt-parity header.
+    let csv = fixture_path("metrics").with_extension("csv");
+    let started = bridge.pin_mut().review_export_metrics(&csv.to_string_lossy());
+    assert!(started.ok && started.operation_id != 0, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (0, 2), "export: {}", done.message);
+    let text = std::fs::read_to_string(&csv).unwrap();
+    assert!(text.starts_with("Frame Type"), "csv header");
+    assert!(!bridge.review_jobs_busy());
+    let _ = std::fs::remove_file(&csv);
+    // Density: one level per scatter point; the fixture has a stored record,
+    // so nothing is computed.
+    let started = bridge.pin_mut().review_request_density(1.0, 0.9, 8, true);
+    assert!(started.ok, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (5, 2), "density: {}", done.message);
+    let density = bridge.pin_mut().fetch_review_density();
+    assert!(density.valid && density.ready && density.level_count == 8);
+    assert_eq!(density.levels.len(), 8);
+    assert!(density.levels.iter().all(|l| *l < 8));
+    assert!(density.computed_record_json.is_empty());
+    // Compute core: record JSON retrievable, saveable through the session.
+    let started = bridge.pin_mut().review_compute_core(0.9);
+    assert!(started.ok, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (4, 2), "core: {}", done.message);
+    let json = bridge.pin_mut().fetch_review_computed_core_json();
+    assert!(json.contains("\"full-run\""), "{json}");
+    assert!(bridge.pin_mut().review_save_core_record(&json, true).ok);
+    // Refusals: unknown regenerate source, empty batch.
+    assert!(!bridge.pin_mut().review_regenerate_masks(99, "", 0, 0, "x.h5", true, false).ok);
+    assert!(!bridge.pin_mut().review_batch_export(Vec::new(), "/tmp", true, true, 0, u64::MAX).ok);
 
     assert!(bridge.pin_mut().review_close().ok);
     assert!(!bridge.pin_mut().fetch_review_info().file_open);
