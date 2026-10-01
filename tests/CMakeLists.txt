@@ -520,6 +520,13 @@ set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording
 
 # KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
 # round-trip + fault injection for the save path and the frontend codec.
+# ReviewSession (plan 2026-10-01-standalone-review-app): the one review
+# implementation behind the Qt tab, the Tauri shell and YOFO Review.
+# Round-trip on experiment/legacy/recording fixtures + fault injection.
+mib_add_backend_test_executable(review_session_test review/review_session_test.cpp)
+add_test(NAME review.session COMMAND $<TARGET_FILE:mib_backend_tests> review_session_test)
+set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+
 mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
 add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
 set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)

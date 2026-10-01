@@ -31,12 +31,13 @@ fn repo_root() -> PathBuf {
 #[cfg(not(windows))]
 fn ensure_backend_built(repo: &Path, build_dir: &Path) {
     let backend_lib = build_dir.join("libmib_backend.a");
+    let review_lib = build_dir.join("libmib_review_core.a");
     let processing_lib = build_dir.join("libmib_processing.a");
     let oeabt_serial_lib = build_dir.join("liboeabt_serial.a");
     let oeabt_core_lib = build_dir.join("liboeabt_core.a");
 
     if std::env::var("MIB_BRIDGE_NO_CMAKE").is_ok() {
-        if !backend_lib.exists() || !processing_lib.exists()
+        if !backend_lib.exists() || !review_lib.exists() || !processing_lib.exists()
             || !oeabt_serial_lib.exists() || !oeabt_core_lib.exists() {
             panic!(
                 "MIB_BRIDGE_NO_CMAKE set but backend archives are missing in {}",
@@ -59,6 +60,7 @@ fn ensure_backend_built(repo: &Path, build_dir: &Path) {
             "linux-backend-only-build",
             "--target",
             "mib_backend",
+            "mib_review_core",
             "mib_processing",
         ])
         .status();
@@ -67,7 +69,7 @@ fn ensure_backend_built(repo: &Path, build_dir: &Path) {
         && matches!(built, Ok(s) if s.success());
 
     if !ok {
-        if backend_lib.exists() && processing_lib.exists()
+        if backend_lib.exists() && review_lib.exists() && processing_lib.exists()
             && oeabt_serial_lib.exists() && oeabt_core_lib.exists() {
             println!(
                 "cargo:warning=cmake backend build failed but archives exist; \
@@ -140,13 +142,13 @@ fn windows_build(repo: &Path, include_dir: &Path) {
     // Order matters for static archives: the backend before its dependencies,
     // exactly as CMake linked the reference test.
     for lib in strings("libs") {
-        if matches!(lib.as_str(), "mib_backend" | "mib_processing" | "oeabt_serial" | "oeabt_core") {
+        if matches!(lib.as_str(), "mib_backend" | "mib_review_core" | "mib_processing" | "oeabt_serial" | "oeabt_core") {
             println!("cargo:rustc-link-lib=static={lib}");
         } else {
             println!("cargo:rustc-link-lib={lib}");
         }
     }
-    for lib in ["mib_backend", "mib_processing", "oeabt_serial", "oeabt_core"] {
+    for lib in ["mib_backend", "mib_review_core", "mib_processing", "oeabt_serial", "oeabt_core"] {
         let dir = manifest["runtime_dirs"][0].as_str().unwrap_or("build/Release");
         println!("cargo:rerun-if-changed={dir}/{lib}.lib");
     }
@@ -188,11 +190,14 @@ fn main() {
         // Relink when the backend archives change (e.g. a facade edit) so a stale
         // build dir can't silently keep an old symbol set.
         println!("cargo:rerun-if-changed={}/libmib_backend.a", build_dir.display());
+        println!("cargo:rerun-if-changed={}/libmib_review_core.a", build_dir.display());
         println!("cargo:rerun-if-changed={}/libmib_processing.a", build_dir.display());
 
-        // Link the static backend archives (order matters: backend before processing).
+        // Link the static backend archives (order matters: backend before the
+        // review core (ADR 0008) before processing).
         println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=static=mib_backend");
+        println!("cargo:rustc-link-lib=static=mib_review_core");
         println!("cargo:rustc-link-lib=static=mib_processing");
         // Autofocus and SerialBus use the native serial transport; its protocol
         // implementation is another static archive. Preserve dependency order.

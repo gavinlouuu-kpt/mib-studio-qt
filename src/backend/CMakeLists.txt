@@ -120,6 +120,29 @@ endif()
 mib_link_opencv(mib_processing PUBLIC)
 mib_link_hdf5(mib_processing PUBLIC)
 
+# mib_review_core: the one review implementation behind every shell (plan
+# 2026-10-01-standalone-review-app, ADR 0008). Qt-free, built on
+# mib_processing only — no cameras, serial, SQLite, Sentry — so YOFO Review
+# links it without mib_backend, while mib_backend links it for the
+# BackendFacade's review surface and the Qt tab's parity.
+add_library(mib_review_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewSession.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewTypes.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/OverlayCompose.h
+)
+set_target_properties(mib_review_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(mib_review_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(mib_review_core PUBLIC mib_processing)
+
 # A wheel build needs only the portable library above. Stopping here keeps Qt,
 # camera services, desktop backends, and the native Windows module out of the
 # manylinux configuration and makes its dependency surface auditable.
@@ -266,7 +289,6 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h
     ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLutCatalog.cpp
@@ -298,7 +320,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
-target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
+target_link_libraries(mib_backend PUBLIC mib_review_core mib_processing oeabt_serial)
 
 
 

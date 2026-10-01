@@ -3,6 +3,7 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/review/ReviewSession.h"
 #include "backend/services/AutofocusService.h"
 
 #include <atomic>
@@ -816,6 +817,11 @@ namespace backend::bridge
         // invalidated on every RecordingLoad; images/masks are pulled one at
         // a time via hyperslab reads (bounded memory).
         bool fetchReviewMetadata(BackendReviewMetadata &out) const;
+        // The review session every shell shares (ADR 0008): overlays,
+        // thumbnails, series, scatter, accounting and the recorded
+        // pixel-to-micron factor live there.
+        review::ReviewSession &reviewSession() { return reviewSession_; }
+        const review::ReviewSession &reviewSession() const { return reviewSession_; }
         bool fetchReviewMetricsPage(bool valid,
                                     std::uint64_t offset,
                                     std::uint64_t count,
@@ -903,13 +909,11 @@ namespace backend::bridge
         // cancelled through the generic operation surface.
         std::atomic<std::uint64_t> experimentOperationId_{0};
 
-        // Review state (BE-6): the loaded file path (jobs open their own
-        // read-only reader on it) and the lazily cached metrics metadata.
-        mutable std::mutex reviewMutex_;
-        std::string loadedRecordingPath_;
-        mutable bool reviewMetricsLoaded_{false};
-        mutable std::vector<services::ProcessedFrame> reviewValidMeta_;
-        mutable std::vector<services::ProcessedFrame> reviewInvalidMeta_;
+        // Review state (BE-6; plan 2026-10-01-standalone-review-app): the
+        // one review implementation, with its own read-only reader — never
+        // the experiment writer's Hdf5Service handle. Jobs open their own
+        // readers on reviewSession_.filePath().
+        review::ReviewSession reviewSession_;
         // Export jobs run detached; joined at shutdown.
         std::vector<std::thread> reviewJobThreads_;
         std::mutex reviewJobsMutex_;
