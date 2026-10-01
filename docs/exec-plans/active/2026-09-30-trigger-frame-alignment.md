@@ -118,6 +118,17 @@ and only the host receipt stamp and a hardware loopback can bridge the gap.
       pulses once per trigger in Ext-Trig mode.
 - [ ] Rig (now, hand-off §6a): Windows build, SSG over LAN, readiness gate
       green on the real instrument, one recorded run with the new datasets.
+      - [x] Windows build (`windows-ninja`, MSVC) incl.
+            `ScpiTransportVisaWin32.cpp`; fast lane 140/141, integration
+            12/13, the two failures outside this work (TD-20) — 2026-10-01.
+      - [x] `rf.generator` gate blocks Start in the real app on an empty
+            address and on a wrong IP (gate lines in
+            [`docs/evidence/2026-10-01-ssg-lan-link/`](../../evidence/2026-10-01-ssg-lan-link/README.md)).
+      - [ ] Gate `pass` with the real `*IDN?`: blocked — the rig PC's
+            `Ethernet 3` (where the SSG answers ARP) has no address in
+            10.11.13.0/24; needs an administrator.
+      - [ ] One recorded sorting run checked with the evidence folder's
+            `check_run.py`.
 - [ ] EGrabber line-event implementation + on-rig evidence
       (`docs/evidence/`), scope check of PC edge vs PULSE OUT.
 - [x] RfGeneratorService + provenance attributes (2026-09-30).

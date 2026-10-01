@@ -324,9 +324,10 @@ inline std::vector<Contour> isoContours(const DensityGrid& grid, double level) {
             if (next == segments.size()) return;
             used[next] = 1;
             const bool fromFirst = segments[next].first.key == key;
-            const Vertex& far = fromFirst ? segments[next].second : segments[next].first;
-            out.push_back(far.p);
-            key = far.key;
+            // Not `far`: <windows.h> defines it as an (empty) macro.
+            const Vertex& farEnd = fromFirst ? segments[next].second : segments[next].first;
+            out.push_back(farEnd.p);
+            key = farEnd.key;
             if (key == (forward ? segments[start].first.key : segments[start].second.key)) return;
         }
     };

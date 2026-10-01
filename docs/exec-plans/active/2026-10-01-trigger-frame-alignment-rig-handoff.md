@@ -26,6 +26,16 @@ Decided with the user on 2026-10-01:
 Do **not** add cables to the rig and do **not** write to the SSG (no
 `applySortWindow`, no front-panel changes) unless the user asks.
 
+**Status after the first rig session (2026-10-01)** — evidence:
+[`docs/evidence/2026-10-01-ssg-lan-link/`](../../evidence/2026-10-01-ssg-lan-link/README.md).
+
+| §6a item | State |
+|---|---|
+| 1 Build + tests | done (three build/test fixes; two failing tests outside this work, TD-20) |
+| 2 Config merge | done; the block is **not** merged into a profile config (this rig runs from one) — added by hand, TD-21 |
+| 3 Gate | fail cases captured in the app; **pass open**: give `Ethernet 3` an address in 10.11.13.0/24 (elevated shell), then re-run |
+| 4 Recorded run | open (needs 3); check the file with the evidence folder's `check_run.py` |
+
 ## 1. Where the work is
 
 | Item | Value |
@@ -138,6 +148,13 @@ DHCP **off** (static), subnet 255.255.255.0, gateway 10.11.13.1, MAC
 `ping 10.11.13.220` and `Test-NetConnection 10.11.13.220 -Port 5025`
 (PowerShell) before blaming the app. Use the static IP; the bundled default
 stays disabled with an empty address because it ships to every install.
+Found on the rig (2026-10-01): the SSG cable is in the PC's `Ethernet 3`
+(it answers ARP there with the MAC above), which only has a link-local
+169.254.x.x address — add one with
+`New-NetIPAddress -InterfaceAlias "Ethernet 3" -IPAddress 10.11.13.10 -PrefixLength 24`
+from an elevated shell. The app on this rig watches the active **profile's**
+`config.json`, where the default-merge does not apply: add the block to
+that file.
 
 The SSG's IP is under its System > Interface > LAN. With sorting enabled
 (`enable_target_group`), the readiness panel's `rf.generator` gate must read

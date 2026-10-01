@@ -41,6 +41,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <set>
 #include <thread>
@@ -84,8 +85,10 @@ ProcessingConfig makeConfig() {
     c.auto_background_enabled = false;
     // Every valid object is a target: wide-open gates.
     c.enable_target_group = true;
-    c.target_group_area_min = 0.0;
-    c.target_group_area_max = 1e12;
+    // The area gates are int (um^2): 1e12 does not fit, and the out-of-range
+    // conversion made the gate negative under MSVC (no frame was a target).
+    c.target_group_area_min = 0;
+    c.target_group_area_max = std::numeric_limits<int>::max();
     c.target_group_deformability_min = 0.0;
     c.target_group_deformability_max = 1.0;
     c.enable_target_group_emodulus = false;

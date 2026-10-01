@@ -6,15 +6,40 @@
 #include "backend/processing/ProcessingCoreAbi.h"
 #include "support/assert.h"
 
-#include <dlfcn.h>
-
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 namespace {
+
+#ifdef _WIN32
+// The dl* subset this test uses, on the Win32 loader.
+constexpr int RTLD_NOW = 0;
+constexpr int RTLD_LOCAL = 0;
+void* dlopen(const char* path, int) { return LoadLibraryA(path); }
+void* dlsym(void* handle, const char* name) {
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(handle), name));
+}
+int dlclose(void* handle) { return FreeLibrary(static_cast<HMODULE>(handle)) ? 0 : 1; }
+const char* dlerror() {
+    static std::string message;
+    const DWORD code = GetLastError();
+    if (code == 0) return nullptr;
+    message = "Win32 error " + std::to_string(code);
+    return message.c_str();
+}
+#endif
 
 mib_processing_image_view viewOf(std::vector<uint8_t>& buf, uint32_t w, uint32_t h) {
     mib_processing_image_view v{};

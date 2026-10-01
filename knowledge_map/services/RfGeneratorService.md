@@ -91,7 +91,9 @@ constructor takes another for tests.
   (fallback `visa32.dll`) loaded with `LoadLibrary`, so the build has no VISA
   SDK dependency; without VISA `open()` fails with "NI-VISA runtime is not
   installed". `auto` = first `USB?*INSTR` from `viFindRsrc`. Termchar `\n`.
-  **Not compiled in the Linux CI lanes — verify on the rig.**
+  Not compiled in the Linux CI lanes; compiles clean under MSVC
+  (rig PC, 2026-10-01). **Never run against an instrument** — the rig uses
+  LAN and has no NI-VISA.
 - **USB on Linux** (`ScpiTransportUsbtmcPosix.cpp`): kernel usbtmc class
   driver, `/dev/usbtmcN`, one message per read/write.
 
@@ -123,3 +125,13 @@ finalize the last readback is written with
   stored strings are whatever the firmware returned.
 - USB and LAN are ~ms round trips with jitter: never derive a timestamp from
   a SCPI reply.
+- The default-merge only reaches the app-managed `include/config.json`. A
+  rig that runs from a **profile** (QSettings `Config/ExternalAppConfigPath`)
+  never gets the `rf_generator` block, and the Config tab cannot add a
+  section that is not in the file: add the block to the profile's
+  `config.json` by hand (rig PC 2026-10-01, TD-21).
+- LAN: the PC needs its own address on the SSG's subnet on the adapter the
+  cable is in. A missing address and a wrong IP give the same gate text
+  (`connect … timed out after 2000 ms`). On the rig PC the SSG
+  (10.11.13.220, static) is on `Ethernet 3`; see
+  `docs/evidence/2026-10-01-ssg-lan-link/README.md`.

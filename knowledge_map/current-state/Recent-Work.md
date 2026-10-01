@@ -1,5 +1,24 @@
 # Recent Work
 
+## 2026-10-01 — Trigger/frame alignment branch built on the rig PC; SSG link half proven
+
+First Windows build of `feat/trigger-frame-alignment` on the rig
+(`windows-ninja`, MSVC): `ScpiTransportVisaWin32.cpp` compiled unchanged.
+Three unrelated breaks were fixed on the way — a local named `far` in
+`MonitoringDensity.h` (a `<windows.h>` macro), `<dlfcn.h>` in
+`processing.core_v2_plugin`, and an out-of-range `1e12` → `int` gate in
+`integration.e2e_series_alignment` that left the test with no targets under
+MSVC. In the real app with the live Coaxlink camera the `rf.generator` gate
+of [[../services/RfGeneratorService]] blocks Start Experiment with the
+expected messages (empty address, wrong IP). The pass case and the recorded
+sorting run are **open**: the SSG answers ARP on the PC's `Ethernet 3`, but
+that adapter has no address in `10.11.13.0/24` (needs an administrator).
+Two rig findings: the `rf_generator` default block is not merged into
+**profile** configs (only into `include/config.json`), and the first start
+overwrote the profile's `autofocus_initial_voltage` with the parked 0 V.
+Evidence and the steps to finish:
+`docs/evidence/2026-10-01-ssg-lan-link/README.md`; debt: TD-20, TD-21.
+
 ## 2026-09-30 — Sort pulses and multi-image series placed in the frame clock
 
 A sort decision left no trace in the data file beyond `isTargetGroup`, and
