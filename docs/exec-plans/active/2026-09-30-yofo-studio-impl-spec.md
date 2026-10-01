@@ -129,6 +129,20 @@ these changes:
   measured in the board's GenTL spike, pz7035-imx426 `gentl/README.md`). Read
   `AcquisitionFrameRate` max and `PzFrameRateLimitReason` before applying, read the rate back
   after, and fail readiness on a mismatch; never rely on an error.
+- Call `arv_disable_interface("GigEVision")` (and `"Fake"`) at start-up: the instrument only
+  uses GenTL, and GigE discovery adds ~1 s per device open.
+- Set windows with `arv_camera_set_region` (it zeroes the offsets before the size; writing Width
+  first is refused when the current offset would push the window off the sensor).
+- Before applying a window or rate, read `AcquisitionFrameRate` max + `PzFrameRateLimitReason`,
+  `PzBandCount`, `PzDeliveredFrameRate` + `PzDeliveredFrameRateLimit` and show
+  "sensor N Hz -> M images/s (limit: ...)". `AcquisitionFrameRate` is the sensor rate; windows
+  larger than the PL grabber are delivered in bands, one per sensor frame (board decision
+  2026-10-01, pz7035-imx426 `gentl/README.md`).
+- Overview preset: full field 816x624 at ~830 Hz (just under the line-error-free HMAX 116 ceiling
+  of 832 Hz), exposure 900 us, LED strobe sync 500 us / 50 us: measured lit, ~23 images/s,
+  0 line errors. Lower sensor rates leave the LED dark (the OCC driver needs ~1 kHz pulses for
+  short gates). Save and restore the experiment window and timing when leaving Overview.
+- Show `PzLinePeriodTicks` (58 = fast regime) and `PzReceiverLineErrors` in diagnostics.
 - Keep at least one buffer returned to the stream: Aravis 0.9's GenTL stream loop re-queues
   buffers only between events (the producer polls to avoid a deadlock, but holding every
   buffer still stalls delivery until one is returned).
