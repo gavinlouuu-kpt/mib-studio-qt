@@ -112,9 +112,12 @@ and only the host receipt stamp and a hardware loopback can bridge the gap.
       I/O TTLIO11: the rig breakout is an HL-DB26T-mini on External I/O (HD26) → terminal 25, GND terminal 24 (photos in `docs/evidence/2026-10-01-trigger-loopback-wiring/`).
       LAN chosen for the SCPI link. Hand-over for the rig agent:
       [`2026-10-01-trigger-frame-alignment-rig-handoff.md`](2026-10-01-trigger-frame-alignment-rig-handoff.md).
-- [ ] Rig: cable + scope confirmation that PULSE OUT pulses once per
-      trigger in Ext-Trig mode (manual is ambiguous); fallback = BNC T off
-      TTLIO12.
+- [ ] Rig (parked until a scope is attached): both breakout TTL lines are
+      used (TTLIO12 sort, TTLIO11 LED); choose IIN11 or Internal I/O 2
+      TTLIO21 for the loopback, then confirm on the scope that PULSE OUT
+      pulses once per trigger in Ext-Trig mode.
+- [ ] Rig (now, hand-off §6a): Windows build, SSG over LAN, readiness gate
+      green on the real instrument, one recorded run with the new datasets.
 - [ ] EGrabber line-event implementation + on-rig evidence
       (`docs/evidence/`), scope check of PC edge vs PULSE OUT.
 - [x] RfGeneratorService + provenance attributes (2026-09-30).

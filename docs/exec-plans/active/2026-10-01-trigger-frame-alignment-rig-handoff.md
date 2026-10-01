@@ -13,6 +13,19 @@ documents: the execution plan
 `knowledge_map/camera/ICamera.md`, `knowledge_map/camera/EGrabberCamera.md`,
 storage schema `knowledge_map/data-model/HDF5-Storage.md`.
 
+## 0. Scope of this hand-off (read first)
+
+Decided with the user on 2026-10-01:
+
+| Do now | Parked (later, once an oscilloscope is attached) |
+|---|---|
+| Build the branch on the rig PC (Windows) and run the test suite | Loopback of SSG PULSE OUT into the grabber (§3) — both TTL lines on this rig's breakout are already used |
+| Make MIB Studio talk to the SSG3021X over **LAN** (§4) and prove it on the real instrument (§6a) | `EGrabberCamera::setLineEventCallback` (§5) — nothing to stamp until there is a loopback input |
+| Record one sorting run and check the new datasets are in the file (§6a) | Loopback/frame-placement evidence (§6) and the scope cross-check |
+
+Do **not** add cables to the rig and do **not** write to the SSG (no
+`applySortWindow`, no front-panel changes) unless the user asks.
+
 ## 1. Where the work is
 
 | Item | Value |
@@ -20,7 +33,7 @@ storage schema `knowledge_map/data-model/HDF5-Storage.md`.
 | Repository | `gavinlouuu-kpt/mib-studio-qt` |
 | Branch | `feat/trigger-frame-alignment`, pushed to `origin`; **no PR opened** |
 | Base | `develop` at `e1c2bf3` |
-| Commits | `52e7821` series identity + `/trigger_events` + `ICamera::setLineEventCallback` + mock loopback · `4d785f8` `RfGeneratorService` (SCPI, LAN/USB), `rf.generator` readiness gate, `rf_generator_*` provenance · this handover |
+| Commits (oldest first) | `52e7821` series identity + `/trigger_events` + `ICamera::setLineEventCallback` + mock loopback · `4d785f8` `RfGeneratorService` (SCPI, LAN/USB), `rf.generator` readiness gate, `rf_generator_*` provenance · `3655a42`, `9ecef5f`, `553a202` this handover, Coaxlink pin tables, annotated rig photos · `726ae19` disabled `rf_generator` block in the bundled default config + empty-address message · then this scope update |
 | Verified here | Linux backend-only build; full `ctest -LE network` green except the two pre-existing `scripts.*` tests that need `numpy`; the trigger/pipeline tests also clean under ThreadSanitizer |
 | **Not compiled anywhere yet** | `src/backend/services/ScpiTransportVisaWin32.cpp` (Windows-only, NI-VISA loaded at runtime). Not needed on this rig (LAN chosen) but it is in the Windows build — build it once and fix any MSVC nit |
 
@@ -51,7 +64,12 @@ boot = the same clock as `Tools::getTimestamp()` = the same clock the I/O
 toolbox stamps events in, so once the edge is captured, `fireUs`,
 `lineEdgeTimestamp` and the frames' `timestampNs` are directly comparable.
 
-## 3. Rig wiring (decided from the rear-panel photo, 2026-10-01)
+## 3. Rig wiring — PARKED (loopback deferred until the scope is attached)
+
+Kept for when the loopback resumes; nothing in this section is to be done in
+this hand-off. Resolved since it was written: the green/yellow wires on
+terminals 24/25 are the **LED** on TTLIO11, so TTLIO11 is **not** available;
+re-target to IIN11 or TTLIO21 (see the "Loopback status" note in §4).
 
 Current state on the SSG3021X rear panel: LAN cable in **LAN**; the
 grabber's sort TTL coax is in **TRIG IN/OUT** (bottom BNC); **PULSE IN/OUT**
@@ -129,7 +147,7 @@ candidates are: isolated input IIN11 (HD26 pins 3 + / 12 −, ≥ 10 µs pulses,
 1625/3304 cable (full-speed TTL, needs the PC opened). §3/§5/§6 below still
 describe the TTLIO11 plan and must be re-targeted to the chosen input.
 
-## 5. The job: `EGrabberCamera::setLineEventCallback`
+## 5. `EGrabberCamera::setLineEventCallback` — PARKED (after the loopback input is chosen)
 
 Goal: the looped-back PULSE OUT edge on `TTLIO11` arrives in
 `TriggerService::onLineEvent` as a `LineEvent` stamped by the grabber.
@@ -209,7 +227,36 @@ void onIoToolboxEvent(const IoToolboxData& data) override {
   `knowledge_map/current-state/Recent-Work.md`. `python3 scripts/check_docs.py`
   before committing (vault maintenance is mandatory, see `AGENTS.md`).
 
-## 6. Acceptance — evidence to collect (`docs/evidence/2026-10-xx-trigger-loopback/`)
+## 6a. Acceptance for THIS hand-off (`docs/evidence/2026-10-xx-ssg-lan-link/`)
+
+1. **Build:** `windows-ninja` Release builds clean, including
+   `ScpiTransportVisaWin32.cpp` (never compiled before — fix any MSVC error
+   there, keep the runtime `LoadLibrary` design). `ctest` with the backend
+   labels passes; list any failure with its output.
+2. **Config merge:** first start of the new build adds the `rf_generator`
+   section to the user `config.json` (disabled). Confirm it appears in the
+   Config tab and that no other user value changed (diff the file before /
+   after).
+3. **Link:** set `enabled: true`, `resource: "<SSG IP>:5025"` (the user
+   provides the IP or it is read from the SSG: System > Interface > LAN).
+   With target-group sorting on, the readiness panel shows `rf.generator =
+   pass` with the real `*IDN?` string, trigger mode, delay and width. Paste
+   that gate line into the evidence README. Also capture one `fail` on
+   purpose (wrong IP) and paste its message.
+4. **Recorded run:** one short sorting experiment; in the HDF5 file check
+   `rf_generator_*` attributes are present and match the SSG front panel,
+   `/trigger_events` has one row per sort request with `outcome` 0 and
+   ordered `requestUs ≤ wakeUs ≤ fireUs ≤ pulseDoneUs` (`lineEdge*` columns
+   are expected to be 0 — no loopback yet), and, if multi-image was on,
+   `/valid_frames/series_meta` rows are present and `series_contiguous` is 1.
+   Note the median and max of `fireUs − grabUs` (classification frame →
+   sort edge driven by the PC).
+5. Vault: add the evidence link to `knowledge_map/current-state/Recent-Work.md`
+   and tick the on-rig items in
+   [`2026-09-30-trigger-frame-alignment.md`](2026-09-30-trigger-frame-alignment.md);
+   `python3 scripts/check_docs.py`.
+
+## 6. Acceptance for the loopback — PARKED (`docs/evidence/2026-10-xx-trigger-loopback/`)
 
 1. **Link check:** readiness `rf.generator` = pass with the real `*IDN?`;
    `PULM:OUT:STATe` reads 1. Paste the gate line into the README.
@@ -268,13 +315,20 @@ void onIoToolboxEvent(const IoToolboxData& data) override {
 
 ## 9. Prompt for the next agent
 
-> Branch `feat/trigger-frame-alignment` of `gavinlouuu-kpt/mib-studio-qt`.
+> Branch `feat/trigger-frame-alignment` of `gavinlouuu-kpt/mib-studio-qt`
+> (Windows rig PC: Coaxlink + CoaXPress camera, SIGLENT SSG3021X on LAN).
 > Read `docs/exec-plans/active/2026-10-01-trigger-frame-alignment-rig-handoff.md`
-> first, then `AGENTS.md`. Build the branch with the `windows-ninja` preset
-> (fix any MSVC error in `ScpiTransportVisaWin32.cpp`). Wire the SSG PULSE
-> OUT loopback per §3, set the `rf_generator` LAN block per §4, implement
-> `EGrabberCamera::setLineEventCallback` per §5 (CallbackOnDemand +
-> `processEvent<IoToolboxData>` thread, LIN1 on TTLIO11), collect the §6
-> evidence into `docs/evidence/`, update the vault notes named in §5.3,
-> run `python3 scripts/check_docs.py`, commit on the same branch, then
-> open the PR against `develop`.
+> first — §0 is the scope — then `AGENTS.md`. Build with the `windows-ninja`
+> preset (fix any MSVC error in `ScpiTransportVisaWin32.cpp`) and run the
+> backend tests. Start MIB Studio once so the `rf_generator` section is merged
+> into the user config, then in the Config tab set `enabled: true` and
+> `resource: "<SSG IP>:5025"` (ask the user for the IP, or read it from the
+> SSG: System > Interface > LAN). Do the §6a checks: `rf.generator` readiness
+> gate passes with the real instrument, one deliberate failure, one short
+> sorting run whose HDF5 file has `rf_generator_*`, `/trigger_events` (and
+> `series_meta` if multi-image). Put the evidence in `docs/evidence/`, update
+> the vault per §6a.5, run `python3 scripts/check_docs.py`, commit on the same
+> branch and push. Do **not** add cables, do **not** write to the SSG, and do
+> **not** start the loopback or `EGrabberCamera` line-event work (§3/§5/§6 are
+> parked until an oscilloscope is attached). Open the PR against `develop`
+> only if the user asks.
