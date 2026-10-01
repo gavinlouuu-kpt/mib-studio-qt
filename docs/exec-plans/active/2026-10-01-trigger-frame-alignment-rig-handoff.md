@@ -128,8 +128,16 @@ and the app merges it into the existing user `config.json` on first start of
 this build. In MIB Studio's **Config tab**, section `rf_generator`, set:
 
 ```json
-{"rf_generator":{"enabled":true,"transport":"lan","resource":"<SSG IP>:5025","timeout_ms":1000}}
+{"rf_generator":{"enabled":true,"transport":"lan","resource":"10.11.13.220:5025","timeout_ms":1000}}
 ```
+
+**Rig SSG network (front-panel photo, 2026-10-01):** IP **10.11.13.220**,
+DHCP **off** (static), subnet 255.255.255.0, gateway 10.11.13.1, MAC
+74:5b:c5:23:38:4f, VNC operable on. The rig PC must have an address in
+10.11.13.0/24 on the interface that reaches the SSG — check with
+`ping 10.11.13.220` and `Test-NetConnection 10.11.13.220 -Port 5025`
+(PowerShell) before blaming the app. Use the static IP; the bundled default
+stays disabled with an empty address because it ships to every install.
 
 The SSG's IP is under its System > Interface > LAN. With sorting enabled
 (`enable_target_group`), the readiness panel's `rf.generator` gate must read
@@ -237,8 +245,8 @@ void onIoToolboxEvent(const IoToolboxData& data) override {
    section to the user `config.json` (disabled). Confirm it appears in the
    Config tab and that no other user value changed (diff the file before /
    after).
-3. **Link:** set `enabled: true`, `resource: "<SSG IP>:5025"` (the user
-   provides the IP or it is read from the SSG: System > Interface > LAN).
+3. **Link:** set `enabled: true`, `resource: "10.11.13.220:5025"` (the
+   SSG's static address, §4).
    With target-group sorting on, the readiness panel shows `rf.generator =
    pass` with the real `*IDN?` string, trigger mode, delay and width. Paste
    that gate line into the evidence README. Also capture one `fail` on
@@ -322,8 +330,8 @@ void onIoToolboxEvent(const IoToolboxData& data) override {
 > preset (fix any MSVC error in `ScpiTransportVisaWin32.cpp`) and run the
 > backend tests. Start MIB Studio once so the `rf_generator` section is merged
 > into the user config, then in the Config tab set `enabled: true` and
-> `resource: "<SSG IP>:5025"` (ask the user for the IP, or read it from the
-> SSG: System > Interface > LAN). Do the §6a checks: `rf.generator` readiness
+> `resource: "10.11.13.220:5025"` (the SSG's static IP; first confirm the PC
+> reaches it: `Test-NetConnection 10.11.13.220 -Port 5025`). Do the §6a checks: `rf.generator` readiness
 > gate passes with the real instrument, one deliberate failure, one short
 > sorting run whose HDF5 file has `rf_generator_*`, `/trigger_events` (and
 > `series_meta` if multi-image). Put the evidence in `docs/evidence/`, update
