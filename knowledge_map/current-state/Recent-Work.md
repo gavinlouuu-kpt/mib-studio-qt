@@ -1,5 +1,27 @@
 # Recent Work
 
+## 2026-10-01 — ReviewSession and the review bridge (YOFO Review PR 1a/1c)
+
+One Qt-free review implementation now sits behind every shell
+([[../services/ReviewSession]], new `mib_review_core` library on
+`mib_processing` only): its own reader (never the experiment writer's
+handle), full-column metrics pages, frames with the overlay and ROI
+composed in the backend (`OverlayCompose`, a port of the Qt renderer),
+series, packed thumbnail strips, columnar scatter, run accounting, stored
+KDE records and the **recorded** pixel-to-micron factor (TD-17 backend
+half). `BackendFacade` delegates its review surface to it, so the Tauri
+shell no longer scrubs the live FrameStore for file frames and can load a
+file during an experiment. A second cxx bridge (`review_ffi`,
+[[../architecture/Rust-Bridge]]) exposes it; contract ABI 15 adds
+`overlay_modes`, `review_pixel_formats` (RGB8 packets), thumbnail/series
+pull kinds and `review_operation_kinds`. The `review-only` cargo feature
+builds only that bridge: the YOFO Review binary links no `AppBackend`
+(`nm` check in `review-ci.yml`). The React review panel now uses the review
+bridge in both products (overlay + ROI controls, Close File, µm² column).
+Guards: `review.session`, `tests/review_bridge.rs` (both feature
+configurations), desktop `review::tests`, `frontend` vitest. Jobs (export,
+batch, regenerate, core contour, density) follow in PR 1b.
+
 ## 2026-10-01 — YOFO Review: the Review tab as a React + Tauri product (PR 0)
 
 Decision (ADR 0008, plan

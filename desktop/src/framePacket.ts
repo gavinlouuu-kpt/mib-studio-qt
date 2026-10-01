@@ -38,7 +38,8 @@ export function decodeFramePacket(buffer: ArrayBuffer, expectedKind: number): Fr
       || d.getUint16(6, true) !== c.header_bytes)
     throw new Error("FRAME_PACKET_INCOMPATIBLE_VERSION");
   const flags = d.getUint32(8, true), kind = d.getUint32(12, true);
-  if (flags > 1 || kind !== expectedKind || kind < 1 || kind > 4)
+  const maxKind = Math.max(...Object.values(c.pull_kinds));
+  if (flags > 1 || kind !== expectedKind || kind < 1 || kind > maxKind)
     throw new Error("FRAME_PACKET_INVALID_FLAGS_OR_SOURCE");
   const n = (offset: number) => d.getBigUint64(offset, true);
   // v1 deliberately has no authoritative identity/time validity bits.
@@ -48,10 +49,13 @@ export function decodeFramePacket(buffer: ArrayBuffer, expectedKind: number): Fr
   if (len !== BigInt(buffer.byteLength - c.header_bytes))
     throw new Error("FRAME_PACKET_INVALID_LENGTH");
   if (flags === 1) {
+    // Contract pixel_formats: Mono8 (legacy 0 or GenICam) = 1 byte/pixel,
+    // RGB8 = 3 (review pulls with a backend-composed overlay, ADR 0008).
+    const bytesPerPixel = format === 0n || format === BigInt(c.pixel_formats.mono8) ? 1n
+      : format === BigInt(c.pixel_formats.rgb8) ? 3n : 0n;
     if (width === 0n || height === 0n || width > BigInt(c.max_dimension)
         || height > BigInt(c.max_dimension) || width * height > BigInt(c.max_pixels)
-        || stride < width || stride * height !== len
-        || (format !== 0n && format !== 0x01080001n))
+        || bytesPerPixel === 0n || stride < width * bytesPerPixel || stride * height !== len)
       throw new Error("FRAME_PACKET_INVALID_GEOMETRY_OR_FORMAT");
   } else if ([n(16), n(24), width, height, format, stride, len].some(v => v !== 0n)) {
     throw new Error("FRAME_PACKET_INVALID_EMPTY_FRAME");

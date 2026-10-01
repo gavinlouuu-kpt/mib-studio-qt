@@ -17,7 +17,6 @@ import {
   type ProcessingCoreStatus,
   type ProcessingStats,
   type PumpStatus,
-  type ReviewMetadata,
   type TriggerStatus,
 } from "./bridge";
 import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
@@ -33,6 +32,7 @@ import {
   type OperatingMode,
 } from "./commissioning";
 import { ReviewPanel, type ReviewPanelHandle } from "./review/ReviewPanel";
+import type { ReviewInfo } from "./review/reviewBridge";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -199,8 +199,7 @@ export default function App() {
   // YOFO Review); the shell keeps only what the workflow and status bar read.
   const [reviewPath, setReviewPath] = useState("");
   const [reviewing, setReviewing] = useState(false);
-  const [range, setRange] = useState({ earliest: "0", latest: "0", count: "0" });
-  const [reviewMeta, setReviewMeta] = useState<ReviewMetadata | null>(null);
+  const [reviewMeta, setReviewMeta] = useState<ReviewInfo | null>(null);
   const reviewPanel = useRef<ReviewPanelHandle>(null);
 
   const liveCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -300,7 +299,8 @@ export default function App() {
       if (e.kind === "CameraStatus") {
         setCamStatus(`${e.running ? "running" : e.configured ? "configured" : "unconfigured"} (${e.label || "camera"})`);
       } else if (e.kind === "PlaybackPosition") {
-        setRange({earliest:e.earliest,latest:e.latest,count:e.available});
+        // The review module reads file frames through the review bridge
+        // (ADR 0008); the live playback range has no consumer here now.
       } else if (e.kind === "BackendError") {
         append(`backend error: ${e.message}${e.textTruncated ? " (details truncated)" : ""}`);
       } else if (e.kind === "OperationStatus") {
@@ -640,9 +640,9 @@ export default function App() {
     setRunning(false);
   }, [stopLoop]);
 
-  const onReviewMetadata = useCallback((meta: ReviewMetadata) => {
-    setReviewMeta(meta);
-    setReviewing(meta.file_open);
+  const onReviewInfo = useCallback((info: ReviewInfo | null) => {
+    setReviewMeta(info);
+    setReviewing(!!info?.file_open);
   }, []);
 
   const openReviewFromMenu = useCallback(() => {
@@ -704,7 +704,7 @@ export default function App() {
     experimentState: expState,
     experimentCompleted,
     reviewFileOpen: reviewMeta?.file_open ?? false,
-    reviewValid: reviewMeta?.valid ?? false,
+    reviewValid: reviewMeta?.file_open ?? false,
   };
   const workflow = deriveWorkflow(workflowFacts);
   const stageByTab = Object.fromEntries(workflow.stages.map((s) => [s.tab, s])) as Record<
@@ -1685,13 +1685,11 @@ export default function App() {
                 ref={reviewPanel}
                 ready={ready}
                 scheduler={framePulls.current}
-                range={range}
                 fitWindow={fitWindow}
                 log={append}
-                applyEvents={applyEvents}
                 beforeLoad={beforeReviewLoad}
                 onFileChange={setReviewPath}
-                onMetadata={onReviewMetadata}
+                onInfo={onReviewInfo}
               />
             )}
           </div>

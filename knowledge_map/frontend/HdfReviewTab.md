@@ -237,6 +237,14 @@ failed counts (from `Hdf5Service::readRunAccounting`) to the status text for
 both experiment and recording files; legacy files show "accounting: not
 recorded (legacy file)" rather than implying completeness.
 
+## Shared implementation (ADR 0008)
+
+The React shells reproduce this tab over [[../services/ReviewSession]]
+(`mib_review_core`): overlay composition is `OverlayCompose.cpp`, a port of
+`OverlayRenderer.cpp` (same colours and contour rules — keep them in step),
+and the session reads the **recorded** pixel-to-micron factor (TD-17); this
+tab still uses the live backend factor until PR 8 of the plan switches it.
+
 ## Gotchas
 
 - Multi-image series (4D dataset) need `readSeriesImagesByIndex` — not the

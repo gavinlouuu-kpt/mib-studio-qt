@@ -44,7 +44,9 @@ the host when set. The image is built per job/container, not published
 (decision in the plan). `.github/actions/setup-linux-env` is the one place
 Linux workflows get packages (`sections`, `extra-packages`), Conan
 (`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
-`desktop-ci`, `review-ci` (YOFO Review, [[../frontend/YofoReview]]),
+`desktop-ci`, `review-ci` (YOFO Review, [[../frontend/YofoReview]]; builds
+`mib_review_core`, the Qt-free review library [[../services/ReviewSession]]
+that `mib_backend` and the review bridge link),
 `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
 and `network-tests` all use it, and `grep apt-get .github/workflows` should
 match nothing. `network-tests.yml` (nightly + manual) runs

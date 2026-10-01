@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // Tauri expects a fixed port and its own build output. `../dist` (from
@@ -20,6 +20,12 @@ export default defineConfig({
       // with ELOOP (kills the dev server moments after startup).
       ignored: ["**/src-tauri/**"],
     },
+  },
+  test: {
+    // Same reason as the watcher: never crawl the Rust build tree (the
+    // cxx-build `crate` symlink loop under src-tauri/target can stall
+    // vitest's collection once a cargo build has run) or the built pages.
+    exclude: [...configDefaults.exclude, "**/src-tauri/**", "**/dist/**"],
   },
   build: {
     outDir: "dist",

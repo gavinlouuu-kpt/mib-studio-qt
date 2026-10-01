@@ -573,8 +573,18 @@ accounting text and the same saved core record; the differences list in
       updater plugin needs the minisign public key in the config at build
       time); bundling is on only in the review overlay (`dmg`, `nsis`),
       the MIB Studio config is unchanged.
-- [ ] PR 1 — `ReviewSession` / `mib_review_core`, facade delegation,
-      review bridge, contract 15, density job (absorbs scatter plan PR 3a)
+- [x] PR 1a — `ReviewSession` / `mib_review_core`, facade delegation
+      (landed 2026-10-01)
+- [x] PR 1c — review bridge (`review_ffi`, feature `review-only`), contract
+      15, Tauri `review.rs`, `reviewBridge.ts`, panel on the review bridge,
+      CI `nm` check (landed 2026-10-01). Deviation: a **second bridge** over
+      `ReviewSession` instead of new functions on `BackendBridge`, because
+      cxx cannot cfg-gate functions inside one bridge module and the
+      review-only binary must not compile the AppBackend shim; MIB Studio's
+      Tauri shell holds both bridges and its Review tab uses only the
+      review one.
+- [ ] PR 1b — review jobs (export, batch, regenerate masks, core contour)
+      and the density review mode (absorbs scatter plan PR 3a)
 - [ ] PR 2 — Frames view, viewer, overlays, series, recording files
 - [ ] PR 3 — Charts view, gestures, click-to-view pane (absorbs scatter
       plan PR 4 / #470)

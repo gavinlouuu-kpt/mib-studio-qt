@@ -11,7 +11,7 @@ publish = false
 # and dialog commands; `tauri.review.conf.json` supplies the product identity.
 # The review-only bridge (no mib_backend in the link) arrives with the plan's
 # PR 1 and will be forwarded here as `mib-bridge/review-only`.
-review-only = []
+review-only = ["mib-bridge/review-only"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

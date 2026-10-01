@@ -1619,7 +1619,11 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // device-discovery job trio (start_device_discovery / start_camera_discovery,
 // fetch_device_discovery, cancel_device_discovery) and the discovery contract
 // groups (#419, ADR 0005). All additive over v1 (ADR 0003/0004). Must match
-// contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 14; }
+// contract/bridge-contract.json. v15 (ADR 0008) added the review bridge
+// (crates/mib-bridge/src/review_bridge.rs): ReviewSession-backed info / rows /
+// frames with backend-composed overlays / series / thumbnails / scatter /
+// core-record save, the overlay_modes and review_pixel_formats groups, and
+// review_operation_kinds for its job queue.
+std::uint32_t bridge_abi_version() { return 15; }
 
 } // namespace mib_bridge

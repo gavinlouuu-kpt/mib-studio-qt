@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 14;
+export const BRIDGE_ABI_VERSION = 15;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -102,6 +102,23 @@ export const REVIEW_IMAGE_DATASETS = {
   RecordedImage: 2,
   ValidMask: 3,
   InvalidMask: 4,
+} as const;
+
+export const OVERLAY_MODES = {
+  None: 0,
+  AllContour: 1,
+  OuterInnerColorCoded: 2,
+  AllMask: 3,
+  FilteredMask: 4,
+} as const;
+
+export const REVIEW_OPERATION_KINDS = {
+  ExportMetrics: 0,
+  ExportAll: 1,
+  BatchExport: 2,
+  RegenerateMasks: 3,
+  ComputeCore: 4,
+  Density: 5,
 } as const;
 
 export const PUMP_IDS = {
@@ -220,6 +237,11 @@ export const RECORDING_STATES = {
   Error: 5,
 } as const;
 
+export const REVIEW_PIXEL_FORMATS = {
+  "Mono8": 0,
+  "Rgb8": 35127316
+} as const;
+
 export const FRAME_PACKET = {
   "version": 1,
   "header_bytes": 96,
@@ -233,7 +255,9 @@ export const FRAME_PACKET = {
     "latest": 1,
     "indexed": 2,
     "review": 3,
-    "background": 4
+    "background": 4,
+    "review_thumbnails": 5,
+    "review_series": 6
   },
   "fields": {
     "magic": 0,
@@ -251,7 +275,14 @@ export const FRAME_PACKET = {
     "session_id_reserved": 72,
     "config_revision_reserved": 80,
     "source_id_reserved": 88
-  }
+  },
+  "pixel_formats": {
+    "mono8_legacy": 0,
+    "mono8": 17301505,
+    "rgb8": 35127316
+  },
+  "rgb8_semantics": "review pulls (kinds 3, 5, 6) may carry RGB8 (3 bytes per pixel, stride = width*3) when the backend composed an overlay or ROI; mono pulls are unchanged",
+  "thumbnail_strip_semantics": "pull kind 5 packs count tiles of size x size as one frame of width size and height size*count; frame_index = page offset"
 } as const;
 
 export const JSON_TRANSPORT = {

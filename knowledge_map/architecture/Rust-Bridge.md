@@ -5,7 +5,8 @@
 > and no display. Wraps [[AppBackend]] via `backend::bridge::BackendFacade`.
 
 **Source:** `crates/mib-bridge/` (`src/lib.rs`, `src/shim.h`, `src/shim.cpp`,
-`build.rs`, `tests/contract.rs`)
+`build.rs`, `tests/contract.rs`); review bridge `src/review_bridge.rs`,
+`src/review_shim.{h,cpp}`, `tests/review_bridge.rs` (ADR 0008)
 **Backend seam:** `include/backend/app/BackendFacade.h`,
 `src/backend/app/BackendFacade.cpp`
 **Decision:** [`docs/decisions/0003-rust-cxx-bridge.md`](../../docs/decisions/0003-rust-cxx-bridge.md)
@@ -256,3 +257,41 @@ no-CMake path validates all four archives, and Cargo watches the OEABT archives
 for relinking. Windows uses the CMake-generated dependency manifest and marks
 the OEABT libraries as static. Missing these dependencies produces undefined
 SerialTransport/ControllerSession and platform serial symbols in bridge CI.
+
+## Review bridge (ABI 15, ADR 0008)
+
+A second `#[cxx::bridge]` module, `review_ffi` (namespace
+`mib_review_bridge`), wraps [[../services/ReviewSession]] as an opaque
+`ReviewBridge`. It is the one review surface every React shell uses (MIB
+Studio's Review tab and the whole YOFO Review window) and is deliberately
+separate from `ffi::BackendBridge`:
+
+- **Link set.** `review_shim.cpp` includes only `backend/review/*`,
+  `Hdf5Service.h` and `KdeCoreRecord.h`, so it links `mib_review_core` +
+  `mib_processing`. The cargo feature `review-only` compiles just this
+  bridge (`build.rs`: `bridge_sources()` / `shim_sources()` /
+  `archives()`), and the YOFO Review binary carries no `AppBackend`
+  (`review-ci.yml` checks `nm` for `backend::AppBackend`). Without the
+  feature both bridges compile and a MIB Studio shell holds one of each.
+- **Calls:** `review_open/close`, `set_fallback_pixel_to_micron`,
+  `fetch_review_info` (counts, ROI, datasets, series, multi-image window,
+  accounting + summary text, recorded factor, KDE JSON),
+  `fetch_review_rows` (full-column `ReviewRow`s), `fetch_review_frame(dataset,
+  index, overlay, roi)` → `ReviewFrame` Mono8 or **RGB8**
+  (`review_pixel_formats`), `fetch_review_series_count/frame`,
+  `fetch_review_thumbnails` (one frame of `size × (size·count)`),
+  `fetch_review_scatter` (columnar), `review_save_core_record`,
+  `poll_review_events` (job lifecycle, `review_operation_kinds` ×
+  `operation_states`; jobs land with PR 1b), `cancel_review_operation`,
+  `review_bridge_abi_version()` (same number as `bridge_abi_version()`),
+  and the test fixture `review_fixture_write_experiment(path)`.
+- **Contract.** `bridge-contract.json` 15 adds `overlay_modes`,
+  `review_pixel_formats`, `review_operation_kinds`, frame-packet pull kinds
+  `review_thumbnails` (5) / `review_series` (6) and the `pixel_formats`
+  table; `review_shim.cpp` pins the enums with `static_assert`s;
+  `tests/review_bridge.rs` runs in both feature configurations;
+  `tests/contract.rs` is `#![cfg(not(feature = "review-only"))]`.
+- **Tauri:** `desktop/src-tauri/src/review.rs` exposes the commands;
+  `frame_packet.rs` now encodes a bridge-neutral `Frame` (RGB8 allowed,
+  stride = width × bytes/pixel). `desktop/src/review/reviewBridge.ts` is the
+  TypeScript client.

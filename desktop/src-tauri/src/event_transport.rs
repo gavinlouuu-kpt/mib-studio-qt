@@ -1,11 +1,8 @@
 //! Versioned lossless JSON boundary. This is marshaling, not run truth.
 use mib_bridge::ffi::BridgeEvent;
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use crate::frame_packet::{JSON_TRANSPORT_VERSION, MAX_EVENT_TEXT_BYTES};
-
-pub fn serialize_u64<S: Serializer>(value: &u64, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&value.to_string())
-}
+pub use crate::wire::serialize_u64;
 
 #[derive(Serialize)]
 pub struct EventEnvelope {

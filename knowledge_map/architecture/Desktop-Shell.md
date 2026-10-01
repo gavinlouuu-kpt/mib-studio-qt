@@ -135,6 +135,13 @@ Thin wrappers over the bridge (all take the managed `AppState`):
 - **Recording/review:** `fetch_indexed_frame_packet(frame_index)` and
   `fetch_review_frame_packet(dataset,index)` accept canonical decimal-string
   indices. `fetch_background_packet` uses the same codec.
+- **Review (ADR 0008):** `src-tauri/src/review.rs` — `review_open/close`,
+  `fetch_review_info/rows/frame/series_*/thumbnails_packet/scatter`,
+  `review_save_core_record`, `poll_review_events`, `cancel_review_operation`
+  over the review bridge ([[Rust-Bridge]]); the only commands the
+  `review-only` build registers besides `init`/`is_initialized`/
+  `abi_version` (review-bridge versions) and `platform::*`. Backend-bridge
+  commands are `#[cfg(not(feature = "review-only"))]`.
 - **Compatibility:** old split-cache commands return
   `FRAME_PROTOCOL_UPGRADE_REQUIRED`; they cannot return a substitute image.
   C++ ABI 11 is unchanged; desktop frame wire protocol v1 is independently

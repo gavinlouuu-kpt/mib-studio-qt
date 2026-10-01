@@ -13,6 +13,7 @@
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
 - [[HdfExportService]] — Qt-free bounded/cancellable CSV+TIFF export job (issue #344)
+- [[ReviewSession]] — the one review implementation behind every shell (ADR 0008; `mib_review_core`)
 - [[SqliteService]] — small metadata DB
 
 ## Hardware I/O

@@ -3,119 +3,127 @@
 // One React tree serves two products: MIB Studio mounts this panel in its
 // Review tab, YOFO Review (`review.html` → `ReviewApp.tsx`) mounts it as the
 // whole window. The panel owns its review state and the "review" slot of the
-// shared FramePullScheduler; the host supplies backend readiness, the
-// PlaybackPosition range it drains from `poll_events`, a log sink and the
-// hooks it needs to stay in sync (file open, metadata).
+// shared FramePullScheduler, and talks only to the review bridge
+// (`reviewBridge.ts` → src-tauri/src/review.rs → ReviewSession), so the
+// review-only product needs no backend bridge at all.
 //
-// Behaviour is today's panel moved out of App.tsx unchanged. The frames /
-// charts / exports rewrites arrive with the later PRs of the plan.
+// Scope today: open/close, info line, raw / valid / invalid scrubbing with
+// backend-composed overlays, the metrics table. Thumbnails, charts, exports
+// and jobs arrive with the plan's PR 2–4.
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import {
-  bridge,
-  mono8ToImageData,
-  type BridgeEvent,
-  type FramePacket,
-  type ReviewMetadata,
-  type ReviewMetricsPage,
-} from "../bridge";
-import { decimalU64 } from "../framePacket";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { FramePacket } from "../framePacket";
 import type { FramePullScheduler } from "../framePullScheduler";
+import {
+  OVERLAY,
+  REVIEW_DATASET,
+  packetToImageData,
+  reviewBridge,
+  type OverlayMode,
+  type ReviewInfo,
+  type ReviewRows,
+} from "./reviewBridge";
 
 export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
 export const METRICS_PAGE_SIZE = 50;
 
-// Standard reason string for controls whose backend surface is not bridged
-// yet (BE-6, #276; replaced by the plan's PR 1). The control stays visible but
-// cannot be activated and never fakes backend state.
-const PENDING_REVIEW = "HDF5 export/batch/regenerate jobs are not bridged yet — backend issue BE-6 (#276)";
+// Jobs (exports, batch, regenerate masks) are bridged with the plan's PR 1b.
+const PENDING_JOBS = "Export and regeneration jobs arrive with the next review bridge step (PR 1b)";
 
-export interface PlaybackRange {
-  earliest: string;
-  latest: string;
-  count: string;
-}
+const OVERLAY_LABELS: { mode: OverlayMode; label: string }[] = [
+  { mode: OVERLAY.None, label: "Overlay: None" },
+  { mode: OVERLAY.AllContour, label: "Overlay: Contours" },
+  { mode: OVERLAY.OuterInnerColorCoded, label: "Overlay: Outer/Inner" },
+  { mode: OVERLAY.AllMask, label: "Overlay: Mask" },
+  { mode: OVERLAY.FilteredMask, label: "Overlay: Filtered mask" },
+];
 
 export interface ReviewPanelProps {
-  /** Backend initialized (load is refused otherwise). */
+  /** Backend initialized (open is refused otherwise). */
   ready: boolean;
   /** Shared scheduler; the panel mounts its own "review" slot on it. */
   scheduler: FramePullScheduler;
-  /** PlaybackPosition range the host drained from poll_events. */
-  range: PlaybackRange;
   /** Image scaling preference shared with the host's live canvases. */
   fitWindow: boolean;
   /** Log drawer sink. */
   log: (line: string) => void;
-  /** Host-side event application for the events drained right after load. */
-  applyEvents: (events: BridgeEvent[]) => void;
-  /** Called before a load replaces the current source (MIB Studio stops the
+  /** Called before an open replaces the current source (MIB Studio stops the
    * live preview loop here). */
   beforeLoad?: () => void;
   /** The loaded file path changed (host invalidates its scheduler views). */
   onFileChange?: (path: string) => void;
-  /** Fresh metadata after a load (workflow facts in MIB Studio). */
-  onMetadata?: (meta: ReviewMetadata) => void;
+  /** Fresh info after an open or close (workflow facts, status bar). */
+  onInfo?: (info: ReviewInfo | null) => void;
 }
 
 export interface ReviewPanelHandle {
   /** The File ▸ Open… action. */
   openFile: () => Promise<void>;
+  /** The File ▸ Close action. */
+  closeFile: () => Promise<void>;
 }
 
-export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(function ReviewPanel(props, ref) {
-  const { ready, scheduler, range, fitWindow, log, applyEvents, beforeLoad, onFileChange, onMetadata } = props;
+type ReviewTab = "raw" | "valid" | "invalid" | "charts";
 
-  const [reviewPath, setReviewPath] = useState("");
-  const [reviewing, setReviewing] = useState(false);
-  const [reviewTab, setReviewTab] = useState<"raw" | "valid" | "invalid" | "charts">("raw");
-  const [reviewIndex, setReviewIndex] = useState("0");
-  // Paged review (bridge schema v9, BE-6).
-  const [reviewMeta, setReviewMeta] = useState<ReviewMetadata | null>(null);
-  const [metricsPage, setMetricsPage] = useState<ReviewMetricsPage | null>(null);
-  const [metricsOffset, setMetricsOffset] = useState(0);
-  const [reviewImgIndex, setReviewImgIndex] = useState(0);
+export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(function ReviewPanel(props, ref) {
+  const { ready, scheduler, fitWindow, log, beforeLoad, onFileChange, onInfo } = props;
+
+  const [info, setInfo] = useState<ReviewInfo | null>(null);
+  const [reviewTab, setReviewTab] = useState<ReviewTab>("raw");
+  const [rows, setRows] = useState<ReviewRows | null>(null);
+  const [rowsOffset, setRowsOffset] = useState(0);
+  const [imgIndex, setImgIndex] = useState(0);
+  const [overlay, setOverlay] = useState<OverlayMode>(OVERLAY.None);
+  const [roiOverlay, setRoiOverlay] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // The host's range at call time, without re-creating the load callback.
-  const rangeRef = useRef(range);
-  rangeRef.current = range;
+
+  const reviewing = !!info?.file_open;
+  const total = Number(rows?.total ?? 0);
 
   // Draw only the pixels owned by this exact immutable pull response.
-  const draw = useCallback((meta: FramePacket) => {
+  const draw = useCallback((p: FramePacket) => {
     const canvas = canvasRef.current;
-    if (!meta.valid || !canvas) return;
-    canvas.width = meta.width;
-    canvas.height = meta.height;
+    if (!p.valid || !canvas) return;
+    canvas.width = p.width;
+    canvas.height = p.height;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.putImageData(mono8ToImageData(meta.data, meta.width, meta.height, meta.stride_bytes), 0, 0);
+    ctx.putImageData(packetToImageData(p), 0, 0);
   }, []);
 
   useEffect(() => {
     return scheduler.mount("review", draw, (e) => log(`review frame error: ${e}`));
   }, [scheduler, draw, log]);
 
-  const onScrub = useCallback(
-    (input: number | string) => {
-      const idx = decimalU64(input);
-      setReviewIndex(idx);
-      scheduler.request("review", async () => {
-        const result = await bridge.seekIndex(idx);
-        if (!result.ok) throw new Error(result.message);
-        return bridge.fetchFrameByIndex(idx);
-      });
+  const datasetFor = useCallback((tab: ReviewTab): number => {
+    if (tab === "raw") return REVIEW_DATASET.RecordedImage;
+    return tab === "invalid" ? REVIEW_DATASET.InvalidImage : REVIEW_DATASET.ValidImage;
+  }, []);
+
+  const imageCount = useCallback(
+    (tab: ReviewTab): number => {
+      if (!info) return 0;
+      if (tab === "raw") return Number(info.recorded_images.count);
+      return Number(tab === "invalid" ? info.invalid_images.count : info.valid_images.count);
     },
-    [scheduler],
+    [info],
   );
 
-  const loadMetricsPage = useCallback(
+  const drawImage = useCallback(
+    (tab: ReviewTab, index: number, mode: OverlayMode, roi: boolean) => {
+      scheduler.request("review", () => reviewBridge.frame(datasetFor(tab), index, mode, roi));
+    },
+    [scheduler, datasetFor],
+  );
+
+  const loadRows = useCallback(
     async (valid: boolean, offset: number) => {
       try {
-        const page = await bridge.fetchReviewMetricsPage(valid, offset, METRICS_PAGE_SIZE);
+        const page = await reviewBridge.rows(valid, offset, METRICS_PAGE_SIZE);
         if (page.valid) {
-          setMetricsPage(page);
-          setMetricsOffset(offset);
+          setRows(page);
+          setRowsOffset(offset);
         }
       } catch (e) {
         log(`metrics page error: ${e}`);
@@ -124,59 +132,71 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     [log],
   );
 
-  const drawReviewImage = useCallback(
-    (dataset: number, index: number) => {
-      scheduler.request("review", () => bridge.fetchReviewImage(dataset, index));
+  const selectTab = useCallback(
+    async (tab: ReviewTab) => {
+      setReviewTab(tab);
+      setImgIndex(0);
+      if (tab === "charts") return;
+      await loadRows(tab !== "invalid", 0);
+      if (imageCount(tab) > 0) drawImage(tab, 0, overlay, roiOverlay);
     },
-    [scheduler],
+    [drawImage, imageCount, loadRows, overlay, roiOverlay],
   );
+
+  const closeFile = useCallback(async () => {
+    try {
+      await reviewBridge.close();
+    } catch (e) {
+      log(`close error: ${e}`);
+    }
+    scheduler.invalidate("review");
+    setInfo(null);
+    setRows(null);
+    setRowsOffset(0);
+    setImgIndex(0);
+    setReviewTab("raw");
+    onInfo?.(null);
+    onFileChange?.("");
+    const canvas = canvasRef.current;
+    canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+  }, [log, onFileChange, onInfo, scheduler]);
 
   const openFile = useCallback(async () => {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
     beforeLoad?.();
-    setReviewPath(picked);
     onFileChange?.(picked);
     try {
-      const res = await bridge.loadRecording(picked);
-      if (!res.ok) return log(`load failed: ${res.message}`);
-      setReviewing(true);
-      log(`loaded ${picked}`);
-      applyEvents(await bridge.pollEvents());
-      const meta = await bridge.fetchReviewMetadata();
-      setReviewMeta(meta);
-      onMetadata?.(meta);
-      setReviewTab(meta.recording_file ? "raw" : "valid");
-      setReviewImgIndex(0);
-      await loadMetricsPage(true, 0);
-      if (meta.recording_file) {
-        onScrub(rangeRef.current.earliest);
-      } else if (meta.valid_images.present && meta.valid_images.count > 0) {
-        drawReviewImage(0, 0);
-      }
+      const res = await reviewBridge.open(picked);
+      if (!res.ok) return log(`open failed: ${res.message}`);
+      const fresh = await reviewBridge.info();
+      setInfo(fresh);
+      onInfo?.(fresh);
+      log(`opened ${picked}${fresh.accounting_summary}`);
+      const tab: ReviewTab = fresh.recording_file ? "raw" : "valid";
+      setReviewTab(tab);
+      setImgIndex(0);
+      await loadRows(true, 0);
+      const count = fresh.recording_file ? Number(fresh.recorded_images.count) : Number(fresh.valid_images.count);
+      if (count > 0) drawImage(tab, 0, overlay, roiOverlay);
     } catch (e) {
-      log(`load error: ${e}`);
+      log(`open error: ${e}`);
     }
-  }, [applyEvents, beforeLoad, drawReviewImage, loadMetricsPage, log, onFileChange, onMetadata, onScrub]);
+  }, [beforeLoad, drawImage, loadRows, log, onFileChange, onInfo, overlay, roiOverlay]);
 
-  useImperativeHandle(ref, () => ({ openFile }), [openFile]);
+  useImperativeHandle(ref, () => ({ openFile, closeFile }), [openFile, closeFile]);
 
-  const onExportCsv = useCallback(async () => {
-    try {
-      const picked = await save({
-        title: "Export Metrics to CSV",
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-        defaultPath: "metrics.csv",
-      });
-      if (!picked) return;
-      const res = await bridge.reviewExportCsv(picked);
-      log(res.ok ? `CSV export started (operation ${res.operation_id})` : `export failed: ${res.message}`);
-    } catch (e) {
-      log(`export error: ${e}`);
-    }
-  }, [log]);
+  const onOverlayChange = (mode: OverlayMode) => {
+    setOverlay(mode);
+    if (reviewing && reviewTab !== "charts" && imageCount(reviewTab) > 0) drawImage(reviewTab, imgIndex, mode, roiOverlay);
+  };
+  const onRoiChange = (on: boolean) => {
+    setRoiOverlay(on);
+    if (reviewing && reviewTab !== "charts" && imageCount(reviewTab) > 0) drawImage(reviewTab, imgIndex, overlay, on);
+  };
 
-  const imageCount = reviewTab === "valid" ? reviewMeta?.valid_images.count ?? 0 : reviewMeta?.invalid_images.count ?? 0;
+  const count = reviewing && reviewTab !== "charts" ? imageCount(reviewTab) : 0;
+  const isRecording = !!info?.recording_file;
 
   return (
     <>
@@ -184,59 +204,66 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         <button onClick={openFile} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
           Select HDF File…
         </button>
-        <button disabled title="Loading a new file replaces the current one">Close File</button>
-        <button
-          onClick={onExportCsv}
-          disabled={!reviewMeta?.file_open}
-          title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
-        >
-          Export Metrics to CSV…
+        <button onClick={closeFile} disabled={!reviewing} title={reviewing ? "Close the current file" : "No file loaded"}>
+          Close File
         </button>
-        <button disabled title={PENDING_REVIEW}>Export All…</button>
-        <button disabled title={PENDING_REVIEW}>Batch Metrics…</button>
-        <button disabled title={PENDING_REVIEW}>Regenerate masks…</button>
+        <button disabled title={PENDING_JOBS}>Export Metrics to CSV…</button>
+        <button disabled title={PENDING_JOBS}>Export All…</button>
+        <button disabled title={PENDING_JOBS}>Batch Metrics…</button>
+        <button disabled title={PENDING_JOBS}>Regenerate masks…</button>
+        <select
+          value={overlay}
+          disabled={!reviewing || isRecording}
+          title={isRecording ? "Recording files carry no masks" : "Overlay drawn by the backend"}
+          onChange={(e) => onOverlayChange(Number(e.target.value) as OverlayMode)}
+          aria-label="Overlay mode"
+        >
+          {OVERLAY_LABELS.map((o) => (
+            <option key={o.mode} value={o.mode}>{o.label}</option>
+          ))}
+        </select>
+        <label title={isRecording ? "Recording files carry no ROI" : "Draw the recorded ROI"}>
+          <input type="checkbox" checked={roiOverlay} disabled={!reviewing || isRecording} onChange={(e) => onRoiChange(e.target.checked)} /> ROI
+        </label>
         <span className="legend">
           <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
           <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
           <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
         </span>
-        <span className="path-label right">
-          {reviewing
-            ? `${reviewPath}${reviewMeta?.valid ? ` · ${reviewMeta.recording_file ? "recording" : "experiment"} · valid ${reviewMeta.total_valid}, invalid ${reviewMeta.total_invalid}${reviewMeta.has_core_identity ? ` · core v${reviewMeta.core_version}` : ""}` : ""}`
+        <span className="path-label right" title={info?.file_path}>
+          {reviewing && info
+            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${info.pixel_to_micron.toFixed(4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}${info.accounting_summary}`
             : "No file selected"}
         </span>
       </div>
       <div className="subtabs" role="tablist" aria-label="Review views">
-        <button className={reviewTab === "raw" ? "active" : ""} onClick={() => setReviewTab("raw")}>
+        <button
+          className={reviewTab === "raw" ? "active" : ""}
+          disabled={!info?.recorded_images.present}
+          title={info?.recorded_images.present ? undefined : "No recorded raw frames in this file"}
+          onClick={() => void selectTab("raw")}
+        >
           Raw Frames
         </button>
         <button
           className={reviewTab === "valid" ? "active" : ""}
-          disabled={!reviewMeta?.valid_images.present}
-          title={reviewMeta?.valid_images.present ? undefined : "No valid-frame images in this file"}
-          onClick={async () => {
-            setReviewTab("valid");
-            setReviewImgIndex(0);
-            await loadMetricsPage(true, 0);
-            drawReviewImage(0, 0);
-          }}
+          disabled={!info?.valid_images.present}
+          title={info?.valid_images.present ? undefined : "No valid-frame images in this file"}
+          onClick={() => void selectTab("valid")}
         >
-          Valid Frames
+          {isRecording ? "Frames" : "Valid Frames"}
         </button>
-        <button
-          className={reviewTab === "invalid" ? "active" : ""}
-          disabled={!reviewMeta?.invalid_images.present}
-          title={reviewMeta?.invalid_images.present ? undefined : "No invalid-frame images in this file"}
-          onClick={async () => {
-            setReviewTab("invalid");
-            setReviewImgIndex(0);
-            await loadMetricsPage(false, 0);
-            drawReviewImage(1, 0);
-          }}
-        >
-          Invalid Frames
-        </button>
-        <button disabled title="Chart rendering lands with UI-4 (#269)">Charts</button>
+        {!isRecording && (
+          <button
+            className={reviewTab === "invalid" ? "active" : ""}
+            disabled={!info?.invalid_images.present}
+            title={info?.invalid_images.present ? undefined : "No invalid-frame images in this file"}
+            onClick={() => void selectTab("invalid")}
+          >
+            Invalid Frames
+          </button>
+        )}
+        <button disabled title="Chart rendering lands with the plan's PR 3">Charts</button>
       </div>
       <div className="subtab-body">
         <div className="review-split">
@@ -245,41 +272,23 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
               {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
               <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
             </div>
-            {reviewing && reviewTab === "raw" && BigInt(range.count) > 0n && (
-              <>
-                <input
-                  type="range"
-                  className="scrub"
-                  min={range.earliest}
-                  max={range.latest}
-                  value={reviewIndex}
-                  onChange={(e) => onScrub(e.target.value)}
-                  disabled={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
-                  title={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
-                  aria-label="Frame scrubber"
-                />
-                <span className="mono">
-                  frame {reviewIndex} of [{range.earliest}…{range.latest}] ({range.count} available)
-                </span>
-              </>
-            )}
-            {reviewing && (reviewTab === "valid" || reviewTab === "invalid") && (
+            {count > 0 && (
               <>
                 <input
                   type="range"
                   className="scrub"
                   min={0}
-                  max={Math.max(0, imageCount - 1)}
-                  value={reviewImgIndex}
+                  max={Math.max(0, count - 1)}
+                  value={imgIndex}
                   onChange={(e) => {
                     const idx = Number(e.target.value);
-                    setReviewImgIndex(idx);
-                    drawReviewImage(reviewTab === "valid" ? 0 : 1, idx);
+                    setImgIndex(idx);
+                    drawImage(reviewTab, idx, overlay, roiOverlay);
                   }}
                   aria-label="Review image scrubber"
                 />
                 <span className="mono">
-                  image {reviewImgIndex + 1} of {imageCount}
+                  image {imgIndex + 1} of {count}
                 </span>
               </>
             )}
@@ -292,48 +301,50 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
                   <th>Object Id</th>
                   <th>Track Id</th>
                   <th>Area (px²)</th>
+                  <th>Area (µm²)</th>
                   <th>Deformability</th>
                   <th>Ring ratio</th>
                   <th>E (kPa)</th>
                 </tr>
               </thead>
               <tbody>
-                {(metricsPage?.rows ?? []).map((r) => (
+                {(rows?.rows ?? []).map((r) => (
                   <tr key={`${r.frame_index}:${r.object_id}`}>
                     <td>{r.frame_index}</td>
                     <td>{r.object_id}</td>
                     <td>{r.track_id}</td>
                     <td>{r.area.toFixed(1)}</td>
+                    <td>{r.area_um2.toFixed(2)}</td>
                     <td>{r.deformability.toFixed(3)}</td>
                     <td>{r.ring_ratio.toFixed(3)}</td>
                     <td>{r.youngs_modulus.toFixed(2)}</td>
                   </tr>
                 ))}
-                {(metricsPage?.rows?.length ?? 0) === 0 && (
+                {(rows?.rows?.length ?? 0) === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ color: "#777" }}>
+                    <td colSpan={8} style={{ color: "#777" }}>
                       {reviewing ? "No metric rows in this table." : "Load a file to see frame/object metrics."}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
-            {reviewing && (metricsPage?.total ?? 0) > METRICS_PAGE_SIZE && (
+            {reviewing && total > METRICS_PAGE_SIZE && (
               <div className="toolbar" style={{ padding: 4 }}>
                 <button
                   className="btn"
-                  disabled={metricsOffset === 0}
-                  onClick={() => loadMetricsPage(reviewTab !== "invalid", Math.max(0, metricsOffset - METRICS_PAGE_SIZE))}
+                  disabled={rowsOffset === 0}
+                  onClick={() => loadRows(reviewTab !== "invalid", Math.max(0, rowsOffset - METRICS_PAGE_SIZE))}
                 >
                   ◀ Prev
                 </button>
                 <span className="mono">
-                  {metricsOffset + 1}–{Math.min(metricsPage?.total ?? 0, metricsOffset + METRICS_PAGE_SIZE)} of {metricsPage?.total ?? 0}
+                  {rowsOffset + 1}–{Math.min(total, rowsOffset + METRICS_PAGE_SIZE)} of {total}
                 </span>
                 <button
                   className="btn"
-                  disabled={metricsOffset + METRICS_PAGE_SIZE >= (metricsPage?.total ?? 0)}
-                  onClick={() => loadMetricsPage(reviewTab !== "invalid", metricsOffset + METRICS_PAGE_SIZE)}
+                  disabled={rowsOffset + METRICS_PAGE_SIZE >= total}
+                  onClick={() => loadRows(reviewTab !== "invalid", rowsOffset + METRICS_PAGE_SIZE)}
                 >
                   Next ▶
                 </button>

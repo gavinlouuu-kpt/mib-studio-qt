@@ -51,18 +51,22 @@ initialized), the scheduler, the `PlaybackPosition` range it drains from
 status bar). `ReviewPanelHandle.openFile()` is the File ▸ Open… action for
 menus.
 
-Behaviour today is the pre-split Review panel unchanged (BE-6 surface:
-`load_recording`, `fetch_review_metadata`, `fetch_review_metrics_page`,
-`fetch_review_frame_packet`, `review_export_csv`; Raw Frames scrub through
-`seek_index` + `fetch_indexed_frame_packet`). The plan's PR 1–4 replace it
-piece by piece (ReviewSession-backed reads, thumbnails, overlays, charts,
-exports, jobs).
+The panel talks only to the **review bridge** (`src/review/reviewBridge.ts`
+→ `src-tauri/src/review.rs` → `ReviewBridge` → [[../services/ReviewSession]]):
+`open`/`close`, `info` (counts, ROI, series, accounting summary, the
+recorded pixel-to-micron factor with a "(fallback)" marker — TD-17),
+`rows` (full columns; the table shows index, object, track, area px²/µm²,
+deformability, ring ratio, E), `frame(dataset, index, overlay, roi)` with the
+overlay composed in the backend (Mono8 or RGB8 packets,
+`packetToImageData`). Raw Frames scrub the file's `/recorded_frames`
+dataset, never the live FrameStore. Export / batch / regenerate buttons are
+disabled until PR 1b bridges the jobs; thumbnails, charts and the viewer
+arrive with PR 2–3.
 
 ## `ReviewApp` (the product shell)
 
-Initializes the backend on boot (`init("")` → Tauri `app_data_dir`), drains
-`poll_events` at 5 Hz for operation outcomes / playback range / backend
-errors, and renders the menu row (File ▸ Open…, View ▸ Fit, Help ▸ About
+Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`),
+drains `poll_review_events` at 5 Hz for job outcomes, and renders the menu row (File ▸ Open…, View ▸ Fit, Help ▸ About
 with the stamped version from `@tauri-apps/api/app`), the panel, a status
 bar and the log drawer. No camera, experiment or hardware state exists.
 
@@ -71,7 +75,9 @@ bar and the log drawer. No camera, experiment or hardware state exists.
 `review-ci.yml` (Linux, headless): version-stamp check, backend archives,
 contract drift gate, both pages built (`dist/review.html` must exist),
 vitest, `cargo build --features review-only` under `TAURI_CONFIG`, a
-`strings` check that the binary carries `bio.yofo.review`, and the Xvfb
+`strings` check that the binary carries `bio.yofo.review`, an `nm` check
+that it links no `backend::AppBackend` (and does link `ReviewSession`),
+`cargo test --features review-only` in `crates/mib-bridge`, and the Xvfb
 boot smoke. macOS and Windows bundle jobs arrive with the plan's PR 5/PR 6.
 
 ## Gotchas

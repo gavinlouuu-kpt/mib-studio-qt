@@ -9,10 +9,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { bridge, type BridgeEvent, type ReviewMetadata } from "../bridge";
-import { BRIDGE_ABI_VERSION } from "../bridgeContract";
+import { bridge } from "../bridge";
+import { BRIDGE_ABI_VERSION, OPERATION_STATES, REVIEW_OPERATION_KINDS } from "../bridgeContract";
 import { FramePullScheduler } from "../framePullScheduler";
-import { ReviewPanel, type PlaybackRange, type ReviewPanelHandle } from "./ReviewPanel";
+import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
+import { reviewBridge, type ReviewEvent, type ReviewInfo } from "./reviewBridge";
 import "../App.css";
 import "./review.css";
 
@@ -56,9 +57,8 @@ export default function ReviewApp() {
   const [showLog, setShowLog] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [fitWindow, setFitWindow] = useState(true);
-  const [range, setRange] = useState<PlaybackRange>({ earliest: "0", latest: "0", count: "0" });
   const [filePath, setFilePath] = useState("");
-  const [meta, setMeta] = useState<ReviewMetadata | null>(null);
+  const [info, setInfo] = useState<ReviewInfo | null>(null);
   const scheduler = useRef(new FramePullScheduler());
   const panel = useRef<ReviewPanelHandle>(null);
   const tickBusy = useRef(false);
@@ -68,21 +68,17 @@ export default function ReviewApp() {
     void bridge.shellLog("info", line).catch(() => {});
   }, []);
 
+  const kindName = (kind: number) =>
+    Object.entries(REVIEW_OPERATION_KINDS).find(([, v]) => v === kind)?.[0] ?? `kind ${kind}`;
+
+  // Review job lifecycle (exports, batch, regenerate, core contour arrive
+  // with PR 1b); only terminal states reach the log.
   const applyEvents = useCallback(
-    (events: BridgeEvent[]) => {
+    (events: ReviewEvent[]) => {
       for (const e of events) {
-        if (e.kind === "PlaybackPosition") {
-          setRange({ earliest: e.earliest, latest: e.latest, count: e.available });
-        } else if (e.kind === "BackendError") {
-          append(`backend error: ${e.message}${e.textTruncated ? " (details truncated)" : ""}`);
-        } else if (e.kind === "OperationStatus") {
-          if (e.state === 2) append(`operation ${e.operationId} completed: ${e.message}`);
-          else if (e.state >= 3) append(`operation ${e.operationId} ${e.state === 3 ? "failed" : e.state === 4 ? "cancelled" : "timed out"}: ${e.message}`);
-        } else if (e.kind === "QueueOverflow") {
-          append(`notification loss: ${e.notificationsDropped} discarded (total ${e.notificationsDroppedTotal})`);
-        } else if (e.kind === "Unknown") {
-          append(`unrecognized notification ${e.receivedKind}`);
-        }
+        if (e.state === OPERATION_STATES.Completed) append(`${kindName(e.kind)} ${e.operation_id} completed: ${e.message}`);
+        else if (e.state === OPERATION_STATES.Failed) append(`${kindName(e.kind)} ${e.operation_id} failed: ${e.message}`);
+        else if (e.state === OPERATION_STATES.Cancelled) append(`${kindName(e.kind)} ${e.operation_id} cancelled`);
       }
     },
     [append],
@@ -92,7 +88,7 @@ export default function ReviewApp() {
   // app_data_dir on the Rust side).
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
-    bridge
+    reviewBridge
       .abiVersion()
       .then((v) => {
         setAbi(v);
@@ -119,7 +115,7 @@ export default function ReviewApp() {
       if (tickBusy.current) return;
       tickBusy.current = true;
       try {
-        applyEvents(await bridge.pollEvents());
+        applyEvents(await reviewBridge.pollEvents());
       } catch (e) {
         append(`tick error: ${e}`);
       } finally {
@@ -133,14 +129,20 @@ export default function ReviewApp() {
     scheduler.current.invalidate();
   }, [filePath]);
 
-  const summary = meta?.valid
-    ? `${meta.recording_file ? "recording" : "experiment"} · valid ${meta.total_valid} · invalid ${meta.total_invalid}`
+  const summary = info?.file_open
+    ? `${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid} · invalid ${info.total_invalid} · px→µm ${info.pixel_to_micron.toFixed(4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}`
     : "no file";
 
   return (
     <div className="review-app">
       <nav className="menubar" aria-label="Main menu">
-        <Menu label="File" items={[{ label: "Open…", onClick: () => void panel.current?.openFile() }]} />
+        <Menu
+          label="File"
+          items={[
+            { label: "Open…", onClick: () => void panel.current?.openFile() },
+            { label: "Close", onClick: () => void panel.current?.closeFile() },
+          ]}
+        />
         <Menu label="View" items={[{ label: fitWindow ? "Fit: 1:1" : "Fit: Window", onClick: () => setFitWindow((f) => !f) }]} />
         <Menu label="Help" items={[{ label: "About", onClick: () => setShowAbout(true) }]} />
         <div className="menubar-spacer" />
@@ -152,12 +154,10 @@ export default function ReviewApp() {
           ref={panel}
           ready={ready}
           scheduler={scheduler.current}
-          range={range}
           fitWindow={fitWindow}
           log={append}
-          applyEvents={applyEvents}
           onFileChange={setFilePath}
-          onMetadata={setMeta}
+          onInfo={setInfo}
         />
       </main>
 
