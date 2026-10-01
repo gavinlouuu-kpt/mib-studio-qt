@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-01 — Backend on the PZ7035 PS (YOFO Studio S6)
+
+`linux-armv7-yocto` cross-builds the backend with the YOFO Yocto SDK;
+`scripts/yofo/deploy_target.sh` runs `target_smoke.sh` on the PS: the runner's
+lifecycle, experiment, mock, processing and Aravis tests plus
+`yofo_preview_soak` against the live producer all pass. 10-minute soaks:
+512x96 previews at 1 kHz 387.5 images/s, full-field Overview at 830 Hz 25.9
+images/s, no loss, flat RSS (7.0 / 11.4 MiB), 84 % / 64 % CPU. See
+[[../build-and-run/Build]] and [[../camera/AravisCamera]].
+
 ## 2026-10-01 — Aravis adapter for YOFO Studio (PZ7035 GenTL producer)
 
 `AravisCamera` now prefers the `YOFO` vendor on auto-selection, keeps GigE
