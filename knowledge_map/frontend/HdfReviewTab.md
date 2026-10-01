@@ -192,6 +192,24 @@ once, in the destructor). The pane sits beside the plot and never covers it.
   on the CPU (TD-18). Linux container, system Qt 6.4, scatter ~800 px wide.
   Gates: hit rule < 2 ms, hover < 5 ms, pan update < 60 ms, pan with
   repaint < 1.5 s (catches O(n²)-class regressions only).
+- **Scaling (measured 2026-10-01, `MIB_REVIEW_SCATTER_CELLS=<n>` on
+  `frontend.hdf_review_scatter`, Linux container, system Qt 6.4):**
+
+  | valid cells | open (metadata + scatter) | RSS delta | hover | pan repaint |
+  |---|---|---|---|---|
+  | 20 000 | 1.5 s | +38 MB | 2 ms | 250 ms |
+  | 100 000 | 31–36 s | +208 MB | 11 ms | 1.3 s |
+  | 300 000 | > 3 min (watchdog) | — | — | — |
+
+  Memory is linear (~2 KB per cell, mostly the per-marker graphics item).
+  Open time is **quadratic inside Qt Charts**: `ScatterChartItem::createPoints`
+  adds each marker with `QGraphicsItemGroup::addToGroup`, which recomputes
+  the group's bounding rect per add (gdb samples during the 100 k load).
+  Our own `replace()` call is one rebuild; the maps and hit test are linear.
+  Practical ceiling today: tens of thousands of cells on the Charts tab;
+  the Valid/Invalid tabs are unaffected (virtualised). The fix is to spread
+  the points over several `QScatterSeries` of ~2 000 (PR 3b's eight density
+  level series do this for free when KDE is on) or OpenGL series (TD-18).
 - **Layout:** the scatter keeps ≥ 420 px and starts with 60 % of the width;
   the embedded viewer hides its overlay / ROI / zoom in-out / export
   controls (the tab's toolbar and Export All cover those) so its one

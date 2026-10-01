@@ -88,7 +88,11 @@ failure was the missing frames (synthetic fallback), not a regression.
   the gate compared raw frame counts over phases of unequal wall time (the
   KDE-off phase overruns while the GUI stalls, TD-16: 9.1 s vs 7.9 s). The
   capture and ring-fill gates now compare rates (`PhaseMetrics::seconds`).
-- 20 000 cells: see the numbers in [[../frontend/HdfReviewTab]] ("Cost").
+- 20 000 cells: see the numbers in [[../frontend/HdfReviewTab]] ("Cost");
+  the scaling table there (20 k / 100 k / 300 k) answers "is there a file
+  size limit": memory is linear, opening is quadratic inside Qt Charts
+  (`addToGroup` per marker), practical ceiling tens of thousands of cells
+  on the Charts tab until TD-18.
 - `frontend.ui_layout` became flaky (5 of 14 runs failed, 0 of 10 before):
   its long-status check raced the camera controller's late "Camera
   running" (the Overview auto-start bypasses the controller), and the heavier

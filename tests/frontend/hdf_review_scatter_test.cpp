@@ -399,20 +399,40 @@ int main(int argc, char* argv[]) {
 
     // ---- cost at 20 000 cells: hit test and pan step -------------------------
     wd.mark("perf");
+    // MIB_REVIEW_SCATTER_CELLS scales the cost stage (default 20 000; the
+    // gates below are calibrated for that size and only report above it).
+    const int cells = std::max(1000, qEnvironmentVariableIntValue("MIB_REVIEW_SCATTER_CELLS") > 0
+                                         ? qEnvironmentVariableIntValue("MIB_REVIEW_SCATTER_CELLS")
+                                         : 20000);
+    const bool gated = cells <= 20000;
+    auto rssMb = []() {
+        QFile st(QStringLiteral("/proc/self/status"));
+        if (!st.open(QIODevice::ReadOnly)) return 0.0;
+        for (const QByteArray& line : st.readAll().split('\n'))
+            if (line.startsWith("VmRSS:")) return line.mid(6).trimmed().split(' ').first().toDouble() / 1024.0;
+        return 0.0;
+    };
     const std::string big = (td.path() / "big.h5").string();
     {
         std::mt19937 rng(7);
         std::normal_distribution<double> a(900, 250), d(0.06, 0.02);
         std::vector<ProcessedFrame> frames;
-        frames.reserve(20000);
-        for (int i = 0; i < 20000; ++i) frames.push_back(frame(static_cast<uint64_t>(i), std::max(50.0, a(rng)),
-                                                               std::clamp(d(rng), 0.0, 0.3), true));
+        frames.reserve(static_cast<size_t>(cells));
+        for (int i = 0; i < cells; ++i) frames.push_back(frame(static_cast<uint64_t>(i), std::max(50.0, a(rng)),
+                                                              std::clamp(d(rng), 0.0, 0.3), true));
         writeExperiment(big, frames);
     }
+    const double rssBefore = rssMb();
+    QElapsedTimer loadTimer;
+    loadTimer.start();
     tab.loadHdfFileForTests(QString::fromStdString(big));
+    const double loadMs = loadTimer.nsecsElapsed() / 1e6;
     tabs->setCurrentIndex(2);
     settle(8);
-    MIB_REQUIRE(tab.scatterPointToFrameForTests().size() == 20000, "20 000 points");
+    const double rssAfter = rssMb();
+    std::fprintf(stderr, "load @%d cells: %.0f ms (metadata read + scatter build); RSS %.0f -> %.0f MB\n", cells, loadMs,
+                 rssBefore, rssAfter);
+    MIB_REQUIRE(static_cast<int>(tab.scatterPointToFrameForTests().size()) == cells, "all cells on the scatter");
     std::vector<double> hitMs;
     const QPointF centre = view->mapFromScene(chart->mapToScene(chart->plotArea().center()));
     for (int i = 0; i < 40; ++i) {
@@ -452,18 +472,20 @@ int main(int argc, char* argv[]) {
     const double panMedian = panMs[panMs.size() / 2];
     const double moveMedian = moveOnlyMs[moveOnlyMs.size() / 2];
     std::fprintf(stderr,
-                 "perf @20k: hit rule %.3f ms/call (%d hits); hover (hit + tooltip) median %.3f ms (max %.3f); "
+                 "perf @%dk: hit rule %.3f ms/call (%d hits); hover (hit + tooltip) median %.3f ms (max %.3f); "
                  "pan step axis update median %.1f ms, with repaint median %.1f ms (max %.1f)\n",
-                 pureMs, pureHits, hitMedian, hitMs.back(), moveMedian, panMedian, panMs.back());
-    MIB_EXPECT(pureMs < 2.0, "hit rule at 20 000 points");
+                 cells / 1000, pureMs, pureHits, hitMedian, hitMs.back(), moveMedian, panMedian, panMs.back());
+    if (gated) MIB_EXPECT(pureMs < 2.0, "hit rule at 20 000 points");
     // Generous absolute bounds (shared CI runners); the numbers above are the
     // record. The pan's own work (axis update + series geometry) is gated
     // tightly; the repaint is Qt Charts drawing one item per marker on the
     // CPU (~200-260 ms at 20 000 points here, tracked as TD-18), so its bound
     // only catches a regression of the O(n²) kind.
-    MIB_EXPECT(hitMedian < 5.0, "hover/click hit test stays interactive at 20 000 points");
-    MIB_EXPECT(moveMedian < 60.0, "pan axis/geometry update stays interactive at 20 000 points");
-    MIB_EXPECT(panMedian < 1500.0, "pan repaint at 20 000 points stays bounded");
+    if (gated) {
+        MIB_EXPECT(hitMedian < 5.0, "hover/click hit test stays interactive at 20 000 points");
+        MIB_EXPECT(moveMedian < 60.0, "pan axis/geometry update stays interactive at 20 000 points");
+        MIB_EXPECT(panMedian < 1500.0, "pan repaint at 20 000 points stays bounded");
+    }
 
     return mib::test::exitCode();
 }
