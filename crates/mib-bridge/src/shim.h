@@ -155,6 +155,7 @@ public:
     BridgeCommandResult set_camera_overview(bool overview);
     BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
     rust::String fetch_camera_geometry();
+    rust::String fetch_platform_info();
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();
     BridgeMonitoringSnapshot fetch_monitoring_snapshot(std::uint64_t max_rows);

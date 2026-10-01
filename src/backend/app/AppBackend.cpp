@@ -1413,6 +1413,7 @@ namespace backend
         // The interim deployment variables seed a profile that does not exist yet.
         if (const char* env = std::getenv("MIB_ARAVIS_FPS")) profile.experimentFps = std::atof(env);
         if (const char* env = std::getenv("MIB_ARAVIS_EXPOSURE_US")) profile.experimentExposureUs = std::atof(env);
+        if (const char* env = std::getenv("MIB_ARAVIS_PREVIEW_HZ")) profile.previewRateHz = std::atof(env);
         if (const char* env = std::getenv("MIB_ARAVIS_REGION")) {
             if (std::sscanf(env, "%d,%d,%d,%d", &profile.x, &profile.y, &profile.width, &profile.height) == 4)
                 profile.hasRoi = true;
@@ -1440,6 +1441,7 @@ namespace backend
                     profile.overviewFps = json["overview"].value("frame_rate_hz", profile.overviewFps);
                     profile.overviewExposureUs = json["overview"].value("exposure_us", profile.overviewExposureUs);
                 }
+                profile.previewRateHz = json.value("preview_rate_hz", profile.previewRateHz);
             } catch (const std::exception& e) {
                 SPDLOG_WARN("AppBackend: ignoring malformed Aravis profile {}: {}", path, e.what());
             }
@@ -1451,6 +1453,7 @@ namespace backend
                                    : std::string("device default"),
                     profile.experimentFps, profile.experimentExposureUs, profile.overviewFps,
                     profile.overviewExposureUs);
+        SPDLOG_INFO("AppBackend: Aravis preview rate {} images/s", profile.previewRateHz);
     }
 
     bool AppBackend::saveAravisProfile(const AravisProfile& profile, std::string* errorOut)
@@ -1461,6 +1464,7 @@ namespace backend
                 json["roi"] = {{"x", profile.x}, {"y", profile.y}, {"width", profile.width}, {"height", profile.height}};
             json["experiment"] = {{"frame_rate_hz", profile.experimentFps}, {"exposure_us", profile.experimentExposureUs}};
             json["overview"] = {{"frame_rate_hz", profile.overviewFps}, {"exposure_us", profile.overviewExposureUs}};
+            json["preview_rate_hz"] = profile.previewRateHz;
             const auto path = std::filesystem::u8path(aravisProfilePath());
             std::filesystem::create_directories(path.parent_path());
             auto temporary = path;
@@ -1494,6 +1498,7 @@ namespace backend
         options.useFake = aravisFake_;
         options.enableGigEVision = aravisGigE_;
         const auto& profile = aravisProfile_;
+        if (profile.previewRateHz > 0) options.previewRateHz = profile.previewRateHz;
         if (aravisOverview_.load()) {
             options.fullSensor = true;
             if (profile.overviewFps > 0) options.frameRateHz = profile.overviewFps;
@@ -1528,6 +1533,7 @@ namespace backend
                 {"band_count", info.bandCount},
                 {"delivered_frame_rate_hz", info.deliveredFrameRateHz},
                 {"delivered_limit", info.deliveredFrameRateLimit},
+                {"preview_rate_hz", info.previewRateHz},
             }.dump();
             std::lock_guard<std::mutex> lock(aravisSessionMutex_);
             aravisSession_ = std::move(geometry);

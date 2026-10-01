@@ -1,4 +1,5 @@
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/SciencePlacement.h"
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/Tools.h"
@@ -461,7 +462,13 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("camera.geometry", GateStatus::Unavailable, "no frame has been received yet",
                                "wait for the first frame"));
     }
-    if (c.roiW > 0 && c.roiH > 0) {
+    if (!app::hostProcessingAvailable()) {
+        // The PL processes every frame; the host pipeline's gates do not apply. The record
+        // path that brings its results to the PS is not connected yet (YOFO B3).
+        r.gates.push_back(gate("science.pl", GateStatus::Warn,
+                               "processing runs on the PL; its results do not reach the PS yet",
+                               "the record path (B3) is pending; previews and recording work"));
+    } else if (c.roiW > 0 && c.roiH > 0) {
         r.gates.push_back(gate("processing.roi", GateStatus::Pass, {}, {},
                                std::to_string(c.roiW) + "x" + std::to_string(c.roiH) + "@" +
                                    std::to_string(c.roiX) + "," + std::to_string(c.roiY)));
@@ -470,7 +477,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     }
 
     // --- processing core / config / calibration ---------------------------
-    if (c.processingCorePinSatisfied) {
+    if (!app::hostProcessingAvailable()) {
+        // none of the host pipeline's prerequisites apply
+    } else if (c.processingCorePinSatisfied) {
         r.gates.push_back(gate("processing.core", GateStatus::Pass, {}, {},
                                c.processingCore.version + " contract " +
                                    std::to_string(c.processingCore.contractVersion)));
@@ -480,9 +489,10 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                    backend_.processing().requiredProcessingCoreVersion() + " is not active",
                                "activate the pinned core in Settings > Processing Core"));
     }
-    r.gates.push_back(gate("processing.config", GateStatus::Pass, {}, {},
-                           "version " + std::to_string(c.processingConfigVersion) + " sha " +
-                               c.processingConfigSha256.substr(0, 12)));
+    if (app::hostProcessingAvailable())
+        r.gates.push_back(gate("processing.config", GateStatus::Pass, {}, {},
+                               "version " + std::to_string(c.processingConfigVersion) + " sha " +
+                                   c.processingConfigSha256.substr(0, 12)));
     if (c.pixelToMicron > 0.0) {
         r.gates.push_back(gate("calibration.pixelToMicron", GateStatus::Pass, {}, {},
                                std::to_string(c.pixelToMicron)));
@@ -491,7 +501,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "pixel-to-micron factor is not positive",
                                "set the conversion factor in Settings"));
     }
-    if (c.backgroundPresent) {
+    if (!app::hostProcessingAvailable()) {
+        // backgrounds live in the PL's table bank (B6 profile); checked there
+    } else if (c.backgroundPresent) {
         r.gates.push_back(gate("processing.background", GateStatus::Pass, {}, {},
                                "generation " + std::to_string(c.backgroundGeneration) + " sha " +
                                    c.backgroundSha256.substr(0, 12)));
@@ -501,7 +513,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "capture a background (Set Background / calibration)"));
     }
 
-    if (backend_.processing().backgroundCalibrationStatus().state ==
+    if (!app::hostProcessingAvailable()) {
+        // no host calibration
+    } else if (backend_.processing().backgroundCalibrationStatus().state ==
         services::ProcessingService::BackgroundCalibrationState::Running) {
         r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Fail,
                                "background calibration is still running",
@@ -727,8 +741,10 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     proc.startExperiment();
     // The shared lifecycle must own a live consumer. Qt previously started it
     // from a visible tab; a headless/Tauri Start otherwise finalized zero work.
-    proc.setRealtimeEnabled(true);
-    proc.startRealtime(backend_.getFrameStore());
+    if (app::hostProcessingAvailable()) {
+        proc.setRealtimeEnabled(true);
+        proc.startRealtime(backend_.getFrameStore());
+    }
     activeRun_ = run;
     lastRun_ = run;
     stopRequested_ = cancelRequested_ = fatalRequested_ = false;

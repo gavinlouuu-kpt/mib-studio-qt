@@ -308,6 +308,9 @@ namespace backend
             int x{0}, y{0}, width{0}, height{0};
             double experimentFps{0.0}, experimentExposureUs{0.0};
             double overviewFps{830.0}, overviewExposureUs{900.0}; // lit full field (PZ7035)
+            // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
+            // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
+            double previewRateHz{60.0};
         };
         AravisProfile aravisProfile_;
         std::atomic<bool> aravisOverview_{false};

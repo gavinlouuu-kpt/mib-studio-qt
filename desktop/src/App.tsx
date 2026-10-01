@@ -18,6 +18,7 @@ import {
   type AutofocusStatus,
   type BridgeEvent,
   type CameraGeometry,
+  type PlatformInfo,
   type CameraDiscovery,
   type CameraSelection,
   type ExperimentStatus,
@@ -233,6 +234,10 @@ export default function App() {
   const tabRef = useRef<MainTab>("connect");
   tabRef.current = tab;
   // ---- Camera & Alignment (ABI 20): the whole sensor and the experiment window on it ----
+  // Where the science runs (ABI 21). On the PZ7035 the PL processes every frame and the host
+  // pipeline's controls (realtime switch, backgrounds, calibration, processed preview) do not apply.
+  const [platform, setPlatform] = useState<PlatformInfo | null>(null);
+  const hostProcessing = platform ? platform.host_processing : true;
   const [cameraGeometry, setCameraGeometry] = useState<CameraGeometry | null>(null);
   const [cameraWindow, setCameraWindow] = useState<Rect | null>(null);
   const cameraGeometryRef = useRef<CameraGeometry | null>(null);
@@ -824,6 +829,11 @@ export default function App() {
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
 
+  useEffect(() => {
+    if (!ready) return;
+    void bridge.fetchPlatformInfo().then(setPlatform).catch(() => setPlatform(null));
+  }, [ready]);
+
   const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
     try {
       const geometry = await bridge.fetchCameraGeometry();
@@ -1193,9 +1203,10 @@ export default function App() {
           </div>
           <div className="side-section">
             <h4>Processing</h4>
-            <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />
+            {!hostProcessing && <SideRow k="Runs on:" v="PL (every frame)" />}
+            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
             <SideRow k="px→µm:" v={stats?.valid ? String(stats.pixel_to_micron) : "—"} cls={stats?.valid ? "" : "dim"} />
           </div>
           <div className="side-section">
@@ -1642,7 +1653,7 @@ export default function App() {
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
                       </span>
-                      <button
+                      {hostProcessing && <button
                         onClick={async () => {
                           const res = await bridge.setBackgroundFromCurrentFrame();
                           append(res.ok ? "background captured from current frame" : `set background failed: ${res.message}`);
@@ -1652,7 +1663,7 @@ export default function App() {
                         title={running ? "Capture the current frame as the processing background" : "Camera is not running"}
                       >
                         Set Background
-                      </button>
+                      </button>}
                       <button
                         onClick={async () => {
                           await bridge.clearBackgroundImage();
@@ -1684,8 +1695,14 @@ export default function App() {
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
                     <PreviewBufferControls model={previewBuffer} />
-                    <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
-                    <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                    {hostProcessing ? (
+                      <>
+                        <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
+                        <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                      </>
+                    ) : (
+                      <p className="mono" role="status">Processing runs on the PL for every frame. Its results reach this screen once the record path is connected; previews and recording work now.</p>
+                    )}
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>
@@ -1729,7 +1746,7 @@ export default function App() {
                                 aria-label="Processing configuration JSON"
                               />
                             </div>
-                            <div className="config-group">
+                            {hostProcessing && <div className="config-group">
                               <h5>realtime_processing</h5>
                               <div className="row">
                                 <label>
@@ -1763,7 +1780,7 @@ export default function App() {
                                 </p>
                               )}
                               <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
-                            </div>
+                            </div>}
                           </div>
                         </>
                       )}

@@ -276,6 +276,11 @@ bool AravisCamera::applySettingsLocked()
         if (error != nullptr)
             return failLocked("aravis.exposure", errorText(error, "Cannot set the Aravis exposure time"));
     }
+    if (options_.previewRateHz && hasFeature(camera_, "PzPreviewRate")) {
+        arv_camera_set_float(camera_, "PzPreviewRate", *options_.previewRateHz, &error);
+        if (error != nullptr)
+            return failLocked("aravis.preview_rate", errorText(error, "Cannot set the preview rate"));
+    }
     return true;
 }
 
@@ -334,6 +339,10 @@ void AravisCamera::readSessionInfoLocked(const std::string& deviceId)
         if (hasFeature(camera_, "PzDeliveredFrameRateLimit")) {
             info.deliveredFrameRateLimit =
                 textOrEmpty(arv_camera_get_string(camera_, "PzDeliveredFrameRateLimit", &error));
+            g_clear_error(&error);
+        }
+        if (hasFeature(camera_, "PzPreviewRate")) {
+            info.previewRateHz = arv_camera_get_float(camera_, "PzPreviewRate", &error);
             g_clear_error(&error);
         }
         if (hasFeature(camera_, "PzFrameRateLimitReason")) {

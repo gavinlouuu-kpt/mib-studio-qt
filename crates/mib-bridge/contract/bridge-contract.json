@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 20,
+  "abi_version": 21,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -463,6 +463,7 @@
   "camera_alignment": {
     "set_camera_overview": "overview bool -> CommandResult; MindVision and Aravis cameras; full sensor at the overview preset vs the saved experiment window; stops capture and realtime processing, swaps the frame store (8 frames in overview), restarts a capture that was running; rejected during experiment/recording; experiment readiness fails camera.mode while in overview",
     "save_camera_roi": "x,y,width,height (sensor coordinates) -> CommandResult; bounds and steps from the camera; MindVision writes its profile, Aravis <data>/config/aravis-camera.json; applies at the next experiment-mode start",
+    "fetch_platform_info": "-> JSON {science: host|pl, host_processing, aravis}; science=pl when built with MIB_PL_SCIENCE (PZ7035 PS) or MIB_PL_SCIENCE=1 in the environment: apply_processing with realtime on fails, experiment start does not start the host pipeline, the host pipeline's readiness gates are replaced by science.pl",
     "fetch_camera_geometry": "-> JSON {supported, overview, camera, sensor_width, sensor_height, roi{x,y,width,height}, width/height/offset_x/offset_y_increment, min_width, min_height, session{...}}; session is the last Aravis read-back (rate, limit, bands, delivered rate)"
   }
 }

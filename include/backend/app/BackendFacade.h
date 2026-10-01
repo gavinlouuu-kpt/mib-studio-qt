@@ -808,6 +808,9 @@ namespace backend::bridge
         // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
         // the last camera read-back (ABI 20).
         std::string fetchCameraGeometryJson() const;
+        // Where the science runs and what this build has (ABI 21): {science: host|pl,
+        // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
+        std::string fetchPlatformInfoJson() const;
         std::string savePreviewBufferJson(const std::string& request);
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;

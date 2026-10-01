@@ -5,7 +5,7 @@
 // end, delivered images/s against the model, queue telemetry, RSS and CPU.
 //
 //   yofo_preview_soak [--region X,Y,W,H] [--fps HZ] [--exposure US]
-//                     [--mode latest|every] [--seconds N] [--interval S]
+//                     [--preview-rate HZ] [--mode latest|every] [--seconds N] [--interval S]
 //
 // Output is one JSON object per line: {"event":"session",...},
 // {"event":"interval",...} and a final {"event":"summary",...}. Exit status 0
@@ -69,7 +69,7 @@ bool parseRegion(const char* text, camera::aravis::AravisRegion& r)
 [[noreturn]] void usage()
 {
     std::cerr << "usage: yofo_preview_soak [--region X,Y,W,H] [--fps HZ] [--exposure US]\n"
-                 "                         [--mode latest|every] [--seconds N] [--interval S]\n";
+                 "                         [--preview-rate HZ] [--mode latest|every] [--seconds N] [--interval S]\n";
     std::exit(2);
 }
 
@@ -97,6 +97,8 @@ int main(int argc, char** argv)
             options.frameRateHz = std::atof(value);
         } else if (arg == "--exposure") {
             options.exposureUs = std::atof(value);
+        } else if (arg == "--preview-rate") {
+            options.previewRateHz = std::atof(value);
         } else if (arg == "--mode") {
             if (std::strcmp(value, "every") == 0)
                 config.deliveryMode = camera::common::FrameDeliveryMode::EveryFrame;
@@ -142,6 +144,7 @@ int main(int argc, char** argv)
                      {"band_count", info.bandCount},
                      {"delivered_model_hz", info.deliveredFrameRateHz},
                      {"delivered_limit", info.deliveredFrameRateLimit},
+                     {"preview_rate_hz", info.previewRateHz},
                      {"timestamp_domain", camera::common::toString(ts.domain)},
                      {"timestamp_valid", ts.isValid()},
                  }

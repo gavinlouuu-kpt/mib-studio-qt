@@ -827,6 +827,9 @@ pub mod ffi {
             -> BridgeCommandResult;
         /// Mode, sensor size, saved window, window steps and the last camera read-back (JSON).
         fn fetch_camera_geometry(self: Pin<&mut BackendBridge>) -> String;
+        /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
+        /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
+        fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
         fn reset_hardware_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 
         /// Enable/disable monitoring accumulation (schema v6, BE-5). Disabled

@@ -339,6 +339,17 @@ MindVision keeps its profile-based overview; Aravis cameras gained one (see
 `camera_alignment_commands_without_overview_camera` covers a camera without
 an overview (mock).
 
+## ABI 21: science on the PL (2026-10-01)
+
+`fetch_platform_info() -> {science: host|pl, host_processing, aravis}`.
+With `MIB_PL_SCIENCE` (the `linux-armv7-yocto` preset) or `MIB_PL_SCIENCE=1`
+in the environment, `backend::app::hostProcessingAvailable()` is false:
+`ProcessingService::setRealtimeEnabled(true)` is refused and `startRealtime`
+is a no-op, `apply_processing` with realtime on fails with the reason,
+experiment start does not start the host pipeline, and the readiness gates
+`processing.*` are replaced by `science.pl` (Warn until the record path B3
+connects the PL's results). Test: `backend.pl_science`.
+
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
 `bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`

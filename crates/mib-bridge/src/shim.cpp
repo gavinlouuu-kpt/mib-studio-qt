@@ -1555,6 +1555,14 @@ BridgeCommandResult BackendBridge::save_camera_roi(std::int32_t x, std::int32_t 
     catch (...) { return errorResult("save_camera_roi: unknown error"); }
 }
 
+rust::String BackendBridge::fetch_platform_info() {
+    try {
+        return rust::String(impl_->facade.fetchPlatformInfoJson());
+    } catch (...) {
+        return rust::String("{}");
+    }
+}
+
 rust::String BackendBridge::fetch_camera_geometry() {
     try {
         return rust::String(impl_->facade.fetchCameraGeometryJson());
@@ -1824,7 +1832,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 20; }
+std::uint32_t bridge_abi_version() { return 21; }
 
 } // namespace mib_bridge
 

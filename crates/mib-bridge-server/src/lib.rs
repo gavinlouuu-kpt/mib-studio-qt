@@ -20,6 +20,14 @@
 //! Requests of one connection run in order, each off the async runtime (bridge calls block).
 //! Frames stay pulled: a client asks for the next packet when it has drawn the last one.
 //!
+//! Control: one client at a time controls the instrument (camera, capture, recording, experiment,
+//! processing, hardware). The first client gets control; others are viewers whose mutating
+//! commands fail with `VIEWER_ONLY`; `take_control` claims it (an operator walking to another
+//! browser). Every client receives `{"session": {"client_id", "controller_id"}}` on connect and
+//! whenever control changes. Control passes to the oldest remaining client when the controller
+//! disconnects. Two browsers switching tabs would otherwise flip the camera's mode against each
+//! other.
+//!
 //! Client loss: the server pings every `ping_interval` and drops a connection that is silent
 //! for `ping_timeout`. When the last client has been gone for `client_grace`, it stops and
 //! saves: an active experiment gets `experiment_stop` (final flush and finalisation) and a raw
@@ -111,7 +119,34 @@ pub struct Server {
     connects: AtomicU64,
     /// Completed client-loss stop-and-save passes (observability and tests).
     stop_and_saves: AtomicU64,
+    /// Connected client ids in connection order; the first is the default controller.
+    sessions: std::sync::Mutex<SessionTable>,
 }
+
+#[derive(Default)]
+struct SessionTable {
+    connected: Vec<u64>,
+    controller: Option<u64>,
+}
+
+/// Commands that change the instrument's state; viewers may not send them.
+const CONTROL_COMMANDS: &[&str] = &[
+    "configure_mock", "start_capture", "stop_capture", "set_camera_overview", "save_camera_roi",
+    "select_hardware_camera", "select_mindvision_camera", "apply_camera_script", "soft_trigger_camera",
+    "reset_hardware_camera", "start_recording", "stop_recording", "seek_latest", "seek_index", "load_recording",
+    "close_review", "experiment_start", "experiment_stop", "experiment_cancel", "experiment_acknowledge_fault",
+    "apply_processing", "apply_processing_config_json", "set_processing_roi", "set_background_from_current_frame",
+    "clear_background_image", "background_calibration_command", "startup_discovery_set_preference",
+    "startup_discovery_run", "start_device_discovery", "start_camera_discovery", "cancel_device_discovery",
+    "pulse_generator_command", "autofocus_connect_endpoint", "autofocus_connect", "autofocus_disconnect",
+    "autofocus_set_enabled", "autofocus_jog", "autofocus_set_config", "pump_connect_endpoint", "pump_connect",
+    "pump_disconnect", "pump_set_flow_rate", "pump_set_direction", "pump_start", "pump_stop", "pump_purge",
+    "pump_stop_purge", "pump_set_syringe_volume", "pump_scan_addresses", "monitoring_set_active",
+    "monitoring_clear", "trigger_set_pulse_duration", "trigger_manual_pulse", "trigger_periodic_start",
+    "trigger_periodic_stop", "cancel_operation", "review_reanalysis_json", "review_export_json",
+    "review_export_csv", "apply_config_document", "profile_command", "processing_core_command",
+    "save_preview_buffer", "set_processed_preview_enabled",
+];
 
 impl Server {
     pub fn new(config: ServerConfig, state: Arc<AppState>) -> Arc<Self> {
@@ -123,6 +158,7 @@ impl Server {
             clients: AtomicUsize::new(0),
             connects: AtomicU64::new(0),
             stop_and_saves: AtomicU64::new(0),
+            sessions: std::sync::Mutex::new(SessionTable::default()),
         })
     }
 
@@ -140,6 +176,47 @@ impl Server {
 
     fn config(&self) -> &ServerConfig {
         &self.host.0
+    }
+
+    pub fn controller(&self) -> Option<u64> {
+        self.sessions.lock().map(|t| t.controller).unwrap_or(None)
+    }
+
+    fn session_message(&self, client_id: u64) -> String {
+        json!({ "session": { "client_id": client_id, "controller_id": self.controller() } }).to_string()
+    }
+
+    /// Register a client; it becomes the controller when nobody has control.
+    fn client_joined(&self, client_id: u64) {
+        let mut table = self.sessions.lock().unwrap();
+        table.connected.push(client_id);
+        if table.controller.is_none() {
+            table.controller = Some(client_id);
+        }
+    }
+
+    /// Unregister a client; control passes to the oldest remaining client.
+    fn client_left(&self, client_id: u64) -> bool {
+        let mut table = self.sessions.lock().unwrap();
+        table.connected.retain(|&c| c != client_id);
+        if table.controller == Some(client_id) {
+            table.controller = table.connected.first().copied();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn take_control(&self, client_id: u64) -> bool {
+        let mut table = self.sessions.lock().unwrap();
+        let changed = table.controller != Some(client_id);
+        table.controller = Some(client_id);
+        changed
+    }
+
+    fn broadcast_session(&self) {
+        // Every client gets the controller id; it compares with its own id.
+        let _ = self.events.send(Arc::new(json!({ "session": { "controller_id": self.controller() } }).to_string()));
     }
 
     pub fn router(self: &Arc<Self>) -> Router {
@@ -203,10 +280,19 @@ impl Server {
 
     /// Run one request. Event draining belongs to the server; `init` is idempotent because
     /// every client (re)initialises on load.
-    fn run(&self, client: &str, cmd: &str, args: Value) -> Result<Reply, String> {
+    fn run(&self, client: &str, client_id: u64, cmd: &str, args: Value) -> Result<Reply, String> {
         let data = std::path::Path::new(&self.config().data_dir);
+        if CONTROL_COMMANDS.contains(&cmd) && self.controller() != Some(client_id) {
+            return Err("VIEWER_ONLY: another client controls the instrument (take_control to claim it)".into());
+        }
         match cmd {
             "poll_events" | "poll_events_exact" => Err("SERVER_OWNS_EVENTS".into()),
+            "take_control" => {
+                if self.take_control(client_id) {
+                    self.broadcast_session();
+                }
+                Ok(Reply::Json(json!({ "controller_id": client_id })))
+            }
             "app_paths" => Ok(Reply::Json(platform::app_paths(data))),
             "get_preferences" => platform::get_preferences(data).map(Reply::Json),
             "set_preferences" => {
@@ -314,9 +400,11 @@ struct Request {
 
 async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
     server.clients.fetch_add(1, Ordering::SeqCst);
-    server.connects.fetch_add(1, Ordering::SeqCst);
+    let client_id = server.connects.fetch_add(1, Ordering::SeqCst) + 1;
+    server.client_joined(client_id);
     let (mut sink, mut stream) = socket.split();
     let (out, mut outbox) = mpsc::channel::<Message>(64);
+    let _ = out.send(Message::Text(server.session_message(client_id).into())).await;
 
     let writer = tokio::spawn(async move {
         while let Some(message) = outbox.recv().await {
@@ -370,7 +458,7 @@ async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
                 let worker = server.clone();
                 let Request { request_id, cmd, args } = request;
                 let client = peer.clone();
-                let result = tokio::task::spawn_blocking(move || worker.run(&client, &cmd, args))
+                let result = tokio::task::spawn_blocking(move || worker.run(&client, client_id, &cmd, args))
                     .await
                     .unwrap_or_else(|e| Err(format!("COMMAND_PANICKED: {e}")));
                 match result {
@@ -393,5 +481,8 @@ async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
     pinger.abort();
     drop(out);
     let _ = writer.await;
+    if server.client_left(client_id) {
+        server.broadcast_session();
+    }
     server.client_gone();
 }

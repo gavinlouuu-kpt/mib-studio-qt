@@ -48,6 +48,9 @@ async fn call(ws: &mut Socket, id: u64, cmd: &str, args: Value, events: &mut Vec
                     events.push(value["event"].clone());
                     continue;
                 }
+                if value.get("session").is_some() {
+                    continue; // control changes; the tests read server.controller()
+                }
                 assert_eq!(value["request_id"], json!(id), "{value}");
                 return match value.get("error") {
                     Some(error) => Err(error.as_str().unwrap().to_string()),
@@ -200,3 +203,37 @@ async fn client_loss_stops_and_saves() {
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn one_client_controls_the_instrument() {
+    let (server, addr, data) = start("control").await;
+    let mut first = connect(addr).await;
+    let mut second = connect(addr).await;
+    let mut events = Vec::new();
+    // Session messages arrive before any reply; the call helper skips them.
+    call(&mut first, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    assert_eq!(server.controller(), Some(1));
+    let refused = call(&mut second, 2, "configure_mock", json!({ "frameDir": mock_frames(), "frameIntervalMs": 5, "loopFiles": true }), &mut events)
+        .await
+        .unwrap_err();
+    assert!(refused.starts_with("VIEWER_ONLY"), "{refused}");
+    assert!(call(&mut second, 3, "fetch_camera_selection", Value::Null, &mut events).await.is_ok(), "viewers may read");
+    let Ok(Reply::Json(claimed)) = call(&mut second, 4, "take_control", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(claimed["controller_id"], json!(2));
+    assert!(call(&mut second, 5, "configure_mock", json!({ "frameDir": mock_frames(), "frameIntervalMs": 5, "loopFiles": true }), &mut events).await.is_ok());
+    assert!(call(&mut first, 6, "start_capture", Value::Null, &mut events).await.unwrap_err().starts_with("VIEWER_ONLY"));
+    // The controller leaving hands control to the oldest remaining client.
+    second.close(None).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.controller() != Some(1) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(server.controller(), Some(1));
+    assert!(call(&mut first, 7, "start_capture", Value::Null, &mut events).await.is_ok());
+    call(&mut first, 8, "stop_capture", Value::Null, &mut events).await.unwrap();
+    first.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+

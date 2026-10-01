@@ -172,6 +172,26 @@ dialog/opener plugins: native in Tauri, prompts for instrument paths and
 hidden. Verified in headless Chromium: the full UI, live mock frames at 30 fps
 over the socket.
 
+**One controller.** The first client controls the instrument; others are
+viewers whose instrument-changing commands (`CONTROL_COMMANDS` in the server)
+fail with `VIEWER_ONLY`. `take_control` claims control; it passes to the
+oldest remaining client when the controller disconnects. Every client gets
+`{"session": {"client_id", "controller_id"}}` on connect and on each change.
+Test: `one_client_controls_the_instrument`.
+
+**Packaging.** `scripts/yofo/stage_image.sh` builds the ARMv7 backend, the
+server and the UI and stages them for pz7035-imx426's `yofo-studio` recipe
+(meta-yofo), which installs `/usr/bin/yofo-studio-server`,
+`/usr/share/yofo-studio/dist` and `yofo-studio.service` (port 8427, token
+generated on first boot in `/etc/yofo-studio/token`, data in
+`/var/lib/yofo-studio`). The backend is not built by BitBake because it needs
+the SDK of the same image.
+
+**Science on the PL.** After `init` the UI reads `fetch_platform_info`; with
+`host_processing` false the realtime switch, backgrounds, calibration and the
+processed preview are hidden and the sidebar says processing runs on the PL
+(ABI 21, [[Rust-Bridge]]).
+
 On the PZ7035 PS (2026-10-01): the ARMv7 server with `MIB_CAMERA_MODE=aravis`,
 `MIB_ARAVIS_FPS=1000`, `MIB_ARAVIS_EXPOSURE_US=900` served the UI to a browser
 on the bench PC, which showed live lit 512x96 IMX426 previews at the UI's

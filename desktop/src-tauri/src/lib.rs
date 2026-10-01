@@ -481,6 +481,11 @@ fn save_camera_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Re
 }
 
 #[tauri::command]
+fn fetch_platform_info(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_platform_info(&state)
+}
+
+#[tauri::command]
 fn fetch_camera_geometry(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::fetch_camera_geometry(&state)
 }
@@ -728,6 +733,7 @@ pub fn run() {
             set_camera_overview,
             save_camera_roi,
             fetch_camera_geometry,
+            fetch_platform_info,
             monitoring_set_active,
             monitoring_clear,
             fetch_monitoring_snapshot,

@@ -1249,6 +1249,12 @@ pub fn save_camera_roi(state: &AppState, x: i32, y: i32, w: i32, h: i32) -> Resu
     Ok(guard.pin_mut().save_camera_roi(x, y, w, h).into())
 }
 
+/// Where the science runs and what this build has (ABI 21).
+pub fn fetch_platform_info(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_platform_info()).map_err(|e| e.to_string())
+}
+
 /// Mode, sensor size, saved window, window steps and the camera's last read-back.
 pub fn fetch_camera_geometry(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

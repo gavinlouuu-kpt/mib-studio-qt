@@ -39,6 +39,9 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
+    # Science placement is a leaf (no dependencies); it lives with ProcessingService, which
+    # consults it, so processing-only binaries link.
+    ${PROJECT_SOURCE_DIR}/src/backend/app/SciencePlacement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
@@ -330,6 +333,7 @@ set_target_properties(mib_backend PROPERTIES
 )
 
 target_compile_definitions(mib_backend PUBLIC
+    MIB_PL_SCIENCE=$<BOOL:${MIB_PL_SCIENCE}>
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
     MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
     MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"

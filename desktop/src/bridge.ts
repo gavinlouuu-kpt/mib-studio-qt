@@ -315,6 +315,14 @@ export interface TriggerStatus {
   periodic_interval_ms: number;
 }
 
+/** Where the science runs (ABI 21). `host_processing` false = the PL processes every frame
+ *  and the host pipeline's controls do not apply. */
+export interface PlatformInfo {
+  science: "host" | "pl";
+  host_processing: boolean;
+  aravis: boolean;
+}
+
 /** Camera & Alignment geometry (ABI 20, `fetch_camera_geometry`). Sensor coordinates. */
 export interface CameraGeometry {
   supported: boolean;
@@ -341,6 +349,7 @@ export interface CameraGeometry {
     band_count?: number;
     delivered_frame_rate_hz?: number;
     delivered_limit?: string;
+    preview_rate_hz?: number;
   };
 }
 
@@ -492,6 +501,7 @@ export const bridge = {
   setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
   saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
+  fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),

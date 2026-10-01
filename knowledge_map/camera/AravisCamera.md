@@ -19,6 +19,9 @@ The default build remains dependency-free.
   `sessionInfo()`. A region the device does not apply exactly fails start
   (`aravis.region_rejected`); frame rate and exposure are clamped by the
   device and reported as `frameRateClamped` / `exposureClamped`.
+- `previewRateHz` sets `PzPreviewRate` when the device has it (0 = every frame);
+  `sessionInfo().previewRateHz` is the read-back and `deliveredFrameRateLimit`
+  reads `PreviewRate` when the cap binds.
 - `fullSensor` replaces the region by the whole sensor (Overview); `sessionInfo()`
   reports the sensor size and the Width/Height/OffsetX/OffsetY increments, and
   `onSession` hands the read-back to an owner that does not hold the camera

@@ -52,7 +52,8 @@ struct AravisSessionInfo {
     bool pzFeatures = false;
     int64_t bandCount = 1;
     double deliveredFrameRateHz = 0.0;
-    std::string deliveredFrameRateLimit; // "SensorRate" or "BandReadout"
+    std::string deliveredFrameRateLimit; // "SensorRate", "BandReadout" or "PreviewRate"
+    double previewRateHz = 0.0;          // applied PzPreviewRate (0 = every frame / no feature)
     std::string frameRateLimitReason;    // "SensorGeometry", "Profile", "StoreBandwidth"
 };
 
@@ -87,6 +88,10 @@ struct AravisCameraOptions {
     std::optional<AravisRegion> region;
     std::optional<double> frameRateHz;
     std::optional<double> exposureUs;
+    // Images per second the device should deliver (PzPreviewRate on the PZ7035 producer; the
+    // PL processes every frame, the PS only displays). 0 = every frame. Ignored by devices
+    // without the feature.
+    std::optional<double> previewRateHz;
     // Overview: the whole sensor (SensorWidth x SensorHeight at offset 0), overriding `region`.
     bool fullSensor = false;
     // Called with the read-back after every successful start (from start()'s thread), so an

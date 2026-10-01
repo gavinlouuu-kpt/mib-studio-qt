@@ -125,6 +125,9 @@ mib_add_backend_test_executable(emodulus_lut_degenerate_test backend/emodulus_lu
 add_test(NAME backend.emodulus_lut_degenerate COMMAND $<TARGET_FILE:mib_backend_tests> emodulus_lut_degenerate_test)
 set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;processing")
 
+mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
+add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
+set_tests_properties(backend.pl_science PROPERTIES LABELS "backend" TIMEOUT 60)
 mib_add_backend_test_executable(backend_lifecycle_smoke_test backend/backend_lifecycle_smoke_test.cpp)
 mib_add_backend_test_executable(hardware_shutdown_test backend/hardware_shutdown_test.cpp)
 add_test(NAME backend.hardware_shutdown COMMAND $<TARGET_FILE:mib_backend_tests> hardware_shutdown_test)

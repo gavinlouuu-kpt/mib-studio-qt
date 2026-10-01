@@ -25,6 +25,15 @@ discovery (off by default). `MIB_ARAVIS_FPS`, `MIB_ARAVIS_EXPOSURE_US` and
 `MIB_ARAVIS_REGION=X,Y,W,H` seed the Aravis camera profile when it does not
 exist yet.
 
+**Science placement (ADR 0008).** `include/backend/app/SciencePlacement.h`:
+on the PZ7035 the PL processes every frame and the PS must never run the
+desktop pipeline. `hostProcessingAvailable()` gates every path that would
+start it (see [[Rust-Bridge]] ABI 21). The Aravis profile's `preview_rate_hz`
+(default 60; `MIB_ARAVIS_PREVIEW_HZ` seeds it) sets the producer's
+`PzPreviewRate`: previews the PS asks for per second, the PL still sees every
+frame. Measured on the PS at 512x96 / 1 kHz: uncapped ~500 previews/s at 70 %
+of a core, 60/s at 8 %, 30/s at 4 %.
+
 **Camera & Alignment.** `setCameraOverview` / `saveCameraRoi` /
 `cameraGeometry` generalise the MindVision Overview to Aravis cameras. The
 Aravis profile `<data>/config/aravis-camera.json` (or `MIB_ARAVIS_PROFILE`)

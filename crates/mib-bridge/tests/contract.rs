@@ -63,7 +63,8 @@ fn abi_version_is_stable() {
     // v14 the asynchronous device-discovery jobs (#419, ADR 0005).
     // v20 Camera & Alignment: set_camera_overview, save_camera_roi,
     // fetch_camera_geometry (YOFO Studio; MindVision and Aravis cameras).
-    assert_eq!(ffi::bridge_abi_version(), 20);
+    // v21 fetch_platform_info: science on the PL (YOFO Studio ADR 0008).
+    assert_eq!(ffi::bridge_abi_version(), 21);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and

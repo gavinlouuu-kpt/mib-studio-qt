@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingService.h"
+#include "backend/app/SciencePlacement.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingConfigJson.h"
@@ -198,6 +199,7 @@ void ProcessingService::workerLoop() {
 }
 
 void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameStore> store) {
+    if (!backend::app::hostProcessingAvailable()) return; // the PL processes every frame
     std::unique_lock coreLock(processingKernelMutex_);
     if (rtRunning_.load()) return;
     if (realtimeThread_.joinable()) {
@@ -361,6 +363,10 @@ void ProcessingService::stopRealtime() {
 }
 
 void ProcessingService::setRealtimeEnabled(bool on) {
+    if (on && !backend::app::hostProcessingAvailable()) {
+        SPDLOG_WARN("ProcessingService: realtime processing refused; science runs on the PL");
+        on = false;
+    }
     rtEnabled_.store(on);
 }
 

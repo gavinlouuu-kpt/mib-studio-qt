@@ -1,4 +1,5 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/app/ProfileCatalog.h"
 #include "backend/app/ProcessingCoreManagement.h"
@@ -865,6 +866,8 @@ namespace backend::bridge
                     merged);
             if (command.roi) roi = *command.roi;
             if (command.realtimeEnabled) enabled = *command.realtimeEnabled;
+            if (enabled && !app::hostProcessingAvailable())
+                throw std::runtime_error("realtime processing runs on the PL on this instrument; the host pipeline is not available");
             if (command.realtimeDropFrames) drop = *command.realtimeDropFrames;
             if (command.realtimeProcessingMode) mode = *command.realtimeProcessingMode;
             if (command.realtimeBatchSettings) batch = *command.realtimeBatchSettings;
@@ -2409,6 +2412,14 @@ app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const 
 }
 
 namespace backend::bridge {
+std::string BackendFacade::fetchPlatformInfoJson() const {
+    return nlohmann::json{
+        {"science", app::sciencePlacement()},
+        {"host_processing", app::hostProcessingAvailable()},
+        {"aravis", MIB_HAS_ARAVIS != 0},
+    }.dump();
+}
+
 std::string BackendFacade::fetchCameraGeometryJson() const {
     if (!initialized_) return nlohmann::json{{"supported", false}}.dump();
     const auto g = backend_.cameraGeometry();

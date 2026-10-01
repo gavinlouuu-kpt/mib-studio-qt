@@ -35,6 +35,7 @@ const LIMITS: Record<string, string> = {
   StoreBandwidth: "store bandwidth",
   BandReadout: "band readout to the PS",
   SensorRate: "sensor rate",
+  PreviewRate: "preview rate (the PL sees every frame)",
 };
 
 /** One line for the operator: what the sensor runs at and what reaches this screen. */

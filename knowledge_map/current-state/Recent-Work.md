@@ -1,5 +1,16 @@
 # Recent Work
 
+## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
+
+`MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21
+`fetch_platform_info`; UI hides its controls); the producer's `PzPreviewRate`
+(default 60/s from the Aravis profile) and its NEON window copy take the PS
+from ~90 % to ~8 % of a core while previewing at 1 kHz; the server has one
+controlling client; `scripts/yofo/stage_image.sh` + meta-yofo's `yofo-studio`
+recipe put the server, UI and a service into the image. See
+[[../architecture/Desktop-Shell]], [[../architecture/AppBackend]],
+[[../architecture/Rust-Bridge]].
+
 ## 2026-10-01 — Camera & Alignment shows the full sensor (ABI 20)
 
 The React Camera & Alignment tab now follows the Qt Overview workflow for
