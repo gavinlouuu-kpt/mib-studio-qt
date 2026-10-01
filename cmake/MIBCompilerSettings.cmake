@@ -67,3 +67,27 @@ if(MIB_SANITIZER AND NOT MSVC)
     add_compile_options(-g -fno-omit-frame-pointer ${_mib_san})
     add_link_options(${_mib_san})
 endif()
+
+# Ninja tracks MSVC header dependencies by parsing cl.exe's /showIncludes
+# output. CMake detects the (localized) prefix at the first configure and
+# stores it in CMAKE_CL_SHOWINCLUDES_PREFIX; when detection fails (seen on a
+# rig PC whose Build Tools ship only a non-English language pack) the value is
+# empty, `ninja -t deps` reports `#deps 0`, and editing a header does not
+# rebuild its includers — a stale object can keep an old struct layout. Fail
+# loudly instead of silently losing dependencies.
+if(MSVC AND CMAKE_GENERATOR MATCHES "Ninja")
+    option(MIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX
+        "Continue configuring even if cl.exe's /showIncludes prefix was not detected (header edits then need --clean-first)"
+        OFF)
+    if(NOT CMAKE_CL_SHOWINCLUDES_PREFIX AND NOT MIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX)
+        message(FATAL_ERROR
+            "cl.exe's /showIncludes prefix was not detected, so Ninja cannot track header dependencies.\n"
+            "Fix one of:\n"
+            "  - install the English language pack: vs_installer.exe modify --installPath \"<VS>\" --addProductLang en-US\n"
+            "  - pass the localized prefix: -DCMAKE_CL_SHOWINCLUDES_PREFIX=\"<text before the path in cl /showIncludes output>\"\n"
+            "  - or -DMIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX=ON and always build with --clean-first after header edits.\n"
+            "scripts/doctor.ps1 reports the prefix your cl.exe prints (knowledge_map/build-and-run/Build.md).")
+    elseif(CMAKE_CL_SHOWINCLUDES_PREFIX)
+        message(STATUS "cl.exe /showIncludes prefix: '${CMAKE_CL_SHOWINCLUDES_PREFIX}'")
+    endif()
+endif()

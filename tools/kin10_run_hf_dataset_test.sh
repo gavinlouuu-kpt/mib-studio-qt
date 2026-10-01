@@ -3,11 +3,13 @@ set -euo pipefail
 
 OUT_DIR="${1:-build/linux-backend/kin10_hf_dataset_pipeline}"
 BINARY="${2:-build/linux-backend/kin10_hf_dataset_pipeline_test}"
-ROW_INDICES="${3:-${KIN10_HF_ROW_INDICES:-0,1,2,2500,4999}}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_ROWS="$(python3 -c "import sys; sys.path.insert(0, '${SCRIPT_DIR}/../scripts'); from assets_manifest import get_asset; print(','.join(map(str, get_asset('512x96stream-kin10').viewer['rows'])))")"
+ROW_INDICES="${3:-${KIN10_HF_ROW_INDICES:-${DEFAULT_ROWS}}}"
 
 mkdir -p "${OUT_DIR}" "${OUT_DIR}/cache" "${OUT_DIR}/logs"
 
-python3 - "${OUT_DIR}" "${ROW_INDICES}" <<'PY'
+python3 - "${OUT_DIR}" "${ROW_INDICES}" "${SCRIPT_DIR}/../scripts" <<'PY'
 import json
 import pathlib
 import sys
@@ -17,9 +19,13 @@ import urllib.request
 
 out_dir = pathlib.Path(sys.argv[1])
 row_indices_arg = sys.argv[2]
-dataset = "gavinlouuu/512x96stream"
-config = "default"
-split = "train"
+sys.path.insert(0, sys.argv[3])
+from assets_manifest import get_asset  # env/assets.json is the single source of the corpus id
+
+_asset = get_asset("512x96stream-kin10")
+dataset = _asset.repo
+config = _asset.viewer["config"]
+split = _asset.viewer["split"]
 base_url = "https://datasets-server.huggingface.co"
 
 row_indices = []

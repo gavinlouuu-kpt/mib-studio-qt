@@ -60,3 +60,12 @@ discovery call must return before its future drains. The POSIX transport's
 launches, not external vendor tools taking a port. Tests use simulated serial
 devices; live hardware was not interrupted. ThreadSanitizer requires the Linux
 CI lane; the local Windows/MSVC environment cannot run it.
+
+## Build and test targets (moved from Build.md, 2026-09-21)
+
+Hardware shutdown regression targets (2026-09-15):
+`serial_port_win32_timeout_test` (Windows-only native transport fault injection),
+`hardware_shutdown_test` in `mib_backend_tests`, `mainwindow_shutdown_test`,
+and `desktop_instance_test`. The two desktop lifecycle tests are standalone
+because they run Qt event loops / subprocesses. Their AUTOUIC is disabled to
+keep `mib_frontend_common` the sole owner of generated UI headers.

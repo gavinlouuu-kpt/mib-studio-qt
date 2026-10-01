@@ -112,6 +112,22 @@ that predates provenance. The writer records the bundled identity when no
 explicit identity is supplied, preserving deterministic metadata for older
 call sites.
 
+`processing_contract_version` is the **executed** contract. A shipped core
+runs only its own contract (ADR 0007), so its identity is recorded as-is. A
+research build (Python wheel, `bundledProcessingContract() == 0`, source
+`bundled`) records the config's contract instead.
+
+`/experiment_info` also records the full Contract-2 era config (T0.2):
+`processing_config_processing_contract_version` (the profile's declared
+contract), `processing_config_difference_threshold`, the ring, area-ratio and
+Laplacian gates (`processing_config_enable_*`, `*_min`/`*_max`), and the
+channel band (`processing_config_auto_roi_*`, `processing_config_channel_band_y/h`,
+frame coordinates). Recording callers pass
+`ProcessingService::getEffectiveProcessingConfig()`, which adds the detected
+band. The write is mandatory, like core provenance. `readRecordedProcessingConfig`
+reads every `processing_config_*` attribute back into a `ProcessingConfig`;
+attributes an older file lacks keep the caller's values.
+
 ## Run accounting (issue #367)
 
 `writeRunAccounting(RecordingAccountingSnapshot)` / `readRunAccounting(...)`
@@ -129,6 +145,21 @@ persist and read the versioned `accounting_*` attributes described in
 `openObjectCountForDiagnostics()` wrap `H5Fget_obj_count` so tests and
 debug logging can prove HDF5 handles return to baseline after repeated
 jobs ([[HdfExportService]] stress test). HDF5 ids never leave this class.
+
+## KDE core contour records
+
+`writeKdeLiveJson` / `readKdeLiveJson` (`/monitoring @kde_live_json`) and
+`writeKdeAnalysisJson` / `readKdeAnalysisJson` (`/analysis @kde_core_json`)
+store the frontend's KDE core record verbatim (plus
+`kde_core_schema_version` = 1 on the group). Writers refuse with a warning
+when no file is open or it was opened read-only (`loadFile`); readers return
+false for an absent record or a non-string attribute. Parsing and schema
+checks belong to the codec (`backend/processing/KdeCoreRecord.h`), never to this
+class. `openFileForUpdate(path)` opens an existing, finished file read-write
+for such post-run metadata (never creates or truncates, no dataset appends;
+refuses a missing or read-only file). Guards: `recording.kde_core_roundtrip`,
+`recording.kde_core_fault`, `recording.kde_full_run_core`.
+See [[../data-model/HDF5-Storage]].
 
 ## Run configuration snapshot (issue #369)
 

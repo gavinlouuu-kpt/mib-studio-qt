@@ -8,7 +8,10 @@
 - [[ProcessingService]] — worker pool + realtime loop; OpenCV pipeline
 - [[PlaybackService]] — UI-facing wrapper over FrameStore
 - [[DotGridService]] — low-rate wafer localization from the dot-grid fiducial
-  pattern (absolute position, rotation, scale, mirror, chip id); ADR 0006
+  pattern (absolute position, rotation, scale, mirror, design + chip id);
+  ADR 0008, design registry ADR 0009
+- [[MonitoringDensityService]] — live Monitoring scatter KDE + core contour on a
+  lowest-priority worker with load back-off and a compute budget
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata

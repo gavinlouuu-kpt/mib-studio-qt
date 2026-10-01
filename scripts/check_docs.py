@@ -7,6 +7,8 @@ Enforces the harness invariants documented in docs/golden-principles.md:
 2. Relative markdown links in agent-facing docs resolve to real files.
 3. Root AGENTS.md stays a short map (<= 120 lines), not an encyclopedia.
 4. Every active execution plan declares a Status: line.
+5. Every Hugging Face Hub id referenced by scripts, tests, tools, workflows or
+   how-tos is declared in env/assets.json (assets are pinned, not ad hoc).
 
 Error messages include remediation instructions so an agent can fix
 violations without extra context. Exit code 0 = clean, 1 = violations.
@@ -116,12 +118,41 @@ def check_active_plans(errors: list[str]) -> None:
             )
 
 
+HUB_ID_RE = re.compile(r"\bgavinlouuu/[A-Za-z0-9_.-]+")
+HUB_ID_SCAN_DIRS = ["scripts", "tests", "tools", "docs/howto", ".github"]
+HUB_ID_SCAN_SUFFIXES = {".py", ".sh", ".ps1", ".yml", ".yaml", ".md", ".cpp", ".h", ".json", ".txt", ".cmake"}
+
+
+def check_hub_ids(errors: list[str]) -> None:
+    """Every `gavinlouuu/<repo>` Hub id in code, harnesses, CI and how-tos must be
+    an asset in env/assets.json, so nothing depends on an unpinned corpus."""
+    manifest = REPO_ROOT / "env" / "assets.json"
+    if not manifest.exists():
+        errors.append("env/assets.json is missing; it declares every external dataset/model.")
+        return
+    declared = set(HUB_ID_RE.findall(manifest.read_text(encoding="utf-8")))
+    for scan_dir in HUB_ID_SCAN_DIRS:
+        for path in sorted((REPO_ROOT / scan_dir).rglob("*")):
+            if not path.is_file() or path.suffix not in HUB_ID_SCAN_SUFFIXES:
+                continue
+            if "kedro_frame_detection/data" in str(path) or "__pycache__" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for hub_id in sorted(set(HUB_ID_RE.findall(text)) - declared):
+                errors.append(
+                    f"{path.relative_to(REPO_ROOT)}: Hub id '{hub_id}' is not declared in "
+                    f"env/assets.json. Add an asset entry (repo, revision, files or viewer) "
+                    f"and read it through scripts/assets_manifest.py."
+                )
+
+
 def main() -> int:
     errors: list[str] = []
     check_wikilinks(errors)
     check_md_links(errors)
     check_agents_md_length(errors)
     check_active_plans(errors)
+    check_hub_ids(errors)
 
     if errors:
         print(f"check_docs: {len(errors)} violation(s)\n", file=sys.stderr)

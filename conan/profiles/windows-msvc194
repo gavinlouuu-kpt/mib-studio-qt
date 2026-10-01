@@ -1,0 +1,18 @@
+# Windows host/build profile: VS 2022 (MSVC 19.4x), x64, Release, C++17.
+# Matches the prebuilt ConanCenter binaries; used by the windows-default
+# (Visual Studio generator) preset. This file replaces the `ci` profile the
+# workflows used to write inline.
+[settings]
+os=Windows
+arch=x86_64
+compiler=msvc
+compiler.version=194
+compiler.cppstd=17
+compiler.runtime=dynamic
+build_type=Release
+
+[replace_requires]
+# ConanCenter resolves cpuinfo/[>=cci.20231129] to a newer revision that
+# conflicts with onnxruntime/1.18.1's pin on a cold cache (Build.md,
+# 2026-09-15). Pin it here so every host resolves the same graph.
+cpuinfo/*: cpuinfo/cci.20231129

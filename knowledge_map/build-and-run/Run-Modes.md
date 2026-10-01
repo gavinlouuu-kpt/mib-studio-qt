@@ -83,3 +83,9 @@ even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
 `MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
 processing-only builds remain SDK-free for Coremor. See
 [[../services/AutofocusService]] for the vendor support inventory.
+
+## Mock frame source (2026-09-21)
+
+`data/mock_frames/` holds two placeholder frames. For a real stream use the
+Hub asset `512x96stream-mock-frames` via `scripts/provision-assets.py` and
+point `MIB_MOCK_CAMERA_DIR` at the provisioned folder. See [[Assets]].

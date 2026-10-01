@@ -43,6 +43,46 @@ if(TARGET onnxruntime::onnxruntime)
     set(MIB_HAS_ONNXRUNTIME ON)
 endif()
 
+# The YOLO weights are an external asset (env/assets.json, hosted on the Hub),
+# not a tracked file. Read the asset id's kind and file name from the manifest
+# so CMake, the provisioner and the deployment copy agree on one path:
+#   ${MIB_ASSETS_DIR}/<kind>s/<id>/<file>
+set(MIB_YOLO_MODEL_PATH "")
+file(READ "${PROJECT_SOURCE_DIR}/env/assets.json" _mib_assets_json)
+string(JSON _mib_assets_count LENGTH "${_mib_assets_json}" assets)
+if(_mib_assets_count GREATER 0)
+    math(EXPR _mib_assets_last "${_mib_assets_count} - 1")
+    foreach(_mib_asset_index RANGE ${_mib_assets_last})
+        string(JSON _mib_asset_id GET "${_mib_assets_json}" assets ${_mib_asset_index} id)
+        if(_mib_asset_id STREQUAL "yolo11n-seg")
+            string(JSON _mib_asset_kind GET "${_mib_assets_json}" assets ${_mib_asset_index} kind)
+            string(JSON _mib_asset_file GET "${_mib_assets_json}" assets ${_mib_asset_index} files 0 path)
+            set(MIB_YOLO_MODEL_PATH
+                "${MIB_ASSETS_DIR}/${_mib_asset_kind}s/${_mib_asset_id}/${_mib_asset_file}")
+        endif()
+    endforeach()
+endif()
+unset(_mib_assets_json)
+unset(_mib_assets_count)
+unset(_mib_assets_last)
+unset(_mib_asset_index)
+unset(_mib_asset_id)
+unset(_mib_asset_kind)
+unset(_mib_asset_file)
+if(NOT MIB_YOLO_MODEL_PATH)
+    message(FATAL_ERROR "env/assets.json has no asset with id \"yolo11n-seg\"")
+endif()
+if(MIB_HAS_ONNXRUNTIME AND NOT MIB_BUILD_PROCESSING_ONLY)
+    if(NOT EXISTS "${MIB_YOLO_MODEL_PATH}")
+        message(FATAL_ERROR
+            "ONNX Runtime was found but the YOLO model is not provisioned:\n"
+            "  ${MIB_YOLO_MODEL_PATH}\n"
+            "Run:  python3 scripts/provision-assets.py --asset yolo11n-seg\n"
+            "or point MIB_ASSETS_DIR at a tree that already holds it (see env/assets.json).")
+    endif()
+    message(STATUS "YOLO model asset: ${MIB_YOLO_MODEL_PATH}")
+endif()
+
 set(MIB_MINDVISION_SDK_ROOT "$ENV{MIB_MINDVISION_SDK_ROOT}" CACHE PATH
     "Root directory of the MindVision SDK installation")
 set(MIB_MINDVISION_RUNTIME_DIR "$ENV{MIB_MINDVISION_RUNTIME_DIR}" CACHE PATH

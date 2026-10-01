@@ -68,3 +68,11 @@ eGrabber alignment constants do not describe MindVision offsets.
 
 Related: [[../camera/MindVisionCamera]], [[../frontend/OverviewTab]],
 [[../architecture/AppBackend]], [[../architecture/Threading-Model]].
+
+## Test coverage (moved from Build.md, 2026-09-21)
+
+`backend.mindvision_overview_mode` exercises geometry faults and repeated capture
+cycles; `frontend.mindvision_overview` covers JSON ROI persistence and mode state.
+Both use existing shared test runners. `hw_illuminated_live_test` optionally
+alternates full-sensor and experiment modes with `MIB_TEST_OVERVIEW_MODES=1`;
+use an even number of runs to finish with the saved experiment settings.

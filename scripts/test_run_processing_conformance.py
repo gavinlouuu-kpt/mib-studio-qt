@@ -81,5 +81,39 @@ class Hdf5ConformanceInputTest(unittest.TestCase):
                 conformance.load_hdf5_frames(Path("fixture.h5"), "/missing", 0, 2)
 
 
+
+class RealFixtureInputTest(unittest.TestCase):
+    def _write(self, directory: Path, owner: list[int]) -> Path:
+        path = directory / "real.npz"
+        np.savez_compressed(
+            path,
+            frames=np.arange(3 * 4 * 6, dtype=np.uint8).reshape(3, 4, 6),
+            backgrounds=np.zeros((2, 4, 6), dtype=np.uint8),
+            frame_background=np.asarray(owner, dtype=np.int16),
+            config_json=np.asarray('{"processing_contract_version": 1}'),
+            pixel_to_micron=np.asarray(0.5),
+        )
+        return path
+
+    def test_groups_frames_by_background_in_order(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            groups, config, pixel_to_micron, fixture_id = conformance.load_real_fixture(
+                self._write(Path(tmp), [0, 0, 1])
+            )
+        self.assertEqual([len(frames) for frames, _ in groups], [2, 1])
+        self.assertEqual(config["processing_contract_version"], 1)
+        self.assertEqual(pixel_to_micron, 0.5)
+        self.assertEqual(fixture_id, "npz-real:real.npz")
+
+    def test_rejects_out_of_order_background_mapping(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                conformance.load_real_fixture(self._write(Path(tmp), [1, 0, 0]))
+
+
 if __name__ == "__main__":
     unittest.main()

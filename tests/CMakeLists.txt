@@ -36,6 +36,8 @@ set(MIB_STANDALONE_BACKEND_TESTS
     kin6_batch_pipeline_evidence        # uses argv[0]
     kin10_hf_dataset_pipeline_test      # uses argv[0]; the harness passes the binary path
     processing_core_loader_test         # add_dependencies on the plugin fixtures
+    processing_core_v2_plugin_test      # add_dependencies on the plugin (Contract v2 dlopen test)
+    processing_core_contract2_equivalence_test # add_dependencies on the Contract-2 plugin
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
     processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
@@ -171,6 +173,9 @@ if(UNIX AND NOT APPLE)
         LABELS "backend;nanopositioner;concurrency"
         TIMEOUT 30)
 endif()
+mib_add_backend_test_executable(autofocus_focus_score_test backend/autofocus_focus_score_test.cpp)
+add_test(NAME backend.autofocus_focus_score COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_score_test)
+set_tests_properties(backend.autofocus_focus_score PROPERTIES LABELS "backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_test.cpp)
 mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
@@ -189,6 +194,26 @@ set_tests_properties(backend.recording_isframeempty_roi PROPERTIES LABELS "backe
 mib_add_backend_test_executable(monitoring_roi_crop_test frontend/monitoring_roi_crop_test.cpp)
 add_test(NAME frontend.monitoring_roi_crop COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_roi_crop_test)
 set_tests_properties(frontend.monitoring_roi_crop PROPERTIES LABELS "frontend;safety" TIMEOUT 30)
+
+# Monitoring scatter density (KDE): invariants, per-axis bandwidth, degenerate
+# input, colour ramp and a ratio-gated cost budget (no Qt).
+mib_add_backend_test_executable(monitoring_density_test processing/monitoring_density_test.cpp)
+add_test(NAME processing.monitoring_density COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_test)
+set_tests_properties(processing.monitoring_density PROPERTIES LABELS "processing;monitoring;performance" TIMEOUT 60)
+
+# MonitoringDensityService (backend-owned live KDE): settings, lowest-priority
+# worker, fingerprint skip, load back-off, compute budget, record sink, stop,
+# and concurrent callers (TSan lane).
+mib_add_backend_test_executable(monitoring_density_service_test backend/monitoring_density_service_test.cpp)
+add_test(NAME backend.monitoring_density_service COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_service_test)
+set_tests_properties(backend.monitoring_density_service PROPERTIES LABELS "backend;monitoring;concurrency;safety" TIMEOUT 120)
+
+# The density worker never costs the processing pipeline throughput: real
+# computeProcessedFrame on every core, density service off vs on (ratio gate),
+# duty cycle within the compute budget when uncontended.
+mib_add_backend_test_executable(monitoring_density_contention_test performance/monitoring_density_contention_test.cpp)
+add_test(NAME performance.monitoring_density_contention COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_contention_test)
+set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 120)
 
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
@@ -310,6 +335,22 @@ mib_add_backend_test_executable(processing_science_seam_test processing/processi
 add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_seam_test)
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(processing_contract_v2_migration_test processing/processing_contract_v2_migration_test.cpp)
+add_test(NAME processing.contract_v2_migration COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract_v2_migration_test)
+set_tests_properties(processing.contract_v2_migration PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_contract2_conformance_test processing/processing_contract2_conformance_test.cpp)
+add_test(NAME processing.contract2_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract2_conformance_test)
+set_tests_properties(processing.contract2_conformance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
+add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
+set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_laplacian_variance_test processing/processing_laplacian_variance_test.cpp)
+add_test(NAME processing.laplacian_variance COMMAND $<TARGET_FILE:mib_backend_tests> processing_laplacian_variance_test)
+set_tests_properties(processing.laplacian_variance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_golden_test)
 set_tests_properties(processing.science_golden PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -341,6 +382,10 @@ mib_add_backend_test_executable(processing_pipeline_smoke_test processing/proces
 add_test(NAME processing.pipeline_smoke COMMAND $<TARGET_FILE:mib_backend_tests> processing_pipeline_smoke_test)
 set_tests_properties(processing.pipeline_smoke PROPERTIES LABELS "processing;backend")
 
+mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
+add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
+set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 add_executable(processing_core_abi_c_test
     ${PROJECT_SOURCE_DIR}/tests/processing/processing_core_abi_c_test.c
 )
@@ -354,11 +399,40 @@ set_target_properties(processing_core_abi_c_test PROPERTIES
 add_test(NAME processing.core_abi_c COMMAND $<TARGET_FILE:processing_core_abi_c_test>)
 set_tests_properties(processing.core_abi_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+add_executable(processing_core_abi_v2_c_test
+    ${PROJECT_SOURCE_DIR}/tests/processing/processing_core_abi_v2_c_test.c
+)
+target_include_directories(processing_core_abi_v2_c_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(processing_core_abi_v2_c_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+)
+add_test(NAME processing.core_abi_v2_c COMMAND $<TARGET_FILE:processing_core_abi_v2_c_test>)
+set_tests_properties(processing.core_abi_v2_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_capabilities_test processing/processing_core_capabilities_test.cpp)
+add_test(NAME processing.core_capabilities COMMAND $<TARGET_FILE:mib_backend_tests> processing_core_capabilities_test)
+set_tests_properties(processing.core_capabilities PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_core_loader_test processing/processing_core_loader_test.cpp)
 add_dependencies(processing_core_loader_test mib_processing_core)
 add_test(NAME processing.core_loader
     COMMAND $<TARGET_FILE:processing_core_loader_test> $<TARGET_FILE:mib_processing_core>)
 set_tests_properties(processing.core_loader PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_v2_plugin_test processing/processing_core_v2_plugin_test.cpp)
+add_dependencies(processing_core_v2_plugin_test mib_processing_core_absdiff_laplacian)
+add_test(NAME processing.core_v2_plugin
+    COMMAND $<TARGET_FILE:processing_core_v2_plugin_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
+set_tests_properties(processing.core_v2_plugin PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_contract2_equivalence_test processing/processing_core_contract2_equivalence_test.cpp)
+add_dependencies(processing_core_contract2_equivalence_test mib_processing_core_absdiff_laplacian)
+add_test(NAME processing.core_contract2_equivalence
+    COMMAND $<TARGET_FILE:processing_core_contract2_equivalence_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
+set_tests_properties(processing.core_contract2_equivalence PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_subdirectory(processing/fixtures)
 mib_add_backend_test_executable(processing_core_fixture_matrix_test processing/processing_core_fixture_matrix_test.cpp)
@@ -462,6 +536,18 @@ set_tests_properties(recording.hdf5_save_performance PROPERTIES LABELS "recordin
 mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_roundtrip_test.cpp)
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> experiment_roundtrip_test)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
+
+# KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
+# round-trip + fault injection for the save path and the frontend codec.
+mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
+add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
+set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)
+mib_add_backend_test_executable(kde_core_fault_test recording/kde_core_fault_test.cpp)
+add_test(NAME recording.kde_core_fault COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_fault_test)
+set_tests_properties(recording.kde_core_fault PROPERTIES LABELS "recording;backend;monitoring;safety" TIMEOUT 30)
+mib_add_backend_test_executable(kde_full_run_core_test recording/kde_full_run_core_test.cpp)
+add_test(NAME recording.kde_full_run_core COMMAND $<TARGET_FILE:mib_backend_tests> kde_full_run_core_test)
+set_tests_properties(recording.kde_full_run_core PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 60)
 
 # Issue #344: native Qt-free export service (round-trip, cancellation, faults,
 # bounded names, repeated runs with HDF5 open-object accounting). The
@@ -885,8 +971,26 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.gold_standard_schema_contract
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_gold_standard_schema_contract.py
+    )
+    set_tests_properties(scripts.gold_standard_schema_contract PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.contract2_export_review
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_contract2_export_review.py
+    )
+    set_tests_properties(scripts.contract2_export_review PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.publish_processing_core
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_publish_processing_core.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_processing_core.py
     )
     set_tests_properties(scripts.publish_processing_core PROPERTIES
         LABELS "scripts;contract"
@@ -895,7 +999,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.publish_profiles
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_publish_profiles.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_profiles.py
     )
     set_tests_properties(scripts.publish_profiles PROPERTIES
         LABELS "scripts;contract"
@@ -904,7 +1008,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.contract_version_consistency
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_contract_version_consistency.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_contract_version_consistency.py
     )
     set_tests_properties(scripts.contract_version_consistency PROPERTIES
         LABELS "scripts;contract"
@@ -913,7 +1017,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.bump_mib_processing_version
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_bump_mib_processing_version.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_bump_mib_processing_version.py
     )
     set_tests_properties(scripts.bump_mib_processing_version PROPERTIES
         LABELS "scripts;contract"
@@ -922,7 +1026,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.verify_processing_core_manifest
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_verify_processing_core_manifest.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_verify_processing_core_manifest.py
     )
     set_tests_properties(scripts.verify_processing_core_manifest PROPERTIES
         LABELS "scripts;contract"
@@ -931,7 +1035,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.processing_core_signer_release_gate
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_processing_core_signer_release_gate.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_processing_core_signer_release_gate.py
     )
     set_tests_properties(scripts.processing_core_signer_release_gate PROPERTIES
         LABELS "scripts;contract;release"
@@ -940,7 +1044,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.desktop_release_version
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_desktop_release_version.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_desktop_release_version.py
     )
     set_tests_properties(scripts.desktop_release_version PROPERTIES
         LABELS "scripts;release"

@@ -5,6 +5,7 @@
 // implementation (ProcessingScience). Qt-free by design.
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -36,11 +37,35 @@ struct ProcessingConfig {
     double ring_ratio_min{15.0};
     double ring_ratio_max{25.0};
     bool enable_ring_ratio_check{true};
+    // Contract v2 object focus metric: per-object Laplacian variance. The gate
+    // is disabled by default and its thresholds are placeholders until V2-7
+    // calibration; enabling it never affects Contract-1 execution.
+    double laplacian_variance_min{0.0};
+    double laplacian_variance_max{0.0};
+    bool enable_laplacian_variance_check{false};
     bool require_single_inner_contour{true};
     int empty_frame_pixel_threshold{100};
     bool auto_background_enabled{false};
     int auto_background_empty_frames{30};
     int auto_background_cooldown_frames{1000};
+    // Auto channel band: when enabled, detect the microfluidic channel walls in
+    // each captured background and reject objects whose centroid lies outside
+    // the channel band (debris stuck on a wall). The ROI itself is not cropped,
+    // so cells near the walls are not clipped by the border check. Off by
+    // default.
+    bool auto_roi_from_background{false};
+    // Row mean-gradient multiple over the channel baseline that marks a wall row.
+    double auto_roi_wall_gradient_ratio{2.5};
+    // Extra rows trimmed inward from each detected wall edge, for margin.
+    int auto_roi_wall_margin{1};
+    // Channel band gate, in the row coordinates of the mask handed to the
+    // object filter. An object is in the channel when its centroid row lies in
+    // [channel_band_y, channel_band_y + channel_band_h). channel_band_h <= 0
+    // disables the gate. Runtime input, not persisted: ProcessingService fills
+    // it from the detected band when auto_roi_from_background is on; wheel
+    // callers may set it directly.
+    int channel_band_y{0};
+    int channel_band_h{0};
     // Target group sort trigger (second gate within valid frames)
     bool enable_target_group{false};
     int target_group_area_min{72};   // μm²
@@ -51,6 +76,12 @@ struct ProcessingConfig {
     bool enable_target_group_emodulus{false};
     double target_group_emodulus_min{0.0};
     double target_group_emodulus_max{10.0};
+    // Processing contract executed by this config (ADR 0006). 1 = saturating
+    // subtraction + ring width (frozen, byte-for-byte reproducible). 2 =
+    // cv::absdiff background comparison, ring width abolished (NaN, gate
+    // ignored), per-object Laplacian variance as the focus metric.
+    // `bg_subtract_threshold` holds the v2 canonical `difference_threshold`.
+    int processing_contract_version{1};
     // Multi-image recording: capture a series of N consecutive frames per valid detection
     // Metrics are computed only from the first (trigger) frame
     bool multi_image_enabled{false};
@@ -62,6 +93,9 @@ struct FilterResult {
     bool touchesBorder{false};
     bool hasSingleInnerContour{false};
     bool inRange{false};
+    // False when a channel band is active and the object's centroid lies
+    // outside it (e.g. debris stuck on a channel wall). True when no band.
+    bool inChannel{true};
     int innerContourCount{0};
     int objectId{-1};
     int objectCount{0};
@@ -79,6 +113,10 @@ struct FilterResult {
     double area{0.0};
     double areaRatio{0.0};
     double ringRatio{0.0};
+    // Contract v2 per-object focus metric (variance of the Laplacian over the
+    // detected object). NaN when unusable or not computed. Replaces ring width
+    // as the v2 focus signal; ringRatio remains for Contract-1 compatibility.
+    double laplacianVariance{std::numeric_limits<double>::quiet_NaN()};
     double youngsModulus{0.0}; // Young's modulus (kPa) from LUT lookup
     BrightnessQuantiles brightness;
     bool isTargetGroup{false}; // True if valid AND matches target group criteria

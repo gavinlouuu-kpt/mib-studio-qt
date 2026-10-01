@@ -150,3 +150,17 @@ Fakes: `tests/support/fake_discovery_providers.h`,
 - The facade's `fetchCameraDiscovery` is a documented **blocking**
   compatibility wrapper (starts a job and waits) for worker-thread C++
   callers only; the bridge/Tauri/TS use the asynchronous trio.
+
+## StartupDiscoveryCoordinator::stop() drains in-flight actions (2026-09-21, #431)
+
+ThreadSanitizer caught a heap-use-after-free in `startup_discovery_policy_test`:
+the coordinator clears `nanoRunning` before delivering the terminal outcome,
+so a caller that waits on `nanopositionerStepRunning()` and then destroys its
+listener storage races the delivery. `stop()` now keeps its documented
+promise: every posted action runs inside an `ActionScope` (in-flight counter
++ condition variable), and `stop()` waits up to 5 s for actions executing on
+other threads before returning; it never waits for itself (thread-local
+depth), so hooks/listeners may call `stop()`. A detached executor
+(`setExecutor({})`) runs actions inline instead of throwing. Tests must wait
+for outcome *delivery*, not the running flag, and declare listener storage
+before the coordinator.

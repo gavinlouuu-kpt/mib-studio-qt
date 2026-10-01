@@ -19,7 +19,7 @@ design registry) and which chip (die) of that wafer the view is on.
 | Bundled registry (compiled into the app as `:/defaults/dot_grid_registry.json`) | `resources/defaults/dot_grid/registry.json` |
 | Archived full codebook of the Wafer_soRT design | `resources/defaults/dot_grid/wafer_soRT_2025-03-16_seed7_p30.json` |
 | Tests | `processing.dot_grid_codebook`, `processing.dot_grid_decoder`, `processing.dot_grid_registry`, `backend.dot_grid_service`, `scripts.dot_grid_reference` |
-| Decision records | [ADR 0006](../decisions/0006-dot-grid-localization.md) (pattern, decoder, service), [ADR 0007](../decisions/0007-dot-grid-design-registry.md) (design registry) |
+| Decision records | [ADR 0008](../decisions/0008-dot-grid-localization.md) (pattern, decoder, service), [ADR 0009](../decisions/0009-dot-grid-design-registry.md) (design registry) |
 
 ## Pattern
 
@@ -129,7 +129,7 @@ dev machine, Release), well inside the 250 ms sampling interval.
 ## Design registry
 
 Every chip design that carries a grid is registered once
-(`resources/defaults/dot_grid/registry.json`, [ADR 0007](../decisions/0007-dot-grid-design-registry.md)):
+(`resources/defaults/dot_grid/registry.json`, [ADR 0009](../decisions/0009-dot-grid-design-registry.md)):
 
 ```json
 {"version": 1, "designs": [

@@ -2,7 +2,7 @@
 
 Status: active
 
-ADR: [0006 — Dot-grid wafer localization](../../decisions/0006-dot-grid-localization.md)
+ADR: [0008 — Dot-grid wafer localization](../../decisions/0008-dot-grid-localization.md)
 Design: [architecture/dot-grid-localization.md](../../architecture/dot-grid-localization.md)
 Task record: `knowledge_map/task/2026-09-17-dot-grid-localization.md`
 
@@ -33,7 +33,7 @@ and overlay integrated in MIB Studio.
       `Hdf5Service` metadata pattern) when recording.
 - [ ] CAD channel overlay from the decoded pose; chip-relative coordinates.
 - [x] Design registry: several designs, one seed each; the app reports which
-      design it sees ([ADR 0007](../../decisions/0007-dot-grid-design-registry.md)).
+      design it sees ([ADR 0009](../../decisions/0009-dot-grid-design-registry.md)).
 - [ ] In-app "add design" dialog (today: `dotgrid_cli.py register` + PR, or
       a local `registry_path`).
 

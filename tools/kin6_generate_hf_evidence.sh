@@ -7,7 +7,8 @@ APP_PROOF_BINARY="${3:-}"
 
 mkdir -p "${OUT_DIR}" "${OUT_DIR}/logs"
 
-python3 - "${OUT_DIR}" <<'PY'
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+python3 - "${OUT_DIR}" "${SCRIPT_DIR}/../scripts" <<'PY'
 import json
 import pathlib
 import sys
@@ -16,9 +17,13 @@ import urllib.parse
 import urllib.request
 
 out_dir = pathlib.Path(sys.argv[1])
-dataset = "gavinlouuu/512x96stream"
-config = "default"
-split = "train"
+sys.path.insert(0, sys.argv[2])
+from assets_manifest import get_asset  # env/assets.json is the single source of the corpus id
+
+_asset = get_asset("512x96stream-kin10")
+dataset = _asset.repo
+config = _asset.viewer["config"]
+split = _asset.viewer["split"]
 base_url = "https://datasets-server.huggingface.co"
 page_size = 100
 

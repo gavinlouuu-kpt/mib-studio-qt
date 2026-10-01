@@ -6,7 +6,7 @@ Context:
   Developers need one way to add a design and get its mask layer.
 - Synthetic finding that made it simple: a frame of one seed never decoded
   under another seed (0/120 at 4x–20x), so the seed is the design identity.
-  ADR 0007.
+  ADR 0009.
 
 Implementation Notes:
 - `resources/defaults/dot_grid/registry.json` (schema v1): per design id,

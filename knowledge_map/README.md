@@ -19,6 +19,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 ### Services (`src/backend/services/`)
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
+- Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
 - Wafer localization (dot-grid fiducials): [[services/DotGridService]]
@@ -66,6 +67,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[build-and-run/Build]]
 - [[build-and-run/Run-Modes]]
 - [[build-and-run/Dependencies]]
+- [[build-and-run/Assets]] — external datasets and model weights (Hub-hosted, pinned in `env/assets.json`)
 
 ### Conventions
 - [[conventions/Code-Conventions]]

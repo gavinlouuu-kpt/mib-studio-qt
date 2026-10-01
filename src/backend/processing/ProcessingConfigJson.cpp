@@ -53,6 +53,9 @@ namespace backend::processing::config_json
             {"auto_background_enabled", c.auto_background_enabled},
             {"auto_background_empty_frames", c.auto_background_empty_frames},
             {"auto_background_cooldown_frames", c.auto_background_cooldown_frames},
+            {"auto_roi_from_background", c.auto_roi_from_background},
+            {"auto_roi_wall_gradient_ratio", c.auto_roi_wall_gradient_ratio},
+            {"auto_roi_wall_margin", c.auto_roi_wall_margin},
             {"filters",
              {
                  {"enable_border_check", c.enable_border_check},
@@ -110,6 +113,9 @@ namespace backend::processing::config_json
         ok &= assignIfPresent(json, "auto_background_enabled", c.auto_background_enabled, errorOut);
         ok &= assignIfPresent(json, "auto_background_empty_frames", c.auto_background_empty_frames, errorOut);
         ok &= assignIfPresent(json, "auto_background_cooldown_frames", c.auto_background_cooldown_frames, errorOut);
+        ok &= assignIfPresent(json, "auto_roi_from_background", c.auto_roi_from_background, errorOut);
+        ok &= assignIfPresent(json, "auto_roi_wall_gradient_ratio", c.auto_roi_wall_gradient_ratio, errorOut);
+        ok &= assignIfPresent(json, "auto_roi_wall_margin", c.auto_roi_wall_margin, errorOut);
 
         if (const auto filters = json.find("filters"); filters != json.end())
         {
@@ -137,6 +143,37 @@ namespace backend::processing::config_json
         {
             ok &= assignIfPresent(*multi, "enabled", c.multi_image_enabled, errorOut);
             ok &= assignIfPresent(*multi, "count", c.multi_image_count, errorOut);
+        }
+        return ok;
+    }
+
+    nlohmann::json toScienceJson(const services::ProcessingConfig &c)
+    {
+        nlohmann::json json = toJson(c);
+        json["abi_v2"] = {
+            {"processing_contract_version", c.processing_contract_version},
+            {"enable_laplacian_variance_check", c.enable_laplacian_variance_check},
+            {"laplacian_variance_min", c.laplacian_variance_min},
+            {"laplacian_variance_max", c.laplacian_variance_max},
+            {"channel_band_y", c.channel_band_y},
+            {"channel_band_h", c.channel_band_h},
+        };
+        return json;
+    }
+
+    bool fromScienceJson(const nlohmann::json &json,
+                         services::ProcessingConfig &c,
+                         std::string *errorOut)
+    {
+        bool ok = fromJson(json, c, errorOut);
+        if (const auto abi = json.find("abi_v2"); abi != json.end())
+        {
+            ok &= assignIfPresent(*abi, "processing_contract_version", c.processing_contract_version, errorOut);
+            ok &= assignIfPresent(*abi, "enable_laplacian_variance_check", c.enable_laplacian_variance_check, errorOut);
+            ok &= assignIfPresent(*abi, "laplacian_variance_min", c.laplacian_variance_min, errorOut);
+            ok &= assignIfPresent(*abi, "laplacian_variance_max", c.laplacian_variance_max, errorOut);
+            ok &= assignIfPresent(*abi, "channel_band_y", c.channel_band_y, errorOut);
+            ok &= assignIfPresent(*abi, "channel_band_h", c.channel_band_h, errorOut);
         }
         return ok;
     }

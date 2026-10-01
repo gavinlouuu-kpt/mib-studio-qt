@@ -408,14 +408,16 @@ class _Run:
         raise ExportFailed(f"could not publish export under {self.final_path.parent}")
 
     # -- phases ------------------------------------------------------------
-    def export_metrics(self, metadata_valid: Any, metadata_invalid: Any, target: Path) -> None:
+    def export_metrics(self, metadata_valid: Any, metadata_invalid: Any, target: Path,
+                       contract_version: int = 1) -> None:
         job = self.job
         _check_cancel(self.cancel_event)
         self.progress(ExportPhase.METRICS, str(target), "Exporting metrics...")
         if job.format == ExportFormat.JSON:
             self.valid_count, self.invalid_count = core.export_metrics_to_json(
                 metadata_valid, metadata_invalid, target, job.pixel_to_micron,
-                job.frame_selection.value, core.source_base_name(job.input_path))
+                job.frame_selection.value, core.source_base_name(job.input_path),
+                contract_version)
         else:
             self.valid_count, self.invalid_count = core.export_metrics_to_csv(
                 metadata_valid, metadata_invalid, target, job.pixel_to_micron, job.frame_selection.value)
@@ -557,7 +559,8 @@ class _Run:
                 self._plan_units(h5_file, metadata_valid, metadata_invalid)
 
                 if metrics_target is not None:
-                    self.export_metrics(metadata_valid, metadata_invalid, metrics_target)
+                    self.export_metrics(metadata_valid, metadata_invalid, metrics_target,
+                                        core.read_processing_contract_version(h5_file))
 
                 if job.format.writes_images:
                     assert out_dir is not None

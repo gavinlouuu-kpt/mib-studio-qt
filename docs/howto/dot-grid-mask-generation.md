@@ -3,7 +3,7 @@
 Tooling lives in `scripts/dot_grid/` (Python 3, numpy, opencv-python; `ezdxf`
 + `scipy` for pattern generation, `gdstk` for GDS output). Design background:
 [architecture/dot-grid-localization.md](../architecture/dot-grid-localization.md)
-(see *Design registry*); decision: [ADR 0007](../decisions/0007-dot-grid-design-registry.md).
+(see *Design registry*); decision: [ADR 0009](../decisions/0009-dot-grid-design-registry.md).
 
 ```bash
 pip install numpy opencv-python-headless ezdxf scipy gdstk

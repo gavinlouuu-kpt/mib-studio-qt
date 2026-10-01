@@ -11,7 +11,7 @@
 `resources/defaults/dot_grid/registry.json`
 **Related:** [[PlaybackService]], [[../data-model/FrameStore]],
 [[../architecture/AppBackend]], [[../frontend/System-Utilities]] (PlaybackPanel
-overlay), ADR 0006, ADR 0007 (design registry),
+overlay), ADR 0008, ADR 0009 (design registry),
 `docs/architecture/dot-grid-localization.md`,
 `docs/howto/dot-grid-mask-generation.md`
 

@@ -196,11 +196,13 @@ int main()
         timing.cameraDelay = 30ms;
         timing.nanopositionerRetries = 3;
         timing.nanopositionerRetryDelay = 10ms;
-        StartupDiscoveryCoordinator coordinator(service, hooks, timing);
 
+        // Declared before the coordinator so they outlive it: the coordinator's
+        // destructor (stop()) drains in-flight listeners into this storage.
         std::mutex m;
         std::vector<StartupDiscoveryCoordinator::CameraOutcome> cameraOutcomes;
         std::vector<StartupDiscoveryCoordinator::NanopositionerOutcome> nanoOutcomes;
+        StartupDiscoveryCoordinator coordinator(service, hooks, timing);
         coordinator.setCameraListener([&](const auto& o) {
             std::lock_guard<std::mutex> lk(m);
             cameraOutcomes.push_back(o);
@@ -219,6 +221,16 @@ int main()
         MIB_EXPECT(elapsed >= 30ms, "camera step honours the initial delay");
         MIB_REQUIRE(waitFor([&] { return !coordinator.nanopositionerStepRunning(); }),
                     "nanopositioner step finishes");
+        // The running flag clears before the terminal outcome is delivered;
+        // wait for the delivery itself (issue #431).
+        MIB_REQUIRE(waitFor([&] {
+                        std::lock_guard<std::mutex> lk(m);
+                        for (const auto& o : nanoOutcomes)
+                            if (o.kind == StartupDiscoveryCoordinator::NanopositionerOutcome::Kind::Connected)
+                                return true;
+                        return false;
+                    }),
+                    "connected outcome delivered");
         MIB_EXPECT(selectCalls.load() == 1, "camera selected exactly once");
         MIB_EXPECT(connectCalls.load() == 1, "nanopositioner connected exactly once");
         MIB_EXPECT(cam->calls.load() == 1 && np->calls.load() == 2,
@@ -240,6 +252,40 @@ int main()
         // Once connected, a further nanopositioner step is refused.
         MIB_EXPECT(!coordinator.runNanopositionerStep(), "connected device: step refused");
         coordinator.stop();
+    }
+
+    // ---- coordinator: stop() drains an in-flight listener (issue #431) -----------
+    {
+        watchdog.mark("coordinator-stop-drains-listener");
+        DeviceDiscoveryService service;
+        auto* np = new ScriptedProvider("nanopositioner", DeviceKind::Nanopositioner);
+        np->result.candidates = {nano("np-a", "COM7")};
+        service.registerProvider(std::unique_ptr<ScriptedProvider>(np));
+
+        StartupDiscoveryCoordinator::Hooks hooks;
+        hooks.cameraConfigured = [] { return true; }; // skip the camera step
+        hooks.captureRunning = [] { return false; };
+        hooks.nanopositionerConnected = [] { return false; };
+        hooks.connectNanopositioner = [](const backend::nanopositioner::Endpoint&) { return true; };
+        StartupDiscoveryCoordinator::Timing timing;
+        timing.cameraDelay = 0ms;
+        timing.nanopositionerRetries = 0;
+
+        std::atomic<bool> listenerEntered{false}, listenerFinished{false};
+        StartupDiscoveryCoordinator coordinator(service, hooks, timing);
+        coordinator.setNanopositionerListener([&](const auto& o) {
+            using K = StartupDiscoveryCoordinator::NanopositionerOutcome::Kind;
+            if (o.kind != K::Connected) return;
+            listenerEntered = true;
+            std::this_thread::sleep_for(150ms); // slow consumer on the worker thread
+            listenerFinished = true;
+        });
+        coordinator.start();
+        MIB_REQUIRE(waitFor([&] { return listenerEntered.load(); }), "terminal outcome reaches the listener");
+        MIB_EXPECT(!listenerFinished.load(), "listener is still running when stop() is called");
+        coordinator.stop();
+        MIB_EXPECT(listenerFinished.load(),
+                   "stop() returns only after the in-flight listener finished (issue #431)");
     }
 
     // ---- coordinator: skip camera when configured, multiple devices, stop ------------
