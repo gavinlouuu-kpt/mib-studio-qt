@@ -4,14 +4,14 @@ import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
-import { invoke } from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import {open, save} from "./transport/dialogs";
+import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
   bridge,
   mono8ToImageData,

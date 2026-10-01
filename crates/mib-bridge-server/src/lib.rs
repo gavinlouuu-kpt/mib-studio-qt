@@ -14,6 +14,9 @@
 //!   (two clients polling would steal each other's) and broadcasts them; `poll_events_exact` is
 //!   refused with `SERVER_OWNS_EVENTS`.
 //!
+//! The desktop-only platform commands (`app_paths`, `get_preferences`, `set_preferences`,
+//! `shell_log`) are answered from the server's data directory, shared by every client.
+//!
 //! Requests of one connection run in order, each off the async runtime (bridge calls block).
 //! Frames stay pulled: a client asks for the next packet when it has drawn the last one.
 //!
@@ -31,7 +34,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -42,6 +45,8 @@ use mib_app_commands::AppState;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
+
+mod platform;
 
 /// Experiment states that a client loss must finalise (`bridgeContract.ts` EXPERIMENT_STATES).
 const EXPERIMENT_STARTING: u32 = 1;
@@ -198,9 +203,22 @@ impl Server {
 
     /// Run one request. Event draining belongs to the server; `init` is idempotent because
     /// every client (re)initialises on load.
-    fn run(&self, cmd: &str, args: Value) -> Result<Reply, String> {
+    fn run(&self, client: &str, cmd: &str, args: Value) -> Result<Reply, String> {
+        let data = std::path::Path::new(&self.config().data_dir);
         match cmd {
             "poll_events" | "poll_events_exact" => Err("SERVER_OWNS_EVENTS".into()),
+            "app_paths" => Ok(Reply::Json(platform::app_paths(data))),
+            "get_preferences" => platform::get_preferences(data).map(Reply::Json),
+            "set_preferences" => {
+                platform::set_preferences(data, args.get("preferences").unwrap_or(&Value::Null)).map(|_| Reply::Json(Value::Null))
+            }
+            "shell_log" => platform::shell_log(
+                data,
+                client,
+                args["level"].as_str().unwrap_or("info"),
+                args["message"].as_str().unwrap_or(""),
+            )
+            .map(|_| Reply::Json(Value::Null)),
             "init" if mib_app_commands::is_initialized(&self.state).unwrap_or(false) => Ok(Reply::Json(json!(true))),
             _ => dispatch::dispatch(&self.state, &*self.host, cmd, args),
         }
@@ -274,6 +292,7 @@ async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
 
 async fn upgrade(
     State(server): State<Arc<Server>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<AuthQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
@@ -282,7 +301,7 @@ async fn upgrade(
         return (StatusCode::UNAUTHORIZED, "token required").into_response();
     }
     // Frame packets reach 32 MiB plus the header; requests are small JSON documents.
-    ws.max_message_size(64 << 20).on_upgrade(move |socket| connection(server, socket))
+    ws.max_message_size(64 << 20).on_upgrade(move |socket| connection(server, socket, peer.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -293,7 +312,7 @@ struct Request {
     args: Value,
 }
 
-async fn connection(server: Arc<Server>, socket: WebSocket) {
+async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
     server.clients.fetch_add(1, Ordering::SeqCst);
     server.connects.fetch_add(1, Ordering::SeqCst);
     let (mut sink, mut stream) = socket.split();
@@ -350,7 +369,8 @@ async fn connection(server: Arc<Server>, socket: WebSocket) {
             Ok(request) => {
                 let worker = server.clone();
                 let Request { request_id, cmd, args } = request;
-                let result = tokio::task::spawn_blocking(move || worker.run(&cmd, args))
+                let client = peer.clone();
+                let result = tokio::task::spawn_blocking(move || worker.run(&client, &cmd, args))
                     .await
                     .unwrap_or_else(|e| Err(format!("COMMAND_PANICKED: {e}")));
                 match result {

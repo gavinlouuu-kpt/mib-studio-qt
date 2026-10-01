@@ -2,7 +2,7 @@ import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
-import { invoke } from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";

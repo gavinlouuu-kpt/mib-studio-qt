@@ -129,6 +129,15 @@ async fn mock_capture_over_websocket() {
     let Ok(Reply::Json(ok)) = call(&mut ws, 92, "init", json!({ "dataDir": "/nonexistent" }), &mut events).await else { panic!() };
     assert_eq!(ok, json!(true));
 
+    // Desktop platform commands are answered from the instrument's data directory.
+    let Ok(Reply::Json(paths)) = call(&mut ws, 94, "app_paths", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(paths["app_data"], json!(data.to_string_lossy()));
+    call(&mut ws, 95, "set_preferences", json!({ "preferences": { "sidebar": "collapsed" } }), &mut events).await.unwrap();
+    let Ok(Reply::Json(preferences)) = call(&mut ws, 96, "get_preferences", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(preferences, json!({ "sidebar": "collapsed" }));
+    call(&mut ws, 97, "shell_log", json!({ "level": "info", "message": "hello" }), &mut events).await.unwrap();
+    assert!(std::fs::read_to_string(data.join("logs/remote-shell.log")).unwrap().contains("[INFO]"));
+
     let Ok(Reply::Json(r)) = call(&mut ws, 93, "stop_capture", Value::Null, &mut events).await else { panic!() };
     assert_eq!(r["ok"], json!(true), "{r}");
     ws.close(None).await.unwrap();
