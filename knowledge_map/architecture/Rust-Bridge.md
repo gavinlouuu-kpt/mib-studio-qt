@@ -275,12 +275,13 @@ separate from `ffi::BackendBridge`:
   feature both bridges compile and a MIB Studio shell holds one of each.
 - **Calls:** `review_open/close`, `set_fallback_pixel_to_micron`,
   `fetch_review_info` (counts, ROI, datasets, series, multi-image window,
-  accounting + summary text, recorded factor, KDE JSON),
+  accounting + summary text, recorded factor, KDE JSON, recorded
+  ring-ratio range),
   `fetch_review_rows` (full-column `ReviewRow`s), `fetch_review_frame(dataset,
   index, overlay, roi)` → `ReviewFrame` Mono8 or **RGB8**
   (`review_pixel_formats`), `fetch_review_series_count/frame`,
   `fetch_review_thumbnails` (one frame of `size × (size·count)`),
-  `fetch_review_scatter` (columnar), `review_save_core_record`,
+  `fetch_review_scatter` (columnar, with ring ratios), `review_save_core_record`,
   `poll_review_events` (job lifecycle, `review_operation_kinds` ×
   `operation_states`), `cancel_review_operation`, the jobs
   `review_export_metrics/all`, `review_batch_export`,
@@ -289,8 +290,12 @@ separate from `ffi::BackendBridge`:
   `review_request_density` + `fetch_review_density` (contract
   `review_density` constants), `review_jobs_busy`,
   `review_bridge_abi_version()` (same number as `bridge_abi_version()`),
-  and the test fixture `review_fixture_write_experiment(path)`.
+  and the fixtures `review_fixture_write_experiment(path)` and
+  `review_fixture_write_population(path, cells, seed)` (two seeded
+  populations for the Charts view; `examples/review_fixture --population N`).
 - **Contract.** `bridge-contract.json` 15 adds `overlay_modes`,
+  `review_density` (incl. `ramp_rgb`, checked against `MonitoringDensity.h`
+  `kStops` by the generator),
   `review_pixel_formats`, `review_operation_kinds`, frame-packet pull kinds
   `review_thumbnails` (5) / `review_series` (6) and the `pixel_formats`
   table; `review_shim.cpp` pins the enums with `static_assert`s;

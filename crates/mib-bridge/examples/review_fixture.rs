@@ -5,6 +5,8 @@
 //! ```text
 //! # small synthetic experiment file (10 valid, 4 invalid, series, ROI, accounting, KDE record)
 //! cargo run --example review_fixture -- out.h5
+//! # Charts population: N valid cells in two seeded clusters, no stored core record
+//! cargo run --example review_fixture -- out.h5 --population 3000
 //! # real cells: run the bundled kernel over a folder of frames (regenerate-masks job)
 //! cargo run --example review_fixture -- out.h5 --from-folder build/vendor/assets/<frames dir>
 //! ```
@@ -16,10 +18,24 @@ use mib_bridge::review_ffi as ffi;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(out) = args.first() else {
-        eprintln!("usage: review_fixture <out.h5> [--from-folder <dir>]");
+        eprintln!("usage: review_fixture <out.h5> [--population <cells> | --from-folder <dir>]");
         std::process::exit(2);
     };
     let folder = args.iter().position(|a| a == "--from-folder").and_then(|i| args.get(i + 1));
+    let population = args.iter().position(|a| a == "--population").and_then(|i| args.get(i + 1));
+
+    if let Some(n) = population {
+        let cells: u32 = n.parse().unwrap_or_else(|_| {
+            eprintln!("--population takes a cell count");
+            std::process::exit(2);
+        });
+        if !ffi::review_fixture_write_population(out, cells, 20261001) {
+            eprintln!("population fixture write failed: {out}");
+            std::process::exit(1);
+        }
+        println!("wrote population fixture {out} ({cells} valid cells)");
+        return;
+    }
 
     let Some(folder) = folder else {
         if !ffi::review_fixture_write_experiment(out) {

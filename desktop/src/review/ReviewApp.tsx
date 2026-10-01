@@ -15,7 +15,6 @@ import { FramePullScheduler } from "../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
 import { reviewBridge, type ReviewEvent, type ReviewInfo } from "./reviewBridge";
 import "../App.css";
-import "./review.css";
 
 export const PRODUCT_NAME = "YOFO Review";
 const POLL_MS = 200;

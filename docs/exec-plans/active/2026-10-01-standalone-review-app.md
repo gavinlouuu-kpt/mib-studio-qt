@@ -596,8 +596,18 @@ accounting text and the same saved core record; the differences list in
       with the screenshot harness, since `webkit2gtk-driver` is not in the
       CI image yet. Raw Frames tab dropped: recording files show their
       frames as the "Frames" set (the Qt behaviour).
-- [ ] PR 3 — Charts view, gestures, click-to-view pane (absorbs scatter
-      plan PR 4 / #470)
+- [x] PR 3 — Charts view, gestures, click-to-view pane (absorbs scatter
+      plan PR 4 / #470; landed 2026-10-01). Verified by vitest (shared hit
+      fixture, gestures, binning, maths), bridge tests on a new population
+      fixture, and driving the review build under Xvfb on 3 000- and
+      20 000-cell files (click/hover/zoom/pan/double-click reset, compute and
+      save core contour); the tauri-driver `review_charts.spec.ts` moves to
+      PR 8 with the other e2e specs. Deviations: no `preferences.ts` — the
+      two toggles persist in `localStorage` (`yofo.review.charts`) and the
+      pane split is a fixed 3:2 flex (resizable splitters go with PR 4's
+      preferences); the histogram range is the file's recorded ring-ratio
+      thresholds (Qt uses the live config); isoelastic curves are embedded
+      in the binary (`include_str!`) instead of read from a bundle path.
 - [ ] PR 4 — exports, regenerate masks, core contour, preferences
 - [ ] PR 5 — macOS Conan profile, preset, bridge manifest, DMG, CI job
 - [ ] PR 6 — Windows preset, NSIS, updater plugin, R2 review channels,

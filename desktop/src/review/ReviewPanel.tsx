@@ -11,13 +11,16 @@
 // recording file) a virtualised thumbnail grid on the left, the selected
 // frame's preview over the paged metrics table on the right; selection is
 // shared by grid, table and preview; double-click / Enter opens the frame
-// viewer (series, zoom, prev/next). Charts arrive with the plan's PR 3,
-// export dialogs with progress / cancel / series range with PR 4.
+// viewer (series, zoom, prev/next). Charts (experiment files): the
+// deformability scatter, the same frame pane and the ring-width histogram
+// (`charts/ChartsView.tsx`, PR 3); clicking a point selects that valid cell.
+// Export dialogs with progress / cancel / series range arrive with PR 4.
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FramePacket } from "../framePacket";
 import type { FramePullScheduler } from "../framePullScheduler";
+import { ChartsView } from "./charts/ChartsView";
 import { FrameViewer } from "./FrameViewer";
 import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
 import {
@@ -33,6 +36,7 @@ import {
   type ReviewRows,
 } from "./reviewBridge";
 import { ThumbnailGrid } from "./ThumbnailGrid";
+import "./review.css";
 
 export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
 export const METRICS_PAGE_SIZE = 100;
@@ -158,7 +162,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   // Preview follows the selection and the overlay / ROI choice.
   useEffect(() => {
-    if (!reviewing || reviewTab === "charts" || selected < 0 || selected >= setTotal) return;
+    if (!reviewing || selected < 0 || selected >= setTotal) return;
     scheduler.request("review", () =>
       reviewBridge.frame(validSet ? REVIEW_DATASET.ValidImage : REVIEW_DATASET.InvalidImage, selected, overlay, roiOverlay),
     );
@@ -237,6 +241,17 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     [beforeLoad, loadRows, log, onFileChange, onInfo, resetView],
   );
 
+  const refreshInfo = useCallback(async () => {
+    try {
+      const fresh = await reviewBridge.info();
+      if (!fresh.file_open) return;
+      setInfo(fresh);
+      onInfo?.(fresh);
+    } catch (e) {
+      log(`info error: ${e}`);
+    }
+  }, [log, onInfo]);
+
   const openFile = useCallback(async () => {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked === "string") await openPath(picked);
@@ -307,6 +322,19 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
 
+  const previewPane = (
+    <div className="canvas-wrap preview" onDoubleClick={() => selected >= 0 && setViewerOpen(true)} title="Double-click to open the viewer">
+      <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
+      <span className="preview-caption mono">
+        {selected >= 0
+          ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}`
+          : reviewTab === "charts"
+            ? "Click a point to show its cell"
+            : "—"}
+      </span>
+    </div>
+  );
+
   return (
     <>
       <div className="toolbar">
@@ -373,7 +401,16 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             Invalid Frames {reviewing ? `(${setTotalFor(info, false)})` : ""}
           </button>
         )}
-        <button disabled title="Chart rendering lands with the plan's PR 3">Charts</button>
+        {!isRecording && (
+          <button
+            className={reviewTab === "charts" ? "active" : ""}
+            disabled={!reviewing || setTotalFor(info, true) === 0}
+            title="Deformability vs area, ring-width histogram"
+            onClick={() => void selectTab("charts")}
+          >
+            Charts
+          </button>
+        )}
       </div>
       <div className="subtab-body">
         {!reviewing ? (
@@ -381,6 +418,17 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             <p>No recording loaded.</p>
             <button onClick={openFile} disabled={!ready}>Select HDF File…</button>
           </div>
+        ) : reviewTab === "charts" && info ? (
+          <ChartsView
+            info={info}
+            fileKey={fileKey}
+            selected={selected}
+            validTotal={setTotal}
+            onSelect={select}
+            framePane={previewPane}
+            refreshInfo={refreshInfo}
+            log={log}
+          />
         ) : (
           <div className="review-frames">
             <ThumbnailGrid
@@ -400,12 +448,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
               log={log}
             />
             <div className="review-side">
-              <div className="canvas-wrap preview" onDoubleClick={() => selected >= 0 && setViewerOpen(true)} title="Double-click to open the viewer">
-                <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
-                <span className="preview-caption mono">
-                  {selected >= 0 ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}` : "—"}
-                </span>
-              </div>
+              {previewPane}
               <div className="table-toolbar">
                 <span className="mono">
                   {rowTotal > 0 ? `${rowsOffset + 1}–${Math.min(rowTotal, rowsOffset + METRICS_PAGE_SIZE)} of ${rowTotal}` : "no rows"}

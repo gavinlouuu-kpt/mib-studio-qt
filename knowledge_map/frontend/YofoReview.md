@@ -5,7 +5,7 @@
 > the same `desktop/` tree as the React + Tauri MIB Studio shell.
 
 **Source:** `desktop/review.html`, `desktop/src/review/` (`main.tsx`,
-`ReviewApp.tsx`, `ReviewPanel.tsx`, `review.css`),
+`ReviewApp.tsx`, `ReviewPanel.tsx`, `review.css`, `charts/`),
 `desktop/src-tauri/tauri.review.conf.json`, cargo feature `review-only` in
 `desktop/src-tauri/Cargo.toml` + `src/lib.rs`,
 `scripts/release/stamp-tauri-version.py`, `.github/workflows/review-ci.yml`
@@ -41,15 +41,14 @@ to see the UI, or build a release binary.
 
 ## `ReviewPanel` (shared module)
 
-`src/review/ReviewPanel.tsx` owns the review state (file path, metadata,
-metrics page, selected image, sub-tab) and the `"review"` slot of the
-host's `FramePullScheduler`. The host supplies: `ready` (backend
-initialized), the scheduler, the `PlaybackPosition` range it drains from
-`poll_events`, `fitWindow`, a `log` sink, `applyEvents`, and three hooks —
-`beforeLoad` (MIB Studio stops its live preview loop), `onFileChange`
-(host invalidates its scheduler views) and `onMetadata` (workflow facts,
-status bar). `ReviewPanelHandle.openFile()` is the File ▸ Open… action for
-menus.
+`src/review/ReviewPanel.tsx` owns the review state (file info, metrics
+page, selection, sub-tab) and the `"review"` / `"viewer"` slots of the
+host's `FramePullScheduler`, and imports `review.css` itself (both products
+get the styles). The host supplies: `ready` (backend initialized), the
+scheduler, `fitWindow`, a `log` sink and three hooks — `beforeLoad` (MIB
+Studio stops its live preview loop), `onFileChange` (host invalidates its
+scheduler views) and `onInfo` (workflow facts, status bar).
+`ReviewPanelHandle` exposes `openFile` / `openPath` / `closeFile` for menus.
 
 The panel talks only to the **review bridge** (`src/review/reviewBridge.ts`
 → `src-tauri/src/review.rs` → `ReviewBridge` → [[../services/ReviewSession]]):
@@ -58,12 +57,10 @@ recorded pixel-to-micron factor with a "(fallback)" marker — TD-17),
 `rows` (full columns; the table shows index, object, track, area px²/µm²,
 deformability, ring ratio, E), `frame(dataset, index, overlay, roi)` with the
 overlay composed in the backend (Mono8 or RGB8 packets,
-`packetToImageData`). Raw Frames scrub the file's `/recorded_frames`
-dataset, never the live FrameStore. Export Metrics, Export All, Batch Metrics, Batch Export All and
+`packetToImageData`). Export Metrics, Export All, Batch Metrics, Batch Export All and
 Regenerate masks start backend jobs (`ReviewJobs`) with native pickers; the
 host's event drain logs their outcome. Progress/cancel dialogs and the
-series-range prompt arrive with PR 4; thumbnails, charts and the viewer
-with PR 2–3.
+series-range prompt arrive with PR 4.
 
 ## Frames view (PR 2)
 
@@ -97,6 +94,49 @@ build/vendor/assets/datasets/512x96stream-mock-frames` (in
 `crates/mib-bridge`, `--features review-only`) regenerates a real-cell
 experiment file through the review job, then launch the review build on it
 under Xvfb with the dev server running.
+
+## Charts view (PR 3)
+
+Experiment files only (recording files carry no metrics). `charts/ChartsView.tsx`:
+scatter on the left, the panel's preview pane over the ring-width histogram
+on the right; clicking a point selects that valid cell (same selection as
+the Frames view, so the table page, preview and viewer follow); ←/→ step
+through the valid set. Both charts are `<canvas>` with no chart library.
+
+- **Data** — `fetch_review_scatter` (columnar: area µm² with the recorded
+  factor, deformability, valid-set position, frame index, ring ratio);
+  `review_request_density` on open, then `fetch_review_density` polled
+  (300 ms) until ready — per-point levels coloured on the contract ramp
+  (`review_density.ramp_rgb`), grid path above 5000 cells; isoelastic
+  curves from `fetch_isoelastic_curves` (`src-tauri/src/isoelastic.rs`,
+  the `resources/isoelastic_curve` file embedded at compile time, so no
+  bundle path can be missing).
+- **Contours** — stored full-run record (solid `#2a78d6`), live
+  provisional record (dashed `#eb6834`), and an unsaved full-run record:
+  the density job's (files with none stored) or one computed from the
+  context menu. "Save computed core contour to file" writes it
+  (`review_save_core_record`, asks before replacing a stored one) and
+  re-reads the info.
+- **Gestures** (`scatterGestures.ts`, the Qt `ZoomableChartView`): wheel
+  zooms ~10 %/notch about the pointer — Ctrl x only, Shift y only, over the
+  y labels y only, under the plot x only; left/middle drag pans after
+  10 px (Manhattan); a click selects the nearest visible point within 8 px,
+  ties to the lowest frame (`scatterHitTest.ts`, checked against
+  `tests/fixtures/review_scatter_hits.json` like the Qt test); double-click
+  resets the zoom only when neither click hit a point; right-click menu:
+  Reset zoom, Compute core contour from full run, Save computed core
+  contour, Colour by density, Isoelastic curves (toggles persisted in
+  `localStorage` key `yofo.review.charts`).
+- **Histogram** — the Qt `generateHistogram`: isValid cells with
+  ringRatio > 0, values clamped, 0.5-wide bins, y to ceil(1.1 × max); the
+  x range is the file's recorded `ring_ratio_min..max` (`has_recorded_config`;
+  defaults 15–25 otherwise) where Qt uses the live config.
+
+Pure maths (`chartMath.ts`) and the gesture / hit-test modules are covered
+by `charts/charts.test.ts`. Visual check: `cargo run --example
+review_fixture -- out.h5 --population 3000` writes two seeded populations
+with no stored record (density + computed contour + histogram); 20 000
+cells render with density ready in ~2–3 s.
 
 ## `ReviewApp` (the product shell)
 

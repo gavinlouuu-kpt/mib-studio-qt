@@ -100,6 +100,11 @@ pub mod review_ffi {
         /// Stored KDE records as written (empty when absent).
         pub kde_analysis_json: String,
         pub kde_live_json: String,
+        /// Recorded ring-ratio thresholds (the histogram range); config
+        /// defaults when `has_recorded_config` is false.
+        pub has_recorded_config: bool,
+        pub ring_ratio_min: f64,
+        pub ring_ratio_max: f64,
     }
 
     /// One metrics row: the full FilterResult the Qt table shows.
@@ -160,6 +165,8 @@ pub mod review_ffi {
         pub area_um2: Vec<f64>,
         pub deformability: Vec<f64>,
         pub target_group: Vec<u8>,
+        /// Ring ratio per point (the Charts histogram input).
+        pub ring_ratio: Vec<f64>,
     }
 
     /// Lifecycle of a review job (export, batch, regenerate masks, core
@@ -216,6 +223,12 @@ pub mod review_ffi {
         /// snapshot with pixel_to_micron 0.25, accounting, a stored KDE
         /// record) so bridge tests need no camera.
         fn review_fixture_write_experiment(path: &str) -> bool;
+
+        /// Dev / screenshot fixture (never a Tauri command): `cells` valid
+        /// cells in two seeded populations (Charts view: scatter, density,
+        /// histogram), `cells / 10` invalid frames, pixel_to_micron 0.25,
+        /// default recorded config, no stored KDE record.
+        fn review_fixture_write_population(path: &str, cells: u32, seed: u64) -> bool;
 
         /// Set up logging under `data_dir` (empty = no file log).
         fn initialize(self: Pin<&mut ReviewBridge>, data_dir: &str) -> bool;

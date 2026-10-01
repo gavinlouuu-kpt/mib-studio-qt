@@ -127,6 +127,16 @@ def main() -> int:
             )
             return 1
 
+    # review_density.ramp_rgb must equal the C++ ramp stops
+    # (MonitoringDensity.h densityRampColor) so both shells colour levels alike.
+    header = (REPO_ROOT / "include/backend/processing/MonitoringDensity.h").read_text(encoding="utf-8")
+    block = header.split("kStops[] = {", 1)[1].split("};", 1)[0]
+    import re
+    stops = [[int(v, 16) for v in m] for m in re.findall(r"\{0x([0-9a-fA-F]{2}), 0x([0-9a-fA-F]{2}), 0x([0-9a-fA-F]{2})\}", block)]
+    if stops != contract["review_density"]["ramp_rgb"]:
+        print("gen_bridge_contract: review_density.ramp_rgb differs from MonitoringDensity.h kStops", file=sys.stderr)
+        return 1
+
     outputs = {OUTPUT_TS: render(contract), OUTPUT_RS: render_rust(contract)}
     for path, rendered in outputs.items():
         if check:

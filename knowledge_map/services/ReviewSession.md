@@ -50,7 +50,10 @@ later the Qt [[../frontend/HdfReviewTab]] (TD-17)
   letterboxed `size`×`size` tiles (a 200-thumbnail page is one IPC pull).
 - `scatter()` → columnar valid-set arrays (`validation.isValid` rows only,
   valid-set order, µm² with the effective factor, target flags,
-  `validPosition` ↔ `frameIndex`).
+  `validPosition` ↔ `frameIndex`, ring ratio — the Charts histogram input).
+- `metadata()` also carries `hasRecordedConfig` and the recorded
+  `ringRatioMin/Max` (`readRecordedProcessingConfig`; the
+  `ProcessingConfig` defaults when absent): the histogram's x range.
 - `accountingSummary()`: the Qt status-line text.
 - `saveCoreRecordJson(json, overwrite)`: refuses an existing record unless
   `overwrite`; closes the reader, writes `/analysis @kde_core_json` through

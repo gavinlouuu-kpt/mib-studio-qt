@@ -159,7 +159,8 @@ once, in the destructor). The pane sits beside the plot and never covers it.
 - **Hit test** (`include/frontend/utils/ScatterHitTest.h`, Qt-free): visible
   points only, pixel distance ≤ max(marker, 8 px), ties → lowest frame index.
   `tests/fixtures/review_scatter_hits.json` is the shared contract with the
-  React shell (#470). Hover uses the same function (cursor + tooltip).
+  React shell (#470; `desktop/src/review/charts/scatterHitTest.ts` passes
+  it in vitest). Hover uses the same function (cursor + tooltip).
 - **Selection** (`setSelectedFrame(frame, true)`) moves the one-point
   `scatterHighlight_` (kept last in the chart's series by
   `raiseScatterHighlight()`, hidden for frames without a point) and refreshes
@@ -244,6 +245,8 @@ The React shells reproduce this tab over [[../services/ReviewSession]]
 `OverlayRenderer.cpp` (same colours and contour rules — keep them in step),
 and the session reads the **recorded** pixel-to-micron factor (TD-17); this
 tab still uses the live backend factor until PR 8 of the plan switches it.
+Likewise the React histogram takes its range from the file's recorded
+ring-ratio thresholds where this tab uses the live processing config.
 
 ## Gotchas
 

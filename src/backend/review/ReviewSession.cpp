@@ -202,6 +202,12 @@ namespace backend::review
             }
             if (!meta.pixelToMicronFromFile) meta.pixelToMicron = fallbackFactor;
 
+            {
+                services::ProcessingConfig recorded;
+                meta.hasRecordedConfig = reader.readRecordedProcessingConfig(recorded);
+                meta.ringRatioMin = meta.hasRecordedConfig ? recorded.ring_ratio_min : services::ProcessingConfig{}.ring_ratio_min;
+                meta.ringRatioMax = meta.hasRecordedConfig ? recorded.ring_ratio_max : services::ProcessingConfig{}.ring_ratio_max;
+            }
             reader.readKdeAnalysisJson(meta.kdeAnalysisJson);
             reader.readKdeLiveJson(meta.kdeLiveJson);
         }
@@ -532,6 +538,7 @@ namespace backend::review
             data.areaUm2.push_back(frame.validation.area * areaFactor);
             data.deformability.push_back(frame.validation.deformability);
             data.targetGroup.push_back(frame.validation.isTargetGroup ? 1 : 0);
+            data.ringRatio.push_back(frame.validation.ringRatio);
         }
         return data;
     }

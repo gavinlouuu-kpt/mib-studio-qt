@@ -1,5 +1,19 @@
 # Recent Work
 
+## 2026-10-01 — YOFO Review charts view (PR 3)
+
+The review panel's Charts tab now matches the Qt tab on `<canvas>`: the
+deformability-vs-area scatter coloured by the backend density levels,
+isoelastic curves (embedded in the Tauri binary), stored / live / unsaved
+full-run KDE core contours with compute and save from the context menu,
+the Qt `ZoomableChartView` gestures and a click-to-view frame pane, and
+the ring-width histogram over the file's **recorded** ring-ratio range.
+Hit testing is checked against the fixture the Qt test uses. The scatter
+gained a ring-ratio column and the info the recorded config range; a new
+`review_fixture --population N` writes chart test files (20 000 cells:
+density in ~2–3 s). Also fixed: MIB Studio never loaded `review.css` (the
+panel now imports it). Note: [[../frontend/YofoReview]].
+
 ## 2026-10-01 — YOFO Review frames view (PR 2)
 
 The shared review panel now has the Qt tab's frames layout: a virtualised

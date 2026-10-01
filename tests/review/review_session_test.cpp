@@ -96,6 +96,8 @@ namespace
         MIB_REQUIRE(hdf5.initializeDatasets(), "init datasets");
         MIB_REQUIRE(hdf5.appendFrames(valid, invalid), "append frames");
         backend::services::ProcessingConfig cfg;
+        cfg.ring_ratio_min = 12.0; // non-default: the histogram range comes from the file
+        cfg.ring_ratio_max = 30.0;
         backend::services::ProcessingService::Roi roi{4, 2, 20, 16};
         MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), cfg, roi), "experiment info");
         if (withSnapshot)
@@ -206,6 +208,7 @@ int main()
                    "TD-17 recorded factor");
         MIB_EXPECT(std::fabs(s.pixelToMicron() - kRecordedFactor) < 1e-12, "effective factor is the recorded one");
         MIB_EXPECT(!meta.kdeAnalysisJson.empty() && meta.kdeLiveJson.empty(), "stored kde records");
+        MIB_EXPECT(meta.hasRecordedConfig && meta.ringRatioMin == 12.0 && meta.ringRatioMax == 30.0, "recorded ring-ratio range");
         MIB_EXPECT(s.frameCount(true) == 10 && s.frameCount(false) == 4, "frame counts");
 
         // Metrics pages: full columns, bounded, stable totals.
@@ -274,6 +277,7 @@ int main()
         MIB_EXPECT(sc.validPosition[3] == 4 && sc.frameIndex[3] == 8, "scatter skips position 3");
         MIB_EXPECT(std::fabs(sc.areaUm2[0] - 100.0 * kRecordedFactor * kRecordedFactor) < 1e-9, "scatter µm²");
         MIB_EXPECT(sc.targetGroup[0] == 1 && sc.targetGroup[1] == 0, "target flags");
+        MIB_EXPECT(sc.ringRatio.size() == 8 && std::fabs(sc.ringRatio[0] - 0.5) < 1e-12, "ring ratio column");
         MIB_EXPECT(std::fabs(sc.pixelToMicron - kRecordedFactor) < 1e-12, "scatter factor");
 
         MIB_EXPECT(s.accountingSummary().find("run complete") != std::string::npos, "accounting text: " + s.accountingSummary());

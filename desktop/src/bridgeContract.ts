@@ -250,7 +250,60 @@ export const REVIEW_DENSITY = {
   "grid_above_points": 5000,
   "sample_seed": 20260924,
   "grid_nx": 256,
-  "grid_ny": 128
+  "grid_ny": 128,
+  "ramp_rgb": [
+    [
+      134,
+      182,
+      239
+    ],
+    [
+      109,
+      167,
+      236
+    ],
+    [
+      85,
+      152,
+      231
+    ],
+    [
+      57,
+      135,
+      229
+    ],
+    [
+      42,
+      120,
+      214
+    ],
+    [
+      37,
+      106,
+      191
+    ],
+    [
+      28,
+      92,
+      171
+    ],
+    [
+      24,
+      79,
+      149
+    ],
+    [
+      16,
+      66,
+      129
+    ],
+    [
+      13,
+      54,
+      107
+    ]
+  ],
+  "ramp_semantics": "backend/processing/MonitoringDensity.h densityRampColor: linear interpolation over the stops, t in [0,1]; level k of n uses t = k/(n-1) (kdeLevelColor)"
 } as const;
 
 export const REVIEW_PIXEL_FORMATS = {

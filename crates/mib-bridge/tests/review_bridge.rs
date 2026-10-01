@@ -117,6 +117,7 @@ fn review_bridge_reads_the_fixture_file() {
     assert_eq!((sc.valid_position[3], sc.frame_index[3]), (4, 8));
     assert!((sc.area_um2[0] - 100.0 * 0.25 * 0.25).abs() < 1e-9);
     assert_eq!((sc.target_group[0], sc.target_group[1]), (1, 0));
+    assert_eq!(sc.ring_ratio.len(), 8);
     assert!((sc.pixel_to_micron - 0.25).abs() < 1e-12);
 
     // Core record: refuse, then overwrite; reads keep working.
@@ -179,5 +180,49 @@ fn review_bridge_reads_the_fixture_file() {
     assert!(!bridge.pin_mut().fetch_review_info().file_open);
     bridge.pin_mut().shutdown();
     assert!(!bridge.is_initialized());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+#[serial]
+fn population_fixture_feeds_the_charts_view() {
+    let path = fixture_path("population");
+    let _ = std::fs::remove_file(&path);
+    assert!(!ffi::review_fixture_write_population(&path.to_string_lossy(), 0, 1), "zero cells refused");
+    assert!(ffi::review_fixture_write_population(&path.to_string_lossy(), 600, 7), "fixture write failed");
+
+    let mut bridge = ffi::new_review_bridge();
+    assert!(bridge.pin_mut().initialize(""));
+    assert!(bridge.pin_mut().review_open(&path.to_string_lossy()).ok);
+    let info = bridge.pin_mut().fetch_review_info();
+    assert_eq!((info.total_valid, info.total_invalid), (600, 60));
+    assert!(info.has_recorded_config && info.ring_ratio_min < info.ring_ratio_max);
+    assert!(info.kde_analysis_json.is_empty(), "no stored core record");
+
+    // Scatter: every valid cell, ring ratios for the histogram.
+    let sc = bridge.pin_mut().fetch_review_scatter();
+    assert_eq!(sc.area_um2.len(), 600);
+    assert_eq!(sc.ring_ratio.len(), 600);
+    assert!(sc.ring_ratio.iter().all(|r| *r > 0.0));
+    assert!(sc.area_um2.iter().all(|a| *a > 0.0) && sc.deformability.iter().all(|d| *d > 0.0));
+
+    // Density: levels parallel to the scatter, and (no stored record) a
+    // computed full-run record for the view to draw.
+    assert!(bridge.pin_mut().review_request_density(1.0, 0.9, 8, true).ok);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let density = loop {
+        let d = bridge.pin_mut().fetch_review_density();
+        if d.valid && d.ready {
+            break d;
+        }
+        assert!(std::time::Instant::now() < deadline, "density did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(density.levels.len(), 600);
+    assert!(density.levels.iter().any(|l| *l == 7), "densest level present");
+    assert!(density.computed_record_json.contains("\"contours\""), "{}", density.computed_record_json);
+
+    assert!(bridge.pin_mut().review_close().ok);
+    bridge.pin_mut().shutdown();
     let _ = std::fs::remove_file(&path);
 }

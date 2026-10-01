@@ -16,9 +16,11 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -237,6 +239,9 @@ ReviewInfo ReviewBridge::fetch_review_info() {
         out.pixel_to_micron_from_file = m.pixelToMicronFromFile;
         out.kde_analysis_json = rust::String(m.kdeAnalysisJson);
         out.kde_live_json = rust::String(m.kdeLiveJson);
+        out.has_recorded_config = m.hasRecordedConfig;
+        out.ring_ratio_min = m.ringRatioMin;
+        out.ring_ratio_max = m.ringRatioMax;
     } catch (...) {
         out.valid = false;
     }
@@ -382,6 +387,7 @@ ReviewScatter ReviewBridge::fetch_review_scatter() {
         for (auto v : s.areaUm2) out.area_um2.push_back(v);
         for (auto v : s.deformability) out.deformability.push_back(v);
         for (auto v : s.targetGroup) out.target_group.push_back(v);
+        for (auto v : s.ringRatio) out.ring_ratio.push_back(v);
     } catch (...) {
         out = ReviewScatter{};
     }
@@ -604,6 +610,60 @@ bool review_fixture_write_experiment(rust::Str path) {
         r.pixelToMicron = 0.25;
         r.contours.push_back({{1, 0.1}, {2, 0.2}, {1, 0.3}});
         if (!hdf5.writeKdeAnalysisJson(backend::monitoring::toJson(r))) return false;
+        hdf5.closeFile();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::uint64_t seed) {
+    try {
+        using backend::services::Hdf5Service;
+        using backend::services::ProcessedFrame;
+        constexpr int kH = 48, kW = 64;
+        constexpr double kFactor = 0.25; // µm per px
+        if (cells == 0 || cells > 200000) return false;
+        std::mt19937_64 rng(seed);
+        std::normal_distribution<double> unit(0.0, 1.0);
+        std::uniform_real_distribution<double> coin(0.0, 1.0);
+        auto make = [&](std::uint64_t idx, bool valid) {
+            // Two populations: small stiff cells (70 %) and large soft ones.
+            const bool small = coin(rng) < 0.7;
+            const double areaUm2 = std::max(20.0, small ? 90.0 + 15.0 * unit(rng) : 150.0 + 22.0 * unit(rng));
+            const double deform = std::clamp(small ? 0.035 + 0.010 * unit(rng) : 0.070 + 0.015 * unit(rng), 0.001, 0.3);
+            const double radiusPx = std::sqrt(areaUm2 / (kFactor * kFactor) / 3.14159265358979);
+            ProcessedFrame f;
+            f.index = idx;
+            f.timestampNs = (idx + 1) * 1'000'000ULL;
+            f.originalImage = cv::Mat(kH, kW, CV_8UC1, cv::Scalar(90));
+            f.processedImage = cv::Mat::zeros(kH, kW, CV_8UC1);
+            const cv::Point c(kW / 2, kH / 2);
+            const cv::Size axes(std::max(2, static_cast<int>(radiusPx * (1.0 + deform))), std::max(2, static_cast<int>(radiusPx * (1.0 - deform))));
+            cv::ellipse(f.originalImage, c, axes, 0, 0, 360, cv::Scalar(40), 2);
+            cv::ellipse(f.processedImage, c, axes, 0, 0, 360, cv::Scalar(255), -1);
+            f.validation.isValid = valid;
+            f.validation.isTargetGroup = valid && !small;
+            f.validation.hasSingleInnerContour = valid;
+            f.validation.objectCount = 1;
+            f.validation.area = areaUm2 / (kFactor * kFactor);
+            f.validation.deformability = deform;
+            f.validation.ringRatio = valid ? 20.0 + 2.5 * unit(rng) : 0.0;
+            return f;
+        };
+        std::vector<ProcessedFrame> valid, invalid;
+        std::uint64_t idx = 0;
+        for (std::uint32_t i = 0; i < cells; ++i) {
+            valid.push_back(make(idx++, true));
+            if (i % 10 == 9) invalid.push_back(make(idx++, false));
+        }
+        Hdf5Service hdf5;
+        if (!hdf5.openFile(toStd(path))) return false;
+        if (!hdf5.initializeDatasets()) return false;
+        if (!hdf5.appendFrames(valid, invalid)) return false;
+        backend::services::ProcessingConfig cfg;
+        if (!hdf5.writeExperimentInfo(1000, 1000 + idx * 1'000'000ULL, valid.size(), invalid.size(), cfg, {0, 0, kW, kH})) return false;
+        if (!hdf5.writeRunSnapshotJson("{\"schema\":1,\"pixel_to_micron\":0.25,\"profile_id\":\"population\"}", "{}")) return false;
         hdf5.closeFile();
         return true;
     } catch (...) {

@@ -61,6 +61,9 @@ export interface ReviewInfo {
   pixel_to_micron_from_file: boolean;
   kde_analysis_json: string;
   kde_live_json: string;
+  has_recorded_config: boolean;
+  ring_ratio_min: number;
+  ring_ratio_max: number;
 }
 
 export interface ReviewRow {
@@ -113,6 +116,7 @@ export interface ReviewScatter {
   area_um2: number[];
   deformability: number[];
   target_group: number[];
+  ring_ratio: number[];
 }
 
 export interface ReviewEvent {
@@ -189,6 +193,9 @@ async function command(name: string, args?: Record<string, unknown>): Promise<Re
 
 export const reviewBridge = {
   abiVersion: () => invoke<number>("review_abi_version"),
+  /** Isoelastic reference curves embedded in the app (descending E). */
+  isoelasticCurves: () =>
+    invoke<{ source: string; curves: { emodulus_kpa: number; points: [number, number][] }[] }>("fetch_isoelastic_curves"),
   /** File passed on the command line / by a file association ("" = none). */
   launchPath: () => invoke<string>("review_launch_path"),
   open: async (path: string) => {

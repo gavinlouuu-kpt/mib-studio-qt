@@ -82,6 +82,11 @@ namespace backend::review
         // snapshot `pixel_to_micron`), else the host-supplied fallback.
         double pixelToMicron{0.0};
         bool pixelToMicronFromFile{false};
+        // The recorded processing config's ring-ratio thresholds (histogram
+        // range); the ProcessingConfig defaults when the file has none.
+        bool hasRecordedConfig{false};
+        double ringRatioMin{15.0};
+        double ringRatioMax{25.0};
         // Stored KDE records (JSON as written; empty when absent).
         std::string kdeAnalysisJson;
         std::string kdeLiveJson;
@@ -157,6 +162,7 @@ namespace backend::review
         std::vector<double> areaUm2;
         std::vector<double> deformability;
         std::vector<std::uint8_t> targetGroup;
+        std::vector<double> ringRatio; // histogram input (Qt bins ringRatio > 0)
     };
 
 } // namespace backend::review

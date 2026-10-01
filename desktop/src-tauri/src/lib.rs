@@ -27,6 +27,7 @@ use tauri::State;
 #[cfg(not(feature = "review-only"))]
 mod event_transport;
 mod frame_packet;
+mod isoelastic;
 mod platform;
 mod review;
 pub mod updater;
@@ -1691,6 +1692,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + 
         fetch_trigger_status,
         review::review_abi_version,
         review::review_launch_path,
+        isoelastic::fetch_isoelastic_curves,
         review::review_open,
         review::review_close,
         review::review_set_pixel_to_micron,
@@ -1730,6 +1732,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + 
         platform::shell_log,
         review::review_abi_version,
         review::review_launch_path,
+        isoelastic::fetch_isoelastic_curves,
         review::review_open,
         review::review_close,
         review::review_set_pixel_to_micron,

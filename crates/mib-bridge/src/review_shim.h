@@ -75,5 +75,6 @@ private:
 std::unique_ptr<ReviewBridge> new_review_bridge();
 std::uint32_t review_bridge_abi_version();
 bool review_fixture_write_experiment(rust::Str path);
+bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::uint64_t seed);
 
 } // namespace mib_review_bridge

@@ -110,6 +110,9 @@ pub struct ReviewInfo {
     pixel_to_micron_from_file: bool,
     kde_analysis_json: String,
     kde_live_json: String,
+    has_recorded_config: bool,
+    ring_ratio_min: f64,
+    ring_ratio_max: f64,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -174,6 +177,7 @@ pub struct ReviewScatter {
     area_um2: Vec<f64>,
     deformability: Vec<f64>,
     target_group: Vec<u8>,
+    ring_ratio: Vec<f64>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -324,6 +328,9 @@ pub fn fetch_review_info(state: State<AppState>) -> Result<ReviewInfo, String> {
         pixel_to_micron_from_file: m.pixel_to_micron_from_file,
         kde_analysis_json: m.kde_analysis_json,
         kde_live_json: m.kde_live_json,
+        has_recorded_config: m.has_recorded_config,
+        ring_ratio_min: m.ring_ratio_min,
+        ring_ratio_max: m.ring_ratio_max,
     })
 }
 
@@ -462,6 +469,7 @@ pub fn fetch_review_scatter(state: State<AppState>) -> Result<ReviewScatter, Str
         area_um2: s.area_um2,
         deformability: s.deformability,
         target_group: s.target_group,
+        ring_ratio: s.ring_ratio,
     })
 }
 
