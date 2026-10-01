@@ -429,9 +429,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "select the mock camera explicitly, or install/connect the hardware",
                                "effective=" + c.camera.effective));
     } else if (c.camera.simulated) {
-        r.gates.push_back(gate("camera.source", GateStatus::Warn, "simulated (mock) camera selected",
+        r.gates.push_back(gate("camera.source", GateStatus::Warn, "simulated camera source selected",
                                "expected for development/tests; not a hardware run",
-                               "effective=mock label=" + c.camera.label));
+                               "effective=" + c.camera.effective + " label=" + c.camera.label));
     } else if (c.camera.effective == "unknown") {
         r.gates.push_back(gate("camera.source", GateStatus::Unavailable, "no camera source configured",
                                "connect a camera or configure the mock camera"));

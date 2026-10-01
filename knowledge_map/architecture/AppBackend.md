@@ -16,6 +16,14 @@ capture and serial hardware are released. Accessors: `deviceDiscovery()`,
 `startupDiscovery()`. Both members are declared after the services they
 reference so they are destroyed first.
 
+## Aravis source selection (2026-09-27)
+
+`MIB_CAMERA_MODE=aravis` configures the optional [[../camera/AravisCamera]]
+factory. `MIB_ARAVIS_DEVICE_ID` selects a device and `MIB_ARAVIS_FAKE` is an
+explicit Fake-interface opt-in. If Aravis is disabled at build time, the
+request records an unavailable effective source and a null factory so capture
+reports the configuration error; it does not silently substitute MockCamera.
+
 ## Explicit hardware shutdown (2026-09-15)
 
 `shutdown()` now disconnects autofocus, both syringe pumps, and the pulse

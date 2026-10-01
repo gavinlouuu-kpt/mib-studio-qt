@@ -160,6 +160,7 @@ namespace backend
                 Mock,
                 Hardware,
                 MindVision,
+                Aravis,
             };
             Mode mode{Mode::None};
             int interfaceIndex{-1};
@@ -274,6 +275,9 @@ namespace backend
         mutable std::mutex mindVisionSensorMutex_;
         MindVisionSensor mindVisionSensor_{};
         bool mockCameraConfigured_{false};
+        bool aravisCameraConfigured_{false};
+        bool aravisFake_{false};
+        std::string aravisDeviceId_;
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.
         std::string lastCameraScriptPath_;

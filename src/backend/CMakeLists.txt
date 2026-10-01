@@ -269,6 +269,12 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
+if(MIB_HAS_ARAVIS)
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/camera/aravis/AravisCamera.cpp
+    )
+endif()
+
 target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
 
 
@@ -287,6 +293,13 @@ else()
     target_sources(mib_backend PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/YoloService.stub.cpp
     )
+endif()
+
+if(MIB_HAS_ARAVIS)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ARAVIS=1)
+    target_link_libraries(mib_backend PUBLIC PkgConfig::MIB_ARAVIS)
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ARAVIS=0)
 endif()
 
 # Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the

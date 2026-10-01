@@ -62,6 +62,12 @@
 #ifndef MIB_HAS_MINDVISION
 #define MIB_HAS_MINDVISION 0
 #endif
+#ifndef MIB_HAS_ARAVIS
+#define MIB_HAS_ARAVIS 0
+#endif
+#if MIB_HAS_ARAVIS
+#include "backend/camera/aravis/AravisCamera.h"
+#endif
 
 namespace backend
 {
@@ -743,6 +749,9 @@ namespace backend
                 captureService_->setCameraFactory([options]() mutable
                                                   { return std::make_unique<::camera::mock::MockCamera>(options); });
                 mockCameraConfigured_ = true;
+                aravisCameraConfigured_ = false;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
                 selectedIfIndex_ = -1;
                 selectedDevIndex_ = -1;
                 selectedMvCameraIndex_ = -1;
@@ -757,6 +766,7 @@ namespace backend
             };
 
             requestedCameraSource_ = cameraMode == "mock" ? "mock"
+                                     : cameraMode == "aravis" ? "aravis"
                                      : cameraMode == "mindvision" ? "mindvision"
                                      : (cameraMode == "egrabber" || cameraMode == "hardware") ? "egrabber"
                                      : cameraMode;
@@ -764,6 +774,60 @@ namespace backend
             if (cameraMode == "mock")
             {
                 configureMock();
+            }
+            else if (cameraMode == "aravis")
+            {
+#if MIB_HAS_ARAVIS
+                ::camera::aravis::AravisCameraOptions options;
+                if (const char *envId = std::getenv("MIB_ARAVIS_DEVICE_ID"))
+                    options.deviceId = envId;
+                if (const char *envFake = std::getenv("MIB_ARAVIS_FAKE"))
+                {
+                    const auto fakeValue = toLower(envFake);
+                    options.useFake = fakeValue == "1" || fakeValue == "true" ||
+                                      fakeValue == "yes";
+                }
+                aravisDeviceId_ = options.deviceId;
+                aravisFake_ = options.useFake;
+                captureService_->setCameraFactory([options]() mutable {
+                    return std::make_unique<::camera::aravis::AravisCamera>(options);
+                });
+                mockCameraConfigured_ = false;
+                aravisCameraConfigured_ = true;
+                selectedIfIndex_ = -1;
+                selectedDevIndex_ = -1;
+                selectedMvCameraIndex_ = -1;
+                selectedLabel_ = options.deviceId.empty() ? "Aravis camera (auto)" :
+                                 "Aravis camera " + options.deviceId;
+                if (options.useFake)
+                    selectedLabel_ += " (Fake)";
+                lastMindVisionConfigPath_.clear();
+                effectiveCameraSource_ = "aravis";
+                SPDLOG_INFO("AppBackend: configuring Aravis camera (device={}, fake={})",
+                            options.deviceId.empty() ? "<auto>" : options.deviceId,
+                            options.useFake);
+#else
+                // An explicit Aravis request is a hard configuration error in
+                // an Aravis-disabled binary. Keep a null factory so capture
+                // reports the failure instead of silently running MockCamera.
+                captureService_->setCameraFactory([]() -> std::unique_ptr<::camera::common::ICamera> {
+                    return nullptr;
+                });
+                mockCameraConfigured_ = false;
+                // Keep the explicit source selected so startup discovery does
+                // not silently replace it with a hardware/mock backend.
+                aravisCameraConfigured_ = true;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
+                effectiveCameraSource_ = "unavailable";
+                cameraFallbackReason_ = "Aravis support is disabled in this build (MIB_ENABLE_ARAVIS=OFF)";
+                selectedIfIndex_ = -1;
+                selectedDevIndex_ = -1;
+                selectedMvCameraIndex_ = -1;
+                selectedLabel_.clear();
+                lastMindVisionConfigPath_.clear();
+                SPDLOG_ERROR("AppBackend: Aravis mode requested but Aravis support is unavailable");
+#endif
             }
             else if (cameraMode == "mindvision")
             {
@@ -798,6 +862,9 @@ namespace backend
                         });
                 });
                 mockCameraConfigured_ = false;
+                aravisCameraConfigured_ = false;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
                 effectiveCameraSource_ = "mindvision";
                 selectedIfIndex_ = -1;
                 selectedDevIndex_ = -1;
@@ -824,6 +891,9 @@ namespace backend
                 captureService_->setCameraFactory([]()
                                                   { return std::make_unique<::camera::common::EGrabberCamera>(); });
                 mockCameraConfigured_ = false;
+                aravisCameraConfigured_ = false;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
                 effectiveCameraSource_ = "egrabber";
                 selectedMvCameraIndex_ = -1;
             #else
@@ -870,6 +940,9 @@ namespace backend
             selectedLabel_.clear();
             lastMindVisionConfigPath_.clear();
             mockCameraConfigured_ = false;
+            aravisCameraConfigured_ = false;
+            aravisFake_ = false;
+            aravisDeviceId_.clear();
         }
 
         if (bootPlayback)
@@ -924,6 +997,9 @@ namespace backend
         requestedCameraSource_ = "mock";
         effectiveCameraSource_ = "mock";
         cameraFallbackReason_.clear();
+        aravisCameraConfigured_ = false;
+        aravisFake_ = false;
+        aravisDeviceId_.clear();
         captureService_->setCameraFactory([options]() mutable
                                           { return std::make_unique<::camera::mock::MockCamera>(options); });
         selectedIfIndex_ = -1;
@@ -944,6 +1020,10 @@ namespace backend
         if (mockCameraConfigured_)
         {
             out.mode = CameraSelectionSnapshot::Mode::Mock;
+        }
+        else if (aravisCameraConfigured_)
+        {
+            out.mode = CameraSelectionSnapshot::Mode::Aravis;
         }
         else if (selectedMvCameraIndex_ >= 0)
         {
@@ -1012,6 +1092,9 @@ namespace backend
         selectedMvCameraIndex_ = -1;
         lastMindVisionConfigPath_.clear();
         mockCameraConfigured_ = false;
+        aravisCameraConfigured_ = false;
+        aravisFake_ = false;
+        aravisDeviceId_.clear();
         effectiveCameraSource_ = "egrabber";
 
         captureService_->setCameraFactory([interfaceIndex, deviceIndex]()
@@ -1034,6 +1117,9 @@ namespace backend
         selectedDevIndex_ = -1;
         selectedLabel_ = label;
         mockCameraConfigured_ = false;
+        aravisCameraConfigured_ = false;
+        aravisFake_ = false;
+        aravisDeviceId_.clear();
         requestedCameraSource_ = "mindvision";
         cameraFallbackReason_.clear();
 
@@ -1346,7 +1432,8 @@ namespace backend
         info.requested = requestedCameraSource_;
         info.effective = effectiveCameraSource_;
         info.label = selectedLabel_;
-        info.simulated = effectiveCameraSource_ == "mock";
+        info.simulated = effectiveCameraSource_ == "mock" ||
+                         (effectiveCameraSource_ == "aravis" && aravisFake_);
         info.fallback = !cameraFallbackReason_.empty() ||
                         (requestedCameraSource_ != "unknown" && requestedCameraSource_ != effectiveCameraSource_);
         info.fallbackReason = cameraFallbackReason_;
@@ -1364,7 +1451,8 @@ namespace backend
         // Camera is configured if a hardware, MindVision, or mock camera is selected.
         return (selectedIfIndex_ >= 0 && selectedDevIndex_ >= 0)
             || (selectedMvCameraIndex_ >= 0)
-            || mockCameraConfigured_;
+            || mockCameraConfigured_
+            || aravisCameraConfigured_;
     }
 
     bool AppBackend::startFrameRecording(const std::string& hdf5FilePath) {

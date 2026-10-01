@@ -88,6 +88,18 @@ sections and Conan profile it needs):
 
 ## Targets
 
+## Optional Aravis Fake validation
+
+Aravis is an optional Qt-free backend dependency and is disabled by default.
+For a local Fake-interface validation build, provision the pinned 0.9.3 source
+described by `env/aravis.toml` (USB, packet-socket, viewer and GStreamer can be
+disabled), then configure with `MIB_ENABLE_ARAVIS=ON` and set
+`PKG_CONFIG_PATH` to that prefix. Build `mib_backend_tests` and run the
+`camera.aravis_*` plus `backend.aravis_*` CTest cases. `MIB_CAMERA_MODE=aravis`
+requires `MIB_ARAVIS_FAKE=1` for the Fake device; it never silently falls back
+to the folder replay camera. See [[../camera/AravisCamera]] and
+[[../task/2026-09-27-aravis-framework]].
+
 | Target | Kind | Purpose |
 |---|---|---|
 | `mib_processing` | STATIC library | Qt-free processing core: `ProcessingService`, `EModulusLut`, `BatchMaskSources`, `Hdf5Service`, `FrameStore`, `Tools`, `CrashStateMirror`. Links only OpenCV + HDF5 + spdlog + STL. |

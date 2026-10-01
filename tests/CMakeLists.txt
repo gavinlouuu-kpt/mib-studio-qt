@@ -67,6 +67,36 @@ function(mib_backend_test_link target)
     endif()
 endfunction()
 
+if(MIB_HAS_ARAVIS)
+    find_package(Threads REQUIRED)
+    mib_add_backend_test_executable(aravis_camera_test camera/aravis_camera_test.cpp)
+    add_test(NAME camera.aravis_fake COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_test)
+    set_tests_properties(camera.aravis_fake PROPERTIES LABELS "camera;aravis;concurrency" TIMEOUT 30)
+    mib_add_backend_test_executable(aravis_capture_lifecycle_test backend/aravis_capture_lifecycle_test.cpp)
+    mib_backend_test_link(aravis_capture_lifecycle_test PRIVATE Threads::Threads)
+    add_test(NAME backend.aravis_capture_lifecycle
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_capture_lifecycle_test)
+    set_tests_properties(backend.aravis_capture_lifecycle PROPERTIES
+                         LABELS "backend;camera;aravis;concurrency;stress" TIMEOUT 30)
+    mib_add_backend_test_executable(aravis_camera_stress_test camera/aravis_camera_stress_test.cpp)
+    mib_backend_test_link(aravis_camera_stress_test PRIVATE Threads::Threads)
+    add_test(NAME camera.aravis_stress COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_stress_test)
+    set_tests_properties(camera.aravis_stress PROPERTIES LABELS "camera;aravis;concurrency;stress" TIMEOUT 90)
+    mib_add_backend_test_executable(aravis_pipeline_e2e integration/aravis_pipeline_e2e_test.cpp)
+    mib_backend_test_link(aravis_pipeline_e2e PRIVATE Threads::Threads)
+    add_test(NAME integration.aravis_pipeline_e2e
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_pipeline_e2e)
+    set_tests_properties(integration.aravis_pipeline_e2e PROPERTIES
+                         LABELS "backend;camera;aravis;integration;e2e;concurrency"
+                         TIMEOUT 90)
+endif()
+
+# Explicit Aravis source selection is validated in both ON and OFF builds:
+# OFF must remain visibly unavailable instead of silently falling back.
+mib_add_backend_test_executable(aravis_appbackend_source_test backend/aravis_appbackend_source_test.cpp)
+add_test(NAME backend.aravis_appbackend_source COMMAND $<TARGET_FILE:mib_backend_tests> aravis_appbackend_source_test)
+set_tests_properties(backend.aravis_appbackend_source PROPERTIES LABELS "backend;aravis" TIMEOUT 60)
+
 mib_add_backend_test_executable(mib_backend_smoke_test backend/backend_smoke_test.cpp)
 add_test(NAME backend.smoke COMMAND $<TARGET_FILE:mib_backend_smoke_test>)
 set_tests_properties(backend.smoke PROPERTIES LABELS "backend")

@@ -24,7 +24,7 @@ Jump to the notes that match your task:
 
 | If you're touching... | Start here |
 |---|---|
-| Frame acquisition / camera | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`) |
+| Frame acquisition / camera | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`, `[[camera/AravisCamera]]`) |
 | Image analysis / metrics | [[services/ProcessingService]] + [[domain/Microscopy-Pipeline]] |
 | Saving/reading experiment files | [[services/Hdf5Service]] + [[data-model/HDF5-Storage]] |
 | Exporting CSV/TIFF from HDF5 (native or PySide tool) | [[services/HdfExportService]] + [[frontend/HdfReviewTab]] + [[task/2026-08-24-exporter-stability]] |
@@ -57,6 +57,11 @@ Jump to the notes that match your task:
 ## Step 5 — Domain lookup
 
 9. If microscopy terms are unfamiliar, skim [[domain/Glossary]].
+
+For the optional Aravis consumer, read [[camera/AravisCamera]] and
+[[task/2026-09-27-aravis-framework]]. It is a real Aravis Fake-interface
+consumer for copied Mono8 preview frames; it does not prove the future
+PZ7035 PL/driver/GenTL path.
 
 ## Ground rules
 
