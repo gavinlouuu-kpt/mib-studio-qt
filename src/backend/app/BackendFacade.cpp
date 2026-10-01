@@ -639,6 +639,44 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Configured));
             return {true, BackendCommandType::Camera, "Camera reset requested"};
         }
+        case CameraCommandAction::SetCameraOverview:
+        {
+            const bool wasRunning = backend_.capture().isRunning();
+            std::string error;
+            if (!backend_.setCameraOverview(command.cameraOverview, &error))
+            {
+                const std::string message = error.empty() ? "Camera mode change failed" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            const std::string mode = command.cameraOverview ? "full sensor overview" : "experiment window";
+            if (wasRunning && !backend_.capture().isRunning())
+            {
+                emitEvent(makeCameraStatus(CameraState::Starting));
+                if (!backend_.capture().start())
+                {
+                    emitEvent(makeCameraStatus(CameraState::Error));
+                    const std::string message = "Camera switched to the " + mode + " but did not restart";
+                    emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                    return {false, BackendCommandType::Camera, message};
+                }
+                emitEvent(makeCameraStatus(CameraState::Running));
+            }
+            return {true, BackendCommandType::Camera, "Camera shows the " + mode};
+        }
+        case CameraCommandAction::SaveCameraRoi:
+        {
+            std::string error;
+            if (!backend_.saveCameraRoi(command.roiX, command.roiY, command.roiWidth, command.roiHeight, &error))
+            {
+                const std::string message = error.empty() ? "Camera ROI was not saved" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            return {true, BackendCommandType::Camera,
+                    "Camera ROI saved: " + std::to_string(command.roiWidth) + "x" + std::to_string(command.roiHeight) +
+                        " at (" + std::to_string(command.roiX) + ", " + std::to_string(command.roiY) + ")"};
+        }
         case CameraCommandAction::StartCapture:
             emitEvent(makeCameraStatus(CameraState::Starting));
             if (!backend_.capture().start())
@@ -2371,6 +2409,28 @@ app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const 
 }
 
 namespace backend::bridge {
+std::string BackendFacade::fetchCameraGeometryJson() const {
+    if (!initialized_) return nlohmann::json{{"supported", false}}.dump();
+    const auto g = backend_.cameraGeometry();
+    nlohmann::json session = nlohmann::json::parse(g.sessionJson, nullptr, false);
+    if (session.is_discarded()) session = nlohmann::json::object();
+    return nlohmann::json{
+        {"supported", g.supported},
+        {"overview", g.overview},
+        {"camera", g.camera},
+        {"sensor_width", g.sensorWidth},
+        {"sensor_height", g.sensorHeight},
+        {"roi", {{"x", g.roiX}, {"y", g.roiY}, {"width", g.roiWidth}, {"height", g.roiHeight}}},
+        {"width_increment", g.widthIncrement},
+        {"height_increment", g.heightIncrement},
+        {"offset_x_increment", g.offsetXIncrement},
+        {"offset_y_increment", g.offsetYIncrement},
+        {"min_width", g.minWidth},
+        {"min_height", g.minHeight},
+        {"session", session},
+    }.dump();
+}
+
 std::string BackendFacade::fetchPreviewBufferJson() const {
     uint64_t first = 0, last = 0; size_t count = 0;
     const bool available = initialized_ && backend_.playback().queryRange(first, last, count);

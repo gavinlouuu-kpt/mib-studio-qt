@@ -306,6 +306,7 @@ namespace backend
 
     bool AppBackend::initialize(const std::string &dataDir)
     {
+        dataDir_ = dataDir;
         std::filesystem::create_directories(dataDir);
 
         // Use user-writable location for logs if dataDir is in Program Files
@@ -788,22 +789,6 @@ namespace backend
                     options.useFake = fakeValue == "1" || fakeValue == "true" ||
                                       fakeValue == "yes";
                 }
-                // Interim deployment settings until the UI's camera controls drive the
-                // Aravis features (YOFO Studio S5): rate, exposure, sensor window. The adapter
-                // reads every value back and reports clamps (AravisCamera::sessionInfo).
-                if (const char *envFps = std::getenv("MIB_ARAVIS_FPS"))
-                    options.frameRateHz = std::atof(envFps);
-                if (const char *envExposure = std::getenv("MIB_ARAVIS_EXPOSURE_US"))
-                    options.exposureUs = std::atof(envExposure);
-                if (const char *envRegion = std::getenv("MIB_ARAVIS_REGION"))
-                {
-                    ::camera::aravis::AravisRegion region;
-                    if (std::sscanf(envRegion, "%d,%d,%d,%d", &region.x, &region.y, &region.width,
-                                    &region.height) == 4)
-                        options.region = region;
-                    else
-                        SPDLOG_WARN("AppBackend: ignoring MIB_ARAVIS_REGION='{}' (expected X,Y,W,H)", envRegion);
-                }
                 if (const char *envGige = std::getenv("MIB_ARAVIS_GIGE"))
                 {
                     const auto gigeValue = toLower(envGige);
@@ -812,11 +797,12 @@ namespace backend
                 }
                 aravisDeviceId_ = options.deviceId;
                 aravisFake_ = options.useFake;
-                captureService_->setCameraFactory([options]() mutable {
-                    return std::make_unique<::camera::aravis::AravisCamera>(options);
-                });
+                aravisGigE_ = options.enableGigEVision;
+                aravisOverview_.store(false);
+                loadAravisProfile();
                 mockCameraConfigured_ = false;
                 aravisCameraConfigured_ = true;
+                installAravisFactory();
                 selectedIfIndex_ = -1;
                 selectedDevIndex_ = -1;
                 selectedMvCameraIndex_ = -1;
@@ -1294,13 +1280,18 @@ namespace backend
     }
 
     void AppBackend::releaseMindVisionOverviewStore() {
-        if (!mindVisionOverview_.load()) return;
+        // Also releases an Aravis Overview: any camera re-selection leaves Overview.
+        const bool aravis = aravisOverview_.load();
+        if (!mindVisionOverview_.load() && !aravis) return;
         captureService_->stop();
         processingService_->stopRealtime();
-        frameStore_ = std::make_shared<playback::FrameStore>(mindVisionExperimentCapacity_);
+        const size_t capacity = aravis ? (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512)
+                                       : mindVisionExperimentCapacity_;
+        frameStore_ = std::make_shared<playback::FrameStore>(capacity);
         captureService_->setFrameStore(frameStore_);
         playbackService_->setFrameStore(frameStore_);
         mindVisionOverview_.store(false);
+        aravisOverview_.store(false);
     }
 
     AppBackend::MindVisionSensor AppBackend::mindVisionSensor() const {
@@ -1407,6 +1398,297 @@ namespace backend
         } catch (const std::exception& e) {
             return fail(e.what());
         }
+    }
+
+    std::string AppBackend::aravisProfilePath() const
+    {
+        if (const char* env = std::getenv("MIB_ARAVIS_PROFILE"); env && *env) return env;
+        return (std::filesystem::u8path(dataDir_.empty() ? "." : dataDir_) / "config" / "aravis-camera.json")
+            .string();
+    }
+
+    void AppBackend::loadAravisProfile()
+    {
+        AravisProfile profile;
+        // The interim deployment variables seed a profile that does not exist yet.
+        if (const char* env = std::getenv("MIB_ARAVIS_FPS")) profile.experimentFps = std::atof(env);
+        if (const char* env = std::getenv("MIB_ARAVIS_EXPOSURE_US")) profile.experimentExposureUs = std::atof(env);
+        if (const char* env = std::getenv("MIB_ARAVIS_REGION")) {
+            if (std::sscanf(env, "%d,%d,%d,%d", &profile.x, &profile.y, &profile.width, &profile.height) == 4)
+                profile.hasRoi = true;
+            else
+                SPDLOG_WARN("AppBackend: ignoring MIB_ARAVIS_REGION='{}' (expected X,Y,W,H)", env);
+        }
+        const auto path = aravisProfilePath();
+        std::ifstream input(std::filesystem::u8path(path));
+        if (input) {
+            try {
+                const auto json = nlohmann::json::parse(input);
+                if (json.contains("roi") && json["roi"].is_object()) {
+                    const auto& roi = json["roi"];
+                    profile.x = roi.value("x", 0);
+                    profile.y = roi.value("y", 0);
+                    profile.width = roi.value("width", 0);
+                    profile.height = roi.value("height", 0);
+                    profile.hasRoi = profile.width > 0 && profile.height > 0;
+                }
+                if (json.contains("experiment")) {
+                    profile.experimentFps = json["experiment"].value("frame_rate_hz", profile.experimentFps);
+                    profile.experimentExposureUs = json["experiment"].value("exposure_us", profile.experimentExposureUs);
+                }
+                if (json.contains("overview")) {
+                    profile.overviewFps = json["overview"].value("frame_rate_hz", profile.overviewFps);
+                    profile.overviewExposureUs = json["overview"].value("exposure_us", profile.overviewExposureUs);
+                }
+            } catch (const std::exception& e) {
+                SPDLOG_WARN("AppBackend: ignoring malformed Aravis profile {}: {}", path, e.what());
+            }
+        }
+        aravisProfile_ = profile;
+        SPDLOG_INFO("AppBackend: Aravis profile {}: window {}, experiment {} Hz / {} us, overview {} Hz / {} us",
+                    path,
+                    profile.hasRoi ? fmt::format("{}x{}+{}+{}", profile.width, profile.height, profile.x, profile.y)
+                                   : std::string("device default"),
+                    profile.experimentFps, profile.experimentExposureUs, profile.overviewFps,
+                    profile.overviewExposureUs);
+    }
+
+    bool AppBackend::saveAravisProfile(const AravisProfile& profile, std::string* errorOut)
+    {
+        try {
+            nlohmann::json json;
+            if (profile.hasRoi)
+                json["roi"] = {{"x", profile.x}, {"y", profile.y}, {"width", profile.width}, {"height", profile.height}};
+            json["experiment"] = {{"frame_rate_hz", profile.experimentFps}, {"exposure_us", profile.experimentExposureUs}};
+            json["overview"] = {{"frame_rate_hz", profile.overviewFps}, {"exposure_us", profile.overviewExposureUs}};
+            const auto path = std::filesystem::u8path(aravisProfilePath());
+            std::filesystem::create_directories(path.parent_path());
+            auto temporary = path;
+            temporary += ".tmp";
+            {
+                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+                output << json.dump(2) << "\n";
+                if (!output) {
+                    if (errorOut) *errorOut = "Cannot write the Aravis camera profile";
+                    return false;
+                }
+            }
+            std::error_code ec;
+            std::filesystem::rename(temporary, path, ec);
+            if (ec) {
+                if (errorOut) *errorOut = "Cannot replace the Aravis camera profile: " + ec.message();
+                return false;
+            }
+            return true;
+        } catch (const std::exception& e) {
+            if (errorOut) *errorOut = e.what();
+            return false;
+        }
+    }
+
+    void AppBackend::installAravisFactory()
+    {
+#if MIB_HAS_ARAVIS
+        ::camera::aravis::AravisCameraOptions options;
+        options.deviceId = aravisDeviceId_;
+        options.useFake = aravisFake_;
+        options.enableGigEVision = aravisGigE_;
+        const auto& profile = aravisProfile_;
+        if (aravisOverview_.load()) {
+            options.fullSensor = true;
+            if (profile.overviewFps > 0) options.frameRateHz = profile.overviewFps;
+            if (profile.overviewExposureUs > 0) options.exposureUs = profile.overviewExposureUs;
+        } else {
+            if (profile.hasRoi)
+                options.region = ::camera::aravis::AravisRegion{profile.x, profile.y, profile.width, profile.height};
+            if (profile.experimentFps > 0) options.frameRateHz = profile.experimentFps;
+            if (profile.experimentExposureUs > 0) options.exposureUs = profile.experimentExposureUs;
+        }
+        options.onSession = [this, overview = aravisOverview_.load()](const ::camera::aravis::AravisSessionInfo& info) {
+            AravisSessionGeometry geometry;
+            geometry.sensorWidth = info.sensorWidth;
+            geometry.sensorHeight = info.sensorHeight;
+            geometry.widthIncrement = info.widthIncrement;
+            geometry.heightIncrement = info.heightIncrement;
+            geometry.offsetXIncrement = info.offsetXIncrement;
+            geometry.offsetYIncrement = info.offsetYIncrement;
+            geometry.json = nlohmann::json{
+                {"overview", overview},
+                {"vendor", info.vendor},
+                {"model", info.model},
+                {"region", {{"x", info.region.x}, {"y", info.region.y}, {"width", info.region.width},
+                            {"height", info.region.height}}},
+                {"frame_rate_hz", info.frameRateHz},
+                {"frame_rate_max_hz", info.frameRateMaxHz},
+                {"frame_rate_clamped", info.frameRateClamped},
+                {"frame_rate_limit", info.frameRateLimitReason},
+                {"exposure_us", info.exposureUs},
+                {"exposure_max_us", info.exposureMaxUs},
+                {"exposure_clamped", info.exposureClamped},
+                {"band_count", info.bandCount},
+                {"delivered_frame_rate_hz", info.deliveredFrameRateHz},
+                {"delivered_limit", info.deliveredFrameRateLimit},
+            }.dump();
+            std::lock_guard<std::mutex> lock(aravisSessionMutex_);
+            aravisSession_ = std::move(geometry);
+        };
+        captureService_->setCameraFactory([options]() mutable {
+            return std::make_unique<::camera::aravis::AravisCamera>(options);
+        });
+#endif
+    }
+
+    bool AppBackend::setAravisOverview(bool overview, std::string* errorOut)
+    {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing camera mode");
+        if (aravisOverview_.load() == overview) return true;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        if (overview) {
+            // Overview frames must not reach processing (wrong timing, auto-background).
+            aravisRealtimeBeforeOverview_ = processingService_->isRealtimeEnabled();
+            processingService_->setRealtimeEnabled(false);
+            aravisExperimentCapacity_ = frameStore_->capacity();
+        } else {
+            processingService_->setRealtimeEnabled(aravisRealtimeBeforeOverview_);
+        }
+        // A new store keeps full-sensor images out of the experiment store and bounds
+        // overview memory, as for MindVision.
+        frameStore_ = std::make_shared<playback::FrameStore>(
+            overview ? 8 : (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512));
+        captureService_->setFrameStore(frameStore_);
+        playbackService_->setFrameStore(frameStore_);
+        aravisOverview_.store(overview);
+        installAravisFactory();
+        SPDLOG_INFO("Aravis camera mode staged: {}", overview ? "Overview (full sensor)" : "Experiment window");
+        return true;
+    }
+
+    bool AppBackend::saveAravisRoi(int x, int y, int width, int height, std::string* errorOut)
+    {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment before editing its ROI");
+        AravisSessionGeometry session;
+        {
+            std::lock_guard<std::mutex> lock(aravisSessionMutex_);
+            session = aravisSession_;
+        }
+        if (session.sensorWidth <= 0 || session.sensorHeight <= 0)
+            return fail("The sensor size is not known yet; show the full sensor first");
+        if (x < 0 || y < 0 || width < session.widthIncrement || height < session.heightIncrement ||
+            width > session.sensorWidth || height > session.sensorHeight || x > session.sensorWidth - width ||
+            y > session.sensorHeight - height)
+            return fail("ROI is outside the camera sensor bounds");
+        if (width % session.widthIncrement || height % session.heightIncrement ||
+            x % session.offsetXIncrement || y % session.offsetYIncrement)
+            return fail("ROI must be in steps of " + std::to_string(session.offsetXIncrement) + " x " +
+                        std::to_string(session.offsetYIncrement) + " (offset) and " +
+                        std::to_string(session.widthIncrement) + " x " + std::to_string(session.heightIncrement) +
+                        " (size) pixels");
+        AravisProfile next = aravisProfile_;
+        next.hasRoi = true;
+        next.x = x;
+        next.y = y;
+        next.width = width;
+        next.height = height;
+        if (!saveAravisProfile(next, errorOut)) return false;
+        aravisProfile_ = next;
+        // The experiment factory picks the window up; the live Overview keeps the full sensor.
+        installAravisFactory();
+        return true;
+    }
+
+    AppBackend::CameraGeometry AppBackend::cameraGeometry() const
+    {
+        CameraGeometry g;
+        if (isMindVisionCameraSelected()) {
+            g.supported = true;
+            g.camera = "mindvision";
+            g.overview = mindVisionOverview_.load();
+            const auto sensor = mindVisionSensor();
+            g.sensorWidth = sensor.sensorWidth;
+            g.sensorHeight = sensor.sensorHeight;
+            g.minWidth = std::max(1, sensor.minWidth);
+            g.minHeight = std::max(1, sensor.minHeight);
+            try {
+                std::ifstream input(std::filesystem::u8path(lastMindVisionConfigPath_));
+                const auto parsed = camera::mindvision::parseConfig(
+                    std::string(std::istreambuf_iterator<char>(input), {}));
+                if (input && parsed.ok) {
+                    g.roiX = parsed.config.offsetX;
+                    g.roiY = parsed.config.offsetY;
+                    g.roiWidth = parsed.config.width;
+                    g.roiHeight = parsed.config.height;
+                }
+            } catch (...) {
+            }
+            return g;
+        }
+#if MIB_HAS_ARAVIS
+        if (aravisCameraConfigured_) {
+            g.supported = true;
+            g.camera = "aravis";
+            g.overview = aravisOverview_.load();
+            {
+                std::lock_guard<std::mutex> lock(aravisSessionMutex_);
+                g.sensorWidth = aravisSession_.sensorWidth;
+                g.sensorHeight = aravisSession_.sensorHeight;
+                g.widthIncrement = aravisSession_.widthIncrement;
+                g.heightIncrement = aravisSession_.heightIncrement;
+                g.offsetXIncrement = aravisSession_.offsetXIncrement;
+                g.offsetYIncrement = aravisSession_.offsetYIncrement;
+                g.sessionJson = aravisSession_.json;
+            }
+            g.minWidth = g.widthIncrement;
+            g.minHeight = g.heightIncrement;
+            if (aravisProfile_.hasRoi) {
+                g.roiX = aravisProfile_.x;
+                g.roiY = aravisProfile_.y;
+                g.roiWidth = aravisProfile_.width;
+                g.roiHeight = aravisProfile_.height;
+            }
+        }
+#endif
+        return g;
+    }
+
+    bool AppBackend::isCameraOverview() const
+    {
+        return mindVisionOverview_.load() || aravisOverview_.load();
+    }
+
+    bool AppBackend::setCameraOverview(bool overview, std::string* errorOut)
+    {
+        if (isMindVisionCameraSelected()) return setMindVisionOverview(overview, errorOut);
+#if MIB_HAS_ARAVIS
+        if (aravisCameraConfigured_) return setAravisOverview(overview, errorOut);
+#endif
+        if (!overview) return true; // nothing to leave
+        if (errorOut) *errorOut = "The selected camera has no full-sensor overview";
+        return false;
+    }
+
+    bool AppBackend::saveCameraRoi(int x, int y, int width, int height, std::string* errorOut)
+    {
+        if (isMindVisionCameraSelected()) return saveMindVisionRoi(x, y, width, height, errorOut);
+#if MIB_HAS_ARAVIS
+        if (aravisCameraConfigured_) return saveAravisRoi(x, y, width, height, errorOut);
+#endif
+        if (errorOut) *errorOut = "The selected camera has no saved window";
+        return false;
     }
 
     bool AppBackend::isMindVisionCameraSelected() const

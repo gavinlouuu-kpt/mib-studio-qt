@@ -810,6 +810,16 @@ pub mod ffi {
 
         /// Issue a GenICam DeviceReset to the selected hardware camera.
         fn soft_trigger_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+
+        /// Camera & Alignment (ABI 20): show the whole sensor (`overview`) or the saved
+        /// experiment window; a running capture restarts in the new mode. Rejected during an
+        /// experiment or recording, and for cameras without an overview.
+        fn set_camera_overview(self: Pin<&mut BackendBridge>, overview: bool) -> BridgeCommandResult;
+        /// Save the experiment window (ROI 1, sensor coordinates) placed on the overview.
+        fn save_camera_roi(self: Pin<&mut BackendBridge>, x: i32, y: i32, width: i32, height: i32)
+            -> BridgeCommandResult;
+        /// Mode, sensor size, saved window, window steps and the last camera read-back (JSON).
+        fn fetch_camera_geometry(self: Pin<&mut BackendBridge>) -> String;
         fn reset_hardware_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 
         /// Enable/disable monitoring accumulation (schema v6, BE-5). Disabled

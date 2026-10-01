@@ -315,6 +315,35 @@ export interface TriggerStatus {
   periodic_interval_ms: number;
 }
 
+/** Camera & Alignment geometry (ABI 20, `fetch_camera_geometry`). Sensor coordinates. */
+export interface CameraGeometry {
+  supported: boolean;
+  overview: boolean;
+  camera: string;
+  sensor_width: number;
+  sensor_height: number;
+  roi: {x: number; y: number; width: number; height: number};
+  width_increment: number;
+  height_increment: number;
+  offset_x_increment: number;
+  offset_y_increment: number;
+  min_width: number;
+  min_height: number;
+  /** Last camera read-back (Aravis): applied window, sensor rate and the delivered rate. */
+  session: {
+    overview?: boolean;
+    region?: {x: number; y: number; width: number; height: number};
+    frame_rate_hz?: number;
+    frame_rate_max_hz?: number;
+    frame_rate_clamped?: boolean;
+    frame_rate_limit?: string;
+    exposure_us?: number;
+    band_count?: number;
+    delivered_frame_rate_hz?: number;
+    delivered_limit?: string;
+  };
+}
+
 async function invokeCommand(command: string, args?: Record<string, unknown>): Promise<CmdResult> {
   return decodeCommandResult(await invoke<unknown>(command,args));
 }
@@ -458,6 +487,11 @@ export const bridge = {
     sourceMutation("apply_processing_config_json", { json }),
   setProcessingRoi: (x: number, y: number, w: number, h: number) =>
     sourceMutation("set_processing_roi", { x, y, w, h }),
+  // Camera & Alignment (ABI 20): the overview changes the frame geometry, so it is a source
+  // mutation; saving the window only persists it for the next experiment-mode start.
+  setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
+  saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
+  fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),

@@ -1,5 +1,14 @@
 # Recent Work
 
+## 2026-10-01 — Camera & Alignment shows the full sensor (ABI 20)
+
+The React Camera & Alignment tab now follows the Qt Overview workflow for
+MindVision and Aravis cameras: full sensor on entry, experiment window placed
+and saved on it, Experiment acquires that window. New bridge commands
+`set_camera_overview`, `save_camera_roi`, `fetch_camera_geometry`; Aravis
+cameras gained an Overview mode and a camera profile. See
+[[../architecture/Desktop-Shell]] and [[../architecture/AppBackend]].
+
 ## 2026-10-01 — Shared command layer and the YOFO Studio WebSocket server
 
 The Tauri command bodies moved to `crates/mib-app-commands` (Tauri keeps typed

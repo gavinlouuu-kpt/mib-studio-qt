@@ -183,6 +183,23 @@ delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
 `desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
 capture over the socket, wrong token refused, client loss and quick reconnect).
 
+## Camera & Alignment (Qt Overview parity)
+
+With a camera that has an overview (MindVision, Aravis/PZ7035), entering the
+Camera & Alignment tab calls `set_camera_overview(true)` and entering
+Experiment `set_camera_overview(false)`, as Qt's tab change does; other tabs
+leave the camera alone and nothing changes during a run. The tab then shows
+the whole sensor with the experiment window as a yellow box (drag to move;
+release saves, as Qt saves on move) and X/Y/W/H fields with "Save camera ROI";
+`cameraAlignment.ts` snaps to the camera's steps and states "Sensor N Hz (max,
+limit) -> >= M images/s here (limit, bands)". For other cameras the fields keep
+setting the processing ROI. Verified on the PZ7035 through the browser:
+816x624 lit overview, window dragged to (232, 356) and saved, Experiment
+showed that 512x96 window. The browser displays the full field at ~10 fps
+(509 KB packets over the socket) although ~25 images/s are delivered.
+`vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
+`src-tauri/target`'s cxx symlink loop hung `vitest run`.
+
 ## Command layer
 
 Thin wrappers over the bridge (all take the managed `AppState`; bodies in

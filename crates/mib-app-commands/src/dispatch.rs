@@ -145,6 +145,9 @@ pub const COMMANDS: &[&str] = &[
     "camera_document",
     "init",
     "processing_core_command",
+    "set_camera_overview",
+    "save_camera_roi",
+    "fetch_camera_geometry",
 ];
 
 /// Run one command. Unknown names fail with `UNKNOWN_COMMAND`; blocking commands (profile and
@@ -727,6 +730,26 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::camera_document::camera_document(a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
         }
+        "set_camera_overview" => {
+            #[derive(Deserialize)]
+            struct A {
+                overview: bool,
+            }
+            let a: A = args(value)?;
+            crate::set_camera_overview(state, a.overview).and_then(json)
+        }
+        "save_camera_roi" => {
+            #[derive(Deserialize)]
+            struct A {
+                x: i32,
+                y: i32,
+                w: i32,
+                h: i32,
+            }
+            let a: A = args(value)?;
+            crate::save_camera_roi(state, a.x, a.y, a.w, a.h).and_then(json)
+        }
+        "fetch_camera_geometry" => crate::fetch_camera_geometry(state).and_then(json),
         _ => Err(format!("UNKNOWN_COMMAND: {name}")),
     }
 }

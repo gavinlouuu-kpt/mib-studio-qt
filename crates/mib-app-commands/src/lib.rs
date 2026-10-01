@@ -1237,6 +1237,24 @@ pub fn apply_camera_script(state: &AppState, script_path: String) -> Result<CmdR
 }
 
 /// Explicit MindVision software exposure trigger; never an automatic startup action.
+/// Camera & Alignment (ABI 20): full-sensor overview on/off; a running capture restarts.
+pub fn set_camera_overview(state: &AppState, overview: bool) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().set_camera_overview(overview).into())
+}
+
+/// Save the experiment window (ROI 1, sensor coordinates) placed on the overview.
+pub fn save_camera_roi(state: &AppState, x: i32, y: i32, w: i32, h: i32) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().save_camera_roi(x, y, w, h).into())
+}
+
+/// Mode, sensor size, saved window, window steps and the camera's last read-back.
+pub fn fetch_camera_geometry(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_camera_geometry()).map_err(|e| e.to_string())
+}
+
 pub fn soft_trigger_camera(state: &AppState) -> Result<CmdResult, String> {
     let mut guard=state.bridge.lock().map_err(|e|e.to_string())?;
     let selected=guard.pin_mut().fetch_camera_selection();

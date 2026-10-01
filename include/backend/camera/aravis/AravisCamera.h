@@ -24,6 +24,38 @@ struct AravisRegion {
     int height = 0;
 };
 
+/** Settings read back from the device after start(), with the PZ7035
+ *  producer's rate model when the device exposes it. The frame rate is the
+ *  sensor rate; a producer that reads full-field images out in bands delivers
+ *  fewer images per second (deliveredFrameRateHz), and the UI must say so. */
+struct AravisSessionInfo {
+    std::string deviceId;
+    std::string vendor;
+    std::string model;
+    AravisRegion region;
+    int sensorWidth = 0;   // 0 = not reported
+    int sensorHeight = 0;
+    int widthIncrement = 1;
+    int heightIncrement = 1;
+    int offsetXIncrement = 1;
+    int offsetYIncrement = 1;
+    double requestedFrameRateHz = 0.0; // 0 = not requested
+    double frameRateHz = 0.0;
+    double frameRateMinHz = 0.0;
+    double frameRateMaxHz = 0.0;
+    bool frameRateClamped = false;     // requested rate differs from the applied one
+    double requestedExposureUs = 0.0;  // 0 = not requested
+    double exposureUs = 0.0;
+    double exposureMaxUs = 0.0;
+    bool exposureClamped = false;
+    // PZ7035 extension features (PzBandCount, PzDeliveredFrameRate, ...).
+    bool pzFeatures = false;
+    int64_t bandCount = 1;
+    double deliveredFrameRateHz = 0.0;
+    std::string deliveredFrameRateLimit; // "SensorRate" or "BandReadout"
+    std::string frameRateLimitReason;    // "SensorGeometry", "Profile", "StoreBandwidth"
+};
+
 /** Options for the optional Aravis consumer.
  *
  * `useFake` is deliberately explicit.  A missing physical device must never
@@ -55,33 +87,14 @@ struct AravisCameraOptions {
     std::optional<AravisRegion> region;
     std::optional<double> frameRateHz;
     std::optional<double> exposureUs;
+    // Overview: the whole sensor (SensorWidth x SensorHeight at offset 0), overriding `region`.
+    bool fullSensor = false;
+    // Called with the read-back after every successful start (from start()'s thread), so an
+    // owner that does not hold the camera (AppBackend, behind CaptureService) can show the
+    // applied geometry and the producer's rate model.
+    std::function<void(const AravisSessionInfo&)> onSession;
 };
 
-/** Settings read back from the device after start(), with the PZ7035
- *  producer's rate model when the device exposes it. The frame rate is the
- *  sensor rate; a producer that reads full-field images out in bands delivers
- *  fewer images per second (deliveredFrameRateHz), and the UI must say so. */
-struct AravisSessionInfo {
-    std::string deviceId;
-    std::string vendor;
-    std::string model;
-    AravisRegion region;
-    double requestedFrameRateHz = 0.0; // 0 = not requested
-    double frameRateHz = 0.0;
-    double frameRateMinHz = 0.0;
-    double frameRateMaxHz = 0.0;
-    bool frameRateClamped = false;     // requested rate differs from the applied one
-    double requestedExposureUs = 0.0;  // 0 = not requested
-    double exposureUs = 0.0;
-    double exposureMaxUs = 0.0;
-    bool exposureClamped = false;
-    // PZ7035 extension features (PzBandCount, PzDeliveredFrameRate, ...).
-    bool pzFeatures = false;
-    int64_t bandCount = 1;
-    double deliveredFrameRateHz = 0.0;
-    std::string deliveredFrameRateLimit; // "SensorRate" or "BandReadout"
-    std::string frameRateLimitReason;    // "SensorGeometry", "Profile", "StoreBandwidth"
-};
 
 class AravisCamera final : public common::ICamera {
 public:

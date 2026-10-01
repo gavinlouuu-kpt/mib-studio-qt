@@ -19,6 +19,10 @@ The default build remains dependency-free.
   `sessionInfo()`. A region the device does not apply exactly fails start
   (`aravis.region_rejected`); frame rate and exposure are clamped by the
   device and reported as `frameRateClamped` / `exposureClamped`.
+- `fullSensor` replaces the region by the whole sensor (Overview); `sessionInfo()`
+  reports the sensor size and the Width/Height/OffsetX/OffsetY increments, and
+  `onSession` hands the read-back to an owner that does not hold the camera
+  (AppBackend's Camera & Alignment geometry).
 - `sessionInfo()` also carries the PZ7035 rate model when the device has it:
   `PzBandCount`, `PzDeliveredFrameRate`, `PzDeliveredFrameRateLimit` and
   `PzFrameRateLimitReason`. `AcquisitionFrameRate` is the sensor rate; a

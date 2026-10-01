@@ -325,3 +325,17 @@ provisioning native dependencies.
 
 Windows regression fixtures canonicalize temporary paths before comparison,
 matching the generator when RUNNER~1 and runneradmin name the same directory.
+
+## ABI 20: Camera & Alignment (2026-10-01)
+
+`set_camera_overview(overview)`, `save_camera_roi(x, y, w, h)` and
+`fetch_camera_geometry() -> JSON` expose the Qt Overview-tab workflow to every
+shell: the whole sensor is shown, the experiment window (ROI 1, sensor
+coordinates) is placed on it and saved, and Experiment acquires that window.
+They go through `BackendFacade` camera actions `SetCameraOverview` (restarts a
+capture that was running) and `SaveCameraRoi`, and `fetchCameraGeometryJson`.
+MindVision keeps its profile-based overview; Aravis cameras gained one (see
+[[AppBackend]]). `crates/mib-bridge/tests/contract.rs`
+`camera_alignment_commands_without_overview_camera` covers a camera without
+an overview (mock).
+

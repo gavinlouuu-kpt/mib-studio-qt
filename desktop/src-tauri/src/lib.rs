@@ -471,6 +471,21 @@ fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<cm
 }
 
 #[tauri::command]
+fn set_camera_overview(state: State<AppState>, overview: bool) -> Result<cmds::CmdResult, String> {
+    cmds::set_camera_overview(&state, overview)
+}
+
+#[tauri::command]
+fn save_camera_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Result<cmds::CmdResult, String> {
+    cmds::save_camera_roi(&state, x, y, w, h)
+}
+
+#[tauri::command]
+fn fetch_camera_geometry(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_camera_geometry(&state)
+}
+
+#[tauri::command]
 fn soft_trigger_camera(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::soft_trigger_camera(&state)
 }
@@ -710,6 +725,9 @@ pub fn run() {
             apply_camera_script,
             reset_hardware_camera,
             soft_trigger_camera,
+            set_camera_overview,
+            save_camera_roi,
+            fetch_camera_geometry,
             monitoring_set_active,
             monitoring_clear,
             fetch_monitoring_snapshot,

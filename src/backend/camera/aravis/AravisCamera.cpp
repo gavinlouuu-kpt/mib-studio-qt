@@ -236,8 +236,16 @@ bool AravisCamera::openAndConfigureLocked()
 bool AravisCamera::applySettingsLocked()
 {
     GError* error = nullptr;
-    if (options_.region) {
-        const AravisRegion& r = *options_.region;
+    std::optional<AravisRegion> region = options_.region;
+    if (options_.fullSensor) {
+        gint sensorWidth = 0, sensorHeight = 0;
+        arv_camera_get_sensor_size(camera_, &sensorWidth, &sensorHeight, &error);
+        if (error != nullptr || sensorWidth <= 0 || sensorHeight <= 0)
+            return failLocked("aravis.sensor_size", errorText(error, "Device does not report its sensor size"));
+        region = AravisRegion{0, 0, sensorWidth, sensorHeight};
+    }
+    if (region) {
+        const AravisRegion& r = *region;
         arv_camera_set_region(camera_, r.x, r.y, r.width, r.height, &error);
         if (error != nullptr)
             return failLocked("aravis.region", errorText(error, "Cannot set the Aravis region"));
@@ -283,6 +291,18 @@ void AravisCamera::readSessionInfoLocked(const std::string& deviceId)
     arv_camera_get_region(camera_, &info.region.x, &info.region.y, &info.region.width,
                           &info.region.height, &error);
     g_clear_error(&error);
+
+    arv_camera_get_sensor_size(camera_, &info.sensorWidth, &info.sensorHeight, &error);
+    g_clear_error(&error);
+    const auto increment = [&](gint value) {
+        const int result = error == nullptr && value > 0 ? value : 1;
+        g_clear_error(&error);
+        return result;
+    };
+    info.widthIncrement = increment(arv_camera_get_width_increment(camera_, &error));
+    info.heightIncrement = increment(arv_camera_get_height_increment(camera_, &error));
+    info.offsetXIncrement = increment(arv_camera_get_x_offset_increment(camera_, &error));
+    info.offsetYIncrement = increment(arv_camera_get_y_offset_increment(camera_, &error));
 
     info.frameRateHz = arv_camera_get_frame_rate(camera_, &error);
     g_clear_error(&error);
@@ -379,6 +399,8 @@ bool AravisCamera::start()
     running_.store(true, std::memory_order_release);
     deliveredFrames_ = 0;
     failure_ = {};
+    if (options_.onSession)
+        options_.onSession(sessionInfo_);
     return true;
 }
 

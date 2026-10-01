@@ -57,6 +57,10 @@ namespace backend::bridge
         SoftTriggerCamera,
         StartCapture,
         StopCapture,
+        // Camera & Alignment: full-sensor Overview on/off (restarts a running capture) and the
+        // experiment window saved on it (ABI 20).
+        SetCameraOverview,
+        SaveCameraRoi,
     };
 
     struct CameraCommand
@@ -72,6 +76,8 @@ namespace backend::bridge
         std::string mindVisionLabel;
         std::string mindVisionConfigPath;
         std::string cameraScriptPath;
+        bool cameraOverview{false};
+        int roiX{0}, roiY{0}, roiWidth{0}, roiHeight{0};
     };
 
     enum class RecordingCommandAction
@@ -799,6 +805,9 @@ namespace backend::bridge
 
         BackendCommandResult closeReview();
         std::string fetchPreviewBufferJson() const;
+        // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
+        // the last camera read-back (ABI 20).
+        std::string fetchCameraGeometryJson() const;
         std::string savePreviewBufferJson(const std::string& request);
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;

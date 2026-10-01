@@ -22,8 +22,21 @@ reference so they are destroyed first.
 factory. `MIB_ARAVIS_DEVICE_ID` selects a device, `MIB_ARAVIS_FAKE` is an
 explicit Fake-interface opt-in and `MIB_ARAVIS_GIGE` re-enables GigE Vision
 discovery (off by default). `MIB_ARAVIS_FPS`, `MIB_ARAVIS_EXPOSURE_US` and
-`MIB_ARAVIS_REGION=X,Y,W,H` set the rate, exposure and sensor window applied at
-start (interim, until the UI's camera controls drive the Aravis features). If Aravis is disabled at build time, the
+`MIB_ARAVIS_REGION=X,Y,W,H` seed the Aravis camera profile when it does not
+exist yet.
+
+**Camera & Alignment.** `setCameraOverview` / `saveCameraRoi` /
+`cameraGeometry` generalise the MindVision Overview to Aravis cameras. The
+Aravis profile `<data>/config/aravis-camera.json` (or `MIB_ARAVIS_PROFILE`)
+holds the experiment window and the rate/exposure of each mode (Overview
+default 830 Hz / 900 us, the lit PZ7035 full field). Overview: the camera
+factory switches to the whole sensor (`AravisCameraOptions::fullSensor`),
+realtime processing is switched off (and restored on leaving), the frame store
+becomes 8 frames; Experiment restores the store and acquires the saved window.
+Rejected during an experiment or recording; the readiness gate `camera.mode`
+fails while in Overview. Window saves are bounds- and step-checked against the
+camera's read-back (sensor size and Width/OffsetX increments, published by the
+adapter's `onSession` callback). Test: `backend.aravis_camera_overview`. If Aravis is disabled at build time, the
 request records an unavailable effective source and a null factory so capture
 reports the configuration error; it does not silently substitute MockCamera.
 

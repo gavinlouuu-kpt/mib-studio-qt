@@ -1532,6 +1532,38 @@ BridgeCommandResult BackendBridge::soft_trigger_camera() {
     catch (...) { return errorResult("Software camera trigger failed"); }
 }
 
+BridgeCommandResult BackendBridge::set_camera_overview(bool overview) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::SetCameraOverview;
+        cmd.cameraOverview = overview;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(std::string("set_camera_overview: ") + e.what()); }
+    catch (...) { return errorResult("set_camera_overview: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width,
+                                                   std::int32_t height) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::SaveCameraRoi;
+        cmd.roiX = x;
+        cmd.roiY = y;
+        cmd.roiWidth = width;
+        cmd.roiHeight = height;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(std::string("save_camera_roi: ") + e.what()); }
+    catch (...) { return errorResult("save_camera_roi: unknown error"); }
+}
+
+rust::String BackendBridge::fetch_camera_geometry() {
+    try {
+        return rust::String(impl_->facade.fetchCameraGeometryJson());
+    } catch (...) {
+        return rust::String("{\"supported\":false}");
+    }
+}
+
 BridgeCommandResult BackendBridge::reset_hardware_camera() {
     try {
         backend::bridge::CameraCommand cmd;
@@ -1793,7 +1825,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 19; }
+std::uint32_t bridge_abi_version() { return 20; }
 
 } // namespace mib_bridge
 

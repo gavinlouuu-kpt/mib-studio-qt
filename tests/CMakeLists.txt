@@ -94,6 +94,10 @@ if(MIB_HAS_ARAVIS)
                              LABELS "camera;aravis;pz7035" TIMEOUT 90
                              ENVIRONMENT "GENICAM_GENTL64_PATH=${_mib_pz7035_cti_dir};PZ_GENTL_PATTERN=1")
     endif()
+    mib_add_backend_test_executable(aravis_camera_overview_test backend/aravis_camera_overview_test.cpp)
+    add_test(NAME backend.aravis_camera_overview
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_overview_test)
+    set_tests_properties(backend.aravis_camera_overview PROPERTIES LABELS "backend;camera;aravis" TIMEOUT 60)
     mib_add_backend_test_executable(aravis_pipeline_e2e integration/aravis_pipeline_e2e_test.cpp)
     mib_backend_test_link(aravis_pipeline_e2e PRIVATE Threads::Threads)
     add_test(NAME integration.aravis_pipeline_e2e
