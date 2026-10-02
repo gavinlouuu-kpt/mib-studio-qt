@@ -8,7 +8,9 @@ was the Windows OpenCV Concurrency Runtime pool (one spinning worker per
 logical CPU) kept busy by a per-frame `parallel_for` on the experiment path,
 starving the processing thread (34 busy threads, about 30 cores).
 `AppBackend::initialize` now calls `cv::setNumThreads(0)` before processing
-starts; `MIB_OPENCV_THREADS=N|opencv` overrides it. Result on the rig: 5000
+starts, and every processing-core plugin applies the same setting to its own,
+statically linked OpenCV on its first `create_context` (shared parser
+`OpenCvThreads.h`); `MIB_OPENCV_THREADS=N|opencv` overrides both. Result on the rig: 5000
 frames/s during runs at 1.3 cores, runs complete, idle processing up from
 about 3000 to 4980 frames/s. Guard: `backend.opencv_threads`. See
 [[../architecture/AppBackend]] and

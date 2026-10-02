@@ -62,3 +62,15 @@ starts (`MIB_OPENCV_THREADS` overrides it); guard `backend.opencv_threads`.
 | `ctest --preset windows-ninja-test` | 140/141 (`frontend.mainwindow_shutdown`, rig-specific TD-20) |
 | `ctest --preset windows-ninja-integration-test` | 12/13 (`integration.monitoring_kde_e2e`, rig-specific TD-20) |
 | `hardware.camera`, `hardware.discovery_reentry` (`MIB_TEST_CAMERA=1`) | pass (185 real frames), measured before the OpenCV change |
+
+## Released (signed) cores link OpenCV statically
+
+The rig runs above used the bundled in-process kernel, which shares the host's
+`opencv_core` DLL. The published signed core `mib-processing-v0.2.1`
+(`mib_processing_core-0.2.1-windows_x86_64.dll`, 3.7 MB) imports no
+`opencv_*` DLL but does import `CONCRT140.dll`: its OpenCV is a private,
+statically linked copy that the host's `cv::setNumThreads` cannot reach. Each
+processing-core plugin therefore applies `MIB_OPENCV_THREADS` (default
+inline) to its own OpenCV on its first `create_context`. Not yet measured: a
+rig run with a signed, statically linked core that carries this change (the
+next core release); the parser is covered by `backend.opencv_threads`.

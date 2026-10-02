@@ -156,8 +156,13 @@ thread.
   Concurrency Runtime: one worker per logical CPU, and idle workers spin.
   The realtime path processes one small frame per call, so any OpenCV call
   there that reaches `parallel_for` keeps the whole pool spinning and starves
-  the processing thread. The host and the processing core share one
-  `opencv_core` DLL, so the single call covers both.
+  the processing thread. Dev builds share one `opencv_core` DLL between the
+  host and the processing cores, but **released cores link OpenCV
+  statically** (the release audit forbids `opencv*` imports; v0.2.1 imports
+  only `CONCRT140.dll`), so the host's call never reaches them. Each core
+  therefore applies the same setting to its own OpenCV on its first
+  `create_context` (`ProcessingCorePlugin.cpp`). Both use the parser in
+  `include/backend/processing/OpenCvThreads.h`.
 - **Measured on the rig PC** (i9-13900, 32 logical CPUs, Coaxlink camera,
   448x116 at 5000 fps, 2026-10-02): during a recorded run the pool kept 34
   threads busy (~30 cores) and processing fell to ~2900 frames/s, ending

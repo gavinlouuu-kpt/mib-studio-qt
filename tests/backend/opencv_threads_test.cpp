@@ -4,6 +4,7 @@
 // parallel call in the realtime path kept ~31 workers busy and halved
 // experiment throughput at 5000 fps on the rig (2026-10-01).
 #include "backend/app/AppBackend.h"
+#include "backend/processing/OpenCvThreads.h"
 #include "support/assert.h"
 #include "support/tempdir.h"
 
@@ -55,6 +56,22 @@ int threadsAfterInitialize(const char* setting) {
 } // namespace
 
 int main() {
+    // The parser shared with the processing-core plugins (OpenCvThreads.h).
+    namespace proc = backend::processing;
+    MIB_EXPECT(proc::resolveOpenCvThreads(nullptr).threads == 0 &&
+                   !proc::resolveOpenCvThreads(nullptr).keepOpenCvDefault,
+               "unset resolves to inline (0)");
+    MIB_EXPECT(proc::resolveOpenCvThreads("").threads == 0 &&
+                   !proc::resolveOpenCvThreads("").invalid,
+               "empty resolves to inline (0), not invalid");
+    MIB_EXPECT(proc::resolveOpenCvThreads("8").threads == 8, "a number is passed through");
+    MIB_EXPECT(proc::resolveOpenCvThreads("256").threads == 256, "256 is the upper bound");
+    MIB_EXPECT(proc::resolveOpenCvThreads("opencv").keepOpenCvDefault, "opencv keeps the default");
+    for (const char* bad : {"257", "-1", "4x", "abc"}) {
+        const auto setting = proc::resolveOpenCvThreads(bad);
+        MIB_EXPECT(setting.invalid && setting.threads == 0 && !setting.keepOpenCvDefault,
+                   std::string("invalid value falls back to inline: '") + bad + "'");
+    }
     setEnv("MIB_CAMERA_MODE", "mock");
     // What this platform's OpenCV reports for "inline" (setNumThreads(0)) and
     // for its own default; the reported numbers differ between parallel

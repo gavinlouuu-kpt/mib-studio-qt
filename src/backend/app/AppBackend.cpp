@@ -53,6 +53,7 @@
 #include <utility>
 #include <spdlog/spdlog.h>
 #include <opencv2/core.hpp>
+#include "backend/processing/OpenCvThreads.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
@@ -74,32 +75,21 @@ namespace backend
     // realtime loop kept ~31 of 32 workers busy on the rig PC and starved the
     // processing thread (5000 fps experiments fell to ~2900 processed/s).
     // Processing already spreads frames over its own threads, so OpenCV's inner
-    // parallel_for is off by default. MIB_OPENCV_THREADS=N passes N to
-    // cv::setNumThreads; "opencv" keeps OpenCV's own default.
+    // parallel_for is off by default (OpenCvThreads.h; processing-core plugins
+    // apply the same setting to their own, statically linked OpenCV).
     void configureOpenCvThreads()
     {
-        int threads = 0;
-        if (const char *env = std::getenv("MIB_OPENCV_THREADS"); env && *env)
+        const auto setting = processing::applyOpenCvThreadsFromEnvironment();
+        if (setting.invalid)
         {
-            const std::string value(env);
-            if (value == "opencv")
-            {
-                SPDLOG_INFO("AppBackend: OpenCV threads left at OpenCV default ({})", cv::getNumThreads());
-                return;
-            }
-            char *end = nullptr;
-            const long parsed = std::strtol(value.c_str(), &end, 10);
-            if (end != value.c_str() && *end == '\0' && parsed >= 0 && parsed <= 256)
-            {
-                threads = static_cast<int>(parsed);
-            }
-            else
-            {
-                SPDLOG_WARN("AppBackend: ignoring invalid MIB_OPENCV_THREADS='{}'", value);
-            }
+            SPDLOG_WARN("AppBackend: ignoring invalid MIB_OPENCV_THREADS='{}'", setting.raw);
         }
-        cv::setNumThreads(threads);
-        SPDLOG_INFO("AppBackend: OpenCV threads set to {} (getNumThreads={})", threads, cv::getNumThreads());
+        if (setting.keepOpenCvDefault)
+        {
+            SPDLOG_INFO("AppBackend: OpenCV threads left at OpenCV default ({})", cv::getNumThreads());
+            return;
+        }
+        SPDLOG_INFO("AppBackend: OpenCV threads set to {} (getNumThreads={})", setting.threads, cv::getNumThreads());
     }
 
     // Builds the capture-owned MindVision camera for `path`. When the saved
