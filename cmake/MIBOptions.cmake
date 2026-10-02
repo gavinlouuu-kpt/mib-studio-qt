@@ -6,6 +6,10 @@ option(MIB_ENABLE_HARDWARE_SDKS
     "Enable proprietary Windows hardware SDK integrations (EGrabber/Coremor)"
     ${MIB_ENABLE_HARDWARE_SDKS_DEFAULT})
 
+option(MIB_ENABLE_COREMOR
+    "Enable the bundled Windows Coremor nanopositioner SDK independently of EGrabber"
+    ${WIN32})
+
 set(MIB_ENABLE_WINDOWS_PACKAGING_DEFAULT OFF)
 if(WIN32)
     set(MIB_ENABLE_WINDOWS_PACKAGING_DEFAULT ON)
@@ -23,6 +27,21 @@ option(MIB_BUILD_BACKEND_ONLY
     "Build only backend targets (no frontend executables)"
     OFF)
 
+# External assets (model weights, datasets) are pinned in env/assets.json and
+# provisioned from Hugging Face by scripts/provision-assets.py into this tree.
+# The environment variable mirrors the Python side (assets_manifest.assets_root).
+set(_mib_assets_dir_default "${PROJECT_SOURCE_DIR}/build/vendor/assets")
+if(DEFINED ENV{MIB_ASSETS_DIR} AND NOT "$ENV{MIB_ASSETS_DIR}" STREQUAL "")
+    set(_mib_assets_dir_default "$ENV{MIB_ASSETS_DIR}")
+endif()
+set(MIB_ASSETS_DIR "${_mib_assets_dir_default}" CACHE PATH
+    "Root of provisioned external assets (env/assets.json, scripts/provision-assets.py)")
+unset(_mib_assets_dir_default)
+
+option(MIB_BUILD_OEABT_TOOLS
+    "Build the oeabtctl serial diagnostic and hardware acceptance tool"
+    ON)
+
 option(MIB_BUILD_PYTHON_BINDINGS
     "Build the pybind11 Python bindings for mib_processing (bindings/python/)"
     OFF)
@@ -30,6 +49,13 @@ option(MIB_BUILD_PYTHON_BINDINGS
 option(MIB_BUILD_PROCESSING_ONLY
     "Configure only the Qt-free mib_processing target and Python bindings"
     OFF)
+
+# ADR 0007: a shipped core implements exactly one processing contract. This
+# fixes the contract of the kernel bundled into this build. "research" (any
+# contract, selected per config) is allowed only for the Python wheel.
+set(MIB_PROCESSING_CORE_CONTRACT "1" CACHE STRING
+    "Contract of the bundled processing kernel: 1 (subtract-ring), 2 (absdiff-laplacian), research (wheel only)")
+set_property(CACHE MIB_PROCESSING_CORE_CONTRACT PROPERTY STRINGS 1 2 research)
 
 set(MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256 "" CACHE STRING
     "Approved Authenticode signer SubjectPublicKeyInfo SHA-256 for native processing cores")

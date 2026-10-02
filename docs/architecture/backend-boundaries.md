@@ -11,7 +11,7 @@ flowchart LR
     Tests["CTest executables\nsrc/tests"] --> API
     API --> Backend["Backend implementation\nsrc/backend"]
     Backend --> Camera["Camera abstraction\ninclude/camera + src/camera"]
-    Backend --> Infra["OpenCV, HDF5, SQLite, spdlog,\nONNX Runtime, Qt Core/Gui, OS APIs"]
+    Backend --> Infra["OpenCV, HDF5, SQLite, spdlog,\nONNX Runtime, OS APIs"]
     Bridge["Frontend-neutral bridge\nbackend::bridge::BackendFacade"] --> API
     Camera --> Hardware["EGrabber SDK or mock frame sources"]
 ```
@@ -40,9 +40,13 @@ Backend code owns capabilities that should work without a visible widget:
   configuration, and camera frame types
 - background threads, service callbacks, and worker lifecycle management
 
-Backend code may use Qt Core/Gui where the current implementation requires it,
-but it should avoid Qt Widgets ownership. Widget layout, tab state, dialogs,
-and display-specific behavior belong in the frontend.
+Backend code is Qt-free: `mib_backend` and `mib_processing` link no Qt and
+include no Qt header (the `linux-backend-only` preset builds and tests them
+from the `base,backend` apt sections, which carry no Qt packages; epic #246).
+Widget layout, tab state, dialogs, and display-specific behavior belong in
+the frontend; derived live analytics a view shows (e.g.
+`MonitoringDensityService`, the Monitoring scatter KDE) run in the backend
+so every shell reads the same result.
 
 ## Portable Processing Sub-Boundary (`mib_processing`)
 
@@ -55,7 +59,7 @@ target, `mib_processing`, that must stay **Qt-free** — no `Qt6::*` link, no
 desktop app is unaffected; `backend-ci.yml` builds `mib_processing`
 explicitly and fails if a Qt symbol leaks into it.
 
-This is a stricter sub-rule than "Backend may use Qt Core/Gui" above: it
+For `mib_processing` this is additionally a guarded contract: it
 exists so `mib_processing` can be built and consumed (e.g. via Python
 bindings) without a Qt toolchain at all — the artifact a non-Qt consumer
 like Biowork's `services/mib-processing` links against. See

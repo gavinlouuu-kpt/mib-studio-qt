@@ -26,6 +26,7 @@ namespace backend::services
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
+    class MonitoringDensityService;
     namespace serialbus
     {
         class SerialBusManager;
@@ -45,6 +46,11 @@ namespace camera::mock
 }
 
 namespace backend::app { class ExperimentCoordinator; }
+namespace backend::discovery
+{
+    class DeviceDiscoveryService;
+    class StartupDiscoveryCoordinator;
+}
 
 namespace backend
 {
@@ -84,11 +90,19 @@ namespace backend
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
+        // Device discovery job service (issue #419, ADR 0005): every camera /
+        // nanopositioner / pulse-generator scan runs through it. Frontends
+        // start jobs and poll snapshots; they never enumerate hardware.
+        discovery::DeviceDiscoveryService &deviceDiscovery();
+        // Startup selection/connection policy over the discovery service.
+        // Constructed here but started by the shell (Qt adapter) so headless
+        // consumers keep today's no-auto-connect behaviour.
+        discovery::StartupDiscoveryCoordinator &startupDiscovery();
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
 
-        void configureMockCamera(const camera::mock::MockCameraOptions &options);
+        void configureMockCamera(const ::camera::mock::MockCameraOptions& options);
 
         // Select a specific hardware device (does not start capture)
         void setHardwareCameraSelection(int interfaceIndex, int deviceIndex, const std::string &label);
@@ -102,10 +116,26 @@ namespace backend
 
         // Apply a JSON config file to the currently selected MindVision camera.
         // If capture is running, it will be stopped first. Capture remains stopped.
+        // Save/select the next-start profile without opening the camera.
+        bool stageMindVisionConfigFromFile(const std::string& path,
+                                           std::string* errorOut = nullptr);
         bool applyMindVisionConfigFromFile(const std::string &path, std::string *errorOut = nullptr);
 
         // Returns true if a MindVision camera is currently selected.
         bool isMindVisionCameraSelected() const;
+
+        // Lifecycle-owner calls only. Stops capture/processing, replaces the frame
+        // store, stages the mode; caller decides whether to restart. No hardware
+        // is opened while idle. Rejected during an experiment or recording.
+        bool setMindVisionOverview(bool overview, std::string* errorOut = nullptr);
+        bool isMindVisionOverview() const { return mindVisionOverview_.load(); }
+        struct MindVisionSensor {
+            int sensorWidth{0}, sensorHeight{0}, minWidth{1}, minHeight{1};
+        };
+        MindVisionSensor mindVisionSensor() const;
+        // Atomic experiment-profile update; does not reconfigure the live overview.
+        bool saveMindVisionRoi(int x, int y, int width, int height,
+                               std::string* errorOut = nullptr);
 
         // Fire one software acquisition trigger on the live capture camera
         // (camera must be running in soft-trigger mode). NOT the sort pulse.
@@ -151,6 +181,10 @@ namespace backend
 
         // Backend-owned experiment readiness + Start transaction (issue #369).
         app::ExperimentCoordinator& experiment();
+        // Live Monitoring scatter density (KDE) and core contour: the shells
+        // push settings and read results; the provisional record goes to the
+        // experiment coordinator from the backend worker.
+        services::MonitoringDensityService& monitoringDensity();
         // Shared RS485 bus registry (pump, pulse generator); tests inject a
         // fake serial-port factory here.
         services::serialbus::SerialBusManager& serialBus();
@@ -219,6 +253,10 @@ namespace backend
         std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
         std::unique_ptr<services::SyringePumpService> syringePumpService_;
         std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
+        // Declared after every service the providers/hooks reference so the
+        // discovery workers and the coordinator are destroyed first.
+        std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
+        std::unique_ptr<discovery::StartupDiscoveryCoordinator> startupDiscovery_;
         std::shared_ptr<playback::FrameStore> frameStore_;
 
         // Shell-injected LUT fetch config (ADR 0002).
@@ -231,6 +269,12 @@ namespace backend
         std::string selectedLabel_;
         int selectedMvCameraIndex_{-1};
         std::string lastMindVisionConfigPath_;
+        std::string savedMindVisionConfigPath_;
+        void releaseMindVisionOverviewStore();
+        std::atomic<bool> mindVisionOverview_{false};
+        size_t mindVisionExperimentCapacity_{5000};
+        mutable std::mutex mindVisionSensorMutex_;
+        MindVisionSensor mindVisionSensor_{};
         bool mockCameraConfigured_{false};
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.
@@ -243,6 +287,9 @@ namespace backend
         std::string effectiveCameraSource_{"unknown"};
         std::string cameraFallbackReason_;
         std::unique_ptr<app::ExperimentCoordinator> experimentCoordinator_;
+        // Declared after the coordinator and processing so it is destroyed
+        // first: its worker reads the monitoring ring and feeds the coordinator.
+        std::unique_ptr<services::MonitoringDensityService> monitoringDensity_;
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;

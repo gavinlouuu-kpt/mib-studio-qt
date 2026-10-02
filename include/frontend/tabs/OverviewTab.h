@@ -36,6 +36,7 @@ namespace frontend
         };
 
         QString currentJsPath() const;
+        void refreshCameraMode();
 
         // Controls whether the ROI overlay is shown on the canvas.
         void setRoiOverlayVisible(bool visible);
@@ -83,6 +84,12 @@ namespace frontend
         QSpinBox *roiWidthSpin_ = nullptr;
         QSpinBox *roiHeightSpin_ = nullptr;
 
+        QString loadedCameraKey_;
+        QLabel* modeLabel_ = nullptr;
+        QPointF savedRoiPosition_;
+        int savedRoiWidth_ = 512, savedRoiHeight_ = 96;
+        bool saveMindVisionRoi();
+        void updateMindVisionBounds();
         // Helper methods
         QString egrabberConfigPath() const;
         void updateEgrabberConfigFromRect(QPointF imagePos);

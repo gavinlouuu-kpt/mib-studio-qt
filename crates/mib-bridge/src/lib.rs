@@ -168,42 +168,102 @@ pub mod ffi {
         pub gates: Vec<BridgeReadinessGate>,
     }
 
-    /// One discovered camera (schema v7, BE-2). `camera_type` is a contract
-    /// `camera_types` value (0 EGrabber, 1 MindVision, 2 Mock — the mock
-    /// source is a synthetic always-present entry).
+    /// Device-discovery request (schema v14, issue #419). `kinds` are
+    /// contract `discovery_device_kinds`; a pulse-generator scan must carry
+    /// an explicit serial scope (port, settings, address range) — the
+    /// backend refuses broad sweeps. Zero `deadline_ms` means the backend
+    /// default (60 s).
     #[derive(Debug, Clone, Default)]
-    pub struct BridgeDiscoveredCamera {
-        pub camera_type: u32,
-        pub camera_index: i32,
+    pub struct BridgeDiscoveryRequest {
+        pub kinds: Vec<u32>,
+        pub providers: Vec<String>,
+        pub has_serial_scope: bool,
+        pub serial_port_name: String,
+        pub baud_rate: i32,
+        pub data_bits: i32,
+        pub parity: u8,
+        pub stop_bits: i32,
+        pub address_from: i32,
+        pub address_to: i32,
+        pub per_address_timeout_ms: i32,
+        pub initial_delay_ms: i32,
+        pub deadline_ms: i32,
+        pub max_retries: i32,
+        pub retry_delay_ms: i32,
+        pub origin: String,
+    }
+
+    /// Outcome of starting a discovery job (schema v14). `rejection` is a
+    /// contract `discovery_error_kinds` value when `accepted` is false.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeDiscoveryStart {
+        pub accepted: bool,
+        pub coalesced: bool,
+        pub job_id: u64,
+        pub rejection: u32,
+        pub reason: String,
+    }
+
+    /// One discovered device (schema v14). `kind`, `identity_strength` and
+    /// `identification` are contract values; `camera_type` keeps the
+    /// `camera_types` meaning (0 EGrabber, 1 MindVision, 2 Mock, -1 n/a).
+    /// Transient SDK indices are session-local and never identity.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeDiscoveredDevice {
+        pub kind: u32,
+        pub provider_id: String,
+        pub display_name: String,
+        pub system_path: String,
+        pub persistent_id: String,
+        pub sdk_index: i32,
         pub interface_index: i32,
         pub device_index: i32,
+        pub stream_index: i32,
+        pub bus_address: i32,
+        pub stable_identity: String,
+        pub identity_strength: u32,
+        pub identification: u32,
+        pub claimed_by: Vec<String>,
+        pub capabilities: Vec<String>,
+        pub synthetic: bool,
+        pub camera_type: i32,
         pub interface_id: String,
         pub device_id: String,
+        pub stream_id: String,
         pub model_name: String,
         pub firmware_version: String,
         pub label: String,
     }
 
-    /// One discovered framegrabber stream (schema v7, BE-2).
+    /// Structured discovery error (schema v14); `kind` is a contract
+    /// `discovery_error_kinds` value.
     #[derive(Debug, Clone, Default)]
-    pub struct BridgeDiscoveredFramegrabber {
-        pub interface_index: i32,
-        pub device_index: i32,
-        pub stream_index: i32,
-        pub interface_id: String,
-        pub device_id: String,
-        pub stream_id: String,
-        pub model_name: String,
-        pub label: String,
+    pub struct BridgeDiscoveryError {
+        pub provider_id: String,
+        pub kind: u32,
+        pub message: String,
+        pub endpoint: String,
     }
 
-    /// Camera discovery result (schema v7, BE-2). Hardware lists are empty on
-    /// platforms without the EGrabber/MindVision SDKs.
+    /// Bounded discovery snapshot (schema v14). `state` is a contract
+    /// `discovery_job_states` value; `complete` is false whenever identity
+    /// coverage has a gap (error, busy, timeout, overflow). Camera jobs carry
+    /// the synthetic mock entry (`synthetic`, camera_type 2).
     #[derive(Debug, Clone, Default)]
-    pub struct BridgeCameraDiscovery {
+    pub struct BridgeDiscoverySnapshot {
         pub valid: bool,
-        pub cameras: Vec<BridgeDiscoveredCamera>,
-        pub framegrabbers: Vec<BridgeDiscoveredFramegrabber>,
+        pub job_id: u64,
+        pub generation: u64,
+        pub state: u32,
+        pub complete: bool,
+        pub overflow: bool,
+        pub attempt: i32,
+        pub max_attempts: i32,
+        pub kinds: Vec<u32>,
+        pub candidates: Vec<BridgeDiscoveredDevice>,
+        pub errors: Vec<BridgeDiscoveryError>,
+        pub providers_run: Vec<String>,
+        pub origin: String,
     }
 
     /// Authoritative selected-device snapshot (schema v7, BE-2). `mode` is a
@@ -648,10 +708,24 @@ pub mod ffi {
         fn fetch_processing_core_status(self: Pin<&mut BackendBridge>)
             -> BridgeProcessingCoreStatus;
 
-        /// Enumerate cameras/framegrabbers (schema v7, BE-2): EGrabber +
-        /// MindVision hardware (empty without the SDKs) plus the synthetic
-        /// mock entry. Discovery is a pull and touches no selection state.
-        fn fetch_camera_discovery(self: Pin<&mut BackendBridge>) -> BridgeCameraDiscovery;
+        /// Start a device-discovery job (schema v14, issue #419). Never
+        /// blocks on hardware; poll `fetch_device_discovery`.
+        fn start_device_discovery(
+            self: Pin<&mut BackendBridge>,
+            request: &BridgeDiscoveryRequest,
+        ) -> BridgeDiscoveryStart;
+
+        /// Convenience: camera + framegrabber job with default bounds (the
+        /// pre-v14 `fetch_camera_discovery` scope, asynchronously).
+        fn start_camera_discovery(self: Pin<&mut BackendBridge>) -> BridgeDiscoveryStart;
+
+        /// Request cancellation of a running job; false for unknown/ended
+        /// jobs. Never disconnects an established device.
+        fn cancel_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64) -> bool;
+
+        /// Value snapshot of a job; never waits for a worker.
+        fn fetch_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64)
+            -> BridgeDiscoverySnapshot;
 
         /// Pull the authoritative selected-device snapshot (schema v7, BE-2).
         fn fetch_camera_selection(self: Pin<&mut BackendBridge>) -> BridgeCameraSelection;

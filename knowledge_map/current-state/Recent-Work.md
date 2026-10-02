@@ -1,9 +1,476 @@
 # Recent Work
 
+## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
+
+The Review tab's Charts scatter is now a `ZoomableChartView` and a single
+click on a point shows that cell in a frame pane docked beside the plot
+(never over it), highlights the point and selects its Valid Frames row;
+prev/next walk the valid set, "Open in window…" opens the modal viewer.
+`ZoomableChartView` tells a click from a drag by `startDragDistance()`
+(issue #466); the Review tab builds point ↔ frame maps (frames failing
+validation have no point), names the dataset explicitly (the Charts tab
+reads as "invalid" to `isShowingValid_`), and keeps the user's zoom and
+selection out of exported chart images. The hit rule is Qt-free and shared
+with the React shell through `tests/fixtures/review_scatter_hits.json`.
+Found on the way: filling the scatter with `append()` was O(n²) on Qt 6.4
+(20 000 cells never finished opening); `replace()` opens it in ~1.6 s —
+TD-16 gets the lead. An end-to-end on the real app and real cells
+(`integration.review_scatter_e2e`, screenshots per state) then exposed a
+pre-existing export bug: chart TIFFs had red and blue swapped (RGB32 read
+as RGBA); fixed. Guards: `frontend.zoomable_chart_view`,
+`frontend.hdf_review_scatter`, `integration.review_scatter_e2e`. Plan:
+[`2026-09-30-review-scatter-click-to-view`](../../docs/exec-plans/active/2026-09-30-review-scatter-click-to-view.md)
+(PR 1 + PR 2 of #465); task note
+[[../task/2026-09-30-review-scatter-click-to-view]].
+
+## 2026-09-26 — Monitoring density (KDE) moved into the backend
+
+The live scatter KDE and core contour now run in the Qt-free backend
+([[../services/MonitoringDensityService]]) instead of a Qt worker job in the
+Monitoring tab, so the React/Tauri shell can read the same result and the
+estimate cannot compete with acquisition: one worker at the lowest OS
+priority (SCHED_IDLE / THREAD_PRIORITY_LOWEST), ticks skipped while frames
+are dropped or the batch queue is ≥ 25% full, next wake ≥ 20× the last
+compute (≤ ~5% of one core). Its input is a metrics-only copy of the
+processing monitoring ring (`ProcessingService::getMonitoringValidPoints`),
+and it hands the provisional record to the coordinator itself. The kernel
+and record codec moved to `include/backend/processing/` (namespace
+`backend::monitoring`). The Qt tab pushes settings/axes and polls for new
+results. Guards: `backend.monitoring_density_service` (policy, back-off,
+concurrency under TSan), `performance.monitoring_density_contention`
+(processing throughput with the service on ≥ 90% of off, duty cycle within
+budget), `e2e.experiment_coordinator` (service-supplied record in the file),
+`processing.monitoring_density` (renamed from `frontend.monitoring_density`).
+Before the PR the mock-camera e2e ran in the Linux container on the
+Hugging Face `512x96stream` frames: it exposed ~600 ms CPU per estimate in
+the busy app, fixed by a separable contour grid, a one-pass normaliser and
+a budget charged on thread CPU time (~90 ms, processing fps unchanged).
+Bridge + React consumption is the follow-up. See
+[[../task/2026-09-23-monitoring-kde-density]].
+
+## 2026-09-24 — KDE core contour: live contour, reference, stored records
+
+The Monitoring scatter shows a solid contour around the densest `Core %`
+(default 90%) of the population while Density (KDE) is on: a true KDE
+iso-line (mass-fraction level, 128×64 grid, marching squares) computed in the
+existing worker job. A dashed reference contour can be pinned or taken from a
+previous experiment file (Monitoring Settings). Each experiment run with
+Density on stores the on-screen contour as a provisional record
+(`/monitoring @kde_live_json`, written by the coordinator at stop); the Review
+tab draws stored contours and, on right-click, computes the authoritative
+full-run contour of all recorded cells and saves it into the file
+(`/analysis @kde_core_json`, via the new `Hdf5Service::openFileForUpdate`).
+Guards: `frontend.monitoring_density`, `recording.kde_core_roundtrip`,
+`recording.kde_core_fault`, `recording.kde_full_run_core`,
+`e2e.experiment_coordinator`,
+`frontend.monitoring_kde_density`, `frontend.hdf_review_core`,
+`integration.monitoring_kde_e2e`. See
+[[../task/2026-09-23-monitoring-kde-density]] and
+`docs/exec-plans/completed/2026-09-24-kde-core-region-split.md`.
+
+## 2026-09-23 — Monitoring scatter density (KDE) colouring
+
+The Monitoring tab's deformability-vs-area scatter can now be coloured by
+local population density (**Density (KDE)** toggle in the top row): a
+Gaussian KDE with a per-axis Silverman bandwidth, evaluated at every sample
+by the Qt-free `MonitoringDensity.h` kernel on the Qt thread pool
+(`QtConcurrent` + `QFutureWatcher`, one job at a time, unchanged buffers
+skipped) on its own periodic timer (default 2 s), and re-applied to the
+series through per-point `QXYSeries` configuration on the ordinary 500 ms
+refresh. Target-group points keep their identity by marker shape while the
+mode is on. The never-called isotropic `computeKDE` grid and the grid
+resolution setting were removed; the settings dialog now exposes a bandwidth
+factor and the update interval, and toggle/factor/interval persist in
+`QSettings`. Points are rendered through eight density-level series rather
+than Qt's per-point configuration, which the new mock-camera end-to-end
+(`integration.monitoring_kde_e2e`, real `MainWindow` on the
+`512x96stream` asset at 200 fps) measured at ≈ +220 ms GUI stall per
+refresh; with level series the KDE-on refresh is ~45 ms while capture,
+processing and overlay lag are unchanged. The same run shows the
+pre-existing plain 1000-point scatter refresh stalling the GUI ~380 ms
+(follow-up). Guards: `frontend.monitoring_density` (kernel invariants,
+per-axis separation, ratio-gated cost), `frontend.monitoring_kde_density`
+(offscreen widget: toggle, asynchronous estimate, late points, hide/show,
+persistence, dialog) and `integration.monitoring_kde_e2e`. See
+[[../frontend/ExperimentMonitoringTab]] and
+[[../task/2026-09-23-monitoring-kde-density]].
+
+## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
+
+Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,
+emulated) found two defects a parse check cannot: the doctor printed a
+CommandNotFound error per absent tool instead of a MISSING line (fixed with a
+`Get-Command` guard), and the bootstrap's `Run` helper took the command as
+remaining arguments, so PowerShell bound `-pr` to its own `-ProgressAction`
+(fixed: `Run` takes one string array). Both scripts now run end to end in that
+environment; TD-15 is narrowed to a real Windows host run.
+## 2026-09-21 — One packager for the export GUI (TD-14)
+
+`scripts/build_mac.sh`, `scripts/build_windows.ps1` and `scripts/hdf5_export.spec`
+were a diverged copy of the MIB Studio Tools packagers under `tools/` (both
+spec files packaged `scripts/hdf5_export_app.py`). Removed; the tools bundle
+(`tools/build_*`, `tools/hdf5_export_app/hdf5_export.spec`, output
+`tools/dist/`) is the only build, and `docs/howto/hdf5-export-app.md` now
+documents it. TD-14 closed.
+## 2026-09-21 — e2e_device_discovery_lifecycle waits for outcome delivery
+
+Same race as #431 in the integration test: it waited on
+`nanopositionerStepRunning()` (cleared before the listener runs) and then
+asserted the Connected outcome, failing once on a PR lane. It now waits for
+the delivery itself.
+
+## 2026-09-21 — StartupDiscoveryCoordinator::stop() drains in-flight listeners (#431)
+
+TSan (sanitizer lane on #424) caught a heap-use-after-free in
+`startup_discovery_policy_test`: the nanopositioner "running" flag clears
+before the terminal outcome is delivered, the test returned on the flag, and
+the worker-thread listener appended to destroyed storage. `stop()` now waits
+(bounded) for actions in flight on other threads, never for itself; the test
+waits for delivery and a new block proves `stop()` returns only after a slow
+listener finished. See [[../services/DeviceDiscoveryService]].
+
+## 2026-09-21 — Repository root cleanup
+
+PR 6 of the self-provisioning plan. Six build logs, a debug log and
+`data/logs/symphony-state-last.json` are untracked (`*.log`, `data/logs/`
+ignored). The eight release-tooling unit tests moved to `tests/release/`
+(CTest `scripts.*` targets and `python-wheel.yml` updated) and the publish /
+verify / bump / release scripts to `scripts/release/` (`release.ps1` and
+`bump-version.ps1` resolve the repo root from their new location; workflows,
+`ci.yml`'s syntax check, README and how-tos repointed). The duplicated
+`scripts/build_*` vs `tools/build_*` packagers are logged as TD-14 rather than
+deleted, since `docs/howto/hdf5-export-app.md` still documents the `scripts/`
+pair. See [[../build-and-run/Build]].
+
+## 2026-09-21 — Build docs consolidated: Build.md is current truth, dated notes moved to task/
+
+PR 5 of the self-provisioning plan. `build-and-run/Build.md` now holds only
+what is true today (start-here, containers/CI, a preset table, targets,
+commands, Conan, platform guards) plus a History list; the dated paragraphs
+moved to `task/2026-09-09-windows-ninja-fast-loop.md`,
+`task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo.md`, and the existing
+hardware-shutdown, MindVision-overview and cloud-toolchain notes. Golden
+principle 12 ("every setup list has exactly one home") is the rule the plan
+implements. `WORKFLOW.md` (Symphony) runs the doctor/bootstrap before each
+run; Agent-Onboarding step 0 is the doctor.
+
+## 2026-09-21 — Preset hygiene: no user paths, described presets, showIncludes gate
+
+PR 4 of the self-provisioning plan. `CMakePresets.json` no longer carries
+`/home/gavin/...` ignore paths (they belong in the gitignored
+`CMakeUserPresets.json`; `CMakeUserPresets.example.json` shows how) and every
+configure preset has a `description` naming its `env/` sections and Conan
+profile. `cmake/MIBCompilerSettings.cmake` now fails a Ninja + MSVC configure
+when `CMAKE_CL_SHOWINCLUDES_PREFIX` is empty instead of silently losing header
+dependencies (`MIB_ALLOW_UNKNOWN_SHOWINCLUDES_PREFIX=ON` to override). See
+[[../build-and-run/Build]].
+
+## 2026-09-21 — Devcontainer, one composite setup action for every Linux lane, nightly network tests
+
+PR 3 of the self-provisioning plan. `.devcontainer/` (Ubuntu 24.04 built from
+`env/apt-packages.txt`, `/opt/venv` with Conan + NumPy, post-create runs the
+bootstrap and doctor, cache volumes, `HF_TOKEN` passthrough). The seven
+hand-typed apt lists in `backend-ci`, `bridge-ci`, `desktop-ci`, `sanitizers`,
+`soak`, `exporter-soak`, `python-wheel` are replaced by
+`.github/actions/setup-linux-env` (sections + extras, Conan, MindVision SDK,
+assets). New `network-tests.yml` runs `linux-network-test` nightly. Decision:
+build the image per job rather than publish to GHCR. See [[../build-and-run/Build]].
+
+## 2026-09-21 — doctor/bootstrap scripts; env/ is the single home for setup lists
+
+PR 2 of the self-provisioning plan. `scripts/doctor.{sh,ps1}` report what a
+host is missing (toolchain minimums from `env/toolchain.toml`, packages from
+`env/apt-packages.txt` / `env/brew-packages.txt` by section, Conan default
+profile, MindVision SDK, required assets, optional `HF_TOKEN`) with one fix
+command per item and exit 1; `scripts/bootstrap.{sh,ps1}` install the same
+idempotently (apt/brew or winget, `.venv` + `env/requirements-build.txt`,
+`conan profile detect`, SDK, assets, and on Windows `conan install` with the
+repo profile). The inline `ci` Conan profile in `build-windows.yml`,
+`release.yml`, `python-wheel.yml` is replaced by
+`conan/profiles/windows-msvc194[-ninja]`, which also carries the `cpuinfo`
+`[replace_requires]` pin that previously lived only in a Build.md paragraph.
+`scripts/requirements.txt` and `tools/requirements-*.txt` moved to
+`env/requirements-{scripts,tools-runtime,tools-build}.txt`;
+`env/requirements-build.txt` (conan, numpy) is new. Runtime pins added:
+`rust-toolchain.toml`, `.nvmrc` + `desktop/package.json` engines,
+`.python-version`, `mise.toml`. AGENTS.md / README / linux-build.md now say
+"run the doctor" instead of restating package lists. See [[../build-and-run/Build]].
+
+## 2026-09-21 — External assets manifest; model weights moved to Hugging Face
+
+PR 1 of the self-provisioning plan. `env/assets.json` now declares every
+dataset and model the repo depends on (Hub id, pinned revision, SHA-256,
+visibility, consumers); `scripts/provision-assets.py` (stdlib) fetches and
+verifies them into `build/vendor/assets/`, `scripts/assets_manifest.py` is the
+only way code names a Hub repo, and `scripts/check_docs.py` fails on any
+undeclared `gavinlouuu/<repo>` id. `yolo11n-seg.onnx`/`.pt` left git for
+`gavinlouuu/mib-yolo11n-seg`; CMake resolves `MIB_YOLO_MODEL_PATH` from the
+manifest, fails configure with the fix command when ONNX Runtime is present
+and the file is missing, and Windows CI / `release.ps1` provision before
+configuring. kin10/kin6 harnesses, `synthetic_condition_validation.py` and
+`empty_frame_detection.py` read the corpus from the manifest;
+`fetch_hf_512x96stream.py` is replaced by the `512x96stream-mock-frames`
+asset. Linux test presets exclude label `network`; `linux-network-test`
+runs it. See [[../build-and-run/Assets]].
+
+## 2026-09-21 — Self-provisioning environment plan; tracked agent settings removed
+
+Opened `docs/exec-plans/completed/2026-09-21-self-provisioning-environment.md`
+(seven PRs: secrets, assets on Hugging Face, doctor/bootstrap, devcontainer +
+CI convergence, preset hygiene, docs consolidation, root cleanup). PR 0 lands
+here: `.claude/settings.local.json` was tracked in this public repository and
+its permission allowlist carried two plaintext credentials (MLflow tracking
+and the team Conan remote) since 2026-03-24; the file is untracked and
+ignored, both credentials must be rotated by their owners, and golden
+principle 11 now states the rule. No other tracked file contained either
+value. See [[../../docs/exec-plans/completed/2026-09-21-self-provisioning-environment]].
+
+## 2026-09-16 — Device discovery service with providers (#419)
+
+Device discovery moved into a backend job service
+([[../services/DeviceDiscoveryService]], ADR 0005): bounded, cancellable,
+coalescing jobs over providers that wrap the existing MindVision / eGrabber /
+nanopositioner / pulse-generator enumeration and read-only identity probes,
+provider-aware dedup with explicit ambiguity, overflow that never looks like
+a unique match, and a separate startup selection/connection policy with the
+pre-#419 defaults (camera after 400 ms, nanopositioner 3 × 4 s). The Qt
+`DeviceInitManager` is now an adapter (no QtConcurrent workers), ConnectTab /
+NanopositionerTab / ConfigTabs consume snapshots (no UI-thread enumeration or
+fallback, no tab-owned scan thread), and `AppBackend::shutdown()` drains
+discovery before releasing serial hardware. Facade and bridge gained the
+asynchronous discovery trio (ABI 14) replacing `fetch_camera_discovery`.
+Windows fast lane and integration lane green (118 / 11 tests), Rust contract
+16/16 on the Ninja tree via the new `tools/gen_bridge_link_manifest_ninja.py`,
+desktop `tsc` + vitest 124/124. Linux/sanitizer lanes run on PR #421 (GCC aggregate-init fix `9dfee2a`).
+Partial hardware acceptance on the rig PC: startup discovery, auto-selection
+(MindVision), auto-connection (OEABT on COM7), shutdown ordering,
+close-during-scan, and relaunch verified; GUI-interactive tests not claimed.
+See [[../task/2026-09-15-device-discovery-service]].
+
+## 2026-09-15 — Desktop hardware ownership and shutdown
+
+Added per-user duplicate-launch protection before hardware initialization,
+explicit serial-device release in backend shutdown, cancellation/draining of
+startup discovery, and main-window close that exits despite utility windows.
+Windows serial output waits now honor their timeout. Three regressions were
+reproduced before fixing them; four new guards and the 116-test Windows
+non-hardware suite pass. The hidden incident process was in its normal Qt event
+loop, so a shutdown deadlock is not claimed. See
+[[../task/2026-09-15-hardware-shutdown]] and [[../frontend/DesktopInstance]].
+
+## 2026-09-15 — Desktop startup acceptance gaps (#413)
+
+Actual app checks found implicit mock fallback blocking MindVision discovery
+in builds without EGrabber, and automatic Overview navigation starting the
+camera before Play. The fallback now leaves selection open when no camera mode
+was explicitly requested. Illuminated profiles require explicit Play on
+Overview. Both failures have regressions proven to fail before correction.
+
+## 2026-09-15 — Illuminated Live View Stop-level regression (#413)
+
+The 1000 Hz preset uses a 100 µs strobe, polarity 0. Webcam commissioning
+disproved the inferred polarity-dependent GPIO off level: high left the LED
+lit after Stop, while explicit GPIO low made it dark. Stop now drives low
+independently of strobe polarity. The corrected two-polarity regression fails
+against the high-on-stop code and passes after correction; desktop rebuild
+passed. The operator replaced unavailable scope acceptance with webcam on/off
+confirmation and specified LED pulses above roughly 45 µs, normally 100 µs.
+
 > Snapshot of recently merged features and fixes, as of 2025-11 / 2025-12.
+
+## 2026-09-14 — Periodic flush byte-watermark fix (#407)
+
+The coordinator's periodic flush gate checked frame count only, but
+`ExperimentFrameBuffer` refused admission on either frame count or byte budget.
+With 1216×256 mono frames the 512 MB byte budget saturated at 862 frames — below
+the 1000-frame flush interval — so no frames reached disk until experiment stop.
+Fix: `ProcessingService::needsFlush()` fires on count **or** a 50 % byte-budget
+watermark; the coordinator also adds a 2-second time-based backstop. Test:
+`processing.flush_byte_watermark`.
 > Refresh from `git log --oneline -20` when outdated.
 
+## 2026-09-14 — Illuminated Live View review pass on the rig PC (#413, PR #414)
+
+Read-only probes on the rig PC found a second, never-configured generator
+module on COM4 answering address 1 with zeroed registers, which the lenient
+generator identity accepted; the real generator on COM6 keeps 0 Hz on channels
+it never set. Automatic discovery now requires the requested channel to hold a
+non-zero in-range frequency, excludes a pump-like responder via a read-only
+syringe-volume register check, and names busy/unset/non-generator ports in its
+error; `live_view` parsing
+and period/exposure/strobe rules live in `parseConfig` and gate Save as well as
+Play; Stop is honoured before handle open and CameraPlay; an unconfirmed
+generator/LED OFF survives handle-teardown faults; the default-profile upgrade
+matches a verbatim historical copy. Tests: `backend.illuminated_live`,
+`frontend.config_tabs_state`. Built and tested on the rig PC on 2026-09-15
+(Windows fast lane 102/102); no hardware acceptance yet.
+
 ## Features shipped
+
+- **Contract-2 native core owns its science** (2026-09-27, Contract 2 rollout
+  T1.1a) — the loader negotiates engine ABI v2 for Contract-2 cores; the
+  absdiff-laplacian core receives the full profile config as JSON and runs
+  the host's own Contract-2 object science (the V2-5 prototype used default
+  gates and the Contract-1 inner-contour rule). `processing.core_contract2_equivalence`
+  proves field-for-field equality with the bundled Contract-2 kernel. See
+  [[../services/ProcessingService#Engine ABI v2 (v2)]].
+- **Real-frame Contract 2 reference** (2026-09-26, Contract 2 rollout T1.2) —
+  `run_processing_conformance.py --processing-contract 2` runs the 50 V
+  fixture under Contract 2 (same config, `difference_threshold` = the recorded
+  threshold) against `scripts/conformance/focus-50v-real-contract2.json` (407
+  records) in the wheel CI. The metrics schema's `contract_version` accepts 2,
+  and `compare_metrics.py` requires `ring_ratio` only in Contract-1 documents
+  (it rejected every Contract-2 record before). Finding for calibration (T2.2):
+  without the area gate, Contract 2 on full frames keeps noise blobs,
+  including on empty frames; see `docs/processing-contract-v2-validation.md`.
+- **Real-frame Contract 1 reference and reference change control**
+  (2026-09-26, Contract 2 rollout T0.3/T0.4) — `scripts/conformance/focus-50v-real.npz`
+  (13 real 1184x240 frames from the four 50 V focus recordings, with
+  per-recording backgrounds and the recorded Contract-1 config, 2.2 MB) and its
+  gold `focus-50v-real-contract1.json` (21 records: 14 valid, 4 invalid, 3
+  border). `run_processing_conformance.py --fixture-npz` processes each
+  recording with its own background; the wheel CI runs it next to the synthetic
+  reference. A difference threshold +1 changes all 21 records. `.github/CODEOWNERS`
+  covers the processing science and references;
+  `gold-reference-guard.yml` fails a PR that changes a reference or fixture
+  without the `gold-reference-change` label. See
+  [[../domain/Microscopy-Pipeline]].
+- **Full processing config in recordings** (2026-09-26, Contract 2 rollout
+  T0.2) — `/experiment_info` records the declared contract, difference
+  threshold, ring/area-ratio/Laplacian gates and the channel band
+  (`getEffectiveProcessingConfig()`); `Hdf5Service::readRecordedProcessingConfig`
+  reads them back. Research (wheel) builds record the executed contract, so a
+  Contract-2 `save_masks_to_hdf5` file now exports as Contract 2. See
+  [[../services/Hdf5Service#Processing-core provenance]].
+- **One contract per shipped core** (2026-09-26, ADR 0007, Contract 2 rollout
+  T0.1) — the bundled kernel's contract is fixed by
+  `MIB_PROCESSING_CORE_CONTRACT` (`1` default; `research` = both, Python wheel
+  only). Native plugins are built per contract: `mib_processing_core`
+  (subtract-ring) exports only `get_api`, and
+  `mib_processing_core_absdiff_laplacian` exports only `get_api_v2`.
+  `ProcessingService` refuses a profile whose contract the active core does
+  not serve (`processingContractMismatch()`), so a recording's contract (from
+  the core identity) is the executed one. C-7 now activates explicit
+  Contract-1 and Contract-2 kernels; the loader test checks that the
+  Contract-1 plugin serves Contract 1 only. See
+  [[../services/ProcessingService#Processing-core selection]].
+- **Processing Contract v2 — runtime selection (V2-8)** (2026-09-24, epic
+  #296) — the stack was merged with `develop` and Contract 2 became
+  executable from a config: `ProcessingConfig::processing_contract_version`
+  drives one shared `differenceImage()` (absdiff vs subtract) across the
+  bundled kernel, empty-frame helpers and realtime/batch loops; ring width is
+  `NaN`/ungated under Contract 2; `AppConfigWatcher` reads the root contract
+  key + `difference_threshold`; wheel 0.3.0 accepts the contract in its config
+  dict, omits `ring_ratio` / emits `laplacian_variance` under Contract 2 and
+  adds `compute_processed_objects`. Conformance C-7 + pytest; Contract-1
+  golden unchanged. See `docs/exec-plans/active/2026-07-21-processing-contract-v2.md`.
+
+- **Processing Contract v2 — HDF5 focus metric + reviewable export** (2026-07-21,
+  issue #302 follow-on, epic #296) — closes the e2e generate→review loop.
+  `laplacianVariance` is appended to the HDF5 per-object compound (offsets
+  preserved; Contract-1 files read `NaN`), verified by
+  `recording.experiment_roundtrip`. `scripts/export_hdf5.py` is now
+  contract-aware (keyed off `processing_contract_version`): a Contract-2 export
+  emits `laplacian_variance` and omits `ring_ratio`; Contract 1 keeps ring.
+  e2e review test `scripts.contract2_export_review` generates compound-shaped
+  records, exports them, and validates a schema-valid v2 review document. So:
+  the C++ pipeline generates + persists the focus metric and the exporter makes
+  it reviewable.
+- **Processing Contract v2 — native ABI-v2 plugin** (2026-07-21, issue #301
+  follow-on, epic #296) — `mib_processing_core` now exports
+  `mib_processing_get_api_v2` alongside the unchanged v1 `get_api`. Its
+  `process_objects` compiles the ABI filter chain, builds the absolute
+  difference, runs the science, and returns full per-object metrics (finite
+  `laplacian_variance`, no ring) into the host-owned buffer with deterministic
+  `BUFFER_TOO_SMALL`; the v2 descriptor advertises the Contract-2 capabilities
+  and passes a v2 self-test. End-to-end dlopen test: `processing.core_v2_plugin`.
+  The loader's v2 activation path + native signing remain follow-on.
+- **Processing Contract v2 — validation release gate (deterministic)**
+  (2026-07-21, issue #303, epic #296) — seventh slice (V2-7). Adds
+  `processing.contract2_conformance`, one deterministic synthetic gate tying the
+  v2 properties together (absdiff polarity symmetry, filter identity/order,
+  blur lowers focus, inversion preserves it, object isolation, tiny/no-object
+  NaN, invalid-background rejection, focus gate default-off), and
+  `docs/processing-contract-v2-validation.md` recording the calibration
+  decisions (gate ships disabled; no threshold converted from ring) and the
+  full list of remaining real-corpus / hardware / MLflow / native-plugin work.
+  The deterministic portion is complete; the resource-dependent portion stays
+  open on the gate.
+- **Processing Contract v2 — contract-aware metrics schema** (2026-07-21, issue
+  #302, epic #296) — sixth slice (V2-6), persisted/contract surface. Makes
+  `docs/gold_standard_metrics.schema.json` contract-aware: `ring_ratio` is now
+  optional and documented as **legacy Contract 1**, and a new optional
+  `laplacian_variance` (Contract-2 focus metric, `NaN`→`null`) is declared, so
+  a Contract-1 document (ring, no laplacian) and a Contract-2 document
+  (laplacian, no ring) both validate under `additionalProperties:false`. No
+  global `contract_version` bump (v2 stays a coexisting per-document contract).
+  Docs (`gold_standard_metrics.md`) updated. Test:
+  `scripts.gold_standard_schema_contract`. The HDF5 compound round-trip, the
+  Python/JSON/CSV exporters, and the review/monitoring UI + screenshots are
+  larger surfaces tracked as follow-on within V2-6.
+- **Processing Contract v2 — engine ABI v2 surface** (2026-07-21, issue #301,
+  epic #296) — fifth slice (V2-5). Adds engine ABI v2 to `ProcessingCoreAbi.h`
+  **additively** (v1 layout pinned unchanged): POD filter-chain / v2-config /
+  per-object-metrics structs (`laplacian_variance`, no ring), a host-owned
+  object buffer with deterministic `BUFFER_TOO_SMALL`, `mib_processing_api_v2`
+  with `process_objects`, and `get_api_v2` negotiation. Capability flags
+  (`MIB_PROCESSING_CAP_*`) plus `ProcessingCoreCapabilities.h` host negotiation
+  (`coreSatisfiesContract2`, `abiV1ServesContract`, `engineAbiForContract`).
+  Native v2 plugin + loader v2 activation are follow-on. Tests:
+  `processing.core_abi_v2_c`, `processing.core_capabilities`.
+- **Processing Contract v2 — focus-score autofocus controller** (2026-07-21,
+  issue #300, epic #296) — fourth slice (V2-4). Adds the Qt-free
+  `AutofocusFocusScore.h`: `FocusSample` (Laplacian variance/frame/timestamp/
+  object/track), a finite-only validity policy, `medianFocusScore` (de-dups by
+  `(frame, identity)`, `NaN` when empty — never manufactured), and
+  `FocusScoreController`, a maximize-score hill-climb (direction probe,
+  reverse-on-wrong-way stays coarse, reverse+refine on overshoot, hold within
+  tolerance, clamped). The Contract-1 ring-width setpoint controller
+  (`AutofocusMath.h`) is untouched. Service/UI wiring rides on V2-6. Test:
+  `backend.autofocus_focus_score`.
+- **Processing Contract v2 — per-object Laplacian variance** (2026-07-21,
+  issue #299, epic #296) — third slice (V2-3). Adds
+  `science::calculateLaplacianVariance` (filled object mask, crop to bbox+kernel
+  context, `cv::Laplacian` on the unmasked crop, variance via `meanStdDev` over
+  the mask so only object pixels contribute; `NaN` for unusable samples).
+  Computed once per emitted object from its own contour (inner for nested,
+  top-level for outer-only — never the parent/halo). New `laplacianVariance`
+  result field and `laplacian_variance_min/max` +
+  `enable_laplacian_variance_check` config (parsed by `AppConfigWatcher` +
+  Python bridge), plus `InvalidReasonCode::Laplacian` (histogram 6→7). Gate
+  **disabled by default**, so Contract-1 output is unchanged; ring width stays
+  for v1. Test: `processing.laplacian_variance`.
+- **Processing Contract v2 — preprocessing filters + shared absdiff path**
+  (2026-07-21, issue #298, epic #296) — second slice (V2-2). Adds the Qt-free
+  `ImageFilterPipeline` (identity/invert/linear_contrast/gamma/clahe, compiled
+  once, fail-closed on bad stages) and one shared `buildDifferenceImage`
+  (input filters applied symmetrically, `cv::absdiff` under Contract 2 vs
+  saturating `cv::subtract` under Contract 1, incompatible-background error
+  under v2). The bundled kernel routes `processMask` **and** `isEmpty` through
+  it, and the host `isFrameEmpty` helpers too, so mask + empty-frame can't
+  diverge. Contract-1 output unchanged (golden/seam/multi-object tests pass).
+  Test: `processing.image_filter_pipeline`.
+- **Processing Contract v2 — schema/migration boundary** (2026-07-21, issue
+  #297, epic #296) — first slice (V2-1) of the Contract-v2 epic. Adds the
+  Qt-free `backend::processing::contract` module
+  (`ProcessingContract.{h,cpp}`): two version axes, `classifyConfigSchema`
+  (same/upgrade/incompatible), the canonical `difference_threshold` adapter
+  (`resolveDifferenceThreshold`), and `migrateProfileConfigV1ToV2` (removes
+  ring science, installs an identity preprocessing chain, disables the
+  Laplacian gate, preserves unrelated values, never activates a core). Plus
+  ADR `docs/decisions/0006-processing-contract-v2.md`, the compatibility-matrix
+  doc, and the active exec-plan. Contract v1 is unchanged. Test:
+  `processing.contract_v2_migration`.
+- **Cross-platform OEABT nanopositioner backend** (2026-08-31) — Added a
+  Qt-free C++17 protocol core, native ISerialPort adapter, guarded `oeabtctl`
+  diagnostic/acceptance CLI, and Linux/Windows MIB Studio backend selection
+  while retaining CoreMOR on Windows. Serial discovery uses persistent
+  endpoint IDs and protocol identity rather than trusting the generic CH341
+  VID/PID. Connect is observe-only; safe-shutdown voltage is written only
+  after an active control session. Legacy COM configuration migrates to an
+  explicit CoreMOR endpoint. Connected V0.5.4 tests now confirm command communication; voltage-accuracy
+  and physical-displacement acceptance remain open.
+  Task record: [[../task/2026-08-31-oeabt-nanopositioner]].
 
 - **ProcessingService::stop() lost-wakeup hang** (2026-09-09) — The ASan
   lane once timed out (600 s) on `backend.mindvision_selection_state`,
@@ -983,6 +1450,30 @@
   an always-on live acquisition→pulse latency gauge, status-bar surfacing,
   [[../diagnostics/CrashStateMirror]] loss fields, and a funnel/loss section in
   `analyze_pipeline_timing.py`. Test: `processing.identification_metrics`.
+- **Auto-fit processing ROI from background** (2026-07-21, issue #295) —
+  new pure detector `detectChannelRoi` (`ChannelRoiDetect.{h,cpp}`, OpenCV-only,
+  in the Qt-free `mib_processing` core) locates the microfluidic channel walls
+  from a captured background's vertical-gradient row profile and returns a
+  full-width ROI with the wall rows excluded, failing safe to the full frame on
+  empty/flat/ambiguous input. `ProcessingConfig::auto_roi_from_background`
+  (default off, + `auto_roi_wall_gradient_ratio`, `auto_roi_wall_margin`) gates
+  it; `setRealtimeBackgroundGray` — the single background-capture chokepoint —
+  applies the derived ROI via `setRealtimeRoi` and fires a new
+  `SuggestedRoiCallback`. Keeps full-frame capture in realtime while excluding
+  the wall noise that both pollutes detections and defeats the empty-frame fast
+  path. Guard: `processing.channel_roi_detect`. Config threaded through
+  `AppConfigWatcher` (`image_processing`). Task:
+  [[../task/2026-07-21-auto-roi-warmup]]. Landed on the Contract-2 branch
+  2026-09-25 with the two fixes validated on the cells-different-focus
+  dataset: the band is the wall-bounded run with the strongest walls (not the
+  longest run, which is the flat glass outside a mid-frame channel) and
+  `minBandFraction` defaults to 0.15 (the MIB channel is ~22% of 1184x240).
+  Same day the band stopped cropping the ROI: it now gates objects by
+  **centroid** (`FilterResult::inChannel`, invalid reason `Channel`, wheel
+  0.3.2 `channel_band_y/h` → `in_channel`), so debris stuck on a wall is
+  rejected without clipping cells near the walls. See
+  [[../services/ProcessingService#Channel band from background]].
+
 - **Trigger-path hardening** (2026-07-18, issue #227) — the
   [[../services/TriggerService]] thread elevates itself to
   `THREAD_PRIORITY_TIME_CRITICAL` on Windows (best-effort `SCHED_FIFO`
@@ -1967,8 +2458,45 @@ integers, a typed adapter, nullable processing metrics and shared producer/
 consumer fixtures. Details: [[../task/2026-09-07-agent-b-event-contracts]].
 Full native experiment acceptance remains open.
 
-## 2026-09-10 — Central registry foundation (#398)
+- **One-click illuminated Live View** (2026-09-14, issue #413): saved XGC/R5D
+  profile, capture-owned generator/strobe lifecycle, failed-start/stop handling,
+  simplified Hardware Setup and fake-SDK/serial regression coverage. See
+  [operator guide](../../docs/howto/illuminated-live-view.md).
 
-Provider contract, Supabase RPC/schema/RLS, immutable SQLite cache and registry-layer
-offline/integrity tests added. No desktop or Start integration yet. See
-[[../services/ProfileRegistryService]] and the active central-profile-registry plan.
+  Task record: [[../task/2026-09-14-one-click-illuminated-live]].
+
+
+### 2026-09-15 ? Nanopositioner vendor discovery follow-up
+
+Separated the bundled Windows Coremor SDK from EGrabber so a MindVision-only
+build can use the existing nanopositioner scan/auto-connect path. The configure
+regression failed before the wiring fix and passes afterward. The operator
+identified the attached vendor as OEABT; no OEABT driver exists yet. Controller
+model/protocol identification remains necessary for actual auto-connect.
+See [[../services/AutofocusService]] for the explicit support inventory.
+
+
+### 2026-09-15 ? Vendor-aware nanopositioner discovery foundation
+
+Added an injectable vendor registry and serial inventory to startup discovery;
+CoreMorrow identifies through its existing read-only probe, while OEABT remains
+explicitly pending its separately supplied protocol. Refresh now requests a scan;
+scan controls prevent competing connects. Unique-match selection covers all ports
+including the saved port. See [[../services/AutofocusService]] and
+[[../frontend/NanopositionerTab]].
+
+
+### September 15 ? OEABT discovery verified on Windows rig
+
+Integrated the protocol from PR #416 with the vendor discovery framework.
+Fixed legacy COM-only migration to Auto (regression-first). Desktop startup
+auto-connected the identified OEABT controller on COM7; illuminated Live View
+ran at 999 fps using generator COM6 and 100 us strobe. App-close released both
+devices and webcam showed dark. No voltage/mode writes. Windows tests105/105
+passed. See [[../task/2026-09-14-one-click-illuminated-live]].
+
+- **2026-09-15 - MindVision overview/ROI:** full native sensor preview, 400 Hz
+  illuminated trigger (50 fps display cap), editable 512x96 default experiment
+  ROI saved to MindVision JSON, bounded preview memory, and transactional mode
+  switching. Rig acceptance measured 816x624 at about 400 fps and restored
+  512x96 at (64,48) at about 998 fps, with generator OFF readback after each stop.

@@ -1,5 +1,25 @@
 # MainWindow
 
+## Desktop exit and hardware release (2026-09-15)
+
+Accepted close stops `DeviceInitManager` (which stops the backend startup
+discovery policy, #419), calls explicit backend shutdown (which drains the
+discovery workers before releasing hardware), and queues application quit
+even if a detached top-level widget remains. `aboutToQuit` also stops
+discovery and the backend for other quit paths.
+Cancelled experiment-close confirmation leaves discovery and hardware running.
+Regression: `frontend.mainwindow_shutdown`. See [[DesktopInstance]] and
+[[../task/2026-09-15-hardware-shutdown]].
+
+## Illuminated rig startup (#413)
+
+Connecting a camera navigates to Overview, but a saved illuminated MindVision
+profile requires explicit Play. `onTabChanged` reads the selected saved profile
+through the shared parser and suppresses Overview auto-start for illuminated
+or unreadable profiles. Legacy non-illuminated profiles retain Overview
+auto-start. `frontend.run_status_ui` verifies navigation does not create a
+capture generation for an illuminated profile, using a fake camera factory.
+
 > `QMainWindow` subclass at the root of the UI. Holds a reference to
 > `backend::AppBackend&` and owns the tab widget, sidebar, and corner
 > actions.
@@ -66,7 +86,8 @@
 - `onTabChanged(index)` — starts/stops the realtime loop when entering or
   leaving the experiment-related tabs (ExperimentController state).
 - `onNoCamerasFound` — shows a friendly dialog when
-  `DeviceInitManager` reports empty discovery.
+  `DeviceInitManager` reports empty discovery (the startup policy's
+  `NoneFound` outcome; an incomplete scan reports its reason instead).
 - Startup restores the persisted native core through
   [[ProcessingCoreDialog]] before capture begins. A restore/pin failure is
   visible in the status bar and experiment start remains blocked.
@@ -251,3 +272,12 @@ created in `setupStatusSurfaces()`:
 - The coordinator's status callback captures `this` and posts a queued
   lambda; the destructor clears the callback before any member dies, and
   `AppBackend` (constructed before the window in `main()`) outlives it.
+
+## MindVision tab transitions (2026-09-15)
+
+Overview/Experiment navigation stages the matching MindVision mode through
+AppBackend before restarting realtime processing. Capture resumes only when
+already running; idle navigation does not enable illumination. The backend
+rejects mode changes during experiments/recording before services are stopped.
+MindVision ROI notifications use sensor offsets for the displayed selection and
+zero offsets for processing the hardware crop. The eGrabber script path is unchanged.

@@ -11,7 +11,15 @@
   evidence pointers, open hardware items
 - `task/2026-08-24-exporter-stability.md` — #344 exporter phase
 
+### Build environment
+- [[../task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo]] — localized cl.exe `/showIncludes` prefix, `cpuinfo` Conan conflict (rig PC)
+- [[../task/2026-09-09-windows-ninja-fast-loop]] — `windows-ninja` preset measurements, sccache, Rust bridge on the Ninja tree
+- [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — cloud image `-lstdc++` fix
+
 ### Camera lifecycle & hardware SDKs
+- [[../task/2026-09-15-device-discovery-service]] — backend discovery job service, providers, startup policy, ABI 14 bridge (#419)
+- [[../task/2026-09-15-mindvision-overview-roi]] - full-sensor overview, 400 Hz trigger, experiment ROI persistence and rig acceptance
+- [[../task/2026-09-15-hardware-shutdown]] — duplicate desktop protection, explicit disconnects, bounded Windows serial drain
 - `task/2025-11-14-safe-start-stop-egrabber.md`
 - `task/camera-reset.md`
 - `task/fps_mbs_zero.md`
@@ -48,8 +56,10 @@
 
 ### Nanopositioner
 - `task/2025-11-19-nanopositioner-tab.md`
+- `task/2026-08-31-oeabt-nanopositioner.md`
 
 ### HDF Review scalability & crashes
+- [[../task/2026-09-30-review-scatter-click-to-view]] — Review scatter click-to-view, docked frame pane, click vs drag, Qt 6.4 `append()` O(n²) (#466/#467)
 - `task/review_2gb_scalability.md`
 - `task/review_hdf_thumbnail_spacer_crash.md`
 - `task/2026-06-02-long-run-frame-growth.md`
@@ -98,6 +108,7 @@
 2026-05-22-boot-service-toggles.md
 2026-05-22-crash-monitoring.md
 2026-06-01-backend-only-build-test-mode.md
+2026-08-31-oeabt-nanopositioner.md
 2026-06-01-hdf5-crash-recovery-checkpoints.md
 2026-06-02-long-run-frame-growth.md
 2026-07-13-processing-conformance.md
@@ -133,3 +144,5 @@ ui-status-stats.md
 ```
 
 **Up**: [[Recent-Work]] · [[../README|Vault home]]
+
+- `task/2026-09-14-one-click-illuminated-live.md`

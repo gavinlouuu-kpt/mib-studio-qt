@@ -13,6 +13,8 @@
 //    opens without touching alerts.
 
 #include "backend/app/AppBackend.h"
+#include "backend/services/CaptureService.h"
+#include "backend/camera/mock/MockCamera.h"
 #include "frontend/core/MainWindow.h"
 #include "frontend/models/RunStatusModel.h"
 #include "frontend/utils/ApplicationSettings.h"
@@ -32,6 +34,7 @@
 #include <QSettings>
 #include <QStyleFactory>
 #include <QToolButton>
+#include <fstream>
 
 namespace {
 void settle(int rounds = 6)
@@ -150,6 +153,23 @@ int main(int argc, char* argv[])
     settle(2);
     MIB_EXPECT(alerts->all().size() == alertsBefore, "diagnostics refresh adds no alerts");
     if (diag) diag->hide();
+    // Selecting the illuminated rig navigates to Overview during startup.
+    // Navigation must not enable the LED before the operator presses Play.
+    wd.mark("illuminated Overview stays idle");
+    const auto rigPath = (td.path() / "rig.json").string();
+    std::ofstream(rigPath) << R"({"exposure_time_us":100,"trigger_mode":2,
+        "strobe_mode":1,"strobe_pulse_width_us":100,"strobe_polarity":0,
+        "live_view":{"enabled":true,"port":"auto","frequency_hz":1000,"duty_percent":2}})";
+    MIB_REQUIRE(backend.stageMindVisionConfigFromFile(rigPath), "stage saved illuminated profile");
+    backend.setMindVisionCameraSelection(0, "test rig");
+    backend.capture().setCameraFactory([] {
+        return std::make_unique<camera::mock::MockCamera>(camera::mock::MockCameraOptions{});
+    });
+    const auto beforeNavigation = backend.capture().lifecycleSnapshot().generation;
+    QMetaObject::invokeMethod(&window, "onTabChanged", Qt::DirectConnection, Q_ARG(int, 1));
+    MIB_EXPECT(backend.capture().lifecycleSnapshot().generation == beforeNavigation,
+               "Overview navigation must not start illuminated capture");
+    backend.capture().stop();
     window.close();
     settle(4);
     backend.shutdown();

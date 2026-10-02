@@ -1,4 +1,6 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
+#include "backend/discovery/StartupDiscoveryCoordinator.h"
 
 #include "backend/app/ExperimentCoordinator.h"
 
@@ -244,6 +246,13 @@ namespace backend::bridge
                 }
             }
         }
+
+        // Device discovery (issue #419): stop the startup policy and drain
+        // every discovery worker before capture/serial teardown so no probe
+        // observes a half torn-down service graph and no late result selects
+        // or connects anything. AppBackend::shutdown() repeats this idempotently.
+        backend_.startupDiscovery().stop();
+        backend_.deviceDiscovery().shutdownDiscovery();
 
         backend_.stopFrameRecording();
         backend_.capture().stop();
@@ -1826,6 +1835,168 @@ namespace backend::bridge
         return {true, BackendCommandType::ProcessingSettings, "Background image cleared"};
     }
 
+    namespace
+    {
+        backend::bridge::BackendDiscoveredDevice toDto(const discovery::DiscoveredDevice &d)
+        {
+            backend::bridge::BackendDiscoveredDevice dto;
+            dto.kind = static_cast<int>(d.kind);
+            dto.providerId = d.providerId;
+            dto.displayName = d.displayName;
+            dto.systemPath = d.endpoint.systemPath;
+            dto.persistentId = d.endpoint.persistentId;
+            dto.sdkIndex = d.endpoint.sdkIndex;
+            dto.interfaceIndex = d.endpoint.interfaceIndex;
+            dto.deviceIndex = d.endpoint.deviceIndex;
+            dto.streamIndex = d.endpoint.streamIndex;
+            dto.busAddress = d.endpoint.busAddress;
+            dto.stableIdentity = d.stableIdentity;
+            dto.identityStrength = static_cast<int>(d.identityStrength);
+            dto.identification = static_cast<int>(d.identification);
+            dto.claimedBy = d.claimedBy;
+            dto.capabilities = d.capabilities;
+            dto.synthetic = d.synthetic;
+            if (d.camera)
+            {
+                dto.cameraType = static_cast<int>(d.camera->cameraType);
+                dto.interfaceId = d.camera->interfaceID;
+                dto.deviceId = d.camera->deviceID;
+                dto.modelName = d.camera->modelName;
+                dto.firmwareVersion = d.camera->firmwareVersion;
+                dto.label = d.camera->label;
+            }
+            else if (d.framegrabber)
+            {
+                dto.interfaceId = d.framegrabber->interfaceID;
+                dto.deviceId = d.framegrabber->deviceID;
+                dto.streamId = d.framegrabber->streamID;
+                dto.modelName = d.framegrabber->modelName;
+                dto.label = d.framegrabber->label;
+            }
+            else
+            {
+                dto.label = d.displayName;
+            }
+            return dto;
+        }
+
+        // Synthetic mock entry (camera type 2) so discovery/selection stays
+        // headless-testable and the shell can always offer the mock source.
+        backend::bridge::BackendDiscoveredDevice mockEntry()
+        {
+            backend::bridge::BackendDiscoveredDevice mock;
+            mock.kind = static_cast<int>(discovery::DeviceKind::Camera);
+            mock.providerId = "mock";
+            mock.displayName = "Mock camera (folder frame stream)";
+            mock.stableIdentity = "mock";
+            mock.identityStrength = static_cast<int>(discovery::IdentityStrength::Persistent);
+            mock.identification = static_cast<int>(discovery::IdentificationStatus::Identified);
+            mock.synthetic = true;
+            mock.cameraType = 2;
+            mock.modelName = "Mock camera";
+            mock.label = "Mock camera (folder frame stream)";
+            return mock;
+        }
+
+        discovery::DiscoveryRequest toRequest(const backend::bridge::BackendDiscoveryRequest &in)
+        {
+            discovery::DiscoveryRequest req;
+            for (int k : in.kinds) req.kinds.push_back(static_cast<discovery::DeviceKind>(k));
+            req.providers = in.providers;
+            if (in.hasSerialScope)
+            {
+                discovery::SerialScanScope scope;
+                scope.portName = in.serialPortName;
+                scope.settings.baudRate = in.baudRate;
+                scope.settings.dataBits = in.dataBits;
+                scope.settings.parity = in.parity;
+                scope.settings.stopBits = in.stopBits;
+                scope.addressFrom = static_cast<std::uint8_t>(std::clamp(in.addressFrom, 0, 255));
+                scope.addressTo = static_cast<std::uint8_t>(std::clamp(in.addressTo, 0, 255));
+                scope.perAddressTimeoutMs = in.perAddressTimeoutMs;
+                req.serialScope = scope;
+            }
+            req.initialDelay = std::chrono::milliseconds(in.initialDelayMs);
+            req.deadline = std::chrono::milliseconds(in.deadlineMs);
+            req.retry.maxRetries = in.maxRetries;
+            req.retry.delay = std::chrono::milliseconds(in.retryDelayMs);
+            req.origin = in.origin.empty() ? std::string("facade") : in.origin;
+            return req;
+        }
+
+        backend::bridge::BackendDiscoverySnapshot toSnapshot(const discovery::DiscoverySnapshot &s)
+        {
+            backend::bridge::BackendDiscoverySnapshot out;
+            out.valid = s.jobId != 0;
+            out.jobId = s.jobId;
+            out.generation = s.generation;
+            out.state = static_cast<int>(s.state);
+            out.complete = s.complete;
+            out.overflow = s.overflow;
+            out.attempt = s.attempt;
+            out.maxAttempts = s.maxAttempts;
+            for (auto k : s.kinds) out.kinds.push_back(static_cast<int>(k));
+            for (const auto &c : s.candidates) out.candidates.push_back(toDto(c));
+            for (const auto &e : s.errors)
+            {
+                out.errors.push_back({e.providerId, static_cast<int>(e.kind), e.message, e.endpoint});
+            }
+            out.providersRun = s.providersRun;
+            out.origin = s.origin;
+            const bool cameraJob = std::find(s.kinds.begin(), s.kinds.end(), discovery::DeviceKind::Camera) != s.kinds.end();
+            if (out.valid && cameraJob && discovery::isTerminal(s.state) && s.state != discovery::JobState::Cancelled)
+            {
+                out.candidates.push_back(mockEntry());
+            }
+            return out;
+        }
+    } // namespace
+
+    BackendDiscoveryStart BackendFacade::startDeviceDiscovery(const BackendDiscoveryRequest &request)
+    {
+        BackendDiscoveryStart out;
+        if (!initialized_)
+        {
+            out.rejection = static_cast<int>(discovery::ErrorKind::ShuttingDown);
+            out.reason = "backend not initialized";
+            return out;
+        }
+        const auto start = backend_.deviceDiscovery().startDiscovery(toRequest(request));
+        out.accepted = start.accepted;
+        out.coalesced = start.coalesced;
+        out.jobId = start.jobId;
+        out.rejection = static_cast<int>(start.rejection);
+        out.reason = start.reason;
+        return out;
+    }
+
+    bool BackendFacade::cancelDeviceDiscovery(std::uint64_t jobId)
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        auto &service = backend_.deviceDiscovery();
+        const auto snapshot = service.discoverySnapshot(jobId);
+        if (snapshot.jobId == 0 || discovery::isTerminal(snapshot.state))
+        {
+            return false;
+        }
+        service.cancelDiscovery(jobId);
+        return true;
+    }
+
+    bool BackendFacade::fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out) const
+    {
+        out = BackendDiscoverySnapshot{};
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = toSnapshot(backend_.deviceDiscovery().discoverySnapshot(jobId));
+        return out.valid;
+    }
+
     bool BackendFacade::fetchCameraDiscovery(BackendCameraDiscovery &out) const
     {
         if (!initialized_)
@@ -1834,37 +2005,51 @@ namespace backend::bridge
         }
         out = BackendCameraDiscovery{};
 
-        auto &control = backend_.cameraControl();
-        for (const auto &cam : control.discoverAllCameras())
+        // Compatibility wrapper: one camera+framegrabber job on the shared
+        // service, waited for on the caller's (worker) thread, mapped onto
+        // the BE-2 shape. The mock entry stays last, as before.
+        auto &service = backend_.deviceDiscovery();
+        discovery::DiscoveryRequest request;
+        request.kinds = {discovery::DeviceKind::Camera, discovery::DeviceKind::Framegrabber};
+        request.origin = "facade-legacy";
+        const auto start = service.startDiscovery(request);
+        discovery::DiscoverySnapshot snapshot;
+        if (start.accepted)
         {
-            BackendDiscoveredCamera dto;
-            dto.type = static_cast<int>(cam.cameraType);
-            dto.cameraIndex = cam.cameraIndex;
-            dto.interfaceIndex = cam.interfaceIndex;
-            dto.deviceIndex = cam.deviceIndex;
-            dto.interfaceId = cam.interfaceID;
-            dto.deviceId = cam.deviceID;
-            dto.modelName = cam.modelName;
-            dto.firmwareVersion = cam.firmwareVersion;
-            dto.label = cam.label;
-            out.cameras.push_back(std::move(dto));
+            (void)service.waitForTerminal(start.jobId, request.deadline + std::chrono::seconds(5));
+            snapshot = service.discoverySnapshot(start.jobId);
         }
-        for (const auto &grabber : control.discoverFramegrabbers())
+        for (const auto &c : snapshot.candidates)
         {
-            BackendDiscoveredFramegrabber dto;
-            dto.interfaceIndex = grabber.interfaceIndex;
-            dto.deviceIndex = grabber.deviceIndex;
-            dto.streamIndex = grabber.streamIndex;
-            dto.interfaceId = grabber.interfaceID;
-            dto.deviceId = grabber.deviceID;
-            dto.streamId = grabber.streamID;
-            dto.modelName = grabber.modelName;
-            dto.label = grabber.label;
-            out.framegrabbers.push_back(std::move(dto));
+            if (c.camera)
+            {
+                BackendDiscoveredCamera dto;
+                dto.type = static_cast<int>(c.camera->cameraType);
+                dto.cameraIndex = c.camera->cameraIndex;
+                dto.interfaceIndex = c.camera->interfaceIndex;
+                dto.deviceIndex = c.camera->deviceIndex;
+                dto.interfaceId = c.camera->interfaceID;
+                dto.deviceId = c.camera->deviceID;
+                dto.modelName = c.camera->modelName;
+                dto.firmwareVersion = c.camera->firmwareVersion;
+                dto.label = c.camera->label;
+                out.cameras.push_back(std::move(dto));
+            }
+            else if (c.framegrabber)
+            {
+                BackendDiscoveredFramegrabber dto;
+                dto.interfaceIndex = c.framegrabber->interfaceIndex;
+                dto.deviceIndex = c.framegrabber->deviceIndex;
+                dto.streamIndex = c.framegrabber->streamIndex;
+                dto.interfaceId = c.framegrabber->interfaceID;
+                dto.deviceId = c.framegrabber->deviceID;
+                dto.streamId = c.framegrabber->streamID;
+                dto.modelName = c.framegrabber->modelName;
+                dto.label = c.framegrabber->label;
+                out.framegrabbers.push_back(std::move(dto));
+            }
         }
 
-        // Synthetic mock entry (type 2) so discovery/selection is
-        // headless-testable and the shell can always offer the mock source.
         BackendDiscoveredCamera mock;
         mock.type = 2;
         mock.modelName = "Mock camera";

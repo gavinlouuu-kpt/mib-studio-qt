@@ -22,40 +22,19 @@ When running algorithm experiments (reanalysis, parameter sweeps, pipeline compa
 Standalone tools for working with HDF5 files after recording (export, reanalyse) are built and distributed separately. See [docs/howto/tools.md](docs/howto/tools.md) for download location, quickstart, and compatibility.
 ## Building
 
-### Prerequisites
+```bash
+scripts/doctor.sh        # Linux/macOS: what is missing, with fix commands   (Windows: .\scripts\doctor.ps1)
+scripts/bootstrap.sh     # install it                                        (Windows: .\scripts\bootstrap.ps1)
+cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build
+```
 
-1. **Conan** - Install Conan 2.x if not already installed:
-   ```bash
-   pip install conan
-   ```
+Windows builds use Conan + VS 2022: `.\scripts\bootstrap.ps1` runs
+`conan install` with `conan/profiles/windows-msvc194`, then
+`cmake --preset windows-default` and `cmake --build build --config Release`
+(fast loop: `-Generator Ninja` + `windows-ninja`). Presets, targets, and the
+one-home-per-list layout under `env/` are documented in
+[knowledge_map/build-and-run/Build.md](knowledge_map/build-and-run/Build.md).
 
-2. **CMake** - Version 3.21 or higher
-
-3. **C++ Compiler** - MSVC (Visual Studio) on Windows
-
-### Setup
-
-1. **Install Conan dependencies**:
-   ```bash
-   conan install . -of build --build=missing -s build_type=Release
-   ```
-   
-   For Debug builds, also install Debug packages:
-   ```bash
-   conan install . -of build --build=missing -s build_type=Debug
-   ```
-
-2. **Configure CMake using preset**:
-   ```bash
-   cmake --preset windows-default
-   ```
-
-3. **Build the project**:
-   ```bash
-    Build Release configuration: `cmake --build build --config Release`
-   
-   Or for Debug:
-   
 ### Building Windows Installer
 
 To create a Windows installer for distribution, see [docs/howto/build-installer.md](docs/howto/build-installer.md).
@@ -70,7 +49,7 @@ After building installers, see [Publishing Updates](#publishing-updates) below t
 
 ## Publishing Updates
 
-After building installers, use `publish-update.py` to upload them to the dedicated Cloudflare R2 update bucket for distribution through `https://updates.yofo.bio`.
+After building installers, use `scripts/release/publish-update.py` to upload them to the dedicated Cloudflare R2 update bucket for distribution through `https://updates.yofo.bio`.
 
 **Prerequisites:**
 - Python
@@ -80,15 +59,15 @@ After building installers, use `publish-update.py` to upload them to the dedicat
 **Publish update package (for auto-updates):**
 ```bash
 # Uses Wrangler automatically when MIB_STUDIO_R2_ENDPOINT is not set.
-python publish-update.py --installer "resources/build/dist/MIB_Studio_Qt_Update_v0.2.0.exe"
+python scripts/release/publish-update.py --installer "resources/build/dist/MIB_Studio_Qt_Update_v0.2.0.exe"
 ```
 
 **Publish full installer (optional, for manual downloads):**
 ```bash
-python publish-update.py --installer "resources/build/dist/MIB_Studio_Qt_Setup_v0.2.0.exe"
+python scripts/release/publish-update.py --installer "resources/build/dist/MIB_Studio_Qt_Setup_v0.2.0.exe"
 ```
 
-The script auto-detects version from filename, computes SHA-256, generates a manifest, uploads files to R2, and prints the final public URLs. Windows PowerShell wrappers remain available as `publish-update.ps1`, `publish-tools.ps1`, and `verify-update-manifest.ps1`.
+The script auto-detects version from filename, computes SHA-256, generates a manifest, uploads files to R2, and prints the final public URLs. Windows PowerShell wrappers remain available as `scripts/release/publish-update.ps1`, `scripts/release/publish-tools.ps1`, and `scripts/release/verify-update-manifest.ps1`.
 
 For complete release workflow, see [docs/howto/release-workflow.md](docs/howto/release-workflow.md).  
 For detailed publishing information, see [docs/howto/auto-update-r2.md](docs/howto/auto-update-r2.md).
@@ -100,8 +79,8 @@ Cloudflare R2 bucket under `profiles/<channel>/`.
 
 ```bash
 # Dry-run first; uses Wrangler unless MIB_STUDIO_R2_ENDPOINT is set.
-python publish-profiles.py --profiles-root "./profile-catalog/stable" --dry-run
-python publish-profiles.py --profiles-root "./profile-catalog/stable"
+python scripts/release/publish-profiles.py --profiles-root "./profile-catalog/stable" --dry-run
+python scripts/release/publish-profiles.py --profiles-root "./profile-catalog/stable"
 ```
 
 The production catalog URL is
@@ -117,20 +96,20 @@ The project uses semantic versioning (X.Y.Z). Version can be managed in two ways
 
 ### Manual Version Bumping
 
-Use the `bump-version.ps1` script to increment the version:
+Use the `scripts/release/bump-version.ps1` script to increment the version:
 
 ```powershell
 # Bump patch version (0.1.0 → 0.1.1)
-.\bump-version.ps1 --patch
+.\scripts\release\bump-version.ps1 --patch
 
 # Bump minor version (0.1.0 → 0.2.0)
-.\bump-version.ps1 --minor
+.\scripts\release\bump-version.ps1 --minor
 
 # Bump major version (0.1.0 → 1.0.0)
-.\bump-version.ps1 --major
+.\scripts\release\bump-version.ps1 --major
 
 # Bump and create git tag automatically
-.\bump-version.ps1 --patch --tag
+.\scripts\release\bump-version.ps1 --patch --tag
 ```
 
 The script updates `cmake/MIBVersion.cmake` and optionally creates a git tag (e.g., `v0.1.1`). If you create a tag, remember to push it:

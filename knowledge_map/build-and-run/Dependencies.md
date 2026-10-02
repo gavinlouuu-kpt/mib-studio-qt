@@ -1,6 +1,12 @@
 # Dependencies
 
-> Third-party stack. Managed by Conan (`conanfile.txt`).
+Desktop ownership uses existing Qt Core `QLockFile`; no new dependency is
+needed. The Windows serial timeout regression links `setupapi` and `advapi32`
+directly and simulates driver calls without connecting hardware.
+
+> Third-party stack. Managed by Conan (`conanfile.py`; host profiles in
+> `conan/profiles/`). System-package equivalents for Linux/macOS builds are
+> listed once in `env/apt-packages.txt` / `env/brew-packages.txt`.
 
 | Package | Version | Shared? | Notes |
 |---|---|---|---|
@@ -25,8 +31,13 @@
   `scripts/provision-mindvision-sdk.sh`. The scripts fetch SHA-256-pinned team
   R2 artifacts and extract only the headers plus the current platform/CPU's
   shared library.
+- **External assets (model weights, datasets)** — not in git. Pinned by Hub
+  revision and SHA-256 in `env/assets.json`, fetched into `build/vendor/assets/`
+  by `scripts/provision-assets.py`. See [[Assets]].
 - **Coremor XMT DLL** — `include/Coremor/` (`.h`, `.lib`, `.dll`). Used by
-  [[../services/AutofocusService]].
+  the optional Windows backend of [[../services/AutofocusService]]. OEABT uses
+  the existing ISerialPort adapter and the operating system's standard serial driver instead of a
+  vendored library.
 
 ## How they're wired
 
@@ -50,10 +61,10 @@
   target.
 - OpenCV and HDF5 DLLs are also copied next to the exe (see
   `docs/howto/windows-deploy.md`).
-- Windows-only hardware SDK linkage is gated by `MIB_HAS_EGRABBER`
-  (`WIN32` => `ON`, otherwise `OFF`):
+- Windows EGrabber linkage is gated by `MIB_HAS_EGRABBER`:
   - EGrabber headers/system path are only added when `MIB_HAS_EGRABBER=1`.
-  - Coremor include/lib wiring is only added when `MIB_HAS_EGRABBER=1`.
+- CoreMOR is gated independently by `MIB_HAS_COREMOR`; OEABT targets build on
+  Linux and Windows from standard C++17 plus Qt SerialPort.
 - MindVision SDK linkage is gated separately by `MIB_ENABLE_MINDVISION` /
   `MIB_HAS_MINDVISION`:
   - CMake locates the dynamic-loader header/DLL on Windows and the direct API
@@ -125,3 +136,11 @@ Registry sources are part of `mib_backend`; `profiles.registry` is in backend CT
 They use existing nlohmann JSON, SQLite and shared SHA-256 without Qt. Optional
 PostgreSQL policy tests run with `npm ci --prefix supabase && npm test --prefix supabase`
 (pinned PGlite development dependency). No new desktop run mode is enabled.
+
+### Independent nanopositioner support (2026-09-15)
+
+Windows defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver
+even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
+`MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
+processing-only builds remain SDK-free for Coremor. See
+[[../services/AutofocusService]] for the vendor support inventory.

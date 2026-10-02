@@ -1,5 +1,7 @@
 #pragma once
 
+#include "backend/nanopositioner/INanopositionerBackend.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -10,22 +12,37 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace backend::services {
 
 class AutofocusService {
 public:
+    using BackendFactory =
+        std::function<std::unique_ptr<backend::nanopositioner::INanopositionerBackend>(
+            backend::nanopositioner::BackendKind)>;
+
     AutofocusService();
+    explicit AutofocusService(BackendFactory backendFactory);
     ~AutofocusService();
 
+    // Test seam: swap the driver factory (e.g. a fake OEABT backend) on a
+    // service owned by AppBackend. Refused (returns false) while connected.
+    bool setBackendFactory(BackendFactory backendFactory);
+
     // Connection management
+    bool connect(const backend::nanopositioner::Endpoint& endpoint);
     bool connect(int comPort, int baudRate, unsigned char deviceAddress);
     void disconnect();
     bool isConnected() const { return connected_.load(); }
     int getComPort() const { return comPort_; }
+    backend::nanopositioner::BackendKind getBackendKind() const;
+    std::string getEndpointId() const;
 
-    // Probe: open port, send XMT read (voltage channel), check plausible response, close.
-    // Returns true only if port responds with a valid voltage (0–250 V). Must not be connected.
+    static std::vector<backend::nanopositioner::Endpoint> availableEndpoints();
+    static bool probeEndpoint(const backend::nanopositioner::Endpoint& endpoint);
+
+    // Legacy CoreMOR COM wrapper. New code should use probeEndpoint/connect(Endpoint).
     static bool probeComPort(int comPort, int baudRate, unsigned char deviceAddress);
 
     // Autofocus control
@@ -65,7 +82,9 @@ public:
     // Expose median ring ratio (same value used by autofocus control) for UI/status
     double getMedianRingRatio() const { return medianRingRatio_.load(std::memory_order_relaxed); }
     // Monotonic timestamp (microseconds) when ring ratio was last updated; 0 if never
-    uint64_t getLastRingRatioUpdateUs() const { return lastRingRatioUpdateUs_.load(std::memory_order_relaxed); }
+    uint64_t getLastRingRatioUpdateUs() const {
+        return lastRingRatioUpdateUs_.load(std::memory_order_relaxed);
+    }
 
     // Status callbacks for UI
     using StatusCallback = std::function<void(const std::string& message)>;
@@ -76,6 +95,9 @@ private:
     void statsLoop();
     void updateStatistics();
     double calculateMedian(const std::vector<double>& sorted) const;
+    void notifyStatus(const std::string& message) const;
+    bool readDeviceVoltage(double& voltage, std::string& error);
+    bool writeDeviceVoltage(double voltage, std::string& error);
 
     std::thread controlThread_;
     std::atomic<bool> running_{false};
@@ -87,6 +109,11 @@ private:
     int comPort_{6};
     int baudRate_{115200};
     unsigned char deviceAddress_{1};
+    mutable std::mutex deviceMutex_;
+    std::unique_ptr<backend::nanopositioner::INanopositionerBackend> device_;
+    BackendFactory backendFactory_;
+    backend::nanopositioner::Endpoint endpoint_;
+    std::atomic<bool> activeControlSession_{false};
 
     // Configuration
     mutable std::mutex configMutex_;
@@ -115,7 +142,8 @@ private:
     static constexpr size_t MAX_BUFFER_SIZE = 1000;
     std::atomic<uint64_t> ringRatioSequence_{0};
     std::atomic<int64_t> lastRingRatioTimestampNs_{0};
-    std::atomic<uint64_t> lastRingRatioUpdateUs_{0}; // monotonic us when a ring ratio sample was last accepted
+    std::atomic<uint64_t> lastRingRatioUpdateUs_{
+        0}; // monotonic us when a ring ratio sample was last accepted
 
     // Statistics
     std::atomic<double> medianRingRatio_{0.0};
@@ -137,4 +165,3 @@ private:
 };
 
 } // namespace backend::services
-

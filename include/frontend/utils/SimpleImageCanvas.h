@@ -20,6 +20,17 @@ namespace frontend
                                    int *roiWidth = nullptr, int *roiHeight = nullptr,
                                    QWidget *parent = nullptr);
 
+        // ROI coordinates remain sensor coordinates even when the ISP mirrors the image.
+        void setRoiTransform(int stepX, int stepY, bool flipX = false, bool flipY = false) {
+            stepX_ = stepX;
+            stepY_ = stepY;
+            flipX_ = flipX;
+            flipY_ = flipY;
+            dragging_ = false;
+            update();
+        }
+        QPointF displayedRoiPosition() const;
+
     signals:
         void roiPositionChanged(QPointF imagePos);
 
@@ -46,6 +57,8 @@ namespace frontend
         QSizeF drawSize_;
 
         // Dragging state
+        int stepX_ = 16, stepY_ = 4;
+        bool flipX_ = false, flipY_ = false;
         bool dragging_ = false;
         QPointF dragStartCanvasPos_;
         QPointF dragStartRoiPos_;

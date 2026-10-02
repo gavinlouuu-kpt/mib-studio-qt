@@ -67,13 +67,15 @@ MindVisionCamera::InFlightOp::~InFlightOp()
 
 // ---------------------------------------------------------------------------
 
-MindVisionCamera::MindVisionCamera(int cameraIndex, std::string configPath,
-                                   std::shared_ptr<const SdkOps> sdk)
-    : sdk_(sdk ? std::move(sdk) : mv::realMindVisionSdk()),
-      cameraIndex_(cameraIndex),
-      configPath_(std::move(configPath))
-{
-}
+MindVisionCamera::MindVisionCamera(
+    int cameraIndex, std::string configPath, std::shared_ptr<const SdkOps> sdk,
+    std::shared_ptr<backend::services::IlluminationSession> illumination, bool overview,
+    std::optional<mv::Config> sessionConfig,
+    std::function<void(const mv::SdkCapability&)> capabilitySink)
+    : overview_(overview), sessionConfig_(std::move(sessionConfig)),
+      capabilitySink_(std::move(capabilitySink)), illumination_(std::move(illumination)),
+      sdk_(sdk ? std::move(sdk) : mv::realMindVisionSdk()), cameraIndex_(cameraIndex),
+      configPath_(std::move(configPath)) {}
 
 MindVisionCamera::~MindVisionCamera()
 {
@@ -115,6 +117,24 @@ mv::SessionGeometry MindVisionCamera::sessionGeometry() const
 
 bool MindVisionCamera::applyJsonConfig(int hCamera)
 {
+    if (rigActive_ || overview_ || sessionConfig_) {
+        configuredTriggerMode_ = rigConfig_.triggerMode;
+        if (!sdk_->applyConfig(hCamera, rigConfig_)) {
+            int actualW = 0, actualH = 0;
+            std::string message =
+                "Camera rejected requested ROI or camera settings; check the camera log";
+            if (sdk_->getImageResolution(hCamera, actualW, actualH) == mv::kSdkSuccess &&
+                (actualW != rigConfig_.width || actualH != rigConfig_.height)) {
+                message = "Requested ROI " + std::to_string(rigConfig_.width) + "x" +
+                          std::to_string(rigConfig_.height) + " is unsupported; camera reports " +
+                          std::to_string(actualW) + "x" + std::to_string(actualH) +
+                          ". Choose supported ROI dimensions in Overview.";
+            }
+            recordFailure("mindvision.config_apply_failed", message);
+            return false;
+        }
+        return true;
+    }
     if (configPath_.empty())
     {
         return true;
@@ -159,8 +179,59 @@ bool MindVisionCamera::start()
     {
         return true;
     }
+    stopRequested_.store(false, std::memory_order_release);
     lastFailure_ = {};
     sessionGeometry_ = {};
+
+    rigConfig_ = sessionConfig_.value_or(mv::Config{});
+    if (!sessionConfig_ && !configPath_.empty()) {
+        std::ifstream file(configPath_, std::ios::binary);
+        const auto parsed = mv::parseConfig(std::string(std::istreambuf_iterator<char>(file), {}));
+        if (!file || !parsed.ok) {
+            recordFailure("mindvision.config_invalid",
+                          "Cannot load saved camera setup: " + parsed.error);
+            return false;
+        }
+        rigConfig_ = parsed.config;
+    }
+    if (overview_ && !sessionConfig_) rigConfig_ = mv::overviewConfig(rigConfig_);
+    if (rigConfig_.illuminatedLive) {
+        const auto timingError = mv::detail::validateLiveViewTiming(rigConfig_);
+        if (!timingError.empty() || rigConfig_.liveView.dutyPercent >= 100.0) {
+            recordFailure("mindvision.overview_timing", "Invalid overview timing: " + timingError);
+            return false;
+        }
+        if (!illumination_ || !illumination_->prepare || !illumination_->enable ||
+            !illumination_->disable) {
+            recordFailure(
+                "mindvision.rig_missing",
+                "Illuminated Live View needs a saved generator connection in Hardware Setup");
+            return false;
+        }
+        rigActive_ = true; // partial preparation also needs cleanup
+        bool prepared = false;
+        try {
+            prepared = illumination_->prepare();
+        } catch (const std::exception& error) {
+            recordFailure("mindvision.rig_discovery", error.what());
+            stopIlluminationLocked();
+            return false;
+        }
+        if (!prepared) {
+            recordFailure("mindvision.rig_prepare",
+                          "Cannot prepare pulse generator. Check the saved port/address and "
+                          "connection in Hardware Setup");
+            stopIlluminationLocked();
+            return false;
+        }
+        // A stop() issued while discovery/preparation ran is queued on
+        // stateMutex_; honour it before opening the camera at all.
+        if (stopRequested_.load(std::memory_order_acquire)) {
+            recordFailure("mindvision.rig_cancelled", "Live View start cancelled");
+            stopIlluminationLocked();
+            return false;
+        }
+    }
 
     mv::SdkStatus status = sdk_->sdkInit();
     if (status == mv::kSdkUnavailable)
@@ -205,6 +276,8 @@ bool MindVisionCamera::start()
     // Everything below owns an open handle; every failure path closes it.
     auto failClosed = [&](const std::string &code, const std::string &message) {
         recordFailure(code, message);
+        stopIlluminationLocked();
+        if (rigConfig_.illuminatedLive) sdk_->stop(hCamera_);
         if (outBuffer_)
         {
             sdk_->alignFree(outBuffer_);
@@ -225,6 +298,27 @@ bool MindVisionCamera::start()
                           "CameraGetCapability failed (status=" + std::to_string(status) + ")");
     }
 
+    if (capabilitySink_) capabilitySink_(cap);
+    if (overview_) {
+        if (cap.sensorWidth <= 0 || cap.sensorHeight <= 0 || cap.sensorWidth > 65535 ||
+            cap.sensorHeight > 65535)
+            return failClosed("mindvision.overview_geometry",
+                              "Camera did not report full sensor dimensions");
+        rigConfig_.width = cap.sensorWidth;
+        rigConfig_.height = cap.sensorHeight;
+        rigConfig_.offsetX = rigConfig_.offsetY = 0;
+        SPDLOG_INFO("MindVision Overview: full sensor {}x{}, trigger {} Hz, display cap 50 fps",
+                    rigConfig_.width, rigConfig_.height,
+                    rigConfig_.illuminatedLive ? rigConfig_.liveView.frequencyHz : 0.0);
+    }
+    if (rigConfig_.requireExactGeometry && cap.sensorWidth > 0 &&
+        (rigConfig_.width < cap.minWidth || rigConfig_.height < cap.minHeight ||
+         rigConfig_.width > cap.sensorWidth || rigConfig_.height > cap.sensorHeight ||
+         rigConfig_.offsetX > cap.sensorWidth - rigConfig_.width ||
+         rigConfig_.offsetY > cap.sensorHeight - rigConfig_.height))
+        return failClosed("mindvision.roi_bounds",
+                          "Experiment ROI is outside the camera sensor bounds");
+
     if (!applyJsonConfig(hCamera_))
     {
         // applyJsonConfig recorded the specific failure.
@@ -239,6 +333,11 @@ bool MindVisionCamera::start()
         return failClosed("mindvision.resolution_failed",
                           "CameraGetImageResolution failed (status=" + std::to_string(status) + ")");
     }
+
+    if (rigConfig_.requireExactGeometry &&
+        (width != rigConfig_.width || height != rigConfig_.height))
+        return failClosed("mindvision.roi_readback",
+                          "Camera resolution does not match the requested mode");
 
     // Required Mono8 output (issue #366): the pipeline is mono8-only and the
     // destination buffer is sized 1 byte/px. A failure to set the format is a
@@ -281,6 +380,12 @@ bool MindVisionCamera::start()
     outBufferBytes_ = validation.geometry.requiredBytes;
     sessionGeometry_ = validation.geometry;
 
+    if (rigActive_ && stopRequested_.load(std::memory_order_acquire)) {
+        // Cancelled during configuration: never start streaming a session
+        // whose owner already asked it to end.
+        return failClosed("mindvision.rig_cancelled", "Live View start cancelled");
+    }
+
     status = sdk_->play(hCamera_);
     if (status != mv::kSdkSuccess)
     {
@@ -288,6 +393,21 @@ bool MindVisionCamera::start()
                           "CameraPlay failed (status=" + std::to_string(status) + ")");
     }
 
+    if (rigActive_) {
+        if (!sdk_->armIllumination || !sdk_->armIllumination(hCamera_, rigConfig_)) {
+            return failClosed("mindvision.rig_arm",
+                              "Camera trigger/strobe readback failed; generator was not started");
+        }
+        if (stopRequested_.load(std::memory_order_acquire)) {
+            return failClosed("mindvision.rig_cancelled", "Live View start cancelled");
+        }
+        if (!illumination_->enable()) {
+            return failClosed("mindvision.rig_enable",
+                              "Pulse generator did not acknowledge start. Check its connection");
+        }
+    }
+
+    lastRigFrame_ = std::chrono::steady_clock::now();
     frameCount_ = 0;
     intentionalDiscards_.store(0, std::memory_order_relaxed);
     geometryRejectedFrames_.store(0, std::memory_order_relaxed);
@@ -349,9 +469,47 @@ void MindVisionCamera::closeHandleLocked(std::unique_lock<std::mutex> &lock)
     hCamera_ = -1;
 }
 
+namespace
+{
+    constexpr const char *kRigShutdownCode = "mindvision.rig_shutdown_unconfirmed";
+}
+
+bool MindVisionCamera::stopIlluminationLocked() {
+    if (!rigActive_) return true;
+    bool generatorOff = false;
+    try {
+        generatorOff = illumination_->disable();
+    } catch (...) {
+        generatorOff = false;
+    }
+    bool ledOff = true;
+    if (hCamera_ >= 0) {
+        // IOMODE_GP_OUTPUT (3), then low: webcam commissioning confirms GPIO
+        // high lights the XGC/R5D rig and low is dark. Strobe polarity is a
+        // separate SDK setting and must not determine the GPIO shutdown level.
+        ledOff = sdk_->setOutputIoMode(hCamera_, 0, 3) == mv::kSdkSuccess;
+        ledOff = (sdk_->setIoStateEx(hCamera_, 0, 0) == mv::kSdkSuccess) && ledOff;
+    }
+    rigActive_ = false;
+    if (!generatorOff || !ledOff) {
+        recordFailure(kRigShutdownCode,
+                      std::string("Capture stopped, but ") +
+                          (!generatorOff && !ledOff ? "generator and LED OFF were"
+                           : !generatorOff          ? "generator OFF was"
+                                                    : "LED OFF was") +
+                          " not confirmed. Check connections and stop the generator in "
+                          "Hardware Setup");
+        return false;
+    }
+    return true;
+}
+
 void MindVisionCamera::stop()
 {
+    stopRequested_.store(true, std::memory_order_release);
     std::unique_lock<std::mutex> lock(stateMutex_);
+    const bool illuminationOff = stopIlluminationLocked();
+    const CameraFailure rigFailure = illuminationOff ? CameraFailure{} : lastFailure_;
     if (!running_.load(std::memory_order_acquire) && hCamera_ < 0)
     {
         return;
@@ -359,6 +517,13 @@ void MindVisionCamera::stop()
     running_.store(false, std::memory_order_release);
     closeHandleLocked(lock);
     sessionGeometry_ = {};
+    if (!illuminationOff && lastFailure_.code != kRigShutdownCode)
+    {
+        // Handle teardown recorded its own fault (in-flight drain timeout);
+        // the unconfirmed generator/LED OFF is the message the operator must
+        // still see, so it stays the reported failure with the drain detail.
+        recordFailure(kRigShutdownCode, rigFailure.message + " (" + lastFailure_.message + ")");
+    }
     SPDLOG_INFO("MindVisionCamera: stopped");
 }
 
@@ -436,10 +601,25 @@ bool MindVisionCamera::grabFrame(Frame &out)
 
         if (status == mv::kSdkTimeout)
         {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            if (rigActive_ &&
+                std::chrono::steady_clock::now() - lastRigFrame_ > std::chrono::seconds(3)) {
+                faultStreamLocked(
+                    "mindvision.rig_no_frames",
+                    "No camera frames for 3 seconds. Check camera/trigger connections");
+                return false;
+            }
             continue;
         }
         if (status != mv::kSdkSuccess)
         {
+            {
+                std::lock_guard<std::mutex> lock(stateMutex_);
+                if (rigActive_)
+                    faultStreamLocked(
+                        "mindvision.rig_stream",
+                        "Camera frame retrieval failed; stopping illuminated Live View");
+            }
             SPDLOG_WARN("MindVisionCamera: frame retrieval returned {} (mode={})",
                         status, toString(mode));
             return false;
@@ -455,6 +635,7 @@ bool MindVisionCamera::grabFrame(Frame &out)
                 sdk_->releaseImageBuffer(hCamera, pBuffer);
                 return false;
             }
+            lastRigFrame_ = std::chrono::steady_clock::now();
             // Destination-size proof (issue #366): the header must match the
             // validated session allocation. On mismatch the frame is rejected
             // BEFORE conversion and the stream is faulted for controlled

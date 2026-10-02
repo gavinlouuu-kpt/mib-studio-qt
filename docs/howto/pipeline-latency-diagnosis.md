@@ -75,8 +75,10 @@ ProcessingService → TriggerService) can be exercised headlessly with the
 line, so pulses and their timing records are real.
 
 ```bash
-# fetch stream frames from the public HF dataset (512x96 grayscale TIFFs)
-python3 scripts/fetch_hf_512x96stream.py --out /tmp/frames512x96 --count 1000
+# fetch stream frames from the public HF dataset (512x96 grayscale TIFFs;
+# asset 512x96stream-mock-frames in env/assets.json, pinned revision)
+python3 scripts/provision-assets.py --asset 512x96stream-mock-frames --count 1000
+# -> build/vendor/assets/datasets/512x96stream-mock-frames/
 
 cmake --preset linux-backend-only
 cmake --build --preset linux-backend-only-build --target mock_pipeline_timing_run

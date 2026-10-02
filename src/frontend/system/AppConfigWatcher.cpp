@@ -21,6 +21,7 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
@@ -281,12 +282,29 @@ namespace frontend
 		{
 			// Start from current config to preserve unspecified values
 			pcfg = backend_.processing().getProcessingConfig();
+			// Contract selection (ADR 0006): a profile declares
+			// processing_contract_version at its root; absent means Contract 1.
+			// Unsupported values fall back to Contract 1 with a warning rather
+			// than silently running v2 science.
+			{
+				const int declared = root.value("processing_contract_version").toInt(1);
+				if (backend::processing::contract::isSupportedProcessingContract(declared))
+					pcfg.processing_contract_version = declared;
+				else
+				{
+					SPDLOG_WARN("AppConfigWatcher: unsupported processing_contract_version {}; using Contract 1", declared);
+					pcfg.processing_contract_version = 1;
+				}
+			}
 			if (root.contains("image_processing") && root.value("image_processing").isObject())
 			{
 				const QJsonObject ip = root.value("image_processing").toObject();
 				if (ip.contains("gaussian_blur_size"))
 					pcfg.gaussian_blur_size = ip.value("gaussian_blur_size").toInt(pcfg.gaussian_blur_size);
-				if (ip.contains("bg_subtract_threshold"))
+				// v2 canonical key wins; the legacy key is accepted for Contract 1.
+				if (ip.contains("difference_threshold"))
+					pcfg.bg_subtract_threshold = ip.value("difference_threshold").toInt(pcfg.bg_subtract_threshold);
+				else if (ip.contains("bg_subtract_threshold"))
 					pcfg.bg_subtract_threshold = ip.value("bg_subtract_threshold").toInt(pcfg.bg_subtract_threshold);
 				if (ip.contains("morph_kernel_size"))
 					pcfg.morph_kernel_size = ip.value("morph_kernel_size").toInt(pcfg.morph_kernel_size);
@@ -306,6 +324,10 @@ namespace frontend
 					pcfg.ring_ratio_min = ip.value("ring_ratio_min").toDouble(pcfg.ring_ratio_min);
 				if (ip.contains("ring_ratio_max"))
 					pcfg.ring_ratio_max = ip.value("ring_ratio_max").toDouble(pcfg.ring_ratio_max);
+				if (ip.contains("laplacian_variance_min"))
+					pcfg.laplacian_variance_min = ip.value("laplacian_variance_min").toDouble(pcfg.laplacian_variance_min);
+				if (ip.contains("laplacian_variance_max"))
+					pcfg.laplacian_variance_max = ip.value("laplacian_variance_max").toDouble(pcfg.laplacian_variance_max);
 				if (ip.contains("empty_frame_pixel_threshold"))
 					pcfg.empty_frame_pixel_threshold = ip.value("empty_frame_pixel_threshold").toInt(pcfg.empty_frame_pixel_threshold);
 				if (ip.contains("auto_background_enabled"))
@@ -314,6 +336,12 @@ namespace frontend
 					pcfg.auto_background_empty_frames = ip.value("auto_background_empty_frames").toInt(pcfg.auto_background_empty_frames);
 				if (ip.contains("auto_background_cooldown_frames"))
 					pcfg.auto_background_cooldown_frames = ip.value("auto_background_cooldown_frames").toInt(pcfg.auto_background_cooldown_frames);
+				if (ip.contains("auto_roi_from_background"))
+					pcfg.auto_roi_from_background = ip.value("auto_roi_from_background").toBool(pcfg.auto_roi_from_background);
+				if (ip.contains("auto_roi_wall_gradient_ratio"))
+					pcfg.auto_roi_wall_gradient_ratio = ip.value("auto_roi_wall_gradient_ratio").toDouble(pcfg.auto_roi_wall_gradient_ratio);
+				if (ip.contains("auto_roi_wall_margin"))
+					pcfg.auto_roi_wall_margin = ip.value("auto_roi_wall_margin").toInt(pcfg.auto_roi_wall_margin);
 				if (ip.contains("filters") && ip.value("filters").isObject())
 				{
 					const QJsonObject fl = ip.value("filters").toObject();
@@ -327,6 +355,8 @@ namespace frontend
 						pcfg.enable_area_ratio_check = fl.value("enable_area_ratio_check").toBool(pcfg.enable_area_ratio_check);
 					if (fl.contains("enable_ring_ratio_check"))
 						pcfg.enable_ring_ratio_check = fl.value("enable_ring_ratio_check").toBool(pcfg.enable_ring_ratio_check);
+					if (fl.contains("enable_laplacian_variance_check"))
+						pcfg.enable_laplacian_variance_check = fl.value("enable_laplacian_variance_check").toBool(pcfg.enable_laplacian_variance_check);
 					if (fl.contains("require_single_inner_contour"))
 						pcfg.require_single_inner_contour = fl.value("require_single_inner_contour").toBool(pcfg.require_single_inner_contour);
 				}

@@ -104,7 +104,12 @@ append only, never renumber.
 5. `Hdf5Service::flush()`; `writeExperimentInfo(...)` (start/end wall-clock,
    remainder counts, processing config, ROI, background, core identity);
    `writeRunAccounting(experimentAccountingSnapshot())`;
-   `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`.
+   `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`;
+   then, best effort, `writeKdeLiveJson(...)` with the last provisional KDE
+   core record [[../services/MonitoringDensityService]] handed over through
+   `setLiveKdeCoreRecord` (from its backend worker, no shell involved)
+   (accepted only while `Active`, cleared at Start; a failed write logs a
+   warning and never changes the run outcome).
 6. `closeFile()`.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled
@@ -114,9 +119,13 @@ append only, never renumber.
    `experiment.saveFailed` is latched and the state is `Failed`.
 
 The worker also runs the periodic flush while Active: every 250 ms it
-submits `flushBufferedFrames(hdf5)` when the buffered count reaches
-`ProcessingService::getFlushInterval()` (`status().flushing` is true during
-the submission).
+submits `flushBufferedFrames(hdf5)` when
+`ProcessingService::needsFlush()` returns true (`status().flushing` is
+true during the submission). `needsFlush()` fires on the frame-count
+interval **or** a 50 % byte-budget watermark (issue #407 — the count-only
+gate never opened when the byte budget saturated first). A 2-second
+time-based backstop also flushes any non-empty buffer regardless of
+thresholds, so a slow trickle of large frames never sits unwritten.
 - `reportUnresolvedFault(code, message)` / `clearUnresolvedFault()`: a save
   or provenance failure from the last run blocks the next Start
   (`lifecycle.fault` gate) until the operator acknowledges it.
@@ -176,3 +185,9 @@ across the HDF5 open + provenance write, which is why a second caller gets
 - A `requestStop()` right after `start()` returned is accepted; the worker
   wakes immediately (condition variable), so the run may finalize with zero
   admitted frames and still be `Complete`.
+
+## MindVision overview gate
+
+Readiness includes a failing `camera.mode` gate while MindVision Overview is
+selected. Experiments require the Experiment acquisition mode, preventing a
+full-sensor preview session from being recorded as an experimental ROI session.

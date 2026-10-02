@@ -32,6 +32,9 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
@@ -69,6 +72,26 @@ target_link_libraries(mib_processing PUBLIC
 target_compile_definitions(mib_processing PUBLIC
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
 )
+
+# Contract of the bundled kernel (ADR 0007); 0 = research (any contract).
+if(MIB_PROCESSING_CORE_CONTRACT STREQUAL "1")
+    set(_mib_bundled_contract 1)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "2")
+    set(_mib_bundled_contract 2)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "research")
+    if(NOT MIB_BUILD_PYTHON_BINDINGS)
+        message(FATAL_ERROR
+            "MIB_PROCESSING_CORE_CONTRACT=research is only for the Python wheel "
+            "(MIB_BUILD_PYTHON_BINDINGS=ON); shipped builds run one contract (ADR 0007)")
+    endif()
+    set(_mib_bundled_contract 0)
+else()
+    message(FATAL_ERROR
+        "MIB_PROCESSING_CORE_CONTRACT must be 1, 2 or research (got '${MIB_PROCESSING_CORE_CONTRACT}')")
+endif()
+target_compile_definitions(mib_processing PUBLIC
+    MIB_PROCESSING_BUNDLED_CONTRACT=${_mib_bundled_contract}
+)
 if(WIN32)
     target_link_libraries(mib_processing PUBLIC wintrust crypt32)
 endif()
@@ -104,36 +127,94 @@ if(MIB_BUILD_PROCESSING_ONLY)
     return()
 endif()
 
-# Native hot-swap artifact. It deliberately links only the mask kernel and
-# OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
-# Windows DLL before the registry publisher hashes it.
-add_library(mib_processing_core MODULE
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+# Clean-room OEABT compatibility layer. The protocol target is standard
+# C++17; native ISerialPort is shared with the existing serial services.
+add_library(oeabt_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/OeabtProtocol.cpp
 )
-target_include_directories(mib_processing_core PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(mib_processing_core PRIVATE spdlog::spdlog)
-mib_link_opencv(mib_processing_core PRIVATE)
-target_compile_definitions(mib_processing_core PRIVATE
-    MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
-    MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
-)
-set_target_properties(mib_processing_core PROPERTIES
-    PREFIX ""
+target_include_directories(oeabt_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(oeabt_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     AUTOMOC OFF
     AUTOUIC OFF
     AUTORCC OFF
     POSITION_INDEPENDENT_CODE ON
-    # MSVC only exports __declspec(dllexport) symbols; ELF must opt into the
-    # same discipline so the release audit sees exactly mib_processing_get_api.
-    C_VISIBILITY_PRESET hidden
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
-    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
+
+add_library(oeabt_serial STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
+)
+target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
+if(WIN32)
+    target_link_libraries(oeabt_serial PUBLIC setupapi)
+endif()
+set_target_properties(oeabt_serial PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+if(MIB_BUILD_OEABT_TOOLS)
+    add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)
+    target_link_libraries(oeabtctl PRIVATE oeabt_serial)
+    set_target_properties(oeabtctl PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+endif()
+
+# Native hot-swap artifacts. They deliberately link only the mask kernel and
+# OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
+# Windows DLL before the registry publisher hashes it. Each plugin line
+# implements exactly one contract (ADR 0007) and exports only that contract's
+# entry point: subtract-ring (Contract 1, mib_processing_get_api) and
+# absdiff-laplacian (Contract 2, mib_processing_get_api_v2).
+function(mib_add_processing_core_plugin target contract)
+    add_library(${target} MODULE
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    )
+    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(${target} PRIVATE spdlog::spdlog)
+    # Header-only: ProcessingScience.cpp includes ProcessingContract.h. Without
+    # the target, MSVC builds (Conan nlohmann_json) cannot find the header.
+    if(TARGET nlohmann_json::nlohmann_json)
+        target_link_libraries(${target} PRIVATE nlohmann_json::nlohmann_json)
+    endif()
+    mib_link_opencv(${target} PRIVATE)
+    target_compile_definitions(${target} PRIVATE
+        MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
+        MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+        MIB_PROCESSING_BUNDLED_CONTRACT=${contract}
+    )
+    set_target_properties(${target} PROPERTIES
+        PREFIX ""
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        POSITION_INDEPENDENT_CODE ON
+        # MSVC only exports __declspec(dllexport) symbols; ELF must opt into
+        # the same discipline so the release audit sees exactly the one entry
+        # point of the plugin's contract.
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+        LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+    )
+endfunction()
+
+# subtract-ring (Contract 1): the released line (artifact naming, descriptor
+# and signing below are unchanged).
+mib_add_processing_core_plugin(mib_processing_core 1)
+# absdiff-laplacian (Contract 2): built for the ABI-v2 plugin tests. Release
+# naming, descriptor and signing arrive with the Contract 2 core line (T1.1).
+mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2)
 if(WIN32)
     set(_mib_processing_native_basename
         "mib_processing_core-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
@@ -205,6 +286,15 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/DeviceDiscoveryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryPolicy.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/CameraEnumerationProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/NanopositionerProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/PulseGeneratorProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp
@@ -212,16 +302,13 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
-target_link_libraries(mib_backend PUBLIC mib_processing)
+target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
+
+
 
 if(MIB_HAS_EGRABBER)
     target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
-    )
-else()
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.stub.cpp
     )
 endif()
 
@@ -238,11 +325,11 @@ endif()
 # Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the
 # backend links no Qt SerialPort (epic #246).
 if(WIN32)
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortWin32.cpp
     )
 else()
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortPosix.cpp
     )
 endif()
@@ -263,6 +350,12 @@ if(MIB_HAS_EGRABBER)
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=1)
 else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=0)
+endif()
+
+if(MIB_HAS_COREMOR)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=1)
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=0)
 endif()
 
 if(MIB_HAS_MINDVISION)
@@ -286,9 +379,11 @@ target_include_directories(mib_backend PUBLIC
 )
 if(MIB_HAS_EGRABBER)
     target_include_directories(mib_backend PUBLIC
-        ${PROJECT_SOURCE_DIR}/include/Coremor
         "C:/Program Files/Euresys/eGrabber/include"
     )
+endif()
+if(MIB_HAS_COREMOR)
+    target_include_directories(mib_backend PUBLIC ${PROJECT_SOURCE_DIR}/include/Coremor)
 endif()
 if(MIB_HAS_MINDVISION)
     target_include_directories(mib_backend PUBLIC
@@ -336,7 +431,7 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_USE_SENTRY=0)
 endif()
 
-if(MIB_HAS_EGRABBER)
+if(MIB_HAS_COREMOR)
     set(COREMOR_LIB_DIR ${PROJECT_SOURCE_DIR}/include/Coremor)
     target_link_libraries(mib_backend PUBLIC
         ${COREMOR_LIB_DIR}/XMT_DLL_SER.lib

@@ -283,3 +283,76 @@ destructor frees it once `inFlightOps_` is zero (the wedged call returned),
 otherwise it stays leaked for good. LeakSanitizer flagged the unconditional
 leak in `backend.mindvision_conversion_fault` ("wedged driver").
 
+
+## One-click illuminated profile (#413)
+
+A validated `live_view.enabled` profile requires an injected
+`IlluminationSession`; it cannot silently start as camera-only. Preparation
+holds the generator off; strict SDK configuration and post-Play strobe/trigger
+readback precede enable. Stop gates generator before driving OUT1 GPIO low
+(webcam-confirmed dark; independent of capture strobe polarity)
+and releasing the handle. Read errors/three seconds without frames fault
+illuminated capture. Sorting stays on OUT2. Legacy profiles are unchanged.
+
+The September 10 100 µs exposure/100 µs strobe preset demonstrated illumination
+overlap and scope-measured 64.6 µs current pulses at 5 kHz, not exact exposure
+edges. The former 47 µs start estimate is not established timing.
+See [workflow and evidence](../../docs/howto/illuminated-live-view.md).
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.
+
+
+### Cancellation and shutdown record (September 14, second pass)
+
+`start()` checks `stopRequested_` after generator preparation (before
+`CameraSdkInit`) and before `CameraPlay`, in addition to the post-arm check, so a
+Stop queued behind a long discovery never opens or streams the camera.
+`stopIlluminationLocked()` returns whether both OFFs were confirmed and names
+the failed one; `stop()` re-records `mindvision.rig_shutdown_unconfirmed` if
+handle teardown replaced it with a drain-timeout fault. The real
+`armIllumination` logs each mismatched readback and tolerates exposure
+quantization (5 %, minimum 1 µs). `live_view` settings come from
+`Config::liveView`, parsed and range/timing-validated by `parseConfig`.
+
+## Overview and experiment acquisition (2026-09-15)
+
+The camera accepts an immutable session config and an Overview flag. AppBackend
+copies the experiment profile, derives a 400 Hz illuminated overview while
+preserving trigger pulse duration (0.01% duty quantization), and passes the same
+timing to the generator session and camera. The SDK capability seam exposes
+native sensor width/height and minimum ROI dimensions. Overview selects the
+full sensor at zero offsets; experiment startup restores the saved ROI and rate.
+The full-sensor dimensions are device-specific (816x624 on the acceptance rig).
+
+Mode sessions require exact ROI readback, including FOV and offsets in the real
+SDK adapter. A rejected or quantized ROI fails before generator enable; the
+camera error reports requested and actual dimensions when these differ. MVSDK
+reports min/max but no universal ROI increment: offsets use pixel coordinates,
+and unsupported dimensions must be corrected rather than silently changing
+the experiment region. Non-illuminated overview uses the slow frame-speed preset.
+Tests: `backend.mindvision_overview_mode`, extended `backend.illuminated_live`,
+and `frontend.mindvision_overview`; optional hardware mode switching is enabled
+by `MIB_TEST_OVERVIEW_MODES=1` in `hw_illuminated_live_test`.

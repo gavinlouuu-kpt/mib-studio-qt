@@ -10,6 +10,7 @@
 #include <QSplitter>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QDir>
@@ -41,6 +42,7 @@
 #include <vector>
 
 #include "backend/app/AppBackend.h"
+#include "backend/camera/mindvision/MindVisionConfig.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/services/CaptureService.h"
@@ -530,9 +532,13 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         // On connection, switch to Overview and enable ROI overlay by default.
         if (overviewTab_) {
             overviewTab_->setRoiOverlayVisible(true);
+            overviewTab_->refreshCameraMode();
         }
         if (ui->tabs) {
-            ui->tabs->setCurrentIndex(1); // Overview tab
+            if (ui->tabs->currentIndex() == 1)
+                onTabChanged(1);
+            else
+                ui->tabs->setCurrentIndex(1); // Overview tab
         } });
 
     // Config conflicts are actionable alerts (issue #363/#361).
@@ -613,12 +619,19 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         if (roiLabel_)
             roiLabel_->setText(tr("ROI: %1 x %2 @ (%3, %4)").arg(width).arg(height).arg(offsetX).arg(offsetY));
         backend::services::ProcessingService::Roi roi{};
-        roi.x = offsetX;
-        roi.y = offsetY;
+        roi.x = backend_.isMindVisionCameraSelected() ? 0 : offsetX;
+        roi.y = backend_.isMindVisionCameraSelected() ? 0 : offsetY;
         roi.w = width;
         roi.h = height;
         backend_.processing().setRealtimeRoi(roi);
     });
+    if (auto* config = previewPage->getConfigTabs()) {
+        connect(overviewTab_, &frontend::OverviewTab::roiChanged, config,
+                [this, config](int x, int y, int w, int h) {
+                    if (backend_.isMindVisionCameraSelected())
+                        config->syncMindVisionRoi(x, y, w, h);
+                });
+    }
     // Initialize displays and processing ROI with current values
     {
         int ox = static_cast<int>(overviewTab_->roiPosition().x());
@@ -629,8 +642,8 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         if (roiLabel_)
             roiLabel_->setText(tr("ROI: %1 x %2 @ (%3, %4)").arg(w).arg(h).arg(ox).arg(oy));
         backend::services::ProcessingService::Roi initialRoi{};
-        initialRoi.x = ox;
-        initialRoi.y = oy;
+        initialRoi.x = backend_.isMindVisionCameraSelected() ? 0 : ox;
+        initialRoi.y = backend_.isMindVisionCameraSelected() ? 0 : oy;
         initialRoi.w = w;
         initialRoi.h = h;
         backend_.processing().setRealtimeRoi(initialRoi);
@@ -643,6 +656,10 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     initManager_->setConnectTab(connectTab_);
     initManager_->setNanopositionerTab(sidebarWidget_ ? sidebarWidget_->nanopositionerTab() : nullptr);
     connectTab_->setDeviceInitManager(initManager_);
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+        initManager_->stop();
+        backend_.shutdown();
+    });
 
     // Connect tab change signal for auto-applying camera scripts
     connect(ui->tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
@@ -669,6 +686,7 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    if (initManager_) initManager_->stop();
     backend_.experiment().setStatusCallback({});
     backend_.setBackgroundCaptureCallback({});
     // Stop all timers that access backend_ via callbacks before the UI is
@@ -1871,6 +1889,25 @@ void MainWindow::onTabChanged(int index)
         return;
     }
 
+    if (backend_.isMindVisionCameraSelected() && (index == 1 || index == 2)) {
+        const bool wasRunning = backend_.capture().isRunning();
+        std::string error;
+        if (!backend_.setMindVisionOverview(index == 1, &error)) {
+            statusLabel_->setText(
+                tr("Camera mode change failed: %1").arg(QString::fromStdString(error)));
+            return;
+        }
+        stopExperimentServices();
+        overviewTab_->refreshCameraMode();
+        backend_.processing().setRealtimeEnabled(index == 2);
+        startExperimentServices();
+        if (wasRunning && !backend_.capture().isRunning()) {
+            const auto result = cameraController_->requestStart();
+            if (!result.accepted()) statusLabel_->setText(result.message);
+        }
+        return;
+    }
+
     // Handle service lifecycle for Overview (index 1) + Experiment (index 2)
     // Both tabs rely on playback/processing to show live frames.
     const int OVERVIEW_TAB_INDEX = 1;
@@ -1888,12 +1925,23 @@ void MainWindow::onTabChanged(int index)
         stopExperimentServices();
     }
 
-    // Auto-start camera when navigating to Overview
-    if (index == OVERVIEW_TAB_INDEX)
-    {
-        auto &cap = backend_.capture();
-        if (!cap.isRunning() && backend_.isCameraConfigured())
-        {
+    // Illuminated capture requires an explicit Play action. A connection
+    // navigates here automatically, so navigation must never energize the rig.
+    bool autoStartOnOverview = true;
+    if (backend_.isMindVisionCameraSelected()) {
+        const auto selection = backend_.cameraSelection();
+        QFile savedProfile(QString::fromStdString(selection.mindVisionConfigPath));
+        autoStartOnOverview = false;
+        if (savedProfile.open(QIODevice::ReadOnly)) {
+            const auto parsed =
+                backend::camera::mindvision::parseConfig(savedProfile.readAll().toStdString());
+            autoStartOnOverview = parsed.ok && !parsed.config.illuminatedLive;
+        }
+    }
+    // Preserve legacy non-illuminated Overview auto-start.
+    if (index == OVERVIEW_TAB_INDEX && autoStartOnOverview) {
+        auto& cap = backend_.capture();
+        if (!cap.isRunning() && backend_.isCameraConfigured()) {
             SPDLOG_INFO("MainWindow: auto-starting camera on Overview navigation");
             if (cap.start())
             {
@@ -2016,6 +2064,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
         }
     }
 
+    if (initManager_) initManager_->stop();
+
     // An active run or a finalization in flight completes before the window
     // goes away (bounded: the coordinator drains the write queue, writes the
     // metadata and closes the file). AppBackend::shutdown() repeats this
@@ -2040,5 +2090,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Issue #358: persist geometry only when the close is accepted.
     saveWindowGeometry();
     saveSidebarPreference();
+    backend_.shutdown();
     QMainWindow::closeEvent(event);
+    // A utility window must not keep the desktop and hardware alive after
+    // the user accepts closing the main window.
+    if (event->isAccepted()) QMetaObject::invokeMethod(qApp, "quit", Qt::QueuedConnection);
 }

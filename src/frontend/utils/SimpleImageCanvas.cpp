@@ -14,10 +14,6 @@ namespace frontend
 
     namespace
     {
-        // ROI alignment constraints: OffsetX must be multiple of 4, OffsetY must be multiple of 16
-        static constexpr int ROI_OFFSET_X_STEP = 16;
-        static constexpr int ROI_OFFSET_Y_STEP = 4;
-
         // Snap a value to the nearest multiple of step, clamping to [0, max]
         static int snapToStep(int value, int step, int max)
         {
@@ -92,7 +88,7 @@ namespace frontend
             const int roiH = roiHeight_ ? *roiHeight_ : 96;
 
             // Convert image coordinates to canvas coordinates
-            QPointF canvasPos = imageToCanvas(*roiPos_);
+            QPointF canvasPos = imageToCanvas(displayedRoiPosition());
             QRectF roiRect(canvasPos.x(), canvasPos.y(), roiW * scale, roiH * scale);
 
             // Draw semi-transparent rectangle
@@ -118,7 +114,7 @@ namespace frontend
             // Check if click is within ROI rectangle
             const int roiW = roiWidth_ ? *roiWidth_ : 512;
             const int roiH = roiHeight_ ? *roiHeight_ : 96;
-            QRectF roiRect(roiPos_->x(), roiPos_->y(), roiW, roiH);
+            QRectF roiRect(displayedRoiPosition(), QSizeF(roiW, roiH));
 
             if (roiRect.contains(imagePos))
             {
@@ -137,6 +133,8 @@ namespace frontend
             QPointF deltaCanvas = canvasPos - dragStartCanvasPos_;
             QPointF deltaImage = QPointF(deltaCanvas.x() / scale_, deltaCanvas.y() / scale_);
 
+            if (flipX_) deltaImage.setX(-deltaImage.x());
+            if (flipY_) deltaImage.setY(-deltaImage.y());
             QPointF newRoiPos = dragStartRoiPos_ + deltaImage;
 
             // Constrain to image bounds
@@ -155,11 +153,13 @@ namespace frontend
             newRoiPos.setX(std::max(0.0, std::min(double(imgW - roiW), newRoiPos.x())));
             newRoiPos.setY(std::max(0.0, std::min(double(imgH - roiH), newRoiPos.y())));
 
-            // Snap to alignment constraints (X step=4, Y step=16)
+            // Snap to the selected provider's alignment constraints
             int maxOffsetX = imgW - roiW;
             int maxOffsetY = imgH - roiH;
-            int snappedX = snapToStep(static_cast<int>(std::round(newRoiPos.x())), ROI_OFFSET_X_STEP, maxOffsetX);
-            int snappedY = snapToStep(static_cast<int>(std::round(newRoiPos.y())), ROI_OFFSET_Y_STEP, maxOffsetY);
+            int snappedX =
+                snapToStep(static_cast<int>(std::round(newRoiPos.x())), stepX_, maxOffsetX);
+            int snappedY =
+                snapToStep(static_cast<int>(std::round(newRoiPos.y())), stepY_, maxOffsetY);
 
             *roiPos_ = QPointF(snappedX, snappedY);
             update();
@@ -177,6 +177,16 @@ namespace frontend
             }
         }
         QWidget::mouseReleaseEvent(event);
+    }
+
+    QPointF SimpleImageCanvas::displayedRoiPosition() const {
+        if (!roiPos_) return {};
+        auto pos = *roiPos_;
+        if (image_) {
+            if (flipX_) pos.setX(image_->width() - (roiWidth_ ? *roiWidth_ : 512) - pos.x());
+            if (flipY_) pos.setY(image_->height() - (roiHeight_ ? *roiHeight_ : 96) - pos.y());
+        }
+        return pos;
     }
 
     QPointF SimpleImageCanvas::canvasToImage(const QPointF &canvasPos) const

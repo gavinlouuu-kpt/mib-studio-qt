@@ -29,14 +29,25 @@
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/MonitoringDensityService.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
+#include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/discovery/providers/CameraEnumerationProvider.h"
+#include "backend/discovery/providers/NanopositionerProvider.h"
+#include "backend/discovery/providers/PulseGeneratorProvider.h"
 #include "backend/processing/EModulusLutCatalog.h"
+
+#include "backend/camera/mindvision/MindVisionConfig.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <limits>
 #include <string>
 #include <utility>
@@ -57,6 +68,70 @@ namespace backend
 {
     namespace
     {
+    // Builds the capture-owned MindVision camera for `path`. When the saved
+    // profile enables illuminated Live View, the same validated parse the
+    // camera uses at start (parseConfig: connection, range and timing rules)
+    // decides here whether a generator session is attached, so a profile that
+    // would fail at Play is rejected when it is staged. Throws std::runtime_error
+    // with the operator-facing reason; no hardware is touched.
+    std::unique_ptr<::camera::common::ICamera>
+    makeLiveCamera(int index, const std::string& path, services::PulseGeneratorService& generator,
+                   bool overview,
+                   std::function<void(const camera::mindvision::SdkCapability&)> capabilitySink) {
+        std::shared_ptr<services::IlluminationSession> session;
+        camera::mindvision::Config effective;
+        if (!path.empty()) {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) throw std::runtime_error("Cannot read saved MindVision setup: " + path);
+            const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+            const auto parsed = backend::camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) throw std::runtime_error(parsed.error);
+            effective =
+                overview ? camera::mindvision::overviewConfig(parsed.config) : parsed.config;
+            effective.requireExactGeometry = true;
+            if (effective.illuminatedLive) {
+                const auto timingError =
+                    camera::mindvision::detail::validateLiveViewTiming(effective);
+                if (!timingError.empty()) throw std::runtime_error(timingError);
+                const auto& lv = effective.liveView;
+                services::PulseGeneratorService::Config cfg;
+                cfg.portName = lv.port;
+                cfg.modbusAddress = static_cast<uint8_t>(lv.address);
+                cfg.serial.baudRate = lv.baud;
+                cfg.serial.dataBits = lv.dataBits;
+                cfg.serial.parity = lv.parity;
+                cfg.serial.stopBits = lv.stopBits;
+                const int channel = lv.channel - 1; // service channels are 0-based
+                const double hz = lv.frequencyHz;
+                const double duty = lv.dutyPercent;
+                session = std::make_shared<services::IlluminationSession>();
+                const auto owner = std::make_shared<char>();
+                session->prepare = [&generator, cfg, channel, hz, duty, owner] {
+                    auto resolved = cfg;
+                    if (resolved.portName == "auto") {
+                        std::string error;
+                        if (!generator.discoverLiveView(resolved, channel, services::serialbus::availablePorts(), &error)) {
+                            SPDLOG_ERROR("Illuminated Live View: {}", error);
+                            throw std::runtime_error(error);
+                        }
+                        SPDLOG_INFO("Illuminated Live View: pulse generator discovered on {} (addr {})",
+                                    resolved.portName, resolved.modbusAddress);
+                    }
+                    return generator.beginLiveView(resolved, channel, hz, duty, owner.get());
+                };
+                session->enable = [&generator, owner] {
+                    return generator.enableLiveView(owner.get());
+                };
+                session->disable = [&generator, owner] {
+                    return generator.endLiveView(owner.get());
+                };
+            }
+        }
+        return std::make_unique<::camera::common::MindVisionCamera>(
+            index, path, nullptr, session, overview,
+            path.empty() ? std::nullopt : std::make_optional(effective), std::move(capabilitySink));
+    }
+
         // Get a user-writable log path, falling back to dataDir if needed
         std::string getLogPath(const std::string &dataDir)
         {
@@ -138,18 +213,73 @@ namespace backend
         }
     }
 
-    AppBackend::AppBackend() = default;
+    AppBackend::AppBackend()
+    {
+        // Exists from construction so shells can bind to it before
+        // initialize(); it stays idle until a shell enables it, and its
+        // callbacks tolerate services that are not built yet.
+        monitoringDensity_ = std::make_unique<services::MonitoringDensityService>(
+            [this] {
+                // Valid monitoring cells in chart units (µm², deformability).
+                services::MonitoringDensityInput in;
+                if (!processingService_) return in;
+                in.pixelToMicron = processingService_->getPixelToMicronFactor();
+                const double areaFactor = in.pixelToMicron * in.pixelToMicron;
+                const auto cells = processingService_->getMonitoringValidPoints();
+                in.frameIndices.reserve(cells.size());
+                in.points.reserve(cells.size());
+                for (const auto& c : cells) {
+                    in.frameIndices.push_back(c.index);
+                    in.points.push_back({c.area * areaFactor, c.deformability});
+                }
+                return in;
+            },
+            [this] {
+                // Falling behind: frames dropped by the batch queue or the
+                // experiment buffer, or a batch queue backlog.
+                services::MonitoringPipelineLoad load;
+                if (!processingService_) return load;
+                const auto batch = processingService_->getBatchPipelineStats();
+                load.droppedFrames = batch.framesDropped + processingService_->getDroppedValidFrames() +
+                                     processingService_->getDroppedInvalidFrames();
+                load.queueDepth = batch.running ? batch.currentQueueDepth : 0;
+                load.queueCapacity = batch.running ? batch.queueCapacity : 0;
+                return load;
+            },
+            [this](std::string json) {
+                if (experimentCoordinator_) experimentCoordinator_->setLiveKdeCoreRecord(std::move(json));
+            });
+    }
 
     AppBackend::~AppBackend() {
         shutdown();
     }
 
     void AppBackend::shutdown() {
+        SPDLOG_INFO("AppBackend: shutdown begin");
+        // Discovery first (issue #419): stop the startup policy so no late
+        // result can select or connect anything, refuse new jobs, cancel and
+        // join every discovery worker. Only then may serial adapters and the
+        // camera be released below: a probe must never observe a half
+        // torn-down service graph.
+        if (startupDiscovery_) {
+            startupDiscovery_->stop();
+        }
+        if (deviceDiscovery_) {
+            SPDLOG_INFO("AppBackend: shutdown draining device discovery");
+            deviceDiscovery_->shutdownDiscovery();
+        }
         // Stop threads before member destruction begins. Members are destroyed
         // in reverse declaration order, so triggerService_/autofocusService_
         // die before processingService_ — a still-running realtime loop would
         // invoke its callbacks on freed services. Every call below is
         // idempotent, so shutdown() may run more than once.
+
+        // The density worker reads the monitoring ring and hands records to
+        // the coordinator: join it before either is finalized or stopped.
+        if (monitoringDensity_) {
+            monitoringDensity_->stop();
+        }
 
         // An active experiment is finalized (file closed, accounting written)
         // while every service it needs is still alive.
@@ -171,6 +301,7 @@ namespace backend
         // left TriggerService holding a camera pointer across the camera's
         // destruction on the capture thread.
         if (captureService_) {
+            SPDLOG_INFO("AppBackend: shutdown stopping capture and releasing camera");
             captureService_->stop();
         }
         if (triggerService_) {
@@ -182,13 +313,31 @@ namespace backend
         }
         stopFrameRecording();
         if (processingService_) {
+            SPDLOG_INFO("AppBackend: shutdown stopping processing");
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
         }
+        // Release hardware during explicit shutdown, while the service graph
+        // is still alive. Capture has ended its owned generator session and
+        // processing can no longer submit autofocus or trigger requests.
+        if (autofocusService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting nanopositioner");
+            autofocusService_->disconnect();
+        }
+        if (syringePumpService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting syringe pumps");
+            syringePumpService_->disconnect(services::SyringePumpService::PumpId::Sample);
+            syringePumpService_->disconnect(services::SyringePumpService::PumpId::Sheath);
+        }
+        if (pulseGeneratorService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting pulse generator");
+            pulseGeneratorService_->disconnect();
+        }
         // All pipeline threads are stopped now, so the dump is an exact
         // snapshot of the recorded latency data.
         dumpPipelineTimingIfEnabled();
+        SPDLOG_INFO("AppBackend: shutdown complete");
     }
 
     bool AppBackend::initialize(const std::string &dataDir)
@@ -240,6 +389,49 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
+
+        // Device discovery (issue #419, ADR 0005): one job service, compiled-in
+        // providers wrapping the existing enumeration/probe code, a camera
+        // guard so enumeration never runs behind a live capture, and the
+        // startup policy with the pre-#419 defaults (started by the shell).
+        deviceDiscovery_ = std::make_unique<discovery::DeviceDiscoveryService>();
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::mindVision(*cameraControlService_));
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::eGrabber(*cameraControlService_));
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::eGrabberFramegrabbers(*cameraControlService_));
+        deviceDiscovery_->registerProvider(discovery::NanopositionerProvider::production());
+        deviceDiscovery_->registerProvider(
+            std::make_unique<discovery::PulseGeneratorProvider>(*pulseGeneratorService_));
+        const auto captureBusy = [this] { return captureService_ && captureService_->isRunning(); };
+        deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Camera, captureBusy);
+        deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Framegrabber, captureBusy);
+
+        discovery::StartupDiscoveryCoordinator::Hooks hooks;
+        hooks.cameraConfigured = [this] { return isCameraConfigured(); };
+        hooks.captureRunning = captureBusy;
+        hooks.nanopositionerConnected = [this] {
+            return autofocusService_ && autofocusService_->isConnected();
+        };
+        hooks.selectCamera = [this](const discovery::DiscoveredDevice &device) {
+            if (!device.camera) return false;
+            const auto &cam = *device.camera;
+            if (cam.cameraType == services::CameraType::MindVision)
+            {
+                setMindVisionCameraSelection(cam.cameraIndex, cam.label);
+            }
+            else
+            {
+                setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
+            }
+            return true;
+        };
+        hooks.connectNanopositioner = [this](const nanopositioner::Endpoint &endpoint) {
+            return autofocusService_ && autofocusService_->connect(endpoint);
+        };
+        startupDiscovery_ =
+            std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
 
         bool bootSqlite = true;
         bool bootHdf5 = true;
@@ -632,12 +824,24 @@ namespace backend
                 }
                 SPDLOG_INFO("AppBackend: configuring MindVision camera (index={}, config={})",
                             cameraIndex, configPath.empty() ? "<none>" : configPath);
-                captureService_->setCameraFactory([cameraIndex, configPath]() mutable
-                                                  { return std::make_unique<::camera::common::MindVisionCamera>(cameraIndex, configPath); });
+                captureService_->setCameraFactory([this, cameraIndex, configPath]() mutable {
+                    return makeLiveCamera(
+                        cameraIndex, configPath, *pulseGeneratorService_,
+                        mindVisionOverview_.load(),
+                        [this](const camera::mindvision::SdkCapability& sensor) {
+                            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                            mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                 sensor.minWidth, sensor.minHeight};
+                        });
+                });
                 mockCameraConfigured_ = false;
                 effectiveCameraSource_ = "mindvision";
                 selectedIfIndex_ = -1;
                 selectedDevIndex_ = -1;
+                {
+                    std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                    mindVisionSensor_ = {};
+                }
                 selectedMvCameraIndex_ = cameraIndex;
                 selectedLabel_ = configPath.empty()
                     ? std::string("MindVision camera ") + std::to_string(cameraIndex)
@@ -664,6 +868,14 @@ namespace backend
                 cameraMode = "mock";
                 configureMock();
                 cameraFallbackReason_ = "EGrabber SDK is unavailable in this build";
+#if MIB_HAS_MINDVISION
+                // An implicit fallback is not an operator selection. Leave
+                // startup discovery enabled so a single MindVision camera
+                // can be selected without a separate Connect action.
+                if (std::getenv("MIB_CAMERA_MODE") == nullptr) {
+                    mockCameraConfigured_ = false;
+                }
+#endif
 #endif
             }
             else
@@ -738,11 +950,14 @@ namespace backend
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
+    discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
+    discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {
         if (!captureService_)
             return;
+        releaseMindVisionOverviewStore();
         requestedCameraSource_ = "mock";
         effectiveCameraSource_ = "mock";
         cameraFallbackReason_.clear();
@@ -792,6 +1007,7 @@ namespace backend
     {
         if (!captureService_)
             return;
+        releaseMindVisionOverviewStore();
         requestedCameraSource_ = "egrabber";
         cameraFallbackReason_.clear();
 
@@ -846,6 +1062,10 @@ namespace backend
         if (!captureService_)
             return;
 
+        {
+            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+            mindVisionSensor_ = {};
+        }
         selectedMvCameraIndex_ = cameraIndex;
         selectedIfIndex_ = -1;
         selectedDevIndex_ = -1;
@@ -855,9 +1075,18 @@ namespace backend
         cameraFallbackReason_.clear();
 
 #if MIB_HAS_MINDVISION
+        if (lastMindVisionConfigPath_.empty())
+            lastMindVisionConfigPath_ = savedMindVisionConfigPath_;
         const std::string configPath = lastMindVisionConfigPath_;
-        captureService_->setCameraFactory([cameraIndex, configPath]()
-                                          { return std::make_unique<::camera::common::MindVisionCamera>(cameraIndex, configPath); });
+        captureService_->setCameraFactory([this, cameraIndex, configPath]() {
+            return makeLiveCamera(cameraIndex, configPath, *pulseGeneratorService_,
+                                  mindVisionOverview_.load(),
+                                  [this](const camera::mindvision::SdkCapability& sensor) {
+                                      std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                                      mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                           sensor.minWidth, sensor.minHeight};
+                                  });
+        });
         effectiveCameraSource_ = "mindvision";
 #else
         SPDLOG_WARN("MindVision camera selection requested but MindVision SDK is unavailable; falling back to mock camera");
@@ -917,6 +1146,46 @@ namespace backend
         return ok;
     }
 
+    bool AppBackend::stageMindVisionConfigFromFile(const std::string& path, std::string* errorOut) {
+        if (captureService_->isRunning()) {
+            if (errorOut) *errorOut = "Stop Live View before changing the saved camera setup";
+            return false;
+        }
+        try {
+            std::ifstream input(path);
+            if (!input) throw std::runtime_error("Cannot open camera setup");
+            const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+            const auto parsed = backend::camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) throw std::runtime_error(parsed.error);
+            // Construct only: validates generator settings, no SDK/serial I/O.
+            auto candidate = makeLiveCamera(
+                selectedMvCameraIndex_, path, *pulseGeneratorService_, mindVisionOverview_.load(),
+                [this](const camera::mindvision::SdkCapability& sensor) {
+                    std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                    mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight, sensor.minWidth,
+                                         sensor.minHeight};
+                });
+            lastMindVisionConfigPath_ = path;
+            savedMindVisionConfigPath_ = path;
+            if (selectedMvCameraIndex_ >= 0) {
+                const int idx = selectedMvCameraIndex_;
+                captureService_->setCameraFactory([this, idx, path] {
+                    return makeLiveCamera(
+                        idx, path, *pulseGeneratorService_, mindVisionOverview_.load(),
+                        [this](const camera::mindvision::SdkCapability& sensor) {
+                            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                            mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                 sensor.minWidth, sensor.minHeight};
+                        });
+                });
+            }
+            return true;
+        } catch (const std::exception& e) {
+            if (errorOut) *errorOut = e.what();
+            return false;
+        }
+    }
+
     bool AppBackend::applyMindVisionConfigFromFile(const std::string &path, std::string *errorOut)
     {
         if (selectedMvCameraIndex_ < 0)
@@ -935,13 +1204,137 @@ namespace backend
         if (ok)
         {
             lastMindVisionConfigPath_ = path;
+            savedMindVisionConfigPath_ = path;
             const int idx = selectedMvCameraIndex_;
             const std::string configPath = lastMindVisionConfigPath_;
-            captureService_->setCameraFactory([idx, configPath]()
-                                              { return std::make_unique<::camera::common::MindVisionCamera>(idx, configPath); });
+            captureService_->setCameraFactory([this, idx, configPath]() {
+                return makeLiveCamera(
+                    idx, configPath, *pulseGeneratorService_, mindVisionOverview_.load(),
+                    [this](const camera::mindvision::SdkCapability& sensor) {
+                        std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                        mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                             sensor.minWidth, sensor.minHeight};
+                    });
+            });
             SPDLOG_INFO("MindVision capture factory updated with config: {}", path);
         }
         return ok;
+    }
+
+    void AppBackend::releaseMindVisionOverviewStore() {
+        if (!mindVisionOverview_.load()) return;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        frameStore_ = std::make_shared<playback::FrameStore>(mindVisionExperimentCapacity_);
+        captureService_->setFrameStore(frameStore_);
+        playbackService_->setFrameStore(frameStore_);
+        mindVisionOverview_.store(false);
+    }
+
+    AppBackend::MindVisionSensor AppBackend::mindVisionSensor() const {
+        std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+        return mindVisionSensor_;
+    }
+
+    bool AppBackend::setMindVisionOverview(bool overview, std::string* errorOut) {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        if (!isMindVisionCameraSelected()) return fail("No MindVision camera selected");
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing camera mode");
+        if (mindVisionOverview_.load() == overview) return true;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        processingService_->setRealtimeEnabled(false);
+        try {
+            // Camera offsets are sensor coordinates. Processing receives the
+            // already-cropped image and uses local coordinates.
+            std::ifstream input(std::filesystem::u8path(lastMindVisionConfigPath_));
+            const auto parsed = camera::mindvision::parseConfig(
+                std::string(std::istreambuf_iterator<char>(input), {}));
+            if (!input || !parsed.ok) return fail("Cannot load MindVision experiment ROI");
+            processingService_->setRealtimeRoi({0, 0, parsed.config.width, parsed.config.height});
+            // A new store prevents stale overview images reaching processing and
+            // bounds full-sensor preview memory. Existing store readers can finish
+            // using their shared ownership; capture is joined before replacement.
+            if (overview) mindVisionExperimentCapacity_ = frameStore_->capacity();
+            auto next = std::make_shared<playback::FrameStore>(
+                overview ? 8 : mindVisionExperimentCapacity_);
+            frameStore_ = std::move(next);
+            captureService_->setFrameStore(frameStore_);
+            playbackService_->setFrameStore(frameStore_);
+            mindVisionOverview_.store(overview);
+            SPDLOG_INFO("MindVision mode staged: {}", overview ? "Overview" : "Experiment");
+            return true;
+        } catch (const std::exception& e) {
+            return fail(e.what());
+        }
+    }
+
+    bool AppBackend::saveMindVisionRoi(int x, int y, int width, int height, std::string* errorOut) {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment before editing its ROI");
+        if (!isMindVisionCameraSelected() || lastMindVisionConfigPath_.empty())
+            return fail("Select a saved MindVision profile first");
+        const auto sensor = mindVisionSensor();
+        if (x < 0 || y < 0 || width < std::max(1, sensor.minWidth) ||
+            height < std::max(1, sensor.minHeight) || x > 65535 || y > 65535 || width > 65535 ||
+            height > 65535 ||
+            (sensor.sensorWidth > 0 &&
+             (width > sensor.sensorWidth || x > sensor.sensorWidth - width)) ||
+            (sensor.sensorHeight > 0 &&
+             (height > sensor.sensorHeight || y > sensor.sensorHeight - height)))
+            return fail("ROI is outside the camera sensor bounds");
+        try {
+            const auto path = std::filesystem::u8path(lastMindVisionConfigPath_);
+            std::ifstream input(path, std::ios::binary);
+            if (!input) return fail("Cannot read MindVision experiment profile");
+            auto json = nlohmann::json::parse(input);
+            input.close();
+            json["offset_x"] = x;
+            json["offset_y"] = y;
+            json["width"] = width;
+            json["height"] = height;
+            const auto bytes = json.dump(2) + "\n";
+            const auto parsed = camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) return fail(parsed.error);
+            auto temporary = path;
+            temporary += ".roi-" + std::to_string(Tools::getTimestamp()) + ".tmp";
+            struct Cleanup {
+                std::filesystem::path path;
+                ~Cleanup() {
+                    std::error_code ec;
+                    std::filesystem::remove(path, ec);
+                }
+            } cleanup{temporary};
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            output.close();
+            if (!output) return fail("Cannot write temporary MindVision ROI profile");
+#ifdef _WIN32
+            if (!MoveFileExW(temporary.c_str(), path.c_str(),
+                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                return fail("Cannot replace MindVision profile (Windows error " +
+                            std::to_string(GetLastError()) + ")");
+#else
+            std::error_code ec;
+            std::filesystem::rename(temporary, path, ec);
+            if (ec) return fail("Cannot replace MindVision profile: " + ec.message());
+#endif
+            return true;
+        } catch (const std::exception& e) {
+            return fail(e.what());
+        }
     }
 
     bool AppBackend::isMindVisionCameraSelected() const
@@ -1000,6 +1393,8 @@ namespace backend
     }
 
     app::ExperimentCoordinator &AppBackend::experiment() { return *experimentCoordinator_; }
+
+    services::MonitoringDensityService &AppBackend::monitoringDensity() { return *monitoringDensity_; }
 
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 

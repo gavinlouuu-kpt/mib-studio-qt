@@ -17,10 +17,16 @@ import urllib.request
 from typing import Any, Dict, List, Mapping, Optional
 
 
-DEFAULT_DATASET = "gavinlouuu/512x96stream"
-DEFAULT_CONFIG = "default"
-DEFAULT_SPLIT = "train"
-DEFAULT_ROWS = "0,1,2,2500,4999"
+# Dataset identity comes from env/assets.json (asset id 512x96stream-kin10) so
+# the manifest is the single place that names the corpus, split and sample rows.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+from assets_manifest import get_asset  # noqa: E402
+
+_KIN10_ASSET = get_asset("512x96stream-kin10")
+DEFAULT_DATASET = _KIN10_ASSET.repo
+DEFAULT_CONFIG = _KIN10_ASSET.viewer["config"]
+DEFAULT_SPLIT = _KIN10_ASSET.viewer["split"]
+DEFAULT_ROWS = ",".join(str(row) for row in _KIN10_ASSET.viewer["rows"])
 BASE_URL = "https://datasets-server.huggingface.co"
 SKIP_EXIT_CODE = 77
 

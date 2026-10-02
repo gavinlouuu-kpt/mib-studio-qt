@@ -23,9 +23,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-DATASET_NAME = "gavinlouuu/512x96stream"
-DATASET_CONFIG = "default"
-DATASET_SPLIT = "train"
+# Corpus identity and pinned revision come from env/assets.json.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from assets_manifest import get_asset  # noqa: E402
+
+_STREAM_ASSET = get_asset("512x96stream-kin10")
+DATASET_NAME = _STREAM_ASSET.repo
+DATASET_CONFIG = _STREAM_ASSET.viewer["config"]
+DATASET_SPLIT = _STREAM_ASSET.viewer["split"]
+DATASET_REVISION = _STREAM_ASSET.revision
 DEFAULT_OUTPUT_DIR = "review_artifacts/KIN-12"
 DEFAULT_SAMPLE_START = 21
 DEFAULT_SAMPLE_COUNT = 3
@@ -214,9 +220,15 @@ def load_samples(
             dataset_config,
             split=split,
             streaming=True,
+            revision=DATASET_REVISION if dataset_name == DATASET_NAME else None,
         )
     else:
-        dataset = load_dataset(dataset_name, split=split, streaming=True)
+        dataset = load_dataset(
+            dataset_name,
+            split=split,
+            streaming=True,
+            revision=DATASET_REVISION if dataset_name == DATASET_NAME else None,
+        )
 
     samples: list[DatasetSample] = []
     selected_rows = itertools.islice(dataset, sample_start, sample_end)

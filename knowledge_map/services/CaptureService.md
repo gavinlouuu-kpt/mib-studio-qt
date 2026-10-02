@@ -152,3 +152,11 @@ receipt/publish timing is host-side latency, never exposure time. Consumers:
   - Windows (`MIB_HAS_EGRABBER=1`) defaults to [[../camera/EGrabberCamera]].
   - Non-Windows defaults to [[../camera/MockCamera]] (`data/mock_frames`) so
     cloud/Linux builds can exercise non-hardware pipeline paths.
+
+## Illuminated rig teardown (#413)
+
+The MindVision camera owns its optional illumination session, so all existing
+capture stop/fault/shutdown paths also release the generator. `releaseCamera`
+retains an unconfirmed rig shutdown in the lifecycle failure message after
+`camera->stop()`; explicit stop must not silently report physical OFF.
+See [workflow](../../docs/howto/illuminated-live-view.md).

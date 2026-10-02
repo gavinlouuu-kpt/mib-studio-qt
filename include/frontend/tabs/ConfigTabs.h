@@ -1,5 +1,7 @@
 #pragma once
 
+#include "backend/discovery/DeviceDiscoveryTypes.h"
+#include "frontend/system/DiscoverySubscription.h"
 #include <QWidget>
 #include <QMap>
 #include <QVector>
@@ -71,6 +73,13 @@ public:
     // Geometry-only reflow of the grouped JSON tables: moves the existing
     // group widgets into 1/2/3 columns; never reloads or rewrites data.
     void relayoutJsonSections(int availableWidth, bool force = false);
+    // Default-profile migration rule (issue #413): returns the bundled preset
+    // bytes when `current` is exactly the historical bundled MindVision
+    // profile (the one shipped before the automatic XGC/R5D rig preset), and
+    // an empty array for anything else — an edited or external profile is
+    // never rewritten. Pure; the caller decides whether to save.
+    static QByteArray upgradedMindVisionDefault(const QByteArray& current,
+                                                const QByteArray& bundled);
     // Test hooks: no modal dialogs; editor access.
     void setNonInteractiveForTests(bool on) { nonInteractive_ = on; }
     QString appConfigEditorText() const;
@@ -80,6 +89,7 @@ public:
     QString noticesText() const;
 
 public slots:
+    void syncMindVisionRoi(int x, int y, int width, int height);
     // Called when config file changes externally (e.g., when ROI is saved)
     void onExternalConfigFileChanged(const QString& path);
 
@@ -138,6 +148,7 @@ private:
     void savePulseGenSettings() const;
     void restorePulseGenSettings();
     void stopPulseGenScan();
+    void onPulseGenScanFinished(const backend::discovery::DiscoverySnapshot& snapshot);
     void syncMvFormFromJson();
     void syncMvJsonFromForm();
     void clearJsonSyncIndicators();
@@ -241,10 +252,12 @@ private:
     QPushButton* mvClearBtn_ = nullptr;
     frontend::ElidingLabel* mvPathLabel_ = nullptr;
     QLabel* mvUnsavedLabel_ = nullptr;
+    QLabel* mvLiveStatus_ = nullptr;
     // Trigger & strobe parameter form (two-way synced with the JSON editor)
     QComboBox* mvTriggerModeCombo_ = nullptr;
     QComboBox* mvSignalTypeCombo_ = nullptr;
     QDoubleSpinBox* mvExposureSpin_ = nullptr;
+    QDoubleSpinBox* mvFpsSpin_ = nullptr;
     QSpinBox* mvTrigDelaySpin_ = nullptr;
     QSpinBox* mvJitterSpin_ = nullptr;
     QSpinBox* mvTrigCountSpin_ = nullptr;
@@ -266,9 +279,12 @@ private:
     QSpinBox* pgAddrSpin_ = nullptr;
     QPushButton* pgScanBtn_ = nullptr;
     QPushButton* pgConnectBtn_ = nullptr;
-    std::thread pgScanThread_;
-    std::atomic<bool> pgScanCancel_{false};
+    // Scan runs as a backend discovery job with an explicit port/address
+    // scope (issue #419); results return on the UI thread through the
+    // subscription. No tab-owned thread.
+    std::uint64_t pgScanJob_ = 0;
     bool pgScanRunning_ = false;
+    frontend::DiscoverySubscription pgScanSubscription_;
     QSpinBox* pgChannelSpin_ = nullptr;
     QDoubleSpinBox* pgFreqSpin_ = nullptr;
     QDoubleSpinBox* pgDutySpin_ = nullptr;

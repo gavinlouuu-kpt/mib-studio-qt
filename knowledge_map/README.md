@@ -19,8 +19,10 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 ### Services (`src/backend/services/`)
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
+- Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
+- Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
   [[services/TriggerService]], [[services/SyringePumpService]],
   [[services/ISerialPort]]
@@ -30,6 +32,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[services/BatchMaskSources]]
 
 ### Frontend (`src/frontend/`)
+- [[frontend/DesktopInstance]] — duplicate-launch protection for hardware ownership
 - [[frontend/_MOC|Frontend MOC]]
 - [[frontend/MainWindow]], [[frontend/Controllers]]
 - Native core selection: [[frontend/ProcessingCoreDialog]]
@@ -63,6 +66,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[build-and-run/Build]]
 - [[build-and-run/Run-Modes]]
 - [[build-and-run/Dependencies]]
+- [[build-and-run/Assets]] — external datasets and model weights (Hub-hosted, pinned in `env/assets.json`)
 
 ### Conventions
 - [[conventions/Code-Conventions]]

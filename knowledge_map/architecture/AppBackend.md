@@ -1,5 +1,30 @@
 # AppBackend
 
+## Device discovery ownership (2026-09-16, #419)
+
+`initialize()` constructs [[../services/DeviceDiscoveryService]] after the
+hardware services, registers the compiled-in providers (MindVision, eGrabber
+cameras, eGrabber framegrabbers, nanopositioner, pulse generator), installs
+the capture-busy guard for camera kinds, and builds the
+`StartupDiscoveryCoordinator` with hooks onto `isCameraConfigured()`,
+`capture().isRunning()`, `autofocus().isConnected()`,
+`set*CameraSelection()` and `autofocus().connect()`. The coordinator is
+started by the Qt adapter (`DeviceInitManager`), not here. `shutdown()`
+begins with `startupDiscovery().stop()` and
+`deviceDiscovery().shutdownDiscovery()` so every probe has ended before
+capture and serial hardware are released. Accessors: `deviceDiscovery()`,
+`startupDiscovery()`. Both members are declared after the services they
+reference so they are destroyed first.
+
+## Explicit hardware shutdown (2026-09-15)
+
+`shutdown()` now disconnects autofocus, both syringe pumps, and the pulse
+generator after stopping capture/triggers and processing. Callers need not
+destroy the backend to release serial adapters. The final shared-bus client
+releases the port. Each phase is logged to locate future shutdown stalls.
+`backend.hardware_shutdown` checks ten reconnect/shutdown cycles with three
+clients on one fake port. See [[../task/2026-09-15-hardware-shutdown]].
+
 > Composition root. Owns every backend service and the shared `FrameStore`.
 > Frontend code holds a single `backend::AppBackend&` and calls getters.
 
@@ -16,11 +41,20 @@ All services are `std::unique_ptr`; [[../data-model/FrameStore]] is
 sqliteService_, hdf5Service_,
 captureService_, processingService_, playbackService_,
 cameraControlService_, autofocusService_,
-triggerService_, yoloService_, syringePumpService_
+triggerService_, yoloService_, syringePumpService_,
+pulseGeneratorService_,
+deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
 ```
 
 ## `initialize(dataDir)` — what it wires
+
+When EGrabber is unavailable but MindVision is enabled, an implicit default
+mock fallback leaves `isCameraConfigured()` false. This allows the existing
+single-camera startup discovery to select the rig. Explicit `MIB_CAMERA_MODE`
+choices and explicitly configured mock cameras retain their previous behavior.
+Regression: `backend.mindvision_selection_state` checks implicit versus
+explicit mock initialization without touching hardware (#413).
 
 See `src/backend/AppBackend.cpp` around lines 79–200.
 
@@ -115,7 +149,11 @@ with source frames. See `docs/howto/pipeline-latency-diagnosis.md`.
 
 ## Shutdown
 
-`shutdown()` first calls `ExperimentCoordinator::shutdown()` so an active
+`shutdown()` first stops [[../services/MonitoringDensityService]] (its
+worker reads the monitoring ring and hands records to the coordinator; the
+service is built in the `AppBackend` constructor, idle until a shell enables
+it, and its record sink is wired to `ExperimentCoordinator::setLiveKdeCoreRecord`),
+then calls `ExperimentCoordinator::shutdown()` so an active
 run is finalized (file closed, accounting written) while every service it
 needs is still alive, then clears the target-group and background-capture
 callbacks (no new trigger requests are admitted), then stops capture **with the
@@ -289,3 +327,62 @@ memory benchmark evidence.
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
+
+## Saved illuminated Live View (#413)
+
+`stageMindVisionConfigFromFile` selects a next-start camera profile without
+hardware I/O. A single factory helper constructs all MindVision sessions and
+binds an optional generator session from `live_view` JSON to the existing
+PulseGeneratorService. Camera selection is separate from profile persistence;
+switching camera modes must not lose the remembered MindVision setup.
+See [lifecycle](../../docs/howto/illuminated-live-view.md).
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.
+
+
+### Single parse for the rig profile (September 14, second pass)
+
+`makeLiveCamera` builds the generator session from `parseConfig(...).config.liveView`
+instead of a second ad-hoc JSON read, so staging, the capture factory, the
+camera and the settings UI share one validation (connection fields, generator
+range, exposure/strobe versus trigger period). Errors carry the parser's
+operator-facing message.
+
+## MindVision acquisition modes (2026-09-15)
+
+`setMindVisionOverview(bool, error)` is a lifecycle-owner operation: it rejects
+active experiment/recording transitions, joins capture and realtime processing,
+stages the new mode, and replaces the shared FrameStore. Overview has 8 slots;
+Experiment restores the previous capacity. The empty replacement prevents old
+full-sensor frames becoming experiment backgrounds or processing inputs. The
+caller restarts realtime/playback and requests camera Start only when capture
+was already running. Switching providers releases the preview buffer limit.
+
+`mindVisionSensor()` returns a mutex-protected capability snapshot published by
+the capture worker. `saveMindVisionRoi` validates bounds and atomically replaces
+only width/height/offset fields of the selected JSON profile. ROI edits affect
+the next experiment start; immutable camera session configs avoid live-file
+races. Processing uses crop-local ROI coordinates (0,0,width,height).

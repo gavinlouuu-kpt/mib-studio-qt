@@ -11,7 +11,9 @@
 
 - `/experiment_info` — root attributes:
   `startTimeNs`, `endTimeNs`, `totalValidFrames`, `totalInvalidFrames`,
-  serialized `ProcessingConfig`, ROI, optional `background` image,
+  serialized `ProcessingConfig` (`processing_config_*`, including the declared
+  contract, difference threshold, all object gates and the channel band;
+  read back by `readRecordedProcessingConfig`), ROI, optional `background` image,
   `config_json` (raw JSON string), plus processing-core provenance:
   `processing_core_version`, `processing_contract_version`,
   `processing_engine_abi_version`, `processing_core_sha256`,
@@ -72,6 +74,21 @@
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for
   older files. See [[../architecture/ExperimentCoordinator]].
+- **KDE core contour records (`kde_core_schema_version` = 1)** — JSON
+  documents produced/parsed by the Qt-free frontend codec
+  `include/backend/processing/KdeCoreRecord.h`, stored verbatim as UTF-8 string
+  attributes: `/monitoring @kde_live_json` (provisional: `provisional:true`,
+  `source:"live-buffer"`, a copy of the Monitoring tab's last on-screen core
+  contour, written by the coordinator at finalization only when KDE was on
+  during the run) and `/analysis @kde_core_json` (`provisional:false`,
+  `source:"full-run"`, computed on demand from the recorded valid frames
+  by the Review tab and written through `Hdf5Service::openFileForUpdate`). Each group also carries
+  `kde_core_schema_version`. Document members: `core_fraction`, `level`
+  (null when no level), `cell_count`, `population_count`,
+  `excluded_points`, bandwidth rule/factor/x (µm²)/y, `pixel_to_micron_factor`,
+  `axis_range`, `grid`, `contours` (closed polylines `[[x, y], ...]` in µm² /
+  deformability), `computed_at_ns`. Absent records mean "none"; readers
+  prefer the analysis record. See [[../frontend/ExperimentMonitoringTab]].
 
 ## Write paths
 
@@ -119,6 +136,19 @@
 - Small batch (e.g. thumbnails): `readImagesRange(datasetPath, start, count, vec)`.
 - Dataset shape discovery: `getDatasetInfo(path, count, H, W, channels)`;
   `getSeriesImageInfo(count, seriesCount, H, W)`.
+
+## Contract-2 focus metric
+
+- The per-object metadata compound (`ProcessedFrameMetadataRecord`) carries
+  `laplacianVariance` (the Contract-2 focus metric) **appended after** the prior
+  fields, so existing offsets are unchanged. Reading a Contract-1 file (no such
+  member) yields `NaN` — the read buffer is NaN-initialized and HDF5 fills the
+  member only when the on-disk type has it. `ringRatio` is still written for
+  Contract-1 compatibility. Round-trip: `recording.experiment_roundtrip`.
+- `scripts/export_hdf5.py` is contract-aware (keyed off the file's
+  `processing_contract_version` attribute): a Contract-2 export emits
+  `laplacian_variance` and omits `ring_ratio`; Contract 1 keeps ring. e2e review
+  test: `scripts.contract2_export_review`.
 
 ## Gotchas
 

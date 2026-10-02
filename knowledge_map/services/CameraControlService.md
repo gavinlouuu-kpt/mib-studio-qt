@@ -10,6 +10,10 @@
 
 ## Responsibility
 
+- Enumeration is consumed through [[DeviceDiscoveryService]] providers
+  (`mindvision`, `egrabber`, `egrabber-framegrabber`) since #419: callers
+  start a discovery job instead of calling these methods on the UI thread.
+  The methods below are unchanged and remain the provider seam.
 - `discoverCameras()` / `discoverFramegrabbers()` — enumerate Euresys
   interfaces, devices, and streams. Returns `DiscoveredCamera` /
   `DiscoveredFramegrabber` with index triples and human labels.

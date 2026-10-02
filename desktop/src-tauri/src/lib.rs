@@ -9,7 +9,7 @@
 use std::sync::Mutex;
 
 use mib_bridge::ffi::{self, BridgeEventKind};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Response;
 use tauri::{Manager, State};
 
@@ -887,39 +887,163 @@ fn fetch_processing_core_status(state: State<AppState>) -> Result<ProcessingCore
     })
 }
 
-/// One discovered camera for the webview (schema v7, BE-2).
+/// Device-discovery request from the webview (schema v14, #419). Camelcase
+/// keys match the TypeScript client; every field is optional there.
+#[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct DiscoveryRequest {
+    kinds: Vec<u32>,
+    providers: Vec<String>,
+    has_serial_scope: bool,
+    serial_port_name: String,
+    baud_rate: i32,
+    data_bits: i32,
+    parity: String,
+    stop_bits: i32,
+    address_from: i32,
+    address_to: i32,
+    per_address_timeout_ms: i32,
+    initial_delay_ms: i32,
+    deadline_ms: i32,
+    max_retries: i32,
+    retry_delay_ms: i32,
+    origin: String,
+}
+
+/// Outcome of starting a discovery job (schema v14).
 #[derive(Serialize, Clone, Default)]
-struct DiscoveredCamera {
-    camera_type: u32,
-    camera_index: i32,
+struct DiscoveryStart {
+    accepted: bool,
+    coalesced: bool,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    job_id: u64,
+    rejection: u32,
+    reason: String,
+}
+
+/// One discovered device for the webview (schema v14).
+#[derive(Serialize, Clone, Default)]
+struct DiscoveredDevice {
+    kind: u32,
+    provider_id: String,
+    display_name: String,
+    system_path: String,
+    persistent_id: String,
+    sdk_index: i32,
     interface_index: i32,
     device_index: i32,
+    stream_index: i32,
+    bus_address: i32,
+    stable_identity: String,
+    identity_strength: u32,
+    identification: u32,
+    claimed_by: Vec<String>,
+    capabilities: Vec<String>,
+    synthetic: bool,
+    camera_type: i32,
     interface_id: String,
     device_id: String,
+    stream_id: String,
     model_name: String,
     firmware_version: String,
     label: String,
 }
 
-/// One discovered framegrabber stream for the webview (schema v7, BE-2).
 #[derive(Serialize, Clone, Default)]
-struct DiscoveredFramegrabber {
-    interface_index: i32,
-    device_index: i32,
-    stream_index: i32,
-    interface_id: String,
-    device_id: String,
-    stream_id: String,
-    model_name: String,
-    label: String,
+struct DiscoveryError {
+    provider_id: String,
+    kind: u32,
+    message: String,
+    endpoint: String,
 }
 
-/// Camera discovery result for the webview (schema v7, BE-2).
+/// Bounded discovery snapshot for the webview (schema v14).
 #[derive(Serialize, Clone, Default)]
-struct CameraDiscovery {
+struct DiscoverySnapshot {
     valid: bool,
-    cameras: Vec<DiscoveredCamera>,
-    framegrabbers: Vec<DiscoveredFramegrabber>,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    job_id: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    generation: u64,
+    state: u32,
+    complete: bool,
+    overflow: bool,
+    attempt: i32,
+    max_attempts: i32,
+    kinds: Vec<u32>,
+    candidates: Vec<DiscoveredDevice>,
+    errors: Vec<DiscoveryError>,
+    providers_run: Vec<String>,
+    origin: String,
+}
+
+impl From<ffi::BridgeDiscoveryStart> for DiscoveryStart {
+    fn from(s: ffi::BridgeDiscoveryStart) -> Self {
+        DiscoveryStart {
+            accepted: s.accepted,
+            coalesced: s.coalesced,
+            job_id: s.job_id,
+            rejection: s.rejection,
+            reason: s.reason,
+        }
+    }
+}
+
+impl From<ffi::BridgeDiscoverySnapshot> for DiscoverySnapshot {
+    fn from(s: ffi::BridgeDiscoverySnapshot) -> Self {
+        DiscoverySnapshot {
+            valid: s.valid,
+            job_id: s.job_id,
+            generation: s.generation,
+            state: s.state,
+            complete: s.complete,
+            overflow: s.overflow,
+            attempt: s.attempt,
+            max_attempts: s.max_attempts,
+            kinds: s.kinds,
+            candidates: s
+                .candidates
+                .into_iter()
+                .map(|d| DiscoveredDevice {
+                    kind: d.kind,
+                    provider_id: d.provider_id,
+                    display_name: d.display_name,
+                    system_path: d.system_path,
+                    persistent_id: d.persistent_id,
+                    sdk_index: d.sdk_index,
+                    interface_index: d.interface_index,
+                    device_index: d.device_index,
+                    stream_index: d.stream_index,
+                    bus_address: d.bus_address,
+                    stable_identity: d.stable_identity,
+                    identity_strength: d.identity_strength,
+                    identification: d.identification,
+                    claimed_by: d.claimed_by,
+                    capabilities: d.capabilities,
+                    synthetic: d.synthetic,
+                    camera_type: d.camera_type,
+                    interface_id: d.interface_id,
+                    device_id: d.device_id,
+                    stream_id: d.stream_id,
+                    model_name: d.model_name,
+                    firmware_version: d.firmware_version,
+                    label: d.label,
+                })
+                .collect(),
+            errors: s
+                .errors
+                .into_iter()
+                .map(|e| DiscoveryError {
+                    provider_id: e.provider_id,
+                    kind: e.kind,
+                    message: e.message,
+                    endpoint: e.endpoint,
+                })
+                .collect(),
+            providers_run: s.providers_run,
+            origin: s.origin,
+        }
+    }
 }
 
 /// Authoritative selected-device snapshot for the webview (schema v7, BE-2).
@@ -940,43 +1064,50 @@ struct CameraSelection {
     running: bool,
 }
 
-/// Enumerate cameras/framegrabbers (EGrabber + MindVision + the mock entry).
+/// Start a device-discovery job (schema v14, #419); never blocks on hardware.
 #[tauri::command]
-fn fetch_camera_discovery(state: State<AppState>) -> Result<CameraDiscovery, String> {
+fn start_device_discovery(state: State<AppState>, request: DiscoveryRequest) -> Result<DiscoveryStart, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let d = guard.pin_mut().fetch_camera_discovery();
-    Ok(CameraDiscovery {
-        valid: d.valid,
-        cameras: d
-            .cameras
-            .into_iter()
-            .map(|c| DiscoveredCamera {
-                camera_type: c.camera_type,
-                camera_index: c.camera_index,
-                interface_index: c.interface_index,
-                device_index: c.device_index,
-                interface_id: c.interface_id,
-                device_id: c.device_id,
-                model_name: c.model_name,
-                firmware_version: c.firmware_version,
-                label: c.label,
-            })
-            .collect(),
-        framegrabbers: d
-            .framegrabbers
-            .into_iter()
-            .map(|g| DiscoveredFramegrabber {
-                interface_index: g.interface_index,
-                device_index: g.device_index,
-                stream_index: g.stream_index,
-                interface_id: g.interface_id,
-                device_id: g.device_id,
-                stream_id: g.stream_id,
-                model_name: g.model_name,
-                label: g.label,
-            })
-            .collect(),
-    })
+    let req = ffi::BridgeDiscoveryRequest {
+        kinds: request.kinds,
+        providers: request.providers,
+        has_serial_scope: request.has_serial_scope,
+        serial_port_name: request.serial_port_name,
+        baud_rate: request.baud_rate,
+        data_bits: request.data_bits,
+        parity: request.parity.bytes().next().unwrap_or(b'N'),
+        stop_bits: request.stop_bits,
+        address_from: request.address_from,
+        address_to: request.address_to,
+        per_address_timeout_ms: request.per_address_timeout_ms,
+        initial_delay_ms: request.initial_delay_ms,
+        deadline_ms: request.deadline_ms,
+        max_retries: request.max_retries,
+        retry_delay_ms: request.retry_delay_ms,
+        origin: if request.origin.is_empty() { "tauri".to_string() } else { request.origin },
+    };
+    Ok(guard.pin_mut().start_device_discovery(&req).into())
+}
+
+/// Start the camera + framegrabber discovery job (schema v14).
+#[tauri::command]
+fn start_camera_discovery(state: State<AppState>) -> Result<DiscoveryStart, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().start_camera_discovery().into())
+}
+
+/// Poll a discovery job's bounded snapshot (schema v14).
+#[tauri::command]
+fn fetch_device_discovery(state: State<AppState>, job_id: String) -> Result<DiscoverySnapshot, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?).into())
+}
+
+/// Cancel a running discovery job (schema v14); false for unknown/ended jobs.
+#[tauri::command]
+fn cancel_device_discovery(state: State<AppState>, job_id: String) -> Result<bool, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?))
 }
 
 /// Pull the authoritative selected-device snapshot.
@@ -1435,7 +1566,10 @@ pub fn run() {
             set_background_from_current_frame,
             clear_background_image,
             fetch_processing_core_status,
-            fetch_camera_discovery,
+            start_device_discovery,
+            start_camera_discovery,
+            fetch_device_discovery,
+            cancel_device_discovery,
             fetch_camera_selection,
             select_hardware_camera,
             select_mindvision_camera,

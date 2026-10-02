@@ -1,4 +1,5 @@
 // C++ side of the Rust <-> C++ bridge (epic #246, ADR 0003). See shim.h.
+#include "backend/discovery/DeviceDiscoveryTypes.h"
 #include "mib-bridge/src/shim.h"
 
 // cxx-generated definitions of the shared structs (BridgeCommandResult,
@@ -81,6 +82,38 @@ static_assert(static_cast<std::uint32_t>(bb::ReviewImageDataset::InvalidMask) ==
 
 static_assert(static_cast<std::uint32_t>(backend::services::CameraType::EGrabber) == 0);
 static_assert(static_cast<std::uint32_t>(backend::services::CameraType::MindVision) == 1);
+// ABI 14 (#419): device-discovery job groups.
+namespace bd = backend::discovery;
+static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Camera) == 0);
+static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Framegrabber) == 1);
+static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Nanopositioner) == 2);
+static_assert(static_cast<std::uint32_t>(bd::DeviceKind::PulseGenerator) == 3);
+static_assert(static_cast<std::uint32_t>(bd::JobState::Queued) == 0);
+static_assert(static_cast<std::uint32_t>(bd::JobState::Running) == 1);
+static_assert(static_cast<std::uint32_t>(bd::JobState::Completed) == 2);
+static_assert(static_cast<std::uint32_t>(bd::JobState::Cancelled) == 3);
+static_assert(static_cast<std::uint32_t>(bd::JobState::Failed) == 4);
+static_assert(static_cast<std::uint32_t>(bd::IdentityStrength::None) == 0);
+static_assert(static_cast<std::uint32_t>(bd::IdentityStrength::SessionLocal) == 1);
+static_assert(static_cast<std::uint32_t>(bd::IdentityStrength::Persistent) == 2);
+static_assert(static_cast<std::uint32_t>(bd::IdentificationStatus::Identified) == 0);
+static_assert(static_cast<std::uint32_t>(bd::IdentificationStatus::Unidentified) == 1);
+static_assert(static_cast<std::uint32_t>(bd::IdentificationStatus::Ambiguous) == 2);
+static_assert(static_cast<std::uint32_t>(bd::IdentificationStatus::Unsupported) == 3);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::None) == 0);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::InvalidRequest) == 1);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Busy) == 2);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::OpenFailed) == 3);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::PermissionDenied) == 4);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Timeout) == 5);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::MalformedResponse) == 6);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Unsupported) == 7);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::MissingSdk) == 8);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::ProviderException) == 9);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Cancelled) == 10);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Overflow) == 11);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::ShuttingDown) == 12);
+static_assert(static_cast<std::uint32_t>(bd::ErrorKind::TooManyJobs) == 13);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::None) == 0);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Mock) == 1);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Hardware) == 2);
@@ -1157,39 +1190,106 @@ BridgeProcessingCoreStatus BackendBridge::fetch_processing_core_status() {
     return out;
 }
 
-BridgeCameraDiscovery BackendBridge::fetch_camera_discovery() {
-    BridgeCameraDiscovery out{};
-    backend::bridge::BackendCameraDiscovery discovery;
-    if (!impl_->facade.fetchCameraDiscovery(discovery)) {
+namespace {
+
+BridgeDiscoveryStart toBridge(const backend::bridge::BackendDiscoveryStart& in) {
+    BridgeDiscoveryStart out{};
+    out.accepted = in.accepted;
+    out.coalesced = in.coalesced;
+    out.job_id = in.jobId;
+    out.rejection = static_cast<std::uint32_t>(in.rejection);
+    out.reason = rust::String(in.reason);
+    return out;
+}
+
+} // namespace
+
+BridgeDiscoveryStart BackendBridge::start_device_discovery(const BridgeDiscoveryRequest& request) {
+    backend::bridge::BackendDiscoveryRequest req;
+    for (auto k : request.kinds) req.kinds.push_back(static_cast<int>(k));
+    for (const auto& p : request.providers) req.providers.push_back(std::string(p));
+    req.hasSerialScope = request.has_serial_scope;
+    req.serialPortName = std::string(request.serial_port_name);
+    req.baudRate = request.baud_rate > 0 ? request.baud_rate : 9600;
+    req.dataBits = request.data_bits > 0 ? request.data_bits : 8;
+    req.parity = request.parity != 0 ? static_cast<char>(request.parity) : 'N';
+    req.stopBits = request.stop_bits > 0 ? request.stop_bits : 1;
+    req.addressFrom = request.address_from > 0 ? request.address_from : 1;
+    req.addressTo = request.address_to > 0 ? request.address_to : 16;
+    req.perAddressTimeoutMs = request.per_address_timeout_ms > 0 ? request.per_address_timeout_ms : 250;
+    req.initialDelayMs = request.initial_delay_ms;
+    req.deadlineMs = request.deadline_ms > 0 ? request.deadline_ms : 60000;
+    req.maxRetries = request.max_retries;
+    req.retryDelayMs = request.retry_delay_ms;
+    req.origin = request.origin.empty() ? std::string("bridge") : std::string(request.origin);
+    return toBridge(impl_->facade.startDeviceDiscovery(req));
+}
+
+BridgeDiscoveryStart BackendBridge::start_camera_discovery() {
+    backend::bridge::BackendDiscoveryRequest req;
+    req.kinds = {static_cast<int>(backend::discovery::DeviceKind::Camera),
+                 static_cast<int>(backend::discovery::DeviceKind::Framegrabber)};
+    req.origin = "bridge-camera";
+    return toBridge(impl_->facade.startDeviceDiscovery(req));
+}
+
+bool BackendBridge::cancel_device_discovery(std::uint64_t job_id) {
+    return impl_->facade.cancelDeviceDiscovery(job_id);
+}
+
+BridgeDiscoverySnapshot BackendBridge::fetch_device_discovery(std::uint64_t job_id) {
+    BridgeDiscoverySnapshot out{};
+    backend::bridge::BackendDiscoverySnapshot snapshot;
+    if (!impl_->facade.fetchDeviceDiscovery(job_id, snapshot)) {
         out.valid = false;
         return out;
     }
-    out.valid = true;
-    for (const auto& cam : discovery.cameras) {
-        BridgeDiscoveredCamera dto{};
-        dto.camera_type = static_cast<std::uint32_t>(cam.type);
-        dto.camera_index = cam.cameraIndex;
-        dto.interface_index = cam.interfaceIndex;
-        dto.device_index = cam.deviceIndex;
-        dto.interface_id = rust::String(cam.interfaceId);
-        dto.device_id = rust::String(cam.deviceId);
-        dto.model_name = rust::String(cam.modelName);
-        dto.firmware_version = rust::String(cam.firmwareVersion);
-        dto.label = rust::String(cam.label);
-        out.cameras.push_back(std::move(dto));
+    out.valid = snapshot.valid;
+    out.job_id = snapshot.jobId;
+    out.generation = snapshot.generation;
+    out.state = static_cast<std::uint32_t>(snapshot.state);
+    out.complete = snapshot.complete;
+    out.overflow = snapshot.overflow;
+    out.attempt = snapshot.attempt;
+    out.max_attempts = snapshot.maxAttempts;
+    for (int k : snapshot.kinds) out.kinds.push_back(static_cast<std::uint32_t>(k));
+    for (const auto& c : snapshot.candidates) {
+        BridgeDiscoveredDevice d{};
+        d.kind = static_cast<std::uint32_t>(c.kind);
+        d.provider_id = rust::String(c.providerId);
+        d.display_name = rust::String(c.displayName);
+        d.system_path = rust::String(c.systemPath);
+        d.persistent_id = rust::String(c.persistentId);
+        d.sdk_index = c.sdkIndex;
+        d.interface_index = c.interfaceIndex;
+        d.device_index = c.deviceIndex;
+        d.stream_index = c.streamIndex;
+        d.bus_address = c.busAddress;
+        d.stable_identity = rust::String(c.stableIdentity);
+        d.identity_strength = static_cast<std::uint32_t>(c.identityStrength);
+        d.identification = static_cast<std::uint32_t>(c.identification);
+        for (const auto& s : c.claimedBy) d.claimed_by.push_back(rust::String(s));
+        for (const auto& s : c.capabilities) d.capabilities.push_back(rust::String(s));
+        d.synthetic = c.synthetic;
+        d.camera_type = c.cameraType;
+        d.interface_id = rust::String(c.interfaceId);
+        d.device_id = rust::String(c.deviceId);
+        d.stream_id = rust::String(c.streamId);
+        d.model_name = rust::String(c.modelName);
+        d.firmware_version = rust::String(c.firmwareVersion);
+        d.label = rust::String(c.label);
+        out.candidates.push_back(std::move(d));
     }
-    for (const auto& grabber : discovery.framegrabbers) {
-        BridgeDiscoveredFramegrabber dto{};
-        dto.interface_index = grabber.interfaceIndex;
-        dto.device_index = grabber.deviceIndex;
-        dto.stream_index = grabber.streamIndex;
-        dto.interface_id = rust::String(grabber.interfaceId);
-        dto.device_id = rust::String(grabber.deviceId);
-        dto.stream_id = rust::String(grabber.streamId);
-        dto.model_name = rust::String(grabber.modelName);
-        dto.label = rust::String(grabber.label);
-        out.framegrabbers.push_back(std::move(dto));
+    for (const auto& e : snapshot.errors) {
+        BridgeDiscoveryError err{};
+        err.provider_id = rust::String(e.providerId);
+        err.kind = static_cast<std::uint32_t>(e.kind);
+        err.message = rust::String(e.message);
+        err.endpoint = rust::String(e.endpoint);
+        out.errors.push_back(std::move(err));
     }
+    for (const auto& id : snapshot.providersRun) out.providers_run.push_back(rust::String(id));
+    out.origin = rust::String(snapshot.origin);
     return out;
 }
 
@@ -1515,8 +1615,11 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // pulls, cancellable CSV export jobs — BE-6); v10 added syringe-pump
 // commands/status for the sample/sheath pumps (BE-7); v11 added autofocus/
 // nanopositioner control, config round-trip, and freshness-explicit status
-// (BE-8). All additive over v1 (ADR 0003/0004). Must match
+// (BE-8); v14 replaced the synchronous fetch_camera_discovery with the
+// device-discovery job trio (start_device_discovery / start_camera_discovery,
+// fetch_device_discovery, cancel_device_discovery) and the discovery contract
+// groups (#419, ADR 0005). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 13; }
+std::uint32_t bridge_abi_version() { return 14; }
 
 } // namespace mib_bridge

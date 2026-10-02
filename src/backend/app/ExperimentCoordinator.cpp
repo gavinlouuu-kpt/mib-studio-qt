@@ -377,6 +377,12 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     r.generation = readinessGeneration_.load();
     r.candidate.readinessGeneration = r.generation;
 
+    if (backend_.isMindVisionCameraSelected() && backend_.isMindVisionOverview()) {
+        r.gates.push_back(gate("camera.mode", GateStatus::Fail,
+                               "MindVision is showing the full sensor overview",
+                               "Switch to Experiment to apply the selected camera ROI"));
+    }
+
     // --- camera session / hardware-vs-mock --------------------------------
     const auto lifecycle = backend_.capture().lifecycleSnapshot();
     if (c.cameraReady) {
@@ -687,6 +693,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     proc.startExperiment();
     activeRun_ = run;
     lastRun_ = run;
+    liveKdeCoreJson_.clear();
     stopRequested_ = cancelRequested_ = fatalRequested_ = false;
     fatalMessage_.clear();
     if (!worker_.joinable()) {
@@ -778,6 +785,13 @@ ExperimentStopOutcome ExperimentCoordinator::requestStop(bool cancelled)
     return ExperimentStopOutcome::Accepted;
 }
 
+void ExperimentCoordinator::setLiveKdeCoreRecord(std::string json)
+{
+    std::scoped_lock lk(mutex_);
+    if (state_ != ExperimentRunState::Active) return; // no run, or already finalizing
+    liveKdeCoreJson_ = std::move(json);
+}
+
 void ExperimentCoordinator::onFatalSaveError(const std::string& message)
 {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -792,6 +806,13 @@ void ExperimentCoordinator::onFatalSaveError(const std::string& message)
 
 void ExperimentCoordinator::worker()
 {
+    using clock = std::chrono::steady_clock;
+    // Issue #407 time-based backstop: flush any non-empty buffer after this
+    // wall-clock interval regardless of count/byte thresholds, so a slow
+    // trickle of large frames never sits unwritten.
+    static constexpr auto kTimeFlushInterval = std::chrono::seconds(2);
+    auto lastFlushTime = clock::now();
+
     std::unique_lock<std::mutex> lk(mutex_);
     while (true) {
         workerCv_.wait_for(lk, std::chrono::milliseconds(250),
@@ -802,21 +823,32 @@ void ExperimentCoordinator::worker()
             const bool cancelled = cancelRequested_;
             stopRequested_ = cancelRequested_ = fatalRequested_ = false;
             finalizeLocked(lk, cancelled, failed, msg);
+            lastFlushTime = clock::now(); // finalize drained everything
             continue;
         }
         stopRequested_ = false;
         if (workerExit_) break;
         if (state_ == ExperimentRunState::Active && activeRun_) {
             auto& proc = backend_.processing();
-            const size_t interval = proc.getFlushInterval();
-            if (interval > 0 && proc.getBufferedFrameCounts().total() >= interval &&
-                backend_.hdf5().isFileOpen()) {
+            // Issue #407: needsFlush() checks both the frame-count interval
+            // AND a byte-budget watermark so a flush fires even when the byte
+            // budget saturates before the count threshold is reached.
+            const bool thresholdReady = proc.needsFlush();
+            const auto now = clock::now();
+            const bool timeBackstop =
+                proc.getBufferedFrameCounts().total() > 0 &&
+                (now - lastFlushTime) >= kTimeFlushInterval;
+            if ((thresholdReady || timeBackstop) && backend_.hdf5().isFileOpen()) {
                 status_.flushing = true;
                 lk.unlock();
                 const size_t n = proc.flushBufferedFrames(backend_.hdf5());
-                if (n > 0) SPDLOG_DEBUG("ExperimentCoordinator: periodic flush submitted {} frames", n);
+                if (n > 0) {
+                    SPDLOG_DEBUG("ExperimentCoordinator: periodic flush submitted {} frames{}",
+                                 n, timeBackstop && !thresholdReady ? " (time backstop)" : "");
+                }
                 lk.lock();
                 status_.flushing = false;
+                lastFlushTime = clock::now();
             }
         }
     }
@@ -839,6 +871,8 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     auto& hdf5 = backend_.hdf5();
     const bool restoreMode = restoreRealtimeMode_;
     restoreRealtimeMode_ = false;
+    const std::string liveKdeCoreJson = std::move(liveKdeCoreJson_);
+    liveKdeCoreJson_.clear();
     lk.unlock();
 
     bool ok = true;
@@ -874,7 +908,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     bool metadataOk = true;
     if (fileOpen) {
         if (!hdf5.flush()) SPDLOG_WARN("ExperimentCoordinator: H5Fflush before metadata failed");
-        const auto cfg = proc.getProcessingConfig();
+        const auto cfg = proc.getEffectiveProcessingConfig();
         const auto roi = proc.getRealtimeRoi();
         cv::Mat bg = proc.getRealtimeBackgroundGray();
         const auto core = proc.activeProcessingCoreIdentity();
@@ -897,6 +931,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             if (!cfgJson.empty()) hdf5.writeConfigJson(cfgJson);
         }
         SPDLOG_INFO("ExperimentCoordinator: metadata+accounting+provenance took {:.3f} ms", sinceMs(t0));
+        // Provisional KDE core contour (copy of the live view); best effort,
+        // never affects the run outcome.
+        if (!liveKdeCoreJson.empty()) {
+            if (hdf5.writeKdeLiveJson(liveKdeCoreJson)) {
+                SPDLOG_INFO("ExperimentCoordinator: stored provisional KDE core record ({} bytes)", liveKdeCoreJson.size());
+            } else {
+                SPDLOG_WARN("ExperimentCoordinator: provisional KDE core record could not be stored");
+            }
+        }
         const auto tClose = clock::now();
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));

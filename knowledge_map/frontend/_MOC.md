@@ -4,6 +4,7 @@
 > controllers to [[../architecture/AppBackend]].
 
 ## Core
+- [[DesktopInstance]] — per-user desktop ownership before hardware initialization
 - [[MainWindow]] — QMainWindow; tabs, corner widgets, sidebar, statusbar
 - [[Controllers]] — CameraController, ExperimentController
 
@@ -23,7 +24,8 @@
 - [[ProcessingCoreDialog]] — version history, verified cache preparation, and
   between-operation native-core activation
 - [[System-Utilities]] — `AppConfigWatcher`, `AutoUpdater`,
-  `DeviceInitManager`, `PlaybackPanel`, notifier bridges
+  `DeviceInitManager` (adapter over [[../services/DeviceDiscoveryService]]),
+  `DiscoverySubscription`, `PlaybackPanel`, notifier bridges
 - [[Screenshot-Tour]] — headless harness that regenerates the user-manual
   screenshots (`docs/manual/`)
 

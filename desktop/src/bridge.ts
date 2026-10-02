@@ -2,6 +2,7 @@
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
 import { invoke } from "@tauri-apps/api/core";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
+import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
 import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus, decodeProcessingStats, wireU64, type CmdResult } from "./eventAdapter";
 export type { BridgeEvent, CmdResult, ExperimentReadiness, ExperimentStatus, ProcessingStats, ReadinessGate } from "./eventAdapter";
@@ -139,10 +140,101 @@ export interface DiscoveredFramegrabber {
   label: string;
 }
 
+/** Camera/framegrabber lists the UI renders, projected from a discovery
+ *  snapshot (schema v14): `valid` is false for a cancelled/failed job and
+ *  `complete` mirrors the backend's identity-coverage flag. */
 export interface CameraDiscovery {
   valid: boolean;
+  complete: boolean;
+  job_id: string;
   cameras: DiscoveredCamera[];
   framegrabbers: DiscoveredFramegrabber[];
+}
+
+/** Device-discovery request (schema v14, #419). Kinds are
+ *  DISCOVERY_DEVICE_KINDS; a pulse-generator scan needs an explicit serial
+ *  scope (the backend refuses broad sweeps). */
+export interface DiscoveryRequest {
+  kinds: number[];
+  providers?: string[];
+  hasSerialScope?: boolean;
+  serialPortName?: string;
+  baudRate?: number;
+  dataBits?: number;
+  parity?: string;
+  stopBits?: number;
+  addressFrom?: number;
+  addressTo?: number;
+  perAddressTimeoutMs?: number;
+  initialDelayMs?: number;
+  deadlineMs?: number;
+  maxRetries?: number;
+  retryDelayMs?: number;
+  origin?: string;
+}
+
+export interface DiscoveryStart {
+  accepted: boolean;
+  coalesced: boolean;
+  /** u64 as a decimal string on the wire. */
+  job_id: string;
+  /** DISCOVERY_ERROR_KINDS value when not accepted. */
+  rejection: number;
+  reason: string;
+}
+
+/** One discovered device (schema v14). `kind` is DISCOVERY_DEVICE_KINDS,
+ *  `identity_strength` DISCOVERY_IDENTITY_STRENGTHS, `identification`
+ *  DISCOVERY_IDENTIFICATION_STATUSES; `camera_type` keeps CAMERA_TYPES
+ *  (-1 when not a camera). SDK indices are session-local, never identity. */
+export interface DiscoveredDevice {
+  kind: number;
+  provider_id: string;
+  display_name: string;
+  system_path: string;
+  persistent_id: string;
+  sdk_index: number;
+  interface_index: number;
+  device_index: number;
+  stream_index: number;
+  bus_address: number;
+  stable_identity: string;
+  identity_strength: number;
+  identification: number;
+  claimed_by: string[];
+  capabilities: string[];
+  synthetic: boolean;
+  camera_type: number;
+  interface_id: string;
+  device_id: string;
+  stream_id: string;
+  model_name: string;
+  firmware_version: string;
+  label: string;
+}
+
+export interface DiscoveryError {
+  provider_id: string;
+  kind: number;
+  message: string;
+  endpoint: string;
+}
+
+/** Bounded discovery snapshot (schema v14). `state` is DISCOVERY_JOB_STATES. */
+export interface DiscoverySnapshot {
+  valid: boolean;
+  job_id: string;
+  generation: string;
+  state: number;
+  complete: boolean;
+  overflow: boolean;
+  attempt: number;
+  max_attempts: number;
+  kinds: number[];
+  candidates: DiscoveredDevice[];
+  errors: DiscoveryError[];
+  providers_run: string[];
+  origin: string;
 }
 
 /** Authoritative selected-device snapshot (bridge schema v7, BE-2). `mode`
@@ -336,8 +428,26 @@ export const bridge = {
   clearBackgroundImage: () => sourceMutation("clear_background_image"),
   fetchProcessingCoreStatus: () =>
     invoke<ProcessingCoreStatus>("fetch_processing_core_status"),
-  // Camera discovery/selection (bridge schema v7, BE-2).
-  fetchCameraDiscovery: () => invoke<CameraDiscovery>("fetch_camera_discovery"),
+  // Device discovery jobs (bridge schema v14, #419): start / poll / cancel.
+  startDeviceDiscovery: (request: DiscoveryRequest) =>
+    invoke<DiscoveryStart>("start_device_discovery", { request }),
+  startCameraDiscovery: () => invoke<DiscoveryStart>("start_camera_discovery"),
+  fetchDeviceDiscovery: (jobId: string) =>
+    invoke<DiscoverySnapshot>("fetch_device_discovery", { jobId: decimalU64(jobId) }),
+  cancelDeviceDiscovery: (jobId: string) =>
+    invoke<boolean>("cancel_device_discovery", { jobId: decimalU64(jobId) }),
+  /** Camera + framegrabber discovery as one awaited job (replaces the
+   *  synchronous fetch_camera_discovery of schema v7). */
+  discoverCameras: (opts?: PollOptions) =>
+    discoverCameras(
+      {
+        start: () => invoke<DiscoveryStart>("start_camera_discovery"),
+        fetch: (jobId) => invoke<DiscoverySnapshot>("fetch_device_discovery", { jobId }),
+        cancel: (jobId) => invoke<boolean>("cancel_device_discovery", { jobId }),
+      },
+      opts,
+    ),
+  // Camera selection (bridge schema v7, BE-2).
   fetchCameraSelection: () => invoke<CameraSelection>("fetch_camera_selection"),
   selectHardwareCamera: (interfaceIndex: number, deviceIndex: number, label: string) =>
     sourceMutation("select_hardware_camera", { interfaceIndex, deviceIndex, label }),

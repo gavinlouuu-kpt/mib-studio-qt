@@ -17,6 +17,9 @@
 #include <QRegularExpression>
 #include <QSpinBox>
 #include <QLabel>
+#include <QSignalBlocker>
+#include "backend/camera/mindvision/MindVisionConfig.h"
+#include "backend/services/CaptureService.h"
 
 #include <spdlog/spdlog.h>
 #ifdef _WIN32
@@ -73,6 +76,7 @@ namespace frontend
         {
             auto *wLabel = new QLabel(tr("W:"), this);
             roiWidthSpin_ = new QSpinBox(this);
+            roiWidthSpin_->setObjectName("overviewRoiWidth");
             roiWidthSpin_->setRange(64, 1920);
             roiWidthSpin_->setSingleStep(EgrabberConfigParser::ROI_WIDTH_STEP);
             roiWidthSpin_->setSuffix(tr(" px"));
@@ -80,6 +84,7 @@ namespace frontend
 
             auto *hLabel = new QLabel(tr("H:"), this);
             roiHeightSpin_ = new QSpinBox(this);
+            roiHeightSpin_->setObjectName("overviewRoiHeight");
             roiHeightSpin_->setRange(16, 1080);
             roiHeightSpin_->setSingleStep(EgrabberConfigParser::ROI_HEIGHT_STEP);
             roiHeightSpin_->setSuffix(tr(" px"));
@@ -91,6 +96,11 @@ namespace frontend
             ui->controlsLayout->insertWidget(4, hLabel);
             ui->controlsLayout->insertWidget(5, roiHeightSpin_);
         }
+
+        modeLabel_ = new QLabel(this);
+        modeLabel_->setObjectName("mindVisionOverviewStatus");
+        modeLabel_->setWordWrap(true);
+        ui->canvasLayout->addWidget(modeLabel_);
 
         // Set initial proportions (50/50 ratio)
         ui->splitter->setStretchFactor(0, 1);
@@ -135,7 +145,7 @@ namespace frontend
         onReloadJs();
 
         // Initialize ROI position from egrabberConfig.js
-        initializeRoiFromConfig();
+        refreshCameraMode();
     }
 
     OverviewTab::~OverviewTab() {
@@ -187,6 +197,32 @@ namespace frontend
 
     void OverviewTab::onTick()
     {
+        const QString key =
+            backend_.isMindVisionCameraSelected()
+                ? QString::fromStdString(backend_.cameraSelection().mindVisionConfigPath)
+                : QStringLiteral("egrabber");
+        if (key != loadedCameraKey_) refreshCameraMode();
+        if (!isVisible()) return;
+        if (backend_.isMindVisionCameraSelected()) {
+            updateMindVisionBounds();
+            if (!backend_.isMindVisionOverview()) return;
+            const auto rate = backend_.capture().stats().lastFrameRate.load();
+            modeLabel_->setText(tr("Full sensor overview | Capture: %1 fps | Display: up to 50 "
+                                   "fps. Drag the ROI for the experiment.")
+                                    .arg(rate));
+            // The static trigger label is set by refreshCameraMode, not by frame-path I/O.
+            if (!modeLabel_->property("triggerText").toString().isEmpty())
+                modeLabel_->setText(modeLabel_->property("triggerText").toString() +
+                                    modeLabel_->text());
+            if (!modeLabel_->property("roiError").toString().isEmpty())
+                modeLabel_->setText(
+                    tr("ROI was not saved: %1").arg(modeLabel_->property("roiError").toString()));
+            if (!backend_.capture().isRunning()) {
+                frameImage_ = {};
+                canvas_->update();
+                return;
+            }
+        }
         // Fetch into member scratch so the vector capacity is reused across ticks
         bool got = backend_.playback().fetchLatest(scratchFrame_);
 
@@ -261,6 +297,7 @@ namespace frontend
 
     void OverviewTab::onApplyJs()
     {
+        if (backend_.isMindVisionCameraSelected()) return;
         const QString path = currentJsPath();
         QString err;
         // Always save first to ensure the latest content is applied
@@ -372,7 +409,11 @@ namespace frontend
     void OverviewTab::onRoiPositionChanged(QPointF imagePos)
     {
         roiPosition_ = imagePos;
-        updateEgrabberConfigFromRect(imagePos);
+        if (backend_.isMindVisionCameraSelected()) {
+            if (!saveMindVisionRoi()) return;
+        } else {
+            updateEgrabberConfigFromRect(imagePos);
+        }
         emit roiChanged(static_cast<int>(roiPosition_.x()), static_cast<int>(roiPosition_.y()), roiWidth_, roiHeight_);
     }
 
@@ -409,8 +450,96 @@ namespace frontend
         }
     }
 
+    void OverviewTab::refreshCameraMode() {
+        const bool mv = backend_.isMindVisionCameraSelected();
+        loadedCameraKey_ =
+            mv ? QString::fromStdString(backend_.cameraSelection().mindVisionConfigPath)
+               : QStringLiteral("egrabber");
+        ui->configWidget->setVisible(!mv);
+        modeLabel_->setVisible(mv);
+        frameImage_ = {};
+        initializeRoiFromConfig();
+        canvas_->update();
+        emit roiChanged(static_cast<int>(roiPosition_.x()), static_cast<int>(roiPosition_.y()),
+                        roiWidth_, roiHeight_);
+    }
+
+    void OverviewTab::updateMindVisionBounds() {
+        const auto cap = backend_.mindVisionSensor();
+        const QSignalBlocker bw(roiWidthSpin_), bh(roiHeightSpin_);
+        roiWidthSpin_->setRange(std::max(1, cap.minWidth),
+                                cap.sensorWidth > 0 ? cap.sensorWidth : 65535);
+        roiHeightSpin_->setRange(std::max(1, cap.minHeight),
+                                 cap.sensorHeight > 0 ? cap.sensorHeight : 65535);
+        // MVSDK exposes min/max, but no universal increment. Hardware readback
+        // must verify a selected ROI instead of borrowing eGrabber alignment.
+        roiWidthSpin_->setSingleStep(1);
+        roiHeightSpin_->setSingleStep(1);
+    }
+
+    bool OverviewTab::saveMindVisionRoi() {
+        std::string error;
+        if (!backend_.saveMindVisionRoi(static_cast<int>(std::round(roiPosition_.x())),
+                                        static_cast<int>(std::round(roiPosition_.y())), roiWidth_,
+                                        roiHeight_, &error)) {
+            roiPosition_ = savedRoiPosition_;
+            roiWidth_ = savedRoiWidth_;
+            roiHeight_ = savedRoiHeight_;
+            const QSignalBlocker bw(roiWidthSpin_), bh(roiHeightSpin_);
+            roiWidthSpin_->setValue(roiWidth_);
+            roiHeightSpin_->setValue(roiHeight_);
+            modeLabel_->setText(tr("ROI was not saved: %1").arg(QString::fromStdString(error)));
+            modeLabel_->setProperty("roiError", QString::fromStdString(error));
+            SPDLOG_ERROR("MindVision ROI save failed: {}", error);
+            canvas_->update();
+            return false;
+        }
+        modeLabel_->setProperty("roiError", QString());
+        savedRoiPosition_ = roiPosition_;
+        savedRoiWidth_ = roiWidth_;
+        savedRoiHeight_ = roiHeight_;
+        canvas_->update();
+        return true;
+    }
+
     void OverviewTab::initializeRoiFromConfig()
     {
+        if (backend_.isMindVisionCameraSelected()) {
+            QFile file(QString::fromStdString(backend_.cameraSelection().mindVisionConfigPath));
+            if (!file.open(QIODevice::ReadOnly)) {
+                modeLabel_->setText(
+                    tr("Cannot read MindVision experiment profile: %1").arg(file.errorString()));
+                return;
+            }
+            const auto parsed =
+                backend::camera::mindvision::parseConfig(file.readAll().toStdString());
+            if (!parsed.ok) {
+                modeLabel_->setText(QString::fromStdString(parsed.error));
+                return;
+            }
+            const auto& config = parsed.config;
+            roiPosition_ = savedRoiPosition_ = QPointF(config.offsetX, config.offsetY);
+            roiWidth_ = savedRoiWidth_ = config.width;
+            roiHeight_ = savedRoiHeight_ = config.height;
+            updateMindVisionBounds();
+            const QSignalBlocker bw(roiWidthSpin_), bh(roiHeightSpin_);
+            roiWidthSpin_->setValue(roiWidth_);
+            roiHeightSpin_->setValue(roiHeight_);
+            static_cast<SimpleImageCanvas*>(canvas_)->setRoiTransform(1, 1, config.flipHorizontal,
+                                                                      config.flipVertical);
+            const QString trigger = config.illuminatedLive ? tr("Trigger: 400 Hz | ") : QString();
+            modeLabel_->setProperty("triggerText", trigger);
+            modeLabel_->setText(
+                trigger +
+                tr("Full sensor overview. Experiment ROI: %1x%2.").arg(roiWidth_).arg(roiHeight_));
+            return;
+        }
+        static_cast<SimpleImageCanvas*>(canvas_)->setRoiTransform(16, 4);
+        const QSignalBlocker bw(roiWidthSpin_), bh(roiHeightSpin_);
+        roiWidthSpin_->setRange(64, 1920);
+        roiHeightSpin_->setRange(16, 1080);
+        roiWidthSpin_->setSingleStep(EgrabberConfigParser::ROI_WIDTH_STEP);
+        roiHeightSpin_->setSingleStep(EgrabberConfigParser::ROI_HEIGHT_STEP);
         const QString path = egrabberConfigPath();
         int offsetX, offsetY;
         if (EgrabberConfigParser::readRoiOffsets(path, offsetX, offsetY))
@@ -450,6 +579,21 @@ namespace frontend
 
     void OverviewTab::onRoiSizeChanged()
     {
+        if (backend_.isMindVisionCameraSelected()) {
+            roiWidth_ = roiWidthSpin_->value();
+            roiHeight_ = roiHeightSpin_->value();
+            const auto sensor = backend_.mindVisionSensor();
+            if (sensor.sensorWidth > 0)
+                roiPosition_.setX(std::clamp(static_cast<int>(roiPosition_.x()), 0,
+                                             std::max(0, sensor.sensorWidth - roiWidth_)));
+            if (sensor.sensorHeight > 0)
+                roiPosition_.setY(std::clamp(static_cast<int>(roiPosition_.y()), 0,
+                                             std::max(0, sensor.sensorHeight - roiHeight_)));
+            if (saveMindVisionRoi())
+                emit roiChanged(static_cast<int>(roiPosition_.x()),
+                                static_cast<int>(roiPosition_.y()), roiWidth_, roiHeight_);
+            return;
+        }
         // Snap to alignment steps (handles typed non-aligned values)
         int w = roiWidthSpin_->value();
         int h = roiHeightSpin_->value();

@@ -1,24 +1,32 @@
 #pragma once
 
+#include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/nanopositioner/INanopositionerBackend.h"
+
 #include <QObject>
 
-#include <vector>
+#include <atomic>
 #include <memory>
 
-class QTimer;
-template <typename T> class QFutureWatcher;
-
-namespace backend { class AppBackend; }
-namespace backend::services { struct DiscoveredCamera; }
-namespace frontend { class ConnectTab; }
-namespace frontend { class NanopositionerTab; }
+namespace backend {
+class AppBackend;
+}
+namespace frontend {
+class ConnectTab;
+class NanopositionerTab;
+}
 
 namespace frontend {
 
 /**
- * Manages auto-connect for camera, nanopositioner, and future devices.
- * Runs blocking discovery/probe in worker threads and applies results on the main thread
- * so the UI never blocks during retries.
+ * Qt adapter over the backend startup discovery policy (issue #419, ADR 0005).
+ *
+ * All scheduling, retries, cancellation and the select/connect decisions live
+ * in backend::discovery::StartupDiscoveryCoordinator; this object only
+ * installs a UI-thread executor, forwards the saved nanopositioner
+ * preference, and maps the coordinator's outcomes onto ConnectTab /
+ * NanopositionerTab widgets. It owns no worker thread and never enumerates
+ * hardware. The public surface is unchanged from the pre-#419 manager.
  */
 class DeviceInitManager : public QObject {
     Q_OBJECT
@@ -27,43 +35,38 @@ public:
     ~DeviceInitManager();
 
     void setConnectTab(ConnectTab* connectTab) { connectTab_ = connectTab; }
-    void setNanopositionerTab(NanopositionerTab* nanopositionerTab) { nanopositionerTab_ = nanopositionerTab; }
+    void setNanopositionerTab(NanopositionerTab* tab);
 
-    /** Start initialisation: schedule camera step (400 ms), then nanopositioner after camera completes. */
+    /** Start initialisation: camera step after the coordinator's delay (400 ms),
+     * then the nanopositioner step after the camera step completes. */
     void start();
 
-    /** Run camera discovery step once (e.g. for "Try again"). Does nothing if camera step is already running. */
+    // Terminal: stops the coordinator (no further selection/connection) and
+    // cancels its jobs. Draining the workers is AppBackend::shutdown()'s job.
+    void stop();
+
+    /** Run the camera step once (e.g. for "Try again"). Refused while a camera
+     * step is running, capture is running, or a camera is configured. */
     void runCameraStep();
+
+    /** Run the nanopositioner step (manual Refresh). */
+    void runNanopositionerStep();
 
 signals:
     void cameraInitFinished(bool success, const QString& message);
     void nanopositionerInitFinished(bool success);
 
-private slots:
-    void onCameraStepTimer();
-    void onCameraDiscoveryFinished();
-    void onNanopositionerStepTimer();
-    void onNanopositionerProbeFinished();
-
 private:
-    void runCameraDiscoveryInWorker();
-    void runNanopositionerProbeInWorker();
-    void scheduleNanopositionerStep();
+    void onCameraOutcome(const backend::discovery::StartupDiscoveryCoordinator::CameraOutcome& outcome);
+    void onNanopositionerOutcome(
+        const backend::discovery::StartupDiscoveryCoordinator::NanopositionerOutcome& outcome);
 
     backend::AppBackend& backend_;
+    backend::discovery::StartupDiscoveryCoordinator& coordinator_;
     ConnectTab* connectTab_ = nullptr;
     NanopositionerTab* nanopositionerTab_ = nullptr;
-
-    QTimer* cameraStepTimer_ = nullptr;
-    QTimer* nanopositionerStepTimer_ = nullptr;
-    std::unique_ptr<QFutureWatcher<std::vector<backend::services::DiscoveredCamera>>> cameraWatcher_;
-    std::unique_ptr<QFutureWatcher<std::vector<int>>> nanopositionerWatcher_;
-
-    bool cameraStepScheduled_ = false;
-    bool cameraStepRunning_ = false;
-    int nanopositionerRetryCount_ = 0;
-    static constexpr int NANOPOSITIONER_MAX_RETRIES = 3;
-    static constexpr int NANOPOSITIONER_RETRY_DELAY_MS = 4000;
+    std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+    bool stopped_ = false;
 };
 
 } // namespace frontend

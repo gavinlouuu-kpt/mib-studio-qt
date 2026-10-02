@@ -9,27 +9,27 @@ a consumer at, and `docs/gold_standard_metrics.md` ("Portable Processing
 Contract") is the shape the engine's output must match.
 
 All endpoints below are plain HTTPS `GET` on public JSON — no auth, no Qt,
-no app dependency. `verify-emodulus-lut-manifest.py` and
-`verify-processing-core-manifest.py` demonstrate this with nothing but
+no app dependency. `scripts/release/verify-emodulus-lut-manifest.py` and
+`scripts/release/verify-processing-core-manifest.py` demonstrate this with nothing but
 Python's stdlib `urllib`.
 
 ## One channel, versioned processing-core registry
 
 Everything is published per **channel** (`stable` by default) to
-`https://updates.yofo.bio/`, via `publish-profiles.py`,
-`publish-emodulus-lut.py`, and `publish-processing-core.py`
+`https://updates.yofo.bio/`, via `scripts/release/publish-profiles.py`,
+`scripts/release/publish-emodulus-lut.py`, and `scripts/release/publish-processing-core.py`
 (`scripts/s3_upload.py` does the actual R2 upload; all three scripts support
 `--dry-run` to generate the manifest locally without uploading).
 
 | Manifest | URL | Published by | Consumed for |
 |---|---|---|---|
-| Profile catalog | `{base}/profiles/{channel}/catalog.json` | `publish-profiles.py` | `ProcessingConfig` values (camera + processing profiles) |
-| Emodulus LUT | `{base}/{channel}/emodulus-lut/latest.json` | `publish-emodulus-lut.py` | Young's-modulus lookup table |
-| Processing core active pointer | `{base}/{channel}/processing-core/latest.json` | `publish-processing-core.py` | Full manifest for the channel-active version; legacy-compatible entry point |
-| Processing core immutable version | `{base}/{channel}/processing-core/versions/<version>.json` | `publish-processing-core.py` | Exact, long-cache wheel/native-core pin |
-| Processing core catalog | `{base}/{channel}/processing-core/index.json` | `publish-processing-core.py` | Enumerable version history and `active_version` for selectors |
-| `mib-processing` package page | `{base}/{channel}/processing-core/simple/mib-processing/index.html` | `publish-processing-core.py` | PEP 503 links with `#sha256=` fragments for baked dependency pins |
-| Pip project route | `{base}/{channel}/processing-core/simple/mib-processing/` | `publish-processing-core.py` | Same package HTML at the exact trailing-slash object key requested by pip |
+| Profile catalog | `{base}/profiles/{channel}/catalog.json` | `scripts/release/publish-profiles.py` | `ProcessingConfig` values (camera + processing profiles) |
+| Emodulus LUT | `{base}/{channel}/emodulus-lut/latest.json` | `scripts/release/publish-emodulus-lut.py` | Young's-modulus lookup table |
+| Processing core active pointer | `{base}/{channel}/processing-core/latest.json` | `scripts/release/publish-processing-core.py` | Full manifest for the channel-active version; legacy-compatible entry point |
+| Processing core immutable version | `{base}/{channel}/processing-core/versions/<version>.json` | `scripts/release/publish-processing-core.py` | Exact, long-cache wheel/native-core pin |
+| Processing core catalog | `{base}/{channel}/processing-core/index.json` | `scripts/release/publish-processing-core.py` | Enumerable version history and `active_version` for selectors |
+| `mib-processing` package page | `{base}/{channel}/processing-core/simple/mib-processing/index.html` | `scripts/release/publish-processing-core.py` | PEP 503 links with `#sha256=` fragments for baked dependency pins |
+| Pip project route | `{base}/{channel}/processing-core/simple/mib-processing/` | `scripts/release/publish-processing-core.py` | Same package HTML at the exact trailing-slash object key requested by pip |
 
 For pip/uv configuration, the **index base URL** is the parent directory:
 `https://updates.yofo.bio/{channel}/processing-core/simple/` (not the package
@@ -268,7 +268,7 @@ The `mib-processing-v<version>` workflow runs wheel/native conformance, attaches
 the assets to one GitHub Release, and invokes:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --from-release "mib-processing-v0.1.0" \
   --channel stable \
   --upload-method s3
@@ -279,7 +279,7 @@ available for local previews. A fixture-backed dry run exercises the exact
 release classification without GitHub or R2:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --from-release mib-processing-v0.1.0 \
   --release-assets-dir ./dist \
   --published-at 2026-07-13T00:00:00Z \
@@ -308,7 +308,7 @@ Wrangler/public reads remain suitable for non-mutating `--dry-run` previews.
 Promote or roll back without rebuilding the old manifest:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --promote-version 0.1.0 \
   --channel stable \
   --published-at 2026-07-13T01:02:03Z \
@@ -338,8 +338,8 @@ an uncommitted bump so the tag cannot point at the old version.
 ## Verifying a channel is reachable (no Qt, no app)
 
 ```bash
-python3 verify-emodulus-lut-manifest.py --manifest-url https://updates.yofo.bio/stable/emodulus-lut/latest.json
-python3 verify-processing-core-manifest.py --manifest-url https://updates.yofo.bio/stable/processing-core/latest.json
+python3 scripts/release/verify-emodulus-lut-manifest.py --manifest-url https://updates.yofo.bio/stable/emodulus-lut/latest.json
+python3 scripts/release/verify-processing-core-manifest.py --manifest-url https://updates.yofo.bio/stable/processing-core/latest.json
 ```
 
 Both use nothing but `urllib`/`json`/`hashlib` from the standard library --

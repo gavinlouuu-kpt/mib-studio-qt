@@ -1,4 +1,6 @@
 #include "backend/processing/IProcessingKernel.h"
+#include "backend/processing/ImageFilterPipeline.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingCoreAbi.h"
 #include "backend/processing/ProcessingScience.h"
 
@@ -9,6 +11,12 @@
 
 #ifndef MIB_PROCESSING_CORE_VERSION
 #define MIB_PROCESSING_CORE_VERSION "0.1.0"
+#endif
+
+// Set by CMake from MIB_PROCESSING_CORE_CONTRACT (ADR 0007): 1 or 2 for a
+// shipped core, 0 for the research (Python wheel) build.
+#ifndef MIB_PROCESSING_BUNDLED_CONTRACT
+#error "MIB_PROCESSING_BUNDLED_CONTRACT must be defined by the build"
 #endif
 
 namespace backend::processing {
@@ -75,7 +83,21 @@ std::string runtimeFingerprint() {
 
 class BundledProcessingKernel final : public IProcessingKernel {
 public:
-    BundledProcessingKernel() : identity_(bundledProcessingCoreIdentity()) {}
+    explicit BundledProcessingKernel(int contract)
+        : contract_(contract), identity_(bundledProcessingCoreIdentity()) {
+        // A research kernel keeps the Contract-1 identity it always had; a
+        // single-contract kernel declares its contract.
+        if (contract_ > 0) {
+            identity_.contractVersion = static_cast<uint32_t>(contract_);
+        }
+    }
+
+    bool servesContract(int contract) const noexcept override {
+        if (contract_ == 0) {
+            return contract::isSupportedProcessingContract(contract);
+        }
+        return contract == contract_;
+    }
 
     const ProcessingCoreIdentity& identity() const noexcept override { return identity_; }
 
@@ -90,22 +112,16 @@ public:
             const cv::Rect region = normalizedRoi(gray, roi);
             outputMask = cv::Mat::zeros(gray.rows, gray.cols, CV_8UC1);
 
-            cv::Mat blurredCurrent;
+            // One shared difference implementation for mask + empty-frame paths.
+            // Contract 1 (flag off) uses saturating subtraction; Contract 2
+            // (flag on) uses cv::absdiff. Filter pipelines are identity here
+            // until an ABI-v2 core / v2 config supplies stages.
             cv::Mat processingInput;
-            cv::GaussianBlur(gray(region), blurredCurrent,
-                             cv::Size(oddAtLeastOne(config.gaussianBlurSize),
-                                      oddAtLeastOne(config.gaussianBlurSize)),
-                             0);
-            if (!background.empty() && background.type() == CV_8UC1 &&
-                background.size() == gray.size()) {
-                cv::Mat blurredBackground;
-                cv::GaussianBlur(background(region), blurredBackground,
-                                 cv::Size(oddAtLeastOne(config.gaussianBlurSize),
-                                          oddAtLeastOne(config.gaussianBlurSize)),
-                                 0);
-                cv::subtract(blurredCurrent, blurredBackground, processingInput);
-            } else {
-                processingInput = blurredCurrent;
+            if (!buildDifferenceImage(gray, background, region, inputStages_, differenceStages_,
+                                      config.gaussianBlurSize, config.absoluteBackgroundDifference,
+                                      processingInput, error)) {
+                outputMask.release();
+                return false;
             }
 
             cv::Mat thresholded;
@@ -144,21 +160,12 @@ public:
                 return false;
             }
             const cv::Rect region = normalizedRoi(gray, roi);
-            cv::Mat blurredCurrent;
             cv::Mat difference;
-            const int blur = oddAtLeastOne(config.gaussianBlurSize);
-            cv::GaussianBlur(gray(region), blurredCurrent, cv::Size(blur, blur), 0);
-            if (!background.empty() && background.type() == CV_8UC1 &&
-                background.size() == gray.size()) {
-                cv::Mat blurredBackground;
-                cv::GaussianBlur(background(region), blurredBackground, cv::Size(blur, blur), 0);
-                if (config.absoluteBackgroundDifference) {
-                    cv::absdiff(blurredCurrent, blurredBackground, difference);
-                } else {
-                    cv::subtract(blurredCurrent, blurredBackground, difference);
-                }
-            } else {
-                difference = blurredCurrent;
+            if (!buildDifferenceImage(gray, background, region, inputStages_, differenceStages_,
+                                      config.gaussianBlurSize, config.absoluteBackgroundDifference,
+                                      difference, error)) {
+                outputIsEmpty = true;
+                return false;
             }
             cv::Mat thresholded;
             cv::threshold(difference, thresholded,
@@ -177,7 +184,12 @@ public:
     bool reset(std::string*) override { return true; }
 
 private:
+    int contract_;
     ProcessingCoreIdentity identity_;
+    // Identity (no-op) preprocessing until an ABI-v2 core / v2 config supplies
+    // stages. Owned by the kernel so stages compile once per context.
+    ImageFilterPipeline inputStages_;
+    ImageFilterPipeline differenceStages_;
 };
 
 } // namespace
@@ -190,10 +202,16 @@ bool ProcessingCoreIdentity::operator==(const ProcessingCoreIdentity& other) con
            buildId == other.buildId && runtimeFingerprint == other.runtimeFingerprint;
 }
 
+int bundledProcessingContract() noexcept {
+    return MIB_PROCESSING_BUNDLED_CONTRACT;
+}
+
 ProcessingCoreIdentity bundledProcessingCoreIdentity() {
     ProcessingCoreIdentity identity;
     identity.version = MIB_PROCESSING_CORE_VERSION;
-    identity.contractVersion = MIB_PROCESSING_CONTRACT_VERSION;
+    identity.contractVersion = MIB_PROCESSING_BUNDLED_CONTRACT > 0
+                                   ? static_cast<uint32_t>(MIB_PROCESSING_BUNDLED_CONTRACT)
+                                   : MIB_PROCESSING_CONTRACT_VERSION;
     identity.engineAbiVersion = MIB_PROCESSING_ENGINE_ABI_VERSION;
     identity.source = "bundled";
     identity.buildId = "mib-processing-" MIB_PROCESSING_CORE_VERSION;
@@ -202,7 +220,11 @@ ProcessingCoreIdentity bundledProcessingCoreIdentity() {
 }
 
 std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel() {
-    return std::make_shared<BundledProcessingKernel>();
+    return makeBundledProcessingKernel(bundledProcessingContract());
+}
+
+std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel(int contract) {
+    return std::make_shared<BundledProcessingKernel>(contract);
 }
 
 // Default science implementations: every kernel executes the shared bundled
@@ -214,7 +236,8 @@ bool IProcessingKernel::analyzeObjects(const cv::Mat& processedImage,
                                        double pixelToMicronFactor,
                                        const backend::EModulusLut* eModulusLut,
                                        std::vector<services::FilterResult>& results,
-                                       std::string* error) {
+                                       std::string* error,
+                                       const cv::Mat& /*background*/) {
     try {
         results = science::filterProcessedObjects(processedImage, roi, config, originalImage,
                                                   pixelToMicronFactor, eModulusLut);

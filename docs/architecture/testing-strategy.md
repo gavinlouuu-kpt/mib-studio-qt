@@ -5,6 +5,16 @@ and frontend boundaries documented in this architecture set. For the
 developer-facing recipe book (how to actually write each kind of test, with
 templates and a PR checklist) see [`../howto/writing-tests.md`](../howto/writing-tests.md).
 
+## Network lane (2026-09-21)
+
+Tests that reach the Hugging Face Hub carry the CTest label `network` and
+`SKIP_RETURN_CODE 77` (transient 429/5xx or connection failure counts as a
+skip, schema/regression failures still fail). Every default test preset
+excludes the label; `linux-network-test` includes only it and
+`.github/workflows/network-tests.yml` runs it nightly and on demand with
+`HF_TOKEN` from repository secrets for private corpora. Dataset identity comes
+from `env/assets.json` (see `knowledge_map/build-and-run/Assets.md`).
+
 ## Test Layers
 
 | Layer | Current entry point | Use when |

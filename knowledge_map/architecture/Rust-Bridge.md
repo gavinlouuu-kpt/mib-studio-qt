@@ -76,10 +76,22 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   monotonic `config_version`), `set_processing_roi`,
   `fetch_background_image`/`set_background_image`/`clear_background_image`
   (binary Mono8), `fetch_processing_core_status` (identity + admin pin).
-- **Camera discovery/selection (v7, BE-2):** `fetch_camera_discovery`
-  (EGrabber + MindVision + a synthetic mock entry; typed DTOs),
-  `fetch_camera_selection` (authoritative snapshot incl. mock params, applied
-  script/config paths, configured/running), `select_hardware_camera`,
+- **Device discovery jobs (v14, #419, ADR 0005):** `start_device_discovery
+  (request)` / `start_camera_discovery()` → `BridgeDiscoveryStart{job_id}`,
+  `fetch_device_discovery(job_id)` → bounded `BridgeDiscoverySnapshot`
+  (contract-typed `state`, `kind`, `identity_strength`, `identification`,
+  error kinds; camera jobs carry the synthetic mock entry, `synthetic=true`,
+  camera_type 2), `cancel_device_discovery(job_id)`. None block on hardware
+  or on the bridge mutex beyond the call itself. Replaces the v7 synchronous
+  `fetch_camera_discovery`; the TS client polls through
+  `desktop/src/discovery.ts` (`bridge.discoverCameras()`), unit-tested. New
+  contract groups: `discovery_device_kinds`, `discovery_job_states`,
+  `discovery_identity_strengths`, `discovery_identification_statuses`,
+  `discovery_error_kinds`. Windows `cargo test` against the `windows-ninja`
+  tree uses `tools/gen_bridge_link_manifest_ninja.py`.
+- **Camera selection (v7, BE-2):** `fetch_camera_selection` (authoritative
+  snapshot incl. mock params, applied script/config paths,
+  configured/running), `select_hardware_camera`,
   `select_mindvision_camera`, `apply_camera_script`, `reset_hardware_camera`
   (structured errors for invalid indices/paths/no-selection).
 - **Monitoring + trigger (v6, BE-5):** `monitoring_set_active` /
@@ -233,3 +245,14 @@ Qt libraries (handoff gap G7, backend part). Guards:
 `experiment_lifecycle_end_to_end` (readiness gate `camera.session` blocks,
 Start → Active → Stop → terminal Complete with the remainder committed, typed
 terminal event, file reloads), `rust_enums_match_contract_json`.
+
+
+### OEABT link dependencies
+
+The Linux bridge links `oeabt_serial` and then `oeabt_core` from
+`<build-dir>` (the CMake archive output directory), after the backend/processing archives. These contain
+both the nanopositioner protocol and the shared native serial transport. The
+no-CMake path validates all four archives, and Cargo watches the OEABT archives
+for relinking. Windows uses the CMake-generated dependency manifest and marks
+the OEABT libraries as static. Missing these dependencies produces undefined
+SerialTransport/ControllerSession and platform serial symbols in bridge CI.

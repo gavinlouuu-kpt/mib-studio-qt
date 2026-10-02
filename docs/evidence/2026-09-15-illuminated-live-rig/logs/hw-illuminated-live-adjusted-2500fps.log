@@ -1,0 +1,122 @@
+[2026-09-15 09:01:25.755] [app] [info] [AppBackend.cpp:484] AppBackend: Young's modulus LUT source=bundled-fallback, revision=bundled, path=C:\Users\gavinlou\AppData\Local\Temp\mib_hw_illuminated_live_13753752762751782696\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=unknown, remote_updated=false, bundled_fallback=false, manifest=
+[2026-09-15 09:01:25.755] [app] [info] [AppBackend.cpp:692] AppBackend: configuring MindVision camera (index=0, config=C:\Users\gavinlou\Developer\mib-studio-qt\build-ninja\mindvision-2500fps.json)
+[2026-09-15 09:01:25.755] [app] [info] [AppBackend.cpp:785] Backend initialized.
+hardware test using MIB_TEST_ILLUMINATED_LIVE=1
+hardware test using MIB_MINDVISION_CONFIG=C:\Users\gavinlou\Developer\mib-studio-qt\build-ninja\mindvision-2500fps.json
+profile C:\Users\gavinlou\Developer\mib-studio-qt\build-ninja\mindvision-2500fps.json: port=auto channel=1 2500.0 Hz duty 5.00 % exposure 100.0 us strobe 100 us
+=== run 1: start ===
+[2026-09-15 09:01:25.756] [app] [info] [CaptureService.cpp:387] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-09-15 09:01:25.761] [app] [info] [SerialBus.cpp:138] SerialBus: COM3 opened (9600 8N1)
+[2026-09-15 09:01:26.016] [app] [error] [SerialBus.cpp:262] SerialBus: COM3 timeout (0 bytes buffered): 
+[2026-09-15 09:01:26.048] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM3 closed
+[2026-09-15 09:01:26.050] [app] [info] [SerialBus.cpp:138] SerialBus: COM4 opened (9600 8N1)
+[2026-09-15 09:01:26.156] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM4 closed
+[2026-09-15 09:01:26.156] [app] [warning] [PulseGeneratorService.cpp:499] PulseGeneratorService: COM4 answers like a pulse generator but channel 1 reads 0 Hz (never set); excluded from automatic discovery
+[2026-09-15 09:01:26.158] [app] [info] [SerialBus.cpp:138] SerialBus: COM5 opened (9600 8N1)
+[2026-09-15 09:01:26.421] [app] [error] [SerialBus.cpp:262] SerialBus: COM5 timeout (0 bytes buffered): 
+[2026-09-15 09:01:26.454] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM5 closed
+[2026-09-15 09:01:26.455] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:26.563] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:26.565] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:26.641] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:26.644] [app] [info] [SerialBus.cpp:138] SerialBus: COM7 opened (9600 8N1)
+[2026-09-15 09:01:26.908] [app] [error] [SerialBus.cpp:262] SerialBus: COM7 timeout (0 bytes buffered): 
+[2026-09-15 09:01:26.912] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM7 closed
+[2026-09-15 09:01:26.912] [app] [info] [AppBackend.cpp:103] Illuminated Live View: pulse generator discovered on COM6 (addr 1)
+[2026-09-15 09:01:26.914] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:26.987] [app] [info] [PulseGeneratorService.cpp:231] PulseGeneratorService: connected on COM6 addr=1 (ch1: 5000 Hz, 0 %)
+[2026-09-15 09:01:27.048] [app] [info] [PulseGeneratorService.cpp:406] PulseGeneratorService: addr1 ch1 output disabled (duty 0 %)
+[2026-09-15 09:01:27.127] [app] [info] [PulseGeneratorService.cpp:359] PulseGeneratorService: addr1 ch1 frequency set to 2500 Hz
+[2026-09-15 09:01:27.128] [app] [info] [PulseGeneratorService.cpp:386] PulseGeneratorService: addr1 ch1 duty set to 5 % (deferred until enable)
+[2026-09-15 09:01:28.240] [app] [info] [MindVisionApply.cpp:45] MindVision config: applying w=512 h=96 ox=0 oy=0 exp=100 trig=2 gain=1
+[2026-09-15 09:01:28.499] [app] [info] [MindVisionSdkReal.cpp:184] MindVision rig armed: trigger mode 2 signal 2 strobe mode 1 polarity 1 width 100 us delay 0 us exposure 100.00 us
+[2026-09-15 09:01:28.613] [app] [info] [MindVisionCamera.cpp:380] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[run 1] state=running failure=none ""
+[started] generator port=COM6 addr=1 connected=1 owned=1
+[started]   ch1: 2500.00 Hz  duty 5.00 %  output ON
+[started]   ch2: 0.00 Hz  duty 0.00 %  output off
+[started]   ch3: 0.00 Hz  duty 0.00 %  output off
+[started]   ch4: 0.00 Hz  duty 0.00 %  output off
+[2026-09-15 09:01:28.615] [app] [info] [MindVisionCamera.cpp:793] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-15 09:01:28.615] [app] [info] [TriggerService.cpp:104] TriggerService started
+[2026-09-15 09:01:28.616] [app] [info] [TriggerService.cpp:33] TriggerService: trigger thread priority set to TIME_CRITICAL
+[run 1] 5.02 s: 22961 frames (4571.9 frames/s host count, backend rate 4570), transport lost 0, discarded 0, latest frame mean grey 255.0/255, state=running failure=none ""
+[2026-09-15 09:01:33.639] [app] [info] [TriggerService.cpp:130] TriggerService stopped
+support SSE4.1
+[2026-09-15 09:01:33.829] [app] [info] [MindVisionCamera.cpp:479] MindVisionCamera: stopped
+[2026-09-15 09:01:33.829] [app] [info] [CaptureService.cpp:659] CaptureService stopped (gen=1, requested)
+[run 1] after stop: state=idle failure=none ""
+[stopped] generator port=COM6 addr=1 connected=1 owned=0
+[stopped]   ch1: 2500.00 Hz  duty 5.00 %  output off
+[stopped]   ch2: 0.00 Hz  duty 0.00 %  output off
+[stopped]   ch3: 0.00 Hz  duty 0.00 %  output off
+[stopped]   ch4: 0.00 Hz  duty 0.00 %  output off
+[2026-09-15 09:01:33.855] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:33.857] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:33.933] [app] [info] [PulseGeneratorService.cpp:231] PulseGeneratorService: connected on COM6 addr=1 (ch1: 2500 Hz, 0 %)
+[readback] generator port=COM6 addr=1 connected=1 owned=0
+[readback]   ch1: 2500.00 Hz  duty 0.00 %  output off
+[readback]   ch2: 0.00 Hz  duty 0.00 %  output off
+[readback]   ch3: 0.00 Hz  duty 0.00 %  output off
+[readback]   ch4: 0.00 Hz  duty 0.00 %  output off
+[2026-09-15 09:01:33.966] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:33.966] [app] [info] [PulseGeneratorService.cpp:247] PulseGeneratorService: disconnected from COM6 addr=1
+=== run 2: start ===
+[2026-09-15 09:01:33.966] [app] [info] [CaptureService.cpp:387] CaptureService starting: gen=2, parts=1, buffers=20, mode=everyFrame
+[2026-09-15 09:01:33.970] [app] [info] [SerialBus.cpp:138] SerialBus: COM3 opened (9600 8N1)
+[2026-09-15 09:01:34.232] [app] [error] [SerialBus.cpp:262] SerialBus: COM3 timeout (0 bytes buffered): 
+[2026-09-15 09:01:34.264] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM3 closed
+[2026-09-15 09:01:34.266] [app] [info] [SerialBus.cpp:138] SerialBus: COM4 opened (9600 8N1)
+[2026-09-15 09:01:34.375] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM4 closed
+[2026-09-15 09:01:34.375] [app] [warning] [PulseGeneratorService.cpp:499] PulseGeneratorService: COM4 answers like a pulse generator but channel 1 reads 0 Hz (never set); excluded from automatic discovery
+[2026-09-15 09:01:34.378] [app] [info] [SerialBus.cpp:138] SerialBus: COM5 opened (9600 8N1)
+[2026-09-15 09:01:34.638] [app] [error] [SerialBus.cpp:262] SerialBus: COM5 timeout (0 bytes buffered): 
+[2026-09-15 09:01:34.671] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM5 closed
+[2026-09-15 09:01:34.674] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:34.780] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:34.783] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:34.857] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:34.862] [app] [info] [SerialBus.cpp:138] SerialBus: COM7 opened (9600 8N1)
+[2026-09-15 09:01:35.123] [app] [error] [SerialBus.cpp:262] SerialBus: COM7 timeout (0 bytes buffered): 
+[2026-09-15 09:01:35.128] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM7 closed
+[2026-09-15 09:01:35.129] [app] [info] [AppBackend.cpp:103] Illuminated Live View: pulse generator discovered on COM6 (addr 1)
+[2026-09-15 09:01:35.130] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:35.201] [app] [info] [PulseGeneratorService.cpp:231] PulseGeneratorService: connected on COM6 addr=1 (ch1: 2500 Hz, 0 %)
+[2026-09-15 09:01:35.265] [app] [info] [PulseGeneratorService.cpp:406] PulseGeneratorService: addr1 ch1 output disabled (duty 0 %)
+[2026-09-15 09:01:35.344] [app] [info] [PulseGeneratorService.cpp:359] PulseGeneratorService: addr1 ch1 frequency set to 2500 Hz
+[2026-09-15 09:01:35.345] [app] [info] [PulseGeneratorService.cpp:386] PulseGeneratorService: addr1 ch1 duty set to 5 % (deferred until enable)
+[2026-09-15 09:01:36.490] [app] [info] [MindVisionApply.cpp:45] MindVision config: applying w=512 h=96 ox=0 oy=0 exp=100 trig=2 gain=1
+[2026-09-15 09:01:36.765] [app] [info] [MindVisionSdkReal.cpp:184] MindVision rig armed: trigger mode 2 signal 2 strobe mode 1 polarity 1 width 100 us delay 0 us exposure 100.00 us
+[2026-09-15 09:01:36.872] [app] [info] [MindVisionCamera.cpp:380] MindVisionCamera: started (index=0, 512x96 mono8 verified, monoSensor=true, deliveryMode=everyFrame, buffer=49152 bytes)
+[run 2] state=running failure=none ""
+[started] generator port=COM6 addr=1 connected=1 owned=1
+[started]   ch1: 2500.00 Hz  duty 5.00 %  output ON
+[started]   ch2: 0.00 Hz  duty 0.00 %  output off
+[started]   ch3: 0.00 Hz  duty 0.00 %  output off
+[started]   ch4: 0.00 Hz  duty 0.00 %  output off
+[2026-09-15 09:01:36.875] [app] [info] [MindVisionCamera.cpp:793] MindVisionCamera: trigger output configured on OUT2 (index 1)
+[2026-09-15 09:01:36.876] [app] [info] [TriggerService.cpp:104] TriggerService started
+[2026-09-15 09:01:36.877] [app] [info] [TriggerService.cpp:33] TriggerService: trigger thread priority set to TIME_CRITICAL
+[run 2] 5.04 s: 22661 frames (4496.5 frames/s host count, backend rate 4495), transport lost 0, discarded 0, latest frame mean grey 255.0/255, state=running failure=none ""
+[2026-09-15 09:01:41.914] [app] [info] [TriggerService.cpp:130] TriggerService stopped
+support SSE4.1
+[2026-09-15 09:01:42.112] [app] [info] [MindVisionCamera.cpp:479] MindVisionCamera: stopped
+[2026-09-15 09:01:42.112] [app] [info] [CaptureService.cpp:659] CaptureService stopped (gen=2, requested)
+[run 2] after stop: state=idle failure=none ""
+[stopped] generator port=COM6 addr=1 connected=1 owned=0
+[stopped]   ch1: 2500.00 Hz  duty 5.00 %  output off
+[stopped]   ch2: 0.00 Hz  duty 0.00 %  output off
+[stopped]   ch3: 0.00 Hz  duty 0.00 %  output off
+[stopped]   ch4: 0.00 Hz  duty 0.00 %  output off
+[2026-09-15 09:01:42.135] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:42.137] [app] [info] [SerialBus.cpp:138] SerialBus: COM6 opened (9600 8N1)
+[2026-09-15 09:01:42.213] [app] [info] [PulseGeneratorService.cpp:231] PulseGeneratorService: connected on COM6 addr=1 (ch1: 2500 Hz, 0 %)
+[readback] generator port=COM6 addr=1 connected=1 owned=0
+[readback]   ch1: 2500.00 Hz  duty 0.00 %  output off
+[readback]   ch2: 0.00 Hz  duty 0.00 %  output off
+[readback]   ch3: 0.00 Hz  duty 0.00 %  output off
+[readback]   ch4: 0.00 Hz  duty 0.00 %  output off
+[2026-09-15 09:01:42.245] [app] [info] [SerialBus.cpp:102] SerialBus: session on COM6 closed
+[2026-09-15 09:01:42.246] [app] [info] [PulseGeneratorService.cpp:247] PulseGeneratorService: disconnected from COM6 addr=1
+[2026-09-15 09:01:42.247] [app] [info] [ProcessingService.cpp:140] ProcessingService stopped
+illuminated live hardware cycle OK

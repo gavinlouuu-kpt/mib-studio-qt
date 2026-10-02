@@ -7,6 +7,8 @@
 - [[CaptureService]] — dedicated thread; `camera->grabFrame()` → FrameStore
 - [[ProcessingService]] — worker pool + realtime loop; OpenCV pipeline
 - [[PlaybackService]] — UI-facing wrapper over FrameStore
+- [[MonitoringDensityService]] — live Monitoring scatter KDE + core contour on a
+  lowest-priority worker with load back-off and a compute budget
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
@@ -14,8 +16,13 @@
 - [[SqliteService]] — small metadata DB
 
 ## Hardware I/O
-- [[CameraControlService]] — GenICam script apply, device reset, discovery
-- [[AutofocusService]] — nanopositioner voltage via serial (Coremor XMT)
+- [[DeviceDiscoveryService]] — backend discovery **jobs** (bounded, cancellable,
+  provider-based) + startup selection/connection policy; every camera /
+  nanopositioner / pulse-generator scan runs through it (#419, ADR 0005)
+- [[CameraControlService]] — GenICam script apply, device reset, SDK enumeration
+  (wrapped by the discovery providers)
+- [[AutofocusService]] — backend-neutral nanopositioner control (OEABT serial
+  on Linux/Windows; CoreMOR XMT on Windows)
 - [[TriggerService]] — camera digital-output pulse on target-group detection
 - [[SerialBus]] — shared RS485/Modbus bus sessions (one `QSerialPort` owner
   per adapter, strict response correlation); transport for the two below
