@@ -20,6 +20,9 @@ set(MIB_DOTGRID_CORE_VERSION "0.0.0")
 if(EXISTS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
     file(STRINGS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION" _mib_dotgrid_version LIMIT_COUNT 1)
     string(STRIP "${_mib_dotgrid_version}" MIB_DOTGRID_CORE_VERSION)
+    # A VERSION bump must re-run configure, or the compiled-in version goes stale.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
 endif()
 
 # mib_processing: the Qt-free deformability-cytometry processing core plus

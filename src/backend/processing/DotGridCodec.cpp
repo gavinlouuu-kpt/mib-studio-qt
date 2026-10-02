@@ -125,7 +125,12 @@ DecodeResult DesignDecoder::decode(const cv::Mat& gray, const DecoderConfig& con
                        : "no active core for the registered designs' codec contract";
         return finish(r);
     }
-    std::vector<DecodeResult> hits;
+    // Every design that matched, across all cores. A core that already found
+    // two of its own designs reports "ambiguous design (a, b)"; those names
+    // count too, so a single hit elsewhere can never mask that ambiguity.
+    std::vector<std::string> matched;
+    DecodeResult firstHit;
+    bool haveHit = false;
     DecodeResult failure;
     bool haveFailure = false;
     int tried = 0;
@@ -136,23 +141,48 @@ DecodeResult DesignDecoder::decode(const cv::Mat& gray, const DecoderConfig& con
         r.codecContract = id.contract;
         r.coreVersion = id.coreVersion;
         r.coreSource = id.source;
+        const std::string prefix = "ambiguous design (";
         if (r.ok) {
-            hits.push_back(std::move(r));
-        } else if (!haveFailure || r.votes > failure.votes) {
+            matched.push_back(r.designId);
+            if (!haveHit) {
+                firstHit = r;
+                haveHit = true;
+            }
+        } else if (r.stage == kDecodeStageAmbiguousDesign || r.reason.rfind(prefix, 0) == 0) {
+            const size_t close = r.reason.rfind(')');
+            const std::string list = r.reason.substr(prefix.size(), close == std::string::npos
+                                                                       ? std::string::npos
+                                                                       : close - prefix.size());
+            size_t pos = 0;
+            while (pos <= list.size()) {
+                const size_t comma = list.find(", ", pos);
+                matched.push_back(list.substr(pos, comma == std::string::npos ? std::string::npos
+                                                                               : comma - pos));
+                if (comma == std::string::npos) break;
+                pos = comma + 2;
+            }
+            if (!haveHit) {
+                firstHit = r;
+                haveHit = true;
+            }
+        } else if (!haveFailure || r.stage > failure.stage ||
+                   (r.stage == failure.stage && r.votes > failure.votes)) {
+            // Same ranking as Decoder: the attempt that got furthest, then votes.
             failure = std::move(r);
             haveFailure = true;
         }
     }
-    if (hits.size() == 1) {
-        hits.front().designsTried = tried;
-        return finish(std::move(hits.front()));
+    if (matched.size() == 1) {
+        firstHit.designsTried = tried;
+        return finish(std::move(firstHit));
     }
-    if (hits.size() > 1) {
-        DecodeResult r = hits.front();
+    if (matched.size() > 1) {
+        DecodeResult r = firstHit;
         std::string names;
-        for (const auto& h : hits)
-            names += (names.empty() ? "" : ", ") + h.designId;
+        for (const auto& m : matched)
+            names += (names.empty() ? "" : ", ") + m;
         r.ok = false;
+        r.stage = kDecodeStageAmbiguousDesign;
         r.reason = "ambiguous design (" + names + ")";
         r.designId.clear();
         r.designName.clear();

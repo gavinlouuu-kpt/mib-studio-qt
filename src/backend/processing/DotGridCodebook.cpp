@@ -183,6 +183,22 @@ bool Codebook::loadJson(const std::string& path, Codebook& out, std::string* err
             if (errorOut) *errorOut = "codebook arrays have inconsistent sizes";
             return false;
         }
+        // The file is an archive of a contract-1 codebook: its m-sequence must
+        // be the contract's, and every phase an index into it (a negative or
+        // >= 63 phase would read outside mns in bits()).
+        if (cb.mns_ != mSequence()) {
+            if (errorOut) *errorOut = "codebook m-sequence is not the codec contract 1 sequence";
+            return false;
+        }
+        auto phasesInRange = [](const std::vector<int>& v) {
+            for (int x : v)
+                if (x < 0 || x >= kMnsPeriod) return false;
+            return true;
+        };
+        if (!phasesInRange(cb.phi_) || !phasesInRange(cb.psi_)) {
+            if (errorOut) *errorOut = "codebook phases must lie in [0, 62]";
+            return false;
+        }
         for (const auto& c : j.value("chips", nlohmann::json::array())) {
             Chip chip;
             chip.name = c.at("name").get<std::string>();

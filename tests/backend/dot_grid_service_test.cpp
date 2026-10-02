@@ -263,6 +263,32 @@ int main() {
         const auto fallback = service.decodeImage(frameAt(cb, 30000.0, 30000.0, 70.0, 8));
         MIB_EXPECT(fallback.valid && fallback.designId.empty(),
                    "empty registry -> inline codebook params, no design id");
+        // A config change re-decodes the current frame even if no new frame
+        // arrives (camera stopped): the pose never stays from the old config.
+        DotGridService::Config onlyB = cfg;
+        auto bOnly = std::make_shared<Registry>();
+        MIB_REQUIRE(bOnly->add(b, &err), err);
+        onlyB.registry = bOnly;
+        MIB_REQUIRE(service.setConfig(onlyB, &err), "registry without chip-a accepted");
+        const uint64_t seqBefore = service.poseSequence();
+        push(*store, frameAt(cb, 30500.0, 30500.0, 10.0, 11), 14000); // a chip-a frame
+        bool sawReject = false;
+        for (int i = 0; i < 100 && !sawReject; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            DotGridService::Pose p;
+            sawReject = service.getLatestPose(p) && !p.valid && p.frameIndex == store->latestCommittedIndex();
+        }
+        MIB_EXPECT(sawReject, "chip-a frame does not decode without chip-a");
+        MIB_EXPECT(service.poseSequence() > seqBefore, "pose sequence advances on publish");
+        MIB_REQUIRE(service.setConfig(withRegistry, &err), "chip-a back");
+        bool redecoded = false;
+        for (int i = 0; i < 100 && !redecoded; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            DotGridService::Pose p;
+            redecoded = service.getLatestPose(p) && p.valid && p.designId == "chip-a" &&
+                        p.frameIndex == store->latestCommittedIndex();
+        }
+        MIB_EXPECT(redecoded, "same frame re-decoded after the config change (no new frame pushed)");
         MIB_REQUIRE(service.setConfig(cfg, &err), "back to the plain config");
     }
 

@@ -55,7 +55,9 @@ the Experiment Preview page has no toggle.
   once). Switching to the Experiment tab, any other tab, or minimising the
   window therefore stops decoding even with Wafer Grid on.
 - `onTick` → `updateDotGridOverlay()` (only while visible) follows the
-  service's `isEnabled()` (config.json can switch it too) and copies the
+  service's `isEnabled()` (config.json can switch it too, but only when the
+  file's `dot_grid.enabled` value changes, so the toggle survives unrelated
+  reloads) and, when `DotGridService::poseSequence()` moved, copies the
   latest `Pose` into `DotGridOverlay`: detected dots, image-centre cross,
   pose text with design name + chip, or the failure reason.
   `SimpleImageCanvas::paintEvent` draws dots and cross over the frame and

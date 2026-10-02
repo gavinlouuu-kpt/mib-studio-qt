@@ -81,8 +81,9 @@ public:
     size_t size() const { return designs_.size(); }
     const Design* find(const std::string& id) const;
 
-    // Stable text identity of the contents (ids, contracts, seeds, geometry, chip count),
-    // used to skip rebuilding decoders when a reloaded config did not change.
+    // Stable text identity of the contents (ids, names, revisions, status, contracts,
+    // seeds, geometry, chip names and outlines), used to skip rebuilding decoders
+    // when a reloaded config did not change.
     std::string fingerprint() const;
 
     static bool validId(const std::string& id);

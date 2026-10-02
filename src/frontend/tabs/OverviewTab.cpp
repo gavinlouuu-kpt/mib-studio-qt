@@ -755,6 +755,13 @@ namespace frontend
         if (!enabled)
             return;
 
+        // A new pose arrives every ~250 ms while this runs at the display rate:
+        // copy it (and its dot list) only when the service published a new one.
+        const uint64_t sequence = backend_.dotGrid().poseSequence();
+        if (sequence == dotGridPoseSequence_ && !dotGridOverlay_.text.isEmpty())
+            return;
+        dotGridPoseSequence_ = sequence;
+
         backend::services::DotGridService::Pose pose;
         if (!backend_.dotGrid().getLatestPose(pose))
         {

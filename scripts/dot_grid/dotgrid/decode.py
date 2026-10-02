@@ -50,7 +50,8 @@ def detect_dots(gray: np.ndarray, expected_diameter_px: float) -> np.ndarray:
     for idx in range(1, n):
         a = stats[idx, cv2.CC_STAT_AREA]
         w, h = stats[idx, cv2.CC_STAT_WIDTH], stats[idx, cv2.CC_STAT_HEIGHT]
-        if a < area_expected * 0.3 or a > area_expected * 3.0:
+        # Wide enough for a scale hint off by ~2x either way (mirrors the C++ gate).
+        if a < area_expected * 0.2 or a > area_expected * 5.0:
             continue
         if max(w, h) > 1.8 * min(w, h):
             continue
@@ -149,6 +150,7 @@ def _transform_indices(idx: np.ndarray, dirs: np.ndarray, T) -> Tuple[np.ndarray
 
 
 MAX_PHASE_CANDIDATES = 4
+MAX_GRID_CELLS = 4_000_000
 
 
 def _line_phases(cb: Codebook, bits: np.ndarray, along_axis: int) -> List[List[int]]:
@@ -212,6 +214,8 @@ def decode_grid(cb: Codebook, idx: np.ndarray, dirs: np.ndarray):
         W = int(ti[:, 0].max()) + 1
         H = int(ti[:, 1].max()) + 1
         if W < WINDOW_DOTS or H < MNS_ORDER:
+            continue
+        if W * H > MAX_GRID_CELLS:  # degenerate lattice fit (mirrors the C++ cap)
             continue
         xb = -np.ones((H, W), int)
         yb = -np.ones((H, W), int)

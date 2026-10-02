@@ -25,6 +25,43 @@ using namespace backend::dotgrid;
 
 namespace {
 
+// A core that returns a canned result, to test DesignDecoder's combination
+// rules independently of real decoding.
+class CannedCodec final : public ICodec {
+public:
+    CannedCodec(int contract, DecodeResult result) : result_(std::move(result)) {
+        id_.contract = contract;
+        id_.coreVersion = "test";
+        id_.source = "plugin";
+        id_.line = "canned";
+    }
+    const CodecIdentity& identity() const override { return id_; }
+    Codebook encode(const CodebookParams& p, std::vector<Chip> chips, std::string name) const override {
+        return Codebook::generate(p, std::move(chips), std::move(name));
+    }
+    DecodeResult decode(const std::shared_ptr<const Registry>& designs, const cv::Mat&,
+                        const DecoderConfig&) const override {
+        DecodeResult r = result_;
+        r.designsTried = static_cast<int>(designs->size());
+        return r;
+    }
+
+private:
+    CodecIdentity id_;
+    DecodeResult result_;
+};
+
+DecodeResult canned(bool ok, int stage, const std::string& reason, const std::string& design = {},
+                    int votes = 0) {
+    DecodeResult r;
+    r.ok = ok;
+    r.stage = stage;
+    r.reason = reason;
+    r.designId = design;
+    r.votes = votes;
+    return r;
+}
+
 std::string entry(const std::string& id, int seed, double pitch = 30.0, double dot = 12.0,
                   double shift = 5.0, const std::string& extra = "", int contract = 1) {
     char buf[1024];
@@ -280,6 +317,73 @@ int main(int argc, char** argv) {
                                    .decode(renderView(futurePattern, pose, RenderOptions{}), cfg);
         MIB_EXPECT(!g.ok && g.reason == "no design of codec contract 1",
                    "contract-1 decoder fails closed on another contract: " + g.reason);
+    }
+
+    // 6c. Review fixes: the fingerprint covers what results show; ambiguity and
+    //     failure ranking survive combining several cores.
+    {
+        Registry base, renamed, moved;
+        const std::string chipA = R"(, "chips": [{"name": "R0C0", "x_min_um": 5000, "y_min_um": 5000, "x_max_um": 15000, "y_max_um": 15000}])";
+        const std::string chipB = R"(, "chips": [{"name": "R0C0", "x_min_um": 5000, "y_min_um": 5000, "x_max_um": 15500, "y_max_um": 15000}])";
+        MIB_REQUIRE(Registry::parse(doc(entry("alpha", 11, 30, 12, 5, chipA)), base, &err), err);
+        std::string renamedEntry = entry("alpha", 11, 30, 12, 5, chipA);
+        renamedEntry.replace(renamedEntry.find("Design alpha"), 12, "Alpha v2");
+        MIB_REQUIRE(Registry::parse(doc(renamedEntry), renamed, &err), err);
+        MIB_REQUIRE(Registry::parse(doc(entry("alpha", 11, 30, 12, 5, chipB)), moved, &err), err);
+        MIB_EXPECT(base.fingerprint() != renamed.fingerprint(), "a renamed design changes the fingerprint");
+        MIB_EXPECT(base.fingerprint() != moved.fingerprint(), "a corrected chip outline changes the fingerprint");
+        Registry merged = base;
+        std::vector<std::string> warnings;
+        merged.merge(moved, &warnings);
+        MIB_EXPECT(warnings.size() == 1, "an edited local copy is reported, not silently dropped");
+
+        // Contract 1 finds two designs, contract 2 finds a third: still ambiguous.
+        Registry mixedContracts;
+        Design a, b, c;
+        CodebookParams p;
+        p.columns = 200;
+        p.rows = 200;
+        p.seed = 31;
+        a.id = "a";
+        a.codecContract = 1;
+        a.codebook = std::make_shared<const Codebook>(Codebook::generate(p));
+        p.seed = 32;
+        b = a;
+        b.id = "b";
+        b.codebook = std::make_shared<const Codebook>(Codebook::generate(p));
+        p.seed = 33;
+        c = a;
+        c.id = "c";
+        c.codecContract = 2;
+        c.codebook = std::make_shared<const Codebook>(Codebook::generate(p));
+        MIB_REQUIRE(mixedContracts.add(a, &err) && mixedContracts.add(b, &err) && mixedContracts.add(c, &err), err);
+        auto shared = std::make_shared<const Registry>(mixedContracts);
+        const cv::Mat frame(10, 10, CV_8UC1, cv::Scalar(0));
+        {
+            CodecSet set;
+            set.add(std::make_shared<CannedCodec>(1, canned(false, kDecodeStageAmbiguousDesign, "ambiguous design (a, b)")));
+            set.add(std::make_shared<CannedCodec>(2, canned(true, kDecodeStageOk, "", "c")));
+            const DecodeResult r = DesignDecoder(set, shared).decode(frame, DecoderConfig{});
+            MIB_EXPECT(!r.ok && r.reason == "ambiguous design (a, b, c)" && r.designId.empty(),
+                       "inner ambiguity is never masked by a hit in another core: " + r.reason);
+        }
+        {
+            // Failures: the attempt that got furthest wins over one with more votes.
+            CodecSet set;
+            set.add(std::make_shared<CannedCodec>(1, canned(false, 2, "no consistent code window", "", 9)));
+            set.add(std::make_shared<CannedCodec>(2, canned(false, 4, "bit agreement too low", "", 3)));
+            const DecodeResult r = DesignDecoder(set, shared).decode(frame, DecoderConfig{});
+            MIB_EXPECT(!r.ok && r.reason == "bit agreement too low" && r.codecContract == 2,
+                       "failure ranked by stage, then votes: " + r.reason);
+        }
+        {
+            CodecSet set;
+            set.add(std::make_shared<CannedCodec>(1, canned(false, 0, "too few dots")));
+            set.add(std::make_shared<CannedCodec>(2, canned(true, kDecodeStageOk, "", "c")));
+            const DecodeResult r = DesignDecoder(set, shared).decode(frame, DecoderConfig{});
+            MIB_EXPECT(r.ok && r.designId == "c" && r.coreSource == "plugin" && r.designsTried == 3,
+                       "one hit across cores decodes: " + r.reason);
+        }
     }
 
     // 7. The bundled registry parses and regenerates the archived Wafer_soRT codebook.

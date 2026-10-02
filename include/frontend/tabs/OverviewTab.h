@@ -111,6 +111,7 @@ namespace frontend
         // Dot-grid wafer localization
         QToolButton *dotGridBtn_ = nullptr;
         DotGridOverlay dotGridOverlay_;
+        uint64_t dotGridPoseSequence_ = 0; // DotGridService::poseSequence() last copied
 
         QString loadedCameraKey_;
         QLabel* modeLabel_ = nullptr;

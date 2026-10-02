@@ -117,6 +117,8 @@ public:
 
     // Latest decode outcome (valid or not); false if nothing decoded yet.
     bool getLatestPose(Pose& out) const;
+    // Bumped on every publish: a UI tick compares it before copying a Pose.
+    uint64_t poseSequence() const { return poseSequence_.load(std::memory_order_acquire); }
     void setPoseCallback(PoseCallback callback);
 
     // Decode any image synchronously with the current codebook/config.
@@ -159,6 +161,8 @@ private:
 
     std::atomic<bool> enabled_{false};
     std::atomic<bool> paused_{false};
+    std::atomic<uint64_t> configGeneration_{0}; // bumped by every accepted setConfig()
+    std::atomic<uint64_t> poseSequence_{0};
     std::atomic<uint64_t> attempts_{0};
     std::atomic<uint64_t> successes_{0};
     std::atomic<double> lastDecodeMs_{0.0};

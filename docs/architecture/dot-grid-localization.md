@@ -86,9 +86,12 @@ measured `umPerPx` already reflects the real (shrunk) chip.
 `backend::dotgrid::Decoder::decode(gray, config)`:
 
 1. **Dots** — background-subtract (Gaussian of 6× the expected dot diameter),
-   threshold, connected components; keep blobs of 0.3–3× the expected area,
+   threshold, connected components; keep blobs of 0.2–5× the expected area,
    aspect < 1.8, fill > 0.5, not touching the border (clipped centroids are
-   biased). `umPerPxHint` only sizes this step.
+   biased). `umPerPxHint` only sizes this step, and a hint off by about 2×
+   either way still decodes (`processing.dot_grid_decoder`; with the old
+   0.3–3× gate it failed from 1.8×, too close to the rig's default hint
+   `pixel_to_micron_factor` = 0.4886 against 0.293 µm/px at 20x).
 2. **Lattice basis** — axis direction from the circular mean of 4× the
    nearest-neighbour angles; pitch from the mean projection of pair vectors
    along each axis (nearest-neighbour *distances* are biased by the
@@ -231,6 +234,23 @@ While on, the Overview canvas draws the detected dots, a cross at the image
 centre and a text box with X/Y (µm), θ, µm/px, direct/mirrored, design name
 and chip, dot and vote counts and decode time, or the failure reason.
 `frontend.dot_grid_overview` covers the tab gating.
+
+### Robustness rules (review of PR #472)
+
+- No exception leaves the service thread: a frame that throws becomes an
+  invalid pose (`decode error: …`) and is logged; a degenerate lattice fit
+  can no longer allocate a huge bit grid (capped at 4 M cells, both decoders).
+- Every accepted `setConfig()` bumps a generation, so the current frame is
+  re-decoded with the new decoder even when no new frame arrives.
+- `DesignDecoder` keeps ambiguity across cores (a core reporting
+  `ambiguous design (a, b)` plus a hit elsewhere is still ambiguous) and ranks
+  failures by stage, then votes, like `Decoder`.
+- `Registry::fingerprint()` covers names, revisions, status and chip outlines,
+  so an edited registry rebuilds the decoder.
+- `Codebook::loadJson` refuses a foreign m-sequence or phases outside [0, 62].
+- `config.json` seeds are exact 64-bit integers (a decimal string above 2^63);
+  `dot_grid.enabled` is applied only when the file's value changes, so the
+  Overview toggle survives unrelated reloads (`frontend.dot_grid_config`).
 
 ## Fabrication notes
 

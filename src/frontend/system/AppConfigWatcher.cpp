@@ -62,6 +62,30 @@ namespace frontend
 			return QDir(appDir).absoluteFilePath("../include");
 		}
 
+		// A dot-grid seed is a full uint64 (codec contract 1). JSON numbers are
+		// read as exact integers (never through double, which rounds above
+		// 2^53); seeds above 2^63 can be written as a decimal string.
+		bool parseDotGridSeed(const QJsonValue &v, uint64_t &out)
+		{
+			if (v.isString())
+			{
+				bool ok = false;
+				const qulonglong s = v.toString().trimmed().toULongLong(&ok, 10);
+				if (ok)
+					out = s;
+				return ok;
+			}
+			if (v.isDouble())
+			{
+				const qint64 i = v.toInteger(-1); // -1 for fractions and negatives
+				if (i < 0)
+					return false;
+				out = static_cast<uint64_t>(i);
+				return true;
+			}
+			return false;
+		}
+
 		// Dot-grid design registry: the bundled one (resources/defaults/dot_grid/
 		// registry.json) plus, when dot_grid.registry_path is set, a local file
 		// for designs not yet shipped with a build (relative paths resolve
@@ -526,7 +550,16 @@ namespace frontend
 		{
 			const QJsonObject dg = root.value("dot_grid").toObject();
 			backend::services::DotGridService::Config cfg = backend_.dotGrid().getConfig();
-			cfg.enabled = dg.value("enabled").toBool(cfg.enabled);
+			// `enabled` follows the file only when the file's value changes: the
+			// Overview's Wafer Grid button toggles the service at runtime, and an
+			// unrelated config.json write must not undo that.
+			if (dg.value("enabled").isBool())
+			{
+				const int onDisk = dg.value("enabled").toBool() ? 1 : 0;
+				if (onDisk != lastDotGridEnabledOnDisk_)
+					cfg.enabled = onDisk == 1;
+				lastDotGridEnabledOnDisk_ = onDisk;
+			}
 			cfg.intervalMs = dg.value("interval_ms").toInt(cfg.intervalMs);
 			const double hint = dg.value("um_per_px_hint").toDouble(0.0);
 			cfg.umPerPxHint = hint > 0.0 ? hint : backend_.processing().getPixelToMicronFactor();
@@ -538,7 +571,9 @@ namespace frontend
 			{
 				const QJsonObject cb = dg.value("codebook").toObject();
 				auto &c = cfg.codebook;
-				c.seed = static_cast<uint64_t>(cb.value("seed").toDouble(static_cast<double>(c.seed)));
+				if (cb.contains("seed") && !parseDotGridSeed(cb.value("seed"), c.seed))
+					SPDLOG_WARN("AppConfigWatcher: dot_grid.codebook.seed must be a non-negative integer "
+								"(a decimal string above 2^63); keeping seed {}", c.seed);
 				c.columns = cb.value("columns").toInt(c.columns);
 				c.rows = cb.value("rows").toInt(c.rows);
 				c.pitchUm = cb.value("pitch_um").toDouble(c.pitchUm);

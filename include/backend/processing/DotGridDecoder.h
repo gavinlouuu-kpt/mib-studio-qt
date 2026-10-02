@@ -34,6 +34,10 @@ struct DecoderConfig {
     int maxDots{8000}; // guard against noise images producing huge blob sets
 };
 
+// DecodeResult::stage values that callers combining several decoders need.
+constexpr int kDecodeStageOk = 6;
+constexpr int kDecodeStageAmbiguousDesign = 7;
+
 struct DecodeResult {
     bool ok{false};
     std::string reason;
@@ -51,6 +55,10 @@ struct DecodeResult {
     std::string designId;            // registered design that decoded (empty in single-codebook mode)
     std::string designName;
     int designsTried{0};
+    // How far the attempt got, for ranking failures across designs and cores:
+    // 0 dots, 1 lattice, 2 code window, 3 ambiguous window, 4 bit agreement,
+    // 5 pose fit, 6 decoded, 7 ambiguous design (more than one design hit).
+    int stage{0};
     // Core that produced this result (ADR 0010); set by DesignDecoder.
     int codecContract{0};
     std::string coreVersion;

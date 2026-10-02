@@ -69,6 +69,17 @@ class DotGridTests(unittest.TestCase):
                 self.assertLess(abs(((r.theta_deg - theta + 180) % 360) - 180), 0.2)
                 self.assertLess(abs(r.um_per_px - 0.293), 0.002)
 
+    def test_scale_hint_off_by_2x(self):
+        # The hint only sizes the blob detector (mirrors the C++ decoder test).
+        pose = ViewPose(centre_um=(47000.0, 41000.0), theta_deg=23.0, um_per_px=0.293, mirrored=True)
+        img = render_view(self.cb, pose, seed=4)
+        for ratio in (0.55, 2.0):
+            with self.subTest(ratio=ratio):
+                r = decode_image(self.cb, img, 0.293 * ratio)
+                self.assertTrue(r.ok, r.reason)
+                self.assertLess(abs(r.centre_um[0] - 47000.0), 1.0)
+                self.assertLess(abs(r.um_per_px - 0.293), 0.003)
+
     def test_channel_band_20x(self):
         pose = ViewPose(centre_um=(30000.0, 30000.0), theta_deg=2.0, um_per_px=0.293)
         c0 = np.array([30000.0, 30040.0]); d = np.array([1.0, 0.0]); nrm = np.array([0.0, 1.0])

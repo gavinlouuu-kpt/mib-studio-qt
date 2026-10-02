@@ -99,6 +99,7 @@ bool DotGridService::setConfig(const Config& config, std::string* errorOut) {
             decoder_ = std::make_shared<const dotgrid::DesignDecoder>(codecs_, registry_);
         }
         enabled_.store(config.enabled, std::memory_order_release);
+        configGeneration_.fetch_add(1, std::memory_order_acq_rel);
     }
     wake();
     return true;
@@ -233,6 +234,7 @@ void DotGridService::publish(const Pose& pose) {
         std::lock_guard<std::mutex> lock(poseMutex_);
         latestPose_ = pose;
         hasPose_ = true;
+        poseSequence_.fetch_add(1, std::memory_order_release);
     }
     PoseCallback cb;
     {
@@ -244,6 +246,7 @@ void DotGridService::publish(const Pose& pose) {
 
 void DotGridService::loop() {
     uint64_t lastIndex = 0;
+    uint64_t lastGeneration = 0;
     bool haveLast = false;
     while (running_.load(std::memory_order_acquire)) {
         int intervalMs = 250;
@@ -262,19 +265,47 @@ void DotGridService::loop() {
             }
             if (store && store->committedCount() > 0) {
                 const uint64_t latest = store->latestCommittedIndex();
-                if (!haveLast || latest != lastIndex) {
+                // A new decoder/config re-decodes the current frame too, so a
+                // paused camera never keeps a pose from the previous config.
+                const uint64_t generation = configGeneration_.load(std::memory_order_acquire);
+                if (!haveLast || latest != lastIndex || generation != lastGeneration) {
                     playback::Frame frame;
                     if (store->getByWriteIndex(latest, frame)) {
-                        cv::Mat gray;
-                        if (frameToGray(frame, gray)) {
-                            attempts_.fetch_add(1, std::memory_order_relaxed);
-                            Pose pose = decodeImage(gray, latest, frame.timestamp);
+                        // Nothing may escape this thread (std::terminate would take the
+                        // app down): a frame that throws becomes an invalid pose.
+                        Pose pose;
+                        bool attempted = false;
+                        try {
+                            cv::Mat gray;
+                            if (frameToGray(frame, gray)) {
+                                attempted = true; // counted when the decode starts
+                                attempts_.fetch_add(1, std::memory_order_relaxed);
+                                pose = decodeImage(gray, latest, frame.timestamp);
+                            }
+                        } catch (const std::exception& e) {
+                            if (!attempted) attempts_.fetch_add(1, std::memory_order_relaxed);
+                            attempted = true;
+                            pose = Pose{};
+                            pose.reason = std::string("decode error: ") + e.what();
+                        } catch (...) {
+                            if (!attempted) attempts_.fetch_add(1, std::memory_order_relaxed);
+                            attempted = true;
+                            pose = Pose{};
+                            pose.reason = "decode error";
+                        }
+                        if (attempted) {
+                            if (pose.reason.rfind("decode error", 0) == 0) {
+                                pose.frameIndex = latest;
+                                pose.timestampNs = frame.timestamp;
+                                SPDLOG_WARN("DotGridService: frame {}: {}", latest, pose.reason);
+                            }
                             lastDecodeMs_.store(pose.decodeMs, std::memory_order_relaxed);
                             if (pose.valid) successes_.fetch_add(1, std::memory_order_relaxed);
                             publish(pose);
                         }
                     }
                     lastIndex = latest;
+                    lastGeneration = generation;
                     haveLast = true;
                 }
             }

@@ -3,6 +3,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -17,6 +18,7 @@ namespace {
 constexpr int kMaxPhaseCandidates = 4;
 constexpr int kBasisSubsample = 400;
 constexpr int kFitIterations = 4;
+constexpr int64_t kMaxGridCells = 4'000'000; // ~2000 x 2000 lattice lines
 
 // (a, b, c, d): u' = a*u + b*v, v' = c*u + d*v. Rotations first, then mirrors.
 constexpr std::array<std::array<int, 4>, 8> kDihedral = {{{1, 0, 0, 1},
@@ -308,6 +310,10 @@ std::vector<GridDecode> decodeGrid(const std::vector<const Codebook*>& cbs,
         }
         const int W = mx.x - mn.x + 1, H = mx.y - mn.y + 1;
         if (W < kWindowDots || H < kMnsOrder) continue;
+        // A degenerate lattice fit can spread indices over a huge range; a real
+        // view never spans more than a few hundred lines, so refuse instead of
+        // allocating W*H cells.
+        if (static_cast<int64_t>(W) * H > kMaxGridCells) continue;
         std::vector<int8_t> xb(static_cast<size_t>(W * H), -1), yb(static_cast<size_t>(W * H), -1);
         for (size_t k = 0; k < n; ++k) {
             int xBit, yBit;
@@ -372,7 +378,8 @@ enum Stage : int {
     kStageAmbiguousWindow,
     kStageAgreement,
     kStagePoseFit,
-    kStageOk
+    kStageOk = kDecodeStageOk,
+    kStageAmbiguousDesign = kDecodeStageAmbiguousDesign
 };
 
 // Verification and pose for one design whose grid decode is in g. Fills r.
@@ -468,7 +475,9 @@ std::vector<cv::Point2f> Decoder::detectDots(const cv::Mat& input, double expect
     for (int i = 1; i < n; ++i) {
         const int a = stats.at<int>(i, cv::CC_STAT_AREA);
         const int w = stats.at<int>(i, cv::CC_STAT_WIDTH), h = stats.at<int>(i, cv::CC_STAT_HEIGHT);
-        if (a < areaExpected * 0.3 || a > areaExpected * 3.0) continue;
+        // Area gate wide enough for a scale hint off by ~2x either way (the hint
+        // is only a size prior; the pose fit measures the true scale).
+        if (a < areaExpected * 0.2 || a > areaExpected * 5.0) continue;
         if (std::max(w, h) > 1.8 * std::min(w, h)) continue;
         if (double(a) / double(w * h) < 0.5) continue;
         const int x0 = stats.at<int>(i, cv::CC_STAT_LEFT), y0 = stats.at<int>(i, cv::CC_STAT_TOP);
@@ -522,6 +531,7 @@ DecodeResult Decoder::decode(const cv::Mat& gray, const DecoderConfig& config) c
         if (stage > failStage || (stage == failStage && r.votes > failure.votes)) {
             failStage = stage;
             failure = r;
+            failure.stage = stage;
         }
     };
     for (size_t g0 = 0; g0 < designs.size(); ++g0) {
@@ -568,6 +578,7 @@ DecodeResult Decoder::decode(const cv::Mat& gray, const DecoderConfig& config) c
             DecodeResult r = base;
             const Stage stage = finishDesign(*cbs[c], grids[c], pts, fit, gray.size(), config, r);
             if (stage == kStageOk) {
+                r.stage = kStageOk;
                 r.designId = designs[group[c]].id;
                 r.designName = designs[group[c]].name;
                 hits.push_back(std::move(r));
@@ -584,6 +595,7 @@ DecodeResult Decoder::decode(const cv::Mat& gray, const DecoderConfig& config) c
             names += (names.empty() ? "" : ", ") + h.designId;
         r.ok = false;
         r.reason = "ambiguous design (" + names + ")";
+        r.stage = kStageAmbiguousDesign;
         r.designId.clear();
         r.designName.clear();
         r.chip.clear();

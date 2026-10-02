@@ -1,5 +1,19 @@
 # Recent Work
 
+## 2026-10-02 — Dot-grid review fixes (PR #472)
+
+Ten review findings fixed: the Overview Wafer Grid toggle survives
+`config.json` reloads (`enabled` applies only when the file value changes);
+exact 64-bit seeds from `config.json`; no exception leaves the
+[[../services/DotGridService]] thread and the bit grid is capped; a config
+change re-decodes the current frame; `DesignDecoder` keeps cross-core
+ambiguity and stage-ranked failures; the registry fingerprint covers names
+and chip outlines; `Codebook::loadJson` validates the m-sequence and phases;
+`VERSION` is a CMake configure dependency; the Overview copies a pose only
+when `poseSequence()` moves; the blob gate tolerates a 2× scale-hint error
+(0.2–5× area, C++ and Python). New test `frontend.dot_grid_config`;
+registry, decoder, codebook, service and Python tests extended.
+
 ## 2026-10-02 — Dot-grid codec cores: contract + core version, gold references (phase 1)
 
 The dot-grid encoder/decoder now follow the processing-core model (ADR

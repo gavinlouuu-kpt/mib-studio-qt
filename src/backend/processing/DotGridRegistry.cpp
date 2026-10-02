@@ -16,18 +16,26 @@ namespace backend::dotgrid {
 
 namespace {
 
+// Everything a decode result or the overlay can show, so an edited entry (a
+// renamed design, a corrected chip outline) is a different registry: the
+// service rebuilds its decoder and merge() does not drop the edit as a duplicate.
 std::string designKey(const Design& d) {
     const auto& p = d.codebook->params();
     std::ostringstream os;
     os.precision(17);
     os << d.id << ":c" << d.codecContract << ':' << p.seed << ':' << p.columns << 'x' << p.rows
        << ':' << p.pitchUm << '/' << p.dotDiameterUm << '/' << p.displacementUm << '@'
-       << p.originXUm << ',' << p.originYUm << ':' << d.codebook->chips().size();
+       << p.originXUm << ',' << p.originYUm << "|name=" << d.name << "|rev=" << d.revision
+       << "|status=" << d.status << "|chips=" << d.codebook->chips().size();
+    for (const auto& c : d.codebook->chips())
+        os << '[' << c.name << ' ' << c.xMinUm << ',' << c.yMinUm << ',' << c.xMaxUm << ','
+           << c.yMaxUm << ']';
     return os.str();
 }
 
 std::string unsupportedKey(const UnsupportedDesign& d) {
-    return d.id + ":c" + std::to_string(d.codecContract) + ':' + std::to_string(d.seed) + ":unsupported";
+    return d.id + ":c" + std::to_string(d.codecContract) + ':' + std::to_string(d.seed) +
+           "|name=" + d.name + ":unsupported";
 }
 
 } // namespace

@@ -105,6 +105,11 @@ loop decodes the newest frame immediately instead of after `interval_ms`
 
 ## Gotchas
 
+- The thread catches every exception per frame (published as an invalid
+  pose `decode error: …`); `setConfig()` bumps `configGeneration_` so the
+  current frame is re-decoded with a new decoder; `poseSequence()` lets the UI
+  skip copying an unchanged pose.
+
 - The decoder reports **mask** coordinates; the Wafer_soRT design is 1.5 %
   pre-enlarged. `umPerPx` is measured from the image, the hint only sizes
   the blob detector.

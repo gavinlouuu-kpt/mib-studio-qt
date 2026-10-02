@@ -8,6 +8,7 @@
 #include "support/tempdir.h"
 
 #include <fstream>
+#include <functional>
 #include <string>
 
 #if __has_include(<nlohmann/json.hpp>)
@@ -127,6 +128,22 @@ int main() {
     Codebook missing;
     MIB_EXPECT(!Codebook::loadJson((td / "nope.json").string(), missing, &err),
                "missing file fails cleanly");
+
+    // A corrupt archive is refused, never decoded: an out-of-range phase would
+    // index outside the m-sequence, another m-sequence is another contract.
+    auto rejects = [&](const std::function<void(nlohmann::json&)>& corrupt, const std::string& want) {
+        nlohmann::json j = nlohmann::json::parse(std::ifstream(path));
+        corrupt(j);
+        const auto bad = (td / "bad.json").string();
+        std::ofstream(bad) << j.dump();
+        Codebook out;
+        std::string why;
+        MIB_EXPECT(!Codebook::loadJson(bad, out, &why) && why.find(want) != std::string::npos,
+                   "corrupt codebook refused (" + want + "): " + why);
+    };
+    rejects([](nlohmann::json& j) { j["phi"][5] = -5; }, "[0, 62]");
+    rejects([](nlohmann::json& j) { j["psi"][7] = 63; }, "[0, 62]");
+    rejects([](nlohmann::json& j) { j["mns"][0] = 1 - j["mns"][0].get<int>(); }, "m-sequence");
 #endif
 
     return mib::test::exitCode();

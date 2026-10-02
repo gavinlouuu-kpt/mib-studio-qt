@@ -72,6 +72,22 @@ int main() {
         std::printf("clean 20x view %d: %d dots, decode %.1f ms\n", k, r.dots, r.decodeMs);
     }
 
+    // 1b. The scale hint only sizes the blob detector: a hint off by ~2x either
+    //     way (wrong objective in config, uncalibrated camera) still decodes and
+    //     the measured scale is the true one.
+    for (const double ratio : {0.55, 2.0}) {
+        ViewPose pose;
+        pose.centreXUm = 47000.0;
+        pose.centreYUm = 41000.0;
+        pose.thetaDeg = 23.0;
+        pose.umPerPx = 0.293;
+        pose.mirrored = true;
+        DecoderConfig off = cfg;
+        off.umPerPxHint = pose.umPerPx * ratio;
+        const DecodeResult r = decoder.decode(renderView(*cb, pose, RenderOptions{}), off);
+        checkPose(r, pose, 1.0, "hint x" + std::to_string(ratio));
+    }
+
     // 2. Chip identification from the codebook chip table.
     {
         ViewPose pose;
