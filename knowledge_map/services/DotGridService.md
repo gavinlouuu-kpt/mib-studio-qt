@@ -60,7 +60,18 @@ pitch_um, dot_diameter_um, displacement_um, origin_x_um, origin_y_um}`.
 `AppConfigWatcher::loadDotGridRegistry` reads `:/defaults/dot_grid_registry.json`
 and merges the local file; clashes are logged and skipped.
 `MIB_DISABLED_SERVICES=dot_grid` leaves the service constructed but not
-started. The Preview page's **Wafer Grid** button toggles `enabled`.
+started. The [[../frontend/OverviewTab]]'s **Wafer Grid** button toggles
+`enabled`; the Experiment tab has no toggle and never decodes.
+
+## Pause (Overview only)
+
+`setPaused(bool)` / `isPaused()` is a runtime gate on top of `enabled`,
+not persisted and off by default (headless users and tests decode whenever
+enabled). `OverviewTab` pauses in its constructor and `hideEvent` and
+resumes in `showEvent`, so the service decodes only while the Overview is on
+screen. `setPaused(false)` sets `wakeRequested_` under `wakeMutex_` so the
+loop decodes the newest frame immediately instead of after `interval_ms`
+(`setConfig()` and `stop()` use the same `wake()`).
 
 ## Manual & periodic test paths
 

@@ -181,6 +181,33 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     MIB_EXPECT(service.decodeAttempts() > attemptsBefore, "decoding resumes when enabled");
 
+    // Paused (no view on screen): enabled but nothing decoded; resuming decodes
+    // the newest frame at once rather than after the (deliberately long) interval.
+    wd.mark("pause");
+    {
+        DotGridService::Config slow = cfg;
+        slow.intervalMs = 5000;
+        MIB_REQUIRE(service.setConfig(slow, &err), "slow interval accepted");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // let the wake settle
+        service.setPaused(true);
+        MIB_EXPECT(service.isPaused() && service.isEnabled(), "paused while enabled");
+        const uint64_t pausedAttempts = service.decodeAttempts();
+        push(*store, frameAt(cb, 47000.0, 33000.0, 21.0, 9), 12500);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        MIB_EXPECT(service.decodeAttempts() == pausedAttempts, "no decode while paused");
+        service.setPaused(false);
+        // Well under the 5 s interval: only the resume wake-up can explain a pose.
+        bool resumed = false;
+        for (int i = 0; i < 100 && !resumed; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            DotGridService::Pose p;
+            resumed = service.getLatestPose(p) && p.valid && std::abs(p.centreXUm - 47000.0) < 1.0;
+        }
+        MIB_EXPECT(resumed, "resume decodes the frame pushed while paused without waiting out "
+                            "the interval");
+        MIB_REQUIRE(service.setConfig(cfg, &err), "normal interval restored");
+    }
+
     // Invalid codebook parameters are rejected and the old codebook stays usable.
     DotGridService::Config bad = cfg;
     bad.codebook.dotDiameterUm = 40.0;

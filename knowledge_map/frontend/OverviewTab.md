@@ -6,7 +6,7 @@
 
 **Source:** `src/frontend/tabs/OverviewTab.cpp`,
 `include/frontend/tabs/OverviewTab.h`
-**Related:** `src/frontend/utils/SimpleImageCanvas.cpp`,
+**Related:** `src/frontend/utils/SimpleImageCanvas.cpp`, [[../services/DotGridService]] (Wafer Grid),
 `include/frontend/utils/SimpleImageCanvas.h`,
 [[../services/ProcessingService]] (ROI propagation, realtime snapshot),
 [[../architecture/AppBackend]] (recording ROI)
@@ -41,6 +41,28 @@ The canvas draws a semi-transparent red rectangle at the current ROI
 position. ROI drag events emit `roiPositionChanged(QPointF)`, which
 `MainWindow` connects to `ProcessingService::setRealtimeRoi` and
 `AppBackend`'s recording thread.
+
+## Wafer Grid (dot-grid localization, Overview only)
+
+The **Wafer Grid** toolbar button (`overviewWaferGridBtn`, after the ROI
+size spin boxes) flips `DotGridService::Config::enabled` on
+[[../services/DotGridService]]. This is the only place localization is shown:
+the Experiment Preview page has no toggle.
+
+- **Runs only while the Overview is on screen.** The constructor and
+  `hideEvent` call `backend_.dotGrid().setPaused(true)`; `showEvent` calls
+  `setPaused(false)` (which wakes the service to decode the newest frame at
+  once). Switching to the Experiment tab, any other tab, or minimising the
+  window therefore stops decoding even with Wafer Grid on.
+- `onTick` → `updateDotGridOverlay()` (only while visible) follows the
+  service's `isEnabled()` (config.json can switch it too) and copies the
+  latest `Pose` into `DotGridOverlay`: detected dots, image-centre cross,
+  pose text with design name + chip, or the failure reason.
+  `SimpleImageCanvas::paintEvent` draws dots and cross over the frame and
+  the text box last, on top of the ROI rectangle. No decoding on the GUI
+  thread.
+- Test: `frontend.dot_grid_overview` (tab switches pause/resume, overlay,
+  toggle, no toggle on the Preview page).
 
 ## Gotchas
 

@@ -35,9 +35,11 @@ visible and needs no extra mask layer.
   publishes a value-typed `Pose` through a mutex snapshot plus an optional
   callback — the same pattern as the realtime drop-frames mode and the
   background-capture callback. No new cross-thread mechanism.
-- Expose it in the Preview page as an overlay behind a **Wafer Grid** toggle
-  and in `config.json` under `dot_grid`, with a `dot_grid` token in
-  `MIB_DISABLED_SERVICES`.
+- Expose it on the **Overview** tab only, as an overlay behind a **Wafer
+  Grid** toggle, and in `config.json` under `dot_grid`, with a `dot_grid`
+  token in `MIB_DISABLED_SERVICES`. The Overview pauses the service while it
+  is not on screen, so localization never runs next to an experiment
+  (revised 2026-10-02: it was first on the Experiment Preview page).
 
 ## Consequences
 

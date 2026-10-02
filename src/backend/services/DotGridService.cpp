@@ -89,7 +89,7 @@ bool DotGridService::setConfig(const Config& config, std::string* errorOut) {
         }
         enabled_.store(config.enabled, std::memory_order_release);
     }
-    wakeCv_.notify_all();
+    wake();
     return true;
 }
 
@@ -108,6 +108,20 @@ std::shared_ptr<const dotgrid::Registry> DotGridService::activeRegistry() const 
     return registry_;
 }
 
+void DotGridService::setPaused(bool paused) {
+    if (paused_.exchange(paused, std::memory_order_acq_rel) == paused) return;
+    SPDLOG_INFO("DotGridService: {}", paused ? "paused (no view)" : "resumed");
+    if (!paused) wake(); // decode the current frame now, not one interval later
+}
+
+void DotGridService::wake() {
+    {
+        std::lock_guard<std::mutex> lock(wakeMutex_);
+        wakeRequested_ = true;
+    }
+    wakeCv_.notify_all();
+}
+
 void DotGridService::start() {
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true)) return;
@@ -120,7 +134,7 @@ void DotGridService::stop() {
         if (thread_.joinable()) thread_.join();
         return;
     }
-    wakeCv_.notify_all();
+    wake();
     if (thread_.joinable()) thread_.join();
     SPDLOG_INFO("DotGridService: stopped (attempts={}, successes={})", attempts_.load(),
                 successes_.load());
@@ -218,7 +232,8 @@ void DotGridService::loop() {
         {
             std::lock_guard<std::mutex> lock(configMutex_);
             intervalMs = std::max(10, config_.intervalMs);
-            enabled = config_.enabled && static_cast<bool>(decoder_);
+            enabled = config_.enabled && static_cast<bool>(decoder_) &&
+                      !paused_.load(std::memory_order_acquire);
         }
         if (enabled) {
             std::shared_ptr<playback::FrameStore> store;
@@ -246,8 +261,10 @@ void DotGridService::loop() {
             }
         }
         std::unique_lock<std::mutex> lock(wakeMutex_);
-        wakeCv_.wait_for(lock, std::chrono::milliseconds(intervalMs),
-                         [this] { return !running_.load(std::memory_order_acquire); });
+        wakeCv_.wait_for(lock, std::chrono::milliseconds(intervalMs), [this] {
+            return wakeRequested_ || !running_.load(std::memory_order_acquire);
+        });
+        wakeRequested_ = false;
     }
 }
 

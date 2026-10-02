@@ -45,5 +45,12 @@ Verification:
 - Real app: `screenshot_tour` on Wafer_soRT mock frames shows the overlay
   "Wafer_soRT DC sorting chip (30 um channels)   chip R4C2" with the pose.
 
+- 2026-10-02 follow-up (review): localization belongs to the Overview tab.
+  Toggle + overlay moved from `PlaybackPanel` to `OverviewTab` /
+  `SimpleImageCanvas`; `DotGridService::setPaused` driven by the Overview's
+  show/hide events; `wake()` + `wakeRequested_` so resume and config changes
+  end the interval wait (the old bare `notify_all` was ignored by the
+  `wait_for` predicate). Test `frontend.dot_grid_overview`.
+
 Follow-ups:
 - In-app "add design" dialog; persist `designId` with the pose in HDF5.

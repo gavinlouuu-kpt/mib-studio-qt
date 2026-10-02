@@ -96,6 +96,14 @@ public:
     std::shared_ptr<const dotgrid::Registry> activeRegistry() const;
     bool isEnabled() const { return enabled_.load(std::memory_order_acquire); }
 
+    // Runtime pause on top of Config::enabled, owned by the UI: the Overview
+    // tab is the only view of the pose, so it pauses decoding whenever it is
+    // not on screen (Experiment tab, other tabs, minimised window) and the
+    // service spends no CPU next to an experiment. Not persisted; default off
+    // (headless users and tests decode whenever enabled).
+    void setPaused(bool paused);
+    bool isPaused() const { return paused_.load(std::memory_order_acquire); }
+
     void start();
     void stop();
     bool isRunning() const { return running_.load(std::memory_order_acquire); }
@@ -131,6 +139,8 @@ private:
     std::atomic<bool> running_{false};
     std::mutex wakeMutex_;
     std::condition_variable wakeCv_;
+    bool wakeRequested_{false}; // guarded by wakeMutex_; ends the interval wait early
+    void wake();
 
     mutable std::mutex poseMutex_;
     Pose latestPose_;
@@ -140,6 +150,7 @@ private:
     PoseCallback callback_;
 
     std::atomic<bool> enabled_{false};
+    std::atomic<bool> paused_{false};
     std::atomic<uint64_t> attempts_{0};
     std::atomic<uint64_t> successes_{0};
     std::atomic<double> lastDecodeMs_{0.0};

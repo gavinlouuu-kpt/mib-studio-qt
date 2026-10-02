@@ -1,5 +1,16 @@
 # Recent Work
 
+## 2026-10-02 — Wafer Grid moved to the Overview tab; no decoding next to experiments
+
+Dot-grid localization now lives on [[../frontend/OverviewTab]] only: the
+**Wafer Grid** toggle and overlay moved off the Experiment Preview page
+(`PlaybackPanel` is back to its pre-dot-grid state), and the Overview pauses
+[[../services/DotGridService]] (`setPaused`) whenever it is not on screen, so
+the service decodes nothing while the Experiment tab is current, even with
+Wafer Grid on. Resuming wakes the service (`wakeRequested_`) to decode the
+newest frame at once. Tests: new `frontend.dot_grid_overview`; pause/resume
+section in `backend.dot_grid_service`.
+
 ## 2026-10-01 — Dot-grid design registry: the app knows which chip design it sees
 
 Every chip design with a dot grid is now registered once in

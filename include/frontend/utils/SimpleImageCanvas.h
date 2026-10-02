@@ -30,6 +30,8 @@ namespace frontend
             update();
         }
         QPointF displayedRoiPosition() const;
+        // Dot-grid localization overlay drawn over the frame (nullptr = none).
+        void setDotGridOverlay(const OverviewTab::DotGridOverlay *overlay) { dotGrid_ = overlay; }
 
     signals:
         void roiPositionChanged(QPointF imagePos);
@@ -50,6 +52,7 @@ namespace frontend
         QPointF *roiPos_ = nullptr;
         int *roiWidth_ = nullptr;
         int *roiHeight_ = nullptr;
+        const OverviewTab::DotGridOverlay *dotGrid_ = nullptr;
 
         // Transformation state
         double scale_ = 1.0;

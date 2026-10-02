@@ -24,7 +24,8 @@ and overlay integrated in MIB Studio.
       (golden test), synthetic renderer.
 - [x] `DotGridService` polling FrameStore at a low rate, config under
       `dot_grid`, `MIB_DISABLED_SERVICES=dot_grid`, wired in `AppBackend`.
-- [x] Preview page overlay + **Wafer Grid** toggle.
+- [x] Overview overlay + **Wafer Grid** toggle; decoding paused whenever the
+      Overview is not on screen (moved off the Experiment Preview page 2026-10-02).
 - [x] Tests: `processing.dot_grid_codebook`, `processing.dot_grid_decoder`,
       `backend.dot_grid_service`, `scripts.dot_grid_reference`.
 - [ ] Mask fabricated (chrome), test wafer moulded, real-frame decode

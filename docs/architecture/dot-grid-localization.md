@@ -14,7 +14,7 @@ design registry) and which chip (die) of that wafer the view is on.
 | Decoder + synthetic renderer (Qt-free, OpenCV) | `include/backend/processing/DotGridDecoder.h`, `src/backend/processing/DotGridDecoder.cpp` |
 | Design registry (Qt-free; every design, one seed each) | `include/backend/processing/DotGridRegistry.h`, `src/backend/processing/DotGridRegistry.cpp`, `scripts/dot_grid/dotgrid/registry.py` |
 | Live service (samples FrameStore, publishes poses) | `include/backend/services/DotGridService.h`, `src/backend/services/DotGridService.cpp` — [vault note](../../knowledge_map/services/DotGridService.md) |
-| Preview overlay + "Wafer Grid" toggle | `src/frontend/system/PlaybackPanel.cpp` |
+| Overview overlay + "Wafer Grid" toggle (Overview tab only) | `src/frontend/tabs/OverviewTab.cpp`, `src/frontend/utils/SimpleImageCanvas.cpp` |
 | Mask generator, reference decoder, simulator (Python) | `scripts/dot_grid/` — see [howto/dot-grid-mask-generation.md](../howto/dot-grid-mask-generation.md) |
 | Bundled registry (compiled into the app as `:/defaults/dot_grid_registry.json`) | `resources/defaults/dot_grid/registry.json` |
 | Archived full codebook of the Wafer_soRT design | `resources/defaults/dot_grid/wafer_soRT_2025-03-16_seed7_p30.json` |
@@ -184,10 +184,17 @@ override), the design registry (bundled + `registry_path`, the normal case),
 or `codebook` (`seed`, `columns`, `rows`, `pitch_um`, `dot_diameter_um`,
 `displacement_um`, `origin_x_um`, `origin_y_um`) when the registry is empty.
 
-The Preview page's **Wafer Grid** button toggles `enabled` at runtime. While
-on, the canvas draws the detected dots, a cross at the image centre and a
-text box with X/Y (µm), θ, µm/px, direct/mirrored, design name and chip, dot and vote counts
-and decode time, or the failure reason.
+Localization belongs to the **Overview** tab, where the operator navigates
+the chip; the Experiment tab never shows it and never pays for it. The
+Overview's **Wafer Grid** button toggles `enabled` at runtime, and the
+Overview pauses the service (`DotGridService::setPaused`) whenever it is not
+on screen — another tab current or the window minimised — so nothing is
+decoded next to a running experiment even with `enabled` on. Showing the
+Overview again resumes at once (the wait is woken, the newest frame decoded).
+While on, the Overview canvas draws the detected dots, a cross at the image
+centre and a text box with X/Y (µm), θ, µm/px, direct/mirrored, design name
+and chip, dot and vote counts and decode time, or the failure reason.
+`frontend.dot_grid_overview` covers the tab gating.
 
 ## Fabrication notes
 
