@@ -16,7 +16,10 @@ Not yet wired into AppBackend, Qt, React/Tauri or experiment execution.
 - `ProfileCache`: origin/user-scoped SQLite, immutable content, versioned state,
   local validation keyed by instrument + context + exact content hash.
 - `ProfileRegistryService`: download/sync one page, separate registry health;
-  a failed request does not erase previously cached data.
+  a failed request does not erase previously cached data. A listed revision that
+  fails hash/canonical verification comes back in `RevisionPage::rejected`, is
+  never cached, and is counted in `RegistryHealth::rejectedRevisions`; the cursor
+  still advances past it.
 - `SupabaseProfileRegistry`: injected user access token and bounded HTTP request
   contract. Transport must enforce TLS/no redirects/response cap/timeout.
 
@@ -26,7 +29,10 @@ All objects are worker-confined. No background thread or execution readiness is
 owned here. Cache eligibility does not mean applied, hardware verified, or allowed
 to Start. New central revisions never select themselves. Known revocation is sticky;
 archived/revoked content remains readable for history. Refresh scans must restart:
-UUID cursors do not detect mutable metadata changes. Corrupt cache rows fail closed;
+UUID cursors do not detect mutable metadata changes. One unverifiable revision (any project author can submit
+noncanonical bytes; the server checks only the hash) must not stall sync for every
+later revision, so `listRevisions` reports it instead of throwing; transport, auth
+and cross-project errors still fail the whole page. Corrupt cache rows fail closed;
 automatic repair and historical pins remain pending.
 
 Setup, current scope, tests and recovery: `supabase/README.md`.

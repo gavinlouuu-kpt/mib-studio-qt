@@ -64,11 +64,20 @@ freeze exact revision identity/content into historical runs.
 - [ ] Windows and actual Qt/Tauri E2E; lifecycle/concurrency/TSan tests when worker
   and experiment integration are added. Current test is registry-layer only.
 
+## Progress log
+
+- 2026-10-02: Merged `develop` (153 commits) into PR #402; conflicts were vault notes
+  only. First full `linux-backend-only` build + CTest of the registry sources: all
+  pass (`profiles.registry` included). Fixed a sync stall: a noncanonical revision
+  threw out of `listRevisions`, so the one-revision page never advanced and every
+  later revision/revocation stayed invisible. Now reported as `RevisionPage::rejected`
+  and counted in `RegistryHealth::rejectedRevisions`. `profile-registry-ci.yml` now
+  runs only the PGlite SQL suite (the C++ test runs in backend-ci; no inline apt list).
+
 ## Validation
 
-Standalone C++17 test build uses the production registry sources, existing SHA-256
-and SQLite. PostgreSQL tests use pinned PGlite with an auth identity stub. Full
-backend build is unavailable in the current minimal container (no CMake/Qt/OpenCV
-SDKs; apt provisioning fails during required UID/group changes). CI includes the
-C++ test in the normal backend runner. No Supabase project has been deployed or
-modified by this PR.
+`profiles.registry` runs in backend CTest (`linux-backend-only` preset; built and
+passing as of 2026-10-02) against the production registry sources, shared SHA-256
+and SQLite. PostgreSQL tests use pinned PGlite with an auth identity stub
+(`npm test --prefix supabase`, `profile-registry-ci.yml`). Windows build not yet
+exercised. No Supabase project has been deployed or modified.

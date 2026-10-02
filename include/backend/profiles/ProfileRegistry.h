@@ -56,8 +56,16 @@ std::string canonicalMethod(const std::string& configJson, const std::string& ca
 std::string contentHash(const std::string& bytes);
 void verifyRevision(const Revision& revision);
 
+// A listed revision that failed integrity/canonical verification. It is never
+// cached; reporting it lets the cursor advance past it instead of stalling sync.
+struct RejectedRevision {
+    std::string revisionId; // empty when the item carried no usable ID
+    std::string reason;
+};
+
 struct RevisionPage {
     std::vector<Revision> revisions;
+    std::vector<RejectedRevision> rejected;
     std::string nextCursor;
 };
 

@@ -141,6 +141,20 @@ int main() {
         response =
             nlohmann::json({{"revisions", nlohmann::json::array()}, {"next_cursor", ""}}).dump();
         require(service.syncPage("project", "r13").value().empty(), "empty terminal page");
+        // One noncanonical revision (any project author can submit one; the server
+        // checks only its hash) must not stall sync for every later revision.
+        auto poisoned = revision("r14", 14);
+        poisoned.canonicalContent = R"({"method_schema_version":1})";
+        poisoned.contentHash = contentHash(poisoned.canonicalContent);
+        response = nlohmann::json({{"revisions", nlohmann::json::array({encode(poisoned)})},
+                                   {"next_cursor", "r14"}})
+                       .dump();
+        const auto pastPoison = service.syncPage("project", "r13");
+        require(pastPoison && *pastPoison == "r14", "rejected revision stalled sync");
+        require(service.health().rejectedRevisions == 1 &&
+                    service.health().connectivity == RegistryHealth::Connectivity::Online,
+                "rejected revision must be counted without an outage");
+        rejects([&] { cache.read("r14"); }, RegistryErrorCode::NotFound);
         response = "{}";
         rejects([&] { provider.fetchRevision("r13"); }, RegistryErrorCode::Invalid);
         rejects(

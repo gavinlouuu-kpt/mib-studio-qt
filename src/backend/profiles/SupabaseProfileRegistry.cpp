@@ -91,8 +91,17 @@ RevisionPage SupabaseProfileRegistry::listRevisions(const std::string& project,
         const auto& revisions = j.at("revisions");
         if (!revisions.is_array() || revisions.size() > 1)
             throw RegistryError(RegistryErrorCode::Invalid, "Invalid registry page");
-        for (const auto& item : revisions)
-            page.revisions.push_back(decode(item));
+        for (const auto& item : revisions) {
+            try {
+                page.revisions.push_back(decode(item));
+            } catch (const RegistryError& e) {
+                if (e.code != RegistryErrorCode::Invalid && e.code != RegistryErrorCode::Integrity)
+                    throw;
+                const auto id = item.is_object() ? item.find("revision_id") : item.end();
+                page.rejected.push_back(
+                    {id != item.end() && id->is_string() ? id->get<std::string>() : "", e.what()});
+            }
+        }
         page.nextCursor = j.at("next_cursor").get<std::string>();
         return page;
     } catch (const Json::exception&) {

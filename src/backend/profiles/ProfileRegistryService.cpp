@@ -35,7 +35,8 @@ std::optional<std::string> ProfileRegistryService::syncPage(const std::string& p
     std::string next;
     if (!attempt([&] {
             const auto page = registry_.listRevisions(project, cursor);
-            if (!page.nextCursor.empty() && (page.nextCursor == cursor || page.revisions.empty()))
+            if (!page.nextCursor.empty() &&
+                (page.nextCursor == cursor || (page.revisions.empty() && page.rejected.empty())))
                 throw RegistryError(RegistryErrorCode::Invalid,
                                     "Registry pagination did not advance");
             for (const auto& revision : page.revisions) {
@@ -43,6 +44,10 @@ std::optional<std::string> ProfileRegistryService::syncPage(const std::string& p
                     throw RegistryError(RegistryErrorCode::Integrity,
                                         "Registry returned another project's revision");
                 cache_.store(revision);
+            }
+            for (const auto& rejected : page.rejected) {
+                ++health_.rejectedRevisions;
+                health_.lastRejection = rejected.revisionId + ": " + rejected.reason;
             }
             next = page.nextCursor;
         }))

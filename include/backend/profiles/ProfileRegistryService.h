@@ -16,6 +16,9 @@ struct RegistryHealth {
     std::string message;
     uint64_t successfulRequests{0};
     uint64_t failedRequests{0};
+    // Listed revisions that failed verification and were skipped, not cached.
+    uint64_t rejectedRevisions{0};
+    std::string lastRejection;
 };
 // Worker-confined service. A single explicit download or sync page is one
 // bounded operation; no polling, thread ownership, selection, Apply or Start.

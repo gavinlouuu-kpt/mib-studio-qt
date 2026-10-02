@@ -130,12 +130,12 @@ container WebKitGTK workarounds (`WEBKIT_DISABLE_DMABUF_RENDERER=1`,
 - [[Build]] for presets and commands.
 - `docs/howto/runtime-deploy.md` for runtime deployment details.
 
-## Profile registry foundation (#398)
+## Profile registry (#398)
 
-Registry sources are part of `mib_backend`; `profiles.registry` is in backend CTest.
-They use existing nlohmann JSON, SQLite and shared SHA-256 without Qt. Optional
-PostgreSQL policy tests run with `npm ci --prefix supabase && npm test --prefix supabase`
-(pinned PGlite development dependency). No new desktop run mode is enabled.
+No new C++ dependency: registry sources reuse nlohmann JSON, SQLite and the
+shared SHA-256 already in `mib_backend`. The PostgreSQL policy tests need Node
+(`.nvmrc`) and the pinned PGlite dev dependency in `supabase/package-lock.json`;
+commands are in [[Build]].
 
 ### Independent nanopositioner support (2026-09-15)
 

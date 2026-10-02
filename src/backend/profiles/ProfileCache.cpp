@@ -1,6 +1,7 @@
 #include "backend/profiles/ProfileCache.h"
 #include <sqlite3.h>
 #include <limits>
+#include <optional>
 
 namespace backend::profiles {
 namespace {
@@ -132,14 +133,17 @@ ProfileCache::~ProfileCache() = default;
 void ProfileCache::store(const Revision& r) {
     verifyRevision(r);
     Transaction transaction(impl_->db);
-    Statement existing(impl_->db, "SELECT * FROM registry_revisions WHERE revision_id=?");
-    existing.bind(1, r.revisionId);
-    if (existing.step() == SQLITE_ROW) {
-        const auto old = row(existing);
-        if (old.methodId != r.methodId || old.projectId != r.projectId ||
-            old.parentRevisionId != r.parentRevisionId || old.authorId != r.authorId ||
-            old.contentHash != r.contentHash || old.canonicalContent != r.canonicalContent ||
-            old.revisionNumber != r.revisionNumber)
+    std::optional<Revision> old;
+    {
+        Statement existing(impl_->db, "SELECT * FROM registry_revisions WHERE revision_id=?");
+        existing.bind(1, r.revisionId);
+        if (existing.step() == SQLITE_ROW) old = row(existing);
+    } // finalize the read before updateState() writes the same table
+    if (old) {
+        if (old->methodId != r.methodId || old->projectId != r.projectId ||
+            old->parentRevisionId != r.parentRevisionId || old->authorId != r.authorId ||
+            old->contentHash != r.contentHash || old->canonicalContent != r.canonicalContent ||
+            old->revisionNumber != r.revisionNumber)
             throw RegistryError(RegistryErrorCode::Integrity,
                                 "Attempt to replace immutable cached revision");
         updateState(r.revisionId, r.state, r.metadataVersion);

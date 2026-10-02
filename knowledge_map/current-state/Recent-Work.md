@@ -1,5 +1,20 @@
 # Recent Work
 
+## 2026-10-02 — Central profile registry foundation (#398, PR #402)
+
+Provider-neutral registry contract, canonical method envelope over the existing
+config/script payload, Supabase RPC provider, immutable origin/user-scoped SQLite
+cache with exact instrument/context validation, and PostgreSQL schema/RLS/lifecycle
+functions. Not yet wired into AppBackend, either shell or Start. Brought up to date
+with `develop` and built/tested under the full backend preset for the first time.
+Fixed on the way (regression-first): one noncanonical revision in a project used to
+stop sync for every later revision (pages hold one revision, and decoding threw);
+it is now reported in `RevisionPage::rejected`, counted in registry health, never
+cached, and the cursor advances. Guards: `profiles.registry` (CTest) and the PGlite
+suite (`npm test --prefix supabase`, `profile-registry-ci.yml`). See
+[[../services/ProfileRegistryService]] and
+`docs/exec-plans/active/2026-09-10-central-profile-registry.md`.
+
 ## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
 
 The Review tab's Charts scatter is now a `ZoomableChartView` and a single

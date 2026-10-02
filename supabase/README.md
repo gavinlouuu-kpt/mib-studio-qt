@@ -49,6 +49,9 @@ range. This is **not RFC 8785/JCS**. New-language publishers must use golden vec
 or call the same C++ implementation. The server verifies the submitted hash and
 structural schema; it stores the exact text without reserializing it. The client
 also rejects noncanonical bytes, unsupported envelopes and duplicate keys before use.
+During a list scan such a revision is skipped, never cached, and counted in registry
+health (`rejectedRevisions`); the scan continues so one bad submission cannot hide
+later revisions or revocations.
 This structural validation does not validate hardware configuration or camera script
 safety; the local instrument validation and existing Apply/Verify gates must do so.
 
