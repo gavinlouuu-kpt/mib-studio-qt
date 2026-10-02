@@ -415,6 +415,8 @@ set_tests_properties(processing.core_v2_plugin PROPERTIES LABELS "processing;bac
 
 mib_add_backend_test_executable(processing_core_contract2_equivalence_test processing/processing_core_contract2_equivalence_test.cpp)
 add_dependencies(processing_core_contract2_equivalence_test mib_processing_core_absdiff_laplacian)
+target_compile_definitions(processing_core_contract2_equivalence_test PRIVATE
+    MIB_ABSDIFF_LAPLACIAN_VERSION="${MIB_ABSDIFF_LAPLACIAN_VERSION}")
 add_test(NAME processing.core_contract2_equivalence
     COMMAND $<TARGET_FILE:processing_core_contract2_equivalence_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
 set_tests_properties(processing.core_contract2_equivalence PROPERTIES LABELS "processing;backend" TIMEOUT 30)

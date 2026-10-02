@@ -14,6 +14,19 @@ if(MIB_PROCESSING_CORE_VERSION STREQUAL "")
     set(MIB_PROCESSING_CORE_VERSION "0.1.0")
 endif()
 
+# absdiff-laplacian (Contract 2) is versioned independently of subtract-ring
+# and the wheel (ADR 0007: releasing one line never rebuilds the other).
+# CACHE INTERNAL so tests/ (a sibling directory) sees it too.
+set(_mib_absdiff_version_file "${PROJECT_SOURCE_DIR}/processing-cores/absdiff-laplacian.version")
+file(STRINGS "${_mib_absdiff_version_file}" _mib_absdiff_version LIMIT_COUNT 1)
+string(STRIP "${_mib_absdiff_version}" _mib_absdiff_version)
+if(NOT _mib_absdiff_version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+")
+    message(FATAL_ERROR "Invalid absdiff-laplacian version in ${_mib_absdiff_version_file}")
+endif()
+set(MIB_ABSDIFF_LAPLACIAN_VERSION "${_mib_absdiff_version}" CACHE INTERNAL
+    "absdiff-laplacian processing-core line version")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mib_absdiff_version_file}")
+
 # mib_processing: the Qt-free deformability-cytometry processing core plus
 # its I/O adapters (HDF5 read/write, frame buffering). Depends only on
 # OpenCV, HDF5, spdlog, and the standard library -- no Qt, no camera SDKs,
@@ -170,7 +183,7 @@ endif()
 # implements exactly one contract (ADR 0007) and exports only that contract's
 # entry point: subtract-ring (Contract 1, mib_processing_get_api) and
 # absdiff-laplacian (Contract 2, mib_processing_get_api_v2).
-function(mib_add_processing_core_plugin target contract)
+function(mib_add_processing_core_plugin target contract line version)
     add_library(${target} MODULE
         ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
@@ -189,7 +202,7 @@ function(mib_add_processing_core_plugin target contract)
     mib_link_opencv(${target} PRIVATE)
     target_compile_definitions(${target} PRIVATE
         MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
-        MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+        MIB_PROCESSING_CORE_VERSION="${version}"
         MIB_PROCESSING_BUNDLED_CONTRACT=${contract}
     )
     set_target_properties(${target} PROPERTIES
@@ -211,10 +224,10 @@ endfunction()
 
 # subtract-ring (Contract 1): the released line (artifact naming, descriptor
 # and signing below are unchanged).
-mib_add_processing_core_plugin(mib_processing_core 1)
+mib_add_processing_core_plugin(mib_processing_core 1 subtract-ring ${MIB_PROCESSING_CORE_VERSION})
 # absdiff-laplacian (Contract 2): built for the ABI-v2 plugin tests. Release
 # naming, descriptor and signing arrive with the Contract 2 core line (T1.1).
-mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2)
+mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2 absdiff-laplacian ${MIB_ABSDIFF_LAPLACIAN_VERSION})
 if(WIN32)
     set(_mib_processing_native_basename
         "mib_processing_core-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
