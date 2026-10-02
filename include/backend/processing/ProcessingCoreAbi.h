@@ -224,9 +224,15 @@ typedef struct mib_processing_kernel_config_v2 {
     uint64_t science_config_json_size;
     /* Optional mask this core already produced for `input` (process_mask,
      * same config and ROI). process_objects then runs its object science on
-     * it instead of rebuilding the mask. NULL == build the mask. */
-    const mib_processing_image_view* precomputed_mask;
-    uint32_t reserved_u32[16];
+     * it instead of rebuilding the mask. NULL == build the mask.
+     * It occupies what were the first two reserved words, so the struct keeps
+     * its size and offsets on 32- and 64-bit targets: hosts built before it
+     * zero-fill the slot (NULL) and cores built before it ignore it. */
+    union {
+        const mib_processing_image_view* precomputed_mask;
+        uint32_t reserved_mask_slot[2];
+    };
+    uint32_t reserved_u32[14];
 } mib_processing_kernel_config_v2;
 
 /* One detected object's metrics (POD). Ring width is intentionally absent. */
