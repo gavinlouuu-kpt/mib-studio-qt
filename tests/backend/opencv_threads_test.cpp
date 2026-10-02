@@ -9,6 +9,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -31,9 +32,11 @@ void unsetEnv(const char* name) {
 #endif
 }
 
-// Boots a mock-camera backend with the given MIB_OPENCV_THREADS (nullptr =
-// unset) and returns cv::getNumThreads() after initialize.
+// Resets OpenCV to its own default, boots a mock-camera backend with the given
+// MIB_OPENCV_THREADS (nullptr = unset) and returns cv::getNumThreads() after
+// initialize.
 int threadsAfterInitialize(const char* setting) {
+    cv::setNumThreads(-1);
     if (setting) {
         setEnv("MIB_OPENCV_THREADS", setting);
     } else {
@@ -53,20 +56,31 @@ int threadsAfterInitialize(const char* setting) {
 
 int main() {
     setEnv("MIB_CAMERA_MODE", "mock");
-    cv::setNumThreads(-1); // OpenCV's own default
+    // What this platform's OpenCV reports for "inline" (setNumThreads(0)) and
+    // for its own default; the reported numbers differ between parallel
+    // backends (ConcRT on Windows, pthreads/TBB/OpenMP elsewhere).
+    cv::setNumThreads(0);
+    const int inlineThreads = cv::getNumThreads();
+    cv::setNumThreads(-1);
     const int opencvDefault = cv::getNumThreads();
+    std::printf("OpenCV reports inline=%d default=%d\n", inlineThreads, opencvDefault);
 
-    MIB_EXPECT(threadsAfterInitialize(nullptr) == 1,
-               "default: OpenCV runs inline on the calling thread");
+    const int byDefault = threadsAfterInitialize(nullptr);
+    std::printf("unset -> %d\n", byDefault);
+    MIB_EXPECT(byDefault == inlineThreads, "default: OpenCV runs inline on the calling thread");
 
-    MIB_EXPECT(threadsAfterInitialize("3") == 3, "MIB_OPENCV_THREADS=3 is passed through");
+    const int three = threadsAfterInitialize("3");
+    std::printf("3 -> %d\n", three);
+    MIB_EXPECT(three == 3, "MIB_OPENCV_THREADS=3 is passed through");
 
-    MIB_EXPECT(threadsAfterInitialize("not-a-number") == 1,
+    const int invalid = threadsAfterInitialize("not-a-number");
+    std::printf("not-a-number -> %d\n", invalid);
+    MIB_EXPECT(invalid == inlineThreads,
                "an invalid MIB_OPENCV_THREADS falls back to the inline default");
 
-    cv::setNumThreads(-1);
-    MIB_EXPECT(threadsAfterInitialize("opencv") == opencvDefault,
-               "MIB_OPENCV_THREADS=opencv keeps OpenCV's own default");
+    const int kept = threadsAfterInitialize("opencv");
+    std::printf("opencv -> %d\n", kept);
+    MIB_EXPECT(kept == opencvDefault, "MIB_OPENCV_THREADS=opencv keeps OpenCV's own default");
 
     return mib::test::exitCode();
 }
