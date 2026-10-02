@@ -14,6 +14,14 @@ if(MIB_PROCESSING_CORE_VERSION STREQUAL "")
     set(MIB_PROCESSING_CORE_VERSION "0.1.0")
 endif()
 
+# Dot-grid codec core version (encoder + decoder build line, ADR 0010). One
+# source shared with the Python mask generator: scripts/dot_grid/dotgrid/VERSION.
+set(MIB_DOTGRID_CORE_VERSION "0.0.0")
+if(EXISTS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
+    file(STRINGS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION" _mib_dotgrid_version LIMIT_COUNT 1)
+    string(STRIP "${_mib_dotgrid_version}" MIB_DOTGRID_CORE_VERSION)
+endif()
+
 # mib_processing: the Qt-free deformability-cytometry processing core plus
 # its I/O adapters (HDF5 read/write, frame buffering). Depends only on
 # OpenCV, HDF5, spdlog, and the standard library -- no Qt, no camera SDKs,
@@ -41,6 +49,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
@@ -73,6 +82,7 @@ target_link_libraries(mib_processing PUBLIC
 )
 
 target_compile_definitions(mib_processing PUBLIC
+    MIB_DOTGRID_CORE_VERSION="${MIB_DOTGRID_CORE_VERSION}"
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
 )
 

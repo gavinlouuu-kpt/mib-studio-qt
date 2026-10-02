@@ -51,6 +51,10 @@ struct DecodeResult {
     std::string designId;            // registered design that decoded (empty in single-codebook mode)
     std::string designName;
     int designsTried{0};
+    // Core that produced this result (ADR 0010); set by DesignDecoder.
+    int codecContract{0};
+    std::string coreVersion;
+    std::string coreSource; // "bundled" | "plugin"
     double pixelToWafer[6]{};        // row-major 2x3: X = m0*u + m1*v + m2, Y = m3*u + m4*v + m5
     std::vector<cv::Point2f> dotsPx; // detected dot centroids (for overlays)
     double decodeMs{0.0};

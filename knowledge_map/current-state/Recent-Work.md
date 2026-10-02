@@ -1,5 +1,21 @@
 # Recent Work
 
+## 2026-10-02 — Dot-grid codec cores: contract + core version, gold references (phase 1)
+
+The dot-grid encoder/decoder now follow the processing-core model (ADR
+0010): a frozen **codec contract** (contract 1 = `mseq63-delta2`) separate
+from the **core version** (`scripts/dot_grid/dotgrid/VERSION`, compiled in as
+`MIB_DOTGRID_CORE_VERSION`). Registry designs require `codec_contract` and
+record their `encoder` core; `ICodec` / `bundledCodec()` / `CodecSet` /
+`DesignDecoder` route each design to the core of its contract and fail
+closed (unsupported designs are logged, never decoded); results and
+[[../services/DotGridService]] poses name the core. Frozen gold reference
+`scripts/dot_grid/gold/codec-contract1.json` (exact encode + 12 decode cases)
+is met by the C++ core (`processing.dot_grid_codec_gold`) and the Python
+reference (`dotgrid_cli.py gold`), and is guarded by `gold-reference-change`.
+Plugin ABI, signed loader, wheel encoder and catalog are planned in
+`docs/exec-plans/active/2026-10-02-dot-grid-codec-cores.md`.
+
 ## 2026-10-02 — Wafer Grid moved to the Overview tab; no decoding next to experiments
 
 Dot-grid localization now lives on [[../frontend/OverviewTab]] only: the

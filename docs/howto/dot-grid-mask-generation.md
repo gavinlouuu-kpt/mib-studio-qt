@@ -45,7 +45,12 @@ What it does:
    each view to be attributed to the right design (`--views`, default 6 per
    design). On failure the registry is left untouched.
 5. Writes the mask outputs to `--out-dir` and appends the entry (geometry,
-   chip table, keep-outs, DXF name + sha256, author, dates) to the registry.
+   chip table, keep-outs, DXF name + sha256, author, dates) to the registry,
+   with the **codec contract** the mask uses (`codec_contract`, today 1,
+   `mseq63-delta2`) and the **encoder** core that generated it (version,
+   contract, line). See [ADR 0010](../decisions/0010-dot-grid-codec-cores.md):
+   the contract is what the dots mean and never changes for a mask; the app
+   decodes each design only with a core of its contract.
 
 Defaults are the validated Wafer_soRT geometry: `--pitch 30 --dot 12 --shift 5`
 (µm). Keep them unless the process needs otherwise: designs sharing a dot
@@ -89,7 +94,7 @@ then ignored.
 ## 2. Inspect, validate, regenerate
 
 ```bash
-python3 dotgrid_cli.py list                       # id, seed, revision, status, pitch, chips
+python3 dotgrid_cli.py list                       # id, seed, codec contract, revision, status, pitch, chips
 python3 dotgrid_cli.py check --cross-check        # unique ids/seeds, codebooks regenerate, discrimination
 python3 dotgrid_cli.py mask mychip-v1 MyChip_v1.dxf --out-dir out/mychip-v1   # identical layer again
 ```
@@ -99,6 +104,9 @@ whose sha256 differs from the registered one: a changed layout is a new
 revision, so register it under a new id (`mychip-v2`) and set the old
 entry's `status` to `retired` in the JSON (retired designs still decode,
 because their wafers still exist).
+
+`mask` also refuses a design of a codec contract this generator does not
+implement (`list` marks such designs with `!`).
 
 `generate DESIGN.dxf --seed N --out-dir out/` still produces an ad-hoc,
 unregistered pattern for experiments; never fabricate one of those.
@@ -138,4 +146,10 @@ design name and chip next to the pose.
   `scripts.dot_grid_reference`; exits 77 = skipped when numpy/OpenCV are
   missing; the end-to-end `register` test skips without ezdxf/scipy).
 - `ctest --preset linux-backend-only-test -R dot_grid` runs the C++ codebook
-  golden, decoder, registry and service tests.
+  golden, codec gold, decoder, registry and service tests.
+- `python3 dotgrid_cli.py gold` checks this (Python reference) core against
+  its contract's frozen gold reference (`gold/codec-contract1.json`); the C++
+  core is checked by `processing.dot_grid_codec_gold`. `gold --write`
+  regenerates the file — only in a PR labelled `gold-reference-change`, and
+  never for an existing contract's encode section (that would mean the
+  contract changed: make a new contract instead).

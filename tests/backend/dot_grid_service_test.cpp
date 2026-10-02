@@ -241,6 +241,12 @@ int main() {
         const auto pb = service.decodeImage(frameAt(*b.codebook, 30000.0, 30000.0, 70.0, 6));
         MIB_EXPECT(pb.valid && pb.designId == "chip-b" && pb.designName == "Chip B",
                    "frame attributed to chip-b: '" + pb.designId + "' " + pb.reason);
+        MIB_EXPECT(pb.codecContract == 1 && pb.coreSource == "bundled" &&
+                       pb.coreVersion == MIB_DOTGRID_CORE_VERSION,
+                   "pose names the codec core that decoded it");
+        const auto codecs = service.activeCodecs();
+        MIB_EXPECT(codecs.size() == 1 && codecs[0].contract == 1 && codecs[0].line == "mseq63-delta2",
+                   "one active core: the bundled contract-1 core");
         const auto pa = service.decodeImage(frameAt(cb, 30000.0, 30000.0, 70.0, 7));
         MIB_EXPECT(pa.valid && pa.designId == "chip-a", "frame attributed to chip-a");
         MIB_REQUIRE(service.setConfig(withRegistry, &err), "same registry re-applied");

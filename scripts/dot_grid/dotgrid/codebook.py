@@ -13,6 +13,12 @@ WINDOW_SYMBOLS = 2                 # phase differences per lookup -> 3 columns/r
 WINDOW_DOTS = WINDOW_SYMBOLS + 1   # lines needed along the coded axis
 CODEBOOK_VERSION = 1
 
+# Codec contract this module implements (ADR 0010): the frozen meaning of the
+# pattern. Mirrors backend::dotgrid::kCodecContract1 / codecLineName(1).
+CODEC_CONTRACT = 1
+CODEC_LINES = {1: "mseq63-delta2"}
+SUPPORTED_CODEC_CONTRACTS = (1,)
+
 # Direction encoding for the two bits (x_bit, y_bit) -> unit displacement in lattice units.
 DIRECTIONS = {(0, 0): (1, 0), (1, 0): (-1, 0), (0, 1): (0, 1), (1, 1): (0, -1)}
 DIRECTION_TO_BITS = {v: k for k, v in DIRECTIONS.items()}

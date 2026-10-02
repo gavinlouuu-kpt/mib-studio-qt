@@ -369,6 +369,11 @@ add_test(NAME processing.dot_grid_registry COMMAND $<TARGET_FILE:mib_backend_tes
          ${PROJECT_SOURCE_DIR}/resources/defaults/dot_grid/registry.json)
 set_tests_properties(processing.dot_grid_registry PROPERTIES LABELS "processing;backend" TIMEOUT 120)
 
+mib_add_backend_test_executable(dot_grid_codec_gold_test processing/dot_grid_codec_gold_test.cpp)
+add_test(NAME processing.dot_grid_codec_gold COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_codec_gold_test
+         ${PROJECT_SOURCE_DIR}/scripts/dot_grid/gold/codec-contract1.json)
+set_tests_properties(processing.dot_grid_codec_gold PROPERTIES LABELS "processing;backend;gold" TIMEOUT 120)
+
 mib_add_backend_test_executable(dot_grid_service_test backend/dot_grid_service_test.cpp)
 mib_backend_test_link(dot_grid_service_test PRIVATE Threads::Threads)
 add_test(NAME backend.dot_grid_service COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_service_test)

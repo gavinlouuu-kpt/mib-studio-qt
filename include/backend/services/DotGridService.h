@@ -13,6 +13,7 @@
 // knowledge_map/services/DotGridService.md.
 
 #include "backend/processing/DotGridCodebook.h"
+#include "backend/processing/DotGridCodec.h"
 #include "backend/processing/DotGridDecoder.h"
 #include "backend/processing/DotGridRegistry.h"
 
@@ -64,6 +65,10 @@ public:
         std::string chip;
         std::string designId; // registered design the frame belongs to
         std::string designName;
+        // Core that decoded (ADR 0010): codec contract, core build, source.
+        int codecContract{0};
+        std::string coreVersion;
+        std::string coreSource;
         int votes{0};
         int dots{0};
         double agreement{0.0};
@@ -94,6 +99,8 @@ public:
     bool hasCodebook() const;
     // Designs the decoder currently tries (1 in single-codebook mode, 0 before setConfig).
     std::shared_ptr<const dotgrid::Registry> activeRegistry() const;
+    // Active codec cores, one per contract (Phase 1: the bundled contract-1 core).
+    std::vector<dotgrid::CodecIdentity> activeCodecs() const;
     bool isEnabled() const { return enabled_.load(std::memory_order_acquire); }
 
     // Runtime pause on top of Config::enabled, owned by the UI: the Overview
@@ -133,7 +140,8 @@ private:
     mutable std::mutex configMutex_;
     Config config_;
     std::shared_ptr<const dotgrid::Registry> registry_; // what decoder_ was built from
-    std::shared_ptr<const dotgrid::Decoder> decoder_;
+    dotgrid::CodecSet codecs_ = dotgrid::CodecSet::bundled();
+    std::shared_ptr<const dotgrid::DesignDecoder> decoder_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};

@@ -140,6 +140,25 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(got, design_id)
                 self.assertLess(abs(r.centre_um[0] - xy[0]), 1.0)
 
+    def test_codec_contract_required_and_gated(self):
+        d = _design("a", 1).to_dict()
+        self.assertEqual(d["codec_contract"], 1)
+        del d["codec_contract"]
+        with self.assertRaises(ValueError):
+            Design.from_dict(d)
+        future = _design("future", 21, codec_contract=2)
+        self.assertFalse(future.supported)
+        with self.assertRaises(ValueError):
+            future.codebook()
+        reg = Registry([_design("alpha", 11), future])
+        self.assertEqual(reg.validate(), [])
+        self.assertTrue(any("seed 21" in e for e in Registry([future, _design("b", 21)]).validate()))
+        # A frame of the contract-2 design is never decoded by this (contract-1) tool.
+        frame = render_view(_design("x", 21).codebook(), ViewPose(centre_um=(9000.0, 9000.0), um_per_px=0.293), seed=1)
+        r, got = decode_registry(reg, frame, 0.31)
+        self.assertFalse(r.ok)
+        self.assertIsNone(got)
+
     def test_unregistered_design_never_decodes(self):
         reg = Registry([_design("alpha", 11), _design("beta", 12)])
         stranger = _design("stranger", 777).codebook()
@@ -149,6 +168,32 @@ class RegistryTests(unittest.TestCase):
             r, got = decode_registry(reg, render_view(stranger, pose, seed=k), 0.31)
             self.assertFalse(r.ok)
             self.assertIsNone(got)
+
+
+@unittest.skipIf(np is None, "numpy/opencv not installed")
+class CodecGoldTests(unittest.TestCase):
+    """The Python reference core reproduces its contract's frozen gold reference (ADR 0010)."""
+
+    def test_reference_core_meets_gold(self):
+        import json
+        from dotgrid import CODEC_CONTRACT, gold
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gold", f"codec-contract{CODEC_CONTRACT}.json")
+        with open(path, encoding="utf-8") as f:
+            ref = json.load(f)
+        self.assertEqual(ref["codec_contract"], CODEC_CONTRACT)
+        problems = gold.check_encode(ref, lambda s, c, r: generate_codebook(s, c, r, pitch_um=30.0, dot_diameter_um=12.0,
+                                                                            displacement_um=5.0))
+        problems += gold.check_reference_decode(ref)
+        self.assertEqual(problems, [])
+
+    def test_gold_document_is_reproducible(self):
+        # The committed file is exactly what the reference core computes; a
+        # change to either is a gold-reference-change, never silent.
+        import json
+        from dotgrid import CODEC_CONTRACT, gold
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gold", f"codec-contract{CODEC_CONTRACT}.json")
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), json.loads(json.dumps(gold.build_reference())))
 
 
 def _mini_dxf(path):
@@ -191,6 +236,10 @@ class RegisterCliTests(unittest.TestCase):
             self.assertEqual(mini.seed, 8)  # one past wafer-sort-rt's seed 7
             self.assertEqual(len(mini.chips), 4)
             self.assertEqual(len(mini.source["sha256"]), 64)
+            self.assertEqual(mini.codec_contract, 1)
+            import dotgrid
+            self.assertEqual(mini.encoder["core_version"], dotgrid.__version__)
+            self.assertEqual((mini.encoder["contract"], mini.encoder["line"]), (1, "mseq63-delta2"))
             self.assertTrue(os.path.exists(os.path.join(d, "out", "codebook.json")))
             # The same DXF cannot be registered twice by accident.
             with quiet, self.assertRaises(SystemExit):

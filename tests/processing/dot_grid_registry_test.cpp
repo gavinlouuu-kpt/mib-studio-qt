@@ -6,7 +6,11 @@
 // geometry decode through their own detection pass. With a path argument it
 // also checks the bundled registry (resources/defaults/dot_grid/registry.json)
 // and that its Wafer_soRT entry regenerates the archived codebook.
+// Codec contracts (ADR 0010): codec_contract is required; a design whose
+// contract no active core serves is listed as unsupported and never decoded;
+// one core per contract; every result names the core that produced it.
 #include "backend/processing/DotGridCodebook.h"
+#include "backend/processing/DotGridCodec.h"
 #include "backend/processing/DotGridDecoder.h"
 #include "backend/processing/DotGridRegistry.h"
 #include "support/assert.h"
@@ -22,13 +26,13 @@ using namespace backend::dotgrid;
 namespace {
 
 std::string entry(const std::string& id, int seed, double pitch = 30.0, double dot = 12.0,
-                  double shift = 5.0, const std::string& extra = "") {
+                  double shift = 5.0, const std::string& extra = "", int contract = 1) {
     char buf[1024];
     std::snprintf(buf, sizeof(buf),
-                  R"({"id": "%s", "name": "Design %s", "revision": "r1", "seed": %d,
-                      "columns": 1200, "rows": 1200, "pitch_um": %g, "dot_diameter_um": %g,
-                      "displacement_um": %g, "origin_um": [0.0, 0.0]%s})",
-                  id.c_str(), id.c_str(), seed, pitch, dot, shift, extra.c_str());
+                  R"({"id": "%s", "name": "Design %s", "revision": "r1", "codec_contract": %d,
+                      "seed": %d, "columns": 1200, "rows": 1200, "pitch_um": %g,
+                      "dot_diameter_um": %g, "displacement_um": %g, "origin_um": [0.0, 0.0]%s})",
+                  id.c_str(), id.c_str(), contract, seed, pitch, dot, shift, extra.c_str());
     return buf;
 }
 
@@ -89,6 +93,10 @@ int main(int argc, char** argv) {
     rejects(doc(entry("alpha", 11, 30, 12, 5, R"(, "status": "draft")")), "status");
     rejects(doc(entry("alpha", 11, 30, 22, 5)), "dots would touch");
     rejects(doc(entry("alpha", 11), 2), "version");
+    rejects(doc(R"({"id": "alpha", "seed": 11, "columns": 1200, "rows": 1200, "pitch_um": 30,
+                    "dot_diameter_um": 12, "displacement_um": 5})"),
+            "codec_contract (a positive integer) is required");
+    rejects(doc(entry("alpha", 11, 30, 12, 5, "", 0)), "codec_contract");
     rejects("{\"version\": 1, \"designs\": [", "parse error");
     {
         Registry r;
@@ -200,6 +208,80 @@ int main(int argc, char** argv) {
                     multiMs / 4.0, s.decodeMs);
     }
 
+    // 6b. Codec contracts and cores (ADR 0010).
+    {
+        const auto bundled = bundledCodec();
+        const CodecIdentity& id = bundled->identity();
+        MIB_EXPECT(id.contract == 1 && id.line == "mseq63-delta2" && id.source == "bundled" &&
+                       id.coreVersion == MIB_DOTGRID_CORE_VERSION && !id.runtimeFingerprint.empty(),
+                   "bundled core identity: " + id.buildId);
+        MIB_EXPECT(codecLineName(1) == "mseq63-delta2" && codecLineName(99).empty(), "line names");
+        CodecSet set = CodecSet::bundled();
+        MIB_EXPECT(!set.add(bundledCodec(), &err) && err.find("already active") != std::string::npos,
+                   "one core per contract: " + err);
+        MIB_EXPECT(set.find(1) != nullptr && set.find(2) == nullptr, "find by contract");
+
+        // A design of a contract without a core: listed, never decoded, still unique.
+        Registry mixed;
+        MIB_REQUIRE(Registry::parse(doc(entry("alpha", 11, 30, 12, 5, chips) + "," +
+                                        entry("future", 21, 30, 12, 5, "", 2)),
+                                    mixed, &err),
+                    "registry with a contract-2 design parses: " + err);
+        MIB_EXPECT(mixed.size() == 1 && mixed.find("future") == nullptr, "contract-2 design not decodable");
+        MIB_REQUIRE(mixed.unsupported().size() == 1, "contract-2 design listed as unsupported");
+        MIB_EXPECT(mixed.unsupported()[0].id == "future" && mixed.unsupported()[0].codecContract == 2 &&
+                       mixed.unsupported()[0].seed == 21,
+                   "unsupported entry keeps id, contract, seed");
+        rejects(doc(entry("alpha", 11) + "," + entry("future", 11, 30, 12, 5, "", 2)),
+                "seed 11 used by both");
+        MIB_EXPECT(mixed.fingerprint().find("future:c2:21") != std::string::npos,
+                   "fingerprint covers unsupported designs");
+        {
+            Registry merged;
+            merged.merge(mixed);
+            merged.merge(mixed); // identical again: no duplicates, no warnings
+            MIB_EXPECT(merged.size() == 1 && merged.unsupported().size() == 1, "merge keeps unsupported once");
+        }
+
+        // DesignDecoder stamps the core identity; a contract-2 frame never decodes.
+        DesignDecoder dd(CodecSet::bundled(), std::make_shared<const Registry>(mixed));
+        ViewPose pose;
+        pose.centreXUm = 10000.0;
+        pose.centreYUm = 9000.0;
+        pose.mirrored = true;
+        const DecodeResult r = dd.decode(renderView(*mixed.find("alpha")->codebook, pose, RenderOptions{}), cfg);
+        MIB_EXPECT(r.ok && r.designId == "alpha" && r.codecContract == 1 &&
+                       r.coreVersion == MIB_DOTGRID_CORE_VERSION && r.coreSource == "bundled",
+                   "result names its core: contract " + std::to_string(r.codecContract) + " " +
+                       r.coreVersion + " " + r.coreSource + " " + r.reason);
+        CodebookParams futureParams;
+        futureParams.seed = 21;
+        futureParams.columns = 1200;
+        futureParams.rows = 1200;
+        const Codebook futurePattern = Codebook::generate(futureParams);
+        const DecodeResult f = dd.decode(renderView(futurePattern, pose, RenderOptions{}), cfg);
+        MIB_EXPECT(!f.ok && f.designId.empty(), "frame of the unsupported design does not decode: " + f.reason);
+
+        Registry onlyFuture;
+        MIB_REQUIRE(Registry::parse(doc(entry("future", 21, 30, 12, 5, "", 2)), onlyFuture, &err), err);
+        const DecodeResult none = DesignDecoder(CodecSet::bundled(), std::make_shared<const Registry>(onlyFuture))
+                                      .decode(renderView(futurePattern, pose, RenderOptions{}), cfg);
+        MIB_EXPECT(!none.ok && none.reason.find("no active core") != std::string::npos,
+                   "only unsupported designs: names the missing core: " + none.reason);
+
+        // The contract-1 algorithm refuses a hand-built design that claims another contract.
+        Registry forged;
+        Design fake;
+        fake.id = "forged";
+        fake.codecContract = 2;
+        fake.codebook = std::make_shared<const Codebook>(futurePattern);
+        MIB_REQUIRE(forged.add(fake, &err), err);
+        const DecodeResult g = Decoder(std::make_shared<const Registry>(forged))
+                                   .decode(renderView(futurePattern, pose, RenderOptions{}), cfg);
+        MIB_EXPECT(!g.ok && g.reason == "no design of codec contract 1",
+                   "contract-1 decoder fails closed on another contract: " + g.reason);
+    }
+
     // 7. The bundled registry parses and regenerates the archived Wafer_soRT codebook.
     if (argc > 1) {
         const std::string registryPath = argv[1];
@@ -209,6 +291,8 @@ int main(int argc, char** argv) {
         MIB_REQUIRE(bundled.find("wafer-sort-rt") != nullptr, "Wafer_soRT registered");
         const auto& cb = *bundled.find("wafer-sort-rt")->codebook;
         MIB_EXPECT(cb.params().seed == 7, "Wafer_soRT keeps seed 7");
+        MIB_EXPECT(bundled.find("wafer-sort-rt")->codecContract == 1, "Wafer_soRT is codec contract 1");
+        MIB_EXPECT(bundled.unsupported().empty(), "every bundled design has a core in this build");
         const std::string dir = registryPath.substr(0, registryPath.find_last_of("/\\") + 1);
         Codebook archived;
         MIB_REQUIRE(

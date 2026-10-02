@@ -37,6 +37,7 @@ What becomes easier/harder; what future agents must respect.
 | [0007](0007-one-contract-per-shipped-core.md) | A shipped processing core implements exactly one contract | proposed |
 | [0008](0008-dot-grid-localization.md) | Dot-grid wafer localization as a Qt-free decoder plus a polling service | accepted |
 | [0009](0009-dot-grid-design-registry.md) | Dot-grid design registry: the seed is the design identity | accepted |
+| [0010](0010-dot-grid-codec-cores.md) | Dot-grid encoder and decoder as versioned, swappable codec cores | accepted |
 
 Decisions made before this index existed live implicitly in
 [`../architecture/`](../architecture/) and the vault

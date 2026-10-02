@@ -12,7 +12,10 @@ namespace backend::services {
 namespace {
 
 bool useRegistry(const DotGridService::Config& c) {
-    return c.codebookPath.empty() && c.registry && !c.registry->empty();
+    // A registry of only unsupported designs still wins over the inline params:
+    // the pose then says no core serves them instead of decoding something else.
+    return c.codebookPath.empty() && c.registry &&
+           (!c.registry->empty() || !c.registry->unsupported().empty());
 }
 
 bool sameCodebookSource(const DotGridService::Config& a, const DotGridService::Config& b) {
@@ -74,18 +77,26 @@ bool DotGridService::setConfig(const Config& config, std::string* errorOut) {
         }
         for (const auto& d : registry->designs()) {
             const auto& p = d.codebook->params();
-            SPDLOG_INFO("DotGridService: design '{}' ready (seed={}, {}x{} nodes, pitch={}um, "
-                        "dot={}um, shift={}um, chips={})",
-                        d.id.empty() ? d.codebook->designName() : d.id, p.seed, p.columns, p.rows,
-                        p.pitchUm, p.dotDiameterUm, p.displacementUm, d.codebook->chips().size());
+            SPDLOG_INFO("DotGridService: design '{}' ready (codec contract {}, seed={}, {}x{} nodes, "
+                        "pitch={}um, dot={}um, shift={}um, chips={})",
+                        d.id.empty() ? d.codebook->designName() : d.id, d.codecContract, p.seed,
+                        p.columns, p.rows, p.pitchUm, p.dotDiameterUm, p.displacementUm,
+                        d.codebook->chips().size());
         }
+        for (const auto& u : registry->unsupported())
+            SPDLOG_WARN("DotGridService: design '{}' needs codec contract {} and no active core serves "
+                        "it; frames of this design will not decode (install its codec core)",
+                        u.id, u.codecContract);
+        for (const auto& c : codecs_.identities())
+            SPDLOG_INFO("DotGridService: codec core {} (contract {} '{}', {})", c.coreVersion,
+                        c.contract, c.line, c.source);
     }
     {
         std::lock_guard<std::mutex> lock(configMutex_);
         config_ = config;
         if (registry_ != registry) {
             registry_ = registry;
-            decoder_ = std::make_shared<const dotgrid::Decoder>(registry_);
+            decoder_ = std::make_shared<const dotgrid::DesignDecoder>(codecs_, registry_);
         }
         enabled_.store(config.enabled, std::memory_order_release);
     }
@@ -101,6 +112,11 @@ DotGridService::Config DotGridService::getConfig() const {
 bool DotGridService::hasCodebook() const {
     std::lock_guard<std::mutex> lock(configMutex_);
     return registry_ && !registry_->empty();
+}
+
+std::vector<dotgrid::CodecIdentity> DotGridService::activeCodecs() const {
+    std::lock_guard<std::mutex> lock(configMutex_);
+    return codecs_.identities();
 }
 
 std::shared_ptr<const dotgrid::Registry> DotGridService::activeRegistry() const {
@@ -170,7 +186,7 @@ bool DotGridService::frameToGray(const playback::Frame& frame, cv::Mat& out) {
 
 DotGridService::Pose DotGridService::decodeImage(const cv::Mat& gray, uint64_t frameIndex,
                                                  uint64_t timestampNs) const {
-    std::shared_ptr<const dotgrid::Decoder> decoder;
+    std::shared_ptr<const dotgrid::DesignDecoder> decoder;
     dotgrid::DecoderConfig dc;
     {
         std::lock_guard<std::mutex> lock(configMutex_);
@@ -199,6 +215,9 @@ DotGridService::Pose DotGridService::decodeImage(const cv::Mat& gray, uint64_t f
     pose.chip = r.chip;
     pose.designId = r.designId;
     pose.designName = r.designName;
+    pose.codecContract = r.codecContract;
+    pose.coreVersion = r.coreVersion;
+    pose.coreSource = r.coreSource;
     pose.votes = r.votes;
     pose.dots = r.dots;
     pose.agreement = r.agreement;

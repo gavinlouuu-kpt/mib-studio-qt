@@ -500,9 +500,22 @@ DecodeResult Decoder::decode(const cv::Mat& gray, const DecoderConfig& config) c
     const auto& designs = registry_->designs();
     failure.designsTried = static_cast<int>(designs.size());
 
+    // This is the contract-1 algorithm: a design made under another codec
+    // contract is never decoded here (ADR 0010, fail closed).
+    std::vector<bool> done(designs.size(), false);
+    size_t servable = 0;
+    for (size_t k = 0; k < designs.size(); ++k) {
+        if (designs[k].codecContract != kCodecContract1)
+            done[k] = true;
+        else
+            ++servable;
+    }
+    if (servable == 0) {
+        failure.reason = "no design of codec contract 1";
+        return finish(failure);
+    }
     // Designs sharing dot diameter and displacement/pitch ratio share the dot
     // detection and lattice fit; usually every design is in one group.
-    std::vector<bool> done(designs.size(), false);
     std::vector<DecodeResult> hits;
     int failStage = -1;
     auto noteFailure = [&](const DecodeResult& r, int stage) {

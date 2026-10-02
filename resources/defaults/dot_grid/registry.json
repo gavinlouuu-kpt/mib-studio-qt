@@ -6,6 +6,7 @@
    "name": "Wafer_soRT DC sorting chip (30 um channels)",
    "revision": "2025-03-16",
    "status": "active",
+   "codec_contract": 1,
    "seed": 7,
    "columns": 3501,
    "rows": 3501,
@@ -26,6 +27,13 @@
    "source": {
     "file": "Wafer_soRT.dxf",
     "sha256": null
+   },
+   "encoder": {
+    "core_version": "1.0.0",
+    "contract": 1,
+    "line": "mseq63-delta2",
+    "source": "python-reference",
+    "note": "back-filled 2026-10-02: registered before codec provenance existed; contract 1 is the only scheme it can use"
    },
    "author": "",
    "registered": "2026-09-17",

@@ -63,6 +63,19 @@ and merges the local file; clashes are logged and skipped.
 started. The [[../frontend/OverviewTab]]'s **Wafer Grid** button toggles
 `enabled`; the Experiment tab has no toggle and never decodes.
 
+## Codec cores (ADR 0010)
+
+The service decodes through `dotgrid::DesignDecoder` built from
+`codecs_` (`CodecSet::bundled()`: the contract-1 core `mseq63-delta2`,
+version `MIB_DOTGRID_CORE_VERSION` from `scripts/dot_grid/dotgrid/VERSION`)
+and the active registry. Each design goes only to the core of its
+`codecContract`; designs whose contract has no core are logged at
+`setConfig()` as unsupported and never decoded. Every `Pose` carries
+`codecContract`, `coreVersion`, `coreSource`; `activeCodecs()` lists the
+cores. `codecs_` is fixed at construction in phase 1 (plugin cores come with
+the loader, exec plan `2026-10-02-dot-grid-codec-cores`). Gold:
+`processing.dot_grid_codec_gold`.
+
 ## Pause (Overview only)
 
 `setPaused(bool)` / `isPaused()` is a runtime gate on top of `enabled`,
@@ -83,7 +96,9 @@ loop decodes the newest frame immediately instead of after `interval_ms`
   archived Wafer_soRT codebook), `backend.dot_grid_service` (lifecycle,
   sampling under a producer burst, disable/enable, bad config, registry mode
   and source precedence, stop idempotence, watchdog),
-  `scripts.dot_grid_reference` (incl. `register` end to end).
+  `scripts.dot_grid_reference` (incl. `register` end to end and the Python
+  codec gold), `processing.dot_grid_codec_gold` (C++ core vs
+  `scripts/dot_grid/gold/codec-contract1.json`).
 - Registry: `python3 scripts/dot_grid/dotgrid_cli.py list | check --cross-check`.
 - Mock camera: `python3 scripts/dot_grid/dotgrid_cli.py mockdir …` then
   `MIB_CAMERA_MODE=mock` (see the how-to).
@@ -93,6 +108,8 @@ loop decodes the newest frame immediately instead of after `interval_ms`
 - The decoder reports **mask** coordinates; the Wafer_soRT design is 1.5 %
   pre-enlarged. `umPerPx` is measured from the image, the hint only sizes
   the blob detector.
+- A design's codec contract is permanent (its mask is): never edit a
+  contract's encode gold; a new encoding is a new contract + core + gold file.
 - A design's seed is its identity: never change or reuse a registered
   seed or geometry; a changed layout is a new id. Two designs decoding the
   same frame is reported as `ambiguous design (...)`, never as a pose.

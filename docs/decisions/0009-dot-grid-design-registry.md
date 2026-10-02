@@ -32,9 +32,11 @@ Options considered:
 - A **registry** (`resources/defaults/dot_grid/registry.json`, schema
   version 1) lists every design: `id` (slug), `name`, `revision`, `status`
   (`active` | `retired`), `seed`, lattice size, pitch/dot/shift, origin, chip
-  table, keep-outs and the source DXF's sha256. It stores parameters, not
-  the codebook arrays; both implementations regenerate the codebook from the
-  seed, exactly as the golden tests already require.
+  table, keep-outs and the source DXF's sha256, plus the required
+  `codec_contract` and the `encoder` core that made the mask
+  ([ADR 0010](0010-dot-grid-codec-cores.md)). It stores parameters, not
+  the codebook arrays; the core of the design's contract regenerates the
+  codebook from the seed, exactly as the gold references require.
 - **Seeds are unique and never reused** (new design = highest seed + 1;
   retired designs keep theirs because their wafers still exist). Ids are
   unique. Both loaders reject a registry that breaks this.

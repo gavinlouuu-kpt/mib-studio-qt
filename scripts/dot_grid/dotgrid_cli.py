@@ -7,6 +7,7 @@ Design registry (one entry per chip design; the app decodes against all of them)
   python3 dotgrid_cli.py mask      my-chip design.dxf --out-dir out/                         # regenerate its mask
   python3 dotgrid_cli.py list                                                                # registered designs
   python3 dotgrid_cli.py check     [--cross-check]                                           # validate the registry
+  python3 dotgrid_cli.py gold      [--write]                    # check this core against the codec gold reference
 
 Pattern tools (CODEBOOK = a codebook.json path or a registered design id):
 
@@ -29,7 +30,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from dotgrid import Codebook, render_view  # noqa: E402
+from dotgrid import CODEC_CONTRACT, Codebook, core_identity, render_view  # noqa: E402
 from dotgrid.registry import Design, Registry, cross_check, decode_registry, sha256_file, today  # noqa: E402
 from dotgrid.render import ViewPose  # noqa: E402
 
@@ -106,6 +107,7 @@ def cmd_register(a):
                                         design_scale=a.design_scale, progress=_log)
     design = Design.from_codebook(
         cb, a.id, a.name or a.id, revision=a.revision or today(), status="active",
+        codec_contract=CODEC_CONTRACT, encoder=core_identity(),
         keepout={"channel_um": ko.channel_um, "dicing_um": ko.dicing_um, "wafer_edge_um": ko.wafer_edge_um,
                  "existing_marks_um": ko.existing_marks_um},
         source={"file": os.path.basename(a.dxf), "sha256": digest}, author=a.author,
@@ -133,6 +135,9 @@ def cmd_mask(a):
     design = reg.find(a.id)
     if design is None:
         sys.exit(f"error: design '{a.id}' is not registered in {a.registry}")
+    if not design.supported:
+        sys.exit(f"error: '{a.id}' was made with codec contract {design.codec_contract}; this generator "
+                 f"implements contract {CODEC_CONTRACT}. Use the codec core of that contract.")
     digest = sha256_file(a.dxf)
     expected = design.source.get("sha256")
     if expected and expected != digest and not a.force:
@@ -153,17 +158,22 @@ def cmd_list(a):
     reg = _load_registry(a.registry)
     if a.json:
         print(json.dumps([{"id": x.id, "name": x.name, "revision": x.revision, "status": x.status,
+                           "codec_contract": x.codec_contract, "supported": x.supported,
                            "seed": x.seed, "pitch_um": x.pitch_um, "chips": len(x.chips)} for x in reg.designs], indent=1))
         return
-    print(f"{'id':<28} {'seed':>5} {'rev':<11} {'status':<8} {'pitch':>6} {'chips':>5}  name")
+    print(f"{'id':<28} {'seed':>5} {'codec':>5} {'rev':<11} {'status':<8} {'pitch':>6} {'chips':>5}  name")
     for x in sorted(reg.designs, key=lambda d: d.seed):
-        print(f"{x.id:<28} {x.seed:>5} {x.revision:<11} {x.status:<8} {x.pitch_um:>6g} {len(x.chips):>5}  {x.name}")
+        codec = str(x.codec_contract) + ("" if x.supported else "!")
+        print(f"{x.id:<28} {x.seed:>5} {codec:>5} {x.revision:<11} {x.status:<8} {x.pitch_um:>6g} {len(x.chips):>5}  {x.name}")
 
 
 def cmd_check(a):
     reg = Registry.load(a.registry)  # raises on duplicate ids/seeds or bad geometry
     for x in reg.designs:
-        reg.codebook(x.id)  # generation itself checks delta-window uniqueness
+        if x.supported:
+            reg.codebook(x.id)  # generation itself checks delta-window uniqueness
+        else:
+            _log(f"note: '{x.id}' uses codec contract {x.codec_contract}, not implemented by this tool")
     _log(f"{a.registry}: {len(reg.designs)} design(s), ids and seeds unique, codebooks regenerate")
     if a.cross_check:
         problems = []
@@ -172,6 +182,29 @@ def cmd_check(a):
         if problems:
             sys.exit("cross-design check failed:\n  " + "\n  ".join(problems))
         _log("cross-design check passed")
+
+
+def cmd_gold(a):
+    from dotgrid import gold
+    path = a.path or os.path.join(HERE, "gold", f"codec-contract{CODEC_CONTRACT}.json")
+    if a.write:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(gold.build_reference(), f, indent=1)
+            f.write("\n")
+        _log(f"wrote {path} - commit it only in a PR labelled gold-reference-change")
+    with open(path, encoding="utf-8") as f:
+        ref = json.load(f)
+    if ref["codec_contract"] != CODEC_CONTRACT:
+        sys.exit(f"error: {path} is contract {ref['codec_contract']}; this core implements {CODEC_CONTRACT}")
+    from dotgrid.codebook import generate_codebook
+    problems = gold.check_encode(ref, lambda s, c, r: generate_codebook(s, c, r, pitch_um=30.0,
+                                                                        dot_diameter_um=12.0, displacement_um=5.0))
+    problems += gold.check_reference_decode(ref, progress=_log if a.verbose else None)
+    if problems:
+        sys.exit("gold reference check FAILED:\n  " + "\n  ".join(problems))
+    print(f"gold reference {os.path.basename(path)}: encode exact, "
+          f"{len(ref['decode']['cases'])} decode cases met")
 
 
 # ---------------------------------------------------------------- pattern tools
@@ -277,6 +310,11 @@ def main(argv=None):
     c = sp.add_parser("check", help="validate the registry (unique ids/seeds, codebooks regenerate)")
     c.add_argument("--cross-check", action="store_true", help="also run the synthetic discrimination check")
     c.add_argument("--views", type=int, default=4); c.set_defaults(func=cmd_check)
+
+    gd = sp.add_parser("gold", help="check this core against its codec contract's frozen gold reference")
+    gd.add_argument("--path", default="", help="default: gold/codec-contract<N>.json next to this tool")
+    gd.add_argument("--write", action="store_true", help="regenerate the reference (gold-reference-change PRs only)")
+    gd.add_argument("-v", "--verbose", action="store_true"); gd.set_defaults(func=cmd_gold)
 
     g = sp.add_parser("generate", help="ad-hoc codebook + layer for an explicit seed (not registered)")
     g.add_argument("dxf"); g.add_argument("--seed", type=int, required=True); g.add_argument("--out-dir", required=True)

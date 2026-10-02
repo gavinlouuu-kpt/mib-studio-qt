@@ -12,6 +12,8 @@ design registry) and which chip (die) of that wafer the view is on.
 |---|---|
 | Codebook (pattern definition, shared with the mask generator) | `include/backend/processing/DotGridCodebook.h`, `src/backend/processing/DotGridCodebook.cpp` |
 | Decoder + synthetic renderer (Qt-free, OpenCV) | `include/backend/processing/DotGridDecoder.h`, `src/backend/processing/DotGridDecoder.cpp` |
+| Codec cores (contract, `ICodec`, bundled contract-1 core, per-contract routing) | `include/backend/processing/DotGridCodec.h`, `src/backend/processing/DotGridCodec.cpp`; version `scripts/dot_grid/dotgrid/VERSION` |
+| Codec gold reference (contract 1) | `scripts/dot_grid/gold/codec-contract1.json`, `scripts/dot_grid/dotgrid/gold.py` |
 | Design registry (Qt-free; every design, one seed each) | `include/backend/processing/DotGridRegistry.h`, `src/backend/processing/DotGridRegistry.cpp`, `scripts/dot_grid/dotgrid/registry.py` |
 | Live service (samples FrameStore, publishes poses) | `include/backend/services/DotGridService.h`, `src/backend/services/DotGridService.cpp` — [vault note](../../knowledge_map/services/DotGridService.md) |
 | Overview overlay + "Wafer Grid" toggle (Overview tab only) | `src/frontend/tabs/OverviewTab.cpp`, `src/frontend/utils/SimpleImageCanvas.cpp` |
@@ -19,7 +21,7 @@ design registry) and which chip (die) of that wafer the view is on.
 | Bundled registry (compiled into the app as `:/defaults/dot_grid_registry.json`) | `resources/defaults/dot_grid/registry.json` |
 | Archived full codebook of the Wafer_soRT design | `resources/defaults/dot_grid/wafer_soRT_2025-03-16_seed7_p30.json` |
 | Tests | `processing.dot_grid_codebook`, `processing.dot_grid_decoder`, `processing.dot_grid_registry`, `backend.dot_grid_service`, `scripts.dot_grid_reference` |
-| Decision records | [ADR 0008](../decisions/0008-dot-grid-localization.md) (pattern, decoder, service), [ADR 0009](../decisions/0009-dot-grid-design-registry.md) (design registry) |
+| Decision records | [ADR 0008](../decisions/0008-dot-grid-localization.md) (pattern, decoder, service), [ADR 0009](../decisions/0009-dot-grid-design-registry.md) (design registry), [ADR 0010](../decisions/0010-dot-grid-codec-cores.md) (codec cores) |
 
 ## Pattern
 
@@ -134,7 +136,7 @@ Every chip design that carries a grid is registered once
 ```json
 {"version": 1, "designs": [
   {"id": "wafer-sort-rt", "name": "Wafer_soRT DC sorting chip (30 um channels)",
-   "revision": "2025-03-16", "status": "active", "seed": 7,
+   "revision": "2025-03-16", "status": "active", "codec_contract": 1, "seed": 7,
    "columns": 3501, "rows": 3501, "pitch_um": 30.0, "dot_diameter_um": 12.0,
    "displacement_um": 5.0, "origin_um": [0.0, 0.0], "design_scale": 1.015,
    "keepout": {"channel_um": 50.0, "...": "..."},
@@ -164,6 +166,40 @@ Every chip design that carries a grid is registered once
   warning.
 - **Adding a design** is `dotgrid_cli.py register` + a PR; see the
   [how-to](../howto/dot-grid-mask-generation.md).
+
+## Codec cores
+
+The encoder and decoder form a versioned **codec core**, modelled on the
+processing cores ([ADR 0010](../decisions/0010-dot-grid-codec-cores.md);
+plan: [exec-plans/active/2026-10-02-dot-grid-codec-cores.md](../exec-plans/active/2026-10-02-dot-grid-codec-cores.md)).
+
+- **Codec contract** = what the dots mean (this document's *Pattern* section
+  is contract 1, line `mseq63-delta2`). Frozen forever: masks are permanent.
+  Every registry design declares `codec_contract` and records the `encoder`
+  core that made its mask.
+- **Core version** = a build of one contract's encoder + decoder
+  (`scripts/dot_grid/dotgrid/VERSION`, `MIB_DOTGRID_CORE_VERSION`). Better
+  detection or speed is a new core version, never a contract change.
+- **Routing.** `CodecSet` holds at most one active core per contract (a bench
+  can mix wafer generations); `DesignDecoder` sends each design only to the
+  core of its contract and keeps the exactly-one-design rule across contracts.
+  A design whose contract has no active core is *unsupported*: logged, never
+  decoded, still counted for id/seed uniqueness. `Decoder` (the contract-1
+  algorithm) skips other contracts itself.
+- **Identity.** Every `DecodeResult` / `Pose` carries `codecContract`,
+  `coreVersion`, `coreSource`; `DotGridService::activeCodecs()` lists the
+  active cores. Phase 1 has one: the bundled contract-1 core.
+- **Gold.** `scripts/dot_grid/gold/codec-contract1.json`: exact encode
+  references (SHA-256 of the full `phi`/`psi` arrays for five seeds including
+  a 64-bit one, heads, probe bits) and twelve decode cases judged against the
+  rendered truth (20x/10x/4x, rotations, mirror, channel band, 10 % dropouts,
+  blank and foreign-seed rejects). Met by the C++ core
+  (`processing.dot_grid_codec_gold`) and the Python reference
+  (`dotgrid_cli.py gold`, `scripts.dot_grid_reference`); changes only with the
+  `gold-reference-change` label.
+- **Next phases** (planned): a pure-C plugin ABI and signed loader shared
+  with the processing cores, the wheel as the mask generator's encoder, and a
+  catalog + release line `mib-dotgrid-<line>-v<semver>`.
 
 ## Live service and UI
 

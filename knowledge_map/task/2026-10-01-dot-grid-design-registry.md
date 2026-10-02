@@ -52,5 +52,12 @@ Verification:
   end the interval wait (the old bare `notify_all` was ignored by the
   `wait_for` predicate). Test `frontend.dot_grid_overview`.
 
+- 2026-10-02 follow-up (review): codec cores, phase 1 (ADR 0010). New
+  `DotGridCodec.{h,cpp}`; registry `codec_contract` + unsupported designs;
+  gold `scripts/dot_grid/gold/codec-contract1.json` + `dotgrid/gold.py`;
+  CTest `processing.dot_grid_codec_gold`; guard path added to
+  `gold-reference-guard.yml`. Mutation check: corrupting one psi value or
+  tightening a tolerance fails both the C++ and the Python gold checks.
+
 Follow-ups:
 - In-app "add design" dialog; persist `designId` with the pose in HDF5.

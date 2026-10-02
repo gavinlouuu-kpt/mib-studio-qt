@@ -27,6 +27,9 @@ constexpr int kMnsPeriod = 63;    // (1 << kMnsOrder) - 1
 constexpr int kWindowSymbols = 2; // phase differences per lookup
 constexpr int kWindowDots = 3;    // consecutive lines needed along the coded axis
 constexpr int kCodebookVersion = 1;
+// Codec contract this Codebook represents (ADR 0010): the frozen meaning of the
+// pattern above. A different encoding is a new contract with its own core.
+constexpr int kCodecContract1 = 1;
 
 struct Chip {
     std::string name;

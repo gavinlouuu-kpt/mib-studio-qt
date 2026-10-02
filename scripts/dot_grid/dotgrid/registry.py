@@ -13,7 +13,11 @@ Rules the registry enforces (``Registry.validate``):
 - ids are unique slugs; seeds are unique across all designs, retired ones
   included (wafers of a retired design still exist on the bench);
 - a seed is never reused: new designs get ``max(seed) + 1``;
-- geometry must be fabricable (``2 * shift + dot < pitch``).
+- geometry must be fabricable (``2 * shift + dot < pitch``);
+- every design records the codec contract its mask was made with
+  (``codec_contract``, ADR 0010) and the core that encoded it (``encoder``).
+  A design of a contract this tool does not implement is never encoded or
+  decoded here; it is reported instead (fail closed).
 
 The C++ loader (``backend::dotgrid::Registry``) reads the same file; the
 bundled copy is ``resources/defaults/dot_grid/registry.json``. See
@@ -28,7 +32,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from .codebook import Chip, Codebook, generate_codebook
+from .codebook import CODEC_CONTRACT, SUPPORTED_CODEC_CONTRACTS, Chip, Codebook, generate_codebook
 
 REGISTRY_VERSION = 1
 STATUSES = ("active", "retired")
@@ -46,6 +50,7 @@ class Design:
     dot_diameter_um: float
     displacement_um: float
     origin_um: Tuple[float, float] = (0.0, 0.0)
+    codec_contract: int = CODEC_CONTRACT
     revision: str = ""
     status: str = "active"
     design_scale: float = 1.0
@@ -55,8 +60,16 @@ class Design:
     author: str = ""
     registered: str = ""
     notes: str = ""
+    encoder: Dict[str, object] = field(default_factory=dict)  # core that generated the mask
+
+    @property
+    def supported(self) -> bool:
+        return self.codec_contract in SUPPORTED_CODEC_CONTRACTS
 
     def codebook(self) -> Codebook:
+        if not self.supported:
+            raise ValueError(f"design '{self.id}' uses codec contract {self.codec_contract}; this tool "
+                             f"implements {SUPPORTED_CODEC_CONTRACTS} (install the matching codec core)")
         return generate_codebook(self.seed, self.columns, self.rows, pitch_um=self.pitch_um,
                                  dot_diameter_um=self.dot_diameter_um,
                                  displacement_um=self.displacement_um, origin_um=tuple(self.origin_um),
@@ -65,12 +78,12 @@ class Design:
     def to_dict(self) -> dict:
         d = {
             "id": self.id, "name": self.name, "revision": self.revision, "status": self.status,
-            "seed": self.seed, "columns": self.columns, "rows": self.rows,
+            "codec_contract": self.codec_contract, "seed": self.seed, "columns": self.columns, "rows": self.rows,
             "pitch_um": self.pitch_um, "dot_diameter_um": self.dot_diameter_um,
             "displacement_um": self.displacement_um, "origin_um": list(self.origin_um),
             "design_scale": self.design_scale, "keepout": dict(self.keepout),
-            "source": dict(self.source), "author": self.author, "registered": self.registered,
-            "notes": self.notes,
+            "source": dict(self.source), "encoder": dict(self.encoder), "author": self.author,
+            "registered": self.registered, "notes": self.notes,
             "chips": [{"name": c.name, "x_min_um": c.x_min_um, "y_min_um": c.y_min_um,
                        "x_max_um": c.x_max_um, "y_max_um": c.y_max_um} for c in self.chips],
         }
@@ -78,7 +91,10 @@ class Design:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Design":
+        if not isinstance(d.get("codec_contract"), int) or d["codec_contract"] < 1:
+            raise ValueError(f"design '{d.get('id')}': codec_contract (a positive integer) is required")
         return cls(id=d["id"], name=d.get("name", d["id"]), seed=int(d["seed"]),
+                   codec_contract=d["codec_contract"], encoder=dict(d.get("encoder", {})),
                    columns=int(d["columns"]), rows=int(d["rows"]), pitch_um=float(d["pitch_um"]),
                    dot_diameter_um=float(d["dot_diameter_um"]),
                    displacement_um=float(d["displacement_um"]),
@@ -166,6 +182,8 @@ class Registry:
             seeds[x.seed] = x.id
             if x.seed < 0:
                 errors.append(f"'{x.id}': seed must be non-negative")
+            if not isinstance(x.codec_contract, int) or x.codec_contract < 1:
+                errors.append(f"'{x.id}': codec_contract must be a positive integer")
             if x.status not in STATUSES:
                 errors.append(f"'{x.id}': status must be one of {STATUSES}")
             if x.columns < 3 or x.rows < 3:
@@ -198,6 +216,8 @@ def decode_registry(registry: Registry, image, um_per_px_hint: float, *, min_vot
     hits = []
     best_fail = None
     for x in registry.designs:
+        if not x.supported:
+            continue  # fail closed: never decoded by a core of another contract
         r = decode_image(registry.codebook(x.id), image, um_per_px_hint, min_votes=min_votes)
         if r.ok:
             hits.append((r, x.id))
@@ -238,6 +258,10 @@ def cross_check(registry: Registry, design_id: str, *, views: int = 6, seed: int
                         mirrored=bool(rng.integers(2)))
 
     for d in registry.designs:
+        if not d.supported:
+            if progress:
+                progress(f"cross-check: {d.id} skipped (codec contract {d.codec_contract} not implemented here)")
+            continue
         for k in range(views):
             pose = random_pose(d)
             img = render_view(registry.codebook(d.id), pose, seed=int(rng.integers(1 << 30)))
