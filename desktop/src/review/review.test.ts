@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { gridGeometry, imageBand, pagesFor, PageCache, scrollToReveal, THUMB_PAGE, THUMB_SIZE, tileRgba, visibleRange } from "./thumbnails";
 import { FRAME_PACKET } from "../bridgeContract";
 import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
-import type { ReviewRow } from "./reviewBridge";
+import type { ReviewInfo, ReviewRow } from "./reviewBridge";
+import { initialTab } from "./ReviewPanel";
 
 describe("thumbnail grid geometry", () => {
   it("fits whole columns and rounds rows up", () => {
@@ -115,5 +116,21 @@ describe("metrics columns", () => {
     expect(pageOffsetFor(0, 100)).toBe(0);
     expect(pageOffsetFor(250, 100)).toBe(200);
     expect(pageOffsetFor(-3, 100)).toBe(0);
+  });
+});
+
+describe("initial review tab", () => {
+  const info = (valid: number, invalid: number, recording = false) =>
+    ({
+      recording_file: recording,
+      valid_images: { count: String(valid) },
+      invalid_images: { count: String(invalid) },
+      recorded_images: { count: String(recording ? valid : 0) },
+    }) as unknown as ReviewInfo;
+  it("opens on the invalid set only when there are no valid frames", () => {
+    expect(initialTab(info(10, 4))).toBe("valid");
+    expect(initialTab(info(0, 200))).toBe("invalid");
+    expect(initialTab(info(0, 0))).toBe("valid");
+    expect(initialTab(info(5, 0, true))).toBe("valid");
   });
 });

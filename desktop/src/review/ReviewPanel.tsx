@@ -20,17 +20,21 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FramePacket } from "../framePacket";
 import type { FramePullScheduler } from "../framePullScheduler";
+import { REVIEW_OPERATION_KINDS } from "../bridgeContract";
 import { ChartsView } from "./charts/ChartsView";
+import { gatherChartInputs, renderChartPngs, stageCharts, type ChartViewState } from "./charts/chartExport";
+import { JobDialog, SeriesPrompt } from "./exports/ExportDialogs";
+import { defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, type SeriesChoice } from "./exports/exportHelpers";
+import { useReviewJobs, type TrackedJob } from "./exports/useReviewJobs";
+import { RegenerateMasksDialog, type RegenerateRequest } from "./RegenerateMasks";
 import { FrameViewer } from "./FrameViewer";
 import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
 import {
   OVERLAY,
-  REGENERATE_SOURCE,
   REVIEW_DATASET,
   packetToImageData,
   reviewBridge,
   type OverlayMode,
-  type ReviewCmdResult,
   type ReviewInfo,
   type ReviewRow,
   type ReviewRows,
@@ -42,9 +46,6 @@ export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
 export const METRICS_PAGE_SIZE = 100;
 const COLUMNS_KEY = "yofo.review.columns";
 
-// Jobs run in the backend as tracked operations (one at a time); the host's
-// event drain logs their outcome. Dialogs with series ranges, progress and
-// cancel arrive with the plan's PR 4.
 const H5_MULTI = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
 
 const OVERLAY_LABELS: { mode: OverlayMode; label: string }[] = [
@@ -71,6 +72,9 @@ export interface ReviewPanelProps {
   onFileChange?: (path: string) => void;
   /** Fresh info after an open or close (workflow facts, status bar). */
   onInfo?: (info: ReviewInfo | null) => void;
+  /** px→µm used when a file records none (TD-17): YOFO Review's
+   * preference, MIB Studio's processing factor. Applied on change. */
+  fallbackPixelToMicron?: number;
 }
 
 export interface ReviewPanelHandle {
@@ -100,7 +104,15 @@ function loadColumns(): string[] {
 }
 
 export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(function ReviewPanel(props, ref) {
-  const { ready, scheduler, fitWindow, log, beforeLoad, onFileChange, onInfo } = props;
+  const { ready, scheduler, fitWindow, log, beforeLoad, onFileChange, onInfo, fallbackPixelToMicron } = props;
+  const jobs = useReviewJobs(ready, log);
+  const [seriesAsk, setSeriesAsk] = useState<{ count: number; resolve: (c: SeriesChoice | null) => void } | null>(null);
+  const [showRegenerate, setShowRegenerate] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const chartView = useRef<ChartViewState | null>(null);
+  const onChartViewChange = useCallback((v: ChartViewState) => {
+    chartView.current = v;
+  }, []);
 
   const [info, setInfo] = useState<ReviewInfo | null>(null);
   const [fileKey, setFileKey] = useState("");
@@ -231,9 +243,12 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         setFileKey(`${path}#${Date.now()}`);
         onInfo?.(fresh);
         log(`opened ${path}${fresh.accounting_summary}`);
-        setReviewTab("valid");
-        await loadRows(true, 0);
-        setSelected(0);
+        // Start on the valid set, or the invalid one when there are no valid
+        // frames (a regenerated file can have none).
+        const startTab = initialTab(fresh);
+        setReviewTab(startTab);
+        await loadRows(startTab !== "invalid", 0);
+        setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 ? 0 : -1);
       } catch (e) {
         log(`open error: ${e}`);
       }
@@ -259,36 +274,85 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   useImperativeHandle(ref, () => ({ openFile, openPath, closeFile }), [openFile, openPath, closeFile]);
 
+  // A new file starts from an unopened Charts view (data extent, prefs).
+  useEffect(() => {
+    chartView.current = null;
+  }, [fileKey]);
+
+  // TD-17 fallback factor: files without a recorded factor use it; the info
+  // (and scatter µm²) follow a change.
+  useEffect(() => {
+    if (!ready || !(fallbackPixelToMicron !== undefined && Number.isFinite(fallbackPixelToMicron) && fallbackPixelToMicron > 0)) return;
+    void reviewBridge
+      .setPixelToMicron(fallbackPixelToMicron)
+      .then(() => refreshInfo())
+      .catch((e) => log(`px→µm fallback error: ${e}`));
+  }, [ready, fallbackPixelToMicron, refreshInfo, log]);
+
   // ---- jobs -----------------------------------------------------------------
-  const report = useCallback(
-    (what: string, r: ReviewCmdResult) => log(r.ok ? `${what} started (operation ${r.operation_id})` : `${what} refused: ${r.message}`),
-    [log],
+  // One job at a time (the backend refuses a second); each runs behind the
+  // progress dialog with Cancel; successful output directories are
+  // remembered (Qt QSettings → localStorage).
+  const isExperiment = reviewing && !isRecording;
+  const imagesPerRecord = info?.has_series ? Number(info.series_count) : info?.multi_image_enabled ? Number(info.multi_image_count) : 0;
+  const hasSeries = !!info?.has_series || imagesPerRecord > 1;
+
+  const askSeries = useCallback(
+    (count: number) => new Promise<SeriesChoice | null>((resolve) => setSeriesAsk({ count, resolve })),
+    [],
   );
-  const baseName = (p: string) => p.replace(/\\/g, "/").split("/").pop()?.replace(/\.(h5|hdf5)$/i, "") ?? "export";
+
+  const remember = (job: TrackedJob | null, dir: string) => {
+    if (job?.phase === "completed") rememberExportDir(dir);
+  };
+
+  // Chart snapshots over the whole run with the Charts view's toggles and
+  // contours (defaults when never opened); staged for the next Export All /
+  // Export Charts.
+  const stageChartSnapshots = useCallback(async () => {
+    if (!info) return;
+    await stageCharts(await renderChartPngs(await gatherChartInputs(info, chartView.current)));
+  }, [info]);
 
   const onExportMetrics = useCallback(async () => {
+    if (!info) return;
     try {
-      const picked = await save({
-        title: "Export Metrics to CSV",
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-        defaultPath: `${baseName(info?.file_path ?? "")}_metrics.csv`,
-      });
+      const dir = exportDir(info.file_path);
+      const name = defaultMetricsName(info.file_path, dir ? await reviewBridge.listDir(dir) : []);
+      const picked = await save({ title: "Export Metrics to CSV", filters: [{ name: "CSV", extensions: ["csv"] }], defaultPath: joinPath(dir, name) });
       if (!picked) return;
-      report("Metrics export", await reviewBridge.exportMetrics(picked));
+      remember(await jobs.start("Export Metrics", REVIEW_OPERATION_KINDS.ExportMetrics, () => reviewBridge.exportMetrics(picked)), dirName(picked));
     } catch (e) {
       log(`export error: ${e}`);
     }
-  }, [info, log, report]);
+  }, [info, jobs, log]);
 
   const onExportAll = useCallback(async () => {
+    if (!info) return;
     try {
-      const root = await open({ title: "Export All — choose the output root", directory: true, multiple: false });
+      const choice = hasSeries ? await askSeries(imagesPerRecord) : ({ kind: "all" } as SeriesChoice);
+      if (!choice) return;
+      const root = await open({ title: "Export All — choose the output root", directory: true, multiple: false, defaultPath: exportDir(info.file_path) || undefined });
       if (typeof root !== "string") return;
-      report("Export All", await reviewBridge.exportAll(root));
+      // Recording files: images only, no charts.
+      const prepare = { label: "Rendering charts…", work: isExperiment ? stageChartSnapshots : () => stageCharts([]) };
+      remember(await jobs.start("Export All", REVIEW_OPERATION_KINDS.ExportAll, () => reviewBridge.exportAll(root, seriesRangeFor(choice)), prepare), root);
     } catch (e) {
       log(`export error: ${e}`);
     }
-  }, [log, report]);
+  }, [askSeries, hasSeries, imagesPerRecord, info, isExperiment, jobs, log, stageChartSnapshots]);
+
+  const onExportCharts = useCallback(async () => {
+    if (!info) return;
+    try {
+      const dir = await open({ title: "Select Directory to Export Charts", directory: true, multiple: false, defaultPath: exportDir(info.file_path) || undefined });
+      if (typeof dir !== "string") return;
+      const prepare = { label: "Rendering charts…", work: stageChartSnapshots };
+      remember(await jobs.start("Export Charts", REVIEW_OPERATION_KINDS.ExportCharts, () => reviewBridge.exportCharts(dir), prepare), dir);
+    } catch (e) {
+      log(`chart export error: ${e}`);
+    }
+  }, [info, jobs, log, stageChartSnapshots]);
 
   const onBatch = useCallback(
     async (metricsOnly: boolean) => {
@@ -296,29 +360,32 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         const picked = await open({ title: metricsOnly ? "Batch Metrics — choose files" : "Batch Export All — choose files", filters: H5_MULTI, multiple: true });
         const sources = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
         if (sources.length === 0) return;
-        const root = await open({ title: "Choose the output root", directory: true, multiple: false });
+        // One series choice for every multi-image record of every file.
+        const choice = metricsOnly ? ({ kind: "all" } as SeriesChoice) : await askSeries(0);
+        if (!choice) return;
+        const root = await open({ title: "Choose the output root", directory: true, multiple: false, defaultPath: exportDir(info?.file_path ?? sources[0]) || undefined });
         if (typeof root !== "string") return;
-        report(metricsOnly ? "Batch metrics" : "Batch export", await reviewBridge.batchExport(sources, root, metricsOnly));
+        const title = metricsOnly ? "Batch Metrics" : "Batch Export All";
+        remember(await jobs.start(title, REVIEW_OPERATION_KINDS.BatchExport, () => reviewBridge.batchExport(sources, root, metricsOnly, seriesRangeFor(choice))), root);
       } catch (e) {
         log(`batch error: ${e}`);
       }
     },
-    [log, report],
+    [askSeries, info, jobs, log],
   );
 
-  const onRegenerate = useCallback(async () => {
-    try {
-      const out = await save({
-        title: "Regenerate masks — output file",
-        filters: [{ name: "HDF5", extensions: ["h5"] }],
-        defaultPath: `${baseName(info?.file_path ?? "")}_remasked.h5`,
-      });
-      if (!out) return;
-      report("Regenerate masks", await reviewBridge.regenerateMasks({ source: REGENERATE_SOURCE.WholeFile, outputPath: out }));
-    } catch (e) {
-      log(`regenerate error: ${e}`);
-    }
-  }, [info, log, report]);
+  const onRegenerate = useCallback(
+    async (r: RegenerateRequest) => {
+      setShowRegenerate(false);
+      const job = await jobs.start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasks(r));
+      // The Qt tab reloads from the regenerated file.
+      if (job?.phase === "completed") {
+        rememberExportDir(dirName(r.outputPath));
+        await openPath(r.outputPath);
+      }
+    },
+    [jobs, openPath],
+  );
 
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
 
@@ -344,21 +411,37 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         <button onClick={closeFile} disabled={!reviewing} title={reviewing ? "Close the current file" : "No file loaded"}>
           Close File
         </button>
-        <button onClick={onExportMetrics} disabled={!reviewing || isRecording} title={isRecording ? "Recording files carry no metrics" : "Write the metrics CSV (recorded px→µm factor)"}>
+        <button
+          onClick={onExportMetrics}
+          disabled={!isExperiment || jobs.busy}
+          title={isRecording ? "Recording files carry no metrics" : "Write the metrics CSV (recorded px→µm factor)"}
+        >
           Export Metrics to CSV…
         </button>
-        <button onClick={onExportAll} disabled={!reviewing} title="Metrics, images and series into <root>/<file>/">
+        <button onClick={onExportAll} disabled={!reviewing || jobs.busy} title="Metrics, images, series and charts into <root>/<file>/">
           Export All…
         </button>
-        <button onClick={() => void onBatch(true)} disabled={!ready} title="Metrics CSV for several files">
-          Batch Metrics…
-        </button>
-        <button onClick={() => void onBatch(false)} disabled={!ready} title="Export All for several files">
-          Batch Export All…
-        </button>
-        <button onClick={onRegenerate} disabled={!reviewing} title="Re-run the bundled kernel on every image with the recorded config, ROI and background">
-          Regenerate masks…
-        </button>
+        <div className="more-menu">
+          <button aria-haspopup="menu" aria-expanded={showMore} onClick={() => setShowMore((v) => !v)} onBlur={() => window.setTimeout(() => setShowMore(false), 150)}>
+            More…
+          </button>
+          {showMore && (
+            <div className="menu-popup" role="menu">
+              <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(true)}>
+                Batch Metrics…
+              </button>
+              <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(false)}>
+                Batch Export All…
+              </button>
+              <button role="menuitem" disabled={!isExperiment || jobs.busy} title={isRecording ? "Recording files carry no metrics to chart" : undefined} onClick={() => void onExportCharts()}>
+                Export Charts…
+              </button>
+              <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => setShowRegenerate(true)}>
+                Regenerate masks…
+              </button>
+            </div>
+          )}
+        </div>
         <select
           value={overlay}
           disabled={!reviewing || isRecording}
@@ -427,6 +510,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             onSelect={select}
             framePane={previewPane}
             refreshInfo={refreshInfo}
+            onViewChange={onChartViewChange}
             log={log}
           />
         ) : (
@@ -512,6 +596,21 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           </div>
         )}
       </div>
+      {seriesAsk && (
+        <SeriesPrompt
+          imagesPerRecord={seriesAsk.count || undefined}
+          onChoose={(c) => {
+            seriesAsk.resolve(c);
+            setSeriesAsk(null);
+          }}
+          onCancel={() => {
+            seriesAsk.resolve(null);
+            setSeriesAsk(null);
+          }}
+        />
+      )}
+      {showRegenerate && <RegenerateMasksDialog info={info} onRun={(r) => void onRegenerate(r)} onCancel={() => setShowRegenerate(false)} />}
+      {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} />}
       {viewerOpen && reviewing && selected >= 0 && (
         <FrameViewer
           scheduler={scheduler}
@@ -536,7 +635,12 @@ function imageDims(info: ReviewInfo | null, valid: boolean): { w: number; h: num
   return { w: d.width, h: d.height };
 }
 
-function setTotalFor(info: ReviewInfo | null, valid: boolean): number {
+/** The set a freshly opened file shows first. */
+export function initialTab(info: ReviewInfo): "valid" | "invalid" {
+  return setTotalFor(info, true) === 0 && !info.recording_file && setTotalFor(info, false) > 0 ? "invalid" : "valid";
+}
+
+export function setTotalFor(info: ReviewInfo | null, valid: boolean): number {
   if (!info) return 0;
   if (valid) return Number(info.recording_file ? info.recorded_images.count : info.valid_images.count);
   return Number(info.invalid_images.count);

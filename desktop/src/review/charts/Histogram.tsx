@@ -3,10 +3,68 @@
 // ring-ratio threshold range (here the file's recorded config, not the live
 // one), y axis to ceil(1.1 × max count).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { niceTicks, ringRatioHistogram } from "./chartMath";
+import { niceTicks, ringRatioHistogram, type Histogram as HistogramData } from "./chartMath";
 
 const MARGIN = { left: 48, top: 28, right: 12, bottom: 40 };
 const BAR = "#209fdf";
+
+export function drawHistogram(g: CanvasRenderingContext2D, w: number, h: number, hist: HistogramData): void {
+  g.fillStyle = "#fff";
+  g.fillRect(0, 0, w, h);
+  const pw = w - MARGIN.left - MARGIN.right;
+  const ph = h - MARGIN.top - MARGIN.bottom;
+  const yMax = Math.max(1, Math.ceil(hist.maxCount * 1.1));
+  const sx = pw / (hist.max - hist.min);
+  const sy = ph / yMax;
+
+  g.font = "11px system-ui, sans-serif";
+  g.lineWidth = 1;
+  g.fillStyle = "#444";
+  g.textAlign = "right";
+  g.textBaseline = "middle";
+  for (const t of niceTicks({ min: 0, max: yMax }, Math.max(2, Math.floor(ph / 40))).filter(Number.isInteger)) {
+    const y = Math.round(MARGIN.top + ph - t * sy) + 0.5;
+    g.strokeStyle = "#e6e6e6";
+    g.beginPath();
+    g.moveTo(MARGIN.left, y);
+    g.lineTo(MARGIN.left + pw, y);
+    g.stroke();
+    g.fillText(String(t), MARGIN.left - 6, y);
+  }
+  g.fillStyle = BAR;
+  hist.counts.forEach((n, k) => {
+    if (n === 0) return;
+    const x = MARGIN.left + k * hist.binWidth * sx;
+    const bw = Math.min(hist.binWidth, hist.max - (hist.min + k * hist.binWidth)) * sx;
+    const bh = n * sy;
+    g.fillRect(x + 0.5, MARGIN.top + ph - bh, Math.max(1, bw - 1), bh);
+  });
+  g.strokeStyle = "#999";
+  g.strokeRect(MARGIN.left + 0.5, MARGIN.top + 0.5, pw, ph);
+  g.fillStyle = "#444";
+  g.textAlign = "center";
+  g.textBaseline = "top";
+  // Six ticks over the fixed range (Qt setTickCount(6)).
+  for (let k = 0; k <= 5; k++) {
+    const v = hist.min + ((hist.max - hist.min) * k) / 5;
+    g.fillText(v.toFixed(1), MARGIN.left + (v - hist.min) * sx, MARGIN.top + ph + 4);
+  }
+  g.fillStyle = "#222";
+  g.textBaseline = "alphabetic";
+  g.font = "bold 13px system-ui, sans-serif";
+  g.fillText("Ring Width Distribution", MARGIN.left + pw / 2, 18);
+  g.font = "12px system-ui, sans-serif";
+  g.fillText("Ring ratio", MARGIN.left + pw / 2, h - 6);
+  g.save();
+  g.translate(12, MARGIN.top + ph / 2);
+  g.rotate(-Math.PI / 2);
+  g.fillText("Frequency", 0, 0);
+  g.restore();
+  if (hist.maxCount === 0) {
+    g.fillStyle = "#888";
+    g.fillText("No ring ratios", MARGIN.left + pw / 2, MARGIN.top + ph / 2);
+  }
+}
 
 export function Histogram(props: { values: number[]; min: number; max: number }) {
   const { values, min, max } = props;
@@ -35,61 +93,7 @@ export function Histogram(props: { values: number[]; min: number; max: number })
     c.style.width = `${size.w}px`;
     c.style.height = `${size.h}px`;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = "#fff";
-    g.fillRect(0, 0, size.w, size.h);
-    const pw = size.w - MARGIN.left - MARGIN.right;
-    const ph = size.h - MARGIN.top - MARGIN.bottom;
-    const yMax = Math.max(1, Math.ceil(hist.maxCount * 1.1));
-    const sx = pw / (hist.max - hist.min);
-    const sy = ph / yMax;
-
-    g.font = "11px system-ui, sans-serif";
-    g.lineWidth = 1;
-    g.fillStyle = "#444";
-    g.textAlign = "right";
-    g.textBaseline = "middle";
-    for (const t of niceTicks({ min: 0, max: yMax }, Math.max(2, Math.floor(ph / 40))).filter(Number.isInteger)) {
-      const y = Math.round(MARGIN.top + ph - t * sy) + 0.5;
-      g.strokeStyle = "#e6e6e6";
-      g.beginPath();
-      g.moveTo(MARGIN.left, y);
-      g.lineTo(MARGIN.left + pw, y);
-      g.stroke();
-      g.fillText(String(t), MARGIN.left - 6, y);
-    }
-    g.fillStyle = BAR;
-    hist.counts.forEach((n, k) => {
-      if (n === 0) return;
-      const x = MARGIN.left + k * hist.binWidth * sx;
-      const w = Math.min(hist.binWidth, hist.max - (hist.min + k * hist.binWidth)) * sx;
-      const h = n * sy;
-      g.fillRect(x + 0.5, MARGIN.top + ph - h, Math.max(1, w - 1), h);
-    });
-    g.strokeStyle = "#999";
-    g.strokeRect(MARGIN.left + 0.5, MARGIN.top + 0.5, pw, ph);
-    g.fillStyle = "#444";
-    g.textAlign = "center";
-    g.textBaseline = "top";
-    // Six ticks over the fixed range (Qt setTickCount(6)).
-    for (let k = 0; k <= 5; k++) {
-      const v = hist.min + ((hist.max - hist.min) * k) / 5;
-      g.fillText(v.toFixed(1), MARGIN.left + (v - hist.min) * sx, MARGIN.top + ph + 4);
-    }
-    g.fillStyle = "#222";
-    g.textBaseline = "alphabetic";
-    g.font = "bold 13px system-ui, sans-serif";
-    g.fillText("Ring Width Distribution", MARGIN.left + pw / 2, 18);
-    g.font = "12px system-ui, sans-serif";
-    g.fillText("Ring ratio", MARGIN.left + pw / 2, size.h - 6);
-    g.save();
-    g.translate(12, MARGIN.top + ph / 2);
-    g.rotate(-Math.PI / 2);
-    g.fillText("Frequency", 0, 0);
-    g.restore();
-    if (hist.maxCount === 0) {
-      g.fillStyle = "#888";
-      g.fillText("No ring ratios", MARGIN.left + pw / 2, MARGIN.top + ph / 2);
-    }
+    drawHistogram(g, size.w, size.h, hist);
   }, [size, hist]);
 
   return (

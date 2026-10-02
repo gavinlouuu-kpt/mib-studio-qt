@@ -9,6 +9,8 @@ use serde::Serialize;
 use tauri::ipc::Response;
 use tauri::State;
 
+use std::sync::Mutex;
+
 use crate::frame_packet;
 use crate::wire::serialize_u64;
 use crate::AppState;
@@ -495,12 +497,74 @@ pub struct ReviewDensity {
     computed_record_json: String,
 }
 
-/// A chart snapshot rendered by the shell for Export All: `name` is the
-/// file written beside the images, `encoded` PNG/TIFF bytes.
-#[derive(serde::Deserialize, Clone, Default)]
-pub struct ChartSnapshotArg {
-    name: String,
-    encoded: Vec<u8>,
+/// Chart snapshots the shell rendered (PNG bytes), staged one per raw IPC
+/// call (`review_stage_chart`, no JSON number arrays) and consumed by the
+/// next Export All / Export Charts. Same name replaces.
+static STAGED_CHARTS: Mutex<Vec<(String, Vec<u8>)>> = Mutex::new(Vec::new());
+/// Upper bound per staged snapshot (a 1200 × 1200 PNG is well under 8 MB).
+const MAX_CHART_BYTES: usize = 32 * 1024 * 1024;
+const MAX_STAGED_CHARTS: usize = 8;
+
+/// The name rule the backend applies (`ReviewJobs::validChartName`): a bare
+/// file name ending .tif / .tiff / .png.
+pub fn valid_chart_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\', ':'])
+        && [".tiff", ".tif", ".png"].iter().any(|ext| lower.len() > ext.len() && lower.ends_with(ext))
+}
+
+fn take_staged_charts() -> Vec<review_ffi::ReviewChartSnapshot> {
+    let mut staged = STAGED_CHARTS.lock().unwrap_or_else(|e| e.into_inner());
+    std::mem::take(&mut *staged)
+        .into_iter()
+        .map(|(name, encoded)| review_ffi::ReviewChartSnapshot { name, encoded })
+        .collect()
+}
+
+/// Stage one chart snapshot: raw body = PNG bytes, header `x-chart-name`.
+/// Returns how many are staged.
+#[tauri::command]
+pub fn review_stage_chart(request: tauri::ipc::Request) -> Result<u32, String> {
+    let name = request
+        .headers()
+        .get("x-chart-name")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing x-chart-name header")?
+        .to_string();
+    if !valid_chart_name(&name) {
+        return Err(format!("invalid chart name: {name}"));
+    }
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("chart body must be raw bytes".into());
+    };
+    if bytes.is_empty() || bytes.len() > MAX_CHART_BYTES {
+        return Err(format!("chart {name}: {} bytes is out of range", bytes.len()));
+    }
+    let mut staged = STAGED_CHARTS.lock().map_err(|e| e.to_string())?;
+    staged.retain(|(n, _)| *n != name);
+    if staged.len() >= MAX_STAGED_CHARTS {
+        return Err("too many staged charts".into());
+    }
+    staged.push((name, bytes.clone()));
+    Ok(staged.len() as u32)
+}
+
+#[tauri::command]
+pub fn review_clear_charts() {
+    STAGED_CHARTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// File names in `dir` (empty when it is not a readable directory): the
+/// shell picks default export names with the backend's `_2`, `_3` rule
+/// (`HdfExportService::nextAvailableName`, mirrored in exports/naming.ts).
+#[tauri::command]
+pub fn review_list_dir(dir: String) -> Vec<String> {
+    std::fs::read_dir(&dir)
+        .map(|it| it.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default()
 }
 
 fn series_range(export_series: bool, start: &str, end: &str) -> Result<(bool, u64, u64), String> {
@@ -522,15 +586,19 @@ pub fn review_export_all(
     export_series: bool,
     series_start: String,
     series_end: String,
-    charts: Vec<ChartSnapshotArg>,
 ) -> Result<ReviewCmdResult, String> {
     let (es, s, e) = series_range(export_series, &series_start, &series_end)?;
-    let snaps: Vec<review_ffi::ReviewChartSnapshot> = charts
-        .into_iter()
-        .map(|c| review_ffi::ReviewChartSnapshot { name: c.name, encoded: c.encoded })
-        .collect();
+    let snaps = take_staged_charts();
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().review_export_all(&output_root, es, s, e, snaps).into())
+}
+
+/// Export Charts: the staged snapshots into `output_dir` (all or nothing).
+#[tauri::command]
+pub fn review_export_charts(state: State<AppState>, output_dir: String) -> Result<ReviewCmdResult, String> {
+    let snaps = take_staged_charts();
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_charts(&output_dir, snaps).into())
 }
 
 #[tauri::command]
@@ -650,6 +718,16 @@ mod tests {
     //! C++-written fixture through it in both feature configurations.
     use mib_bridge::review_ffi;
     use serial_test::serial;
+
+    #[test]
+    fn chart_names_follow_the_backend_rule() {
+        for ok in ["scatter_plot.tiff", "ring_width_histogram.tiff", "a.TIF", "chart.png"] {
+            assert!(super::valid_chart_name(ok), "{ok}");
+        }
+        for bad in ["", ".hidden.tiff", "../x.tiff", "a/b.tiff", "a\\b.tiff", "c:x.tiff", "x.csv", ".tiff"] {
+            assert!(!super::valid_chart_name(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn launch_path_picks_the_first_existing_hdf5_argument() {

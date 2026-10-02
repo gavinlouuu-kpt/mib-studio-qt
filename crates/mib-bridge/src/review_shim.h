@@ -52,6 +52,7 @@ public:
     ReviewResult review_export_metrics(rust::Str output_path);
     ReviewResult review_export_all(rust::Str output_root, bool export_series, std::uint64_t series_start,
                                    std::uint64_t series_end, rust::Vec<ReviewChartSnapshot> charts);
+    ReviewResult review_export_charts(rust::Str output_dir, rust::Vec<ReviewChartSnapshot> charts);
     ReviewResult review_batch_export(rust::Vec<rust::String> sources, rust::Str output_root, bool metrics_only,
                                      bool export_series, std::uint64_t series_start, std::uint64_t series_end);
     ReviewResult review_regenerate_masks(std::uint32_t source, rust::Str source_path, std::uint64_t start_index,

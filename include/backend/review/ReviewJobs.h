@@ -40,6 +40,7 @@ namespace backend::review
         RegenerateMasks = 3,
         ComputeCore = 4,
         Density = 5,
+        ExportCharts = 6,
     };
 
     // Contract `operation_states`.
@@ -88,6 +89,16 @@ namespace backend::review
         std::vector<ChartSnapshot> charts;
     };
 
+    // Export Charts: the shell's snapshots written as files into an existing
+    // directory (Qt: scatter_plot.tiff, ring_width_histogram.tiff). All or
+    // nothing — written under temporary names, renamed once every one
+    // encoded.
+    struct ExportChartsRequest
+    {
+        std::string outputDir;
+        std::vector<ChartSnapshot> charts;
+    };
+
     struct BatchExportRequest
     {
         std::vector<std::string> sources;
@@ -133,7 +144,9 @@ namespace backend::review
     struct DensityResult
     {
         bool ready{false};
-        std::uint64_t sessionGeneration{0};
+        // The file the levels belong to; density() returns an empty result
+        // once the session holds another file.
+        std::string sourcePath;
         std::vector<std::uint8_t> levels;
         int levelCount{8};
         double bandwidthFactor{1.0};
@@ -155,14 +168,16 @@ namespace backend::review
         std::uint64_t startExportMetrics(const std::string &outputPath, std::string *error = nullptr);
         std::uint64_t startExportAll(const ExportAllRequest &request, std::string *error = nullptr);
         std::uint64_t startBatchExport(const BatchExportRequest &request, std::string *error = nullptr);
+        std::uint64_t startExportCharts(const ExportChartsRequest &request, std::string *error = nullptr);
         std::uint64_t startRegenerateMasks(const RegenerateMasksRequest &request, std::string *error = nullptr);
         std::uint64_t startComputeCore(double coreFraction, std::string *error = nullptr);
         std::uint64_t startDensity(const DensityRequest &request, std::string *error = nullptr);
 
         bool cancel(std::uint64_t operationId);
         bool busy() const;
-        // The record the last ComputeCore / Density job produced (JSON, empty
-        // when none); the shell saves it through ReviewSession.
+        // The record the last ComputeCore / Density job produced for the file
+        // the session holds now (JSON, empty when none or computed for
+        // another file); the shell saves it through ReviewSession.
         std::string computedCoreJson() const;
         DensityResult density() const;
         // Cancels the running job and joins it. Called by the destructor.
@@ -170,6 +185,9 @@ namespace backend::review
 
         // Pure helpers, exposed for tests.
         static int levelForDensity(double density, int levels);
+        // A chart file name the export accepts: a bare file name (no
+        // directory parts) ending in .tif / .tiff / .png.
+        static bool validChartName(const std::string &name);
         static std::vector<double> densityAtPoints(const std::vector<backend::monitoring::DensityPoint> &points,
                                                    double bandwidthFactor, std::size_t gridAbove,
                                                    std::uint32_t seed);

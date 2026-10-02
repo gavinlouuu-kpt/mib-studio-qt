@@ -119,6 +119,7 @@ export const REVIEW_OPERATION_KINDS = {
   RegenerateMasks: 3,
   ComputeCore: 4,
   Density: 5,
+  ExportCharts: 6,
 } as const;
 
 export const REVIEW_REGENERATE_SOURCES = {

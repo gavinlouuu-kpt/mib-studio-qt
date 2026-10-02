@@ -1690,6 +1690,7 @@ export default function App() {
                 beforeLoad={beforeReviewLoad}
                 onFileChange={setReviewPath}
                 onInfo={onReviewInfo}
+                fallbackPixelToMicron={stats?.valid ? (stats.pixel_to_micron ?? undefined) : undefined}
               />
             )}
           </div>

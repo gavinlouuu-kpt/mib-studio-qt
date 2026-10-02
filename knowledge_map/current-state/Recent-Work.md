@@ -1,5 +1,21 @@
 # Recent Work
 
+## 2026-10-02 — YOFO Review exports, regenerate dialog, preferences (PR 4)
+
+Exports in the shared review panel now run behind a progress dialog with
+Cancel (no partial output left) and Show in folder; the toolbar has the Qt
+**More…** menu (Batch Metrics, Batch Export All, Export Charts,
+Regenerate masks). Default metrics names, the `_N` suffix rule, the
+remembered export directory and the Export All series prompt (`9-15`)
+follow the Qt tab. Chart TIFFs are rendered by the same drawing code as
+the Charts view at 1200 × 1200 and reach the new backend Export Charts job
+(all or nothing) over raw IPC. The Regenerate masks dialog covers every
+source and reopens the result; YOFO Review gained File ▸ Preferences
+(fallback px→µm). Fixed on the way: MIB Studio never drained review events
+(the panel owns the drain now), density / computed-record results could
+leak to the next file, batch metrics were named `run_metrics2.csv`.
+Note: [[../frontend/YofoReview]].
+
 ## 2026-10-01 — YOFO Review charts view (PR 3)
 
 The review panel's Charts tab now matches the Qt tab on `<canvas>`: the

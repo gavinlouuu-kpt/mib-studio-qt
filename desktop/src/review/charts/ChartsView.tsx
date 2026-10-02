@@ -8,33 +8,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ask } from "@tauri-apps/plugin-dialog";
 import { reviewBridge, type ReviewDensity, type ReviewInfo, type ReviewScatter as ScatterData } from "../reviewBridge";
 import { recordContours } from "./chartMath";
+import { contourFamilies, loadChartPrefs, loadCurves, saveChartPrefs, unsavedRecordJson } from "./chartData";
+import type { ChartViewState } from "./chartExport";
 import { Histogram } from "./Histogram";
-import { ReviewScatter, type ContourFamily, type IsoCurve, type MenuItem } from "./ReviewScatter";
+import { ReviewScatter, type IsoCurve, type MenuItem } from "./ReviewScatter";
 
-const FULL_RUN = "#2a78d6";
-const LIVE = "#eb6834";
 const POLL_MS = 300;
 const DEFAULT_CORE_FRACTION = 0.9;
-
-let curvesOnce: Promise<IsoCurve[]> | null = null;
-function loadCurves(): Promise<IsoCurve[]> {
-  curvesOnce ??= reviewBridge.isoelasticCurves().then((c) => c.curves).catch(() => {
-    curvesOnce = null; // retry on the next mount
-    return [];
-  });
-  return curvesOnce;
-}
-
-// Per-viewer chart toggles (density colours, isoelastic curves).
-const PREFS_KEY = "yofo.review.charts";
-function loadPrefs(): { density: boolean; curves: boolean } {
-  try {
-    const o = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Record<string, unknown>;
-    return { density: o.density !== false, curves: o.curves !== false };
-  } catch {
-    return { density: true, curves: true };
-  }
-}
 
 const pct = (f: number) => Math.round(f * 100);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -51,16 +31,18 @@ export interface ChartsViewProps {
   framePane: ReactNode;
   /** Re-read the file info (after a core record is saved). */
   refreshInfo: () => Promise<void>;
+  /** What the view shows (zoom, toggles, unsaved record) for chart exports. */
+  onViewChange?: (state: ChartViewState) => void;
   log: (line: string) => void;
 }
 
 export function ChartsView(props: ChartsViewProps) {
-  const { info, fileKey, selected, validTotal, onSelect, framePane, refreshInfo, log } = props;
+  const { info, fileKey, selected, validTotal, onSelect, framePane, refreshInfo, onViewChange, log } = props;
   const [scatter, setScatter] = useState<ScatterData | null>(null);
   const [density, setDensity] = useState<ReviewDensity | null>(null);
   const [curves, setCurves] = useState<IsoCurve[]>([]);
-  const [showCurves, setShowCurves] = useState(() => loadPrefs().curves);
-  const [colourByDensity, setColourByDensity] = useState(() => loadPrefs().density);
+  const [showCurves, setShowCurves] = useState(() => loadChartPrefs().curves);
+  const [colourByDensity, setColourByDensity] = useState(() => loadChartPrefs().density);
   const [computedJson, setComputedJson] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -74,13 +56,11 @@ export function ChartsView(props: ChartsViewProps) {
     };
   }, []);
 
+  useEffect(() => saveChartPrefs({ density: colourByDensity, curves: showCurves }), [colourByDensity, showCurves]);
+
   useEffect(() => {
-    try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify({ density: colourByDensity, curves: showCurves }));
-    } catch {
-      // Storage unavailable: the choice lasts for this session only.
-    }
-  }, [colourByDensity, showCurves]);
+    onViewChange?.({ colourByDensity, showCurves, computedJson });
+  }, [onViewChange, colourByDensity, showCurves, computedJson]);
 
   useEffect(() => {
     void loadCurves().then((c) => alive.current && setCurves(c));
@@ -134,19 +114,15 @@ export function ChartsView(props: ChartsViewProps) {
   }, [fileKey, log]);
 
   const stored = useMemo(() => recordContours(info.kde_analysis_json), [info.kde_analysis_json]);
-  const live = useMemo(() => recordContours(info.kde_live_json), [info.kde_live_json]);
   // A record computed this session (context menu), else the density job's
   // full-run record for files that carry none. Neither is in the file yet.
-  const computed = useMemo(() => recordContours(computedJson || (stored ? "" : (density?.computed_record_json ?? ""))), [computedJson, density, stored]);
-  const computedSource = computedJson || (stored ? "" : (density?.computed_record_json ?? ""));
+  const computedSource = unsavedRecordJson(info, computedJson, density?.computed_record_json ?? "");
+  const computed = useMemo(() => recordContours(computedSource), [computedSource]);
 
-  const contours = useMemo(() => {
-    const out: ContourFamily[] = [];
-    if (stored && !computedJson) out.push({ name: `Core ${pct(stored.coreFraction)}% (full run)`, color: FULL_RUN, dashed: false, loops: stored.loops });
-    if (computed) out.push({ name: `Core ${pct(computed.coreFraction)}% (full run, not saved)`, color: FULL_RUN, dashed: false, loops: computed.loops });
-    if (live) out.push({ name: `Core ${pct(live.coreFraction)}% (live, provisional)`, color: LIVE, dashed: true, loops: live.loops });
-    return out;
-  }, [stored, live, computed, computedJson]);
+  const contours = useMemo(
+    () => contourFamilies(info, computedJson, density?.computed_record_json ?? ""),
+    [info, computedJson, density],
+  );
 
   const saveRecord = useCallback(
     async (json: string) => {

@@ -608,7 +608,26 @@ accounting text and the same saved core record; the differences list in
       preferences); the histogram range is the file's recorded ring-ratio
       thresholds (Qt uses the live config); isoelastic curves are embedded
       in the binary (`include_str!`) instead of read from a bundle path.
-- [ ] PR 4 — exports, regenerate masks, core contour, preferences
+- [x] PR 4 — exports, regenerate masks, core contour, preferences (landed
+      2026-10-02). Export dialogs (progress, Cancel, Show in folder,
+      batch summary), series prompt, `_N` default names, remembered
+      directory, Export Charts (new backend job, kind 6, all or nothing),
+      chart snapshots over raw IPC (`review_stage_chart`), Regenerate masks
+      dialog that reopens the result, File ▸ Preferences (fallback px→µm),
+      manual section. Verified by `review.jobs` (Export Charts, batch `_2`,
+      per-file density results), bridge and vitest suites, and driving the
+      review build under Xvfb (series range export, metrics `_2`, cancel
+      at 1 600 of 22 000 images leaves nothing, Export Charts, regenerate +
+      reopen, preference persisted across launches). Export Metrics
+      byte-equality with the Qt tab is the `review.jobs` comparison against
+      a direct `HdfExportService` run (the Qt path); the tauri-driver
+      `review_exports.spec.ts` moves to PR 8. Deviations: no
+      `desktop/src-tauri/src/lib.rs` upload command — the staging commands
+      live in `review.rs`; Batch Export All writes no chart TIFFs per file
+      (the Qt tab redraws its charts for each file; follow-up); chart
+      exports use density colours only when a density result for the file
+      is ready (Charts tab opened); the progress/regenerate dialogs are
+      in-window modals rather than native ones.
 - [ ] PR 5 — macOS Conan profile, preset, bridge manifest, DMG, CI job
 - [ ] PR 6 — Windows preset, NSIS, updater plugin, R2 review channels,
       release workflow

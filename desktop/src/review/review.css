@@ -315,3 +315,133 @@
     min-width: 0;
   }
 }
+
+/* ---- Jobs and dialogs (PR 4) -------------------------------------------- */
+.more-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.job-dialog {
+  min-width: 420px;
+}
+
+.job-progress {
+  height: 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #f0f0f0;
+  overflow: hidden;
+  margin: 6px 0 8px;
+}
+
+.job-progress-bar {
+  height: 100%;
+  background: #2b6cb0;
+  transition: width 0.2s ease;
+}
+
+.job-progress-bar.indeterminate {
+  width: 30%;
+  animation: job-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes job-slide {
+  0% { margin-left: -30%; }
+  100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .job-progress-bar.indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+.job-outcome {
+  margin: 6px 0;
+  word-break: break-all;
+}
+
+.job-outcome.failed {
+  color: #b42318;
+}
+
+.job-outcome.completed {
+  color: #1a7f37;
+}
+
+.job-failures {
+  max-height: 160px;
+  overflow: auto;
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.radio-row,
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.series-range-input {
+  width: 110px;
+  padding: 3px 6px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.regenerate-dialog fieldset {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin: 0 0 8px;
+  padding: 4px 10px 6px;
+}
+
+.regenerate-dialog .row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.regenerate-dialog .row input[type="number"] {
+  width: 90px;
+  flex: none;
+}
+
+.form-error {
+  color: #b42318;
+  margin: 6px 0 0;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+button.btn.primary {
+  background: #2b6cb0;
+  border-color: #2b6cb0;
+  color: #fff;
+}
+
+button.btn.primary:hover:not(:disabled) {
+  background: #245a93;
+}
+
+/* Menu items inside the toolbar are menu rows, not toolbar buttons. */
+.toolbar .menu-popup button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 14px;
+}
+
+.toolbar .menu-popup button:hover:not(:disabled) {
+  background: #e2e8f0;
+}

@@ -50,7 +50,8 @@
     "BatchExport": 2,
     "RegenerateMasks": 3,
     "ComputeCore": 4,
-    "Density": 5
+    "Density": 5,
+    "ExportCharts": 6
   },
   "review_regenerate_sources": {
     "CurrentValid": 0,

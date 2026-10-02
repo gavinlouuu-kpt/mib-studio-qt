@@ -17,6 +17,8 @@ import {
 } from "./chartMath";
 import { doubleClickResets, DRAG_THRESHOLD_PX, GestureTracker } from "./scatterGestures";
 import { nearestPoint } from "./scatterHitTest";
+import { contourFamilies, unsavedRecordJson } from "./chartData";
+import { scatterModel, type ChartExportInputs } from "./chartExport";
 
 describe("scatter hit test (shared fixture with the Qt tab)", () => {
   const xs = hits.points.map((p) => p.x);
@@ -148,5 +150,40 @@ describe("chart gestures", () => {
     expect(doubleClickResets(false, false)).toBe(true);
     expect(doubleClickResets(true, false)).toBe(false);
     expect(doubleClickResets(false, true)).toBe(false);
+  });
+});
+
+describe("chart export inputs", () => {
+  const rec = (fraction: number, provisional: boolean) => JSON.stringify({ contours: [[[1, 0.1], [2, 0.2], [1, 0.3]]], core_fraction: fraction, provisional, source: "x" });
+  it("orders contour families like the view and hides superseded records", () => {
+    const none = { kde_analysis_json: "", kde_live_json: "" };
+    expect(contourFamilies(none, "", "").map((c) => c.name)).toEqual([]);
+    expect(contourFamilies(none, "", rec(0.9, false)).map((c) => c.name)).toEqual(["Core 90% (full run, not saved)"]);
+    const stored = { kde_analysis_json: rec(0.8, false), kde_live_json: rec(0.9, true) };
+    expect(contourFamilies(stored, "", rec(0.9, false)).map((c) => c.name)).toEqual(["Core 80% (full run)", "Core 90% (live, provisional)"]);
+    const fams = contourFamilies(stored, rec(0.7, false), "");
+    expect(fams.map((c) => [c.name, c.dashed])).toEqual([
+      ["Core 70% (full run, not saved)", false],
+      ["Core 90% (live, provisional)", true],
+    ]);
+    expect(unsavedRecordJson(stored, "", rec(0.9, false))).toBe("");
+  });
+
+  it("maps the selected valid position to the highlighted point", () => {
+    const inp: ChartExportInputs = {
+      scatter: { valid: true, pixel_to_micron: 0.25, frame_index: ["0", "2", "4"], valid_position: ["0", "2", "4"], area_um2: [1, 2, 3], deformability: [0.1, 0.2, 0.3], target_group: [0, 0, 0], ring_ratio: [20, 21, 22] },
+      density: null,
+      curves: [],
+      contours: [],
+      ranges: { x: { min: 0, max: 4 }, y: { min: 0, max: 1 } },
+      colourByDensity: true,
+      ringMin: 15,
+      ringMax: 25,
+      selected: 4,
+    };
+    const m = scatterModel(inp);
+    expect(m.highlight).toBe(2);
+    expect(m.colourByDensity).toBe(false); // no density result
+    expect(scatterModel({ ...inp, selected: 3 }).highlight).toBe(-1); // position without a point
   });
 });

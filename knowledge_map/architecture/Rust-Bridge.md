@@ -286,6 +286,7 @@ separate from `ffi::BackendBridge`:
   `operation_states`), `cancel_review_operation`, the jobs
   `review_export_metrics/all`, `review_batch_export`,
   `review_regenerate_masks` (`review_regenerate_sources`),
+  `review_export_charts` (kind `ExportCharts` = 6),
   `review_compute_core` + `fetch_review_computed_core_json`,
   `review_request_density` + `fetch_review_density` (contract
   `review_density` constants), `review_jobs_busy`,
@@ -301,6 +302,12 @@ separate from `ffi::BackendBridge`:
   table; `review_shim.cpp` pins the enums with `static_assert`s;
   `tests/review_bridge.rs` runs in both feature configurations;
   `tests/contract.rs` is `#![cfg(not(feature = "review-only"))]`.
+- **Tauri:** chart snapshots reach the jobs over the raw IPC body, not
+  JSON number arrays: `review_stage_chart` (body = PNG bytes, header
+  `x-chart-name`, ≤ 32 MB, ≤ 8 staged, name rule = the backend's),
+  `review_clear_charts`; `review_export_all` / `review_export_charts` take
+  the staged set. `review_list_dir(dir)` lists file names for the shell's
+  default export names.
 - **Tauri:** `desktop/src-tauri/src/review.rs` exposes the commands;
   `frame_packet.rs` now encodes a bridge-neutral `Frame` (RGB8 allowed,
   stride = width × bytes/pixel). `desktop/src/review/reviewBridge.ts` is the

@@ -301,6 +301,13 @@ pub mod review_ffi {
             series_end: u64,
             charts: Vec<ReviewChartSnapshot>,
         ) -> ReviewResult;
+        /// Export Charts: the snapshots written into an existing directory,
+        /// all or nothing (contract kind `ExportCharts`).
+        fn review_export_charts(
+            self: Pin<&mut ReviewBridge>,
+            output_dir: &str,
+            charts: Vec<ReviewChartSnapshot>,
+        ) -> ReviewResult;
         fn review_batch_export(
             self: Pin<&mut ReviewBridge>,
             sources: Vec<String>,

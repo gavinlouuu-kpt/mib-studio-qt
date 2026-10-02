@@ -67,6 +67,7 @@ namespace backend::review
         ReviewJobKind currentKind{ReviewJobKind::ExportMetrics};
         std::shared_ptr<std::atomic<bool>> cancelFlag;
         std::string computedCoreJson;
+        std::string computedCorePath; // file computedCoreJson belongs to
         DensityResult density;
 
         Impl(ReviewSession &s, services::ProcessingService *p, ReviewJobSink k)
@@ -184,13 +185,16 @@ namespace backend::review
 
     std::string ReviewJobs::computedCoreJson() const
     {
+        const std::string current = impl_->session.filePath();
         std::scoped_lock lock(impl_->mutex);
-        return impl_->computedCoreJson;
+        return !current.empty() && impl_->computedCorePath == current ? impl_->computedCoreJson : std::string{};
     }
 
     DensityResult ReviewJobs::density() const
     {
+        const std::string current = impl_->session.filePath();
         std::scoped_lock lock(impl_->mutex);
+        if (current.empty() || impl_->density.sourcePath != current) return DensityResult{};
         return impl_->density;
     }
 
@@ -291,7 +295,7 @@ namespace backend::review
                     request.explicitDestination =
                         recording::HdfExportService::nextAvailableName(
                             req.outputRoot, recording::HdfExportService::sourceBaseName(source) + "_metrics.csv",
-                            recording::HdfExportService::sourceBaseName(source) + "_metrics", ".csv");
+                            recording::HdfExportService::sourceBaseName(source) + "_metrics_", ".csv");
                 }
                 else
                 {
@@ -311,6 +315,87 @@ namespace backend::review
                 for (std::size_t i = 0; i < failures.size(); ++i) summary << (i ? "; " : "") << failures[i];
             }
             return Outcome{ReviewJobState::Completed, summary.str()};
+        }, error);
+    }
+
+    bool ReviewJobs::validChartName(const std::string &name)
+    {
+        if (name.empty() || name.size() > 128 || name.front() == '.') return false;
+        if (name.find_first_of("/\\:") != std::string::npos) return false;
+        std::string lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        const auto endsWith = [&](const std::string &suffix) {
+            return lower.size() > suffix.size() && lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0;
+        };
+        return endsWith(".tiff") || endsWith(".tif") || endsWith(".png");
+    }
+
+    std::uint64_t ReviewJobs::startExportCharts(const ExportChartsRequest &req, std::string *error)
+    {
+        if (req.outputDir.empty())
+        {
+            if (error) *error = "Export directory is empty";
+            return 0;
+        }
+        if (req.charts.empty())
+        {
+            if (error) *error = "No charts to export";
+            return 0;
+        }
+        for (const auto &chart : req.charts)
+        {
+            if (!validChartName(chart.name))
+            {
+                if (error) *error = "Invalid chart file name: " + chart.name;
+                return 0;
+            }
+        }
+        return impl_->start(ReviewJobKind::ExportCharts, [this, req](std::uint64_t id, auto flag) {
+            const fs::path dir(req.outputDir);
+            std::error_code ec;
+            if (!fs::is_directory(dir, ec)) return Outcome{ReviewJobState::Failed, "not a directory: " + req.outputDir};
+            std::vector<fs::path> temps;
+            const auto discard = [&]() {
+                for (const auto &t : temps) fs::remove(t, ec);
+            };
+            const std::uint64_t total = req.charts.size();
+            for (std::size_t i = 0; i < req.charts.size(); ++i)
+            {
+                const auto &chart = req.charts[i];
+                if (flag->load())
+                {
+                    discard();
+                    return Outcome{ReviewJobState::Cancelled, "cancelled; partial charts discarded"};
+                }
+                impl_->progress(id, ReviewJobKind::ExportCharts, i, total, chart.name);
+                const cv::Mat image = cv::imdecode(chart.encoded, cv::IMREAD_COLOR);
+                if (image.empty())
+                {
+                    discard();
+                    return Outcome{ReviewJobState::Failed, "could not decode chart " + chart.name};
+                }
+                // Same extension so OpenCV picks the same encoder.
+                const fs::path final = dir / chart.name;
+                const fs::path temp = dir / ("." + final.stem().string() + ".partial" + final.extension().string());
+                temps.push_back(temp);
+                if (!cv::imwrite(temp.string(), image))
+                {
+                    discard();
+                    return Outcome{ReviewJobState::Failed, "could not write " + final.string()};
+                }
+            }
+            for (std::size_t i = 0; i < req.charts.size(); ++i)
+            {
+                fs::rename(temps[i], dir / req.charts[i].name, ec);
+                if (ec)
+                {
+                    discard();
+                    return Outcome{ReviewJobState::Failed, "could not publish " + req.charts[i].name + ": " + ec.message()};
+                }
+            }
+            impl_->progress(id, ReviewJobKind::ExportCharts, total, total);
+            return Outcome{ReviewJobState::Completed,
+                           "exported " + std::to_string(total) + " chart(s) to " + req.outputDir};
         }, error);
     }
 
@@ -460,7 +545,9 @@ namespace backend::review
         }
         const double fraction = std::clamp(std::isfinite(coreFraction) ? coreFraction : 0.9, 0.05, 1.0);
         return impl_->start(ReviewJobKind::ComputeCore, [this, fraction](std::uint64_t, auto flag) {
+            const std::string path = impl_->session.filePath();
             const ScatterData sc = impl_->session.scatter();
+            if (impl_->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
             std::vector<backend::monitoring::DensityPoint> points;
             points.reserve(sc.areaUm2.size());
             for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) points.push_back({sc.areaUm2[i], sc.deformability[i]});
@@ -473,6 +560,7 @@ namespace backend::review
             {
                 std::scoped_lock lock(impl_->mutex);
                 impl_->computedCoreJson = json;
+                impl_->computedCorePath = path;
             }
             return Outcome{ReviewJobState::Completed, "core contour computed from " + std::to_string(record.cellCount) + " cells"};
         }, error);
@@ -549,13 +637,15 @@ namespace backend::review
         r.bandwidthFactor = std::clamp(std::isfinite(r.bandwidthFactor) ? r.bandwidthFactor : 1.0, 0.2, 5.0);
         r.coreFraction = std::clamp(std::isfinite(r.coreFraction) ? r.coreFraction : 0.9, 0.05, 1.0);
         r.levels = std::clamp(r.levels, 1, 64);
-        {
-            std::scoped_lock lock(impl_->mutex);
-            impl_->density = DensityResult{};
-        }
         return impl_->start(ReviewJobKind::Density, [this, r](std::uint64_t, auto flag) {
+            {
+                std::scoped_lock lock(impl_->mutex);
+                impl_->density = DensityResult{}; // not ready while this one runs
+            }
+            const std::string path = impl_->session.filePath();
             const ScatterData sc = impl_->session.scatter();
             const ReviewMetadata meta = impl_->session.metadata();
+            if (impl_->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
             std::vector<backend::monitoring::DensityPoint> points;
             points.reserve(sc.areaUm2.size());
             for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) points.push_back({sc.areaUm2[i], sc.deformability[i]});
@@ -578,10 +668,15 @@ namespace backend::review
             }
             if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled"};
             result.ready = true;
+            result.sourcePath = path;
             {
                 std::scoped_lock lock(impl_->mutex);
                 impl_->density = result;
-                if (!result.computedRecordJson.empty()) impl_->computedCoreJson = result.computedRecordJson;
+                if (!result.computedRecordJson.empty())
+                {
+                    impl_->computedCoreJson = result.computedRecordJson;
+                    impl_->computedCorePath = path;
+                }
             }
             return Outcome{ReviewJobState::Completed, "density estimated for " + std::to_string(points.size()) + " cells"};
         }, error);

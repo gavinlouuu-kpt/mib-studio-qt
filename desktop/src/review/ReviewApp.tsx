@@ -3,21 +3,77 @@
 // `main.tsx`; MIB Studio mounts the same `ReviewPanel` in its Review tab.
 //
 // This shell owns what the panel does not: backend initialization, the
-// event drain (PlaybackPosition range, operation outcomes, backend errors),
-// the menu bar, the log drawer and the About dialog. No camera, experiment
-// or hardware controls exist in this product.
+// menu bar, preferences (px→µm fallback), the log drawer and the About
+// dialog. The panel drains review events and tracks its jobs itself. No
+// camera, experiment or hardware controls exist in this product.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { bridge } from "../bridge";
-import { BRIDGE_ABI_VERSION, OPERATION_STATES, REVIEW_OPERATION_KINDS } from "../bridgeContract";
+import { BRIDGE_ABI_VERSION } from "../bridgeContract";
 import { FramePullScheduler } from "../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
-import { reviewBridge, type ReviewEvent, type ReviewInfo } from "./reviewBridge";
+import { reviewBridge, type ReviewInfo } from "./reviewBridge";
 import "../App.css";
 
 export const PRODUCT_NAME = "YOFO Review";
-const POLL_MS = 200;
+// Preferences (per machine; Qt QSettings → localStorage).
+export const PX_TO_UM_KEY = "yofo.review.pixelToMicron";
+export const DEFAULT_PX_TO_UM = 1.0;
+
+/** The stored fallback factor, or the default when unset / invalid. */
+export function loadPixelToMicron(storage: Pick<Storage, "getItem"> | null = safeStorage()): number {
+  try {
+    const v = Number(storage?.getItem(PX_TO_UM_KEY));
+    return Number.isFinite(v) && v > 0 ? v : DEFAULT_PX_TO_UM;
+  } catch {
+    return DEFAULT_PX_TO_UM;
+  }
+}
+
+function safeStorage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function PreferencesDialog(props: { value: number; onSave: (v: number) => void; onClose: () => void }) {
+  const [text, setText] = useState(String(props.value));
+  const v = Number(text);
+  const valid = Number.isFinite(v) && v > 0 && v < 1000;
+  return (
+    <div className="modal-backdrop" onClick={props.onClose}>
+      <div className="modal" role="dialog" aria-label="Preferences" onClick={(e) => e.stopPropagation()}>
+        <h3>Preferences</h3>
+        <div className="row">
+          <label htmlFor="pref-px">Fallback px→µm</label>
+          <input id="pref-px" type="number" step="0.0001" min="0" value={text} onChange={(e) => setText(e.target.value)} />
+        </div>
+        <p className="hint">
+          Used only for files that do not record their pixel-to-micron factor (older recordings). Files that record one always use it.
+        </p>
+        {!valid && <p className="form-error">Enter a positive number.</p>}
+        <div className="actions">
+          <button className="btn" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={!valid}
+            onClick={() => {
+              props.onSave(v);
+              props.onClose();
+            }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Menu(props: { label: string; items: { label: string; onClick?: () => void; pending?: string }[] }) {
   const [openMenu, setOpenMenu] = useState(false);
@@ -58,9 +114,10 @@ export default function ReviewApp() {
   const [fitWindow, setFitWindow] = useState(true);
   const [filePath, setFilePath] = useState("");
   const [info, setInfo] = useState<ReviewInfo | null>(null);
+  const [pxToUm, setPxToUm] = useState(() => loadPixelToMicron());
+  const [showPrefs, setShowPrefs] = useState(false);
   const scheduler = useRef(new FramePullScheduler());
   const panel = useRef<ReviewPanelHandle>(null);
-  const tickBusy = useRef(false);
   // React StrictMode runs the boot effect twice in development; open the
   // launch file once.
   const launched = useRef(false);
@@ -69,22 +126,6 @@ export default function ReviewApp() {
     setLog((l) => [`${new Date().toLocaleTimeString()} ${line}`, ...l].slice(0, 50));
     void bridge.shellLog("info", line).catch(() => {});
   }, []);
-
-  const kindName = (kind: number) =>
-    Object.entries(REVIEW_OPERATION_KINDS).find(([, v]) => v === kind)?.[0] ?? `kind ${kind}`;
-
-  // Review job lifecycle (exports, batch, regenerate, core contour arrive
-  // with PR 1b); only terminal states reach the log.
-  const applyEvents = useCallback(
-    (events: ReviewEvent[]) => {
-      for (const e of events) {
-        if (e.state === OPERATION_STATES.Completed) append(`${kindName(e.kind)} ${e.operation_id} completed: ${e.message}`);
-        else if (e.state === OPERATION_STATES.Failed) append(`${kindName(e.kind)} ${e.operation_id} failed: ${e.message}`);
-        else if (e.state === OPERATION_STATES.Cancelled) append(`${kindName(e.kind)} ${e.operation_id} cancelled`);
-      }
-    },
-    [append],
-  );
 
   // Initialize the backend on boot (empty data dir resolves to Tauri's
   // app_data_dir on the Rust side).
@@ -118,23 +159,6 @@ export default function ReviewApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Drain events while a file is open (operation outcomes, playback range).
-  useEffect(() => {
-    if (!ready) return;
-    const id = window.setInterval(async () => {
-      if (tickBusy.current) return;
-      tickBusy.current = true;
-      try {
-        applyEvents(await reviewBridge.pollEvents());
-      } catch (e) {
-        append(`tick error: ${e}`);
-      } finally {
-        tickBusy.current = false;
-      }
-    }, POLL_MS);
-    return () => window.clearInterval(id);
-  }, [ready, applyEvents, append]);
-
   useEffect(() => {
     scheduler.current.invalidate();
   }, [filePath]);
@@ -151,6 +175,7 @@ export default function ReviewApp() {
           items={[
             { label: "Open…", onClick: () => void panel.current?.openFile() },
             { label: "Close", onClick: () => void panel.current?.closeFile() },
+            { label: "Preferences…", onClick: () => setShowPrefs(true) },
           ]}
         />
         <Menu label="View" items={[{ label: fitWindow ? "Fit: 1:1" : "Fit: Window", onClick: () => setFitWindow((f) => !f) }]} />
@@ -168,6 +193,7 @@ export default function ReviewApp() {
           log={append}
           onFileChange={setFilePath}
           onInfo={setInfo}
+          fallbackPixelToMicron={pxToUm}
         />
       </main>
 
@@ -185,6 +211,21 @@ export default function ReviewApp() {
         </div>
       )}
 
+      {showPrefs && (
+        <PreferencesDialog
+          value={pxToUm}
+          onClose={() => setShowPrefs(false)}
+          onSave={(v) => {
+            setPxToUm(v);
+            try {
+              localStorage.setItem(PX_TO_UM_KEY, String(v));
+            } catch {
+              // Storage unavailable: this session only.
+            }
+            append(`fallback px→µm set to ${v}`);
+          }}
+        />
+      )}
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="About">

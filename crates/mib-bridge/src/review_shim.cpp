@@ -43,6 +43,7 @@ static_assert(static_cast<std::uint32_t>(br::OverlayMode::AllMask) == 3);
 static_assert(static_cast<std::uint32_t>(br::OverlayMode::FilteredMask) == 4);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportMetrics) == 0);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::Density) == 5);
+static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportCharts) == 6);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobState::Started) == 0);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobState::TimedOut) == 5);
 static_assert(static_cast<std::uint32_t>(br::RegenerateSource::CurrentValid) == 0);
@@ -448,6 +449,23 @@ ReviewResult ReviewBridge::review_export_all(rust::Str output_root, bool export_
         return impl_->started(impl_->jobs->startExportAll(req, &error), error, "Export All");
     } catch (const std::exception& e) {
         return fail(std::string("review_export_all: ") + e.what());
+    }
+}
+
+ReviewResult ReviewBridge::review_export_charts(rust::Str output_dir, rust::Vec<ReviewChartSnapshot> charts) {
+    try {
+        br::ExportChartsRequest req;
+        req.outputDir = toStd(output_dir);
+        for (const auto& c : charts) {
+            br::ChartSnapshot snap;
+            snap.name = std::string(c.name);
+            snap.encoded.assign(c.encoded.begin(), c.encoded.end());
+            req.charts.push_back(std::move(snap));
+        }
+        std::string error;
+        return impl_->started(impl_->jobs->startExportCharts(req, &error), error, "Export Charts");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_export_charts: ") + e.what());
     }
 }
 

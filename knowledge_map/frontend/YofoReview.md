@@ -5,7 +5,8 @@
 > the same `desktop/` tree as the React + Tauri MIB Studio shell.
 
 **Source:** `desktop/review.html`, `desktop/src/review/` (`main.tsx`,
-`ReviewApp.tsx`, `ReviewPanel.tsx`, `review.css`, `charts/`),
+`ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx`, `review.css`,
+`charts/`, `exports/`),
 `desktop/src-tauri/tauri.review.conf.json`, cargo feature `review-only` in
 `desktop/src-tauri/Cargo.toml` + `src/lib.rs`,
 `scripts/release/stamp-tauri-version.py`, `.github/workflows/review-ci.yml`
@@ -47,8 +48,12 @@ host's `FramePullScheduler`, and imports `review.css` itself (both products
 get the styles). The host supplies: `ready` (backend initialized), the
 scheduler, `fitWindow`, a `log` sink and three hooks — `beforeLoad` (MIB
 Studio stops its live preview loop), `onFileChange` (host invalidates its
-scheduler views) and `onInfo` (workflow facts, status bar).
+scheduler views), `onInfo` (workflow facts, status bar) and
+`fallbackPixelToMicron` (TD-17 factor for files without a recorded one:
+YOFO Review's preference, MIB Studio's applied processing factor; applied
+with `review_set_pixel_to_micron` and the info re-read on change).
 `ReviewPanelHandle` exposes `openFile` / `openPath` / `closeFile` for menus.
+A file with no valid frames opens on its invalid set (`initialTab`).
 
 The panel talks only to the **review bridge** (`src/review/reviewBridge.ts`
 → `src-tauri/src/review.rs` → `ReviewBridge` → [[../services/ReviewSession]]):
@@ -57,10 +62,8 @@ recorded pixel-to-micron factor with a "(fallback)" marker — TD-17),
 `rows` (full columns; the table shows index, object, track, area px²/µm²,
 deformability, ring ratio, E), `frame(dataset, index, overlay, roi)` with the
 overlay composed in the backend (Mono8 or RGB8 packets,
-`packetToImageData`). Export Metrics, Export All, Batch Metrics, Batch Export All and
-Regenerate masks start backend jobs (`ReviewJobs`) with native pickers; the
-host's event drain logs their outcome. Progress/cancel dialogs and the
-series-range prompt arrive with PR 4.
+`packetToImageData`). Exports and mask regeneration are backend jobs
+(`ReviewJobs`) — see **Exports and jobs** below.
 
 ## Frames view (PR 2)
 
@@ -138,12 +141,54 @@ review_fixture -- out.h5 --population 3000` writes two seeded populations
 with no stored record (density + computed contour + histogram); 20 000
 cells render with density ready in ~2–3 s.
 
+## Exports and jobs (PR 4)
+
+- **Job tracking** (`exports/useReviewJobs.ts`): the panel owns the review
+  event drain in both products (`poll_review_events` at 5 Hz; before PR 4
+  only YOFO Review drained it, so MIB Studio lost job outcomes), logs every
+  terminal state and tracks the one job it started. Events are buffered per
+  operation id, so a job that finishes before its start call returns still
+  reaches its dialog. An optional `prepare` step (chart rendering) runs
+  first behind a "Preparing…" state.
+- **`JobDialog`** (`exports/ExportDialogs.tsx`): progress bar + phase text
+  (paths shortened to file names), Cancel; then the outcome — "Written to
+  …" with **Show in folder** (`revealItemInDir`), the batch summary with
+  per-file failures, "Cancelled. Partial output was discarded", or the
+  refusal ("Not started: Another review job is still running").
+- **Toolbar**: Export Metrics, Export All, and a **More…** menu with Batch
+  Metrics, Batch Export All, Export Charts, Regenerate masks (the Qt
+  layout); job buttons disable while a job runs.
+- **Rules** (`exports/exportHelpers.ts`, Qt parity): metrics default to
+  `<basename>_metrics.csv`, then `_N` one past the highest suffix in the
+  directory (`HdfExportService::nextAvailableName`, mirrored; directory
+  listed through `review_list_dir`); the last successful export directory
+  is remembered (`localStorage` `yofo.review.lastExportDir`, else the
+  file's directory); Export All asks the series question (all / 1-based
+  range such as `9-15` / skip) when records have series, Batch Export All
+  always — one choice for every record.
+- **Chart snapshots** (`charts/chartExport.ts`): `drawScatter` /
+  `drawHistogram` (the on-screen drawing, shared) render offscreen at
+  1200 × 1200 over the whole run (data extent, no selection ring — the Qt
+  rule) with the Charts view's toggles and contours (persisted defaults
+  when it was never opened); density colours only when a ready result for
+  this file exists. PNG bytes are staged one raw IPC call each
+  (`review_stage_chart`, header `x-chart-name`) and consumed by the next
+  `review_export_all` / `review_export_charts`; the backend writes TIFFs.
+  Recording files export no charts.
+- **Regenerate masks** (`RegenerateMasks.tsx`): source (whole file, valid /
+  invalid range with 1-based start + count, AVI, folder), recorded config
+  / ROI / background by default (AVI and folder use defaults), synthesize
+  background, output `<basename>_remasked.h5`; the panel opens the result
+  (the Qt tab reloads from it).
+
 ## `ReviewApp` (the product shell)
 
-Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`),
-drains `poll_review_events` at 5 Hz for job outcomes, and renders the menu row (File ▸ Open…, View ▸ Fit, Help ▸ About
-with the stamped version from `@tauri-apps/api/app`), the panel, a status
-bar and the log drawer. No camera, experiment or hardware state exists.
+Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`)
+and renders the menu row (File ▸ Open… / Close / Preferences…, View ▸ Fit,
+Help ▸ About with the stamped version from `@tauri-apps/api/app`), the
+panel, a status bar and the log drawer. **Preferences** holds the fallback
+px→µm (`localStorage` `yofo.review.pixelToMicron`, default 1.0) passed to
+the panel. No camera, experiment or hardware state exists.
 
 ## CI
 

@@ -5,12 +5,15 @@
 //    a direct HdfExportService run byte-for-byte, factor = recorded (TD-17);
 //  - export all: folder under the root with metrics + TIFFs + the chart
 //    snapshot the shell handed over; cancel leaves no ".partial-" residue;
+//  - export charts: snapshots written as TIFFs; a bad name is refused; an
+//    undecodable snapshot fails with nothing written (all or nothing);
 //  - batch: continues after a missing file, summary names the failure;
 //  - regenerate masks (whole file, recorded config/ROI/background): output
 //    opens in a ReviewSession with the image count, recorded indices kept;
 //  - compute core: full-run record JSON with the recorded factor;
 //  - density: one level per scatter point, no computed record when the
-//    file has one, a computed record on a legacy file; grid path agrees
+//    file has one, a computed record on a legacy file, results only for the
+//    file they were computed from; grid path agrees
 //    with the direct path within one level on a 4000-point population;
 //  - single flight: a second start while one runs is refused.
 // Watchdog guarded.
@@ -237,6 +240,45 @@ int main()
     }
     wd.mark("export all");
 
+    // ---- export charts -----------------------------------------------------------
+    {
+        const fs::path dir = td.path() / "charts";
+        fs::create_directories(dir);
+        std::vector<uchar> png;
+        cv::imencode(".png", cv::Mat(40, 40, CV_8UC3, cv::Scalar(200, 100, 0)), png);
+        ExportChartsRequest req;
+        req.outputDir = dir.string();
+        req.charts.push_back({"scatter_plot.tiff", std::vector<std::uint8_t>(png.begin(), png.end())});
+        req.charts.push_back({"ring_width_histogram.tiff", std::vector<std::uint8_t>(png.begin(), png.end())});
+        const uint64_t id = jobs.startExportCharts(req, &err);
+        MIB_REQUIRE(id != 0, "start export charts: " + err);
+        MIB_REQUIRE(sink.terminal(id, done), "export charts terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.kind == ReviewJobKind::ExportCharts, "charts completed: " + done.message);
+        const cv::Mat back = cv::imread((dir / "scatter_plot.tiff").string(), cv::IMREAD_COLOR);
+        MIB_EXPECT(back.cols == 40 && back.at<cv::Vec3b>(0, 0) == cv::Vec3b(200, 100, 0), "chart TIFF content (BGR kept)");
+        MIB_EXPECT(fs::exists(dir / "ring_width_histogram.tiff"), "histogram written");
+
+        ExportChartsRequest bad = req;
+        bad.charts[0].name = "../escape.tiff";
+        MIB_EXPECT(jobs.startExportCharts(bad, &err) == 0 && !err.empty(), "path in chart name refused");
+        MIB_EXPECT(!ReviewJobs::validChartName("x.csv") && !ReviewJobs::validChartName(".hidden.tiff") &&
+                       ReviewJobs::validChartName("a.TIF"), "chart name rule");
+        MIB_EXPECT(jobs.startExportCharts(ExportChartsRequest{dir.string(), {}}, &err) == 0, "no charts refused");
+
+        const fs::path dir2 = td.path() / "charts2";
+        fs::create_directories(dir2);
+        ExportChartsRequest broken;
+        broken.outputDir = dir2.string();
+        broken.charts.push_back({"scatter_plot.tiff", std::vector<std::uint8_t>(png.begin(), png.end())});
+        broken.charts.push_back({"ring_width_histogram.tiff", {1, 2, 3}});
+        const uint64_t id2 = jobs.startExportCharts(broken, &err);
+        MIB_REQUIRE(id2 != 0, "start broken charts: " + err);
+        MIB_REQUIRE(sink.terminal(id2, done), "broken terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Failed, "undecodable chart fails");
+        MIB_EXPECT(fs::is_empty(dir2), "all or nothing: nothing left behind");
+    }
+    wd.mark("export charts");
+
     // ---- cancel ----------------------------------------------------------------
     {
         ExportAllRequest req;
@@ -264,6 +306,11 @@ int main()
         MIB_EXPECT(done.message.find("missing.h5") != std::string::npos, "batch names the failure");
         MIB_EXPECT(fs::exists(td.path() / "batch" / "run_metrics.csv"), "batch output run");
         MIB_EXPECT(fs::exists(td.path() / "batch" / "legacy_metrics.csv"), "batch output legacy");
+        // Again into the same root: the Qt `_2` suffix (not "run_metrics2.csv").
+        const uint64_t again = jobs.startBatchExport(req, &err);
+        MIB_REQUIRE(again != 0, "start batch again: " + err);
+        MIB_REQUIRE(sink.terminal(again, done), "batch again terminal");
+        MIB_EXPECT(fs::exists(td.path() / "batch" / "run_metrics_2.csv"), "second batch run gets _2");
     }
     wd.mark("batch");
 
@@ -323,6 +370,14 @@ int main()
         MIB_REQUIRE(id != 0, "legacy density: " + err);
         MIB_REQUIRE(s2.terminal(id, done), "legacy density terminal");
         MIB_EXPECT(!j2.density().computedRecordJson.empty(), "legacy file gets a computed record");
+        MIB_EXPECT(!j2.computedCoreJson().empty(), "computed record retrievable for this file");
+        // Results belong to their file: another file open → nothing ready
+        // (no stale levels / record from the previous file).
+        MIB_REQUIRE(ls.open(experiment.string()), "switch file");
+        MIB_EXPECT(!j2.density().ready && j2.density().levels.empty(), "density not ready for another file");
+        MIB_EXPECT(j2.computedCoreJson().empty(), "computed record not offered for another file");
+        MIB_REQUIRE(ls.open(legacy.string()), "back to legacy");
+        MIB_EXPECT(j2.density().ready, "same file again: result still valid");
         MIB_EXPECT(j2.startRegenerateMasks(RegenerateMasksRequest{}, &err) == 0, "no processing service → refused");
     }
     wd.mark("density");

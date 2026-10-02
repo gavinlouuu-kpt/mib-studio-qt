@@ -140,10 +140,6 @@ export interface ReviewDensity {
   computed_record_json: string;
 }
 
-export interface ChartSnapshot {
-  name: string;
-  encoded: number[];
-}
 
 export interface SeriesRange {
   exportSeries: boolean;
@@ -230,14 +226,19 @@ export const reviewBridge = {
   saveCoreRecord: (json: string, overwrite: boolean) => command("review_save_core_record", { json, overwrite }),
   // Jobs (tracked operations; outcomes through pollEvents).
   exportMetrics: (outputPath: string) => command("review_export_metrics", { outputPath }),
-  exportAll: (outputRoot: string, series: SeriesRange = ALL_SERIES, charts: ChartSnapshot[] = []) =>
+  /** Export All; chart snapshots staged beforehand (charts/chartExport.ts
+   * `stageCharts`) are consumed by this call. */
+  exportAll: (outputRoot: string, series: SeriesRange = ALL_SERIES) =>
     command("review_export_all", {
       outputRoot,
       exportSeries: series.exportSeries,
       seriesStart: decimalU64(series.start),
       seriesEnd: series.end === "" ? "" : decimalU64(series.end),
-      charts,
     }),
+  /** Export Charts: the staged snapshots as files in `outputDir`. */
+  exportCharts: (outputDir: string) => command("review_export_charts", { outputDir }),
+  /** File names in `dir` (default export names, exports/naming.ts). */
+  listDir: (dir: string) => invoke<string[]>("review_list_dir", { dir }),
   batchExport: (sources: string[], outputRoot: string, metricsOnly: boolean, series: SeriesRange = ALL_SERIES) =>
     command("review_batch_export", {
       sources,

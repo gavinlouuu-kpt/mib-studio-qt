@@ -172,6 +172,16 @@ fn review_bridge_reads_the_fixture_file() {
     let json = bridge.pin_mut().fetch_review_computed_core_json();
     assert!(json.contains("\"full-run\""), "{json}");
     assert!(bridge.pin_mut().review_save_core_record(&json, true).ok);
+    // Export Charts: kind 6; a name with a path is refused up front; bytes
+    // that do not decode fail the job (encoding is covered by review.jobs).
+    let snap = |name: &str, bytes: Vec<u8>| ffi::ReviewChartSnapshot { name: name.into(), encoded: bytes };
+    let dir = std::env::temp_dir();
+    assert!(!bridge.pin_mut().review_export_charts(&dir.to_string_lossy(), vec![snap("../x.tiff", vec![1])]).ok);
+    let started = bridge.pin_mut().review_export_charts(&dir.to_string_lossy(), vec![snap("mib_bridge_bad_chart.tiff", vec![1, 2, 3])]);
+    assert!(started.ok, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (6, 3), "charts: {}", done.message);
+    assert!(!dir.join("mib_bridge_bad_chart.tiff").exists());
     // Refusals: unknown regenerate source, empty batch.
     assert!(!bridge.pin_mut().review_regenerate_masks(99, "", 0, 0, "x.h5", true, false).ok);
     assert!(!bridge.pin_mut().review_batch_export(Vec::new(), "/tmp", true, true, 0, u64::MAX).ok);

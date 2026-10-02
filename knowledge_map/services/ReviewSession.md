@@ -74,7 +74,15 @@ opening its own reader so session reads never block:
   [[HdfExportService]] with the **recorded** factor; chart snapshots arrive
   encoded (PNG/TIFF) from the shell and are written beside the images; batch
   continues after per-file failures and reports them in the terminal
-  message; recording files export images only.
+  message ("exported N of M file(s); failed: …"); batch metrics names
+  follow the service's `<base>_metrics_N.csv` rule; recording files export
+  images only.
+- `startExportCharts({outputDir, charts})` (PR 4, contract kind
+  `ExportCharts` = 6): the shell's snapshots decoded and written as files
+  into an existing directory, all or nothing (temporary
+  `.<stem>.partial.<ext>` names, renamed once every one wrote; any failure
+  or cancel removes them). Names must be bare file names ending
+  .tif/.tiff/.png (`validChartName`, mirrored by the Tauri staging command).
 - `startRegenerateMasks(request)`: current valid / invalid range, whole file,
   AVI or folder → `ProcessingService::processBatch` (bundled kernel) with the
   recorded config, ROI and background by default (optional median
@@ -90,6 +98,11 @@ opening its own reader so session reads never block:
   path for ≥ 95 % of a 4000-point population); a computed full-run record
   only when the file has none. This is the scatter plan's PR 3a "review
   density" in the review core instead of `MonitoringDensityService`.
+- Results belong to their file: `density()` and `computedCoreJson()` return
+  nothing once the session holds another file (each result carries the
+  path it was computed from; fixed in PR 4 — before, a new file could be
+  handed the previous file's levels as ready). The density result is
+  cleared when its job starts running, not when a start is refused.
 
 Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`).
 

@@ -8,22 +8,13 @@
 // resets). Hit testing and gestures live in scatterHitTest.ts /
 // scatterGestures.ts, shared with the Qt tab through a fixture.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { levelColor, niceTicks, paddedExtent, panRanges, toData, toPx, zoomAxes, zoomRange, type Range, type Viewport } from "./chartMath";
+import { paddedExtent, panRanges, toData, zoomAxes, zoomRange, type Range } from "./chartMath";
+import { drawScatter, MARKER, scatterViewport, type ContourFamily, type IsoCurve } from "./drawScatter";
 import { doubleClickResets, GestureTracker } from "./scatterGestures";
 import { nearestPoint } from "./scatterHitTest";
 import type { ReviewScatter as ScatterData } from "../reviewBridge";
 
-export interface ContourFamily {
-  name: string;
-  color: string;
-  dashed: boolean;
-  loops: [number, number][][];
-}
-
-export interface IsoCurve {
-  emodulus_kpa: number;
-  points: [number, number][];
-}
+export type { ContourFamily, IsoCurve };
 
 export interface MenuItem {
   label: string;
@@ -49,20 +40,6 @@ export interface ReviewScatterProps {
   menu: MenuItem[];
   /** Exposes resetZoom to the host toolbar. */
   resetRef?: React.MutableRefObject<(() => void) | null>;
-}
-
-const MARGIN = { left: 64, top: 30, right: 12, bottom: 44 };
-const LEGEND_W = 158;
-const MARKER = 6; // Qt marker size (diameter, px)
-const HIGHLIGHT = 13;
-const POINT_COLOUR = "#209fdf"; // Qt light theme, first series
-const HIGHLIGHT_COLOUR = "#f28e2b";
-const CURVE_COLOURS = ["#99ca53", "#f6a625", "#6d5fd5", "#bf593e", "#7f7f7f", "#2bb5a3", "#d55fa8", "#8c6d31", "#5f8dd5", "#c2a400", "#3d9970"];
-
-function decimalsFor(ticks: number[]): number {
-  if (ticks.length < 2) return 2;
-  const step = Math.abs(ticks[1] - ticks[0]);
-  return Math.min(6, Math.max(0, -Math.floor(Math.log10(step) + 1e-9)));
 }
 
 export function ReviewScatter(props: ReviewScatterProps) {
@@ -97,26 +74,7 @@ export function ReviewScatter(props: ReviewScatterProps) {
     if (resetRef) resetRef.current = resetZoom;
   }, [resetRef, resetZoom]);
 
-  const legendEntries = useMemo(() => {
-    const out: { name: string; color: string; dashed?: boolean; line: boolean }[] = [{ name: "Valid Frames", color: POINT_COLOUR, line: false }];
-    for (const c of contours) out.push({ name: c.name, color: c.color, dashed: c.dashed, line: true });
-    curves.forEach((c, k) => out.push({ name: `${c.emodulus_kpa.toFixed(2)} kPa`, color: CURVE_COLOURS[k % CURVE_COLOURS.length], line: true }));
-    return out;
-  }, [contours, curves]);
-
-  const vp: Viewport = useMemo(
-    () => ({
-      x0: ranges.x.min,
-      x1: ranges.x.max,
-      y0: ranges.y.min,
-      y1: ranges.y.max,
-      left: MARGIN.left,
-      top: MARGIN.top,
-      width: Math.max(10, size.w - MARGIN.left - MARGIN.right - LEGEND_W),
-      height: Math.max(10, size.h - MARGIN.top - MARGIN.bottom),
-    }),
-    [ranges, size],
-  );
+  const vp = useMemo(() => scatterViewport(size.w, size.h, ranges), [ranges, size]);
 
   useLayoutEffect(() => {
     const el = wrap.current;
@@ -140,162 +98,18 @@ export function ReviewScatter(props: ReviewScatterProps) {
     const g = c.getContext("2d");
     if (!g) return;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, size.w, size.h);
-    g.fillStyle = "#fff";
-    g.fillRect(0, 0, size.w, size.h);
-
-    const xTicks = niceTicks(ranges.x, Math.max(3, Math.floor(vp.width / 90)));
-    const yTicks = niceTicks(ranges.y, Math.max(3, Math.floor(vp.height / 50)));
-    const xd = decimalsFor(xTicks), yd = decimalsFor(yTicks);
-    g.font = "11px system-ui, sans-serif";
-    g.strokeStyle = "#e6e6e6";
-    g.lineWidth = 1;
-    g.fillStyle = "#444";
-    g.textAlign = "center";
-    g.textBaseline = "top";
-    for (const t of xTicks) {
-      const [px] = toPx(vp, t, ranges.y.min);
-      g.beginPath();
-      g.moveTo(Math.round(px) + 0.5, vp.top);
-      g.lineTo(Math.round(px) + 0.5, vp.top + vp.height);
-      g.stroke();
-      g.fillText(t.toFixed(xd), px, vp.top + vp.height + 4);
-    }
-    g.textAlign = "right";
-    g.textBaseline = "middle";
-    for (const t of yTicks) {
-      const [, py] = toPx(vp, ranges.x.min, t);
-      g.beginPath();
-      g.moveTo(vp.left, Math.round(py) + 0.5);
-      g.lineTo(vp.left + vp.width, Math.round(py) + 0.5);
-      g.stroke();
-      g.fillText(t.toFixed(yd), vp.left - 6, py);
-    }
-    g.strokeStyle = "#999";
-    g.strokeRect(vp.left + 0.5, vp.top + 0.5, vp.width, vp.height);
-    g.fillStyle = "#222";
-    g.textAlign = "center";
-    g.textBaseline = "alphabetic";
-    g.font = "bold 13px system-ui, sans-serif";
-    g.fillText("Deformability vs Area (μm²)", vp.left + vp.width / 2, 18);
-    g.font = "12px system-ui, sans-serif";
-    g.fillText("Area (μm²)", vp.left + vp.width / 2, size.h - 8);
-    g.save();
-    g.translate(14, vp.top + vp.height / 2);
-    g.rotate(-Math.PI / 2);
-    g.fillText("Deformability", 0, 0);
-    g.restore();
-
-    // Plot content, clipped to the plot rectangle.
-    g.save();
-    g.beginPath();
-    g.rect(vp.left, vp.top, vp.width, vp.height);
-    g.clip();
-    const line = (pts: [number, number][], color: string, width: number, dash: number[]) => {
-      g.strokeStyle = color;
-      g.lineWidth = width;
-      g.setLineDash(dash);
-      g.beginPath();
-      pts.forEach(([x, y], k) => {
-        const [px, py] = toPx(vp, x, y);
-        if (k === 0) g.moveTo(px, py);
-        else g.lineTo(px, py);
-      });
-      g.stroke();
-      g.setLineDash([]);
-    };
-    curves.forEach((cv, k) => line(cv.points, CURVE_COLOURS[k % CURVE_COLOURS.length], 1.5, []));
-
-    // Points: one path per colour; denser levels drawn last (on top).
-    const useLevels = colourByDensity && levels && levels.length === points.n;
-    const buckets = new Map<string, Path2D>();
-    const order: string[] = [];
-    const indices = Array.from({ length: points.n }, (_, i) => i);
-    if (useLevels) indices.sort((a, b) => levels![a] - levels![b]);
-    const r = MARKER / 2;
-    for (const i of indices) {
-      const x = points.xs[i], y = points.ys[i];
-      if (x < vp.x0 || x > vp.x1 || y < vp.y0 || y > vp.y1) continue;
-      const color = useLevels ? levelColor(levels![i], levelCount) : POINT_COLOUR;
-      let path = buckets.get(color);
-      if (!path) {
-        path = new Path2D();
-        buckets.set(color, path);
-        order.push(color);
-      }
-      const [px, py] = toPx(vp, x, y);
-      path.moveTo(px + r, py);
-      path.arc(px, py, r, 0, Math.PI * 2);
-    }
-    for (const color of order) {
-      g.fillStyle = color;
-      g.fill(buckets.get(color)!);
-    }
-
-    for (const fam of contours) for (const loop of fam.loops) line(loop, fam.color, 2, fam.dashed ? [7, 5] : []);
-
-    const hi = points.byPos.get(selected);
-    if (hi !== undefined) {
-      const [px, py] = toPx(vp, points.xs[hi], points.ys[hi]);
-      g.beginPath();
-      g.arc(px, py, HIGHLIGHT / 2, 0, Math.PI * 2);
-      g.fillStyle = HIGHLIGHT_COLOUR;
-      g.fill();
-      g.strokeStyle = "#fff";
-      g.lineWidth = 1.5;
-      g.stroke();
-    }
-    g.restore();
-
-    // Legend (right).
-    const lx = vp.left + vp.width + 14;
-    let ly = vp.top + 6;
-    g.font = "11px system-ui, sans-serif";
-    g.textAlign = "left";
-    g.textBaseline = "middle";
-    for (const e of legendEntries) {
-      if (ly > size.h - 10) break;
-      if (e.line) {
-        g.strokeStyle = e.color;
-        g.lineWidth = 2;
-        g.setLineDash(e.dashed ? [5, 3] : []);
-        g.beginPath();
-        g.moveTo(lx, ly);
-        g.lineTo(lx + 16, ly);
-        g.stroke();
-        g.setLineDash([]);
-      } else {
-        g.fillStyle = e.color;
-        g.beginPath();
-        g.arc(lx + 8, ly, 3.5, 0, Math.PI * 2);
-        g.fill();
-      }
-      g.fillStyle = "#333";
-      g.fillText(e.name, lx + 22, ly, LEGEND_W - 30);
-      ly += 17;
-    }
-    if (useLevels && ly < size.h - 30) {
-      ly += 4;
-      g.fillStyle = "#333";
-      g.fillText("Density", lx, ly);
-      ly += 12;
-      const w = LEGEND_W - 30;
-      for (let k = 0; k < w; k++) {
-        g.fillStyle = levelColor((k / (w - 1)) * (levelCount - 1), levelCount);
-        g.fillRect(lx + k, ly, 1, 9);
-      }
-      g.fillStyle = "#666";
-      g.fillText("low", lx, ly + 18);
-      g.textAlign = "right";
-      g.fillText("high", lx + w, ly + 18);
-    }
-    if (points.n === 0) {
-      g.fillStyle = "#888";
-      g.textAlign = "center";
-      g.font = "13px system-ui, sans-serif";
-      g.fillText("No valid cells to plot", vp.left + vp.width / 2, vp.top + vp.height / 2);
-    }
-  }, [size, ranges, vp, points, levels, levelCount, colourByDensity, curves, contours, selected, legendEntries]);
+    drawScatter(g, size.w, size.h, {
+      xs: points.xs,
+      ys: points.ys,
+      levels,
+      levelCount,
+      colourByDensity,
+      curves,
+      contours,
+      highlight: points.byPos.get(selected) ?? -1,
+      ranges,
+    });
+  }, [size, ranges, points, levels, levelCount, colourByDensity, curves, contours, selected]);
 
   // ---- interaction ---------------------------------------------------------
   const local = (e: { clientX: number; clientY: number }): [number, number] => {
