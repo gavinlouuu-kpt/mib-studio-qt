@@ -628,8 +628,25 @@ accounting text and the same saved core record; the differences list in
       exports use density colours only when a density result for the file
       is ready (Charts tab opened); the progress/regenerate dialogs are
       in-window modals rather than native ones.
-- [ ] PR 5 — macOS Conan profile, preset, bridge manifest, DMG, CI job
+- [ ] PR 5 — macOS Conan profile, preset, bridge manifest, DMG, CI job.
+      **CI part landed 2026-10-03:** `conan/profiles/macos-appleclang-arm64`,
+      `conanfile.py` `review_core` option (static OpenCV/HDF5, no Qt),
+      `macos-review-core` preset (processing-only tree + link probe),
+      `tools/gen_review_link_manifest.py` + `build.rs` manifest replay (one
+      mechanism for macOS and Windows, instead of a macOS path in
+      `gen_bridge_link_manifest.py`), ad-hoc `signingIdentity`, job
+      `review-macos` (DMG built, mounted, `otool -L` system-only, smoke
+      launch, artifact), `docs/howto/macos-build.md`. Deviation: the
+      `src/backend/CMakeLists.txt` OpenSSL / macOS core-descriptor changes are
+      not needed — the review core never loads native processing cores.
+      Remaining: `RunEvent::Opened` (Finder opens), `scripts/bootstrap.sh` /
+      `doctor.sh` / `env/brew-packages.txt` steps.
 - [ ] PR 6 — Windows preset, NSIS, updater plugin, R2 review channels,
-      release workflow
+      release workflow. **CI part landed 2026-10-03:** `windows-review-core`
+      preset, job `review-windows` (static review core, manifest link,
+      bridge tests, NSIS per-user installer, silent install, `dumpbin`
+      check, smoke launch, artifact), `docs/howto/build-installer.md`
+      section. Remaining: updater plugin + minisign key, R2 review
+      channels, `release.yml` on `v*` tags.
 - [x] PR 7 — removed: no signing (user decision 2026-10-01)
 - [ ] PR 8 — manual, screenshots, parity sign-off, tracker, plan → completed

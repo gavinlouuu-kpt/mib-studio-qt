@@ -7,6 +7,12 @@ directly and simulates driver calls without connecting hardware.
 > Third-party stack. Managed by Conan (`conanfile.py`; host profiles in
 > `conan/profiles/`). System-package equivalents for Linux/macOS builds are
 > listed once in `env/apt-packages.txt` / `env/brew-packages.txt`.
+>
+> **YOFO Review graph** (`-o "&:review_core=True"`, macOS / Windows review
+> lanes): spdlog, HDF5, OpenCV and nlohmann_json only, OpenCV / HDF5 static,
+> OpenCV limited to core / imgproc / imgcodecs / videoio (no FFmpeg — AVI
+> sources use OpenCV's MJPEG reader / AVFoundation / Media Foundation), no Qt,
+> SQLite or ONNX Runtime. The "Shared?" column below is the default graph.
 
 | Package | Version | Shared? | Notes |
 |---|---|---|---|

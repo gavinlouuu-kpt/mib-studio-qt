@@ -197,8 +197,21 @@ contract drift gate, both pages built (`dist/review.html` must exist),
 vitest, `cargo build --features review-only` under `TAURI_CONFIG`, a
 `strings` check that the binary carries `bio.yofo.review`, an `nm` check
 that it links no `backend::AppBackend` (and does link `ReviewSession`),
-`cargo test --features review-only` in `crates/mib-bridge`, and the Xvfb
-boot smoke. macOS and Windows bundle jobs arrive with the plan's PR 5/PR 6.
+`cargo test --features review-only` in `crates/mib-bridge`, the link-manifest
+generator tests, and the Xvfb boot smoke.
+
+`review-macos` (macos-14) and `review-windows` (windows-2022) build what
+ships: Conan `review_core=True` (static spdlog / HDF5 / OpenCV core, imgproc,
+imgcodecs, videoio — no Qt, no FFmpeg; `~/.conan2/p` cached), the
+`<os>-review-core` preset, the probe run plus an `otool -L` / `dumpbin
+/dependents` check that nothing third-party is loaded dynamically, the link
+manifest, `cargo test --features review-only`, then `npm run tauri:review --
+build --features review-only` → `YOFO Review.app` + DMG (ad-hoc signature,
+`LSMinimumSystemVersion` 13.0, mounted and checked) / per-user NSIS
+installer (silent `/S` install under `%LOCALAPPDATA%\YOFO Review`), a
+20-second smoke launch, and the DMG / installer uploaded as artifacts. No
+signing or notarisation. How-tos: `docs/howto/macos-build.md`,
+`docs/howto/build-installer.md` (YOFO Review section).
 
 ## Gotchas
 

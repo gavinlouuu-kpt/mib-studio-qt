@@ -50,6 +50,13 @@ option(MIB_BUILD_PROCESSING_ONLY
     "Configure only the Qt-free mib_processing target and Python bindings"
     OFF)
 
+# YOFO Review (ADR 0008): a tiny executable linking mib_review_core whose
+# CMake-resolved link line tools/gen_review_link_manifest.py turns into the
+# Rust bridge's link manifest on macOS / Windows (*-review-core presets).
+option(MIB_BUILD_REVIEW_LINK_PROBE
+    "Build tools/review_link_probe (link line source for the review-only bridge)"
+    OFF)
+
 # ADR 0007: a shipped core implements exactly one processing contract. This
 # fixes the contract of the kernel bundled into this build. "research" (any
 # contract, selected per config) is allowed only for the Python wheel.

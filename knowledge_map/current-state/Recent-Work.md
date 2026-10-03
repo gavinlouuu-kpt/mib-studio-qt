@@ -1,5 +1,21 @@
 # Recent Work
 
+## 2026-10-03 — YOFO Review macOS and Windows CI lanes (plan PR 5 / PR 6 CI)
+
+`review-ci.yml` gained `review-macos` (macos-14 → unsigned, ad-hoc-signed
+DMG) and `review-windows` (windows-2022 → per-user NSIS installer). The
+review core builds against a static Conan graph (`conanfile.py`
+`review_core=True`: no Qt, OpenCV reduced to core / imgproc / imgcodecs /
+videoio) with new `macos-review-core` / `windows-review-core` presets and
+profile `conan/profiles/macos-appleclang-arm64`; the bridge links from a
+CMake-derived manifest (`mib_review_link_probe` +
+`tools/gen_review_link_manifest.py`, replayed by `build.rs`), so macOS gets a
+working bridge link for the first time. Each lane checks the binaries load no
+third-party dylib/DLL, installs/mounts the bundle and smoke-launches it.
+The manifest path was exercised on Linux against system libraries. Notes:
+[[../frontend/YofoReview]], [[../architecture/Rust-Bridge]],
+[[../build-and-run/Build]].
+
 ## 2026-10-02 — YOFO Review exports, regenerate dialog, preferences (PR 4)
 
 Exports in the shared review panel now run behind a progress dialog with

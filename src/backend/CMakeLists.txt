@@ -145,6 +145,14 @@ set_target_properties(mib_review_core PROPERTIES
 target_include_directories(mib_review_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(mib_review_core PUBLIC mib_processing)
 
+if(MIB_BUILD_REVIEW_LINK_PROBE)
+    add_executable(mib_review_link_probe ${PROJECT_SOURCE_DIR}/tools/review_link_probe/main.cpp)
+    target_link_libraries(mib_review_link_probe PRIVATE mib_review_core)
+    set_target_properties(mib_review_link_probe PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+endif()
+
 # A wheel build needs only the portable library above. Stopping here keeps Qt,
 # camera services, desktop backends, and the native Windows module out of the
 # manylinux configuration and makes its dependency surface auditable.

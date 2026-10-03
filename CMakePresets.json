@@ -117,6 +117,62 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan_toolchain.cmake"
       }
+    },
+    {
+      "name": "macos-review-core",
+      "displayName": "macOS review core (YOFO Review, static Conan deps)",
+      "description": "mib_review_core + mib_processing + link probe for the review-only Tauri build, in build/review-core/. After: conan install . -of build/review-core --build=missing -o \"&:review_core=True\" -pr:h conan/profiles/macos-appleclang-arm64 -pr:b conan/profiles/macos-appleclang-arm64 (docs/howto/macos-build.md).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/review-core",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/review-core/conan_toolchain.cmake",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "MIB_BUILD_PROCESSING_ONLY": "ON",
+        "MIB_BUILD_REVIEW_LINK_PROBE": "ON",
+        "BUILD_TESTING": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_COREMOR": "OFF",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF",
+        "MIB_BUILD_OEABT_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "windows-review-core",
+      "displayName": "Windows review core (YOFO Review, static Conan deps)",
+      "description": "mib_review_core + mib_processing + link probe for the review-only Tauri build, in build/review-core/. From a VS 2022 x64 developer shell after: conan install . -of build/review-core --build=missing -o \"&:review_core=True\" -pr:h conan/profiles/windows-msvc194-ninja -pr:b conan/profiles/windows-msvc194-ninja (docs/howto/build-installer.md).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/review-core",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/review-core/conan_toolchain.cmake",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "MIB_BUILD_PROCESSING_ONLY": "ON",
+        "MIB_BUILD_REVIEW_LINK_PROBE": "ON",
+        "BUILD_TESTING": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_COREMOR": "OFF",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF",
+        "MIB_BUILD_OEABT_TOOLS": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -159,6 +215,26 @@
     {
       "name": "windows-ninja-ci-build",
       "configurePreset": "windows-ninja-ci"
+    },
+    {
+      "name": "macos-review-core-build",
+      "displayName": "Build macos-review-core",
+      "configurePreset": "macos-review-core",
+      "targets": [
+        "mib_review_core",
+        "mib_processing",
+        "mib_review_link_probe"
+      ]
+    },
+    {
+      "name": "windows-review-core-build",
+      "displayName": "Build windows-review-core",
+      "configurePreset": "windows-review-core",
+      "targets": [
+        "mib_review_core",
+        "mib_processing",
+        "mib_review_link_probe"
+      ]
     }
   ],
   "testPresets": [

@@ -23,6 +23,15 @@
 // tools/gen_bridge_link_manifest.py from the CMake-generated backend test
 // project. MIB_BRIDGE_NO_CMAKE is implied: build the backend with the
 // windows-default preset first.
+//
+// Review-only builds on macOS / Windows (YOFO Review): the macos-review-core
+// / windows-review-core presets build the review core against static Conan
+// dependencies plus `mib_review_link_probe`, and
+// tools/gen_review_link_manifest.py records that probe's CMake-resolved link
+// line and compile settings ("format": "mib-review-link-v1"). build.rs
+// replays it verbatim — archives, frameworks, system libraries, in order —
+// from MIB_BRIDGE_LINK_MANIFEST or build/review-core/. Linux uses it too when
+// MIB_BRIDGE_LINK_MANIFEST points at one.
 
 use std::path::{Path, PathBuf};
 #[cfg(not(windows))]
@@ -195,6 +204,101 @@ fn windows_build(repo: &Path, include_dir: &Path) {
     }
 }
 
+const REVIEW_MANIFEST_FORMAT: &str = "mib-review-link-v1";
+
+/// The review-core link manifest, when this build should use one: an explicit
+/// MIB_BRIDGE_LINK_MANIFEST in that format, else build/review-core/'s for
+/// review-only builds on macOS (required there) and Windows (when present).
+fn review_manifest(repo: &Path) -> Option<(PathBuf, serde_json::Value)> {
+    println!("cargo:rerun-if-env-changed=MIB_BRIDGE_LINK_MANIFEST");
+    let default = repo.join("build/review-core/mib-bridge-link-manifest.json");
+    let path = match std::env::var_os("MIB_BRIDGE_LINK_MANIFEST") {
+        Some(p) => PathBuf::from(p),
+        None if review_only() && cfg!(target_os = "macos") => default,
+        None if review_only() && cfg!(windows) && default.is_file() => default,
+        None => return None,
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "review bridge link manifest {} unreadable ({e}); build the review core with the \
+             <os>-review-core preset and run `python3 tools/gen_review_link_manifest.py` \
+             (docs/howto/macos-build.md, docs/howto/build-installer.md)",
+            path.display()
+        )
+    });
+    let manifest: serde_json::Value = serde_json::from_str(&text).expect("link manifest is JSON");
+    if manifest["format"].as_str() != Some(REVIEW_MANIFEST_FORMAT) {
+        // The Windows MIB Studio manifest (gen_bridge_link_manifest.py).
+        return None;
+    }
+    assert!(
+        review_only(),
+        "{} is a review-core link manifest; it links only the review bridge — build with \
+         --features review-only (YOFO Review) or unset MIB_BRIDGE_LINK_MANIFEST",
+        path.display()
+    );
+    Some((path, manifest))
+}
+
+fn manifest_build(include_dir: &Path, manifest: &serde_json::Value) {
+    let strings = |key: &str| -> Vec<String> {
+        manifest[key]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    let include_dirs = strings("include_dirs");
+    let defines = strings("defines");
+    compile_bridges(|b| {
+        b.include(include_dir);
+        if cfg!(target_env = "msvc") {
+            b.flag("/std:c++17")
+                .flag("/EHsc")
+                .flag("/utf-8")
+                .flag("/Zc:__cplusplus")
+                .define("NOMINMAX", None)
+                .define("WIN32_LEAN_AND_MEAN", None);
+        } else {
+            b.flag_if_supported("-std=c++17");
+        }
+        for d in &include_dirs {
+            b.include(d);
+        }
+        for def in &defines {
+            match def.split_once('=') {
+                Some((k, v)) => {
+                    b.define(k, v);
+                }
+                None => {
+                    b.define(def, None);
+                }
+            }
+        }
+    });
+
+    for d in strings("search_dirs") {
+        println!("cargo:rustc-link-search=native={d}");
+    }
+    // Static archives are not bundled into the rlib (-bundle): they reach the
+    // final link once, in CMake's order, after the shim that needs them.
+    for entry in manifest["link"].as_array().into_iter().flatten() {
+        let name = entry["name"].as_str().unwrap_or_default();
+        let dir = entry["dir"].as_str().unwrap_or_default();
+        match entry["kind"].as_str() {
+            Some("static") => {
+                println!("cargo:rustc-link-lib=static:-bundle={name}");
+                if matches!(name, "mib_review_core" | "mib_processing") {
+                    let file = if cfg!(target_env = "msvc") { format!("{name}.lib") } else { format!("lib{name}.a") };
+                    println!("cargo:rerun-if-changed={}", Path::new(dir).join(file).display());
+                }
+            }
+            Some("framework") => println!("cargo:rustc-link-lib=framework={name}"),
+            _ => println!("cargo:rustc-link-lib=dylib={name}"),
+        }
+    }
+}
+
 fn main() {
     let repo = repo_root();
     let include_dir = repo.join("include");
@@ -208,6 +312,11 @@ fn main() {
     println!("cargo:rerun-if-changed=src/review_shim.cpp");
     println!("cargo:rerun-if-changed=src/review_shim.h");
     println!("cargo:rerun-if-env-changed=MIB_BRIDGE_NO_CMAKE");
+
+    if let Some((_, manifest)) = review_manifest(&repo) {
+        manifest_build(&include_dir, &manifest);
+        return;
+    }
 
     #[cfg(windows)]
     {

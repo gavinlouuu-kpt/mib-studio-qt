@@ -72,6 +72,8 @@ sections and Conan profile it needs):
 | `linux-backend-only` | Makefiles | apt sections `base,backend` | backend libs + CTest, no Qt; CI and devcontainer |
 | `linux-system-release` | Ninja | apt sections `base,backend,frontend` | full app from Ubuntu packages |
 | `linux-release` / `linux-sentry-release` | Makefiles | `conan/profiles/linux-gcc13` | Conan Qt 6.7.3 on Linux |
+| `macos-review-core` | Ninja, `build/review-core/` | `conan install . -of build/review-core -o "&:review_core=True" -pr:h/-pr:b conan/profiles/macos-appleclang-arm64` | YOFO Review: `mib_processing` + `mib_review_core` + link probe, static deps ([[../frontend/YofoReview]], `docs/howto/macos-build.md`) |
+| `windows-review-core` | Ninja, `build/review-core/` | same with `conan/profiles/windows-msvc194-ninja` (VS x64 dev shell) | YOFO Review on Windows (`docs/howto/build-installer.md`) |
 
 - Every preset builds with `MIB_USE_SENTRY=ON` (the option's default) so
   CrashReporter's sentry-native paths are compiled and tested everywhere;
@@ -306,7 +308,12 @@ windeployqt.exe --release build/Release/mib_studio_qt.exe
 ## Conan
 
 Dependencies resolved via Conan 2 (`conanfile.py`; host profiles in
-`conan/profiles/`). See [[Dependencies]]. Post-build hooks call
+`conan/profiles/`). See [[Dependencies]]. Option `review_core=True` (YOFO
+Review) resolves only spdlog, HDF5, OpenCV (four modules, no FFmpeg /
+protobuf / Eigen) and nlohmann_json, with OpenCV and HDF5 **static**; the
+default graph is unchanged (shared OpenCV / HDF5, Qt, SQLite, ONNX Runtime on
+Windows) — the shared/static choice moved from `default_options` to
+`configure()`. Post-build hooks call
 `windeployqt.exe` to copy Qt plugins and DLLs next to the exe. CMake resolves
 `windeployqt` and the `PATH` prefix from Conan CMakeDeps’ `qt_PACKAGE_FOLDER_*`
 so Release/Debug tools stay aligned with the linked Qt package (stale

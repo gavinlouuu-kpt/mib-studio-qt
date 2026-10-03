@@ -200,3 +200,34 @@ If you compile via CMake (`package_installer` target), the version is injected a
 ```
 ISCC.exe /DAppVersion=<PROJECT_VERSION> mib-studio-qt.iss
 ```
+
+## YOFO Review installer (NSIS, per-user)
+
+YOFO Review — the standalone review app (ADR 0008) — ships as a Tauri NSIS
+installer, not through InnoSetup. It installs per user (no administrator
+rights) under `%LOCALAPPDATA%\YOFO Review`, registers `.h5` / `.hdf5`, and
+carries no third-party DLLs (the review core links OpenCV / HDF5 statically).
+It is **not Authenticode-signed** (decision log 2026-10-01): SmartScreen asks
+for **More info ▸ Run anyway** on first run. CI builds it on every push
+(`.github/workflows/review-ci.yml`, job `review-windows`) with these steps,
+from a **VS 2022 x64 developer shell** (Python with `pip install conan ninja`,
+Rust stable, Node 22):
+
+```powershell
+conan profile detect --force
+conan install . -of build/review-core --build=missing `
+  -o "&:review_core=True" `
+  -pr:h conan/profiles/windows-msvc194-ninja -pr:b conan/profiles/windows-msvc194-ninja
+cmake --preset windows-review-core
+cmake --build --preset windows-review-core-build
+.\build\review-core\mib_review_link_probe.exe
+python tools/gen_review_link_manifest.py
+$env:MIB_BRIDGE_NO_CMAKE = "1"
+cd desktop; npm install
+npm run tauri:review -- build --features review-only --bundles nsis
+```
+
+Output: `desktop\src-tauri\target\release\bundle\nsis\YOFO Review_<version>_x64-setup.exe`.
+The bridge's `build.rs` links from `build\review-core\mib-bridge-link-manifest.json`
+(the probe's CMake-resolved link line; see `tools/gen_review_link_manifest.py`).
+The macOS counterpart is [macos-build.md](macos-build.md).

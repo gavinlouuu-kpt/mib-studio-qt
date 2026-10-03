@@ -172,6 +172,23 @@ runtime on Ubuntu.
 CI: `.github/workflows/bridge-ci.yml` builds the archives then runs
 `cargo test` — no Qt, no webkit, no display.
 
+**Review-only link manifest (macOS / Windows, YOFO Review).** The
+`macos-review-core` / `windows-review-core` presets build the review core
+against static Conan deps (`conanfile.py` `review_core=True`) plus
+`mib_review_link_probe` (`tools/review_link_probe/main.cpp`, option
+`MIB_BUILD_REVIEW_LINK_PROBE`). `tools/gen_review_link_manifest.py` reads the
+probe's link edge from `build.ninja` (`LINK_LIBRARIES` / `LINK_PATH`, Ninja
+escapes and MSVC quoting handled) and the review core's flags from
+`compile_commands.json`, and writes `"format": "mib-review-link-v1"`.
+`build.rs` (`review_manifest` / `manifest_build`) replays it: static archives
+as `static:-bundle` in CMake's order, frameworks, system libraries, include
+dirs and defines. Picked from `MIB_BRIDGE_LINK_MANIFEST`, else
+`build/review-core/` for review-only builds on macOS (required) and Windows
+(when present); a review manifest with the default features is an error.
+Linux keeps its fixed list unless the env points at a manifest (how the
+mechanism is exercised locally). Parser tests:
+`tools/test_gen_review_link_manifest.py` (synthetic macOS + MSVC trees).
+
 ## Gotchas
 
 - The bridge links the **static** archives, so it depends on them being built
