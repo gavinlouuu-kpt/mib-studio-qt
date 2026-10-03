@@ -52,8 +52,11 @@ freeze exact revision identity/content into historical runs.
   member projects (`registry_list_projects`), offline reopen of the last user's cache.
 - [ ] M1: refresh-token persistence in the OS keychain (shell-owned seam) so a
   restart does not require a password; today a restart is CachedOffline until sign-in.
+- [x] M1 (Qt): Settings → Central Methods… dialog over the worker: sign-in/out,
+  refresh, cancel, cached revisions with their separate central states, offline
+  listing; refresh on open; no select/apply.
 - [ ] M1: shared backend snapshots/commands through BackendFacade and Rust bridge;
-  Qt and React method discovery/details showing separate central/cache states.
+  React method discovery/details showing separate central/cache states.
 - [ ] M2: authoritative selected/applied/verified method aggregate; compatibility
   validator tied to real core/camera/calibration context; explicit update selection.
 - [ ] M2: Start readiness binds revision/hash and local execution permission;

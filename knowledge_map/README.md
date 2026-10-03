@@ -37,6 +37,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[frontend/_MOC|Frontend MOC]]
 - [[frontend/MainWindow]], [[frontend/Controllers]]
 - Native core selection: [[frontend/ProcessingCoreDialog]]
+- Central method registry (sign-in, cached revisions): [[frontend/CentralMethodsDialog]]
 - Tabs: [[frontend/ConnectTab]], [[frontend/PreviewPage]],
   [[frontend/ConfigTabs]], [[frontend/ExperimentMonitoringTab]],
   [[frontend/HdfReviewTab]], [[frontend/NanopositionerTab]],

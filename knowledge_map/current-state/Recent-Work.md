@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-02 — Central Methods dialog (#398 M1, Qt)
+
+**Settings → Central Methods…** signs in to the central registry, refreshes
+(also on open when signed in), cancels, signs out, and lists the revisions
+cached for the user with each central state shown as itself (REVOKED in bold
+red), project names and hash prefixes. Offline it lists the last user's cached
+methods. Read-only: no select/apply. The GUI only enqueues worker commands and
+renders snapshots. Guard: `frontend.central_methods`. See
+[[../frontend/CentralMethodsDialog]].
+
 ## 2026-10-02 — Central registry worker: sign-in, refresh, offline cache (#398 M1)
 
 `AppBackend` now owns a `profiles::ProfileRegistryWorker` (one thread): Supabase
