@@ -299,6 +299,15 @@ Contract-2 kernel across objects, holes, border, ROI, noise with and without
 the area gate, channel band, Laplacian gate, target group and empty frames;
 a Contract-1 config is refused.
 
+**Core lines (T1.1b PR 1).** `subtract-ring` (Contract 1, `mib_processing_core`) and
+`absdiff-laplacian` (Contract 2, `mib_processing_core_absdiff_laplacian`) each have
+their own version (pyproject / `processing-cores/absdiff-laplacian.version`), artifact
+`mib_processing_core-<line>-<version>-<os>_<arch>` and sidecar with `algorithm`.
+`release.core_line_sidecars` checks both builds; `processing.native_core_contract2_gold`
+runs the built Contract-2 binary over the real-frame Contract-2 reference through ABI v2
+(all reference objects identical; extra valid objects are ones the host tracker does not
+record). See `docs/portable-processing-sync.md` (Core lines).
+
 ## Accumulation modes
 
 - **Monitoring rings** — `monitoringValidFrames_` / `monitoringInvalidFrames_`,

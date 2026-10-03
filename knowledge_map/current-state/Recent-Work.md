@@ -1,5 +1,21 @@
 # Recent Work
 
+## 2026-10-03 — Processing-core lines named, versioned and gold-checked (T1.1b PR 1)
+
+Both processing-core lines now have their own release identity: `subtract-ring`
+(Contract 1, pyproject version shared with the wheel) and `absdiff-laplacian`
+(Contract 2, `processing-cores/absdiff-laplacian.version`, 0.1.0). Artifacts are
+`mib_processing_core-<line>-<version>-<os>_<arch>` with an `algorithm` sidecar
+field; tags are `mib-processing-<line>-v<version>` (`bump_mib_processing_version.py
+--line`). The release jobs build, export-audit, Ed25519-rehearse and gold-check
+both lines; `scripts/run_native_core_conformance.py` runs the built Contract-2
+binary over the real-frame reference (all 407 reference objects identical).
+Only subtract-ring is signed and published; the publisher still parses legacy
+`mib-processing-v` tags so v0.1.0–v0.2.1 stay promotable. The installer no
+longer packs `mib_processing_core*.dll` and removes old ones. Next: PR 2 (sign
+and publish absdiff-laplacian to its own registry subtree). Plan:
+[`2026-10-02-processing-core-lines-pr1`](../../docs/exec-plans/active/2026-10-02-processing-core-lines-pr1.md).
+
 ## 2026-10-02 — OpenCV thread pool off: 5000 fps experiments no longer lose frames
 
 On the rig PC, experiments at 5000 fps processed only about 2900 frames/s

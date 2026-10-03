@@ -64,8 +64,13 @@ the gold references.
    2)"). The contract number stays the machine-checked identifier, and the name
    is its fixed human label. Names are registered once, in the compatibility
    matrix, and never reused. A later contract that shares a step is named by
-   what it changes. The published `mib-processing-v0.1.0` and `v0.2.0` releases
-   are immutable and remain valid as legacy `subtract-ring` releases.
+   what it changes. The published `mib-processing-v0.1.0`…`v0.2.1` releases
+   are immutable and remain valid as legacy `subtract-ring` releases. In effect
+   since T1.1b PR 1 (2026-10-03): artifacts
+   `mib_processing_core-<name>-<version>-<os>_<arch>`, sidecar `algorithm`,
+   tags `mib-processing-<name>-v<version>`, one version per line
+   (subtract-ring shares the wheel's pyproject version; absdiff-laplacian
+   reads `processing-cores/absdiff-laplacian.version`).
 8. **Rollback means activating the previous core.** On a rig this is done
    through the Processing Core dialog. That is either the previous version of
    the same contract's core, or a Contract-1 core together with a Contract-1
