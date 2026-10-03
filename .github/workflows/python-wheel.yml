@@ -3,7 +3,7 @@ name: Python Wheel (mib_processing)
 on:
   push:
     branches: [main, master]
-    tags: ['mib-processing-v*']
+    tags: ['mib-processing-subtract-ring-v*']
     paths:
       - 'bindings/python/**'
       - 'src/backend/processing/**'
@@ -99,7 +99,7 @@ jobs:
       - name: Require release tag to match the wheel version
         id: identity
         env:
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/mib-processing-v') && github.ref_name || '' }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/mib-processing-subtract-ring-v') && github.ref_name || '' }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -112,7 +112,7 @@ jobs:
           version = tomllib.loads(
               Path("bindings/python/pyproject.toml").read_text(encoding="utf-8")
           )["project"]["version"]
-          if tag and tag != f"mib-processing-v{version}":
+          if tag and tag != f"mib-processing-subtract-ring-v{version}":
               raise SystemExit(
                   f"release tag {tag!r} does not match source wheel version {version!r}"
               )
@@ -358,12 +358,15 @@ jobs:
             -DMIB_ENABLE_HARDWARE_SDKS=OFF `
             -DMIB_ENABLE_WINDOWS_PACKAGING=OFF `
             -DMIB_USE_SENTRY=OFF `
-            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-v') && 'ON' || 'OFF' }} `
+            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-subtract-ring-v') && 'ON' || 'OFF' }} `
             -DMIB_PROCESSING_CORE_APP_MIN_VERSION="$env:APP_MIN_VERSION" `
             -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$env:APP_MAX_VERSION"
           cmake --build build --config Release --target `
             mib_processing_core `
+            mib_processing_core_absdiff_laplacian `
             processing_core_abi_c_test `
+            processing_core_abi_v2_c_test `
+            processing_core_v2_plugin_test `
             processing_core_loader_test `
             processing_core_cache_test `
             processing_core_fixture_matrix_test `
@@ -372,7 +375,7 @@ jobs:
       - name: Verify native ABI, loader, and cache
         shell: pwsh
         run: |
-          $command = 'call build\conanrun.bat && ctest --test-dir build -C Release -R "processing\.core_(abi_c|loader|cache|fixture_matrix)" --output-on-failure'
+          $command = 'call build\conanrun.bat && ctest --test-dir build -C Release -R "processing\.core_(abi_c|abi_v2_c|v2_plugin|loader|cache|fixture_matrix)" --output-on-failure'
           & cmd.exe /d /s /c $command
           if ($LASTEXITCODE -ne 0) {
             throw "Native processing-core tests failed with exit code $LASTEXITCODE"
@@ -417,15 +420,17 @@ jobs:
             throw 'Could not read mib-processing version from pyproject.toml'
           }
           $version = $matches[1]
-          $stem = "mib_processing_core-$version-windows_x86_64"
+          $stem = "mib_processing_core-subtract-ring-$version-windows_x86_64"
           $dll = Get-Item -LiteralPath "build\Release\$stem.dll" -ErrorAction SilentlyContinue
           $descriptor = Get-Item -LiteralPath "build\Release\$stem.json" -ErrorAction SilentlyContinue
           if (-not $dll -or -not $descriptor) {
             throw "Expected release assets $stem.dll and $stem.json under build/Release"
           }
           $metadata = Get-Content $descriptor.FullName -Raw | ConvertFrom-Json
-          if ($metadata.filename -ne $dll.Name -or $metadata.version -ne $version) {
-            throw 'Native sidecar identity does not match the built DLL/version'
+          if ($metadata.filename -ne $dll.Name -or $metadata.version -ne $version -or
+              $metadata.algorithm -ne 'subtract-ring' -or $metadata.contract_version -ne 1 -or
+              $metadata.engine_abi_version -ne 1 -or $metadata.entrypoint -ne 'mib_processing_get_api') {
+            throw 'Native sidecar identity does not match the built subtract-ring DLL/version'
           }
           $nativeDist = Join-Path $env:RUNNER_TEMP 'mib-processing-native-dist'
           Remove-Item -LiteralPath $nativeDist -Recurse -Force -ErrorAction SilentlyContinue
@@ -436,6 +441,33 @@ jobs:
           Copy-Item -LiteralPath $descriptor.FullName -Destination $stagedDescriptor
           "dll=$stagedDll" >> $env:GITHUB_OUTPUT
           "descriptor=$stagedDescriptor" >> $env:GITHUB_OUTPUT
+
+      - name: Locate and validate absdiff-laplacian release assets
+        id: native-assets-c2
+        shell: pwsh
+        run: |
+          # Contract-2 line (T1.1b): built, audited and gold-checked here;
+          # signed and published once its registry line exists (PR 2).
+          $version = (Get-Content processing-cores/absdiff-laplacian.version -TotalCount 1).Trim()
+          $stem = "mib_processing_core-absdiff-laplacian-$version-windows_x86_64"
+          $dll = Get-Item -LiteralPath "build\Release\$stem.dll" -ErrorAction SilentlyContinue
+          $descriptor = Get-Item -LiteralPath "build\Release\$stem.json" -ErrorAction SilentlyContinue
+          if (-not $dll -or -not $descriptor) {
+            throw "Expected release assets $stem.dll and $stem.json under build/Release"
+          }
+          $metadata = Get-Content $descriptor.FullName -Raw | ConvertFrom-Json
+          if ($metadata.filename -ne $dll.Name -or $metadata.version -ne $version -or
+              $metadata.algorithm -ne 'absdiff-laplacian' -or $metadata.contract_version -ne 2 -or
+              $metadata.engine_abi_version -ne 2 -or $metadata.entrypoint -ne 'mib_processing_get_api_v2') {
+            throw 'Native sidecar identity does not match the built absdiff-laplacian DLL/version'
+          }
+          $nativeDist = Join-Path $env:RUNNER_TEMP 'mib-processing-native-dist-absdiff-laplacian'
+          Remove-Item -LiteralPath $nativeDist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $nativeDist | Out-Null
+          $stagedDll = Join-Path $nativeDist $dll.Name
+          Copy-Item -LiteralPath $dll.FullName -Destination $stagedDll
+          Copy-Item -LiteralPath $descriptor.FullName -Destination (Join-Path $nativeDist $descriptor.Name)
+          "dll=$stagedDll" >> $env:GITHUB_OUTPUT
 
       - name: Audit native plugin exports and imports
         shell: pwsh
@@ -451,33 +483,39 @@ jobs:
             Select-Object -First 1
           if (-not $dumpbin) { throw 'MSVC x64 dumpbin.exe was not found' }
 
-          $exports = & $dumpbin.FullName /nologo /exports '${{ steps.native-assets.outputs.dll }}'
-          Write-Host ($exports -join "`n")
-          $exportNames = @($exports | ForEach-Object {
-            # dumpbin may append an alias/forwarder after the name. Parse the
-            # stable ordinal/hint/RVA/name prefix and still count every row.
-            if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') {
-              $matches[1]
+          # ADR 0007: each core line implements one contract and exports only
+          # that contract's entry point.
+          $plugins = @(
+            @{ dll = '${{ steps.native-assets.outputs.dll }}'; export = 'mib_processing_get_api' },
+            @{ dll = '${{ steps.native-assets-c2.outputs.dll }}'; export = 'mib_processing_get_api_v2' }
+          )
+          foreach ($plugin in $plugins) {
+            $exports = & $dumpbin.FullName /nologo /exports $plugin.dll
+            Write-Host ($exports -join "`n")
+            $exportNames = @($exports | ForEach-Object {
+              # dumpbin may append an alias/forwarder after the name. Parse the
+              # stable ordinal/hint/RVA/name prefix and still count every row.
+              if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') {
+                $matches[1]
+              }
+            })
+            if ($exportNames.Count -ne 1 -or $exportNames[0] -ne $plugin.export) {
+              throw "$($plugin.dll) must export exactly $($plugin.export); found: $($exportNames -join ', ')"
             }
-          })
-          # ADR 0007: the subtract-ring (Contract 1) core implements one
-          # contract and exports only its engine ABI v1 entry point.
-          if ($exportNames.Count -ne 1 -or $exportNames[0] -ne 'mib_processing_get_api') {
-            throw "Native plugin must export exactly mib_processing_get_api; found: $($exportNames -join ', ')"
-          }
 
-          $dependents = & $dumpbin.FullName /nologo /dependents '${{ steps.native-assets.outputs.dll }}'
-          Write-Host ($dependents -join "`n")
-          $dependencyNames = @($dependents | ForEach-Object {
-            if ($_ -match '^\s+([A-Za-z0-9_.+\-]+\.dll)\s*$') { $matches[1] }
-          })
-          $forbidden = @($dependencyNames | Where-Object {
-            $_ -match '^(Qt|hdf5|opencv|python|mib_studio)'
-          })
-          if ($forbidden.Count -ne 0) {
-            throw "Native plugin imports forbidden host/framework DLLs: $($forbidden -join ', ')"
+            $dependents = & $dumpbin.FullName /nologo /dependents $plugin.dll
+            Write-Host ($dependents -join "`n")
+            $dependencyNames = @($dependents | ForEach-Object {
+              if ($_ -match '^\s+([A-Za-z0-9_.+\-]+\.dll)\s*$') { $matches[1] }
+            })
+            $forbidden = @($dependencyNames | Where-Object {
+              $_ -match '^(Qt|hdf5|opencv|python|mib_studio)'
+            })
+            if ($forbidden.Count -ne 0) {
+              throw "$($plugin.dll) imports forbidden host/framework DLLs: $($forbidden -join ', ')"
+            }
+            Write-Host "Native imports of $($plugin.dll): $($dependencyNames -join ', ')"
           }
-          Write-Host "Native imports: $($dependencyNames -join ', ')"
 
       - name: Verify Authenticode trust with signed SDK fixture
         shell: pwsh
@@ -492,6 +530,13 @@ jobs:
         with:
           name: mib_processing-native-windows-x86_64-unsigned
           path: ${{ runner.temp }}/mib-processing-native-dist/*
+          if-no-files-found: error
+
+      - name: Upload unsigned absdiff-laplacian plugin artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: mib_processing-native-windows-x86_64-absdiff-laplacian-unsigned
+          path: ${{ runner.temp }}/mib-processing-native-dist-absdiff-laplacian/*
           if-no-files-found: error
 
   build-native-plugin-linux:
@@ -523,12 +568,15 @@ jobs:
           set -euo pipefail
           cmake --preset linux-backend-only \
             -DMIB_USE_SENTRY=OFF \
-            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-v') && 'ON' || 'OFF' }} \
+            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-subtract-ring-v') && 'ON' || 'OFF' }} \
             -DMIB_PROCESSING_CORE_APP_MIN_VERSION="$APP_MIN_VERSION" \
             -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$APP_MAX_VERSION"
           cmake --build --preset linux-backend-only-build --parallel --target \
             mib_processing_core \
+            mib_processing_core_absdiff_laplacian \
             processing_core_abi_c_test \
+            processing_core_abi_v2_c_test \
+            processing_core_v2_plugin_test \
             processing_core_loader_test \
             processing_core_cache_test \
             processing_core_fixture_matrix_test \
@@ -541,7 +589,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset linux-backend-only-test \
-            -R "processing\.core_(abi_c|loader|cache|fixture_matrix|ed25519)" \
+            -R "processing\.core_(abi_c|abi_v2_c|v2_plugin|loader|cache|fixture_matrix|ed25519)" \
             --output-on-failure
 
       - name: Locate and validate release assets
@@ -555,7 +603,7 @@ jobs:
               print(tomllib.load(handle)["project"]["version"])
           EOF
           )"
-          stem="mib_processing_core-${version}-linux_x86_64"
+          stem="mib_processing_core-subtract-ring-${version}-linux_x86_64"
           shared_library="build/linux-backend/Release/${stem}.so"
           descriptor="build/linux-backend/Release/${stem}.json"
           test -f "$shared_library"
@@ -569,8 +617,40 @@ jobs:
           assert metadata["version"] == version, "sidecar version mismatch"
           assert metadata["os"] == "linux" and metadata["arch"] == "x86_64"
           assert metadata["signing"] == {"required": True, "scheme": "ed25519"}
+          assert metadata["algorithm"] == "subtract-ring" and metadata["contract_version"] == 1
+          assert metadata["engine_abi_version"] == 1 and metadata["entrypoint"] == "mib_processing_get_api"
           EOF
           staging="$RUNNER_TEMP/mib-processing-native-dist"
+          rm -rf "$staging"
+          mkdir -p "$staging"
+          cp "$shared_library" "$descriptor" "$staging/"
+          echo "so=$staging/${stem}.so" >> "$GITHUB_OUTPUT"
+          echo "descriptor=$staging/${stem}.json" >> "$GITHUB_OUTPUT"
+
+      - name: Locate and validate absdiff-laplacian release assets
+        id: native-assets-c2
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(head -n1 processing-cores/absdiff-laplacian.version | tr -d '[:space:]')"
+          stem="mib_processing_core-absdiff-laplacian-${version}-linux_x86_64"
+          shared_library="build/linux-backend/Release/${stem}.so"
+          descriptor="build/linux-backend/Release/${stem}.json"
+          test -f "$shared_library"
+          test -f "$descriptor"
+          python3 - "$descriptor" "$stem.so" "$version" <<'EOF'
+          import json, sys
+          descriptor, filename, version = sys.argv[1:]
+          with open(descriptor, encoding="utf-8") as handle:
+              metadata = json.load(handle)
+          assert metadata["filename"] == filename, "sidecar filename mismatch"
+          assert metadata["version"] == version, "sidecar version mismatch"
+          assert metadata["os"] == "linux" and metadata["arch"] == "x86_64"
+          assert metadata["signing"] == {"required": True, "scheme": "ed25519"}
+          assert metadata["algorithm"] == "absdiff-laplacian" and metadata["contract_version"] == 2
+          assert metadata["engine_abi_version"] == 2 and metadata["entrypoint"] == "mib_processing_get_api_v2"
+          EOF
+          staging="$RUNNER_TEMP/mib-processing-native-dist-absdiff-laplacian"
           rm -rf "$staging"
           mkdir -p "$staging"
           cp "$shared_library" "$descriptor" "$staging/"
@@ -581,13 +661,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shared_library='${{ steps.native-assets.outputs.so }}'
+          # ADR 0007: each core line implements one contract and exports only
+          # that contract's entry point.
+          for pair in \
+            '${{ steps.native-assets.outputs.so }}:mib_processing_get_api' \
+            '${{ steps.native-assets-c2.outputs.so }}:mib_processing_get_api_v2'; do
+          shared_library="${pair%%:*}"
+          expected_export="${pair##*:}"
           exports="$(nm -D --defined-only "$shared_library" | awk '$2 == "T" {print $3}')"
-          echo "Exports: $exports"
-          # ADR 0007: the subtract-ring (Contract 1) core implements one
-          # contract and exports only its engine ABI v1 entry point.
-          if [ "$exports" != "mib_processing_get_api" ]; then
-            echo "::error::Native plugin must export exactly mib_processing_get_api"
+          echo "Exports of $shared_library: $exports"
+          if [ "$exports" != "$expected_export" ]; then
+            echo "::error::$shared_library must export exactly $expected_export"
             exit 1
           fi
           needed="$(readelf -d "$shared_library" | awk '/NEEDED/ {gsub(/[\[\]]/, "", $5); print $5}')"
@@ -598,24 +682,30 @@ jobs:
           # dependencies are reported but allowed; pinning them down across
           # supported distro baselines is part of the remaining A13 live gate.
           if echo "$needed" | grep -Eiq '^(libQt|libhdf5|libpython|libmib_studio)'; then
-            echo "::error::Native plugin imports forbidden host/framework libraries"
+            echo "::error::$shared_library imports forbidden host/framework libraries"
             exit 1
           fi
+          done
 
       - name: Rehearse detached Ed25519 signing with an ephemeral key
         shell: bash
         run: |
           set -euo pipefail
-          workdir="$RUNNER_TEMP/mib-processing-ed25519"
+          for pair in \
+            '${{ steps.native-assets.outputs.so }}|${{ steps.native-assets.outputs.descriptor }}' \
+            '${{ steps.native-assets-c2.outputs.so }}|${{ steps.native-assets-c2.outputs.descriptor }}'; do
+          shared_library="${pair%%|*}"
+          descriptor="${pair##*|}"
+          workdir="$RUNNER_TEMP/mib-processing-ed25519/$(basename "$shared_library")"
           rm -rf "$workdir"
           mkdir -p "$workdir"
           openssl genpkey -algorithm ed25519 -out "$workdir/signer.pem"
           openssl pkey -in "$workdir/signer.pem" -pubout -outform DER -out "$workdir/signer-spki.der"
           openssl pkeyutl -sign -inkey "$workdir/signer.pem" -rawin \
-            -in '${{ steps.native-assets.outputs.so }}' -out "$workdir/artifact.sig"
+            -in "$shared_library" -out "$workdir/artifact.sig"
           openssl pkeyutl -verify -pubin -inkey <(openssl pkey -in "$workdir/signer.pem" -pubout) \
-            -rawin -in '${{ steps.native-assets.outputs.so }}' -sigfile "$workdir/artifact.sig"
-          python3 - '${{ steps.native-assets.outputs.descriptor }}' "$workdir" <<'EOF'
+            -rawin -in "$shared_library" -sigfile "$workdir/artifact.sig"
+          python3 - "$descriptor" "$workdir" <<'EOF'
           import base64, hashlib, json, sys
           descriptor_path, workdir = sys.argv[1:]
           with open(f"{workdir}/signer-spki.der", "rb") as handle:
@@ -634,32 +724,36 @@ jobs:
               json.dump(metadata, handle, indent=2)
               handle.write("\n")
           EOF
+          done
 
       - name: Validate the signed descriptor through the registry publisher
         shell: bash
         run: |
           set -euo pipefail
-          python3 - '${{ steps.native-assets.outputs.descriptor }}' <<'EOF'
+          python3 - '${{ steps.native-assets.outputs.descriptor }}' \
+            '${{ steps.native-assets-c2.outputs.descriptor }}' <<'EOF'
           import importlib.util, json, sys
           from pathlib import Path
-          descriptor = Path(sys.argv[1])
           spec = importlib.util.spec_from_file_location(
               "publish_processing_core", "scripts/release/publish-processing-core.py")
           publisher = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(publisher)
-          version = json.loads(descriptor.read_text(encoding="utf-8"))["version"]
-          entries = publisher.build_native_plugin_entries(
-              [descriptor],
-              asset_dir=descriptor.parent,
-              repo="OWNER/REPO",
-              release_tag=f"mib-processing-v{version}",
-              expected_version=version,
-              expected_contract_version=1,
-          )
-          signing = entries[0]["signing"]
-          assert signing["scheme"] == "ed25519" and signing["required"] is True
-          assert signing["public_key_spki_sha256"]
-          print("publisher accepted the ed25519-signed Linux descriptor")
+          for argument in sys.argv[1:]:
+              descriptor = Path(argument)
+              metadata = json.loads(descriptor.read_text(encoding="utf-8"))
+              line, version = metadata["algorithm"], metadata["version"]
+              entries = publisher.build_native_plugin_entries(
+                  [descriptor],
+                  asset_dir=descriptor.parent,
+                  repo="OWNER/REPO",
+                  release_tag=f"mib-processing-{line}-v{version}",
+                  expected_version=version,
+                  expected_contract_version=metadata["contract_version"],
+              )
+              signing = entries[0]["signing"]
+              assert signing["scheme"] == "ed25519" and signing["required"] is True
+              assert signing["public_key_spki_sha256"]
+              print(f"publisher accepted the ed25519-signed Linux {line} descriptor")
           EOF
 
       - name: Upload unsigned native plugin artifact
@@ -669,10 +763,17 @@ jobs:
           path: ${{ runner.temp }}/mib-processing-native-dist/*
           if-no-files-found: error
 
+      - name: Upload unsigned absdiff-laplacian plugin artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: mib_processing-native-linux-x86_64-absdiff-laplacian-unsigned
+          path: ${{ runner.temp }}/mib-processing-native-dist-absdiff-laplacian/*
+          if-no-files-found: error
+
   sign-native-plugin:
     name: Sign native processing core (Production)
     needs: build-native-plugin
-    if: startsWith(github.ref, 'refs/tags/mib-processing-v')
+    if: startsWith(github.ref, 'refs/tags/mib-processing-subtract-ring-v')
     runs-on: windows-2022
     environment: Production
     permissions:
@@ -750,7 +851,7 @@ jobs:
             return (($digest | ForEach-Object { $_.ToString('x2') }) -join '')
           }
 
-          $dlls = @(Get-ChildItem native-dist -File -Filter 'mib_processing_core-*-windows_x86_64.dll')
+          $dlls = @(Get-ChildItem native-dist -File -Filter 'mib_processing_core-subtract-ring-*-windows_x86_64.dll')
           if ($dlls.Count -ne 1) {
             throw "Expected exactly one native plugin DLL, found $($dlls.Count)"
           }
@@ -799,7 +900,7 @@ jobs:
   sign-native-plugin-linux:
     name: Sign native processing core (Linux, Production)
     needs: build-native-plugin-linux
-    if: startsWith(github.ref, 'refs/tags/mib-processing-v')
+    if: startsWith(github.ref, 'refs/tags/mib-processing-subtract-ring-v')
     runs-on: ubuntu-24.04
     environment: Production
     permissions:
@@ -832,7 +933,7 @@ jobs:
             exit 1
           fi
           shopt -s nullglob
-          libraries=(native-dist/mib_processing_core-*-linux_x86_64.so)
+          libraries=(native-dist/mib_processing_core-subtract-ring-*-linux_x86_64.so)
           if [ "${#libraries[@]}" -ne 1 ]; then
             echo "::error::Expected exactly one native plugin .so, found ${#libraries[@]}"
             exit 1
@@ -893,7 +994,7 @@ jobs:
   release:
     name: Publish processing-core GitHub Release and registry
     needs: [validate-source-version, build-and-test, sign-native-plugin, sign-native-plugin-linux]
-    if: startsWith(github.ref, 'refs/tags/mib-processing-v')
+    if: startsWith(github.ref, 'refs/tags/mib-processing-subtract-ring-v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -941,13 +1042,13 @@ jobs:
           if nested:
               raise SystemExit(f"nested release asset paths are forbidden: {nested}")
 
-          version = os.environ["GITHUB_REF"].removeprefix("refs/tags/mib-processing-v")
+          version = os.environ["GITHUB_REF"].removeprefix("refs/tags/mib-processing-subtract-ring-v")
           names = {path.name for path in root.iterdir() if path.is_file()}
           expected_native = {
-              f"mib_processing_core-{version}-windows_x86_64.dll",
-              f"mib_processing_core-{version}-windows_x86_64.json",
-              f"mib_processing_core-{version}-linux_x86_64.so",
-              f"mib_processing_core-{version}-linux_x86_64.json",
+              f"mib_processing_core-subtract-ring-{version}-windows_x86_64.dll",
+              f"mib_processing_core-subtract-ring-{version}-windows_x86_64.json",
+              f"mib_processing_core-subtract-ring-{version}-linux_x86_64.so",
+              f"mib_processing_core-subtract-ring-{version}-linux_x86_64.json",
           }
           wheel_pattern = re.compile(
               rf"mib_processing-{re.escape(version)}-cp(310|311|312|313)-cp\1-"
@@ -996,7 +1097,7 @@ jobs:
           from pathlib import Path
 
           tag = os.environ["GITHUB_REF"].removeprefix("refs/tags/")
-          version = tag.removeprefix("mib-processing-v")
+          version = tag.removeprefix("mib-processing-subtract-ring-v")
           names = {
               asset["name"]
               for asset in json.loads(Path("/tmp/existing-release.json").read_text())["assets"]
@@ -1010,10 +1111,10 @@ jobs:
               )
           wheels = sorted(name for name in names if name.endswith(".whl"))
           expected_native = {
-              f"mib_processing_core-{version}-windows_x86_64.dll",
-              f"mib_processing_core-{version}-windows_x86_64.json",
-              f"mib_processing_core-{version}-linux_x86_64.so",
-              f"mib_processing_core-{version}-linux_x86_64.json",
+              f"mib_processing_core-subtract-ring-{version}-windows_x86_64.dll",
+              f"mib_processing_core-subtract-ring-{version}-windows_x86_64.json",
+              f"mib_processing_core-subtract-ring-{version}-linux_x86_64.so",
+              f"mib_processing_core-subtract-ring-{version}-linux_x86_64.json",
           }
           wheel_pattern = re.compile(
               rf"mib_processing-{re.escape(version)}-cp(310|311|312|313)-cp\1-"
