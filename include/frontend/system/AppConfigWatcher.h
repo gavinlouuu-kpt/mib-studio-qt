@@ -86,6 +86,10 @@ private:
 	// Value-initialized to 0 == FrameDeliveryMode::EveryFrame (the enum is only
 	// forward-declared here, so the enumerator itself is not nameable).
 	camera::common::FrameDeliveryMode lastDeliveryMode_{};
+	// dot_grid.enabled as last read from disk (-1 = not read yet). A reload
+	// applies `enabled` only when this file value changes, so the Overview's
+	// runtime Wafer Grid toggle survives unrelated config.json writes.
+	int lastDotGridEnabledOnDisk_ = -1;
 };
 
 } // namespace frontend

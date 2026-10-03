@@ -7,6 +7,8 @@
 #include <QPen>
 #include <QBrush>
 #include <QColor>
+#include <QFontMetrics>
+#include <algorithm>
 #include <cmath>
 
 namespace frontend
@@ -81,6 +83,25 @@ namespace frontend
         }
         p.drawImage(topLeft.toPoint(), scaledImgCache_);
 
+        // Dot-grid wafer localization: detected dots and the image-centre marker
+        // (the reported wafer position); the pose text is drawn last, on top.
+        if (dotGrid_ && dotGrid_->active && dotGrid_->valid)
+        {
+            QPen dotPen(QColor(255, 160, 0));
+            dotPen.setWidth(1);
+            p.setPen(dotPen);
+            p.setBrush(Qt::NoBrush);
+            const double r = std::max(3.0, 6.0 * scale);
+            for (const QPointF &d : dotGrid_->dots)
+                p.drawEllipse(imageToCanvas(d), r, r);
+            QPen centrePen(QColor(0, 220, 255));
+            centrePen.setWidth(2);
+            p.setPen(centrePen);
+            const QPointF c = imageToCanvas(dotGrid_->centre);
+            p.drawLine(c + QPointF(-14, 0), c + QPointF(14, 0));
+            p.drawLine(c + QPointF(0, -14), c + QPointF(0, 14));
+        }
+
         // Draw ROI overlay if visible
         if (roiVisible_ && *roiVisible_ && roiPos_)
         {
@@ -95,6 +116,18 @@ namespace frontend
             p.setPen(QPen(QColor(255, 0, 0, 200), 2));
             p.setBrush(QBrush(QColor(255, 0, 0, 30)));
             p.drawRect(roiRect);
+        }
+
+        if (dotGrid_ && dotGrid_->active && !dotGrid_->text.isEmpty())
+        {
+            const QFontMetrics fm(p.font());
+            const QRect textRect = fm.boundingRect(QRect(0, 0, 640, 200), Qt::AlignLeft | Qt::TextWordWrap, dotGrid_->text);
+            const QRectF box(topLeft.x() + 8, topLeft.y() + 8, textRect.width() + 14, textRect.height() + 10);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 150));
+            p.drawRoundedRect(box, 4, 4);
+            p.setPen(dotGrid_->valid ? QColor(255, 220, 120) : QColor(255, 130, 130));
+            p.drawText(box.adjusted(7, 5, -7, -5), Qt::AlignLeft | Qt::TextWordWrap, dotGrid_->text);
         }
     }
 

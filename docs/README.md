@@ -36,6 +36,9 @@ This folder hosts living documentation as we build functionality. Keep content c
   `env/assets.json`, fetched by `scripts/provision-assets.py`) — see
   [../knowledge_map/build-and-run/Assets.md](../knowledge_map/build-and-run/Assets.md)
 - Post-processing tools (export, reanalyse) — see [howto/tools.md](howto/tools.md)
+- Dot-grid wafer localization (fiducial pattern, decoder, mask generator) — see
+  [architecture/dot-grid-localization.md](architecture/dot-grid-localization.md) and
+  [howto/dot-grid-mask-generation.md](howto/dot-grid-mask-generation.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)
