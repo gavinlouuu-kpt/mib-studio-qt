@@ -55,6 +55,17 @@ def make_manifest(root: Path, version: str, published_at: str = "2026-07-13T00:0
 
 
 class VersionAndWheelTest(unittest.TestCase):
+    def test_release_tag_prefixes(self) -> None:
+        # New subtract-ring releases use the line prefix; releases published
+        # before the rename (mib-processing-v0.1.0..v0.2.1) stay promotable.
+        parse = publish_processing_core.version_from_release_tag
+        self.assertEqual(parse("mib-processing-subtract-ring-v0.3.3"), "0.3.3")
+        self.assertEqual(parse("mib-processing-v0.2.1"), "0.2.1")
+        for other in ("mib-processing-absdiff-laplacian-v0.1.0", "v0.2.1", "mib-processing-0.2.1"):
+            with self.subTest(tag=other), self.assertRaises(ValueError):
+                parse(other)
+        self.assertEqual(publish_processing_core._TAG_PREFIX, "mib-processing-subtract-ring-v")
+
     def test_rejects_unsafe_version(self) -> None:
         for value in ("../1.0", "1/2", "", ".", "..", "v 1"):
             with self.subTest(value=value), self.assertRaises(ValueError):

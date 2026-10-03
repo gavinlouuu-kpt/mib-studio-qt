@@ -20,8 +20,14 @@ from pathlib import Path
 
 PYPROJECT = Path("bindings/python/pyproject.toml")
 PACKAGE_INIT = Path("bindings/python/python/mib_processing/__init__.py")
-TAG_PREFIX = "mib-processing-v"
+# Processing-core lines (ADR 0007), each versioned independently. subtract-ring
+# shares the wheel version (pyproject + __init__); other lines own one file.
+LINES: dict[str, Path | None] = {
+    "subtract-ring": None,
+    "absdiff-laplacian": Path("processing-cores/absdiff-laplacian.version"),
+}
 _SAFE_VERSION = re.compile(r"^[0-9][A-Za-z0-9._+!-]*$")
+_LINE_VERSION_FILE = re.compile(r"^([0-9][A-Za-z0-9._+!-]*)\r?\n$")
 _PYPROJECT_VERSION = re.compile(r'(?m)^(version\s*=\s*)"([^"]+)"\s*$')
 _PACKAGE_VERSION = re.compile(r'(?m)^(__version__\s*=\s*)"([^"]+)"\s*$')
 
@@ -41,8 +47,33 @@ def _replace_one(text: str, pattern: re.Pattern[str], version: str, source: Path
     return updated, current
 
 
-def plan_updates(repo_root: Path, version: str) -> tuple[dict[Path, str], str]:
+def _check_line(line: str) -> str:
+    if line not in LINES:
+        raise ValueError(f"Unknown processing-core line: {line!r}")
+    return line
+
+
+def tag_for(line: str, version: str) -> str:
+    """Release tag of one core line: mib-processing-<line>-v<version>."""
+    return f"mib-processing-{_check_line(line)}-v{validate_version(version)}"
+
+
+def _line_version(text: str, source: Path) -> str:
+    match = _LINE_VERSION_FILE.fullmatch(text)
+    if match is None:
+        raise ValueError(f"{source} must hold exactly one version line")
+    return match.group(1)
+
+
+def plan_updates(
+    repo_root: Path, version: str, line: str = "subtract-ring"
+) -> tuple[dict[Path, str], str]:
     version = validate_version(version)
+    version_file = LINES[_check_line(line)]
+    if version_file is not None:
+        path = repo_root / version_file
+        current = _line_version(path.read_text(encoding="utf-8"), version_file)
+        return {path: f"{version}\n"}, current
     pyproject_path = repo_root / PYPROJECT
     package_path = repo_root / PACKAGE_INIT
     pyproject_text = pyproject_path.read_text(encoding="utf-8")
@@ -109,11 +140,15 @@ def _git(repo_root: Path, *args: str, capture: bool = False) -> subprocess.Compl
     )
 
 
-def create_committed_tag(repo_root: Path, version: str, message: str | None = None) -> str:
+def create_committed_tag(
+    repo_root: Path, version: str, message: str | None = None, line: str = "subtract-ring"
+) -> str:
     """Create the release tag only when HEAD already contains the bumped literals."""
-    tag = f"{TAG_PREFIX}{validate_version(version)}"
+    tag = tag_for(line, version)
+    version_file = LINES[line]
+    tracked = (PYPROJECT, PACKAGE_INIT) if version_file is None else (version_file,)
     dirty = _git(
-        repo_root, "status", "--porcelain", "--", str(PYPROJECT), str(PACKAGE_INIT), capture=True,
+        repo_root, "status", "--porcelain", "--", *(str(path) for path in tracked), capture=True,
     ).stdout.strip()
     if dirty:
         raise RuntimeError(
@@ -121,10 +156,18 @@ def create_committed_tag(repo_root: Path, version: str, message: str | None = No
             "so the tag points at the versioned commit."
         )
 
-    for relative_path, pattern in ((PYPROJECT, _PYPROJECT_VERSION), (PACKAGE_INIT, _PACKAGE_VERSION)):
+    for relative_path in tracked:
         head_text = _git(repo_root, "show", f"HEAD:{relative_path.as_posix()}", capture=True).stdout
-        match = pattern.search(head_text)
-        if match is None or match.group(2) != version:
+        if version_file is None:
+            pattern = _PYPROJECT_VERSION if relative_path == PYPROJECT else _PACKAGE_VERSION
+            match = pattern.search(head_text)
+            head_version = match.group(2) if match else None
+        else:
+            try:
+                head_version = _line_version(head_text, relative_path)
+            except ValueError:
+                head_version = None
+        if head_version != version:
             raise RuntimeError(f"HEAD does not contain version {version} in {relative_path}")
 
     existing = subprocess.run(
@@ -133,13 +176,17 @@ def create_committed_tag(repo_root: Path, version: str, message: str | None = No
     )
     if existing.returncode == 0:
         raise RuntimeError(f"Tag already exists: {tag}")
-    _git(repo_root, "tag", "-a", tag, "-m", message or f"mib-processing {version}")
+    _git(repo_root, "tag", "-a", tag, "-m", message or f"mib-processing {line} {version}")
     return tag
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("version", help="New wheel version, for example 0.2.0 or 0.2.0rc1")
+    parser.add_argument("version", help="New line version, for example 0.2.0 or 0.2.0rc1")
+    parser.add_argument(
+        "--line", choices=sorted(LINES), default="subtract-ring",
+        help="Processing-core line to bump (subtract-ring also bumps the wheel)",
+    )
     parser.add_argument(
         "--repo-root", default=str(Path(__file__).resolve().parents[1]),
         help=argparse.SUPPRESS,
@@ -147,7 +194,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Validate and show changes without writing")
     parser.add_argument(
         "--create-tag", action="store_true",
-        help="Create annotated mib-processing-v<version>; requires the version files committed at HEAD",
+        help="Create annotated mib-processing-<line>-v<version>; requires the version files committed at HEAD",
     )
     parser.add_argument("--tag-message", default=None)
     return parser
@@ -157,9 +204,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     repo_root = Path(args.repo_root).resolve()
     try:
-        updates, current = plan_updates(repo_root, args.version)
+        updates, current = plan_updates(repo_root, args.version, args.line)
         changed = any(path.read_text(encoding="utf-8") != content for path, content in updates.items())
-        print(f"mib-processing version: {current} -> {args.version}")
+        print(f"mib-processing {args.line} version: {current} -> {args.version}")
         for path in updates:
             print(f"  {path.relative_to(repo_root)}")
 
@@ -180,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Version literals already match; no files changed.")
 
         if args.create_tag:
-            tag = create_committed_tag(repo_root, args.version, args.tag_message)
+            tag = create_committed_tag(repo_root, args.version, args.tag_message, args.line)
             print(f"Created annotated tag: {tag}")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
