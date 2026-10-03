@@ -87,6 +87,7 @@
 #include <QMenu>
 #include "frontend/dialogs/ProcessingSettingsDialog.h"
 #include "frontend/dialogs/ProcessingCoreDialog.h"
+#include "frontend/dialogs/CentralMethodsDialog.h"
 #include "frontend/dialogs/ConversionFactorDialog.h"
 #include "frontend/dialogs/SyringePumpSettingsDialog.h"
 #include "backend/app/Tools.h"
@@ -231,6 +232,15 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
                           .arg(identity.contractVersion)
                     : tr("Core: unavailable (selection failed)"));
         }
+    });
+    // Central profile registry (#398): sign-in, refresh and the cached central
+    // revisions. Read-only toward the instrument (no select/apply here).
+    auto* centralMethodsAct = new QAction(tr("Central Methods..."), this);
+    ui->settingsMenu->addAction(centralMethodsAct);
+    connect(centralMethodsAct, &QAction::triggered, this, [this]() {
+        SPDLOG_INFO("Opening Central Methods dialog");
+        frontend::CentralMethodsDialog dialog(backend_.profileRegistry(), this);
+        dialog.exec();
     });
     connect(ui->aboutAct, &QAction::triggered, this, [this]()
             {

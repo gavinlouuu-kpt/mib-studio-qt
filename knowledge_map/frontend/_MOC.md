@@ -21,6 +21,8 @@
 ## Support
 - [[Dialogs]] — settings dialogs (Mock, Processing, Monitoring, Buffer save,
   Conversion factor, Frame viewer, Syringe pump)
+- [[CentralMethodsDialog]] — central registry sign-in, refresh and cached
+  central revisions with their states (#398); read-only toward the instrument.
 - [[ProcessingCoreDialog]] — version history, verified cache preparation, and
   between-operation native-core activation
 - [[System-Utilities]] — `AppConfigWatcher`, `AutoUpdater`,

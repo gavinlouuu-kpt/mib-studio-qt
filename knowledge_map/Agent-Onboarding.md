@@ -33,6 +33,7 @@ Jump to the notes that match your task:
 | Post-experiment review | [[frontend/HdfReviewTab]] |
 | Live charts during a run | [[frontend/ExperimentMonitoringTab]] |
 | Processing-core versions / native hot-swap | [[frontend/ProcessingCoreDialog]] + [[services/ProcessingService]] |
+| Central method registry (#398) | [[frontend/CentralMethodsDialog]] + [[services/ProfileRegistryService]] |
 | Autofocus / nanopositioner | [[services/AutofocusService]] + [[frontend/NanopositionerTab]] |
 | Device discovery (camera / nanopositioner / pulse-generator scans, startup auto-select) | [[services/DeviceDiscoveryService]] + [[frontend/System-Utilities]] (`DeviceInitManager`) + [[task/2026-09-15-device-discovery-service]] |
 | Hidden desktop / hardware held after close | [[frontend/DesktopInstance]] + [[task/2026-09-15-hardware-shutdown]] |
