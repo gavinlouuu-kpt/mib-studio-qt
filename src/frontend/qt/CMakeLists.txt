@@ -303,6 +303,14 @@ if(BUILD_TESTING)
     mib_test_runner_add(mib_frontend_tests mindvision_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/mindvision_overview_test.cpp)
     add_test(NAME frontend.mindvision_overview COMMAND $<TARGET_FILE:mib_frontend_tests> mindvision_overview_test)
     set_tests_properties(frontend.mindvision_overview PROPERTIES LABELS "frontend;camera;safety" TIMEOUT 120)
+    # dot_grid config apply: exact 64-bit seeds, Wafer Grid toggle survives reloads.
+    mib_test_runner_add(mib_frontend_tests dot_grid_config_test ${PROJECT_SOURCE_DIR}/tests/frontend/dot_grid_config_test.cpp)
+    add_test(NAME frontend.dot_grid_config COMMAND $<TARGET_FILE:mib_frontend_tests> dot_grid_config_test)
+    set_tests_properties(frontend.dot_grid_config PROPERTIES LABELS "frontend;config" TIMEOUT 120)
+    # Dot-grid localization runs on the Overview tab only (paused elsewhere).
+    mib_test_runner_add(mib_frontend_tests dot_grid_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/dot_grid_overview_test.cpp)
+    add_test(NAME frontend.dot_grid_overview COMMAND $<TARGET_FILE:mib_frontend_tests> dot_grid_overview_test)
+    set_tests_properties(frontend.dot_grid_overview PROPERTIES LABELS "frontend;processing;concurrency" TIMEOUT 180)
     mib_test_runner_finalize(mib_frontend_tests ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     # Standalone: this test runs the application's event loop through quit.
     add_executable(mainwindow_shutdown_test ${PROJECT_SOURCE_DIR}/tests/frontend/mainwindow_shutdown_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
