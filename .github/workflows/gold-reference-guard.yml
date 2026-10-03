@@ -3,7 +3,9 @@ name: Gold reference guard
 # ADR 0007 / Contract 2 rollout T0.4: a processing contract's gold reference
 # (and the fixtures it is computed from) may only change in a PR that carries
 # the `gold-reference-change` label, so a reference is never moved by
-# accident to make a failing conformance check pass.
+# accident to make a failing conformance check pass. ADR 0010 puts the
+# dot-grid codec contracts' references (scripts/dot_grid/gold/) under the
+# same rule.
 
 on:
   pull_request:
@@ -29,7 +31,8 @@ jobs:
           set -euo pipefail
           changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
             scripts/gold_standard_dataset.json \
-            'scripts/conformance/*')"
+            'scripts/conformance/*' \
+            'scripts/dot_grid/gold/*')"
           if [ -z "$changed" ]; then
             echo "No gold reference or fixture changed."
             exit 0
