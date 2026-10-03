@@ -1003,6 +1003,24 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.core_line_versions
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_core_line_versions.py
+    )
+    set_tests_properties(scripts.core_line_versions PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.installer_excludes_cores
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_installer_excludes_cores.py
+    )
+    set_tests_properties(scripts.installer_excludes_cores PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.bump_mib_processing_version
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_bump_mib_processing_version.py
     )
