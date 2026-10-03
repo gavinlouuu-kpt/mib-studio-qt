@@ -55,7 +55,7 @@ order) and compile settings for the Rust bridge.
 export MACOSX_DEPLOYMENT_TARGET=13.0 MIB_BRIDGE_NO_CMAKE=1
 (cd crates/mib-bridge && cargo test --features review-only)
 cd desktop && npm install
-npm run tauri:review -- build --features review-only --bundles app,dmg
+npm run tauri:review:build -- --features review-only --bundles app,dmg
 ```
 
 `crates/mib-bridge/build.rs` reads `build/review-core/mib-bridge-link-manifest.json`

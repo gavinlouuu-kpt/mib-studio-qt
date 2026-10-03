@@ -32,7 +32,8 @@ Build locally:
 cd desktop && npm install && npm run build             # both pages into dist/
 cd src-tauri
 TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo build --features review-only
-# or, with the bundler (macOS/Windows): npm run tauri:review -- build -- --features review-only
+# or, with the bundler (macOS/Windows): npm run tauri:review:build -- --features review-only
+# (Tauri CLI v2 takes --config after the subcommand: tauri:review:dev / tauri:review:build)
 ```
 
 `TAURI_CONFIG` is how the Tauri CLI passes `--config` overlays to
@@ -205,8 +206,8 @@ ships: Conan `review_core=True` (static spdlog / HDF5 / OpenCV core, imgproc,
 imgcodecs, videoio — no Qt, no FFmpeg; `~/.conan2/p` cached), the
 `<os>-review-core` preset, the probe run plus an `otool -L` / `dumpbin
 /dependents` check that nothing third-party is loaded dynamically, the link
-manifest, `cargo test --features review-only`, then `npm run tauri:review --
-build --features review-only` → `YOFO Review.app` + DMG (ad-hoc signature,
+manifest, `cargo test --features review-only`, then `npm run tauri:review:build --
+--features review-only` → `YOFO Review.app` + DMG (ad-hoc signature,
 `LSMinimumSystemVersion` 13.0, mounted and checked) / per-user NSIS
 installer (silent `/S` install under `%LOCALAPPDATA%\YOFO Review`), a
 20-second smoke launch, and the DMG / installer uploaded as artifacts. No

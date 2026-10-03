@@ -267,8 +267,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--build-dir", default="build/review-core")
     parser.add_argument("--out", default=None, help="default <build-dir>/mib-bridge-link-manifest.json")
-    parser.add_argument("--windows", action="store_true", default=os.name == "nt",
-                        help="parse MSVC command lines (default on Windows)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--windows", dest="windows", action="store_true", default=os.name == "nt",
+                      help="parse MSVC command lines (default on Windows)")
+    mode.add_argument("--posix", dest="windows", action="store_false",
+                      help="parse POSIX command lines (default elsewhere)")
     args = parser.parse_args()
 
     build_dir = Path(args.build_dir).resolve()

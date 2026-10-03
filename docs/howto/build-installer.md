@@ -224,7 +224,7 @@ cmake --build --preset windows-review-core-build
 python tools/gen_review_link_manifest.py
 $env:MIB_BRIDGE_NO_CMAKE = "1"
 cd desktop; npm install
-npm run tauri:review -- build --features review-only --bundles nsis
+npm run tauri:review:build -- --features review-only --bundles nsis
 ```
 
 Output: `desktop\src-tauri\target\release\bundle\nsis\YOFO Review_<version>_x64-setup.exe`.

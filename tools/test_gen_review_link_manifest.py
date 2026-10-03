@@ -55,8 +55,7 @@ class Parsing(unittest.TestCase):
 
     def run_gen(self, root: Path, windows: bool) -> dict:
         args = [sys.executable, str(HERE / "gen_review_link_manifest.py"), "--build-dir", str(root)]
-        if windows:
-            args.append("--windows")
+        args.append("--windows" if windows else "--posix")
         subprocess.run(args, check=True, capture_output=True)
         return json.loads((root / "mib-bridge-link-manifest.json").read_text())
 
@@ -102,7 +101,7 @@ class Parsing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             write_tree(root, "build x: phony\n", "c++ -c /src/src/backend/review/ReviewSession.cpp")
-            r = subprocess.run([sys.executable, str(HERE / "gen_review_link_manifest.py"), "--build-dir", str(root)], capture_output=True)
+            r = subprocess.run([sys.executable, str(HERE / "gen_review_link_manifest.py"), "--build-dir", str(root), "--posix"], capture_output=True)
             self.assertEqual(r.returncode, 1)
 
 

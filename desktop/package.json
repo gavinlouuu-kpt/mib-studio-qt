@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
-    "tauri:review": "tauri --config src-tauri/tauri.review.conf.json"
+    "tauri:review:dev": "tauri dev --config src-tauri/tauri.review.conf.json",
+    "tauri:review:build": "tauri build --config src-tauri/tauri.review.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

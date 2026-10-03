@@ -266,7 +266,7 @@ jobs:
         run: |
           set -euo pipefail
           npm install
-          npm run tauri:review -- build --ci --features review-only --bundles app,dmg
+          npm run tauri:review:build -- --ci --features review-only --bundles app,dmg
 
       - name: Verify the bundle
         shell: bash
@@ -419,7 +419,7 @@ jobs:
         run: |
           npm install
           if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-          npm run tauri:review -- build --ci --features review-only --bundles nsis
+          npm run tauri:review:build -- --ci --features review-only --bundles nsis
           if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
       - name: Verify, install silently and smoke-launch
