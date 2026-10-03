@@ -16,6 +16,12 @@ Usage::
     python3 scripts/release/stamp-tauri-version.py --check    # exit 1 on drift
     python3 scripts/release/stamp-tauri-version.py --version 1.2.3-beta.1
 
+Committed files carry the numeric ``X.Y.Z`` only, and ``--check`` compares
+that core: develop merges cut ``vX.Y.Z-beta.<sha>`` tags (build-windows.yml),
+and no commit can contain the SHA of a tag pointing at itself. Builds that
+ship a pre-release stamp the full version (this script without ``--check``)
+in their workspace, never in a commit.
+
 Without ``--version`` the version is resolved like CMake does: the newest
 ``v*`` tag reachable from HEAD when it is at least ``DEFAULT_VERSION``, else
 ``DEFAULT_VERSION``. The pre-release suffix is kept (Tauri accepts semver).
@@ -93,10 +99,12 @@ def main(argv: list[str]) -> int:
     if not _TAG.match(version):
         raise SystemExit(f"not a release version: {version!r}")
 
+    # --check: the committed numeric core (see the module docstring).
+    expected = version.split("-", 1)[0] if args.check and not args.version else version
     drift = []
     for path in (TAURI_CONF, PACKAGE_JSON):
         data = read_json(path)
-        if data.get("version") != version:
+        if data.get("version") != expected:
             drift.append((path, data.get("version")))
             if not args.check:
                 data["version"] = version
@@ -104,10 +112,10 @@ def main(argv: list[str]) -> int:
 
     if args.check:
         for path, current in drift:
-            print(f"{path.relative_to(REPO_ROOT)}: version {current!r}, expected {version!r}")
+            print(f"{path.relative_to(REPO_ROOT)}: version {current!r}, expected {expected!r}")
         if drift:
             return 1
-        print(f"tauri version {version}: in sync")
+        print(f"tauri version {expected}: in sync (resolved {version})")
         return 0
 
     for path, current in drift:

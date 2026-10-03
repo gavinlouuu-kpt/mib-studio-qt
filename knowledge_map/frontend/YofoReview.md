@@ -24,7 +24,7 @@
 | Review UI | `App.tsx` mounts `ReviewPanel` in its Review tab | `ReviewApp.tsx` mounts `ReviewPanel` as the window |
 | Tauri config | `tauri.conf.json` | `tauri.conf.json` + overlay `tauri.review.conf.json` (`--config`): product name, identifier `bio.yofo.review`, `mainBinaryName` `yofo-review`, window → `review.html`, bundle targets `dmg` + `nsis`, `.h5`/`.hdf5` association |
 | Commands | full `generate_handler!` list | `--features review-only`: review, platform, dialog, operation control only (`invoke_handler()` in `lib.rs`) |
-| Version | both stamped from `cmake/MIBVersion.cmake` by `stamp-tauri-version.py` (CI checks `--check`) | same |
+| Version | both stamped from `cmake/MIBVersion.cmake` by `stamp-tauri-version.py`; committed files carry the numeric `X.Y.Z` (CI `--check` compares that core — develop's `vX.Y.Z-beta.<sha>` tags cannot be committed), a pre-release suffix is stamped at build time | same |
 
 Build locally:
 
