@@ -236,12 +236,39 @@ pub fn init(app: tauri::AppHandle, state: State<AppState>, data_dir: String) -> 
     Ok(guard.pin_mut().initialize(&dir))
 }
 
-/// The HDF5 file the app was launched with (`yofo-review run.h5`, the
-/// Windows / Linux file association), or "" when none. macOS delivers
-/// Finder opens as `RunEvent::Opened`; see `run()`.
+/// A file the OS asked us to open after launch began: macOS delivers Finder
+/// opens (double-click, "Open With", drag onto the Dock icon) as
+/// `RunEvent::Opened`, possibly before the webview listens. `run()` stores it
+/// here and emits [`OPEN_FILE_EVENT`]; whoever takes it first opens it, so a
+/// file never opens twice.
+static PENDING_OPEN: Mutex<Option<String>> = Mutex::new(None);
+
+/// Event the window listens for (payload: the path) — a file to open now.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const OPEN_FILE_EVENT: &str = "review-open-file";
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn set_pending_open(path: String) {
+    *PENDING_OPEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+}
+
+fn take_pending_open() -> Option<String> {
+    PENDING_OPEN.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// The HDF5 file to open at startup: a pending OS open request (macOS Finder),
+/// else the first `.h5`/`.hdf5` argument (`yofo-review run.h5`, the Windows /
+/// Linux file association), else "".
 #[tauri::command]
 pub fn review_launch_path() -> String {
-    launch_path_from(std::env::args().skip(1))
+    take_pending_open().unwrap_or_else(|| launch_path_from(std::env::args().skip(1)))
+}
+
+/// The pending OS open request only ("" when none) — what the window takes
+/// when [`OPEN_FILE_EVENT`] arrives while it is running.
+#[tauri::command]
+pub fn review_take_open_request() -> String {
+    take_pending_open().unwrap_or_default()
 }
 
 pub fn launch_path_from(args: impl Iterator<Item = String>) -> String {
@@ -718,6 +745,18 @@ mod tests {
     //! C++-written fixture through it in both feature configurations.
     use mib_bridge::review_ffi;
     use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn pending_open_request_is_taken_once_and_wins_over_argv() {
+        assert_eq!(super::review_take_open_request(), "");
+        super::set_pending_open("/data/finder.h5".into());
+        assert_eq!(super::review_launch_path(), "/data/finder.h5");
+        assert_eq!(super::review_take_open_request(), "", "taken by the launch read");
+        super::set_pending_open("/data/second.h5".into());
+        assert_eq!(super::review_take_open_request(), "/data/second.h5");
+        assert_eq!(super::review_take_open_request(), "");
+    }
 
     #[test]
     fn chart_names_follow_the_backend_rule() {

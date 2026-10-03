@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-03 — YOFO Review releases, Finder opens, macOS bootstrap
+
+`v*` tags now attach YOFO Review's DMG and NSIS installer (+ SHA-256 sums)
+to the GitHub Release (`review-release.yml` over the reusable
+`review-bundles.yml`, version stamped from the tag). macOS Finder opens reach
+the app (`RunEvent::Opened` → queued request + `review-open-file` event,
+taken once). `scripts/bootstrap.sh` / `doctor.sh` print the YOFO Review steps
+on macOS instead of "no preset yet"; `env/brew-packages.txt` gained the
+desktop-shell section. Note: [[../frontend/YofoReview]].
+
 ## 2026-10-03 — YOFO Review macOS and Windows CI lanes (plan PR 5 / PR 6 CI)
 
 `review-ci.yml` gained `review-macos` (macos-14 → unsigned, ad-hoc-signed

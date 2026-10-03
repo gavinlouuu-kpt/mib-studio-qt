@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
 import { bridge } from "../bridge";
 import { BRIDGE_ABI_VERSION } from "../bridgeContract";
 import { FramePullScheduler } from "../framePullScheduler";
@@ -17,6 +18,8 @@ import { reviewBridge, type ReviewInfo } from "./reviewBridge";
 import "../App.css";
 
 export const PRODUCT_NAME = "YOFO Review";
+/** Backend event: a file the OS asked to open (src-tauri review::OPEN_FILE_EVENT). */
+export const OPEN_FILE_EVENT = "review-open-file";
 // Preferences (per machine; Qt QSettings → localStorage).
 export const PX_TO_UM_KEY = "yofo.review.pixelToMicron";
 export const DEFAULT_PX_TO_UM = 1.0;
@@ -158,6 +161,27 @@ export default function ReviewApp() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // macOS: a Finder open (double-click, Open With, drop on the Dock icon)
+  // while the app runs. The backend queues the path and emits; taking it
+  // through the bridge means a cold-launch open that the boot read already
+  // took is never opened twice.
+  useEffect(() => {
+    if (!ready) return;
+    let stop: (() => void) | undefined;
+    let disposed = false;
+    void listen<string>(OPEN_FILE_EVENT, async () => {
+      const path = await reviewBridge.takeOpenRequest().catch(() => "");
+      if (path) await panel.current?.openPath(path);
+    }).then((un) => {
+      if (disposed) un();
+      else stop = un;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [ready]);
 
   useEffect(() => {
     scheduler.current.invalidate();

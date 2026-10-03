@@ -1692,6 +1692,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + 
         fetch_trigger_status,
         review::review_abi_version,
         review::review_launch_path,
+        review::review_take_open_request,
         isoelastic::fetch_isoelastic_curves,
         review::review_open,
         review::review_close,
@@ -1736,6 +1737,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + 
         platform::shell_log,
         review::review_abi_version,
         review::review_launch_path,
+        review::review_take_open_request,
         isoelastic::fetch_isoelastic_curves,
         review::review_open,
         review::review_close,
@@ -1777,6 +1779,24 @@ pub fn run() {
             review: Mutex::new(review_ffi::new_review_bridge()),
         })
         .invoke_handler(invoke_handler())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // macOS Finder opens (YOFO Review's .h5 / .hdf5 association):
+            // queue the first HDF5 file and tell the window. Windows and
+            // Linux pass the file as an argument instead (review_launch_path).
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &_event {
+                use tauri::Emitter;
+                let paths = urls
+                    .iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| p.to_string_lossy().into_owned());
+                let path = review::launch_path_from(paths);
+                if !path.is_empty() {
+                    review::set_pending_open(path.clone());
+                    let _ = _app.emit(review::OPEN_FILE_EVENT, path);
+                }
+            }
+        });
 }

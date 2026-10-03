@@ -87,10 +87,15 @@ The Qt tab's layout per set (Valid / Invalid, or "Frames" for a recording):
 - **`FrameViewer.tsx`** — in-app overlay (scheduler slot "viewer"): frame
   prev/next (←/→, wraps), multi-image series (↑/↓; frame → series 1…n),
   zoom Fit / 1× / 2× / 4×, the frame's key metrics, Esc closes.
-- **Launch file** — `review_launch_path` returns the first existing
-  `.h5`/`.hdf5` argument (`yofo-review run.h5`, the Windows/Linux file
-  association); `?open=<path>` does the same for dev and the screenshot
-  harness. macOS Finder opens (`RunEvent::Opened`) land with PR 5.
+- **Launch file** — `review_launch_path` returns a pending OS open request,
+  else the first existing `.h5`/`.hdf5` argument (`yofo-review run.h5`, the
+  Windows/Linux file association); `?open=<path>` does the same for dev and
+  the screenshot harness. macOS Finder opens arrive as `RunEvent::Opened`
+  (`run()` in `lib.rs`): the first HDF5 path is queued
+  (`review::set_pending_open`) and `review-open-file` is emitted;
+  `ReviewApp` takes it with `review_take_open_request` — taking means a
+  cold-launch open read at boot is never opened twice. Windows/Linux start a
+  second instance per double-click (no single-instance plugin).
 
 Pure helpers are unit-tested in `src/review/review.test.ts`. Manual / visual
 check: `cargo run --example review_fixture -- out.h5 --from-folder
@@ -201,7 +206,10 @@ that it links no `backend::AppBackend` (and does link `ReviewSession`),
 `cargo test --features review-only` in `crates/mib-bridge`, the link-manifest
 generator tests, and the Xvfb boot smoke.
 
-`review-macos` (macos-14) and `review-windows` (windows-2022) build what
+`review-macos` (macos-14) and `review-windows` (windows-2022) — the reusable
+`review-bundles.yml`, called by `review-ci.yml` and, on `v*` tags, by
+`review-release.yml` (version stamped from the tag; DMG + installer +
+`SHA256SUMS-yofo-review.txt` appended to the GitHub Release) — build what
 ships: Conan `review_core=True` (static spdlog / HDF5 / OpenCV core, imgproc,
 imgcodecs, videoio — no Qt, no FFmpeg; `~/.conan2/p` cached), the
 `<os>-review-core` preset, the probe run plus an `otool -L` / `dumpbin

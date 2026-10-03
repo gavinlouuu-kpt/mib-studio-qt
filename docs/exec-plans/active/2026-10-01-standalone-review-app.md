@@ -639,14 +639,19 @@ accounting text and the same saved core record; the differences list in
       launch, artifact), `docs/howto/macos-build.md`. Deviation: the
       `src/backend/CMakeLists.txt` OpenSSL / macOS core-descriptor changes are
       not needed — the review core never loads native processing cores.
-      Remaining: `RunEvent::Opened` (Finder opens), `scripts/bootstrap.sh` /
-      `doctor.sh` / `env/brew-packages.txt` steps.
+      Finder opens (`RunEvent::Opened` → pending request + `review-open-file`
+      event), `scripts/bootstrap.sh` / `doctor.sh` / `env/brew-packages.txt`
+      (desktop-shell section) landed 2026-10-03.
 - [ ] PR 6 — Windows preset, NSIS, updater plugin, R2 review channels,
       release workflow. **CI part landed 2026-10-03:** `windows-review-core`
       preset, job `review-windows` (static review core, manifest link,
       bridge tests, NSIS per-user installer, silent install, `dumpbin`
       check, smoke launch, artifact), `docs/howto/build-installer.md`
-      section. Remaining: updater plugin + minisign key, R2 review
-      channels, `release.yml` on `v*` tags.
+      section. Release on `v*` tags landed 2026-10-03 as
+      `review-release.yml` (bundle jobs moved to the reusable
+      `review-bundles.yml`; DMG + installer + checksums appended to the
+      tag's GitHub Release) instead of extending the Windows-only
+      `release.yml`. Remaining: updater plugin + minisign key, R2 review
+      channels.
 - [x] PR 7 — removed: no signing (user decision 2026-10-01)
 - [ ] PR 8 — manual, screenshots, parity sign-off, tracker, plan → completed

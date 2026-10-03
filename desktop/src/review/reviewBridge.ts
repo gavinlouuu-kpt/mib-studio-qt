@@ -194,6 +194,8 @@ export const reviewBridge = {
     invoke<{ source: string; curves: { emodulus_kpa: number; points: [number, number][] }[] }>("fetch_isoelastic_curves"),
   /** File passed on the command line / by a file association ("" = none). */
   launchPath: () => invoke<string>("review_launch_path"),
+  /** A pending OS open request (macOS Finder) taken once, "" when none. */
+  takeOpenRequest: () => invoke<string>("review_take_open_request"),
   open: async (path: string) => {
     generation++;
     try {
