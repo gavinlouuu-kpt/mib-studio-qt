@@ -469,6 +469,18 @@ jobs:
           Copy-Item -LiteralPath $descriptor.FullName -Destination (Join-Path $nativeDist $descriptor.Name)
           "dll=$stagedDll" >> $env:GITHUB_OUTPUT
 
+      - name: Contract-2 gold against the built absdiff-laplacian DLL
+        shell: pwsh
+        run: |
+          python -m pip install numpy
+          python scripts/run_native_core_conformance.py `
+            --core '${{ steps.native-assets-c2.outputs.dll }}' `
+            --frames-npz scripts/conformance/focus-50v-real.npz `
+            --reference scripts/conformance/focus-50v-real-contract2.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native Contract-2 gold failed with exit code $LASTEXITCODE"
+          }
+
       - name: Audit native plugin exports and imports
         shell: pwsh
         run: |
@@ -656,6 +668,16 @@ jobs:
           cp "$shared_library" "$descriptor" "$staging/"
           echo "so=$staging/${stem}.so" >> "$GITHUB_OUTPUT"
           echo "descriptor=$staging/${stem}.json" >> "$GITHUB_OUTPUT"
+
+      - name: Contract-2 gold against the built absdiff-laplacian library
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends python3-numpy
+          python3 scripts/run_native_core_conformance.py \
+            --core '${{ steps.native-assets-c2.outputs.so }}' \
+            --frames-npz scripts/conformance/focus-50v-real.npz \
+            --reference scripts/conformance/focus-50v-real-contract2.json
 
       - name: Audit native plugin exports and imports
         shell: bash

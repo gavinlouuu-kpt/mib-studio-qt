@@ -1088,6 +1088,23 @@ if(Python3_Interpreter_FOUND)
         TIMEOUT 30
     )
 
+    # The built absdiff-laplacian (Contract 2) binary against the real-frame
+    # Contract-2 reference (rollout plan Phase 1 exit gate). Release CI runs
+    # the same script without the skip flag.
+    add_test(
+        NAME processing.native_core_contract2_gold
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/run_native_core_conformance.py
+                --core $<TARGET_FILE:mib_processing_core_absdiff_laplacian>
+                --frames-npz ${PROJECT_SOURCE_DIR}/scripts/conformance/focus-50v-real.npz
+                --reference ${PROJECT_SOURCE_DIR}/scripts/conformance/focus-50v-real-contract2.json
+                --skip-if-missing-numpy
+    )
+    set_tests_properties(processing.native_core_contract2_gold PROPERTIES
+        LABELS "processing;release"
+        TIMEOUT 120
+        SKIP_RETURN_CODE 77
+    )
+
     add_test(
         NAME scripts.kin10_hf_dataset_runner
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/test_kin10_run_hf_dataset_test.py
