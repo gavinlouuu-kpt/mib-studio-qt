@@ -335,8 +335,9 @@ Use `scripts/bump_mib_processing_version.py <version>` to update the
 authoritative pyproject version and the import-time wrapper literal together.
 Commit those files, then rerun with `--create-tag`; the command refuses to tag
 an uncommitted bump so the tag cannot point at the old version. `--line
-absdiff-laplacian` bumps `processing-cores/absdiff-laplacian.version` instead
-and tags `mib-processing-absdiff-laplacian-v<version>`.
+absdiff-laplacian` bumps `processing-cores/absdiff-laplacian.version` instead;
+its `--create-tag` is refused until a workflow releases
+`mib-processing-absdiff-laplacian-v<version>` tags (T1.1b PR 2).
 
 ### Core lines (ADR 0007, T1.1b)
 

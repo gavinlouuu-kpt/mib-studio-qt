@@ -111,7 +111,7 @@ class VersionBumpTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown processing-core line"):
             bump.tag_for("ring", "0.1.0")
 
-    def test_absdiff_tag_requires_its_committed_version_file(self) -> None:
+    def test_absdiff_tag_is_refused_until_its_release_workflow_exists(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             make_repo(root)
@@ -123,11 +123,13 @@ class VersionBumpTest(unittest.TestCase):
                 subprocess.run(["git", *args], cwd=root, check=True)
             updates, _ = bump.plan_updates(root, "0.2.0", line="absdiff-laplacian")
             bump.apply_updates_atomically(updates)
-            with self.assertRaisesRegex(RuntimeError, "not committed"):
-                bump.create_committed_tag(root, "0.2.0", line="absdiff-laplacian")
             subprocess.run(["git", "commit", "-qam", "bump"], cwd=root, check=True)
-            tag = bump.create_committed_tag(root, "0.2.0", line="absdiff-laplacian")
-            self.assertEqual(tag, "mib-processing-absdiff-laplacian-v0.2.0")
+            # No release workflow handles absdiff-laplacian tags yet (T1.1b PR 2):
+            # a pushed tag would spend the version with no artifacts.
+            with self.assertRaisesRegex(RuntimeError, "no release workflow"):
+                bump.create_committed_tag(root, "0.2.0", line="absdiff-laplacian")
+            tags = subprocess.run(["git", "tag"], cwd=root, check=True, capture_output=True, text=True)
+            self.assertEqual(tags.stdout.strip(), "")
 
     def test_publisher_uses_subtract_ring_tag_prefix(self) -> None:
         spec = importlib.util.spec_from_file_location(

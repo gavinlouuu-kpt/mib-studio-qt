@@ -26,6 +26,9 @@ LINES: dict[str, Path | None] = {
     "subtract-ring": None,
     "absdiff-laplacian": Path("processing-cores/absdiff-laplacian.version"),
 }
+# Lines whose mib-processing-<line>-v* tag triggers a release workflow
+# (.github/workflows/python-wheel.yml).
+RELEASED_LINES = {"subtract-ring"}
 _SAFE_VERSION = re.compile(r"^[0-9][A-Za-z0-9._+!-]*$")
 _LINE_VERSION_FILE = re.compile(r"^([0-9][A-Za-z0-9._+!-]*)\r?\n$")
 _PYPROJECT_VERSION = re.compile(r'(?m)^(version\s*=\s*)"([^"]+)"\s*$')
@@ -145,6 +148,11 @@ def create_committed_tag(
 ) -> str:
     """Create the release tag only when HEAD already contains the bumped literals."""
     tag = tag_for(line, version)
+    if line not in RELEASED_LINES:
+        raise RuntimeError(
+            f"{line} has no release workflow yet (T1.1b PR 2): a pushed {tag} would spend the "
+            "version without building, signing or publishing anything. Bump the version only."
+        )
     version_file = LINES[line]
     tracked = (PYPROJECT, PACKAGE_INIT) if version_file is None else (version_file,)
     dirty = _git(

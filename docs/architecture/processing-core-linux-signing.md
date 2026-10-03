@@ -113,7 +113,7 @@ descriptor and publisher path, and uploads the unsigned artifact.
   the key against the repository pin before signing, injects the envelope
   into the sidecar, and the release job requires the signed `.so`/`.json`
   pair in the flat asset set.
-- Publish a real signed `.so` through a `mib-processing-v*` tag and record
+- Publish a real signed `.so` through a `mib-processing-subtract-ring-v*` tag and record
   the evidence on #245.
 - Validate the dynamic OpenCV/spdlog link baseline (or static linking)
   across supported distros; the CI import audit currently reports these
