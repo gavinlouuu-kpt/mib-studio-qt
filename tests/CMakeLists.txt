@@ -1065,6 +1065,29 @@ if(Python3_Interpreter_FOUND)
         TIMEOUT 30
     )
 
+    # Release identity of both processing-core lines (T1.1b): artifact names
+    # and sidecars produced by mib_set_processing_core_release_identity.
+    if(WIN32)
+        set(_mib_core_os windows)
+        set(_mib_core_arch x86_64)
+    else()
+        set(_mib_core_os linux)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+            set(_mib_core_arch aarch64)
+        else()
+            set(_mib_core_arch x86_64)
+        endif()
+    endif()
+    add_test(
+        NAME release.core_line_sidecars
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_core_line_sidecars.py
+                $<TARGET_FILE_DIR:mib_processing_core> ${_mib_core_os} ${_mib_core_arch}
+    )
+    set_tests_properties(release.core_line_sidecars PROPERTIES
+        LABELS "release;processing"
+        TIMEOUT 30
+    )
+
     add_test(
         NAME scripts.kin10_hf_dataset_runner
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/test_kin10_run_hf_dataset_test.py

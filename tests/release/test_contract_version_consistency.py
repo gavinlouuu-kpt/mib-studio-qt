@@ -56,9 +56,14 @@ class ContractVersionConsistencyTest(unittest.TestCase):
         backend_cmake = (REPO_ROOT / "src" / "backend" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         )
-        match = re.search(r'\\"contract_version\\":\s*(\d+)', backend_cmake)
-        self.assertIsNotNone(match, "native sidecar contract_version not found in backend CMake")
-        declarations["src/backend/CMakeLists.txt native sidecar"] = int(match.group(1))
+        # subtract-ring is the Contract-1 line; its sidecar takes contract and
+        # engine ABI from mib_set_processing_core_release_identity's arguments.
+        match = re.search(
+            r"mib_set_processing_core_release_identity\(mib_processing_core\s+subtract-ring\s+\S+\s+(\d+)\s+(\d+)\s+mib_processing_get_api\)",
+            backend_cmake,
+        )
+        self.assertIsNotNone(match, "subtract-ring release identity not found in backend CMake")
+        declarations["src/backend/CMakeLists.txt subtract-ring sidecar"] = int(match.group(1))
 
         config = json.loads((REPO_ROOT / "resources" / "defaults" / "config.json").read_text(encoding="utf-8"))
         declarations["resources/defaults/config.json"] = config["config_schema_version"]
@@ -83,10 +88,13 @@ class ContractVersionConsistencyTest(unittest.TestCase):
         backend_cmake = (REPO_ROOT / "src" / "backend" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         )
-        sidecar_match = re.search(r'\\"engine_abi_version\\":\s*(\d+)', backend_cmake)
-        self.assertIsNotNone(sidecar_match, "native sidecar engine_abi_version not found")
+        sidecar_match = re.search(
+            r"mib_set_processing_core_release_identity\(mib_processing_core\s+subtract-ring\s+\S+\s+(\d+)\s+(\d+)\s+mib_processing_get_api\)",
+            backend_cmake,
+        )
+        self.assertIsNotNone(sidecar_match, "subtract-ring release identity not found")
         self.assertEqual(
-            int(sidecar_match.group(1)),
+            int(sidecar_match.group(2)),
             int(header_match.group(1)),
             "native sidecar engine_abi_version must mirror ProcessingCoreAbi.h",
         )
