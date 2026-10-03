@@ -68,6 +68,7 @@ ctest --test-dir build -C Debug -R backend.my_thing -V
 #include "support/frames.h"     // ringFrame(), writeFrames()
 #include "support/stats.h"      // summarize(), percentile()
 #include "support/faultinject.h"// longPath(), makeReadOnly()
+#include "support/opencv_tsan.h" // serializeOpenCvUnderTsan()
 ```
 
 - `MIB_REQUIRE(cond, msg)` — fatal (`_Exit(1)`); `MIB_EXPECT(cond, msg)` —
@@ -75,6 +76,13 @@ ctest --test-dir build -C Debug -R backend.my_thing -V
 - `Watchdog wd(20); wd.mark("step");` — if no `mark()` lands within N seconds it
   prints the stuck step and `_Exit(99)`s. **Use this for anything with threads.**
 - `TempDir td("prefix"); auto p = td / "file.h5";` — auto-removed.
+- `mib::test::serializeOpenCvUnderTsan();` first thing in `main` for tests that
+  push full-size frames through OpenCV blur / connected components. Ubuntu's
+  OpenCV runs `parallel_for_` on uninstrumented TBB, which TSan reports as a
+  race between a worker's allocation and the caller's free; under TSan the
+  helper runs OpenCV single-threaded (`cv::setNumThreads(0)`), elsewhere it is
+  a no-op. Prefer it over a `tsan.supp` entry for `libopencv_core`, which
+  would also hide real races on our `cv::Mat` buffers.
 
 ## Category recipes
 

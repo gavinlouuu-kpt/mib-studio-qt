@@ -1,0 +1,726 @@
+{
+ "gold_schema_version": 1,
+ "codec_contract": 1,
+ "line": "mseq63-delta2",
+ "encode": {
+  "pitch_um": 30.0,
+  "dot_diameter_um": 12.0,
+  "displacement_um": 5.0,
+  "phase_digest": "sha256 of the decimal phases joined with ','",
+  "mns": "000001000011000101001111010001110010010110111011001101010111111",
+  "codebooks": [
+   {
+    "seed": 7,
+    "columns": 3700,
+    "rows": 3700,
+    "phi_sha256": "b4bdef2a54bbf6a964d65c982bef8b5621c9044124d3da1d7deb38b03a07efc8",
+    "psi_sha256": "2cd686c25af5cb0fb1eb4a907244e59a8f73e51e2c8b1837b73e458594b01cb6",
+    "phi_head": [
+     0,
+     51,
+     23,
+     58,
+     18,
+     37,
+     5,
+     7,
+     34,
+     51,
+     13,
+     9
+    ],
+    "psi_head": [
+     0,
+     61,
+     35,
+     11,
+     25,
+     47,
+     24,
+     21,
+     19,
+     42,
+     57,
+     53
+    ],
+    "phi_last": 42,
+    "psi_last": 1,
+    "probes": [
+     {
+      "i": 0,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 1,
+      "j": 0,
+      "bits": [
+       1,
+       0
+      ]
+     },
+     {
+      "i": 0,
+      "j": 1,
+      "bits": [
+       0,
+       1
+      ]
+     },
+     {
+      "i": 62,
+      "j": 62,
+      "bits": [
+       1,
+       0
+      ]
+     },
+     {
+      "i": 100,
+      "j": 200,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 63,
+      "j": 64,
+      "bits": [
+       1,
+       0
+      ]
+     },
+     {
+      "i": 1999,
+      "j": 1,
+      "bits": [
+       1,
+       1
+      ]
+     }
+    ]
+   },
+   {
+    "seed": 1,
+    "columns": 64,
+    "rows": 64,
+    "phi_sha256": "1e76bf14da34a99357cf715bd9fd8ec7c11955c874d10bffc74a8a30024560fe",
+    "psi_sha256": "a1304ff9d7c95bdaf77188f2cbbe1aa60566bb996fc1942072b6f4ed35d7497e",
+    "phi_head": [
+     0,
+     17,
+     5,
+     56,
+     6,
+     28,
+     41,
+     49,
+     3,
+     27,
+     57,
+     16
+    ],
+    "psi_head": [
+     0,
+     2,
+     25,
+     29,
+     39,
+     58,
+     58,
+     49,
+     16,
+     60,
+     44,
+     16
+    ],
+    "phi_last": 56,
+    "psi_last": 19,
+    "probes": [
+     {
+      "i": 0,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 1,
+      "j": 0,
+      "bits": [
+       1,
+       0
+      ]
+     },
+     {
+      "i": 0,
+      "j": 1,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 62,
+      "j": 62,
+      "bits": [
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "seed": 8,
+    "columns": 3501,
+    "rows": 2900,
+    "phi_sha256": "0d2d8c460287ba91681686f11044f65075ea02104a2aca3c779aeadbbd5603f9",
+    "psi_sha256": "10cf6a770e6095db428c53c58e605bfeb0d208a6a99d437b3647e6d2731e3075",
+    "phi_head": [
+     0,
+     35,
+     5,
+     35,
+     6,
+     41,
+     34,
+     38,
+     52,
+     40,
+     26,
+     3
+    ],
+    "psi_head": [
+     0,
+     50,
+     46,
+     23,
+     28,
+     39,
+     55,
+     41,
+     44,
+     57,
+     27,
+     34
+    ],
+    "phi_last": 6,
+    "psi_last": 26,
+    "probes": [
+     {
+      "i": 0,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 1,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 0,
+      "j": 1,
+      "bits": [
+       0,
+       1
+      ]
+     },
+     {
+      "i": 62,
+      "j": 62,
+      "bits": [
+       0,
+       1
+      ]
+     },
+     {
+      "i": 100,
+      "j": 200,
+      "bits": [
+       1,
+       1
+      ]
+     },
+     {
+      "i": 63,
+      "j": 64,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 1999,
+      "j": 1,
+      "bits": [
+       1,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "seed": 1001,
+    "columns": 1200,
+    "rows": 1200,
+    "phi_sha256": "8368001c58ebbca15318537fa649c3c003815163936ee1544b7b9cb25ac9c2a9",
+    "psi_sha256": "adf237510b46f017f2feb58ba75f9680330e6cc886db1864715418a34ce26829",
+    "phi_head": [
+     0,
+     56,
+     34,
+     45,
+     48,
+     40,
+     60,
+     14,
+     0,
+     17,
+     32,
+     8
+    ],
+    "psi_head": [
+     0,
+     0,
+     9,
+     52,
+     55,
+     58,
+     28,
+     44,
+     6,
+     27,
+     60,
+     41
+    ],
+    "phi_last": 39,
+    "psi_last": 35,
+    "probes": [
+     {
+      "i": 0,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 1,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 0,
+      "j": 1,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 62,
+      "j": 62,
+      "bits": [
+       1,
+       0
+      ]
+     },
+     {
+      "i": 100,
+      "j": 200,
+      "bits": [
+       1,
+       1
+      ]
+     },
+     {
+      "i": 63,
+      "j": 64,
+      "bits": [
+       0,
+       1
+      ]
+     }
+    ]
+   },
+   {
+    "seed": 1099511627779,
+    "columns": 2000,
+    "rows": 2000,
+    "phi_sha256": "3c13675f04b333f8bd4edb65ecef512fd5a616eb99e06e17fc2ef7a9f15bfc17",
+    "psi_sha256": "3da2678c827c49bee4b507d55df496e4a9f62f6f6a0225a6e609b0b1a2d7f242",
+    "phi_head": [
+     0,
+     18,
+     46,
+     30,
+     51,
+     38,
+     59,
+     36,
+     37,
+     55,
+     60,
+     47
+    ],
+    "psi_head": [
+     0,
+     8,
+     42,
+     61,
+     41,
+     13,
+     46,
+     50,
+     57,
+     59,
+     25,
+     37
+    ],
+    "phi_last": 39,
+    "psi_last": 1,
+    "probes": [
+     {
+      "i": 0,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 1,
+      "j": 0,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 0,
+      "j": 1,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 62,
+      "j": 62,
+      "bits": [
+       1,
+       1
+      ]
+     },
+     {
+      "i": 100,
+      "j": 200,
+      "bits": [
+       0,
+       0
+      ]
+     },
+     {
+      "i": 63,
+      "j": 64,
+      "bits": [
+       0,
+       1
+      ]
+     },
+     {
+      "i": 1999,
+      "j": 1,
+      "bits": [
+       1,
+       0
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "decode": {
+  "codebook": {
+   "seed": 7,
+   "columns": 3700,
+   "rows": 3700,
+   "pitch_um": 30.0,
+   "dot_diameter_um": 12.0,
+   "displacement_um": 5.0
+  },
+  "um_per_px_hint_factor": 1.06,
+  "cases": [
+   {
+    "name": "20x-clean-r0",
+    "pose": {
+     "centre_um": [
+      40000.0,
+      52000.0
+     ],
+     "theta_deg": 0.0,
+     "um_per_px": 0.293,
+     "mirrored": false,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 0,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 1.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "20x-clean-r37-mirror",
+    "pose": {
+     "centre_um": [
+      41234.5,
+      51012.75
+     ],
+     "theta_deg": 37.5,
+     "um_per_px": 0.293,
+     "mirrored": true,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 1,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 1.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "20x-clean-r-120",
+    "pose": {
+     "centre_um": [
+      42469.0,
+      50025.5
+     ],
+     "theta_deg": -120.0,
+     "um_per_px": 0.293,
+     "mirrored": false,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 2,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 1.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "20x-clean-r91-mirror",
+    "pose": {
+     "centre_um": [
+      43703.5,
+      49038.25
+     ],
+     "theta_deg": 91.0,
+     "um_per_px": 0.293,
+     "mirrored": true,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 3,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 1.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "20x-clean-r179",
+    "pose": {
+     "centre_um": [
+      44938.0,
+      48051.0
+     ],
+     "theta_deg": 179.0,
+     "um_per_px": 0.293,
+     "mirrored": false,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 4,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 1.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "20x-clean-r-45-mirror",
+    "pose": {
+     "centre_um": [
+      60000.0,
+      30000.0
+     ],
+     "theta_deg": -45.0,
+     "um_per_px": 0.293,
+     "mirrored": true,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 5,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 1.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "10x-clean-r12-mirror",
+    "pose": {
+     "centre_um": [
+      35000.0,
+      61000.0
+     ],
+     "theta_deg": 12.0,
+     "um_per_px": 0.586,
+     "mirrored": true,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 6,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 2.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "4x-clean-r-70",
+    "pose": {
+     "centre_um": [
+      52000.0,
+      47000.0
+     ],
+     "theta_deg": -70.0,
+     "um_per_px": 1.465,
+     "mirrored": false,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 7,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 2.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "20x-channel-band",
+    "pose": {
+     "centre_um": [
+      30000.0,
+      30000.0
+     ],
+     "theta_deg": 2.0,
+     "um_per_px": 0.293,
+     "mirrored": false,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 8,
+    "channel": {
+     "from_um": [
+      27000.0,
+      30040.0
+     ],
+     "to_um": [
+      33000.0,
+      30040.0
+     ],
+     "width_um": 30.0,
+     "band_um": 71.0
+    },
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 1.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "10x-dropout-10pct",
+    "pose": {
+     "centre_um": [
+      47000.0,
+      39000.0
+     ],
+     "theta_deg": 63.0,
+     "um_per_px": 0.586,
+     "mirrored": true,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 9,
+    "missing_fraction": 0.1,
+    "expect": "decode",
+    "tolerance": {
+     "position_um": 2.0,
+     "theta_deg": 0.3,
+     "um_per_px_rel": 0.01
+    }
+   },
+   {
+    "name": "blank-frame",
+    "pose": {
+     "centre_um": [
+      40000.0,
+      52000.0
+     ],
+     "theta_deg": 0.0,
+     "um_per_px": 0.293,
+     "mirrored": false,
+     "width": 1920,
+     "height": 1200
+    },
+    "blank": true,
+    "expect": "reject"
+   },
+   {
+    "name": "foreign-seed-99",
+    "pose": {
+     "centre_um": [
+      40000.0,
+      52000.0
+     ],
+     "theta_deg": 25.0,
+     "um_per_px": 0.293,
+     "mirrored": true,
+     "width": 1920,
+     "height": 1200
+    },
+    "noise_seed": 10,
+    "pattern_seed": 99,
+    "expect": "reject"
+   }
+  ]
+ }
+}
