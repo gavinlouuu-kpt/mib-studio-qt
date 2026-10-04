@@ -243,3 +243,12 @@ CR/LF header refusal, helper thread so a cancel returns at once, never panics
 across the FFI), installed with `set_registry_transport` when `AppState` is
 built — before the UI's `init`. Enabled by the same
 `MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY` environment as the Qt app.
+
+#398 M2b: rows are selectable and show local validation on this instrument
+(`local_validation`, contract `registry_local_validation`) and the instrument
+label. **Materialize** (`registry_materialize`) and **Mark validated… /
+Record failed run…** (`@tauri-apps/plugin-dialog` picker →
+`registry_record_validation`; the backend refusal is shown) work as in Qt.
+**Apply…** is rendered disabled with `APPLY_UNAVAILABLE`: the React shell has
+no config.json applier (it edits the processing-config document instead), so
+it cannot load a method exactly — a follow-up.

@@ -644,6 +644,7 @@ fn rust_enums_match_contract_json() {
                                   ("Cancelled", 5)]),
         ("registry_central_states", &[("Submitted", 0), ("Approved", 1), ("Rejected", 2), ("Published", 3),
                                       ("Superseded", 4), ("Archived", 5), ("Revoked", 6)]),
+        ("registry_local_validation", &[("None", 0), ("Passed", 1), ("Failed", 2)]),
     ];
     for (group, values) in groups {
         let obj = contract[*group].as_object().unwrap_or_else(|| panic!("missing contract group {group}"));
@@ -1213,6 +1214,18 @@ fn registry_commands_through_shell_transport() {
         assert!(REGISTRY_HANDLE_LIVE.load(Ordering::SeqCst), "cancel handle live during the call");
         assert!(REGISTRY_SAW_APIKEY.load(Ordering::SeqCst), "request shape (url, apikey, bounds)");
         assert_eq!(s.last_job.job_id, job_id);
+
+        // #398 M2b surface: instrument identity, materialize (kind 4) and
+        // "Mark validated" refusals cross the bridge as values.
+        assert_eq!(s.instrument_id.len(), 36, "instrument UUID mirrored");
+        assert_eq!(bridge.pin_mut().registry_materialize("../x"), 0, "unsafe revision ID refused");
+        let materialize = bridge.pin_mut().registry_materialize("r1");
+        assert_ne!(materialize, 0, "materialize queued");
+        let job = wait_registry_job(&mut bridge, materialize);
+        assert_eq!((job.kind, job.state), (4, 4), "no cache open: materialize fails: {}", job.message);
+        let refused = bridge.pin_mut().registry_record_validation("r1", "/nonexistent/run.h5", true);
+        assert_eq!(refused.job_id, 0, "validation without a cached revision is refused");
+        assert!(!refused.error.is_empty(), "refusal carries a reason");
         bridge.pin_mut().shutdown();
     }
 

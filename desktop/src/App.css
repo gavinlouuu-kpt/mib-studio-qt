@@ -1128,3 +1128,14 @@ button.btn:disabled,
   color: #b00020;
   font-weight: 700;
 }
+
+.registry-table tr.selected td {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.registry-table tr {
+  cursor: pointer;
+}
+.registry-table td.validation-failed {
+  color: var(--err);
+  font-weight: 600;
+}

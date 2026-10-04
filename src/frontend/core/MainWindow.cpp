@@ -233,13 +233,29 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
                     : tr("Core: unavailable (selection failed)"));
         }
     });
-    // Central profile registry (#398): sign-in, refresh and the cached central
-    // revisions. Read-only toward the instrument (no select/apply here).
+    // Central profile registry (#398): sign-in, refresh, the cached central
+    // revisions with their local validation, Apply (through the config
+    // watcher, exact bytes + backup) and Mark validated (backend-checked
+    // test-run evidence).
     auto* centralMethodsAct = new QAction(tr("Central Methods..."), this);
     ui->settingsMenu->addAction(centralMethodsAct);
     connect(centralMethodsAct, &QAction::triggered, this, [this]() {
         SPDLOG_INFO("Opening Central Methods dialog");
-        frontend::CentralMethodsDialog dialog(backend_.profileRegistry(), this);
+        frontend::CentralMethodsHooks hooks;
+        hooks.methodContext = [this] { return backend_.methodContext(); };
+        hooks.instrumentName = backend_.instrumentIdentity().name;
+        hooks.currentConfigJson = [this] { return backend_.getLastConfigJson(); };
+        auto* previewPage = experimentTabs_ ? qobject_cast<frontend::PreviewPage*>(experimentTabs_->widget(0)) : nullptr;
+        if (auto* watcher = previewPage ? previewPage->getConfigWatcher() : nullptr) {
+            hooks.applyConfig = [watcher](const QByteArray& text, QString* backup) {
+                return watcher->applyMethodDocument(text, backup);
+            };
+        }
+        hooks.recordValidation = [this](const std::string& revisionId, const std::string& file, bool passed) {
+            const auto r = backend_.requestMethodValidation(revisionId, file, passed);
+            return frontend::CentralMethodsHooks::ValidationOutcome{r.jobId, r.error};
+        };
+        frontend::CentralMethodsDialog dialog(backend_.profileRegistry(), std::move(hooks), this);
         dialog.exec();
     });
     connect(ui->aboutAct, &QAction::triggered, this, [this]()

@@ -317,6 +317,22 @@ pub mod ffi {
         pub revision_number: u64,
         pub metadata_version: u64,
         pub central_state: u32,
+        /// Verified materialized files ("" = not materialized; #398 M2b).
+        pub materialized_dir: String,
+        /// `registry_local_validation` on this instrument under the current
+        /// method context, with who/when (empty when none).
+        pub local_validation: u32,
+        pub validated_by: String,
+        pub validated_at_utc: String,
+    }
+
+    /// Outcome of `registry_record_validation` (#398 M2b): `job_id` 0 means
+    /// refused and `error` says why (e.g. the test run was not recorded with
+    /// this revision applied on this instrument).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryValidationRequest {
+        pub job_id: u64,
+        pub error: String,
     }
 
     /// Registry job status (schema v15); `kind`/`state` are contract
@@ -356,6 +372,9 @@ pub mod ffi {
         pub last_job: BridgeRegistryJob,
         pub queued_jobs: u64,
         pub busy: bool,
+        /// This instrument's identity (UUID + optional name; #398 M2b).
+        pub instrument_id: String,
+        pub instrument_name: String,
     }
 
     /// Authoritative selected-device snapshot (schema v7, BE-2). `mode` is a
@@ -843,6 +862,17 @@ pub mod ffi {
         fn registry_download(self: Pin<&mut BackendBridge>, revision_id: &str) -> u64;
         /// Drop queued registry jobs and abort the running one.
         fn registry_cancel_all(self: Pin<&mut BackendBridge>) -> bool;
+        /// Write a cached revision's files read-only for Apply (#398 M2b).
+        fn registry_materialize(self: Pin<&mut BackendBridge>, revision_id: &str) -> u64;
+        /// "Mark validated" (#398 M2b): `evidence_file` is a test-run HDF5
+        /// recorded with `revision_id` applied on this instrument under the
+        /// current method context; checked before the job is queued.
+        fn registry_record_validation(
+            self: Pin<&mut BackendBridge>,
+            revision_id: &str,
+            evidence_file: &str,
+            passed: bool,
+        ) -> BridgeRegistryValidationRequest;
         /// Value snapshot of the registry worker; never waits on a request.
         fn fetch_registry_snapshot(self: Pin<&mut BackendBridge>) -> BridgeRegistrySnapshot;
         fn fetch_registry_job(self: Pin<&mut BackendBridge>, job_id: u64) -> BridgeRegistryJob;

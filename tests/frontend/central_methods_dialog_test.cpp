@@ -3,7 +3,10 @@
 // widgets (password field cleared), refresh-on-open, revoked rows marked, an
 // outage keeps the cached rows, the GUI stays responsive while a registry
 // request hangs and Cancel aborts it, sign-out, and the last user's cached
-// methods listed offline after a restart.
+// methods listed offline after a restart. M2b: Apply (materialize, confirm
+// with changed keys, exact bytes to the applier, backup reported, applied row
+// marked), revoked rows not applicable/validatable, Mark validated hands the
+// picked test run to the backend and shows its refusal.
 #include "frontend/dialogs/CentralMethodsDialog.h"
 
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -22,6 +25,7 @@
 #include <QTimer>
 
 #include <functional>
+#include <vector>
 
 using namespace backend::profiles;
 using mib::test::FakeSupabase;
@@ -224,6 +228,93 @@ int main(int argc, char* argv[]) {
                     "sign-out clears the listed methods");
         MIB_EXPECT(find<QLineEdit>(dialog, "centralMethodsEmail")->isVisible(),
                    "sign-in offered again");
+    }
+    watchdog.mark("M2b: apply + mark validated");
+    {
+        mib::test::TempDir methodDir("mib_central_methods_apply");
+        auto c = config(methodDir / "cache");
+        c.methodsDir = methodDir / "methods";
+        ProfileRegistryWorker worker(c, transportFor(fake));
+        MIB_REQUIRE(worker.waitIdle(std::chrono::seconds(5)), "worker idle");
+        MIB_REQUIRE(worker.waitForJob(worker.requestSignIn("alice@lab", "pw-alice"), std::chrono::seconds(5)),
+                    "sign in");
+        MIB_REQUIRE(worker.waitForJob(worker.requestRefresh(), std::chrono::seconds(5)), "refresh");
+
+        std::string appliedConfig = R"({"config_schema_version":1,"gain":7})";
+        QByteArray written;
+        int confirms = 0;
+        bool confirmAnswer = true;
+        QString confirmText;
+        std::vector<std::string> validations;
+        frontend::CentralMethodsHooks hooks;
+        hooks.methodContext = [] {
+            return MethodContext{"123e4567-e89b-42d3-a456-426614174000", "1.0", std::string(64, 'c'), "mock"};
+        };
+        hooks.instrumentName = "MIB-01";
+        hooks.currentConfigJson = [&] { return appliedConfig; };
+        hooks.applyConfig = [&](const QByteArray& text, QString* backup) {
+            written = text;
+            appliedConfig = text.toStdString();
+            *backup = QStringLiteral("/data/config.json.bak-test");
+            return QString();
+        };
+        hooks.recordValidation = [&](const std::string& id, const std::string& file, bool passed) {
+            validations.push_back(id + "|" + file + "|" + (passed ? "pass" : "fail"));
+            return frontend::CentralMethodsHooks::ValidationOutcome{0, "The test run was not recorded with this revision applied"};
+        };
+        hooks.pickEvidenceFile = [](const QString&) { return QStringLiteral("/runs/test.h5"); };
+        hooks.confirm = [&](const QString&, const QString& text) {
+            ++confirms;
+            confirmText = text;
+            return confirmAnswer;
+        };
+        frontend::CentralMethodsDialog dialog(worker, hooks);
+        dialog.show();
+        auto* table = find<QTableWidget>(dialog, "centralMethodsTable");
+        auto* apply = find<QPushButton>(dialog, "centralMethodsApply");
+        auto* validate = find<QPushButton>(dialog, "centralMethodsValidate");
+        auto* notice = find<QLabel>(dialog, "centralMethodsNotice");
+        MIB_REQUIRE(waitUntil([&] { return table->rowCount() == 3; }), "rows listed");
+        MIB_EXPECT(find<QLabel>(dialog, "centralMethodsInstrument")->text().contains("MIB-01"), "instrument shown");
+        MIB_EXPECT(!apply->isEnabled() && !validate->isEnabled(), "nothing selected: actions disabled");
+
+        const int revoked = rowWithState(table, QStringLiteral("REVOKED"));
+        table->selectRow(revoked);
+        MIB_EXPECT(!apply->isEnabled() && !validate->isEnabled(), "revoked row: no apply, no validation");
+        MIB_EXPECT(cell(table, revoked, 6).contains("not validated"), "local validation column");
+
+        const int published = rowWithState(table, QStringLiteral("Published"));
+        table->selectRow(published);
+        MIB_REQUIRE(waitUntil([&] { return apply->isEnabled(); }), "published row: apply offered");
+        MIB_EXPECT(validate->isEnabled(), "signed in + instrument known: validation offered");
+
+        // Declined confirmation: nothing written.
+        confirmAnswer = false;
+        apply->click();
+        MIB_REQUIRE(waitUntil([&] { return confirms == 1; }), "materialize then confirm");
+        MIB_EXPECT(written.isEmpty() && notice->text().contains("cancelled"), "declined: nothing applied");
+        MIB_EXPECT(confirmText.contains("gain") && confirmText.contains("backed up") &&
+                       confirmText.contains("egrabberConfig.js"),
+                   "confirmation lists changed keys, backup and camera script");
+
+        confirmAnswer = true;
+        table->selectRow(rowWithState(table, QStringLiteral("Published")));
+        MIB_REQUIRE(waitUntil([&] { return apply->isEnabled(); }), "apply offered again");
+        apply->click();
+        MIB_REQUIRE(waitUntil([&] { return !written.isEmpty(); }), "applied");
+        MIB_EXPECT(canonicalConfigSha256(written.toStdString()) ==
+                       canonicalConfigSha256(R"({"config_schema_version":1,"gain":2})"),
+                   "exactly r2's config handed to the applier");
+        MIB_EXPECT(notice->text().contains("config.json.bak-test"), "backup reported");
+        MIB_REQUIRE(waitUntil([&] { return cell(table, rowWithState(table, QStringLiteral("Published")), 6).contains("APPLIED"); }),
+                    "applied row marked");
+
+        table->selectRow(rowWithState(table, QStringLiteral("Published")));
+        MIB_REQUIRE(waitUntil([&] { return validate->isEnabled(); }), "validation offered");
+        validate->click();
+        MIB_EXPECT(validations.size() == 1 && validations[0] == "r2|/runs/test.h5|pass", "evidence handed to the backend");
+        MIB_EXPECT(notice->text().contains("Not recorded") && notice->text().contains("not recorded with this revision"),
+                   "backend refusal shown");
     }
     return mib::test::exitCode();
 }

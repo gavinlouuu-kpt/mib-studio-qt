@@ -23,6 +23,7 @@ struct BridgeHttpRequest;
 struct BridgeHttpResponse;
 struct BridgeRegistrySnapshot;
 struct BridgeRegistryJob;
+struct BridgeRegistryValidationRequest;
 struct BridgeCameraSelection;
 struct BridgeCommandResult;
 struct BridgeConfigDocument;
@@ -123,6 +124,9 @@ public:
     std::uint64_t registry_refresh();
     std::uint64_t registry_download(rust::Str revision_id);
     bool registry_cancel_all();
+    std::uint64_t registry_materialize(rust::Str revision_id);
+    BridgeRegistryValidationRequest registry_record_validation(rust::Str revision_id,
+                                                               rust::Str evidence_file, bool passed);
     BridgeRegistrySnapshot fetch_registry_snapshot();
     BridgeRegistryJob fetch_registry_job(std::uint64_t job_id);
     BridgeCommandResult select_hardware_camera(std::int32_t interface_index,

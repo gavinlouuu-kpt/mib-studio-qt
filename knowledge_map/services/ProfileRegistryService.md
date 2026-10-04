@@ -15,8 +15,12 @@ see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
 revisions. M2a (backend): the worker materializes a cached revision's files and
 records operator-confirmed local validations; [[../architecture/ExperimentCoordinator]]
 matches the applied config.json to a cached revision, gates Start on it
-(`method.revision`) and freezes it into `/run_provenance`. No Apply / "Mark
-validated" UI yet (M2b).
+(`method.revision`) and freezes it into `/run_provenance`. M2b: Apply (Qt;
+`planMethodApply` + `AppConfigWatcher::applyMethodDocument`) and "Mark
+validated" (both shells; `AppBackend::requestMethodValidation` accepts only a
+test run whose `/run_provenance` names the revision on this instrument under
+the current context — `checkValidationEvidence`). See
+`include/backend/app/MethodApply.h`.
 
 ## Key APIs
 

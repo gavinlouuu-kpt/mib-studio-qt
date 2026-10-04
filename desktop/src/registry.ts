@@ -4,14 +4,18 @@
 // Methods panel renders. It mirrors the Qt CentralMethodsDialog wording and
 // enablement rules so both shells present the same backend truth: each
 // central state is shown as itself (never collapsed into "ready"), central
-// state is never presented as local validation, and nothing here selects or
-// applies a method.
-import type { RegistryJob, RegistrySnapshot } from "./bridge";
+// state is never presented as local validation. #398 M2b adds per-revision
+// local validation on this instrument and the selected-row actions
+// (materialize, mark validated / failed). Apply stays a Qt-shell action: the
+// React shell has no config.json applier yet, so it is shown disabled with
+// the reason rather than simulated.
+import type { RegistryJob, RegistryRevision, RegistrySnapshot } from "./bridge";
 import {
   REGISTRY_CENTRAL_STATES,
   REGISTRY_CONNECTIVITY,
   REGISTRY_JOB_KINDS,
   REGISTRY_JOB_STATES,
+  REGISTRY_LOCAL_VALIDATION,
   REGISTRY_SESSION_STATES,
 } from "./bridgeContract";
 
@@ -25,6 +29,21 @@ export interface RegistryRow {
   hashPrefix: string;
   hash: string;
   author: string;
+  /** Local validation on this instrument under the current context. */
+  validation: string;
+  validationFailed: boolean;
+  materialized: boolean;
+  /** Published or superseded: may be materialized/validated. */
+  usable: boolean;
+}
+
+/** What the selected row allows (all false when nothing is selected). */
+export interface RegistryActions {
+  canMaterialize: boolean;
+  canMarkValidated: boolean;
+  /** Always false in the React shell; `applyReason` says why. */
+  canApply: boolean;
+  applyReason: string;
 }
 
 export interface RegistryView {
@@ -39,8 +58,14 @@ export interface RegistryView {
   canSignOut: boolean;
   /** Prefill for the email field from the cached/signed-in session. */
   email: string;
+  /** "Instrument: MIB-01 (1234abcd…)" or a warning when unknown. */
+  instrument: string;
   rows: RegistryRow[];
 }
+
+export const APPLY_UNAVAILABLE =
+  "Apply is available in the Qt app. The React shell has no config.json applier yet (#398 follow-up), " +
+  "so applying here would not load the method.";
 
 export const CENTRAL_STATE_NOTE =
   "Central state is the registry's approval and publication record only. It is not local " +
@@ -102,6 +127,38 @@ function nameOf(table: Record<string, number>, value: number): string {
   return entry ? entry[0] : String(value);
 }
 
+export function localValidationText(r: RegistryRevision): string {
+  switch (r.local_validation) {
+    case REGISTRY_LOCAL_VALIDATION.Passed:
+      return `Validated here by ${r.validated_by} (${r.validated_at_utc} UTC)`;
+    case REGISTRY_LOCAL_VALIDATION.Failed:
+      return `Validation FAILED here (${r.validated_by}, ${r.validated_at_utc} UTC)`;
+    default:
+      return "Not validated here";
+  }
+}
+
+export function instrumentText(s: RegistrySnapshot): string {
+  if (!s.valid) return "";
+  if (!s.instrument_id) return "Instrument identity unknown: local validation is unavailable";
+  const id = `${s.instrument_id.slice(0, 8)}…`;
+  return s.instrument_name ? `Instrument: ${s.instrument_name} (${id})` : `Instrument: ${id}`;
+}
+
+export function actionsFor(view: RegistryView, s: RegistrySnapshot | null, revisionId: string | null): RegistryActions {
+  const none = { canMaterialize: false, canMarkValidated: false, canApply: false, applyReason: APPLY_UNAVAILABLE };
+  const row = view.rows.find((r) => r.revisionId === revisionId);
+  if (!s || !row || s.busy || !s.valid || !s.configured) return none;
+  const hasCache = s.session !== REGISTRY_SESSION_STATES.SignedOut;
+  return {
+    canMaterialize: hasCache && row.usable,
+    // The validator must be an authenticated registry user (backend rule).
+    canMarkValidated: s.session === REGISTRY_SESSION_STATES.SignedIn && row.usable && !!s.instrument_id,
+    canApply: false,
+    applyReason: APPLY_UNAVAILABLE,
+  };
+}
+
 export function jobText(job: RegistryJob): string {
   if (!job.job_id || job.job_id === "0") return "";
   const kind = nameOf(REGISTRY_JOB_KINDS, job.kind).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
@@ -145,6 +202,11 @@ export function toRegistryView(s: RegistrySnapshot): RegistryView {
     hashPrefix: r.content_hash.slice(0, 12),
     hash: r.content_hash,
     author: r.author_id,
+    validation: localValidationText(r),
+    validationFailed: r.local_validation === REGISTRY_LOCAL_VALIDATION.Failed,
+    materialized: r.materialized_dir !== "",
+    usable:
+      r.central_state === REGISTRY_CENTRAL_STATES.Published || r.central_state === REGISTRY_CENTRAL_STATES.Superseded,
   }));
 
   return {
@@ -158,11 +220,16 @@ export function toRegistryView(s: RegistrySnapshot): RegistryView {
     canCancel: usable && (s.busy || Number(s.queued_jobs) > 0),
     canSignOut: usable && hasUser && !s.busy,
     email: hasUser ? s.email : "",
+    instrument: instrumentText(s),
     rows,
   };
 }
 
 /** True when the snapshot changed in a way the panel must re-render. */
 export function changed(prev: RegistrySnapshot | null, next: RegistrySnapshot): boolean {
-  return !prev || prev.generation !== next.generation || prev.busy !== next.busy || prev.valid !== next.valid;
+  if (!prev || prev.generation !== next.generation || prev.busy !== next.busy || prev.valid !== next.valid) return true;
+  // Local validation also depends on the method context (core build, camera
+  // source), which changes without a registry generation bump.
+  const local = (x: RegistrySnapshot) => x.revisions.map((r) => r.local_validation).join(",");
+  return local(prev) !== local(next);
 }

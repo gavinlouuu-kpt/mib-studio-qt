@@ -1,8 +1,9 @@
 # Central Methods Dialog
 
-> Settings UI for the central profile registry (#398 M1): sign in, refresh,
-> and list the central method revisions cached for the current user, each with
-> its own central state. Read-only toward the instrument.
+> Settings UI for the central profile registry (#398 M1/M2b): sign in,
+> refresh, list the cached central method revisions with their central state
+> and local validation on this instrument, Apply one (exact config.json,
+> backed up) and record a local validation from a test run.
 
 **Source:** `src/frontend/dialogs/CentralMethodsDialog.cpp`,
 `include/frontend/dialogs/CentralMethodsDialog.h`
@@ -27,8 +28,30 @@ polling of the registry).
 The table lists method, `r<number>`, project display name, central state
 (Published, Superseded, Archived, Approved (not published), Submitted,
 Rejected, **REVOKED - do not use** in bold red), a 12-character content-hash
-prefix (full hash in the tooltip) and author. A note states that central
-state is not local validation and that listing does not select or apply.
+prefix (full hash in the tooltip), author, and **On this instrument**:
+`APPLIED` when the applied config.json is exactly that revision's, the local
+validation for this instrument UUID + current method context (validated by
+… / validation FAILED / not validated; `backend::app::localValidationFor`),
+and `files ready` when materialized. The instrument label shows
+`MIB_INSTRUMENT_NAME` and the UUID.
+
+M2b actions on the selected row (constructor takes `CentralMethodsHooks`;
+each missing hook disables its action with a tooltip):
+
+- **Apply…** — published/superseded only. Materializes first when needed
+  (waits for that job in `poll()`), then `planMethodApply()` (refuses
+  tampered files) and a confirmation listing the changed config.json keys, the
+  backup and the camera-script path (not applied). On Yes,
+  `hooks.applyConfig` = `AppConfigWatcher::applyMethodDocument` writes the exact
+  bytes after a `config.json.bak-<UTC stamp>` backup and reloads, so the
+  coordinator's `method.revision` gate recognises the revision.
+- **Mark validated…** / **Record failed run…** — signed in, instrument known,
+  published/superseded. Picks an `.h5` and calls
+  `AppBackend::requestMethodValidation`; a refusal (wrong revision, instrument
+  or context, local-method run, unreadable file) is shown in the notice line.
+
+[[MainWindow]] builds the hooks from `AppBackend` and the Preview page's
+`AppConfigWatcher`.
 
 ## Gotchas
 
@@ -38,8 +61,13 @@ state is not local validation and that listing does not select or apply.
   changes. The GUI thread stays responsive while a registry request hangs.
 - Unconfigured (no `MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY`, or no
   shell transport): the status says so and every control is disabled.
-- No method selection, Apply, update-available badge or context-bar entry yet
-  (later #398 milestones).
+- Besides the snapshot generation, `poll()` re-renders when the applied
+  config.json text or the method context hash changes (neither bumps the
+  registry generation).
+- No update-available badge or context-bar entry yet (later #398 milestones).
 
 Test: `frontend.central_methods` (offscreen dialog over the real worker and a
-fake Supabase from `tests/support/fake_supabase.h`).
+fake Supabase from `tests/support/fake_supabase.h`; M2b: apply with declined
+and accepted confirmation, exact bytes, backup, APPLIED marker, revoked row
+disabled, validation refusal shown) and `frontend.config_apply`
+(`applyMethodDocument` on a real config.json).

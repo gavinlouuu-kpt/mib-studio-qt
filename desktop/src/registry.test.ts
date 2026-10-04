@@ -8,9 +8,20 @@ import {
   REGISTRY_CONNECTIVITY,
   REGISTRY_JOB_KINDS,
   REGISTRY_JOB_STATES,
+  REGISTRY_LOCAL_VALIDATION,
   REGISTRY_SESSION_STATES,
 } from "./bridgeContract";
-import { CENTRAL_STATE_NOTE, centralStateText, changed, jobText, toRegistryView } from "./registry";
+import {
+  APPLY_UNAVAILABLE,
+  CENTRAL_STATE_NOTE,
+  actionsFor,
+  centralStateText,
+  changed,
+  instrumentText,
+  jobText,
+  localValidationText,
+  toRegistryView,
+} from "./registry";
 
 function revision(partial: Partial<RegistryRevision>): RegistryRevision {
   return {
@@ -23,6 +34,10 @@ function revision(partial: Partial<RegistryRevision>): RegistryRevision {
     revision_number: "12",
     metadata_version: "1",
     central_state: REGISTRY_CENTRAL_STATES.Published,
+    materialized_dir: "",
+    local_validation: REGISTRY_LOCAL_VALIDATION.None,
+    validated_by: "",
+    validated_at_utc: "",
     ...partial,
   };
 }
@@ -50,6 +65,8 @@ function snapshot(partial: Partial<RegistrySnapshot> = {}): RegistrySnapshot {
     last_job: { job_id: "0", kind: 0, state: 0, message: "" },
     queued_jobs: "0",
     busy: false,
+    instrument_id: "123e4567-e89b-42d3-a456-426614174000",
+    instrument_name: "MIB-01",
     ...partial,
   };
 }
@@ -147,5 +164,74 @@ describe("registry view model", () => {
     expect(changed(a, { ...a })).toBe(false);
     expect(changed(a, { ...a, generation: "2" })).toBe(true);
     expect(changed(a, { ...a, busy: true })).toBe(true);
+  });
+
+  it("M2b: shows local validation per row and the instrument", () => {
+    const v = toRegistryView(
+      snapshot({
+        session: REGISTRY_SESSION_STATES.SignedIn,
+        revisions: [
+          revision({
+            revision_id: "a",
+            local_validation: REGISTRY_LOCAL_VALIDATION.Passed,
+            validated_by: "user-bob",
+            validated_at_utc: "2026-10-04 10:00:00",
+            materialized_dir: "/data/methods/a",
+          }),
+          revision({ revision_id: "b", local_validation: REGISTRY_LOCAL_VALIDATION.Failed, validated_by: "x" }),
+          revision({ revision_id: "c" }),
+        ],
+      }),
+    );
+    expect(v.rows.map((r) => r.validation)).toEqual([
+      "Validated here by user-bob (2026-10-04 10:00:00 UTC)",
+      "Validation FAILED here (x,  UTC)",
+      "Not validated here",
+    ]);
+    expect(v.rows.map((r) => r.validationFailed)).toEqual([false, true, false]);
+    expect(v.rows.map((r) => r.materialized)).toEqual([true, false, false]);
+    expect(v.instrument).toBe("Instrument: MIB-01 (123e4567…)");
+    expect(instrumentText(snapshot({ instrument_id: "" }))).toContain("unknown");
+    expect(instrumentText(snapshot({ instrument_name: "" }))).toBe("Instrument: 123e4567…");
+    expect(localValidationText(revision({}))).toBe("Not validated here");
+  });
+
+  it("M2b: actions follow selection, session and central state; Apply is never enabled here", () => {
+    const signedIn = snapshot({
+      session: REGISTRY_SESSION_STATES.SignedIn,
+      revisions: [
+        revision({ revision_id: "pub" }),
+        revision({ revision_id: "rev", central_state: REGISTRY_CENTRAL_STATES.Revoked }),
+        revision({ revision_id: "sub", central_state: REGISTRY_CENTRAL_STATES.Superseded }),
+      ],
+    });
+    const view = toRegistryView(signedIn);
+    expect(actionsFor(view, signedIn, null)).toMatchObject({ canMaterialize: false, canMarkValidated: false });
+    expect(actionsFor(view, signedIn, "pub")).toEqual({
+      canMaterialize: true,
+      canMarkValidated: true,
+      canApply: false,
+      applyReason: APPLY_UNAVAILABLE,
+    });
+    expect(actionsFor(view, signedIn, "sub")).toMatchObject({ canMaterialize: true, canMarkValidated: true });
+    expect(actionsFor(view, signedIn, "rev")).toMatchObject({ canMaterialize: false, canMarkValidated: false });
+
+    const offline = { ...signedIn, session: REGISTRY_SESSION_STATES.CachedOffline };
+    expect(actionsFor(toRegistryView(offline), offline, "pub")).toMatchObject({
+      canMaterialize: true,
+      canMarkValidated: false,
+    });
+    const busy = { ...signedIn, busy: true };
+    expect(actionsFor(toRegistryView(busy), busy, "pub")).toMatchObject({ canMaterialize: false });
+    const noInstrument = { ...signedIn, instrument_id: "" };
+    expect(actionsFor(toRegistryView(noInstrument), noInstrument, "pub").canMarkValidated).toBe(false);
+    expect(APPLY_UNAVAILABLE).toContain("Qt app");
+  });
+
+  it("M2b: a local validation change re-renders without a generation bump", () => {
+    const a = snapshot({ revisions: [revision({})] });
+    const b = { ...a, revisions: [revision({ local_validation: REGISTRY_LOCAL_VALIDATION.Passed })] };
+    expect(changed(a, b)).toBe(true);
+    expect(changed(a, { ...a, revisions: [revision({})] })).toBe(false);
   });
 });
