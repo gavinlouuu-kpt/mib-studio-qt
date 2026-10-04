@@ -336,9 +336,9 @@ ManifestResult parseVersionManifest(const QByteArray& bytes) {
                             entry.contractVersion, entry.nativePlugins, result.error))
         return result;
     for (const auto& plugin : entry.nativePlugins) {
-        if (plugin.contractVersion != entry.contractVersion) {
-            result.error = QStringLiteral("processing-core native contract does not match manifest");
-            return result;
+        if (plugin.contractVersion != entry.contractVersion) {
+            result.error = QStringLiteral("processing-core native contract does not match manifest");
+            return result;
         }
         if (plugin.engineAbiVersion != entry.engineAbiVersion) {
             result.error = QStringLiteral("processing-core native ABI does not match manifest");
