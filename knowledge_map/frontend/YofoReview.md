@@ -202,7 +202,9 @@ Preferences (`localStorage` `yofo.review.updateChannel`), and one quiet
 check per launch that puts "Update X available" in the status bar.
 Publishing: `scripts/release/publish-review-update.py` (Tauri `latest.json`
 + `sha256`, artifacts first, manifest last), run by `review-release.yml`
-when the bundles carry signatures. Setup: `docs/howto/auto-update-r2.md`
+when the bundles carry signatures. `review-release.yml` runs on the shared
+`vX.Y.Z` tags and on YOFO-Review-only `review-vX.Y.Z[-beta.N]` tags, which
+`release.yml` ignores and which get their own GitHub Release. Setup: `docs/howto/auto-update-r2.md`
 ("YOFO Review").
 
 ## `ReviewApp` (the product shell)

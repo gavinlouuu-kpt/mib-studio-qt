@@ -200,6 +200,16 @@ pre-release suffix. Note: tags pushed by `GITHUB_TOKEN` (e.g. the automatic
 develop betas) do not start other workflows, so betas get YOFO Review
 bundles only when the workflow is run by hand for their tag.
 
+**YOFO Review on its own.** A `review-vX.Y.Z` or `review-vX.Y.Z-beta.N`
+tag releases only YOFO Review: `release.yml` (`v*.*.*`) does not match it,
+so no MIB Studio Qt build or R2 publish runs. The bundles go to their own
+GitHub Release named "YOFO Review X.Y.Z" (never marked latest) and, when
+signed, to the `review-stable` / `review-beta` update channel:
+
+```bash
+git tag review-v1.1.3-beta.1 <commit> && git push origin review-v1.1.3-beta.1
+```
+
 ## Prerequisites
 
 Before starting a release, ensure you have:

@@ -8,15 +8,20 @@ name: YOFO Review release
 # YOFO_Review_v<version>_x64-setup.exe and adds them, with SHA-256 sums, to
 # the release (created if release.yml has not created it yet). Unsigned
 # (decision log 2026-10-01): the release notes say how to open them.
+#
+# review-vX.Y.Z[-beta.N] tags release YOFO Review alone: release.yml
+# (v*.*.*) does not match them, and the bundles go to their own GitHub
+# Release ("YOFO Review X.Y.Z", never marked latest) and update channel.
 
 on:
   push:
     tags:
       - "v*.*.*"
+      - "review-v*.*.*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and attach (e.g. v1.2.0)"
+        description: "Existing tag to build and attach (e.g. v1.2.0 or review-v1.2.0-beta.1)"
         required: true
 
 permissions:
@@ -34,6 +39,7 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
       version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
+      standalone: ${{ steps.v.outputs.standalone }}
     steps:
       - name: Validate the tag
         id: v
@@ -42,12 +48,13 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9A-Za-z][0-9A-Za-z.-]*)?)$ ]]; then
+          if [[ ! "$TAG" =~ ^(review-)?v([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9A-Za-z][0-9A-Za-z.-]*)?)$ ]]; then
             echo "not a release tag: $TAG" >&2; exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-          if [[ -n "${BASH_REMATCH[2]}" ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >> "$GITHUB_OUTPUT"
+          echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${BASH_REMATCH[3]}" ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >> "$GITHUB_OUTPUT"
+          if [[ -n "${BASH_REMATCH[1]}" ]]; then echo "standalone=true"; else echo "standalone=false"; fi >> "$GITHUB_OUTPUT"
 
   bundles:
     name: Bundles
@@ -92,6 +99,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
+          # A shared vX.Y.Z release carries release.yml's name (whichever
+          # workflow creates it); a review-v* tag gets its own release that
+          # never becomes the repository's latest.
+          name: ${{ needs.version.outputs.standalone == 'true' && format('YOFO Review {0}', needs.version.outputs.version) || format('MIB Studio Qt {0}', needs.version.outputs.tag) }}
+          make_latest: ${{ needs.version.outputs.standalone == 'true' && 'false' || 'legacy' }}
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           append_body: true
           body: |

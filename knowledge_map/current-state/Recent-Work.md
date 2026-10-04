@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-10-04 — YOFO Review-only release tags
+
+`review-vX.Y.Z[-beta.N]` tags release YOFO Review alone
+(`review-release.yml`): `release.yml` ignores them, the bundles get their own
+GitHub Release ("YOFO Review X.Y.Z", not latest) and the signed updates go to
+`review-stable/` or `review-beta/`. Used for the first signed update
+(`review-v1.1.3-beta.1`). Note: [[../frontend/YofoReview]].
+
 ## 2026-10-04 — YOFO Review auto-update
 
 YOFO Review gained the Tauri updater: channel-specific Tauri manifests on R2

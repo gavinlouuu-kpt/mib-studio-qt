@@ -587,7 +587,8 @@ Until the public key is committed the app has no updater (the plugin is not
 registered; **Check for updates…** says so) and releases ship without update
 bundles. `scripts/release/review-updater-enabled.py` reports the state.
 
-**Publishing** is automatic on `v*` tags (`.github/workflows/review-release.yml`):
+**Publishing** is automatic on `v*` and YOFO-Review-only `review-v*` tags
+(`.github/workflows/review-release.yml`; see `release-workflow.md`):
 with the public key committed and the signing secret present, the bundle
 jobs build the signed updater artifacts, and `publish-updates` runs
 `scripts/release/publish-review-update.py`, which uploads the bundles first
