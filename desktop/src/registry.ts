@@ -9,7 +9,7 @@
 // (materialize, mark validated / failed). Apply stays a Qt-shell action: the
 // React shell has no config.json applier yet, so it is shown disabled with
 // the reason rather than simulated.
-import type { RegistryJob, RegistryRevision, RegistrySnapshot } from "./bridge";
+import type { RegistryDraft, RegistryJob, RegistryRevision, RegistrySnapshot } from "./bridge";
 import {
   REGISTRY_CENTRAL_STATES,
   REGISTRY_CONNECTIVITY,
@@ -35,6 +35,9 @@ export interface RegistryRow {
   materialized: boolean;
   /** Published or superseded: may be materialized/validated. */
   usable: boolean;
+  /** #398 M3b: "r13 available" or "". */
+  update: string;
+  notes: string;
 }
 
 /** What the selected row allows (all false when nothing is selected). */
@@ -207,6 +210,11 @@ export function toRegistryView(s: RegistrySnapshot): RegistryView {
     materialized: r.materialized_dir !== "",
     usable:
       r.central_state === REGISTRY_CENTRAL_STATES.Published || r.central_state === REGISTRY_CENTRAL_STATES.Superseded,
+    update: (() => {
+      const newer = s.revisions.find((n) => n.revision_id === r.newer_revision_id);
+      return newer ? `r${newer.revision_number} available` : "";
+    })(),
+    notes: r.release_notes,
   }));
 
   return {
@@ -232,4 +240,162 @@ export function changed(prev: RegistrySnapshot | null, next: RegistrySnapshot): 
   // source), which changes without a registry generation bump.
   const local = (x: RegistrySnapshot) => x.revisions.map((r) => r.local_validation).join(",");
   return local(prev) !== local(next);
+}
+
+// ---- #398 M3b authoring: the same role and conflict rules as the Qt dialog ----
+
+/** UI enablement only; the server enforces roles. */
+export function hasRole(s: RegistrySnapshot, projectId: string, role: string): boolean {
+  const p = s.projects.find((x) => x.project_id === projectId);
+  return !!p && (p.roles.includes(role) || p.roles.includes("admin"));
+}
+
+export function revisionLabel(s: RegistrySnapshot, revisionId: string): string {
+  if (!revisionId) return "";
+  const r = s.revisions.find((x) => x.revision_id === revisionId);
+  return r ? `r${r.revision_number}` : `${revisionId.slice(0, 8)}…`;
+}
+
+export interface ReviewActions {
+  canNewDraft: boolean;
+  canApprove: boolean;
+  canReject: boolean;
+  canPublish: boolean;
+  canArchive: boolean;
+  canRevoke: boolean;
+  canHistory: boolean;
+}
+
+export function reviewActionsFor(s: RegistrySnapshot | null, revisionId: string | null): ReviewActions {
+  const none = {
+    canNewDraft: false,
+    canApprove: false,
+    canReject: false,
+    canPublish: false,
+    canArchive: false,
+    canRevoke: false,
+    canHistory: false,
+  };
+  const r = s?.revisions.find((x) => x.revision_id === revisionId);
+  if (!s || !r || !s.valid || !s.configured || s.busy) return none;
+  const signedIn = s.session === REGISTRY_SESSION_STATES.SignedIn;
+  const hasCache = s.session !== REGISTRY_SESSION_STATES.SignedOut;
+  const C = REGISTRY_CENTRAL_STATES;
+  const reviewer = signedIn && hasRole(s, r.project_id, "reviewer");
+  const publisher = signedIn && hasRole(s, r.project_id, "publisher");
+  return {
+    canNewDraft: hasCache,
+    canApprove: reviewer && r.central_state === C.Submitted,
+    canReject: reviewer && r.central_state === C.Submitted,
+    canPublish: publisher && r.central_state === C.Approved,
+    canArchive: publisher && (r.central_state === C.Published || r.central_state === C.Superseded),
+    canRevoke:
+      publisher &&
+      (r.central_state === C.Published || r.central_state === C.Superseded || r.central_state === C.Archived),
+    canHistory: signedIn,
+  };
+}
+
+export interface DraftRow {
+  draftId: string;
+  method: string;
+  base: string;
+  status: string;
+  notes: string;
+  conflict: boolean;
+  submitted: boolean;
+}
+
+export function draftRows(s: RegistrySnapshot): DraftRow[] {
+  return s.drafts.map((d: RegistryDraft) => {
+    const conflict = s.submit_conflict.present && s.submit_conflict.draft_id === d.draft_id;
+    const submitted = d.submitted_revision_id !== "";
+    return {
+      draftId: d.draft_id,
+      method: d.method_display_name,
+      base: d.new_method ? "new method" : revisionLabel(s, d.base_revision_id),
+      status: submitted
+        ? `Submitted as ${revisionLabel(s, d.submitted_revision_id)}`
+        : conflict
+          ? `CONFLICT: head is now ${revisionLabel(s, s.submit_conflict.head_revision_id)}`
+          : "Draft (not submitted)",
+      notes: d.release_notes,
+      conflict,
+      submitted,
+    };
+  });
+}
+
+export interface DraftActions {
+  canNewMethod: boolean;
+  canEditNotes: boolean;
+  canSubmit: boolean;
+  canBranch: boolean;
+  canFromHead: boolean;
+  canDiscard: boolean;
+}
+
+export function authorProjects(s: RegistrySnapshot): { id: string; name: string }[] {
+  return s.projects.filter((p) => hasRole(s, p.project_id, "author")).map((p) => ({ id: p.project_id, name: p.display_name }));
+}
+
+export function draftActionsFor(s: RegistrySnapshot | null, draftId: string | null): DraftActions {
+  const usable = !!s && s.valid && s.configured && !s.busy && s.session !== REGISTRY_SESSION_STATES.SignedOut;
+  const d = s?.drafts.find((x) => x.draft_id === draftId);
+  const signedIn = s?.session === REGISTRY_SESSION_STATES.SignedIn;
+  const open = !!d && d.submitted_revision_id === "";
+  const author = !!s && !!d && hasRole(s, d.project_id, "author");
+  const conflict = !!s && !!d && s.submit_conflict.present && s.submit_conflict.draft_id === d.draft_id;
+  return {
+    canNewMethod: usable && !!s && authorProjects(s).length > 0,
+    canEditNotes: usable && open,
+    canSubmit: usable && signedIn && open && author && !conflict,
+    canBranch: usable && signedIn && open && author && conflict,
+    canFromHead: usable && open && conflict && !!s && s.submit_conflict.head_revision_id !== "",
+    canDiscard: usable && !!d,
+  };
+}
+
+function changes(keys: string[]): string {
+  if (keys.length === 0) return "none";
+  const shown = keys.slice(0, 12).join(", ");
+  return keys.length > 12 ? `${shown}, … ${keys.length - 12} more` : shown;
+}
+
+/** The conflict explanation for `draftId`, or "" when it has none. */
+export function conflictText(s: RegistrySnapshot, draftId: string | null): string {
+  const c = s.submit_conflict;
+  if (!c.present || c.draft_id !== draftId) return "";
+  const base = revisionLabel(s, c.base_revision_id);
+  const head = revisionLabel(s, c.head_revision_id);
+  const lines = [`This draft is based on ${base}, but ${head} has been published since. Nothing was sent.`];
+  if (c.compared) {
+    lines.push(`Changed upstream: ${changes(c.upstream_changes)}`);
+    lines.push(`Your draft differs from the head in: ${changes(c.draft_vs_head)}`);
+  } else {
+    lines.push("Refresh to compare the two revisions.");
+  }
+  lines.push(`Choose: submit as a branch of ${base}, start a new draft from ${head}, or discard.`);
+  return lines.join("\n");
+}
+
+/** Lineage, notes, update and (when fetched) history of a revision. */
+export function detailLines(s: RegistrySnapshot, revisionId: string | null): string[] {
+  const r = s.revisions.find((x) => x.revision_id === revisionId);
+  if (!r) return [];
+  const lines = [
+    `${r.display_name} r${r.revision_number} · ${centralStateText(r.central_state)} · parent ${
+      r.parent_revision_id ? revisionLabel(s, r.parent_revision_id) : "none"
+    }`,
+  ];
+  const newer = s.revisions.find((n) => n.revision_id === r.newer_revision_id);
+  if (newer) lines.push(`Update available: r${newer.revision_number} is published`);
+  lines.push(`Release notes: ${r.release_notes || "(none)"}`);
+  if (s.history_revision_id === r.revision_id) {
+    for (const h of s.history.filter((x) => x.review))
+      lines.push(`Review: ${h.what} by ${h.who} at ${h.created_at} - ${h.reason}`);
+    for (const h of s.history.filter((x) => !x.review))
+      lines.push(`Event: ${h.what} by ${h.who} at ${h.created_at}${h.reason ? ` - ${h.reason}` : ""}`);
+  }
+  return lines;
 }

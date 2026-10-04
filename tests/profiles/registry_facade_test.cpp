@@ -9,7 +9,9 @@
 //  - facade shutdown aborts a hung registry request promptly;
 //  - AppBackend loads the instrument identity (#398 M2) at initialize;
 //  - M2b: materialize (kind 4), per-revision materialized dir + local
-//    validation, instrument identity, and refused validation evidence.
+//    validation, instrument identity, and refused validation evidence;
+//  - M3b: drafts, notes, history, method heads and authoring refusals
+//    through the facade.
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -163,6 +165,43 @@ int main() {
         MIB_EXPECT(facade.registryRecordValidation("missing", notARun.string(), true).error.find("cache") !=
                        std::string::npos,
                    "uncached revision refused");
+
+        watchdog.mark("authoring through the facade (M3b)");
+        {
+            const auto noConfig = facade.registryNewDraftFromRevision("r1", true);
+            MIB_EXPECT(noConfig.jobId == 0 && noConfig.error.find("config.json") != std::string::npos,
+                       "no applied config.json: refused with the reason");
+            const auto copy = facade.registryNewDraftFromRevision("r1", false);
+            MIB_REQUIRE(copy.jobId != 0, copy.error);
+            const auto saved = waitJob(facade, copy.jobId);
+            MIB_EXPECT(saved.kind == 6 && saved.state == 2, "kind 6 = SaveDraft succeeded");
+            MIB_REQUIRE(facade.fetchRegistrySnapshot(s) && s.drafts.size() == 1, "draft mirrored");
+            MIB_EXPECT(s.drafts[0].baseRevisionId == "r1" && !s.drafts[0].newMethod &&
+                           s.drafts[0].submittedRevisionId.empty(),
+                       "draft based on r1, not submitted");
+            const auto notes = facade.registrySetDraftNotes(s.drafts[0].draftId, "Adjusted gain");
+            MIB_REQUIRE(notes.jobId != 0, notes.error);
+            waitJob(facade, notes.jobId);
+            MIB_REQUIRE(facade.fetchRegistrySnapshot(s), "snapshot");
+            MIB_EXPECT(s.drafts[0].releaseNotes == "Adjusted gain", "release notes saved");
+            MIB_EXPECT(facade.registryTransition("r1", 1, " ").jobId == 0, "blank reason refused");
+            MIB_EXPECT(facade.registryTransition("r1", 42, "x").jobId == 0, "unknown state refused");
+            MIB_EXPECT(facade.registryDraftFromHead(s.drafts[0].draftId, true).jobId == 0,
+                       "no conflict: draft-from-head refused");
+            MIB_EXPECT(!s.submitConflict.present && s.historyRevisionId.empty(), "no conflict, no history yet");
+            const auto history = facade.registryFetchHistory("r1");
+            MIB_REQUIRE(history.jobId != 0, history.error);
+            MIB_EXPECT(waitJob(facade, history.jobId).kind == 10, "kind 10 = FetchHistory");
+            MIB_REQUIRE(facade.fetchRegistrySnapshot(s), "snapshot");
+            MIB_EXPECT(s.historyRevisionId == "r1", "history mirrored for r1");
+            MIB_EXPECT(!s.methods.empty() && s.methods[0].headRevisionId == "r1", "method head mirrored");
+            for (const auto& r : s.revisions)
+                MIB_EXPECT(r.newerRevisionId.empty(), "no newer published revision");
+            const auto discard = facade.registryDeleteDraft(s.drafts[0].draftId);
+            MIB_REQUIRE(discard.jobId != 0, discard.error);
+            waitJob(facade, discard.jobId);
+            MIB_REQUIRE(facade.fetchRegistrySnapshot(s) && s.drafts.empty(), "draft discarded");
+        }
 
         BackendRegistryJob unknown;
         MIB_EXPECT(!facade.fetchRegistryJob(999999, unknown) && unknown.jobId == 0,

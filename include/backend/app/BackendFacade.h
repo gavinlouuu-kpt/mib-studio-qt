@@ -670,6 +670,53 @@ namespace backend::bridge
         int localValidation{0};
         std::string validatedBy;
         std::string validatedAtUtc;
+        // #398 M3b: lineage, author's notes, and a newer published revision
+        // of the same method ("" = none; "update available").
+        std::string parentRevisionId;
+        std::string releaseNotes;
+        std::string newerRevisionId;
+    };
+
+    // #398 M3b authoring mirrors (no config content: the shells only list).
+    struct BackendRegistryDraft
+    {
+        std::string draftId;
+        std::string projectId;
+        std::string methodId;
+        bool newMethod{false};
+        std::string methodDisplayName;
+        std::string baseRevisionId;
+        std::string releaseNotes;
+        std::string submittedRevisionId;
+        std::string updatedAtUtc;
+    };
+
+    struct BackendRegistryMethod
+    {
+        std::string methodId;
+        std::string projectId;
+        std::string displayName;
+        std::string headRevisionId;
+    };
+
+    struct BackendRegistryHistoryEntry
+    {
+        std::string who;      // reviewer or actor id
+        std::string what;     // decision or action
+        std::string reason;
+        std::string createdAt;
+        bool review{false};   // true: a review decision; false: an audit event
+    };
+
+    struct BackendRegistryConflict
+    {
+        bool present{false};
+        std::string draftId;
+        std::string baseRevisionId;
+        std::string headRevisionId;
+        bool compared{false};
+        std::vector<std::string> upstreamChanges;
+        std::vector<std::string> draftVsHead;
     };
 
     struct BackendRegistryJob
@@ -705,6 +752,19 @@ namespace backend::bridge
         bool busy{false};
         std::string instrumentId;   // #398 M2b: AppBackend::instrumentIdentity()
         std::string instrumentName;
+        // #398 M3b
+        std::vector<BackendRegistryDraft> drafts;
+        std::vector<BackendRegistryMethod> methods;
+        std::string historyRevisionId; // "" = no history fetched
+        std::vector<BackendRegistryHistoryEntry> history;
+        BackendRegistryConflict submitConflict;
+    };
+
+    // Outcome of an authoring command: jobId 0 = refused, `error` says why.
+    struct BackendRegistryCommand
+    {
+        std::uint64_t jobId{0};
+        std::string error;
     };
 
     // "Mark validated" outcome: jobId 0 = refused, `error` says why.
@@ -895,6 +955,23 @@ namespace backend::bridge
         BackendRegistryValidationRequest registryRecordValidation(const std::string &revisionId,
                                                                   const std::string &evidenceFile,
                                                                   bool passed);
+        // #398 M3b authoring (drafts stay local until submitted).
+        // A draft from a cached revision: its config, or (useCurrentConfig)
+        // the applied config.json on top of it.
+        BackendRegistryCommand registryNewDraftFromRevision(const std::string &revisionId, bool useCurrentConfig);
+        // A new central method from the applied config.json.
+        BackendRegistryCommand registryNewMethodDraft(const std::string &projectId, const std::string &name,
+                                                      const std::string &releaseNotes);
+        BackendRegistryCommand registrySetDraftNotes(const std::string &draftId, const std::string &notes);
+        // Conflict choice: a new draft based on the current head, keeping the
+        // stale draft's config.json or taking the head's.
+        BackendRegistryCommand registryDraftFromHead(const std::string &draftId, bool keepDraftConfig);
+        BackendRegistryCommand registrySubmitDraft(const std::string &draftId, bool asBranch);
+        BackendRegistryCommand registryDeleteDraft(const std::string &draftId);
+        // `state` = registry_central_states (Approved, Rejected, Published,
+        // Archived, Revoked); reason required.
+        BackendRegistryCommand registryTransition(const std::string &revisionId, int state, const std::string &reason);
+        BackendRegistryCommand registryFetchHistory(const std::string &revisionId);
         bool fetchRegistrySnapshot(BackendRegistrySnapshot &out) const;
         bool fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const;
         bool fetchCameraSelection(BackendCameraSelection &out) const;

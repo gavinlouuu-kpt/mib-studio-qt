@@ -1447,6 +1447,9 @@ BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
             br.local_validation = static_cast<std::uint32_t>(r.localValidation);
             br.validated_by = rust::String(r.validatedBy);
             br.validated_at_utc = rust::String(r.validatedAtUtc);
+            br.parent_revision_id = rust::String(r.parentRevisionId);
+            br.release_notes = rust::String(r.releaseNotes);
+            br.newer_revision_id = rust::String(r.newerRevisionId);
             out.revisions.push_back(std::move(br));
         }
         for (const auto& id : s.corruptRevisionIds) out.corrupt_revision_ids.push_back(rust::String(id));
@@ -1458,11 +1461,99 @@ BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
         out.busy = s.busy;
         out.instrument_id = rust::String(s.instrumentId);
         out.instrument_name = rust::String(s.instrumentName);
+        for (const auto& d : s.drafts) {
+            BridgeRegistryDraft bd{};
+            bd.draft_id = rust::String(d.draftId);
+            bd.project_id = rust::String(d.projectId);
+            bd.method_id = rust::String(d.methodId);
+            bd.new_method = d.newMethod;
+            bd.method_display_name = rust::String(d.methodDisplayName);
+            bd.base_revision_id = rust::String(d.baseRevisionId);
+            bd.release_notes = rust::String(d.releaseNotes);
+            bd.submitted_revision_id = rust::String(d.submittedRevisionId);
+            bd.updated_at_utc = rust::String(d.updatedAtUtc);
+            out.drafts.push_back(std::move(bd));
+        }
+        for (const auto& m : s.methods) {
+            BridgeRegistryMethod bm{};
+            bm.method_id = rust::String(m.methodId);
+            bm.project_id = rust::String(m.projectId);
+            bm.display_name = rust::String(m.displayName);
+            bm.head_revision_id = rust::String(m.headRevisionId);
+            out.methods.push_back(std::move(bm));
+        }
+        out.history_revision_id = rust::String(s.historyRevisionId);
+        for (const auto& h : s.history) {
+            BridgeRegistryHistoryEntry bh{};
+            bh.who = rust::String(h.who);
+            bh.what = rust::String(h.what);
+            bh.reason = rust::String(h.reason);
+            bh.created_at = rust::String(h.createdAt);
+            bh.review = h.review;
+            out.history.push_back(std::move(bh));
+        }
+        out.submit_conflict.present = s.submitConflict.present;
+        out.submit_conflict.draft_id = rust::String(s.submitConflict.draftId);
+        out.submit_conflict.base_revision_id = rust::String(s.submitConflict.baseRevisionId);
+        out.submit_conflict.head_revision_id = rust::String(s.submitConflict.headRevisionId);
+        out.submit_conflict.compared = s.submitConflict.compared;
+        for (const auto& k : s.submitConflict.upstreamChanges)
+            out.submit_conflict.upstream_changes.push_back(rust::String(k));
+        for (const auto& k : s.submitConflict.draftVsHead)
+            out.submit_conflict.draft_vs_head.push_back(rust::String(k));
     } catch (...) {
         // Never let a conversion failure (e.g. non-UTF-8 text) cross the FFI.
         return BridgeRegistrySnapshot{};
     }
     return out;
+}
+
+namespace {
+template <class F> BridgeRegistryCommand registryCommand(F&& call) {
+    BridgeRegistryCommand out{};
+    try {
+        const backend::bridge::BackendRegistryCommand r = call();
+        out.job_id = r.jobId;
+        out.error = rust::String(r.error);
+    } catch (...) {
+        out.job_id = 0;
+        out.error = rust::String("registry command failed");
+    }
+    return out;
+}
+} // namespace
+
+BridgeRegistryCommand BackendBridge::registry_new_draft_from_revision(rust::Str revision_id,
+                                                                      bool use_current_config) {
+    return registryCommand(
+        [&] { return impl_->facade.registryNewDraftFromRevision(toStd(revision_id), use_current_config); });
+}
+BridgeRegistryCommand BackendBridge::registry_new_method_draft(rust::Str project_id, rust::Str name,
+                                                               rust::Str release_notes) {
+    return registryCommand([&] {
+        return impl_->facade.registryNewMethodDraft(toStd(project_id), toStd(name), toStd(release_notes));
+    });
+}
+BridgeRegistryCommand BackendBridge::registry_set_draft_notes(rust::Str draft_id, rust::Str notes) {
+    return registryCommand([&] { return impl_->facade.registrySetDraftNotes(toStd(draft_id), toStd(notes)); });
+}
+BridgeRegistryCommand BackendBridge::registry_draft_from_head(rust::Str draft_id, bool keep_draft_config) {
+    return registryCommand([&] { return impl_->facade.registryDraftFromHead(toStd(draft_id), keep_draft_config); });
+}
+BridgeRegistryCommand BackendBridge::registry_submit_draft(rust::Str draft_id, bool as_branch) {
+    return registryCommand([&] { return impl_->facade.registrySubmitDraft(toStd(draft_id), as_branch); });
+}
+BridgeRegistryCommand BackendBridge::registry_delete_draft(rust::Str draft_id) {
+    return registryCommand([&] { return impl_->facade.registryDeleteDraft(toStd(draft_id)); });
+}
+BridgeRegistryCommand BackendBridge::registry_transition(rust::Str revision_id, std::uint32_t state,
+                                                         rust::Str reason) {
+    return registryCommand([&] {
+        return impl_->facade.registryTransition(toStd(revision_id), static_cast<int>(state), toStd(reason));
+    });
+}
+BridgeRegistryCommand BackendBridge::registry_fetch_history(rust::Str revision_id) {
+    return registryCommand([&] { return impl_->facade.registryFetchHistory(toStd(revision_id)); });
 }
 
 BridgeRegistryJob BackendBridge::fetch_registry_job(std::uint64_t job_id) {
@@ -1860,8 +1951,9 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // (registry_sign_in/sign_out/refresh/download/cancel_all,
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
 // contract groups — #398; registry_job_kinds Materialize/RecordValidation,
-// registry_local_validation, registry_materialize, registry_record_validation
-// and the authoring job kinds 6-10 were added before v15 shipped). All additive over v1 (ADR 0003/0004). Must match
+// registry_local_validation, registry_materialize, registry_record_validation,
+// the authoring job kinds 6-10 and the registry_* authoring functions were
+// added before v15 shipped). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 std::uint32_t bridge_abi_version() { return 15; }
 
