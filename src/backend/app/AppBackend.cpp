@@ -4,6 +4,7 @@
 #endif
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/MethodApply.h"
 #include "backend/app/Tools.h"
 
 #include "backend/services/Logger.h"
@@ -1024,6 +1025,50 @@ namespace backend
         }
         context.cameraSource = cameraSourceInfo().effective;
         return context;
+    }
+
+    AppBackend::MethodValidationRequestResult AppBackend::requestMethodValidation(
+        const std::string &revisionId, const std::string &evidenceFile, bool passed)
+    {
+        MethodValidationRequestResult result;
+        if (!profileRegistry_)
+        {
+            result.error = "Backend not initialized";
+            return result;
+        }
+        std::string contentHash;
+        for (const auto &r : profileRegistry_->snapshot().revisions)
+            if (r.revisionId == revisionId) contentHash = r.contentHash;
+        if (contentHash.empty())
+        {
+            result.error = "Revision is not in the local cache";
+            return result;
+        }
+        std::string runJson;
+        {
+            // Separate read-only service: never touches the run being recorded.
+            services::Hdf5Service reader;
+            if (!reader.loadFile(evidenceFile))
+            {
+                result.error = "Cannot open the test-run file: " + evidenceFile;
+                return result;
+            }
+            reader.readRunSnapshotJson(runJson);
+            reader.closeFile();
+        }
+        const auto context = methodContext();
+        result.error = app::checkValidationEvidence(runJson, revisionId, contentHash, context.instrumentId,
+                                                    profiles::methodContextHash(context));
+        if (!result.error.empty()) return result;
+        profiles::LocalValidationRequest request;
+        request.revisionId = revisionId;
+        request.context = context;
+        request.instrumentName = instrumentIdentity_.name;
+        request.evidenceFile = evidenceFile;
+        request.passed = passed;
+        result.jobId = profileRegistry_->requestRecordValidation(std::move(request));
+        if (result.jobId == 0) result.error = "The registry worker refused the request";
+        return result;
     }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)

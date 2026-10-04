@@ -122,6 +122,11 @@
     "Archived": 5,
     "Revoked": 6
   },
+  "registry_local_validation": {
+    "None": 0,
+    "Passed": 1,
+    "Failed": 2
+  },
   "experiment_states": {
     "Idle": 0,
     "Starting": 1,

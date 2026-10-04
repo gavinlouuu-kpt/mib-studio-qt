@@ -1,12 +1,17 @@
 // Central Methods panel (bridge schema v15, issue #398): the React twin of the
 // Qt CentralMethodsDialog. It only enqueues backend registry commands and
 // renders the worker snapshot (polled while open); the UI never waits on the
-// network. Read-only toward the instrument: nothing here selects or applies a
-// method.
+// network. #398 M2b: select a row to materialize it or record a local
+// validation backed by a test-run file (the backend checks the file was
+// recorded with that revision on this instrument). Apply is a Qt-shell action
+// for now and is shown disabled with the reason.
+import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { bridge, type RegistrySnapshot } from "./bridge";
 import { REGISTRY_SESSION_STATES } from "./bridgeContract";
-import { CENTRAL_STATE_NOTE, changed, toRegistryView } from "./registry";
+import { CENTRAL_STATE_NOTE, actionsFor, changed, toRegistryView } from "./registry";
+
+const H5_FILTER = [{ name: "HDF5 run", extensions: ["h5", "hdf5"] }];
 
 const POLL_MS = 250;
 
@@ -15,6 +20,8 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [inputError, setInputError] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
   const last = useRef<RegistrySnapshot | null>(null);
   const report = props.onError;
 
@@ -75,7 +82,32 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
     run(() => bridge.registrySignIn(email.trim(), pw));
   };
 
-  const warnings = [...(inputError ? [inputError] : []), ...(view?.warnings ?? [])];
+  const actions = view ? actionsFor(view, snapshot, selected) : null;
+
+  const markValidated = async (passed: boolean) => {
+    if (!selected) return;
+    setActionError("");
+    try {
+      const picked = await open({
+        title: passed ? "Test run that validates this revision" : "Test run that failed with this revision",
+        filters: H5_FILTER,
+        multiple: false,
+        directory: false,
+      });
+      if (typeof picked !== "string") return; // cancelled
+      const res = await bridge.registryRecordValidation(selected, picked, passed);
+      if (res.job_id === "0") setActionError(res.error || "Validation was refused.");
+      await poll();
+    } catch (e) {
+      report?.(`registry validation failed: ${e}`);
+    }
+  };
+
+  const warnings = [
+    ...(inputError ? [inputError] : []),
+    ...(actionError ? [actionError] : []),
+    ...(view?.warnings ?? []),
+  ];
 
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
@@ -90,6 +122,7 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
           {view?.status ?? "Central registry: loading..."}
         </p>
         <p data-testid="registry-account">{view?.account ?? ""}</p>
+        {view?.instrument && <p data-testid="registry-instrument">{view.instrument}</p>}
         {view && view.activity.length > 0 && <p className="registry-activity">{view.activity.join(" | ")}</p>}
         {warnings.length > 0 && (
           <div className="registry-warning" role="alert">
@@ -150,11 +183,17 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
                 <th>Central state</th>
                 <th>Content hash</th>
                 <th>Author</th>
+                <th>Local validation</th>
               </tr>
             </thead>
             <tbody>
               {(view?.rows ?? []).map((r) => (
-                <tr key={r.revisionId} className={r.revoked ? "revoked" : undefined}>
+                <tr
+                  key={r.revisionId}
+                  className={[r.revoked ? "revoked" : "", r.revisionId === selected ? "selected" : ""].join(" ").trim() || undefined}
+                  onClick={() => setSelected(r.revisionId)}
+                  aria-selected={r.revisionId === selected}
+                >
                   <td>{r.method}</td>
                   <td>{r.revision}</td>
                   <td>{r.project}</td>
@@ -163,10 +202,32 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
                     <code>{r.hashPrefix}</code>
                   </td>
                   <td>{r.author}</td>
+                  <td className={r.validationFailed ? "validation-failed" : undefined}>
+                    {r.validation}
+                    {r.materialized ? " · files ready" : ""}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="row" data-testid="registry-actions">
+          <button
+            className="btn"
+            disabled={!actions?.canMaterialize}
+            onClick={() => selected && run(() => bridge.registryMaterialize(selected))}
+          >
+            Materialize
+          </button>
+          <button className="btn" disabled={!actions?.canApply} title={actions?.applyReason}>
+            Apply...
+          </button>
+          <button className="btn" disabled={!actions?.canMarkValidated} onClick={() => void markValidated(true)}>
+            Mark validated...
+          </button>
+          <button className="btn" disabled={!actions?.canMarkValidated} onClick={() => void markValidated(false)}>
+            Record failed run...
+          </button>
         </div>
         <p className="registry-note">{CENTRAL_STATE_NOTE}</p>
         <div className="actions">

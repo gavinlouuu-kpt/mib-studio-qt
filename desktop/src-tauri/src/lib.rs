@@ -1144,6 +1144,19 @@ struct RegistryRevision {
     #[serde(serialize_with = "event_transport::serialize_u64")]
     metadata_version: u64,
     central_state: u32,
+    /// #398 M2b: "" = not materialized; `local_validation` is a contract
+    /// `registry_local_validation` value for this instrument + context.
+    materialized_dir: String,
+    local_validation: u32,
+    validated_by: String,
+    validated_at_utc: String,
+}
+
+/// "Mark validated" outcome (#398 M2b): `job_id` "0" = refused, `error` why.
+#[derive(Serialize, Clone, Default)]
+struct RegistryValidationRequest {
+    job_id: String,
+    error: String,
 }
 
 /// Registry worker snapshot (schema v15). No token or password, ever.
@@ -1175,6 +1188,8 @@ struct RegistrySnapshot {
     #[serde(serialize_with = "event_transport::serialize_u64")]
     queued_jobs: u64,
     busy: bool,
+    instrument_id: String,
+    instrument_name: String,
 }
 
 impl From<ffi::BridgeRegistryJob> for RegistryJob {
@@ -1216,6 +1231,10 @@ impl From<ffi::BridgeRegistrySnapshot> for RegistrySnapshot {
                     revision_number: r.revision_number,
                     metadata_version: r.metadata_version,
                     central_state: r.central_state,
+                    materialized_dir: r.materialized_dir,
+                    local_validation: r.local_validation,
+                    validated_by: r.validated_by,
+                    validated_at_utc: r.validated_at_utc,
                 })
                 .collect(),
             corrupt_revision_ids: s.corrupt_revision_ids,
@@ -1225,6 +1244,8 @@ impl From<ffi::BridgeRegistrySnapshot> for RegistrySnapshot {
             last_job: s.last_job.into(),
             queued_jobs: s.queued_jobs,
             busy: s.busy,
+            instrument_id: s.instrument_id,
+            instrument_name: s.instrument_name,
         }
     }
 }
@@ -1264,6 +1285,27 @@ fn registry_download(state: State<AppState>, revision_id: String) -> Result<Stri
 fn registry_cancel_all(state: State<AppState>) -> Result<bool, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().registry_cancel_all())
+}
+
+/// Write a cached revision's files read-only (#398 M2b).
+#[tauri::command]
+fn registry_materialize(state: State<AppState>, revision_id: String) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(job_id_string(guard.pin_mut().registry_materialize(&revision_id)))
+}
+
+/// "Mark validated" (#398 M2b): the backend checks that `evidence_file` was
+/// recorded with this revision applied on this instrument before queueing.
+#[tauri::command]
+fn registry_record_validation(
+    state: State<AppState>,
+    revision_id: String,
+    evidence_file: String,
+    passed: bool,
+) -> Result<RegistryValidationRequest, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let r = guard.pin_mut().registry_record_validation(&revision_id, &evidence_file, passed);
+    Ok(RegistryValidationRequest { job_id: job_id_string(r.job_id), error: r.error })
 }
 
 /// Registry worker snapshot; never waits on a registry request.
@@ -1750,6 +1792,8 @@ pub fn run() {
             registry_refresh,
             registry_download,
             registry_cancel_all,
+            registry_materialize,
+            registry_record_validation,
             fetch_registry_snapshot,
             fetch_registry_job,
             fetch_camera_selection,
