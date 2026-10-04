@@ -702,3 +702,23 @@ current/max queue depth, batch size, worker count, and running state. See
   not the whole ROI). It also uses row pointers instead of `cv::Mat::at<>`
   and skips the `clone()` for already-single-channel input. These were
   per-object allocator/CPU costs that scaled with objects-per-frame.
+
+## Host U-Net (`UnetC4`, plan W3.D)
+
+`include/backend/processing/UnetC4.h` is the bit-exact integer C4 U-Net that
+the PZ7035 PL runs, for desktop reprocessing with Contract 3.
+
+- **Parameters:** the `.npz` that pz7035-imx426 `dump_unet_params.py`
+  writes, read directly (stored zip; C or Fortran order).
+- **API:** `run(codes)` gives the 96x512 output codes; `foregroundMask(gray)`
+  gives the PL's mask.
+- **Speed:** about 35 ms per frame, single-threaded.
+- **Test `processing.unet_c4`** (SKIP unless `MIB_UNET_C4_PARAMS` and
+  `MIB_UNET_C4_FIXTURES` point at a model release):
+  - 240/240 release fixtures bit-exact;
+  - with `MIB_UNET_C4_BOARD_CAPTURES`, the masks equal the ones the PL
+    produced on the board: 85/85 frames from five runs with the promoted
+    weights.
+- **Not yet:** the weights are not a pinned asset (`env/assets.json`), and no
+  shipped core serves Contract 3 yet (A6).
+
