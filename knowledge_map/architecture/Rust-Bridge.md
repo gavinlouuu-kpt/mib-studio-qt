@@ -89,6 +89,24 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `discovery_identity_strengths`, `discovery_identification_statuses`,
   `discovery_error_kinds`. Windows `cargo test` against the `windows-ninja`
   tree uses `tools/gen_bridge_link_manifest_ninja.py`.
+- **Central profile registry (v15, #398):** `registry_sign_in(email,
+  password)`, `registry_sign_out()`, `registry_refresh()`,
+  `registry_download(revision_id)` → job ID (0 = refused),
+  `registry_cancel_all()`, `fetch_registry_snapshot()` →
+  `BridgeRegistrySnapshot` (session, connectivity, projects, cached
+  revisions with `central_state`, corrupt IDs, last job; never a token or
+  password), `fetch_registry_job(job_id)`. New contract groups:
+  `registry_session_states`, `registry_connectivity`, `registry_job_kinds`,
+  `registry_job_states`, `registry_central_states`. **Transport seam (ADR
+  0002 addendum):** the shell installs its HTTPS POST with
+  `set_registry_transport(fn(&BridgeHttpRequest) -> BridgeHttpResponse)`
+  *before* `initialize` (refused afterwards). Each request carries a
+  `cancel_handle`; the transport polls the free function
+  `registry_request_cancelled(handle)` and returns status 0 once it is true
+  (registry cancel or backend shutdown). Response bodies cross as bytes, and
+  every snapshot/job conversion catches exceptions so non-UTF-8 text can
+  never cross the FFI. The Rust test transports are plain `fn`s reporting
+  through statics (a `fn` pointer cannot capture).
 - **Camera selection (v7, BE-2):** `fetch_camera_selection` (authoritative
   snapshot incl. mock params, applied script/config paths,
   configured/running), `select_hardware_camera`,

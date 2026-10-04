@@ -266,6 +266,98 @@ pub mod ffi {
         pub origin: String,
     }
 
+    /// One HTTP header of a registry request (schema v15, #398).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeHttpHeader {
+        pub name: String,
+        pub value: String,
+    }
+
+    /// HTTPS POST the backend registry worker asks the shell to perform
+    /// (schema v15, #398; ADR 0002 seam). The transport must refuse non-HTTPS
+    /// URLs and redirects, verify TLS, honour `timeout_ms`, stop reading past
+    /// `max_response_bytes`, never log headers or bodies, and abort promptly
+    /// (status 0) once `registry_request_cancelled(cancel_handle)` is true.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeHttpRequest {
+        pub url: String,
+        pub body: String,
+        pub headers: Vec<BridgeHttpHeader>,
+        pub timeout_ms: u32,
+        pub max_response_bytes: u64,
+        pub cancel_handle: u64,
+    }
+
+    /// Transport result: `status` 0 means transport failure/timeout/cancel.
+    /// `body` is raw bytes (the backend validates and parses it).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeHttpResponse {
+        pub status: u32,
+        pub body: Vec<u8>,
+    }
+
+    /// A registry project the signed-in user belongs to (schema v15).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryProject {
+        pub project_id: String,
+        pub display_name: String,
+        pub roles: Vec<String>,
+    }
+
+    /// A cached central revision (schema v15); `central_state` is a contract
+    /// `registry_central_states` value.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryRevision {
+        pub revision_id: String,
+        pub method_id: String,
+        pub project_id: String,
+        pub display_name: String,
+        pub author_id: String,
+        pub content_hash: String,
+        pub revision_number: u64,
+        pub metadata_version: u64,
+        pub central_state: u32,
+    }
+
+    /// Registry job status (schema v15); `kind`/`state` are contract
+    /// `registry_job_kinds` / `registry_job_states` values. `job_id` 0 means
+    /// unknown, evicted or refused.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryJob {
+        pub job_id: u64,
+        pub kind: u32,
+        pub state: u32,
+        pub message: String,
+    }
+
+    /// Value snapshot of the backend registry worker (schema v15, #398).
+    /// `session` = `registry_session_states`, `connectivity` =
+    /// `registry_connectivity`. Never carries a token or password.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistrySnapshot {
+        pub valid: bool,
+        pub configured: bool,
+        pub generation: u64,
+        pub origin: String,
+        pub session: u32,
+        pub subject_id: String,
+        pub email: String,
+        pub connectivity: u32,
+        pub health_message: String,
+        pub successful_requests: u64,
+        pub failed_requests: u64,
+        pub rejected_revisions: u64,
+        pub projects: Vec<BridgeRegistryProject>,
+        pub revisions: Vec<BridgeRegistryRevision>,
+        pub corrupt_revision_ids: Vec<String>,
+        pub cache_error: String,
+        pub has_last_successful_refresh: bool,
+        pub last_successful_refresh_unix_ms: i64,
+        pub last_job: BridgeRegistryJob,
+        pub queued_jobs: u64,
+        pub busy: bool,
+    }
+
     /// Authoritative selected-device snapshot (schema v7, BE-2). `mode` is a
     /// contract `camera_selection_modes` value.
     #[derive(Debug, Clone, Default)]
@@ -726,6 +818,34 @@ pub mod ffi {
         /// Value snapshot of a job; never waits for a worker.
         fn fetch_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64)
             -> BridgeDiscoverySnapshot;
+
+        /// Install the shell's HTTPS POST for the central profile registry
+        /// (schema v15, #398). Call before `initialize`; returns false (and
+        /// installs nothing) afterwards. Without a transport the registry
+        /// stays inert even when configured.
+        fn set_registry_transport(
+            self: Pin<&mut BackendBridge>,
+            transport: fn(request: &BridgeHttpRequest) -> BridgeHttpResponse,
+        ) -> bool;
+
+        /// True once the in-flight registry request `cancel_handle` should be
+        /// abandoned (registry cancel or backend shutdown). Unknown or
+        /// finished handles report true.
+        fn registry_request_cancelled(cancel_handle: u64) -> bool;
+
+        /// Central profile registry commands (schema v15, #398): each enqueues
+        /// a worker job and returns its ID (0 = refused: not initialized,
+        /// registry not configured, or invalid argument). Never blocks on
+        /// the network.
+        fn registry_sign_in(self: Pin<&mut BackendBridge>, email: &str, password: &str) -> u64;
+        fn registry_sign_out(self: Pin<&mut BackendBridge>) -> u64;
+        fn registry_refresh(self: Pin<&mut BackendBridge>) -> u64;
+        fn registry_download(self: Pin<&mut BackendBridge>, revision_id: &str) -> u64;
+        /// Drop queued registry jobs and abort the running one.
+        fn registry_cancel_all(self: Pin<&mut BackendBridge>) -> bool;
+        /// Value snapshot of the registry worker; never waits on a request.
+        fn fetch_registry_snapshot(self: Pin<&mut BackendBridge>) -> BridgeRegistrySnapshot;
+        fn fetch_registry_job(self: Pin<&mut BackendBridge>, job_id: u64) -> BridgeRegistryJob;
 
         /// Pull the authoritative selected-device snapshot (schema v7, BE-2).
         fn fetch_camera_selection(self: Pin<&mut BackendBridge>) -> BridgeCameraSelection;

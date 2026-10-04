@@ -1,5 +1,18 @@
 # Recent Work
 
+## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 15)
+
+`BackendFacade` gained registry commands and a value snapshot; the bridge
+exposes them (ABI 15, five new `registry_*` contract groups pinned in C++,
+Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
+installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
+a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**
+in the React app mirrors the Qt dialog through a shared-wording view model.
+Fixed on the way: facade shutdown left the registry worker running. Guards:
+`profiles.registry_facade`, bridge `registry_*` tests, Tauri
+`registry_transport` tests, `registry.test.ts`. See
+[[../architecture/Desktop-Shell]] and [[../services/ProfileRegistryService]].
+
 ## 2026-10-02 — Central Methods dialog (#398 M1, Qt)
 
 **Settings → Central Methods…** signs in to the central registry, refreshes

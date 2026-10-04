@@ -34,6 +34,7 @@ import {
   DEFAULT_MODE,
   type OperatingMode,
 } from "./commissioning";
+import { CentralMethodsPanel } from "./CentralMethodsPanel";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -149,6 +150,7 @@ export default function App() {
   );
   const [fitWindow, setFitWindow] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
+  const [showCentralMethods, setShowCentralMethods] = useState(false);
 
   // Camera discovery/selection (bridge schema v7, BE-2). The selection
   // snapshot from the backend is authoritative — no local mirror of it.
@@ -952,6 +954,7 @@ export default function App() {
             { label: "Processing Settings…", pending: PENDING.config },
             { label: "Pixel to Micron…", pending: PENDING.config },
             { label: "Monitoring Settings…", pending: PENDING.monitoring },
+            { label: "Central Methods…", onClick: () => setShowCentralMethods(true) },
             { label: "Updates…", pending: PENDING.platform },
           ]}
         />
@@ -2022,6 +2025,11 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ---- Central Methods (registry, #398) ---- */}
+      {showCentralMethods && (
+        <CentralMethodsPanel onClose={() => setShowCentralMethods(false)} onError={append} />
       )}
 
       {/* ---- About modal ---- */}

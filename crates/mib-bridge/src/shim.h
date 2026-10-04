@@ -19,6 +19,10 @@ struct BridgeDiscoveryStart;
 struct BridgeDiscoveredDevice;
 struct BridgeDiscoveryError;
 struct BridgeDiscoverySnapshot;
+struct BridgeHttpRequest;
+struct BridgeHttpResponse;
+struct BridgeRegistrySnapshot;
+struct BridgeRegistryJob;
 struct BridgeCameraSelection;
 struct BridgeCommandResult;
 struct BridgeConfigDocument;
@@ -111,6 +115,16 @@ public:
     bool cancel_device_discovery(std::uint64_t job_id);
     BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id);
     BridgeCameraSelection fetch_camera_selection();
+    // Central profile registry (schema v15, #398).
+    bool set_registry_transport(
+        rust::Fn<BridgeHttpResponse(const BridgeHttpRequest&)> transport);
+    std::uint64_t registry_sign_in(rust::Str email, rust::Str password);
+    std::uint64_t registry_sign_out();
+    std::uint64_t registry_refresh();
+    std::uint64_t registry_download(rust::Str revision_id);
+    bool registry_cancel_all();
+    BridgeRegistrySnapshot fetch_registry_snapshot();
+    BridgeRegistryJob fetch_registry_job(std::uint64_t job_id);
     BridgeCommandResult select_hardware_camera(std::int32_t interface_index,
                                                std::int32_t device_index,
                                                rust::Str label);
@@ -141,5 +155,6 @@ private:
 
 std::unique_ptr<BackendBridge> new_backend_bridge();
 std::uint32_t bridge_abi_version();
+bool registry_request_cancelled(std::uint64_t cancel_handle);
 
 } // namespace mib_bridge

@@ -27,6 +27,7 @@ sha2 = "0.10"
 hex = "0.4"
 cxx = "1"
 mib-bridge = { path = "../../crates/mib-bridge" }
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 
 # Desktop-only: an rlib consumed by the binary (main.rs) that links the C++
 # backend archives into an executable. The mobile crate-types (cdylib/staticlib)
