@@ -17,6 +17,13 @@ equals the PL on all of them, and on the full set of 45 frames and 181 cells
 comes next, with the HDF5 fields and autofocus from the per-cell Laplacian. See
 [[../services/ProcessingService]].
 
+Recordings: the per-object HDF5 compound gains the Contract-3 cell members
+(appended; older files read them as not present), and the gold schema gains
+`$defs/unet_cell_frame`, chosen when `contract_version` is 3. `export_hdf5.py`
+exports Contract 3 with brightness mean and variance instead of the quartiles.
+Tests: `recording.experiment_roundtrip` and `scripts.contract3_export_review`.
+See [[../data-model/HDF5-Storage]].
+
 ## 2026-10-02 — Central profile registry foundation (#398, PR #402)
 
 Provider-neutral registry contract, canonical method envelope over the existing

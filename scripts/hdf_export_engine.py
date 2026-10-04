@@ -420,7 +420,8 @@ class _Run:
                 contract_version)
         else:
             self.valid_count, self.invalid_count = core.export_metrics_to_csv(
-                metadata_valid, metadata_invalid, target, job.pixel_to_micron, job.frame_selection.value)
+                metadata_valid, metadata_invalid, target, job.pixel_to_micron, job.frame_selection.value,
+                contract_version)
         self.completed_units += 1
         self.progress(ExportPhase.METRICS, str(target),
                       f"Exported {self.valid_count + self.invalid_count} frames "

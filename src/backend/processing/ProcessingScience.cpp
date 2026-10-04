@@ -645,7 +645,9 @@ FilterResult evaluateUnetCell(const std::vector<cv::Point>& contour, const UnetC
                               const ProcessingConfig& config, const cv::Mat& originalImage,
                               double pixelToMicronFactor, const backend::EModulusLut* eModulusLut) {
     FilterResult result{};
-    result.ringRatio = std::numeric_limits<double>::quiet_NaN(); // no ring width
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    result.ringRatio = nan;                     // no ring width
+    result.brightness = {nan, nan, nan, nan}; // mean and variance replace the quartiles
     result.objectId = objectId;
     result.objectCount = objectCount;
     result.pixelCount = cell.pixels;
@@ -767,7 +769,9 @@ std::vector<services::FilterResult> filterUnetCellObjects(
         std::make_shared<const std::vector<std::vector<cv::Point>>>(std::move(contours));
     if (cells.empty()) {
         FilterResult empty{};
-        empty.ringRatio = std::numeric_limits<double>::quiet_NaN();
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        empty.ringRatio = nan;
+        empty.brightness = {nan, nan, nan, nan};
         empty.blemishCount = blemishes;
         empty.allContours = sharedContours;
         return {std::move(empty)};
