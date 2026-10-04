@@ -399,6 +399,18 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Per-line core releases** (2026-10-04, Contract 2 rollout T1.1b step 2) —
+  the wheel workflow now also triggers on `mib-processing-absdiff-laplacian-v<ver>`.
+  `validate-source-version` maps the tag to a core line (`line`,
+  `artifact_suffix` outputs) and refuses tags that match no line. The
+  Windows/Linux signing jobs sign that line's core with the existing
+  Production keys. The existing `release` job runs only for subtract-ring
+  tags; the new `release-absdiff-laplacian` job publishes the signed
+  Contract-2 cores (no wheel) as their own immutable GitHub Release and
+  registry line (`publish-processing-core.py --line absdiff-laplacian`).
+  `scripts/bump_mib_processing_version.py --create-tag --line absdiff-laplacian`
+  creates the tag. `processing-core-promote.yml` still promotes the
+  subtract-ring line only.
 - **Registry publisher per core line** (2026-10-04, Contract 2 rollout
   T1.1b) — `publish-processing-core.py --line {subtract-ring,absdiff-laplacian}`
   (default `subtract-ring`). The default line's documents are byte-identical

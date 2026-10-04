@@ -3,7 +3,10 @@ name: Python Wheel (mib_processing)
 on:
   push:
     branches: [main, master]
-    tags: ['mib-processing-v*']
+    # ADR 0007: one release tag per core line. mib-processing-v<ver> is the
+    # subtract-ring (Contract 1) line + wheel; mib-processing-absdiff-laplacian-v<ver>
+    # releases only the absdiff-laplacian (Contract 2) core.
+    tags: ['mib-processing-v*', 'mib-processing-absdiff-laplacian-v*']
     paths:
       - 'bindings/python/**'
       - 'src/backend/processing/**'
@@ -92,6 +95,10 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       channel: ${{ steps.identity.outputs.channel }}
+      # Core line released by this tag ('' when not a release tag).
+      line: ${{ steps.identity.outputs.line }}
+      # Native artifact name suffix of that line ('' for subtract-ring).
+      artifact_suffix: ${{ steps.identity.outputs.artifact_suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -99,7 +106,7 @@ jobs:
       - name: Require release tag to match the wheel version
         id: identity
         env:
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/mib-processing-v') && github.ref_name || '' }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/mib-processing-') && github.ref_name || '' }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -112,14 +119,26 @@ jobs:
           version = tomllib.loads(
               Path("bindings/python/pyproject.toml").read_text(encoding="utf-8")
           )["project"]["version"]
-          if tag and tag != f"mib-processing-v{version}":
-              raise SystemExit(
-                  f"release tag {tag!r} does not match source wheel version {version!r}"
-              )
+          # ADR 0007 core lines: tag -> (line, native artifact suffix).
+          lines = {
+              f"mib-processing-v{version}": ("subtract-ring", ""),
+              f"mib-processing-absdiff-laplacian-v{version}": (
+                  "absdiff-laplacian", "-absdiff-laplacian"),
+          }
+          line, suffix = "", ""
+          if tag:
+              if tag not in lines:
+                  raise SystemExit(
+                      f"release tag {tag!r} does not match source wheel version {version!r} "
+                      f"for any core line ({', '.join(sorted(lines))})"
+                  )
+              line, suffix = lines[tag]
           channel = "stable" if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) else "beta"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"channel={channel}\n")
-          print(f"source mib-processing version: {version} ({channel})")
+              output.write(f"line={line}\n")
+              output.write(f"artifact_suffix={suffix}\n")
+          print(f"source mib-processing version: {version} ({channel}); release line: {line or 'none'}")
           PY
 
   build-and-test:
@@ -358,7 +377,7 @@ jobs:
             -DMIB_ENABLE_HARDWARE_SDKS=OFF `
             -DMIB_ENABLE_WINDOWS_PACKAGING=OFF `
             -DMIB_USE_SENTRY=OFF `
-            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-v') && 'ON' || 'OFF' }} `
+            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-') && 'ON' || 'OFF' }} `
             -DMIB_PROCESSING_CORE_APP_MIN_VERSION="$env:APP_MIN_VERSION" `
             -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$env:APP_MAX_VERSION"
           cmake --build build --config Release --target `
@@ -585,7 +604,7 @@ jobs:
           set -euo pipefail
           cmake --preset linux-backend-only \
             -DMIB_USE_SENTRY=OFF \
-            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-v') && 'ON' || 'OFF' }} \
+            -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-') && 'ON' || 'OFF' }} \
             -DMIB_PROCESSING_CORE_APP_MIN_VERSION="$APP_MIN_VERSION" \
             -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$APP_MAX_VERSION"
           cmake --build --preset linux-backend-only-build --parallel --target \
@@ -789,8 +808,9 @@ jobs:
 
   sign-native-plugin:
     name: Sign native processing core (Production)
-    needs: build-native-plugin
-    if: startsWith(github.ref, 'refs/tags/mib-processing-v')
+    needs: [validate-source-version, build-native-plugin]
+    # Signs the core of the line this tag releases (ADR 0007).
+    if: needs.validate-source-version.outputs.line != ''
     runs-on: windows-2022
     environment: Production
     permissions:
@@ -800,7 +820,7 @@ jobs:
       - name: Download verified unsigned native plugin
         uses: actions/download-artifact@v6
         with:
-          name: mib_processing-native-windows-x86_64-unsigned
+          name: mib_processing-native-windows-x86_64${{ needs.validate-source-version.outputs.artifact_suffix }}-unsigned
           path: native-dist
 
       - name: Checkout signing trust anchors
@@ -910,14 +930,15 @@ jobs:
       - name: Upload signed native plugin artifact
         uses: actions/upload-artifact@v6
         with:
-          name: mib_processing-native-windows-x86_64
+          name: mib_processing-native-windows-x86_64${{ needs.validate-source-version.outputs.artifact_suffix }}
           path: native-dist/*
           if-no-files-found: error
 
   sign-native-plugin-linux:
     name: Sign native processing core (Linux, Production)
-    needs: build-native-plugin-linux
-    if: startsWith(github.ref, 'refs/tags/mib-processing-v')
+    needs: [validate-source-version, build-native-plugin-linux]
+    # Signs the core of the line this tag releases (ADR 0007).
+    if: needs.validate-source-version.outputs.line != ''
     runs-on: ubuntu-24.04
     environment: Production
     permissions:
@@ -927,7 +948,7 @@ jobs:
       - name: Download verified unsigned native plugin
         uses: actions/download-artifact@v6
         with:
-          name: mib_processing-native-linux-x86_64-unsigned
+          name: mib_processing-native-linux-x86_64${{ needs.validate-source-version.outputs.artifact_suffix }}-unsigned
           path: native-dist
 
       # The staged descriptor carries the PR-lane rehearsal envelope from an
@@ -1004,14 +1025,14 @@ jobs:
       - name: Upload signed native plugin artifact
         uses: actions/upload-artifact@v6
         with:
-          name: mib_processing-native-linux-x86_64
+          name: mib_processing-native-linux-x86_64${{ needs.validate-source-version.outputs.artifact_suffix }}
           path: native-dist/*
           if-no-files-found: error
 
   release:
     name: Publish processing-core GitHub Release and registry
     needs: [validate-source-version, build-and-test, sign-native-plugin, sign-native-plugin-linux]
-    if: startsWith(github.ref, 'refs/tags/mib-processing-v')
+    if: needs.validate-source-version.outputs.line == 'subtract-ring'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1203,6 +1224,154 @@ jobs:
           python -m pip install --upgrade pip boto3
           tag="${GITHUB_REF#refs/tags/}"
           python scripts/release/publish-processing-core.py \
+            --from-release "$tag" \
+            --repo "${{ github.repository }}" \
+            --channel "$PROCESSING_CHANNEL" \
+            --upload-method s3
+
+  # ADR 0007: the absdiff-laplacian (Contract 2) line releases only its signed
+  # native cores (no wheel: the wheel is a research build) into its own
+  # registry path, <channel>/processing-core-absdiff-laplacian/. The
+  # subtract-ring release above never runs for this tag.
+  release-absdiff-laplacian:
+    name: Publish absdiff-laplacian core GitHub Release and registry
+    needs: [validate-source-version, sign-native-plugin, sign-native-plugin-linux]
+    if: needs.validate-source-version.outputs.line == 'absdiff-laplacian'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: processing-core-absdiff-laplacian-registry-${{ needs.validate-source-version.outputs.channel }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Download signed Windows Contract-2 core
+        uses: actions/download-artifact@v6
+        with:
+          name: mib_processing-native-windows-x86_64-absdiff-laplacian
+          path: dist
+
+      - name: Download signed Linux Contract-2 core
+        uses: actions/download-artifact@v6
+        with:
+          name: mib_processing-native-linux-x86_64-absdiff-laplacian
+          path: dist
+
+      - name: Validate flat release asset set
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("dist")
+          nested = sorted(
+              str(path.relative_to(root))
+              for path in root.rglob("*")
+              if path.is_file() and path.parent != root
+          )
+          if nested:
+              raise SystemExit(f"nested release asset paths are forbidden: {nested}")
+          version = os.environ["GITHUB_REF"].removeprefix("refs/tags/mib-processing-absdiff-laplacian-v")
+          stem = f"mib_processing_core-absdiff-laplacian-{version}"
+          expected = {
+              f"{stem}-windows_x86_64.dll",
+              f"{stem}-windows_x86_64.json",
+              f"{stem}-linux_x86_64.so",
+              f"{stem}-linux_x86_64.json",
+          }
+          names = {path.name for path in root.iterdir() if path.is_file()}
+          if names != expected:
+              raise SystemExit(
+                  f"staged Contract-2 asset set is not canonical; names={sorted(names)}"
+              )
+          for descriptor in sorted(root.glob("*.json")):
+              metadata = json.loads(descriptor.read_text(encoding="utf-8"))
+              if (metadata.get("algorithm") != "absdiff-laplacian"
+                      or metadata.get("contract_version") != 2
+                      or metadata.get("engine_abi_version") != 2
+                      or metadata.get("entrypoint") != "mib_processing_get_api_v2"):
+                  raise SystemExit(f"{descriptor.name} is not an absdiff-laplacian descriptor")
+          print("Flat Contract-2 release asset set is complete and canonical.")
+          PY
+
+      - name: Create or verify immutable Contract-2 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROCESSING_CHANNEL: ${{ needs.validate-source-version.outputs.channel }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          if gh release view "$tag" --repo "${{ github.repository }}" \
+              --json assets,isPrerelease > /tmp/existing-release.json 2>/dev/null; then
+            # The GitHub Release is the immutable source of truth; a retry
+            # validates and reuses its original assets for the R2 publish.
+            python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF"].removeprefix("refs/tags/")
+          version = tag.removeprefix("mib-processing-absdiff-laplacian-v")
+          release = json.loads(Path("/tmp/existing-release.json").read_text())
+          names = {asset["name"] for asset in release["assets"]}
+          if release["isPrerelease"] != (os.environ["PROCESSING_CHANNEL"] == "beta"):
+              raise SystemExit("existing release prerelease flag does not match the channel")
+          stem = f"mib_processing_core-absdiff-laplacian-{version}"
+          expected = {
+              f"{stem}-windows_x86_64.dll",
+              f"{stem}-windows_x86_64.json",
+              f"{stem}-linux_x86_64.so",
+              f"{stem}-linux_x86_64.json",
+          }
+          if names != expected:
+              raise SystemExit(
+                  f"existing release is not the canonical Contract-2 asset set: {sorted(names)}"
+              )
+          print("Existing immutable Contract-2 release is complete; reusing it for R2 publish.")
+          PY
+          else
+            release_flags=()
+            if [ "$PROCESSING_CHANNEL" = beta ]; then
+              release_flags+=(--prerelease)
+            fi
+            release_flags+=(--latest=false)
+            gh release create "$tag" \
+              --repo "${{ github.repository }}" \
+              --verify-tag \
+              --title "$tag" \
+              --notes "Signed Windows/Linux absdiff-laplacian (Processing Contract 2) cores for tag $tag (ADR 0007). See docs/portable-processing-sync.md." \
+              --generate-notes \
+              "${release_flags[@]}" \
+              dist/*
+          fi
+
+      - name: Checkout publisher
+        uses: actions/checkout@v6
+
+      - name: Set up registry publisher
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Publish immutable registry, index, then active pointer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          MIB_STUDIO_R2_ENDPOINT: ${{ secrets.MIB_STUDIO_R2_ENDPOINT }}
+          PROCESSING_CHANNEL: ${{ needs.validate-source-version.outputs.channel }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || [ -z "${MIB_STUDIO_R2_ENDPOINT:-}" ]; then
+            echo "R2 registry publication requires R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and MIB_STUDIO_R2_ENDPOINT" >&2
+            exit 1
+          fi
+          python -m pip install --upgrade pip boto3
+          tag="${GITHUB_REF#refs/tags/}"
+          python scripts/release/publish-processing-core.py \
+            --line absdiff-laplacian \
             --from-release "$tag" \
             --repo "${{ github.repository }}" \
             --channel "$PROCESSING_CHANNEL" \

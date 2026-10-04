@@ -5,7 +5,9 @@ Status: active. Phase 0 merged 2026-09-26 (#455, #457, #458); T1.2 done
 owns Contract-2 science) done 2026-09-27; T1.1b (release pipeline: both core
 lines built, audited, signed, published; step 1 = CI build/audit/upload of
 the absdiff-laplacian core, 2026-09-27; step 2 = per-line signing and
-publishing, needs a registry decision) and T1.1c (Processing Core dialog
+publishing, decided 2026-10-04: own tag `mib-processing-absdiff-laplacian-v<ver>`
+and own registry path `<channel>/processing-core-absdiff-laplacian/`, no
+wheel; the subtract-ring tag and path are unchanged) and T1.1c (Processing Core dialog
 shows and filters by contract) next.
 
 Builds on the [Processing Contract v2 plan](2026-07-21-processing-contract-v2.md),
