@@ -8,8 +8,10 @@
 - The masks equal those the PL produced on the board for 85/85 live IMX426
   frames.
 - About 35 ms per frame.
-- Test `processing.unet_c4` is gated on the release path until the weights
-  are a pinned asset. See [[../services/ProcessingService]].
+- Weights and fixtures are the private Hub asset `unet-c4-multiline-v1`
+  (`gavinlouuu/yofo-unet-c4`). `processing.unet_c4` runs on the provisioned
+  files, and the `network-tests` workflow provisions them with `HF_TOKEN`.
+  See [[../services/ProcessingService]].
 
 ## 2026-10-04 — PZ7035 result record decoder (#447 E3, W3.B1)
 

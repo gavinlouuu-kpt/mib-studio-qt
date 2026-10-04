@@ -8,8 +8,9 @@
 // MIB_UNET_C4_BOARD_CAPTURES=<dir> (optional): c<N>.raw Mono8 frames and the
 // c<N>.mask the PL produced for them on the board (packed bits, little order),
 // e.g. results-hw-20261003/retrain-lit-run3: the host mask must equal the PL's.
-// Without the params and fixtures the test reports SKIP (77): the weights are
-// not a pinned asset yet.
+// CTest points both at the provisioned asset unet-c4-multiline-v1
+// (env/assets.json, private Hub repo, token); without it the test reports
+// SKIP (77).
 #include "backend/processing/UnetC4.h"
 
 #include "support/assert.h"
@@ -40,8 +41,10 @@ int main() {
 
     const char* params = std::getenv("MIB_UNET_C4_PARAMS");
     const char* fixtures = std::getenv("MIB_UNET_C4_FIXTURES");
-    if (!params || !*params || !fixtures || !*fixtures) {
-        std::printf("SKIP: set MIB_UNET_C4_PARAMS and MIB_UNET_C4_FIXTURES to the model release\n");
+    if (!params || !*params || !fixtures || !*fixtures || !std::filesystem::exists(params) ||
+        !std::filesystem::exists(std::string(fixtures) + "/manifest.json")) {
+        std::printf("SKIP: provision the model (scripts/provision-assets.py --asset unet-c4-multiline-v1, "
+                    "token) or set MIB_UNET_C4_PARAMS and MIB_UNET_C4_FIXTURES\n");
         return mib::test::exitCode() == 0 ? 77 : 1;
     }
     const auto model = UnetC4::loadNpz(params, &error);
