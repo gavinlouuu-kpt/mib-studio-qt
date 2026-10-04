@@ -300,7 +300,11 @@ the area gate, channel band, Laplacian gate, target group and empty frames;
 a Contract-1 config is refused. The adapter hands the core back its own
 `process_mask` output (`mib_processing_kernel_config_v2::precomputed_mask`),
 so the mask is built once per frame; both sides then analyse exactly the same
-mask, including the cropped-ROI realtime loop.
+mask, including the cropped-ROI realtime loop. The field overlays the first
+two of the config's reserved words (`reserved_u32[14]` follows), so the v2
+config keeps its size (120 bytes on 64-bit) and offsets: hosts built before it
+zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
+`processing.core_abi_v2_c` locks the layout.
 
 ## Accumulation modes
 

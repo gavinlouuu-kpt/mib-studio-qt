@@ -183,6 +183,37 @@ int main(int argc, char** argv) {
                                    sizeof(err)) == MIB_PROCESSING_STATUS_INVALID_ARGUMENT,
                "a precomputed mask of the wrong size is rejected");
 
+    // The core must analyse the mask it is handed, not rebuild its own: an
+    // empty mask yields no objects even though the frame has one, and a blob
+    // drawn elsewhere yields an object there.
+    std::vector<uint8_t> emptyMaskBytes(static_cast<size_t>(W) * H, 0);
+    mib_processing_image_view emptyMask = viewOf(emptyMaskBytes, W, H);
+    withMask.precomputed_mask = &emptyMask;
+    reusedOut.count = 0;
+    std::memset(err, 0, sizeof(err));
+    MIB_REQUIRE(api.process_objects(ctx, &input, &bg, &withMask, &roi, 0.5, nullptr, &reusedOut,
+                                    err, sizeof(err)) == MIB_PROCESSING_STATUS_OK,
+                std::string("process_objects with an empty precomputed mask: ") + err);
+    MIB_EXPECT(reusedOut.count == 0, "an empty precomputed mask yields no objects");
+
+    std::vector<uint8_t> movedMaskBytes(static_cast<size_t>(W) * H, 0);
+    for (uint32_t y = 2; y < 10; ++y) {
+        for (uint32_t x = 2; x < 10; ++x) {
+            movedMaskBytes[y * W + x] = 255;
+        }
+    }
+    mib_processing_image_view movedMask = viewOf(movedMaskBytes, W, H);
+    withMask.precomputed_mask = &movedMask;
+    std::memset(err, 0, sizeof(err));
+    MIB_REQUIRE(api.process_objects(ctx, &input, &bg, &withMask, &roi, 0.5, nullptr, &reusedOut,
+                                    err, sizeof(err)) == MIB_PROCESSING_STATUS_OK,
+                std::string("process_objects with a moved precomputed mask: ") + err);
+    MIB_REQUIRE(reusedOut.count >= 1, "the drawn blob is an object");
+    MIB_EXPECT(reused[0].centroid_x < 12.0 && reused[0].centroid_y < 12.0,
+               "the object is where the precomputed mask put it, not the frame's own object "
+               "(centroid " + std::to_string(reused[0].centroid_x) + ", " +
+                   std::to_string(reused[0].centroid_y) + ")");
+
     api.destroy_context(ctx);
     dlclose(handle);
     return mib::test::exitCode();
