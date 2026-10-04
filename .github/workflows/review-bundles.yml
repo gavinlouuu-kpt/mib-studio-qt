@@ -24,6 +24,12 @@ on:
         description: "Git ref to build (default: the caller's ref)"
         type: string
         default: ""
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        description: "minisign private key for updater artifacts (release only)"
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
     outputs:
       macos-artifact:
         description: "Artifact holding the DMG"
@@ -135,13 +141,24 @@ jobs:
         shell: bash
         run: python3 scripts/release/stamp-tauri-version.py --version "${{ inputs.version }}"
 
+      # Updater artifacts (.app.tar.gz + .sig) only when the app carries the
+      # minisign public key AND the private key secret is present (release
+      # builds); otherwise a plain DMG.
       - name: Build YOFO Review.app and DMG (unsigned, ad-hoc signature)
         shell: bash
         working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           npm install
-          npm run tauri:review:build -- --ci --features review-only --bundles app,dmg
+          extra=()
+          if python3 ../scripts/release/review-updater-enabled.py && [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            extra=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
+            echo "building signed updater artifacts"
+          fi
+          npm run tauri:review:build -- --ci --features review-only --bundles app,dmg ${extra[@]+"${extra[@]}"}
 
       - name: Verify the bundle
         shell: bash
@@ -184,7 +201,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: yofo-review-macos-arm64
-          path: ${{ env.DMG }}
+          # The DMG, plus the updater bundle + signature in signed builds.
+          path: |
+            ${{ env.DMG }}
+            desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
           retention-days: 14
 
@@ -299,10 +320,19 @@ jobs:
       - name: Build the YOFO Review NSIS installer (unsigned, per-user)
         shell: pwsh
         working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           npm install
           if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-          npm run tauri:review:build -- --ci --features review-only --bundles nsis
+          $extra = @()
+          python ../scripts/release/review-updater-enabled.py
+          if ($LASTEXITCODE -eq 0 -and $env:TAURI_SIGNING_PRIVATE_KEY) {
+            $extra = @('--config', '{"bundle":{"createUpdaterArtifacts":true}}')
+            Write-Host "building signed updater artifacts"
+          }
+          npm run tauri:review:build -- --ci --features review-only --bundles nsis @extra
           if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
       - name: Verify, install silently and smoke-launch
@@ -333,6 +363,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: yofo-review-windows-x64
-          path: ${{ env.SETUP }}
+          # The installer, plus its updater signature in signed builds.
+          path: |
+            ${{ env.SETUP }}
+            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           if-no-files-found: error
           retention-days: 14

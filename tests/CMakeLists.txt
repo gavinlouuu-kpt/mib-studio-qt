@@ -1055,6 +1055,15 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.publish_review_update
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_publish_review_update.py
+    )
+    set_tests_properties(scripts.publish_review_update PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.compare_metrics
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_compare_metrics.py
     )

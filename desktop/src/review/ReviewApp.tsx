@@ -15,6 +15,7 @@ import { BRIDGE_ABI_VERSION } from "../bridgeContract";
 import { FramePullScheduler } from "../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
 import { reviewBridge, type ReviewInfo } from "./reviewBridge";
+import { checkUpdate, loadUpdateChannel, saveUpdateChannel, UpdateDialog, type UpdateChannel } from "./updates";
 import "../App.css";
 
 export const PRODUCT_NAME = "YOFO Review";
@@ -42,8 +43,14 @@ function safeStorage(): Storage | null {
   }
 }
 
-function PreferencesDialog(props: { value: number; onSave: (v: number) => void; onClose: () => void }) {
+function PreferencesDialog(props: {
+  value: number;
+  channel: UpdateChannel;
+  onSave: (v: number, channel: UpdateChannel) => void;
+  onClose: () => void;
+}) {
   const [text, setText] = useState(String(props.value));
+  const [channel, setChannel] = useState<UpdateChannel>(props.channel);
   const v = Number(text);
   const valid = Number.isFinite(v) && v > 0 && v < 1000;
   return (
@@ -57,6 +64,13 @@ function PreferencesDialog(props: { value: number; onSave: (v: number) => void; 
         <p className="hint">
           Used only for files that do not record their pixel-to-micron factor (older recordings). Files that record one always use it.
         </p>
+        <div className="row">
+          <label htmlFor="pref-channel">Update channel</label>
+          <select id="pref-channel" value={channel} onChange={(e) => setChannel(e.target.value === "beta" ? "beta" : "stable")}>
+            <option value="stable">Stable</option>
+            <option value="beta">Beta (pre-releases)</option>
+          </select>
+        </div>
         {!valid && <p className="form-error">Enter a positive number.</p>}
         <div className="actions">
           <button className="btn" onClick={props.onClose}>
@@ -66,7 +80,7 @@ function PreferencesDialog(props: { value: number; onSave: (v: number) => void; 
             className="btn primary"
             disabled={!valid}
             onClick={() => {
-              props.onSave(v);
+              props.onSave(v, channel);
               props.onClose();
             }}
           >
@@ -119,6 +133,9 @@ export default function ReviewApp() {
   const [info, setInfo] = useState<ReviewInfo | null>(null);
   const [pxToUm, setPxToUm] = useState(() => loadPixelToMicron());
   const [showPrefs, setShowPrefs] = useState(false);
+  const [channel, setChannel] = useState<UpdateChannel>(() => loadUpdateChannel());
+  const [showUpdate, setShowUpdate] = useState(false);
+  const [updateNotice, setUpdateNotice] = useState("");
   const scheduler = useRef(new FramePullScheduler());
   const panel = useRef<ReviewPanelHandle>(null);
   // React StrictMode runs the boot effect twice in development; open the
@@ -183,6 +200,18 @@ export default function ReviewApp() {
     };
   }, [ready]);
 
+  // One quiet check per launch / channel change: a status-bar notice when a
+  // newer version exists (builds without an update key stay silent).
+  useEffect(() => {
+    let live = true;
+    checkUpdate(channel)
+      .then((s) => live && setUpdateNotice(s.configured && s.available ? `Update ${s.version} available` : ""))
+      .catch(() => live && setUpdateNotice(""));
+    return () => {
+      live = false;
+    };
+  }, [channel]);
+
   useEffect(() => {
     scheduler.current.invalidate();
   }, [filePath]);
@@ -203,7 +232,13 @@ export default function ReviewApp() {
           ]}
         />
         <Menu label="View" items={[{ label: fitWindow ? "Fit: 1:1" : "Fit: Window", onClick: () => setFitWindow((f) => !f) }]} />
-        <Menu label="Help" items={[{ label: "About", onClick: () => setShowAbout(true) }]} />
+        <Menu
+          label="Help"
+          items={[
+            { label: "Check for updates…", onClick: () => setShowUpdate(true) },
+            { label: "About", onClick: () => setShowAbout(true) },
+          ]}
+        />
         <div className="menubar-spacer" />
         <span className="product-name">{PRODUCT_NAME}</span>
       </nav>
@@ -223,6 +258,11 @@ export default function ReviewApp() {
 
       <div className="statusbar">
         <span className="metrics mono">{filePath || "No file"} · {summary}</span>
+        {updateNotice && (
+          <button className="log-toggle update-notice" onClick={() => setShowUpdate(true)}>
+            {updateNotice}
+          </button>
+        )}
         <button className="log-toggle" onClick={() => setShowLog((s) => !s)} aria-expanded={showLog}>
           Log ({log.length})
         </button>
@@ -238,8 +278,11 @@ export default function ReviewApp() {
       {showPrefs && (
         <PreferencesDialog
           value={pxToUm}
+          channel={channel}
           onClose={() => setShowPrefs(false)}
-          onSave={(v) => {
+          onSave={(v, ch) => {
+            setChannel(ch);
+            saveUpdateChannel(ch);
             setPxToUm(v);
             try {
               localStorage.setItem(PX_TO_UM_KEY, String(v));
@@ -250,6 +293,7 @@ export default function ReviewApp() {
           }}
         />
       )}
+      {showUpdate && <UpdateDialog channel={channel} onClose={() => setShowUpdate(false)} log={append} />}
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="About">

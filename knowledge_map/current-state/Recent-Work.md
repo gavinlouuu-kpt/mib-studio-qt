@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-04 — YOFO Review auto-update
+
+YOFO Review gained the Tauri updater: channel-specific Tauri manifests on R2
+(`review-stable/`, `review-beta/`), minisign signature plus a SHA-256 pin
+checked before install (fail closed), Help ▸ Check for updates…, a channel
+preference and a launch-time notice. Releases build signed update bundles
+and publish them (`publish-review-update.py`) once the owner's public key is
+in `tauri.review.conf.json` and the signing secret exists; until then the
+updater is off. Note: [[../frontend/YofoReview]].
+
 ## 2026-10-03 — YOFO Review releases, Finder opens, macOS bootstrap
 
 `v*` tags now attach YOFO Review's DMG and NSIS installer (+ SHA-256 sums)

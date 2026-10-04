@@ -445,3 +445,19 @@ button.btn.primary:hover:not(:disabled) {
 .toolbar .menu-popup button:hover:not(:disabled) {
   background: #e2e8f0;
 }
+
+/* ---- Updates (PR 6) ------------------------------------------------------ */
+.update-notes {
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  background: #f6f6f6;
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+}
+
+.statusbar .update-notice {
+  font-weight: 600;
+  color: #1a7f37;
+}

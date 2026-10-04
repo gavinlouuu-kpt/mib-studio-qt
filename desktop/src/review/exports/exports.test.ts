@@ -193,3 +193,18 @@ describe("chart export outcome", () => {
     expect(outcomeText(j)).toBe("Exported 2 chart(s) to /out/charts");
   });
 });
+
+describe("updates", () => {
+  it("defaults to the stable channel", async () => {
+    const { loadUpdateChannel, updateSummary, UPDATE_CHANNEL_KEY } = await import("../updates");
+    const s = (v: string | null) => ({ getItem: (k: string) => (k === UPDATE_CHANNEL_KEY ? v : null) });
+    expect(loadUpdateChannel(s(null))).toBe("stable");
+    expect(loadUpdateChannel(s("beta"))).toBe("beta");
+    expect(loadUpdateChannel(s("nightly"))).toBe("stable");
+    expect(loadUpdateChannel(null)).toBe("stable");
+    const base = { configured: true, channel: "stable", current: "1.2.0", available: false, version: "", notes: "", date: "" };
+    expect(updateSummary({ ...base, configured: false })).toMatch(/no update key/);
+    expect(updateSummary(base)).toBe("YOFO Review 1.2.0 is the latest version on the stable channel.");
+    expect(updateSummary({ ...base, available: true, version: "1.3.0" })).toBe("YOFO Review 1.3.0 is available (you have 1.2.0).");
+  });
+});

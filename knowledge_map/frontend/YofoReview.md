@@ -187,6 +187,24 @@ cells render with density ready in ~2–3 s.
   background, output `<basename>_remasked.h5`; the panel opens the result
   (the Qt tab reloads from it).
 
+## Updates (PR 6)
+
+`src-tauri/src/review_update.rs` (review-only feature, `tauri-plugin-updater`
+2.x): `review_check_update(channel)` / `review_install_update(channel)`
+against `https://updates.yofo.bio/review-<stable|beta>/latest.json`; the
+plugin verifies the minisign signature against
+`tauri.review.conf.json` `plugins.updater.pubkey`, then `verify_sha256`
+checks the platform entry's `sha256` (fail closed), installs and restarts.
+The plugin is registered only when that public key is present — until the
+key is committed the commands answer `configured: false`.
+`src/review/updates.tsx`: Help ▸ Check for updates… dialog, the channel in
+Preferences (`localStorage` `yofo.review.updateChannel`), and one quiet
+check per launch that puts "Update X available" in the status bar.
+Publishing: `scripts/release/publish-review-update.py` (Tauri `latest.json`
++ `sha256`, artifacts first, manifest last), run by `review-release.yml`
+when the bundles carry signatures. Setup: `docs/howto/auto-update-r2.md`
+("YOFO Review").
+
 ## `ReviewApp` (the product shell)
 
 Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`)

@@ -540,3 +540,55 @@ If a bad R2 release is published:
 - Confirm `MIB_STUDIO_R2_ENDPOINT` is set to the account-specific R2 S3 API endpoint.
 - Confirm `MIB_STUDIO_R2_PROFILE` points to a profile with write access to `mib-studio-qt-updates`.
 - Avoid committing access keys or endpoint-specific secrets to the repo.
+
+### YOFO Review (Tauri updater)
+
+YOFO Review, the standalone review app, updates through the Tauri updater
+plugin rather than the MIB Studio installer flow above. It shares the bucket
+and hostname with its own channel prefixes:
+
+- `review-stable/latest.json`, `review-beta/latest.json` (Tauri format)
+- `review-<channel>/YOFO_Review_v<version>_aarch64.app.tar.gz` (macOS)
+- `review-<channel>/YOFO_Review_v<version>_x64-setup.exe` (Windows NSIS)
+
+`latest.json` carries, per platform (`darwin-aarch64`, `windows-x86_64`),
+the bundle `url`, its minisign `signature` and a `sha256`. The app verifies
+the signature against the public key compiled into it and then the SHA-256
+pin, failing closed (`desktop/src-tauri/src/review_update.rs`). Users pick
+the channel under **File ▸ Preferences** and update from **Help ▸ Check for
+updates…**; a status-bar notice appears when a newer version is available.
+
+**One-time key setup (on your own machine — the private key never goes into
+the repository or a chat):**
+
+```bash
+cd desktop
+npx tauri signer generate -w ~/.tauri/yofo-review.key     # asks for a password
+```
+
+1. Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the contents of
+   `~/.tauri/yofo-review.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+2. Put the **public** key (`~/.tauri/yofo-review.key.pub`) into
+   `desktop/src-tauri/tauri.review.conf.json`:
+
+   ```json
+   "plugins": { "updater": {
+     "pubkey": "<contents of yofo-review.key.pub>",
+     "endpoints": ["https://updates.yofo.bio/review-stable/latest.json"]
+   } }
+   ```
+
+Until the public key is committed the app has no updater (the plugin is not
+registered; **Check for updates…** says so) and releases ship without update
+bundles. `scripts/release/review-updater-enabled.py` reports the state.
+
+**Publishing** is automatic on `v*` tags (`.github/workflows/review-release.yml`):
+with the public key committed and the signing secret present, the bundle
+jobs build the signed updater artifacts, and `publish-updates` runs
+`scripts/release/publish-review-update.py`, which uploads the bundles first
+and `latest.json` last to `review-stable/` (or `review-beta/` for
+`-beta.*` versions) with the same R2 secrets as `publish-update.py`. By
+hand: `python3 scripts/release/publish-review-update.py --version X.Y.Z
+--macos-bundle … --macos-sig … --windows-installer … --windows-sig …
+[--dry-run]`. Losing the private key means existing installs can no longer
+verify updates: keep a backup of `~/.tauri/yofo-review.key`.

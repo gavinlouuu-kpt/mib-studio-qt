@@ -651,7 +651,16 @@ accounting text and the same saved core record; the differences list in
       `review-release.yml` (bundle jobs moved to the reusable
       `review-bundles.yml`; DMG + installer + checksums appended to the
       tag's GitHub Release) instead of extending the Windows-only
-      `release.yml`. Remaining: updater plugin + minisign key, R2 review
-      channels.
+      `release.yml`. Updater landed 2026-10-04: `review_update.rs`
+      (plugin registered only with a public key; minisign + SHA-256 pin,
+      fail closed), Help ▸ Check for updates…, channel preference,
+      `publish-review-update.py` (Tauri latest.json to `review-stable/` /
+      `review-beta/`), signed artifacts and the `publish-updates` job gated
+      on the key + secrets. Deviation: no `tauri-plugin-process` (Tauri's
+      `AppHandle::restart` suffices); the SHA-256 pin lives in
+      `review_update.rs` rather than reusing `updater.rs` (different manifest
+      shape). Remaining: the user-generated public key (decision
+      2026-10-04: the key pair is generated on the owner's machine, only the
+      public half enters the repo).
 - [x] PR 7 — removed: no signing (user decision 2026-10-01)
 - [ ] PR 8 — manual, screenshots, parity sign-off, tracker, plan → completed

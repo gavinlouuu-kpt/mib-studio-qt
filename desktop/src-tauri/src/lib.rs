@@ -30,6 +30,8 @@ mod frame_packet;
 mod isoelastic;
 mod platform;
 mod review;
+#[cfg(feature = "review-only")]
+mod review_update;
 pub mod updater;
 mod wire;
 
@@ -1738,6 +1740,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + 
         review::review_abi_version,
         review::review_launch_path,
         review::review_take_open_request,
+        review_update::review_check_update,
+        review_update::review_install_update,
         isoelastic::fetch_isoelastic_curves,
         review::review_open,
         review::review_close,
@@ -1779,6 +1783,15 @@ pub fn run() {
             review: Mutex::new(review_ffi::new_review_bridge()),
         })
         .invoke_handler(invoke_handler())
+        .setup(|_app| {
+            // YOFO Review's updater exists only in builds that carry the
+            // minisign public key (tauri.review.conf.json plugins.updater).
+            #[cfg(feature = "review-only")]
+            if !review_update::configured_pubkey(&_app.config()).is_empty() {
+                _app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {

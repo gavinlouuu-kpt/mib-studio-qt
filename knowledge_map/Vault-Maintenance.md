@@ -16,7 +16,7 @@ below is the policy it cannot check for you.
 | `src/backend/playback/FrameStore.*` | [[data-model/FrameStore]] |
 | HDF5 schema / dataset paths (`Hdf5Service.cpp`) | [[data-model/HDF5-Storage]] + [[services/Hdf5Service]] |
 | Review core (`src/backend/review/`, `include/backend/review/`) | [[services/ReviewSession]] (+ [[frontend/HdfReviewTab]] when shared behaviour moves) |
-| Review bridge / YOFO Review (`crates/mib-bridge/src/review_*`, `desktop/src/review/`, `desktop/src-tauri/src/{review,isoelastic}.rs`, `tauri.review.conf.json`) | [[frontend/YofoReview]] + [[architecture/Rust-Bridge]] |
+| Review bridge / YOFO Review (`crates/mib-bridge/src/review_*`, `desktop/src/review/`, `desktop/src-tauri/src/{review,review_update,isoelastic}.rs`, `scripts/release/publish-review-update.py`, `tauri.review.conf.json`) | [[frontend/YofoReview]] + [[architecture/Rust-Bridge]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |
 | `env/assets.json`, `scripts/assets_manifest.py`, `scripts/provision-assets.py` | [[build-and-run/Assets]] |
