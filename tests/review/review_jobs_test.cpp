@@ -87,7 +87,8 @@ namespace
         return f;
     }
 
-    void writeExperiment(const fs::path &path, int validN, bool withRecord)
+    // snapshotFactor 0 writes no run snapshot (a file with no recorded px→µm).
+    void writeExperiment(const fs::path &path, int validN, bool withRecord, double snapshotFactor = 0.5)
     {
         std::mt19937 rng(7);
         std::normal_distribution<double> ax(700, 60), ay(0.05, 0.01), bx(1300, 70), by(0.12, 0.015);
@@ -103,7 +104,8 @@ namespace
         backend::services::ProcessingConfig cfg;
         backend::services::ProcessingService::Roi roi{2, 2, 28, 20};
         MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), cfg, roi, &valid.front().originalImage), "info");
-        MIB_REQUIRE(hdf5.writeRunSnapshotJson("{\"pixel_to_micron\":0.5}", "{}"), "snapshot");
+        if (snapshotFactor > 0.0)
+            MIB_REQUIRE(hdf5.writeRunSnapshotJson("{\"pixel_to_micron\":" + std::to_string(snapshotFactor) + "}", "{}"), "snapshot");
         if (withRecord)
         {
             backend::monitoring::KdeCoreRecord r;
@@ -112,6 +114,23 @@ namespace
             r.cellCount = static_cast<uint64_t>(validN);
             MIB_REQUIRE(hdf5.writeKdeAnalysisJson(backend::monitoring::toJson(r)), "record");
         }
+        hdf5.closeFile();
+    }
+
+    void writeRecording(const fs::path &path, int frames)
+    {
+        Hdf5Service hdf5;
+        MIB_REQUIRE(hdf5.openFile(path.string()), "open recording fixture");
+        MIB_REQUIRE(hdf5.initializeRecordingDatasets(), "init recording datasets");
+        std::vector<cv::Mat> images;
+        std::vector<Hdf5Service::RecordingFrameMeta> meta;
+        for (int i = 0; i < frames; ++i)
+        {
+            images.push_back(pattern(static_cast<uint64_t>(i), 0));
+            meta.push_back({static_cast<uint64_t>(i), static_cast<uint64_t>(i) * 100, kW, kH});
+        }
+        MIB_REQUIRE(hdf5.appendRecordingFrames(images, meta), "append recording frames");
+        MIB_REQUIRE(hdf5.writeRecordingInfo(10, 20, frames, 2, false, 1), "recording info");
         hdf5.closeFile();
     }
 
@@ -314,6 +333,46 @@ int main()
     }
     wd.mark("batch");
 
+    // ---- batch: each source's own recorded factor; recording files refused -------
+    {
+        const fs::path quarter = td.path() / "quarter.h5";
+        const fs::path bare = td.path() / "bare.h5";
+        const fs::path rec = td.path() / "rec.h5";
+        writeExperiment(quarter, 9, false, 0.25);
+        writeExperiment(bare, 9, false, 0.0);
+        writeRecording(rec, 4);
+        session.setFallbackPixelToMicron(0.3); // the open file records 0.5: unaffected
+        BatchExportRequest req;
+        req.sources = {experiment.string(), quarter.string(), bare.string(), rec.string()};
+        req.outputRoot = (td.path() / "factors").string();
+        req.metricsOnly = true;
+        const uint64_t id = jobs.startBatchExport(req, &err);
+        MIB_REQUIRE(id != 0, "start factor batch: " + err);
+        MIB_REQUIRE(sink.terminal(id, done), "factor batch terminal");
+        MIB_EXPECT(done.message.find("exported 3 of 4") != std::string::npos, "factor batch summary: " + done.message);
+        MIB_EXPECT(done.message.find("rec.h5: recording files do not contain metrics") != std::string::npos,
+                   "recording file refused like the Qt tab: " + done.message);
+        const auto direct = [&](const fs::path &src, double factor) {
+            backend::recording::HdfExportRequest d;
+            d.sourcePath = src.string();
+            d.outputRoot = td.path().string();
+            d.format = backend::recording::HdfExportFormat::MetricsCsv;
+            d.conversionFactor = factor;
+            d.explicitDestination = (td.path() / (src.stem().string() + "_direct.csv")).string();
+            backend::recording::HdfExportService service;
+            backend::recording::HdfExportCancelToken token;
+            MIB_REQUIRE(service.run(d, token).status == backend::recording::HdfExportStatus::Completed, "direct " + src.string());
+            return readAll(d.explicitDestination);
+        };
+        MIB_EXPECT(readAll(td.path() / "factors" / "run_metrics.csv") == direct(experiment, 0.5), "run.h5 uses its 0.5");
+        MIB_EXPECT(readAll(td.path() / "factors" / "quarter_metrics.csv") == direct(quarter, 0.25), "quarter.h5 uses its 0.25");
+        MIB_EXPECT(readAll(td.path() / "factors" / "bare_metrics.csv") == direct(bare, 0.3), "bare.h5 uses the fallback");
+        MIB_EXPECT(direct(quarter, 0.25) != direct(quarter, 0.5), "factors change the CSV (test is sensitive)");
+        MIB_EXPECT(!fs::exists(td.path() / "factors" / "rec_metrics.csv"), "no CSV for the recording file");
+        session.setFallbackPixelToMicron(0.4886);
+    }
+    wd.mark("batch factors");
+
     // ---- regenerate masks (whole file, recorded config) --------------------------
     {
         RegenerateMasksRequest req;
@@ -340,7 +399,15 @@ int main()
         MIB_EXPECT(done.state == ReviewJobState::Completed, "core completed: " + done.message);
         const auto record = backend::monitoring::fromJson(jobs.computedCoreJson());
         MIB_REQUIRE(record.has_value(), "core json parses");
-        MIB_EXPECT(!record->provisional && record->source == "full-run" && record->cellCount == 30, "core record");
+        MIB_EXPECT(!record->provisional && record->source == "full-run", "core record");
+        // cell_count is the in-core count (the Qt tab's meaning), not every valid cell.
+        std::vector<backend::monitoring::DensityPoint> pts;
+        const auto sc = session.scatter();
+        for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) pts.push_back({sc.areaUm2[i], sc.deformability[i]});
+        const auto direct = backend::monitoring::computeFullRunCoreRecord(pts, 0.9, sc.pixelToMicron);
+        MIB_EXPECT(record->cellCount == direct.cellCount && record->cellCount < 30 && record->populationCount == 30,
+                   "core cell_count is in-core: " + std::to_string(record->cellCount) + " of " + std::to_string(record->populationCount));
+        MIB_EXPECT(done.message.rfind("Core 90%: ", 0) == 0, "core message in the Qt tab's wording: " + done.message);
         MIB_EXPECT(std::fabs(record->pixelToMicron - 0.5) < 1e-12, "core factor is the recorded one");
         MIB_EXPECT(record->computedAtNs > 0, "computedAt set");
     }

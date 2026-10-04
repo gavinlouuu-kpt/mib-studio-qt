@@ -283,6 +283,13 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(integration.review_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;recording" TIMEOUT 300 SKIP_RETURN_CODE 77)
 
+    # YOFO Review parity sign-off, Qt half (tools/review_parity/run.sh): dumps
+    # what the tab shows/exports for MIB_REVIEW_PARITY_FILE. Skips (77) without it.
+    mib_test_runner_add(mib_frontend_tests review_parity_qt_dump ${PROJECT_SOURCE_DIR}/tests/frontend/review_parity_qt_dump.cpp)
+    add_test(NAME parity.review_qt_dump COMMAND $<TARGET_FILE:mib_frontend_tests> review_parity_qt_dump
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(parity.review_qt_dump PROPERTIES LABELS "parity;manual;frontend" TIMEOUT 1800 SKIP_RETURN_CODE 77)
+
     mib_test_runner_add(mib_frontend_tests app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp)
     add_test(NAME frontend.config_apply COMMAND $<TARGET_FILE:mib_frontend_tests> app_config_apply_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

@@ -186,19 +186,10 @@ namespace backend::review
             meta.hasAccounting = reader.readRunAccounting(meta.accounting);
 
             // TD-17: the factor the run was recorded with.
-            std::string snapshot;
-            if (reader.readRunSnapshotJson(snapshot) && !snapshot.empty())
+            if (const double f = ReviewSession::recordedPixelToMicron(reader); f > 0.0)
             {
-                const auto j = nlohmann::json::parse(snapshot, nullptr, false);
-                if (j.is_object() && j.contains("pixel_to_micron") && j["pixel_to_micron"].is_number())
-                {
-                    const double f = j["pixel_to_micron"].get<double>();
-                    if (f > 0.0)
-                    {
-                        meta.pixelToMicron = f;
-                        meta.pixelToMicronFromFile = true;
-                    }
-                }
+                meta.pixelToMicron = f;
+                meta.pixelToMicronFromFile = true;
             }
             if (!meta.pixelToMicronFromFile) meta.pixelToMicron = fallbackFactor;
 
@@ -349,6 +340,22 @@ namespace backend::review
     {
         std::scoped_lock lock(impl_->mutex);
         return impl_->factor();
+    }
+
+    double ReviewSession::fallbackPixelToMicron() const
+    {
+        std::scoped_lock lock(impl_->mutex);
+        return impl_->fallbackFactor;
+    }
+
+    double ReviewSession::recordedPixelToMicron(const services::Hdf5Service &reader)
+    {
+        std::string snapshot;
+        if (!reader.readRunSnapshotJson(snapshot) || snapshot.empty()) return 0.0;
+        const auto j = nlohmann::json::parse(snapshot, nullptr, false);
+        if (!j.is_object() || !j.contains("pixel_to_micron") || !j["pixel_to_micron"].is_number()) return 0.0;
+        const double f = j["pixel_to_micron"].get<double>();
+        return f > 0.0 ? f : 0.0;
     }
 
     ReviewMetadata ReviewSession::metadata() const

@@ -216,6 +216,33 @@ What is missing or wrong today (evidence in the agent survey of
   with the Qt tab is checked on data, not pixels: `metrics.csv` and
   exported image TIFFs byte-for-byte, chart snapshots by point count,
   axis ranges and legend entries.
+- 2026-10-04: **Parity decisions (owner).** A read-only survey found 19
+  Qt/YOFO differences the plan did not list (the Qt tab never goes through
+  `ReviewSession`). Owner choices: the core record's `cell_count` is the
+  **in-core** count, as the Qt tab saves it (ReviewJobs stopped overwriting
+  it with every valid cell). YOFO's fallback px→µm defaults to **0.4886**,
+  like the Qt tab and the C++ core (was 1.0). Batch export uses **each
+  source's recorded factor**. Regenerate masks keeps YOFO's method (recorded
+  config, median-of-32 background) as an **accepted** difference. Also
+  aligned: Batch Metrics refuses recording files in the Qt wording, and the
+  core status reads like Qt's ("Core 90%: N of M cells, K loop(s)").
+- 2026-10-04: **TD-17 on the Qt tab covers the exports too.** The tab
+  resolves one factor per file at load
+  (`ReviewSession::recordedPixelToMicron`, live factor only for files
+  without one). It uses that factor for the metrics tables, scatter, core
+  contour, Export Metrics / All and each Batch source. TD-17's text names
+  scatter and contour, but the CSV's `Area (µm²)` must use the same factor,
+  or byte-equality would fail on every file recorded at another factor.
+  This is the one Qt-tab change the non-goals allow.
+- 2026-10-04: **Parity is measured by `tools/review_parity/`**, not by
+  tauri-driver. An offscreen `HdfReviewTab` dump (ctest
+  `parity.review_qt_dump`, skip without input) is compared with the review
+  bridge (cargo example `review_parity`) plus the TS chart maths (opt-in
+  vitest `desktop/scripts/review-parity-charts.test.ts`). The Qt export requests are rebuilt (file dialogs
+  bypassed) and the Qt live config is set to the file's recorded one before
+  binning. The remaining differences are listed and accepted in
+  [YofoReview.md](../../../knowledge_map/frontend/YofoReview.md) →
+  "Differences from the Qt tab".
 
 ## Design
 
@@ -665,3 +692,17 @@ accounting text and the same saved core record; the differences list in
       [2026-10-04-yofo-review-update-key-handover.md](../completed/2026-10-04-yofo-review-update-key-handover.md).
 - [x] PR 7 — removed: no signing (user decision 2026-10-01)
 - [ ] PR 8 — manual, screenshots, parity sign-off, tracker, plan → completed
+      **Parity sign-off done 2026-10-04** (`tools/review_parity/run.sh`).
+      Inputs: the `z-adjustment-50v` corpus (recording file, 30 878 frames),
+      the 512x96 real-cell run kept from `integration.review_scatter_e2e`
+      (3 174 valid cells), and two `review_fixture` files recorded at
+      0.25 µm/px. Result: 40 checks, none different. Identical across the
+      inputs: metrics.csv, Export All images (series included), scatter
+      count and extents, histogram bins and labels, the core record (except
+      `computed_at_ns`), the core status text, and the recording-file
+      accounting text. Accepted: the experiment-file status line and the
+      histogram y-axis rounding. Fixes that came with it are in the
+      2026-10-04 decision-log entries; TD-17 is closed. Remaining in PR 8:
+      manual page, screenshot harness, tech-debt TD-18 note, the
+      decoupling-plan parity row, the scatter plan → completed,
+      `Recent-Work.md`.

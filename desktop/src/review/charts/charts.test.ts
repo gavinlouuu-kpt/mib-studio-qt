@@ -107,7 +107,7 @@ describe("chart maths", () => {
 
   it("parses KDE core records", () => {
     const r = recordContours(JSON.stringify({ contours: [[[1, 0.1], [2, 0.2], [3, 0.1]], [[5, 0.5]]], core_fraction: 0.8, provisional: false, source: "full_run" }));
-    expect(r).toEqual({ provisional: false, source: "full_run", coreFraction: 0.8, loops: [[[1, 0.1], [2, 0.2], [3, 0.1]]] });
+    expect(r).toEqual({ provisional: false, source: "full_run", coreFraction: 0.8, cellCount: 0, populationCount: 0, loops: [[[1, 0.1], [2, 0.2], [3, 0.1]]] });
     expect(recordContours("")).toBeNull();
     expect(recordContours("{bad")).toBeNull();
     expect(recordContours("{}")).toBeNull();

@@ -168,13 +168,14 @@ describe("regenerate masks form", () => {
 });
 
 describe("px→µm preference", () => {
-  it("falls back to 1.0 when unset or invalid", () => {
+  it("falls back to the Qt tab's 0.4886 when unset or invalid", () => {
     const s = (v: string | null) => ({ getItem: (k: string) => (k === PX_TO_UM_KEY ? v : null) });
-    expect(loadPixelToMicron(s(null))).toBe(1.0);
+    expect(loadPixelToMicron(s(null))).toBe(0.4886);
     expect(loadPixelToMicron(s("0.25"))).toBe(0.25);
-    expect(loadPixelToMicron(s("-2"))).toBe(1.0);
-    expect(loadPixelToMicron(s("abc"))).toBe(1.0);
-    expect(loadPixelToMicron(null)).toBe(1.0);
+    expect(loadPixelToMicron(s("1"))).toBe(1);
+    expect(loadPixelToMicron(s("-2"))).toBe(0.4886);
+    expect(loadPixelToMicron(s("abc"))).toBe(0.4886);
+    expect(loadPixelToMicron(null)).toBe(0.4886);
   });
 });
 

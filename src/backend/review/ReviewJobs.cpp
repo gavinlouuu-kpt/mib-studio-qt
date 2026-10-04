@@ -266,8 +266,10 @@ namespace backend::review
             if (error) *error = "Export root is empty";
             return 0;
         }
-        const double factor = impl_->session.pixelToMicron();
-        return impl_->start(ReviewJobKind::BatchExport, [this, req, factor](std::uint64_t id, auto flag) {
+        // Each source uses its own recorded factor (TD-17); files without one
+        // use the host fallback, as when they are opened.
+        const double fallback = impl_->session.fallbackPixelToMicron();
+        return impl_->start(ReviewJobKind::BatchExport, [this, req, fallback](std::uint64_t id, auto flag) {
             std::uint64_t exported = 0;
             std::vector<std::string> failures;
             for (std::size_t i = 0; i < req.sources.size(); ++i)
@@ -278,7 +280,7 @@ namespace backend::review
                 recording::HdfExportRequest request;
                 request.sourcePath = source;
                 request.outputRoot = req.outputRoot;
-                request.conversionFactor = factor;
+                request.conversionFactor = fallback;
                 request.series = toServiceRange(req.series);
                 bool recordingFile = false;
                 {
@@ -286,8 +288,15 @@ namespace backend::review
                     if (probe.loadFile(source))
                     {
                         recordingFile = probe.isRecordingFile();
+                        if (const double f = ReviewSession::recordedPixelToMicron(probe); f > 0.0) request.conversionFactor = f;
                         probe.closeFile();
                     }
+                }
+                if (req.metricsOnly && recordingFile)
+                {
+                    // As the Qt tab: recording files are refused, not attempted.
+                    failures.push_back(fs::path(source).filename().string() + ": recording files do not contain metrics");
+                    continue;
                 }
                 if (req.metricsOnly)
                 {
@@ -552,8 +561,9 @@ namespace backend::review
             points.reserve(sc.areaUm2.size());
             for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) points.push_back({sc.areaUm2[i], sc.deformability[i]});
             if (points.size() < 3) return Outcome{ReviewJobState::Failed, "fewer than three valid cells"};
+            // cellCount stays the in-core count computeFullRunCoreRecord sets (the
+            // Qt tab's meaning); populationCount carries the run's size.
             auto record = backend::monitoring::computeFullRunCoreRecord(points, fraction, sc.pixelToMicron);
-            record.cellCount = points.size();
             record.computedAtNs = nowNs();
             if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled"};
             const std::string json = backend::monitoring::toJson(record);
@@ -562,7 +572,9 @@ namespace backend::review
                 impl_->computedCoreJson = json;
                 impl_->computedCorePath = path;
             }
-            return Outcome{ReviewJobState::Completed, "core contour computed from " + std::to_string(record.cellCount) + " cells"};
+            return Outcome{ReviewJobState::Completed, "Core " + std::to_string(std::lround(record.coreFraction * 100.0)) + "%: " +
+                                                              std::to_string(record.cellCount) + " of " + std::to_string(record.populationCount) +
+                                                              " cells, " + std::to_string(record.contours.size()) + " loop(s)"};
         }, error);
     }
 
@@ -662,7 +674,6 @@ namespace backend::review
             if (r.wantCoreRecord && meta.kdeAnalysisJson.empty() && points.size() >= 3)
             {
                 auto record = backend::monitoring::computeFullRunCoreRecord(points, r.coreFraction, sc.pixelToMicron);
-                record.cellCount = points.size();
                 record.computedAtNs = nowNs();
                 result.computedRecordJson = backend::monitoring::toJson(record);
             }

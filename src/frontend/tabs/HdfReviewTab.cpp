@@ -1,5 +1,6 @@
 #include "frontend/tabs/HdfReviewTab.h"
 #include "ui_HdfReviewTab.h"
+#include "backend/review/ReviewSession.h"
 
 #include <memory>
 
@@ -538,6 +539,7 @@ void HdfReviewTab::onCloseFile() {
     clearDisplay();
     hdfReader_.reset();
     loadedHdfFilePath_.clear();
+    filePixelToMicron_ = 0.0;
     setFilePathText(tr("No file selected"));
     ui->statusLabel->setText(tr("Ready"));
     ui->closeFileBtn->setEnabled(false);
@@ -570,10 +572,14 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
         ui->statusLabel->setText(tr("Error loading file"));
         hdfReader_.reset();
         loadedHdfFilePath_.clear();
+        filePixelToMicron_ = 0.0;
         return;
     }
 
     loadedHdfFilePath_ = filePath;
+    filePixelToMicron_ = pixelToMicronOf(*hdfReader_);
+    validMetricsModel_->setPixelToMicronFactor(filePixelToMicron_);
+    invalidMetricsModel_->setPixelToMicronFactor(filePixelToMicron_);
     readStoredKdeRecords();
 
     // Detect recording-mode file. Recording files have no valid/invalid
@@ -1280,7 +1286,7 @@ void HdfReviewTab::onExportMetrics() {
     request.sourcePath = loadedHdfFilePath_.toStdString();
     request.outputRoot = QFileInfo(filePath).absolutePath().toStdString();
     request.format = backend::recording::HdfExportFormat::MetricsCsv;
-    request.conversionFactor = backend_.processing().getPixelToMicronFactor();
+    request.conversionFactor = filePixelToMicron();
     request.explicitDestination = filePath.toStdString();
     beginExportJob(std::move(request), tr("Export Metrics"), [this, filePath](const backend::recording::HdfExportResult& r) {
         finishExportUi();
@@ -1756,7 +1762,7 @@ void HdfReviewTab::onExportAll() {
     request.sourcePath = loadedHdfFilePath_.toStdString();
     request.outputRoot = rootPath.toStdString();
     request.format = backend::recording::HdfExportFormat::All;
-    request.conversionFactor = backend_.processing().getPixelToMicronFactor();
+    request.conversionFactor = filePixelToMicron();
     size_t seriesCount = 0, seriesRecords = 0;
     int seriesH = 0, seriesW = 0;
     if (!isRecordingMode_ && hdfReader_->getSeriesImageInfo(seriesRecords, seriesCount, seriesH, seriesW)) {
@@ -2031,7 +2037,12 @@ void HdfReviewTab::continueBatchExport() {
         backend::recording::HdfExportRequest request;
         request.sourcePath = filePath.toStdString();
         request.outputRoot = batch_->root.toStdString();
-        request.conversionFactor = backend_.processing().getPixelToMicronFactor();
+        {
+            // TD-17: each source's own recorded factor.
+            backend::services::Hdf5Service probe;
+            request.conversionFactor = probe.loadFile(request.sourcePath) ? pixelToMicronOf(probe)
+                                                                           : backend_.processing().getPixelToMicronFactor();
+        }
         request.explicitDestination = batch_->destinations[i].toStdString();
         if (batch_->metricsOnly) {
             request.format = backend::recording::HdfExportFormat::MetricsCsv;
@@ -2296,10 +2307,19 @@ void HdfReviewTab::updateComputeCoreActionState() {
     computeCoreAction_->setEnabled(hdfReader_ && !isRecordingMode_ && anyValid && !coreWatcher_);
 }
 
+double HdfReviewTab::pixelToMicronOf(const backend::services::Hdf5Service& reader) const {
+    const double recorded = backend::review::ReviewSession::recordedPixelToMicron(reader);
+    return recorded > 0.0 ? recorded : backend_.processing().getPixelToMicronFactor();
+}
+
+double HdfReviewTab::filePixelToMicron() const {
+    return filePixelToMicron_ > 0.0 ? filePixelToMicron_ : backend_.processing().getPixelToMicronFactor();
+}
+
 void HdfReviewTab::startFullRunCoreComputation() {
     if (coreWatcher_ || !hdfReader_ || isRecordingMode_ || loadedHdfFilePath_.isEmpty()) return;
-    // Same axes as this scatter: area in µm² with the current factor.
-    const double factor = backend_.processing().getPixelToMicronFactor();
+    // Same axes as this scatter: area in µm² with the file's factor (TD-17).
+    const double factor = filePixelToMicron();
     const double areaFactor = factor * factor;
     std::vector<backend::monitoring::DensityPoint> points;
     points.reserve(validFrames_.size());
@@ -2440,8 +2460,8 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
         return;
     }
 
-    // Get conversion factor from backend (pixels to microns)
-    const double conversionFactor = backend_.processing().getPixelToMicronFactor();
+    // Pixels to microns: the factor the file was recorded with (TD-17).
+    const double conversionFactor = filePixelToMicron();
     // Area conversion: pixels² to microns² = pixels² * (microns/pixel)²
     const double areaConversionFactor = conversionFactor * conversionFactor;
 

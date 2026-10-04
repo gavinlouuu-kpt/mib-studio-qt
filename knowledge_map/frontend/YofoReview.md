@@ -187,6 +187,50 @@ cells render with density ready in ~2–3 s.
   background, output `<basename>_remasked.h5`; the panel opens the result
   (the Qt tab reloads from it).
 
+## Differences from the Qt tab (parity sign-off, 2026-10-04)
+
+Measured by `tools/review_parity/` (README there) on the `z-adjustment-50v`
+corpus, the real-cell 512x96 run of `integration.review_scatter_e2e`, and two
+`review_fixture` files recorded at 0.25 µm/px. Across those four inputs, the
+following are identical: metrics.csv; Export All images, including series;
+scatter point count and axis extents; histogram bins and labels; the saved
+core record apart from `computed_at_ns`; the core status text; and the
+accounting text for recording files.
+
+**Fixed on 2026-10-04 to match (the Qt behaviour, or TD-17 for both):**
+- Core record `cell_count` is the in-core count (the job used to store every
+  valid cell).
+- The fallback px→µm defaults to 0.4886 (it was 1.0).
+- Batch export uses each source's recorded factor.
+- Batch Metrics refuses recording files.
+- The Qt tab reads the recorded factor (TD-17).
+
+**Accepted (decision log of the plan):**
+- **Ranges and axes:**
+  - The histogram range comes from the file's recorded thresholds; Qt uses the live config.
+  - The histogram y axis is `ceil(1.1 × max)`; Qt applies `applyNiceNumbers()`.
+  - Non-finite ring ratios are dropped before binning.
+  - The degenerate-extent fallback (all points equal) is ±max(1, 10 %) / ±max(0.01, 10 %).
+- **Charts:**
+  - Chart pixels and legend order differ: YOFO draws contours before isoelastic curves.
+  - YOFO adds a "Core N% (full run, not saved)" family.
+  - Exported charts use density colours when a result is ready.
+- **Exports:**
+  - Batch Export All writes no chart TIFFs per file.
+  - Batch default names take one past the highest `_N`; Qt fills the first gap.
+  - Batch series is one choice for all files; Qt prompts per file.
+  - Export All asks the series question before the folder; Qt asks after it.
+- **Status text:** for experiment files, the Qt status line replaces the
+  accounting suffix with "Valid: N, Invalid: M" (metadata counts). YOFO shows
+  the accounting in the file label, with counts from the experiment info.
+- **Regenerate masks:** YOFO uses the recorded config and a median-of-32
+  background. Qt uses the live config, a tiled synthetic background and
+  timestamp order.
+- **Regenerate gating:** YOFO enables Regenerate masks once a file is ready;
+  Qt requires data.
+- **Core fraction:** YOFO uses the stored record's fraction, else 0.9; Qt uses
+  `Monitoring/KdeCoreFraction` (default 0.9).
+
 ## Updates (PR 6)
 
 `src-tauri/src/review_update.rs` (review-only feature, `tauri-plugin-updater`
@@ -213,7 +257,7 @@ Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`)
 and renders the menu row (File ▸ Open… / Close / Preferences…, View ▸ Fit,
 Help ▸ About with the stamped version from `@tauri-apps/api/app`), the
 panel, a status bar and the log drawer. **Preferences** holds the fallback
-px→µm (`localStorage` `yofo.review.pixelToMicron`, default 1.0) passed to
+px→µm (`localStorage` `yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to
 the panel. No camera, experiment or hardware state exists.
 
 ## CI

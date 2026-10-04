@@ -165,11 +165,12 @@ export function ChartsView(props: ChartsViewProps) {
       const json = await reviewBridge.computedCoreJson();
       const rec = recordContours(json);
       if (!rec || rec.loops.length === 0) {
-        setStatus("Core contour: too few cells for a contour");
+        setStatus(`Core contour: too few cells for a contour (${rec?.populationCount ?? n} estimated)`);
         return;
       }
       setComputedJson(json);
-      setStatus(`Core ${pct(rec.coreFraction)}%: ${rec.loops.length} loop(s) from ${n} cells`);
+      // Same wording as the Qt tab: in-core cells of the estimated population.
+      setStatus(`Core ${pct(rec.coreFraction)}%: ${rec.cellCount} of ${rec.populationCount} cells, ${rec.loops.length} loop(s)`);
       if (await ask("Save this full-run core contour into the file?", { title: "Save core contour", kind: "info" })) await saveRecord(json);
       else setStatus("Full-run core contour shown, not saved");
     } catch (e) {

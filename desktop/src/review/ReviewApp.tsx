@@ -23,7 +23,8 @@ export const PRODUCT_NAME = "YOFO Review";
 export const OPEN_FILE_EVENT = "review-open-file";
 // Preferences (per machine; Qt QSettings → localStorage).
 export const PX_TO_UM_KEY = "yofo.review.pixelToMicron";
-export const DEFAULT_PX_TO_UM = 1.0;
+// Same default as the Qt tab's live factor and ReviewSession (0.4886 µm/px).
+export const DEFAULT_PX_TO_UM = 0.4886;
 
 /** The stored fallback factor, or the default when unset / invalid. */
 export function loadPixelToMicron(storage: Pick<Storage, "getItem"> | null = safeStorage()): number {

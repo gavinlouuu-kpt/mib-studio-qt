@@ -49,6 +49,10 @@ namespace backend::review
         void setFallbackPixelToMicron(double factor);
         // The effective factor (recorded value when present, else fallback).
         double pixelToMicron() const;
+        double fallbackPixelToMicron() const;
+        // TD-17: the factor `reader`'s open file was recorded with (run
+        // snapshot `pixel_to_micron`); 0 when the file records none.
+        static double recordedPixelToMicron(const services::Hdf5Service &reader);
 
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;

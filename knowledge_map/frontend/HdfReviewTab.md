@@ -243,8 +243,12 @@ recorded (legacy file)" rather than implying completeness.
 The React shells reproduce this tab over [[../services/ReviewSession]]
 (`mib_review_core`): overlay composition is `OverlayCompose.cpp`, a port of
 `OverlayRenderer.cpp` (same colours and contour rules — keep them in step),
-and the session reads the **recorded** pixel-to-micron factor (TD-17); this
-tab still uses the live backend factor until PR 8 of the plan switches it.
+and the session reads the **recorded** pixel-to-micron factor (TD-17). Since
+2026-10-04 this tab does too (`filePixelToMicron()`, resolved at load through
+`ReviewSession::recordedPixelToMicron`, live factor only for files without
+one): metrics tables, scatter, full-run core contour, Export Metrics / All and
+each Batch Export source. Guard: `frontend.hdf_review_core` (file recorded at
+0.25 µm/px).
 Likewise the React histogram takes its range from the file's recorded
 ring-ratio thresholds where this tab uses the live processing config.
 

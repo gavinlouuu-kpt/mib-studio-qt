@@ -136,7 +136,9 @@ export function rampColor(t: number): string {
 }
 
 /** A stored / computed KDE core record's loops (µm² × deformability). */
-export function recordContours(json: string): { provisional: boolean; source: string; coreFraction: number; loops: [number, number][][] } | null {
+export function recordContours(
+  json: string,
+): { provisional: boolean; source: string; coreFraction: number; cellCount: number; populationCount: number; loops: [number, number][][] } | null {
   if (!json) return null;
   try {
     const o = JSON.parse(json) as Record<string, unknown>;
@@ -156,6 +158,8 @@ export function recordContours(json: string): { provisional: boolean; source: st
       provisional: o.provisional !== false,
       source: typeof o.source === "string" ? o.source : "",
       coreFraction: typeof o.core_fraction === "number" ? o.core_fraction : typeof o.coreFraction === "number" ? o.coreFraction : 0.9,
+      cellCount: typeof o.cell_count === "number" ? o.cell_count : 0,
+      populationCount: typeof o.population_count === "number" ? o.population_count : 0,
       loops,
     };
   } catch {

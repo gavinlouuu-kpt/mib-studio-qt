@@ -18,7 +18,7 @@ facade. `ReviewExport.cpp` (`review::writeMetricsCsv`) moved here too.
 **Consumers:** `BackendFacade` (`reviewSession()`; `RecordingLoad`,
 `fetchReviewMetadata/MetricsPage/Image`, CSV export factor),
 `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
-later the Qt [[../frontend/HdfReviewTab]] (TD-17)
+the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 **Related:** [[Hdf5Service]], [[HdfExportService]], [[BatchMaskSources]],
 [[../data-model/HDF5-Storage]], [[../frontend/YofoReview]]
 
@@ -35,7 +35,9 @@ later the Qt [[../frontend/HdfReviewTab]] (TD-17)
   live JSON) and the **pixel-to-micron factor** the file was recorded with
   (`/run_provenance @run_snapshot_json` → `pixel_to_micron`; TD-17). Files
   without it use `setFallbackPixelToMicron()` (the host's live/preferred
-  factor); `pixelToMicronFromFile` says which applied.
+  factor; `fallbackPixelToMicron()` reads it back); `pixelToMicronFromFile`
+  says which applied. The static `recordedPixelToMicron(reader)` is that
+  read (0 when absent), shared with the Qt tab and the batch job.
 - `metricsPage(valid, offset, count)` → `MetricRow` with **every**
   FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`.
 - `fetchImage(dataset, index, OverlayMode, roiOverlay)` → packed Mono8 or
@@ -71,12 +73,15 @@ opening its own reader so session reads never block:
 
 - `startExportMetrics(path)` / `startExportAll(root, series, charts)` /
   `startBatchExport(sources, root, metricsOnly, series)`: run
-  [[HdfExportService]] with the **recorded** factor; chart snapshots arrive
+  [[HdfExportService]] with **each source's own recorded** factor (the
+  fallback for files without one; 2026-10-04 — before, every source used the
+  open file's factor); chart snapshots arrive
   encoded (PNG/TIFF) from the shell and are written beside the images; batch
   continues after per-file failures and reports them in the terminal
   message ("exported N of M file(s); failed: …"); batch metrics names
   follow the service's `<base>_metrics_N.csv` rule; recording files export
-  images only.
+  images only, and Batch Metrics refuses them per file ("<name>: recording
+  files do not contain metrics", the Qt wording) instead of attempting them.
 - `startExportCharts({outputDir, charts})` (PR 4, contract kind
   `ExportCharts` = 6): the shell's snapshots decoded and written as files
   into an existing directory, all or nothing (temporary
@@ -90,7 +95,11 @@ opening its own reader so session reads never block:
   recorded indices and normalise timestamps to the first image.
 - `startComputeCore(fraction)`: `computeFullRunCoreRecord` over the scatter
   (recorded factor, fixed seed); `computedCoreJson()` hands the record to the
-  shell, which saves it with `saveCoreRecordJson`.
+  shell, which saves it with `saveCoreRecordJson`. `cell_count` is the
+  record's **in-core** count (as the Qt tab saves it; `population_count` is
+  the estimated size) — until 2026-10-04 the job overwrote it with every
+  valid cell. The terminal message is the Qt status ("Core 90%: N of M
+  cells, K loop(s)").
 - `startDensity({bandwidthFactor, coreFraction, levels, wantCoreRecord})`:
   per-point density → `levelForDensity` (same bucketing as the Monitoring
   tab); above 5000 cells a fixed-seed 5000-cell subsample → 256×128 grid →
