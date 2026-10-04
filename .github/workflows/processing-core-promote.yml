@@ -15,17 +15,25 @@ on:
         options:
           - stable
           - beta
+      line:
+        description: Core line (absdiff-laplacian is beta only until Phase 3 opt-in)
+        required: true
+        default: subtract-ring
+        type: choice
+        options:
+          - subtract-ring
+          - absdiff-laplacian
 
 permissions:
   contents: read
 
 concurrency:
-  group: processing-core-registry-${{ inputs.channel }}
+  group: processing-core-registry-${{ inputs.channel }}-${{ inputs.line }}
   cancel-in-progress: false
 
 jobs:
   promote:
-    name: Activate ${{ inputs.version }} on ${{ inputs.channel }}
+    name: Activate ${{ inputs.line }} ${{ inputs.version }} on ${{ inputs.channel }}
     runs-on: ubuntu-24.04
     environment: Production
     steps:
@@ -44,6 +52,7 @@ jobs:
           MIB_STUDIO_R2_ENDPOINT: ${{ secrets.MIB_STUDIO_R2_ENDPOINT }}
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          LINE: ${{ inputs.line }}
         run: |
           set -euo pipefail
           if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || [ -z "${MIB_STUDIO_R2_ENDPOINT:-}" ]; then
@@ -52,20 +61,38 @@ jobs:
           fi
           python -m pip install --upgrade pip boto3
           published_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          python scripts/release/publish-processing-core.py \
-            --promote-version "$VERSION" \
-            --channel "$CHANNEL" \
-            --published-at "$published_at" \
-            --upload-method s3
+          if [ "$LINE" = "subtract-ring" ]; then
+            python scripts/release/publish-processing-core.py \
+              --promote-version "$VERSION" \
+              --channel "$CHANNEL" \
+              --published-at "$published_at" \
+              --upload-method s3
+          else
+            # Native-only line subtree; the publisher refuses stable for beta-only lines.
+            python scripts/release/publish-processing-core-line.py \
+              --line "$LINE" \
+              --channel "$CHANNEL" \
+              --promote-version "$VERSION" \
+              --published-at "$published_at" \
+              --endpoint "$MIB_STUDIO_R2_ENDPOINT" \
+              --upload-method s3
+          fi
 
       - name: Verify public active pointer and cross-links
         env:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          LINE: ${{ inputs.line }}
         run: |
           set -euo pipefail
-          url="https://updates.yofo.bio/${CHANNEL}/processing-core/latest.json?promotion=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          python scripts/release/verify-processing-core-manifest.py --manifest-url "$url"
+          if [ "$LINE" = "subtract-ring" ]; then
+            url="https://updates.yofo.bio/${CHANNEL}/processing-core/latest.json?promotion=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            python scripts/release/verify-processing-core-manifest.py --manifest-url "$url"
+          else
+            # verify-processing-core-manifest.py is wheel-schema specific; the
+            # version check below covers the native-only line manifest.
+            url="https://updates.yofo.bio/${CHANNEL}/processing-core/absdiff-laplacian/latest.json?promotion=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fi
           python - "$url" "$VERSION" <<'PY'
           import json
           import sys

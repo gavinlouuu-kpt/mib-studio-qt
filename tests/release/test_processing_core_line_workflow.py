@@ -45,5 +45,21 @@ class LineWorkflow(unittest.TestCase):
         self.assertNotIn("subtract-ring", self.text)
 
 
+PROMOTE = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "processing-core-promote.yml"
+
+
+class PromoteWorkflow(unittest.TestCase):
+    def test_line_input_routes_absdiff_to_the_line_publisher(self) -> None:
+        wf = yaml.safe_load(PROMOTE.read_text(encoding="utf-8"))
+        on = wf[True] if True in wf else wf["on"]
+        line = on["workflow_dispatch"]["inputs"]["line"]
+        self.assertEqual(line["default"], "subtract-ring")
+        self.assertEqual(line["options"], ["subtract-ring", "absdiff-laplacian"])
+        text = PROMOTE.read_text(encoding="utf-8")
+        self.assertIn("publish-processing-core-line.py", text)
+        self.assertIn("processing-core/absdiff-laplacian/latest.json", text)
+        self.assertIn("inputs.line", wf["concurrency"]["group"])
+
+
 if __name__ == "__main__":
     unittest.main()
