@@ -120,10 +120,39 @@ valid cells always, invalid ones sampled. The rows carry the PL values
 (Laplacian, brightness mean/variance, contour area, pixel and blemish
 counts) and no images. See [[HDF5-Storage]].
 
+## Profile compiler (S2)
+
+`include/backend/processing/pz/PzProfileCompiler.h` builds the 32-word
+`unet_cells_v2` page and the 80,000 B E-modulus table (`PROFILE_TABLE0`).
+`compileUnetCellsV2` takes the `ProcessingConfig`, p2m, the store policy and
+the `EModulusLut`.
+
+- The config gained develop's `laplacian_variance_*`, `channel_band_*`,
+  `min_cell_area_px` and `laplacian_kernel_size`.
+- `EModulusLut` gained develop's `loadGrid` plus grid getters.
+- **Page format:** the field table equals the vendored profile, which a test
+  checks. A value outside a field's range is a compile error, except
+  deformability 1.0, which is held as 65535.
+- **Table format:** Q8.8 kPa, `0xFFFF` = no value.
+- **Board equality:** the host defaults compile to exactly the page the board
+  ran (`page.bin`, 2026-10-03). The board's grid compiles to its `lut.bin`
+  byte for byte (`MIB_PZ_BOARD_LUT=`).
+- **Device commit:** providers take the profile with `configure()`. The
+  `/dev/mem` provider does what `pzres config` does: geometry 512x96 MONO8,
+  preview off, the page, then `CONFIG_COMMIT`. It waits for ACKED, then loads
+  the table through `TABLE_*`.
+- **Readiness:** gate `processing.profileCompile` fails with the compile
+  errors.
+- **Start:** compile, `configure`, then arm. Any failure rolls the Start back.
+- **Tests:** `processing.pz_profile_compiler`; `backend.pl_science_provider`
+  (gate pass and fail, profile committed before arming).
+- **Board check:** `tools/pz_provider_probe --configure` commits these
+  defaults through the provider before reading.
+
 ## Not yet
 
-- Profile compiler and table upload (S2), and the store drain (images from
-  the PL frame store).
+- The store drain (images from the PL frame store) and UI for the cell
+  parameters. The new config fields have defaults but no settings plumbing.
 - `scripts/export_hdf5.py` on this line still exports the quartiles, which are
   NaN for PL rows. develop's contract-aware exporter comes with the merge.
 **Board check (2026-10-04, `tools/pz_provider_probe`).** The probe was

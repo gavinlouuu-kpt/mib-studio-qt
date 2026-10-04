@@ -498,6 +498,9 @@ public:
 
     // Young's modulus LUT loading
     bool loadEModulusLut(const std::string& path);
+    // The loaded LUT (read-only; loaded at bootstrap), e.g. for the PZ7035
+    // profile compiler's E-modulus table.
+    const EModulusLut& eModulusLut() const { return eModulusLut_; }
 
     // Background capture callback for auto-capture (called when background is auto-captured)
     using BackgroundCaptureCallback = std::function<void(const cv::Mat& background, uint64_t frameIndex)>;

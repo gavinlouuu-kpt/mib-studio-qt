@@ -38,6 +38,11 @@ struct ProcessingConfig {
     double ring_ratio_min{15.0};
     double ring_ratio_max{25.0};
     bool enable_ring_ratio_check{true};
+    // Per-object Laplacian-variance focus gate (develop Contract 2; here
+    // compiled into the PL profile page). Disabled by default.
+    double laplacian_variance_min{0.0};
+    double laplacian_variance_max{0.0};
+    bool enable_laplacian_variance_check{false};
     bool require_single_inner_contour{true};
     int empty_frame_pixel_threshold{100};
     bool auto_background_enabled{false};
@@ -53,6 +58,15 @@ struct ProcessingConfig {
     bool enable_target_group_emodulus{false};
     double target_group_emodulus_min{0.0};
     double target_group_emodulus_max{10.0};
+    // Channel band gate, in ROI 1 rows (develop names): a cell whose centroid
+    // row is outside [channel_band_y, channel_band_y + channel_band_h) is
+    // invalid; h <= 0 disables it. Runtime input (from the off-path background).
+    int channel_band_y{0};
+    int channel_band_h{0};
+    // U-Net cells (develop Contract 3; here the PL profile page): components
+    // with fewer pixels are blemishes; Laplacian aperture 1 or 3.
+    int min_cell_area_px{250};
+    int laplacian_kernel_size{3};
     // Multi-image recording: capture a series of N consecutive frames per valid detection
     // Metrics are computed only from the first (trigger) frame
     bool multi_image_enabled{false};

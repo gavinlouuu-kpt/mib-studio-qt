@@ -59,7 +59,11 @@ void PzRecordPipeline::reset(uint64_t runId, uint32_t epoch, uint32_t generation
     stream_ = bpz::StreamDecoder(epoch, generation);
     assembler_ = bpz::FrameAssembler();
     std::scoped_lock lk(statusMutex_);
+    const bool committed = status_.profileCommitted;
+    const uint32_t committedEpoch = status_.epoch;
     status_ = ProviderStatus{};
+    status_.profileCommitted = committed; // a profile outlives runs
+    status_.epoch = committedEpoch;
 }
 
 void PzRecordPipeline::feed(const uint8_t* data, size_t size, const IExecutionProvider::Sink& sink) {
@@ -90,6 +94,12 @@ void PzRecordPipeline::noteOverrun() {
     std::scoped_lock lk(statusMutex_);
     ++status_.overruns;
     status_.lastError = "result ring overrun: the consumer fell behind";
+}
+
+void PzRecordPipeline::noteProfile(uint32_t epoch) {
+    std::scoped_lock lk(statusMutex_);
+    status_.profileCommitted = true;
+    status_.epoch = epoch;
 }
 
 ProviderStatus PzRecordPipeline::status() const {
@@ -136,6 +146,16 @@ ReplayExecutionProvider::ReplayExecutionProvider(std::vector<uint8_t> records, d
     : records_(std::move(records)), framesPerSecond_(framesPerSecond) {}
 
 ReplayExecutionProvider::~ReplayExecutionProvider() { stop(); }
+
+bool ReplayExecutionProvider::configure(const CompiledProfile& profile, std::string* error) {
+    if (running_.load()) {
+        if (error) *error = "configure while running";
+        return false;
+    }
+    profile_ = profile;
+    pipeline_.noteProfile(++epoch_);
+    return true;
+}
 
 bool ReplayExecutionProvider::start(uint64_t runId, std::string* error) {
     if (running_.load()) {
@@ -244,13 +264,63 @@ PzDevMemExecutionProvider::PzDevMemExecutionProvider(Layout layout) : layout_(la
 
 PzDevMemExecutionProvider::~PzDevMemExecutionProvider() { stop(); }
 
+bool PzDevMemExecutionProvider::ensureMapped(std::string* error) {
+    if (map_) return true;
+    auto map = std::make_unique<Mapping>();
+    if (!map->open(layout_, error)) return false;
+    map_ = std::move(map);
+    return true;
+}
+
+bool PzDevMemExecutionProvider::configure(const CompiledProfile& profile, std::string* error) {
+    if (running_.load()) {
+        if (error) *error = "configure while running";
+        return false;
+    }
+    if (!ensureMapped(error)) return false;
+    auto& m = *map_;
+    m.setReg(PZ_MIB_REG_CONFIG_SHADOW + 4 * PZ_MIB_CONFIG_GEOMETRY, (96u << 16) | 512u);
+    m.setReg(PZ_MIB_REG_CONFIG_SHADOW + 4 * PZ_MIB_CONFIG_PIXEL_FORMAT, PZ_MIB_PIXEL_FORMAT_MONO8);
+    m.setReg(PZ_MIB_REG_CONFIG_SHADOW + 4 * PZ_MIB_CONFIG_PREVIEW_DECIMATION, 0); // no preview DMA
+    for (unsigned i = 0; i < PZ_MIB_PROFILE_PAGE_WORDS; ++i) {
+        m.setReg(PZ_MIB_REG_PROFILE_PAGE_SHADOW + 4 * i, profile.page[i]);
+    }
+    const uint32_t epoch = m.reg(PZ_MIB_REG_EPOCH) + 1;
+    m.setReg(PZ_MIB_REG_CONFIG_COMMIT, epoch);
+    uint32_t status = PZ_MIB_COMMIT_STATUS_PENDING;
+    for (int i = 0; i < 200 && status == PZ_MIB_COMMIT_STATUS_PENDING; ++i) {
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+        status = m.reg(PZ_MIB_REG_COMMIT_STATUS);
+    }
+    if (status != PZ_MIB_COMMIT_STATUS_ACKED) {
+        if (error) *error = "profile commit not acknowledged (COMMIT_STATUS " + std::to_string(status) + ")";
+        return false;
+    }
+    if (!profile.table0.empty()) {
+        m.setReg(PZ_MIB_REG_TABLE_SELECT, PZ_MIB_TABLE_ID_PROFILE_TABLE0);
+        m.setReg(PZ_MIB_REG_TABLE_ADDR, 0);
+        for (size_t i = 0; i + 3 < profile.table0.size(); i += 4) {
+            const uint32_t word = profile.table0[i] | profile.table0[i + 1] << 8 |
+                                  static_cast<uint32_t>(profile.table0[i + 2]) << 16 |
+                                  static_cast<uint32_t>(profile.table0[i + 3]) << 24;
+            m.setReg(PZ_MIB_REG_TABLE_DATA, word);
+        }
+    }
+    SPDLOG_INFO("PzDevMemExecutionProvider: profile committed at epoch {} (table {} B, status 0x{:08x}, "
+                "crc32 0x{:08x})",
+                m.reg(PZ_MIB_REG_EPOCH), profile.table0.size(), m.reg(PZ_MIB_REG_TABLE_STATUS),
+                m.reg(PZ_MIB_REG_TABLE_CRC32));
+    pipeline_.noteProfile(m.reg(PZ_MIB_REG_EPOCH));
+    return true;
+}
+
 bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     if (running_.load()) {
         if (error) *error = "provider already running";
         return false;
     }
-    auto map = std::make_unique<Mapping>();
-    if (!map->open(layout_, error)) return false;
+    if (!ensureMapped(error)) return false;
+    auto* map = map_.get();
     const uint32_t hz = map->reg(PZ_MIB_REG_TIMESTAMP_HZ);
     pipeline_.setTimestampHz(hz ? hz : PZ_MIB_TIMESTAMP_HZ_DEFAULT);
     pipeline_.reset(runId, map->reg(PZ_MIB_REG_EPOCH),
@@ -264,7 +334,6 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     map->setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_ARM);
     SPDLOG_INFO("PzDevMemExecutionProvider: armed run {} (state {}, fault 0x{:x}, timestamp {} Hz)", runId,
                 map->reg(PZ_MIB_REG_STATE), map->reg(PZ_MIB_REG_FAULT), hz);
-    map_ = std::move(map);
     stopRequested_.store(false);
     running_.store(true);
     thread_ = std::thread(&PzDevMemExecutionProvider::run, this);
@@ -293,11 +362,13 @@ void PzDevMemExecutionProvider::run() {
 }
 
 void PzDevMemExecutionProvider::stop() {
-    if (!map_) return;
+    if (!map_ || !running_.load()) {
+        if (thread_.joinable()) thread_.join();
+        return;
+    }
     map_->setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_STOP);
     stopRequested_.store(true);
     if (thread_.joinable()) thread_.join();
-    map_.reset();
     running_.store(false);
 }
 

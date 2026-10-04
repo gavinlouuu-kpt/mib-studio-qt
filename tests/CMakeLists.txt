@@ -386,6 +386,11 @@ add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(pz_profile_compiler_test processing/pz_profile_compiler_test.cpp)
+add_test(NAME processing.pz_profile_compiler COMMAND $<TARGET_FILE:mib_backend_tests> pz_profile_compiler_test
+         ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
+set_tests_properties(processing.pz_profile_compiler PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(pz_execution_provider_test processing/pz_execution_provider_test.cpp)
 mib_backend_test_link(pz_execution_provider_test PRIVATE Threads::Threads)
 add_test(NAME processing.pz_execution_provider COMMAND $<TARGET_FILE:mib_backend_tests> pz_execution_provider_test

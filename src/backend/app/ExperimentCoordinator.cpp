@@ -1,5 +1,6 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/processing/IExecutionProvider.h"
+#include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/app/SciencePlacement.h"
 
 #include "backend/app/AppBackend.h"
@@ -156,6 +157,18 @@ bool outputWritable(const std::string& path, std::string& reason)
 // ---------------------------------------------------------------------------
 // JSON serializers
 // ---------------------------------------------------------------------------
+
+// PL science (YOFO S2): the profile the PL runs, from the current settings.
+static backend::processing::pz::CompiledProfile compilePlProfile(AppBackend& backend)
+{
+    auto& proc = backend.processing();
+    backend::processing::pz::UnetCellsProfileInputs in;
+    in.config = proc.getProcessingConfig();
+    in.pixelToMicron = proc.getPixelToMicronFactor();
+    in.storeInvalidEveryN = static_cast<uint32_t>(std::min<size_t>(proc.getInvalidFrameSamplingRate(), 0xFFFF));
+    in.lut = proc.eModulusLut().isLoaded() ? &proc.eModulusLut() : nullptr;
+    return backend::processing::pz::compileUnetCellsV2(in);
+}
 
 std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
 {
@@ -473,6 +486,18 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         if (auto* provider = backend_.executionProvider()) {
             r.gates.push_back(gate("science.pl", GateStatus::Pass, {}, {},
                                    "results from execution provider '" + provider->name() + "'"));
+            // The settings must compile into the PL profile page (S2).
+            const auto profile = compilePlProfile(backend_);
+            if (profile.ok()) {
+                r.gates.push_back(gate("processing.profileCompile", GateStatus::Pass, {}, {},
+                                       "unet_cells_v2" + std::string(profile.table0.empty() ? ", no E-modulus table"
+                                                                                           : ", E-modulus table")));
+            } else {
+                std::string why;
+                for (const auto& e : profile.errors) why += (why.empty() ? "" : "; ") + e;
+                r.gates.push_back(gate("processing.profileCompile", GateStatus::Fail, why,
+                                       "correct the processing settings"));
+            }
         } else {
             r.gates.push_back(gate("science.pl", GateStatus::Warn,
                                    "processing runs on the PL; no execution provider brings its results to the PS",
@@ -761,7 +786,11 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
                                                          std::chrono::system_clock::now().time_since_epoch())
                                                          .count());
         std::string providerError;
-        if (!provider->start(runId, &providerError)) {
+        const auto profile = compilePlProfile(backend_);
+        bool providerOk = profile.ok() && provider->configure(profile, &providerError);
+        if (!profile.ok()) providerError = "the settings do not compile into the PL profile";
+        providerOk = providerOk && provider->start(runId, &providerError);
+        if (!providerOk) {
             // Roll back as for a provenance failure; the results source is a
             // start prerequisite, so the outcome is NotReady with the reason.
             proc.endExperiment();

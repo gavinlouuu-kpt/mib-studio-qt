@@ -5,10 +5,11 @@
 // host pipeline (ADR 0008). A provider delivers one ProviderFrame per sensor
 // frame on its own thread; ProcessingService ingests them. Qt-free.
 //
-// This first slice covers start/stop, the frame sink and status. Profile
-// commit and table upload (S2) come with the profile compiler.
+// Covers profile commit (S2: page + E-modulus table), start/stop, the frame
+// sink and status.
 
 #include "backend/processing/ProcessingTypes.h"
+#include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/pz/PzRecords.h"
 
 #include <cstdint>
@@ -53,6 +54,9 @@ struct ProviderStatus {
     uint64_t orphanResults{0};  // RESULTs without their FRAME
     uint64_t unknownProfileResults{0};
     std::string lastError;
+    // Profile page and table the device last accepted (configure()).
+    bool profileCommitted{false};
+    uint32_t epoch{0};
 };
 
 class IExecutionProvider {
@@ -62,6 +66,8 @@ public:
     virtual std::string name() const = 0;
     // Set before start(); called on the provider thread.
     virtual void setSink(Sink sink) = 0;
+    // Commit a compiled profile (page + E-modulus table) while stopped (S2).
+    virtual bool configure(const pz::CompiledProfile& profile, std::string* error) = 0;
     virtual bool start(uint64_t runId, std::string* error) = 0;
     virtual void stop() = 0;
     virtual ProviderStatus status() const = 0;

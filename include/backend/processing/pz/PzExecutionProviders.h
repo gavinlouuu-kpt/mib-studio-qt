@@ -32,6 +32,7 @@ public:
     // Deliver a frame still waiting for RESULTs (at stop).
     void flush(const IExecutionProvider::Sink& sink);
     void noteOverrun();
+    void noteProfile(uint32_t epoch);
     ProviderStatus status() const;
 
 private:
@@ -53,6 +54,9 @@ public:
     ~ReplayExecutionProvider() override;
     std::string name() const override { return "replay"; }
     void setSink(Sink sink) override { sink_ = std::move(sink); }
+    // Records the profile (a replay has no device to configure).
+    bool configure(const CompiledProfile& profile, std::string* error) override;
+    const CompiledProfile& lastProfile() const { return profile_; }
     bool start(uint64_t runId, std::string* error) override;
     void stop() override;
     ProviderStatus status() const override;
@@ -64,6 +68,8 @@ private:
 
     std::vector<uint8_t> records_;
     double framesPerSecond_;
+    CompiledProfile profile_;
+    uint32_t epoch_{0};
     Sink sink_;
     PzRecordPipeline pipeline_;
     std::thread thread_;
@@ -85,6 +91,9 @@ public:
     ~PzDevMemExecutionProvider() override;
     std::string name() const override { return "pz-devmem"; }
     void setSink(Sink sink) override { sink_ = std::move(sink); }
+    // As pzres config: geometry 512x96 MONO8, preview off, the 32-word page,
+    // CONFIG_COMMIT (waits for ACKED), then PROFILE_TABLE0 through the loader.
+    bool configure(const CompiledProfile& profile, std::string* error) override;
     bool start(uint64_t runId, std::string* error) override;
     void stop() override;
     ProviderStatus status() const override;
@@ -92,6 +101,7 @@ public:
 private:
     class Mapping;
     void run();
+    bool ensureMapped(std::string* error);
 
     Layout layout_;
     Sink sink_;

@@ -11,5 +11,7 @@ $CXX -std=c++17 -O2 -Wall -Wextra -Wno-psabi -DSPDLOG_FMT_EXTERNAL -I"$ROOT/incl
     "$ROOT/tools/pz_provider_probe/main.cpp" \
     "$ROOT/src/backend/processing/pz/PzExecutionProviders.cpp" \
     "$ROOT/src/backend/pz/PzRecords.cpp" \
+    "$ROOT/src/backend/processing/pz/PzProfileCompiler.cpp" \
+    "$ROOT/src/backend/processing/EModulusLut.cpp" \
     -o "$OUT" -lspdlog -lfmt -lpthread
 echo "built $OUT"

@@ -20,6 +20,23 @@ public:
     /// Whether a LUT has been successfully loaded.
     bool isLoaded() const { return loaded_; }
 
+    // Load a ready grid (row-major [deformability][area], NaN = no value).
+    // Axis i covers min + k * step, k = 0..bins-1. False (and unloaded) on a
+    // size mismatch, fewer than two bins per axis, or a non-positive step.
+    bool loadGrid(double areaMin, double areaStep, size_t areaBins, double deformMin,
+                  double deformStep, size_t deformBins, std::vector<double> grid);
+
+    // The interpolation grid (for the PZ7035 profile table). Valid when loaded.
+    double gridAreaMin() const { return areaMin_; }
+    double gridAreaStep() const { return numAreaBins_ > 1 ? (areaMax_ - areaMin_) / (numAreaBins_ - 1) : 0.0; }
+    double gridDeformMin() const { return deformMin_; }
+    double gridDeformStep() const {
+        return numDeformBins_ > 1 ? (deformMax_ - deformMin_) / (numDeformBins_ - 1) : 0.0;
+    }
+    size_t gridAreaBins() const { return numAreaBins_; }
+    size_t gridDeformBins() const { return numDeformBins_; }
+    const std::vector<double>& grid() const { return grid_; }
+
     /// Look up Young's modulus (kPa) for given area (µm²) and deformability.
     /// Returns NaN if the query point is outside the LUT coverage area.
     double lookup(double area_um, double deformability) const;

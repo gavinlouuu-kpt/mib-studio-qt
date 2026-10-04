@@ -42,6 +42,12 @@ On the board, the C++ provider (`tools/pz_provider_probe`, 120 s at 5 kHz)
 read 600,251 frames and 600,192 cells with 0 decode errors, 0 gaps and 0
 overruns. `pzres monitor` straight after agrees.
 
+Profile compiler (S2): settings become the PL's `unet_cells_v2` page and
+E-modulus table. The host defaults reproduce the board's committed page and
+table byte for byte. Providers commit the profile with `configure()` before
+arming, and readiness gate `processing.profileCompile` blocks a Start whose
+settings do not compile.
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21

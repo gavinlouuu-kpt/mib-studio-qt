@@ -11,6 +11,7 @@
 #include "backend/app/SciencePlacement.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/processing/pz/PzExecutionProviders.h"
 #include "backend/pz/PzRecords.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
@@ -152,10 +153,28 @@ int main(int argc, char** argv) {
                              g.reason.c_str(), g.detail.c_str());
         }
         MIB_REQUIRE(readiness.ready, "ready to start");
+        const auto* compileGate = readiness.gate("processing.profileCompile");
+        MIB_EXPECT(compileGate && compileGate->status == backend::app::GateStatus::Pass,
+                   "the settings compile into the PL profile");
+        {
+            // A setting outside the profile's range fails the gate.
+            auto cfg = backend.processing().getProcessingConfig();
+            const auto saved = cfg;
+            cfg.laplacian_kernel_size = 2;
+            backend.processing().setProcessingConfig(cfg);
+            const auto bad = coord.evaluateReadiness(out, "pl");
+            const auto* g = bad.gate("processing.profileCompile");
+            MIB_EXPECT(!bad.ready && g && g->status == backend::app::GateStatus::Fail &&
+                           g->reason.find("laplacian_kernel_size") != std::string::npos,
+                       "an uncompilable setting blocks Start with the reason");
+            backend.processing().setProcessingConfig(saved);
+        }
+        const auto ready = coord.evaluateReadiness(out, "pl");
+        MIB_REQUIRE(ready.ready, "ready again");
 
         ExperimentStartRequest req;
         req.outputPath = out;
-        req.readinessGeneration = readiness.generation;
+        req.readinessGeneration = ready.generation;
         req.profileId = "pl";
         const auto started = coord.start(req);
         MIB_REQUIRE(started.outcome == ExperimentStartOutcome::Started, "run starts: " + started.message);
@@ -175,6 +194,12 @@ int main(int argc, char** argv) {
                                                  " of " + std::to_string(frameCount));
         MIB_EXPECT(a.reconciled, "the run's accounting reconciles");
         MIB_EXPECT(!provider->status().running && provider->status().decodeErrors == 0, "provider stopped, clean");
+        MIB_EXPECT(provider->status().profileCommitted, "the compiled profile was committed before arming");
+        auto* replay = dynamic_cast<backend::processing::pz::ReplayExecutionProvider*>(provider);
+        MIB_REQUIRE(replay, "replay provider");
+        MIB_EXPECT(replay->lastProfile().page[2] == static_cast<uint32_t>(
+                       backend.processing().getProcessingConfig().min_cell_area_px),
+                   "the committed page carries the configured size gate");
         MIB_EXPECT(!backend.hdf5().isFileOpen() && fs::exists(out), "run file finalized");
         backend.capture().stop();
         backend.shutdown();
