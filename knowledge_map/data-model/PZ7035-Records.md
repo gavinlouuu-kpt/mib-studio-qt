@@ -151,8 +151,17 @@ the `EModulusLut`.
 
 ## Not yet
 
-- The store drain (images from the PL frame store) and UI for the cell
-  parameters. The new config fields have defaults but no settings plumbing.
+- The store drain (images from the PL frame store).
+- The channel band from the off-path background (T3.7). `channel_band_*` is a
+  runtime field and stays 0 (off) for now.
+
+Settings: `config.json` `image_processing` carries develop's
+`laplacian_variance_min/max` and `filters.enable_laplacian_variance_check`,
+plus `min_cell_area_px` and `laplacian_kernel_size` (top level, new). They
+apply through the same config transaction as the other settings. The
+transaction rejects ksize other than 1/3, a size gate over u16, and an
+inverted Laplacian range (`backend.processing_config_transaction`). The React
+JSON editor edits them like any `image_processing` key.
 - `scripts/export_hdf5.py` on this line still exports the quartiles, which are
   NaN for PL rows. develop's contract-aware exporter comes with the merge.
 **Board check (2026-10-04, `tools/pz_provider_probe`).** The probe was

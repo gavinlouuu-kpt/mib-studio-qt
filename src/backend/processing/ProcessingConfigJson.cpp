@@ -53,6 +53,12 @@ namespace backend::processing::config_json
             {"auto_background_enabled", c.auto_background_enabled},
             {"auto_background_empty_frames", c.auto_background_empty_frames},
             {"auto_background_cooldown_frames", c.auto_background_cooldown_frames},
+            // Laplacian gate (develop's keys) and the U-Net cell parameters,
+            // compiled into the PZ7035 profile page.
+            {"laplacian_variance_min", c.laplacian_variance_min},
+            {"laplacian_variance_max", c.laplacian_variance_max},
+            {"min_cell_area_px", c.min_cell_area_px},
+            {"laplacian_kernel_size", c.laplacian_kernel_size},
             {"filters",
              {
                  {"enable_border_check", c.enable_border_check},
@@ -60,6 +66,7 @@ namespace backend::processing::config_json
                  {"enable_deformability_range_check", c.enable_deformability_range_check},
                  {"enable_area_ratio_check", c.enable_area_ratio_check},
                  {"enable_ring_ratio_check", c.enable_ring_ratio_check},
+                 {"enable_laplacian_variance_check", c.enable_laplacian_variance_check},
                  {"require_single_inner_contour", c.require_single_inner_contour},
              }},
             {"target_group",
@@ -110,6 +117,10 @@ namespace backend::processing::config_json
         ok &= assignIfPresent(json, "auto_background_enabled", c.auto_background_enabled, errorOut);
         ok &= assignIfPresent(json, "auto_background_empty_frames", c.auto_background_empty_frames, errorOut);
         ok &= assignIfPresent(json, "auto_background_cooldown_frames", c.auto_background_cooldown_frames, errorOut);
+        ok &= assignIfPresent(json, "laplacian_variance_min", c.laplacian_variance_min, errorOut);
+        ok &= assignIfPresent(json, "laplacian_variance_max", c.laplacian_variance_max, errorOut);
+        ok &= assignIfPresent(json, "min_cell_area_px", c.min_cell_area_px, errorOut);
+        ok &= assignIfPresent(json, "laplacian_kernel_size", c.laplacian_kernel_size, errorOut);
 
         if (const auto filters = json.find("filters"); filters != json.end())
         {
@@ -119,6 +130,8 @@ namespace backend::processing::config_json
                                   c.enable_deformability_range_check, errorOut);
             ok &= assignIfPresent(*filters, "enable_area_ratio_check", c.enable_area_ratio_check, errorOut);
             ok &= assignIfPresent(*filters, "enable_ring_ratio_check", c.enable_ring_ratio_check, errorOut);
+            ok &= assignIfPresent(*filters, "enable_laplacian_variance_check",
+                                  c.enable_laplacian_variance_check, errorOut);
             ok &= assignIfPresent(*filters, "require_single_inner_contour",
                                   c.require_single_inner_contour, errorOut);
         }

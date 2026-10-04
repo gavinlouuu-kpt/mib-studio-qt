@@ -24,12 +24,17 @@
         "auto_background_enabled": false,
         "auto_background_empty_frames": 30,
         "auto_background_cooldown_frames": 1000,
+        "laplacian_variance_min": 0.0,
+        "laplacian_variance_max": 0.0,
+        "min_cell_area_px": 250,
+        "laplacian_kernel_size": 3,
         "filters": {
             "enable_area_range_check": true,
             "enable_border_check": true,
             "enable_area_ratio_check": false,
             "enable_deformability_range_check": true,
             "enable_ring_ratio_check": true,
+            "enable_laplacian_variance_check": false,
             "enable_multiple_contours_check": true,
             "require_single_inner_contour": true
         },

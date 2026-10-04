@@ -48,6 +48,10 @@ table byte for byte. Providers commit the profile with `configure()` before
 arming, and readiness gate `processing.profileCompile` blocks a Start whose
 settings do not compile.
 
+Settings plumbing for the PL profile: the size gate, Laplacian aperture and
+Laplacian gate are `config.json` `image_processing` keys (in the defaults,
+validated, applied through the config transaction).
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21
