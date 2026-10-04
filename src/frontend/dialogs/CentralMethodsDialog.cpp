@@ -1,10 +1,15 @@
 #include "frontend/dialogs/CentralMethodsDialog.h"
 
+#include "frontend/dialogs/MethodDraftsPanel.h"
+
 #include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 
 #include <QDateTime>
 #include <QFileDialog>
+#include <QInputDialog>
+#include <QPlainTextEdit>
+#include <QTabWidget>
 #include <QSignalBlocker>
 #include <QMessageBox>
 #include <QFont>
@@ -126,6 +131,21 @@ CentralMethodsDialog::CentralMethodsDialog(backend::profiles::ProfileRegistryWor
         hooks_.confirm = [this](const QString& title, const QString& text) {
             return QMessageBox::question(this, title, text) == QMessageBox::Yes;
         };
+    if (!hooks_.askText)
+        hooks_.askText = [this](const QString& title, const QString& label, const QString& initial,
+                                bool multiline) -> std::optional<QString> {
+            bool ok = false;
+            const QString text = multiline ? QInputDialog::getMultiLineText(this, title, label, initial, &ok)
+                                           : QInputDialog::getText(this, title, label, QLineEdit::Normal, initial, &ok);
+            return ok ? std::optional<QString>(text) : std::nullopt;
+        };
+    if (!hooks_.chooseItem)
+        hooks_.chooseItem = [this](const QString& title, const QString& label,
+                                   const QStringList& items) -> std::optional<QString> {
+            bool ok = false;
+            const QString item = QInputDialog::getItem(this, title, label, items, 0, false, &ok);
+            return ok ? std::optional<QString>(item) : std::nullopt;
+        };
     setWindowTitle(tr("Central Methods"));
     resize(960, 560);
     auto* root = new QVBoxLayout(this);
@@ -190,7 +210,12 @@ CentralMethodsDialog::CentralMethodsDialog(backend::profiles::ProfileRegistryWor
     actions->addWidget(closeBtn);
     root->addLayout(actions);
 
-    table_ = new QTableWidget(0, 7, this);
+    tabs_ = new QTabWidget(this);
+    tabs_->setObjectName(QStringLiteral("centralMethodsTabs"));
+    auto* methodsPage = new QWidget(tabs_);
+    auto* methodsLayout = new QVBoxLayout(methodsPage);
+    methodsLayout->setContentsMargins(0, 0, 0, 0);
+    table_ = new QTableWidget(0, 7, methodsPage);
     table_->setObjectName(QStringLiteral("centralMethodsTable"));
     table_->setHorizontalHeaderLabels({tr("Method"), tr("Revision"), tr("Project"),
                                        tr("Central state"), tr("Content hash"), tr("Author"),
@@ -200,7 +225,7 @@ CentralMethodsDialog::CentralMethodsDialog(backend::profiles::ProfileRegistryWor
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->hide();
     table_->horizontalHeader()->setStretchLastSection(true);
-    root->addWidget(table_, 1);
+    methodsLayout->addWidget(table_, 1);
 
     auto* methodActions = new QHBoxLayout();
     applyBtn_ = new QPushButton(tr("Apply..."), this);
@@ -213,7 +238,37 @@ CentralMethodsDialog::CentralMethodsDialog(backend::profiles::ProfileRegistryWor
     methodActions->addWidget(validateBtn_);
     methodActions->addWidget(failedBtn_);
     methodActions->addStretch(1);
-    root->addLayout(methodActions);
+    methodsLayout->addLayout(methodActions);
+
+    auto* reviewActions = new QHBoxLayout();
+    const auto reviewButton = [this, reviewActions](const QString& text, const char* name) {
+        auto* b = new QPushButton(text, this);
+        b->setObjectName(QString::fromLatin1(name));
+        reviewActions->addWidget(b);
+        return b;
+    };
+    newDraftBtn_ = reviewButton(tr("New draft..."), "centralMethodsNewDraft");
+    approveBtn_ = reviewButton(tr("Approve..."), "centralMethodsApprove");
+    rejectBtn_ = reviewButton(tr("Reject..."), "centralMethodsReject");
+    publishBtn_ = reviewButton(tr("Publish..."), "centralMethodsPublish");
+    archiveBtn_ = reviewButton(tr("Archive..."), "centralMethodsArchive");
+    revokeBtn_ = reviewButton(tr("Revoke..."), "centralMethodsRevoke");
+    historyBtn_ = reviewButton(tr("History"), "centralMethodsHistory");
+    reviewActions->addStretch(1);
+    methodsLayout->addLayout(reviewActions);
+
+    details_ = new QPlainTextEdit(methodsPage);
+    details_->setObjectName(QStringLiteral("centralMethodsDetails"));
+    details_->setReadOnly(true);
+    details_->setMaximumHeight(120);
+    details_->setPlaceholderText(tr("Select a revision to see its lineage, release notes and history."));
+    methodsLayout->addWidget(details_);
+
+    tabs_->addTab(methodsPage, tr("Methods"));
+    drafts_ = new MethodDraftsPanel(registry_, hooks_, [this](const QString& text, bool error) { setNotice(text, error); },
+                                    tabs_);
+    tabs_->addTab(drafts_, tr("Drafts"));
+    root->addWidget(tabs_, 1);
 
     notice_ = new QLabel(this);
     notice_->setObjectName(QStringLiteral("centralMethodsNotice"));
@@ -249,8 +304,22 @@ CentralMethodsDialog::CentralMethodsDialog(backend::profiles::ProfileRegistryWor
     connect(applyBtn_, &QPushButton::clicked, this, &CentralMethodsDialog::apply);
     connect(validateBtn_, &QPushButton::clicked, this, [this] { markValidated(true); });
     connect(failedBtn_, &QPushButton::clicked, this, [this] { markValidated(false); });
-    connect(table_, &QTableWidget::itemSelectionChanged, this,
-            [this] { updateActions(registry_.snapshot()); });
+    connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
+        const auto s = registry_.snapshot();
+        updateActions(s);
+        renderDetails(s);
+    });
+    connect(newDraftBtn_, &QPushButton::clicked, this, &CentralMethodsDialog::newDraftFromRevision);
+    connect(approveBtn_, &QPushButton::clicked, this, [this] { transition(CentralState::Approved); });
+    connect(rejectBtn_, &QPushButton::clicked, this, [this] { transition(CentralState::Rejected); });
+    connect(publishBtn_, &QPushButton::clicked, this, [this] { transition(CentralState::Published); });
+    connect(archiveBtn_, &QPushButton::clicked, this, [this] { transition(CentralState::Archived); });
+    connect(revokeBtn_, &QPushButton::clicked, this, [this] { transition(CentralState::Revoked); });
+    connect(historyBtn_, &QPushButton::clicked, this, [this] {
+        const auto id = selectedRevision().toStdString();
+        if (!id.empty()) registry_.requestHistory(id);
+        poll();
+    });
 
     pollTimer_ = new QTimer(this);
     pollTimer_->setInterval(200);
@@ -348,6 +417,106 @@ void CentralMethodsDialog::updateActions(const RegistryWorkerSnapshot& s) {
                                                  : tr("Pick a test run recorded with this revision applied");
     validateBtn_->setToolTip(why);
     failedBtn_->setToolTip(why);
+
+    const auto role = [&](const char* name) { return r && backend::profiles::hasProjectRole(s, r->projectId, name); };
+    const bool reviewIdle = s.configured && !s.busy && signedIn;
+    newDraftBtn_->setEnabled(s.configured && !s.busy && hasCache && r);
+    approveBtn_->setEnabled(reviewIdle && role("reviewer") && r->state == CentralState::Submitted);
+    rejectBtn_->setEnabled(approveBtn_->isEnabled());
+    publishBtn_->setEnabled(reviewIdle && role("publisher") && r->state == CentralState::Approved);
+    archiveBtn_->setEnabled(reviewIdle && role("publisher") &&
+                            (r->state == CentralState::Published || r->state == CentralState::Superseded));
+    revokeBtn_->setEnabled(reviewIdle && role("publisher") &&
+                           (r->state == CentralState::Published || r->state == CentralState::Superseded ||
+                            r->state == CentralState::Archived));
+    historyBtn_->setEnabled(reviewIdle && r);
+    const QString reviewWhy = !signedIn ? tr("Sign in to review or publish")
+                                        : tr("Needs the reviewer role (approve/reject) or the publisher role");
+    for (auto* b : {approveBtn_, rejectBtn_, publishBtn_, archiveBtn_, revokeBtn_})
+        b->setToolTip(b->isEnabled() ? tr("Recorded with your reason in the audit trail") : reviewWhy);
+}
+
+void CentralMethodsDialog::renderDetails(const RegistryWorkerSnapshot& s) {
+    const auto id = selectedRevision().toStdString();
+    const auto* r = findRevision(s, id);
+    if (!r) {
+        details_->clear();
+        return;
+    }
+    QStringList lines;
+    const auto* parent = findRevision(s, r->parentRevisionId);
+    lines << tr("%1 r%2 · %3 · parent %4")
+                 .arg(q(r->displayName))
+                 .arg(r->revisionNumber)
+                 .arg(stateText(r->state),
+                      r->parentRevisionId.empty() ? tr("none")
+                      : parent ? QStringLiteral("r%1").arg(parent->revisionNumber)
+                               : q(r->parentRevisionId));
+    const auto newer = backend::app::newerPublishedRevision(s, *r);
+    if (const auto* n = findRevision(s, newer)) lines << tr("Update available: r%1 is published").arg(n->revisionNumber);
+    lines << tr("Release notes: %1").arg(r->releaseNotes.empty() ? tr("(none)") : q(r->releaseNotes));
+    if (s.history && s.history->revisionId == id) {
+        for (const auto& v : s.history->reviews)
+            lines << tr("Review: %1 by %2 at %3 - %4").arg(q(v.decision), q(v.reviewerId), q(v.createdAt), q(v.reason));
+        for (const auto& e : s.history->events)
+            lines << tr("Event: %1 by %2 at %3%4")
+                         .arg(q(e.action), q(e.actorId), q(e.createdAt),
+                              e.reason.empty() ? QString{} : QStringLiteral(" - ") + q(e.reason));
+    }
+    details_->setPlainText(lines.join(QLatin1Char('\n')));
+}
+
+void CentralMethodsDialog::newDraftFromRevision() {
+    const auto id = selectedRevision().toStdString();
+    const auto s = registry_.snapshot();
+    const auto* r = findRevision(s, id);
+    if (!r) return;
+    backend::profiles::MethodDraft draft;
+    if (hooks_.currentConfigDraft &&
+        hooks_.confirm(tr("New draft"), tr("Start the draft from this instrument's current config.json on top of "
+                                           "r%1? (No: copy r%1's config.json.)")
+                                            .arg(r->revisionNumber))) {
+        std::string error;
+        draft = hooks_.currentConfigDraft(&error);
+        if (!error.empty()) {
+            setNotice(tr("Cannot start a draft: %1").arg(q(error)), true);
+            return;
+        }
+    }
+    if (registry_.requestSaveDraft(std::move(draft), id) == 0) {
+        setNotice(tr("The draft was refused."), true);
+        return;
+    }
+    setNotice(tr("Draft created from r%1; edit and submit it on the Drafts tab.").arg(r->revisionNumber), false);
+    tabs_->setCurrentWidget(drafts_);
+}
+
+void CentralMethodsDialog::transition(CentralState target) {
+    const auto id = selectedRevision().toStdString();
+    const auto s = registry_.snapshot();
+    const auto* r = findRevision(s, id);
+    if (!r) return;
+    const QString verb = target == CentralState::Approved   ? tr("Approve")
+                         : target == CentralState::Rejected  ? tr("Reject")
+                         : target == CentralState::Published ? tr("Publish")
+                         : target == CentralState::Archived  ? tr("Archive")
+                                                             : tr("Revoke");
+    QString label = tr("%1 \"%2\" r%3. Reason (recorded in the audit trail):")
+                        .arg(verb, q(r->displayName))
+                        .arg(r->revisionNumber);
+    if (target == CentralState::Revoked)
+        label += QStringLiteral("\n") + tr("Revocation is permanent: every instrument blocks Start with it.");
+    const auto reason = hooks_.askText(verb, label, {}, true);
+    if (!reason || reason->trimmed().isEmpty()) {
+        if (reason) setNotice(tr("A reason is required; nothing was changed."), true);
+        return;
+    }
+    if (registry_.requestTransition(id, target, reason->toStdString()) == 0) {
+        setNotice(tr("The request was refused."), true);
+        return;
+    }
+    setNotice(tr("%1 requested...").arg(verb), false);
+    poll();
 }
 
 void CentralMethodsDialog::apply() {
@@ -525,12 +694,15 @@ void CentralMethodsDialog::render(const RegistryWorkerSnapshot& s) {
                     }
                 }
                 if (!r.materializedDir.empty()) parts << tr("files ready");
+                if (const auto* newer = findRevision(s, backend::app::newerPublishedRevision(s, r)))
+                    parts << tr("r%1 available").arg(newer->revisionNumber);
                 return parts.join(QStringLiteral(" · "));
             }(),
         };
         for (int col = 0; col < cells.size(); ++col) {
             auto* item = new QTableWidgetItem(cells[col]);
             if (col == 4) item->setToolTip(q(r.contentHash));
+            if (col == 0 && !r.releaseNotes.empty()) item->setToolTip(q(r.releaseNotes));
             item->setData(Qt::UserRole, q(r.revisionId));
             if (r.state == CentralState::Revoked) {
                 QFont f = item->font();
@@ -544,6 +716,8 @@ void CentralMethodsDialog::render(const RegistryWorkerSnapshot& s) {
     }
     table_->resizeColumnsToContents();
     updateActions(s);
+    renderDetails(s);
+    drafts_->render(s);
 }
 
 } // namespace frontend

@@ -245,6 +245,7 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         hooks.methodContext = [this] { return backend_.methodContext(); };
         hooks.instrumentName = backend_.instrumentIdentity().name;
         hooks.currentConfigJson = [this] { return backend_.getLastConfigJson(); };
+        hooks.currentConfigDraft = [this](std::string* error) { return backend_.currentConfigDraft(error); };
         auto* previewPage = experimentTabs_ ? qobject_cast<frontend::PreviewPage*>(experimentTabs_->widget(0)) : nullptr;
         if (auto* watcher = previewPage ? previewPage->getConfigWatcher() : nullptr) {
             hooks.applyConfig = [watcher](const QByteArray& text, QString* backup) {

@@ -62,6 +62,8 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/resources/ui/SyringePumpSettingsDialog.ui
     ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/CentralMethodsDialog.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/CentralMethodsDialog.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/MethodDraftsPanel.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/MethodDraftsPanel.h
     ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/SoftwareUpdatesDialog.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/SoftwareUpdatesDialog.h
     # Controllers

@@ -2,16 +2,19 @@
 
 #include <QDialog>
 
-#include "backend/profiles/ProfileRegistry.h" // MethodContext
+#include "backend/profiles/ProfileCache.h" // MethodContext, MethodDraft
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 class QLabel;
 class QLineEdit;
+class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
+class QTabWidget;
 class QTimer;
 class QWidget;
 
@@ -43,16 +46,29 @@ struct CentralMethodsHooks {
     std::function<ValidationOutcome(const std::string& revisionId, const std::string& evidenceFile,
                                     bool passed)>
         recordValidation;
-    // Prompts; default to QFileDialog / QMessageBox. Tests replace them.
+    // #398 M3b: draft content from the instrument (AppBackend::
+    // currentConfigDraft); without it, drafts can only copy a revision.
+    std::function<backend::profiles::MethodDraft(std::string* error)> currentConfigDraft;
+    // Prompts; default to QFileDialog / QMessageBox / QInputDialog. Tests
+    // replace them. askText/chooseItem return nullopt when cancelled.
     std::function<QString(const QString& title)> pickEvidenceFile;
     std::function<bool(const QString& title, const QString& text)> confirm;
+    std::function<std::optional<QString>(const QString& title, const QString& label, const QString& initial,
+                                         bool multiline)>
+        askText;
+    std::function<std::optional<QString>(const QString& title, const QString& label, const QStringList& items)>
+        chooseItem;
 };
 
-// Central profile registry view (#398 M1/M2b): sign in / out, refresh, and the
+class MethodDraftsPanel;
+
+// Central profile registry view (#398 M1/M2b/M3b): sign in / out, refresh, and the
 // revisions cached for the signed-in (or last) user, each with its own central
 // state and its local validation on this instrument. Select a row to Apply it
 // (materialize if needed, show what changes, confirm, back up config.json,
-// apply exactly) or to record a local validation from a test-run file. All
+// apply exactly), to record a local validation from a test-run file, to start
+// a draft from it, or (by role) to approve / reject / publish / archive / revoke
+// it with a reason; the Drafts tab holds the local drafts. All
 // registry work goes through the backend ProfileRegistryWorker; the dialog
 // only enqueues commands and renders its snapshots (polled while visible), so
 // the GUI thread never waits on the network or the cache.
@@ -76,6 +92,9 @@ private:
     void continueApply(const std::string& revisionId);
     void markValidated(bool passed);
     void setNotice(const QString& text, bool error);
+    void newDraftFromRevision();
+    void transition(backend::profiles::CentralState target);
+    void renderDetails(const backend::profiles::RegistryWorkerSnapshot& snapshot);
 
     backend::profiles::ProfileRegistryWorker& registry_;
     CentralMethodsHooks hooks_;
@@ -85,6 +104,17 @@ private:
     QPushButton* applyBtn_{nullptr};
     QPushButton* validateBtn_{nullptr};
     QPushButton* failedBtn_{nullptr};
+    // #398 M3b
+    QTabWidget* tabs_{nullptr};
+    MethodDraftsPanel* drafts_{nullptr};
+    QPushButton* newDraftBtn_{nullptr};
+    QPushButton* approveBtn_{nullptr};
+    QPushButton* rejectBtn_{nullptr};
+    QPushButton* publishBtn_{nullptr};
+    QPushButton* archiveBtn_{nullptr};
+    QPushButton* revokeBtn_{nullptr};
+    QPushButton* historyBtn_{nullptr};
+    QPlainTextEdit* details_{nullptr};
     // Apply waiting for its Materialize job.
     std::uint64_t pendingApplyJob_{0};
     std::string pendingApplyRevision_;

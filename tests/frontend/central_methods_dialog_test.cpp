@@ -6,7 +6,11 @@
 // methods listed offline after a restart. M2b: Apply (materialize, confirm
 // with changed keys, exact bytes to the applier, backup reported, applied row
 // marked), revoked rows not applicable/validatable, Mark validated hands the
-// picked test run to the backend and shows its refusal.
+// picked test run to the backend and shows its refusal. M3b: an author starts a
+// new method from the current config, submits it, cannot approve; a reviewer
+// approves (blank reason refused) and publishes with history and release
+// notes shown; a stale draft shows the compared conflict, withholds plain
+// submit, offers the branch, and "new draft from head" bases a draft on r2.
 #include "frontend/dialogs/CentralMethodsDialog.h"
 
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -21,6 +25,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QPlainTextEdit>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
 
@@ -315,6 +321,152 @@ int main(int argc, char* argv[]) {
         MIB_EXPECT(validations.size() == 1 && validations[0] == "r2|/runs/test.h5|pass", "evidence handed to the backend");
         MIB_EXPECT(notice->text().contains("Not recorded") && notice->text().contains("not recorded with this revision"),
                    "backend refusal shown");
+    }
+    watchdog.mark("M3b: author drafts, reviewer approves/publishes, conflict choices");
+    {
+        FakeSupabase lab;
+        lab.users["alice@lab"] = {"user-alice", "pw-alice", {"p1"}, {"author"}};
+        lab.users["carol@lab"] = {"user-carol", "pw-carol", {"p1"}, {"reviewer", "publisher"}};
+        mib::test::TempDir authorDir("mib_central_methods_authoring");
+        ProfileRegistryWorker alice(config(authorDir / "alice"), transportFor(lab));
+        ProfileRegistryWorker carol(config(authorDir / "carol"), transportFor(lab));
+        for (auto* w : {&alice, &carol}) MIB_REQUIRE(w->waitIdle(std::chrono::seconds(5)), "idle");
+        MIB_REQUIRE(alice.waitForJob(alice.requestSignIn("alice@lab", "pw-alice"), std::chrono::seconds(5)), "alice");
+        MIB_REQUIRE(carol.waitForJob(carol.requestSignIn("carol@lab", "pw-carol"), std::chrono::seconds(5)), "carol");
+        for (auto* w : {&alice, &carol})
+            MIB_REQUIRE(w->waitForJob(w->requestRefresh(), std::chrono::seconds(5)), "refresh");
+
+        std::vector<QString> answers; // askText answers, consumed in order
+        bool confirmAnswer = false;
+        const auto makeHooks = [&] {
+            frontend::CentralMethodsHooks h;
+            h.currentConfigDraft = [](std::string*) {
+                MethodDraft d;
+                d.configJson = R"({"config_schema_version":1,"gain":11})";
+                d.processingCoreId = "1.0";
+                d.processingContractVersion = 2;
+                d.hardwareCompatibilityJson.clear();
+                return d;
+            };
+            h.askText = [&](const QString&, const QString&, const QString&, bool) -> std::optional<QString> {
+                if (answers.empty()) return std::nullopt;
+                const auto a = answers.front();
+                answers.erase(answers.begin());
+                return a;
+            };
+            h.chooseItem = [](const QString&, const QString&, const QStringList& items) -> std::optional<QString> {
+                return items.value(0);
+            };
+            h.confirm = [&](const QString&, const QString&) { return confirmAnswer; };
+            return h;
+        };
+
+        frontend::CentralMethodsDialog authorDialog(alice, makeHooks());
+        authorDialog.show();
+        auto* tabs = find<QTabWidget>(authorDialog, "centralMethodsTabs");
+        auto* drafts = find<QTableWidget>(authorDialog, "centralMethodsDrafts");
+        auto* newMethod = find<QPushButton>(authorDialog, "centralMethodsNewMethod");
+        auto* submit = find<QPushButton>(authorDialog, "centralMethodsSubmit");
+        MIB_REQUIRE(waitUntil([&] { return newMethod->isEnabled(); }), "author may start a new method");
+        answers = {QStringLiteral("Cell Sorting"), QStringLiteral("First release")};
+        newMethod->click();
+        MIB_REQUIRE(waitUntil([&] { return drafts->rowCount() == 1; }), "draft listed");
+        MIB_EXPECT(cell(drafts, 0, 1) == QStringLiteral("new method") && cell(drafts, 0, 2).startsWith("Draft"),
+                   "new-method draft, not submitted");
+        MIB_EXPECT(alice.snapshot().revisions.empty(), "nothing sent before submit");
+        drafts->selectRow(0);
+        MIB_REQUIRE(waitUntil([&] { return submit->isEnabled(); }), "submit offered to the author");
+        submit->click();
+        MIB_REQUIRE(waitUntil([&] { return cell(drafts, 0, 2).startsWith("Submitted as r1"); }), "submitted as r1");
+
+        // The author has no reviewer role: approve stays disabled.
+        tabs->setCurrentIndex(0);
+        auto* authorTable = find<QTableWidget>(authorDialog, "centralMethodsTable");
+        MIB_REQUIRE(waitUntil([&] { return authorTable->rowCount() == 1; }), "r1 listed for alice");
+        authorTable->selectRow(0);
+        MIB_EXPECT(!find<QPushButton>(authorDialog, "centralMethodsApprove")->isEnabled(), "author cannot approve");
+
+        frontend::CentralMethodsDialog reviewerDialog(carol, makeHooks());
+        reviewerDialog.show();
+        auto* reviewTable = find<QTableWidget>(reviewerDialog, "centralMethodsTable");
+        auto* approve = find<QPushButton>(reviewerDialog, "centralMethodsApprove");
+        auto* publish = find<QPushButton>(reviewerDialog, "centralMethodsPublish");
+        MIB_REQUIRE(carol.waitForJob(carol.requestRefresh(), std::chrono::seconds(5)), "carol refresh");
+        MIB_REQUIRE(waitUntil([&] { return reviewTable->rowCount() == 1; }), "r1 listed for carol");
+        reviewTable->selectRow(0);
+        MIB_REQUIRE(waitUntil([&] { return approve->isEnabled(); }), "reviewer may approve");
+        MIB_EXPECT(!publish->isEnabled(), "publish needs an approved revision");
+        answers = {QStringLiteral("   ")};
+        approve->click();
+        MIB_EXPECT(find<QLabel>(reviewerDialog, "centralMethodsNotice")->text().contains("reason is required"),
+                   "blank reason refused locally");
+        answers = {QStringLiteral("Checked on MIB-01")};
+        approve->click();
+        MIB_REQUIRE(waitUntil([&] { return cell(reviewTable, 0, 3) == QStringLiteral("Approved (not published)"); }),
+                    "approved");
+        reviewTable->selectRow(0);
+        MIB_REQUIRE(waitUntil([&] { return publish->isEnabled(); }), "publish offered");
+        answers = {QStringLiteral("Pilot release")};
+        publish->click();
+        MIB_REQUIRE(waitUntil([&] { return cell(reviewTable, 0, 3) == QStringLiteral("Published"); }), "published");
+        reviewTable->selectRow(0);
+        find<QPushButton>(reviewerDialog, "centralMethodsHistory")->click();
+        auto* details = find<QPlainTextEdit>(reviewerDialog, "centralMethodsDetails");
+        MIB_REQUIRE(waitUntil([&] { return details->toPlainText().contains("Review: approved by user-carol"); }),
+                    "history shown");
+        MIB_EXPECT(details->toPlainText().contains("Release notes: First release"), "release notes shown");
+
+        // Alice drafts from r1 (copy), Carol publishes r2 meanwhile: conflict.
+        MIB_REQUIRE(alice.waitForJob(alice.requestRefresh(), std::chrono::seconds(5)), "alice refresh");
+        MIB_REQUIRE(waitUntil([&] { return cell(authorTable, 0, 3) == QStringLiteral("Published"); }), "alice sees r1");
+        authorTable->selectRow(0);
+        confirmAnswer = false; // copy r1's config
+        find<QPushButton>(authorDialog, "centralMethodsNewDraft")->click();
+        MIB_REQUIRE(waitUntil([&] { return drafts->rowCount() == 2; }), "draft from r1");
+        MIB_EXPECT(tabs->currentWidget() == drafts->parentWidget() || tabs->currentIndex() == 1, "drafts tab shown");
+        const auto r1 = alice.snapshot().revisions.front().revisionId;
+        MethodDraft rival;
+        rival.draftId = "rival";
+        MIB_REQUIRE(alice.waitForJob(alice.requestSaveDraft(rival, r1), std::chrono::seconds(5)), "rival draft");
+        MIB_REQUIRE(alice.waitForJob(alice.requestSubmitDraft("rival"), std::chrono::seconds(5)), "rival submitted");
+        MIB_REQUIRE(carol.waitForJob(carol.requestRefresh(), std::chrono::seconds(5)), "carol refresh");
+        std::string r2;
+        for (const auto& r : carol.snapshot().revisions)
+            if (r.revisionNumber == 2) r2 = r.revisionId;
+        MIB_REQUIRE(carol.waitForJob(carol.requestTransition(r2, CentralState::Approved, "ok"), std::chrono::seconds(5)),
+                    "r2 approved");
+        MIB_REQUIRE(carol.waitForJob(carol.requestTransition(r2, CentralState::Published, "ok"), std::chrono::seconds(5)),
+                    "r2 published");
+
+        int draftRow = -1;
+        MIB_REQUIRE(waitUntil([&] {
+                        draftRow = -1;
+                        for (int i = 0; i < drafts->rowCount(); ++i)
+                            if (cell(drafts, i, 1) == QStringLiteral("r1") && cell(drafts, i, 2).startsWith("Draft"))
+                                draftRow = i;
+                        return draftRow >= 0;
+                    }),
+                    "open draft based on r1");
+        drafts->selectRow(draftRow);
+        MIB_REQUIRE(waitUntil([&] { return submit->isEnabled(); }), "submit offered");
+        submit->click();
+        auto* conflict = find<QLabel>(authorDialog, "centralMethodsConflict");
+        MIB_REQUIRE(waitUntil([&] { return conflict->isVisible(); }), "conflict shown");
+        MIB_EXPECT(conflict->text().contains("based on r1") && conflict->text().contains("r2 has been published") &&
+                       conflict->text().contains("Nothing was sent"),
+                   "conflict explained");
+        for (int i = 0; i < drafts->rowCount(); ++i)
+            if (cell(drafts, i, 2).startsWith("CONFLICT")) drafts->selectRow(i);
+        MIB_REQUIRE(waitUntil([&] { return find<QPushButton>(authorDialog, "centralMethodsSubmitBranch")->isEnabled(); }),
+                    "branch offered");
+        MIB_EXPECT(!submit->isEnabled(), "plain submit withheld during a conflict");
+        const int before = drafts->rowCount();
+        confirmAnswer = true; // keep my config on top of the head
+        find<QPushButton>(authorDialog, "centralMethodsDraftFromHead")->click();
+        MIB_REQUIRE(waitUntil([&] { return drafts->rowCount() == before + 1; }), "new draft from head");
+        bool basedOnHead = false;
+        for (int i = 0; i < drafts->rowCount(); ++i) basedOnHead |= cell(drafts, i, 1) == QStringLiteral("r2");
+        MIB_EXPECT(basedOnHead, "the new draft is based on r2");
     }
     return mib::test::exitCode();
 }
