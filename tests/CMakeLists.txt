@@ -88,6 +88,10 @@ set_tests_properties(backend.hardware_shutdown PROPERTIES LABELS "backend;concur
 add_test(NAME backend.lifecycle_smoke COMMAND $<TARGET_FILE:mib_backend_tests> backend_lifecycle_smoke_test)
 set_tests_properties(backend.lifecycle_smoke PROPERTIES LABELS "backend")
 
+mib_add_backend_test_executable(opencv_threads_test backend/opencv_threads_test.cpp)
+add_test(NAME backend.opencv_threads COMMAND $<TARGET_FILE:mib_backend_tests> opencv_threads_test)
+set_tests_properties(backend.opencv_threads PROPERTIES LABELS "backend;processing" TIMEOUT 120)
+
 mib_add_backend_test_executable(frame_store_concurrency_test backend/frame_store_concurrency_test.cpp)
 find_package(Threads REQUIRED)
 mib_backend_test_link(frame_store_concurrency_test PRIVATE Threads::Threads)
