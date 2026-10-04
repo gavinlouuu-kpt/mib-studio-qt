@@ -119,5 +119,7 @@ frame-id gaps and 0 incomplete frames:
 
 - Recording the PL cells to HDF5 (metadata rows without images; S3).
 - Profile compiler and table upload (S2), and the store drain.
-- A board check of `PzDevMemExecutionProvider` against `pzres` (needs a board
-  slot).
+- A board check of `PzDevMemExecutionProvider` against `pzres`.
+  `tools/pz_provider_probe` (cross-built with `build.sh` and the Yocto SDK)
+  runs the provider on the PS for N seconds and reports frames, cells,
+  decode errors and gaps, like `pzres monitor`. Stop `pzres` first.
