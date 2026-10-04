@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge, type AutofocusConfig, type AutofocusStatus, type PumpStatus, type CmdResult } from '../bridge';
 import { DEFAULT_MODE, type OperatingMode } from '../commissioning';
 import { HardwareCommandOwner, hardwareGate, numericInput, validateFocusConfig } from './hardwareControlModel';
+import { PUMP_MODELS } from '../bridgeContract';
 import './HardwareControls.css';
 import {StartupDiscoveryControls} from './StartupDiscoveryControls';
 import {EndpointDiscovery} from './EndpointDiscovery';
@@ -10,6 +11,10 @@ import {PulseGeneratorControls} from './PulseGeneratorControls';
 type Props = { ready: boolean; experimentActive: boolean; append: (message: string) => void; mode?: OperatingMode; armed?: boolean; onDisarm: () => void; onSelectionChanged?: () => void };
 type Connection = { port: string; baud: string; address: string };
 const initialConnection = (): Connection => ({port: '', baud: '115200', address: '1'});
+// 0.4 rpm delivers 10 µL/min on the instrument tubing until a measured calibration replaces it.
+const DEFAULT_MICROLITERS_PER_REV = '25';
+// Where the PZ7035 instrument's peristaltic pump answers (PS UART1 RS485).
+const PERISTALTIC_DEFAULT_ENDPOINT = {port: '/dev/ttyPS1', address: '3'};
 const focusFields: Array<[keyof AutofocusConfig, string]> = [
   ['focus_setpoint', 'Focus setpoint'], ['focus_range', 'Focus range'], ['voltage_step', 'Voltage step (V)'],
   ['fine_voltage_step', 'Fine step (V)'], ['min_voltage', 'Minimum voltage (V)'], ['max_voltage', 'Maximum voltage (V)'],
@@ -37,6 +42,8 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
   const [directions, setDirections] = useState([0, 0]);
   const [volumes, setVolumes] = useState(['', '']);
   const [volumeUnits, setVolumeUnits] = useState([100, 100]);
+  const [models, setModels] = useState<number[]>([PUMP_MODELS.DlspSyringe, PUMP_MODELS.DlspSyringe]);
+  const [calibrations, setCalibrations] = useState([DEFAULT_MICROLITERS_PER_REV, DEFAULT_MICROLITERS_PER_REV]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [statusError, setStatusError] = useState('');
@@ -96,14 +103,32 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
       const connected = !!status?.connected;
       const actuateReason = gate('actuate', connected);
       const stopped = status?.run_status === 0;
+      const model = connected && status?.model !== undefined ? status.model : models[id];
+      const peristaltic = model === PUMP_MODELS.TushuiPeristaltic;
+      const selectModel = (value: number) => {
+        update(setModels, models, id, value);
+        const current = connections[id];
+        if (value === PUMP_MODELS.TushuiPeristaltic && !current.port.trim() && current.address === '1')
+          update(setConnections, connections, id, {...current, ...PERISTALTIC_DEFAULT_ENDPOINT});
+      };
       return <fieldset key={id}><legend>{id === 0 ? 'Sample pump' : 'Sheath pump'}</legend>
         <p>{status ? `${connected ? 'Connected' : 'Disconnected'} · ${['Stopped', 'Forward', 'Backward', 'Paused'][status.run_status] ?? `Unknown state ${status.run_status}`} · ${status.stalled ? 'STALLED' : 'No stall reported'}` : 'Status unknown'}</p>
-        {connected && status && <p>{status.port_name || `COM ${status.com_port}`} · Address {status.modbus_address} · Configured rate {status.configured_flow_rate} ({status.flow_rate_unit === 100 ? 'µL/min' : status.flow_rate_unit === 103 ? 'mL/min' : `unit ${status.flow_rate_unit}`}) · Direction {status.direction === 0 ? 'Infuse' : status.direction === 1 ? 'Withdraw' : 'Unknown'} · Live rate {status.current_flow_rate} · Accumulated volume {status.accumulated_volume} (device units)</p>}
+        {connected && status && <p>{peristaltic ? 'Peristaltic' : 'Syringe'} · {status.port_name || `COM ${status.com_port}`} · Address {status.modbus_address} · Configured rate {status.configured_flow_rate} ({status.flow_rate_unit === 100 ? 'µL/min' : status.flow_rate_unit === 103 ? 'mL/min' : `unit ${status.flow_rate_unit}`}) · Direction {status.direction === 0 ? 'Infuse' : status.direction === 1 ? 'Withdraw' : 'Unknown'} · Live rate {status.current_flow_rate}{peristaltic ? ' µL/min' : ''} · {peristaltic
+          ? `Head ${(status.speed_rpm ?? 0).toFixed(2)} rpm at ${status.microliters_per_rev ?? '?'} µL/rev · Delivered ≈ ${status.accumulated_volume.toFixed(1)} µL (estimated from speed)`
+          : `Accumulated volume ${status.accumulated_volume} (device units)`}</p>}
+        <div className="hardware-fields">
+          <label>Pump model<select value={model} disabled={configureDisabled || connected} onChange={e => selectModel(Number(e.target.value))}>
+            <option value={PUMP_MODELS.DlspSyringe}>Syringe (Longer dLSP)</option>
+            <option value={PUMP_MODELS.TushuiPeristaltic}>Peristaltic (Tushui)</option>
+          </select></label>
+          {peristaltic && <label>Calibration (µL per revolution)<input type="number" min="0" step="any" value={calibrations[id]} disabled={configureDisabled || connected} onChange={e => update(setCalibrations, calibrations, id, e.target.value)} /></label>}
+        </div>
         <ConnectionFields systemPort value={connections[id]} disabled={configureDisabled || connected} onChange={v => update(setConnections, connections, id, v)} />
         <div className="hardware-actions">
           <button disabled={configureDisabled || !status || connected} onClick={() => void run('Connect pump', 'configure', false, () => {
             const connection = connections[id]; const port = connection.port.trim(); if (!port) throw new Error('System serial port is required');
-            return bridge.pumpConnectEndpoint(id, /^\d+$/.test(port) ? `COM${port}` : port, numericInput(connection.baud, 'Baud rate', 1, 4000000, true), numericInput(connection.address, 'Address', 1, 247, true));
+            const microlitersPerRev = peristaltic ? numericInput(calibrations[id], 'Calibration', 0.001, 100000) : Number(DEFAULT_MICROLITERS_PER_REV);
+            return bridge.pumpConnectModel(id, model, /^\d+$/.test(port) ? `COM${port}` : port, numericInput(connection.baud, 'Baud rate', 1, 4000000, true), numericInput(connection.address, 'Address', 1, 247, true), microlitersPerRev);
           })}>Connect</button>
           <button disabled={configureDisabled || !connected} onClick={() => void run('Disconnect pump', 'configure', connected, () => bridge.pumpDisconnect(id))}>Disconnect</button>
           <button disabled={busy || !ready || !connected} onClick={() => void run('Poll pump', 'stop', connected, () => bridge.pumpPollStatus(id))}>Read device status</button>
@@ -114,9 +139,11 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
           <button disabled={configureDisabled || !connected || !stopped} onClick={() => void run('Set flow rate', 'configure', connected, () => bridge.pumpSetFlowRate(id, numericInput(rates[id], 'Flow rate', 0), units[id]))}>Apply rate</button>
           <label>Direction<select value={directions[id]} disabled={configureDisabled || !connected || !stopped} onChange={e => update(setDirections, directions, id, Number(e.target.value))}><option value={0}>Infuse</option><option value={1}>Withdraw</option></select></label>
           <button disabled={configureDisabled || !connected || !stopped} onClick={() => void run('Set direction', 'configure', connected, () => bridge.pumpSetDirection(id, directions[id]))}>Apply direction</button>
+          {!peristaltic && <>
           <label>Syringe volume (1–9999)<input type="number" min="1" max="9999" step="1" value={volumes[id]} disabled={configureDisabled || !connected || !stopped} onChange={e => update(setVolumes, volumes, id, e.target.value)} /></label>
           <label>Volume unit{unitSelect(volumeUnits[id], value => update(setVolumeUnits, volumeUnits, id, value), false)}</label>
           <button disabled={configureDisabled || !connected || !stopped} onClick={() => void run('Set syringe volume', 'configure', connected, () => bridge.pumpSetSyringeVolume(id, numericInput(volumes[id], 'Syringe volume', 1, 9999, true), volumeUnits[id]))}>Apply volume</button>
+          </>}
         </div>
         {actuateReason && <p>{actuateReason}</p>}
         <div className="hardware-actions">

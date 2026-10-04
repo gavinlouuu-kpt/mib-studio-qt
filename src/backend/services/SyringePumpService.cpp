@@ -3,9 +3,11 @@
 #include <string>
 #include "backend/services/ModbusRtu.h"
 #include "backend/services/SerialBus.h"
+#include "backend/services/TushuiPumpProtocol.h"
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace backend::services {
@@ -39,6 +41,14 @@ namespace {
     const char* pumpName(SyringePumpService::PumpId id) {
         return id == SyringePumpService::PumpId::Sample ? "Sample" : "Sheath";
     }
+
+    const char* pumpName(int idx) {
+        return pumpName(static_cast<SyringePumpService::PumpId>(idx));
+    }
+
+    // Flow-rate unit codes shared with the dLSP protocol and the UI.
+    constexpr uint16_t UNIT_UL_PER_MIN = 100;
+    constexpr uint16_t UNIT_ML_PER_MIN = 103;
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -158,6 +168,13 @@ bool SyringePumpService::connect(PumpId id, int comPort, int baudRate, uint8_t m
 
 bool SyringePumpService::connect(PumpId id, const std::string& portName, int baudRate,
                                  uint8_t modbusAddress) {
+    return connect(id, portName, baudRate, modbusAddress, PumpModel::DlspSyringe,
+                   tushui::kDefaultMicrolitersPerRev);
+}
+
+bool SyringePumpService::connect(PumpId id, const std::string& portName, int baudRate,
+                                 uint8_t modbusAddress, PumpModel model,
+                                 double microlitersPerRev) {
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
 
@@ -173,6 +190,10 @@ bool SyringePumpService::connect(PumpId id, const std::string& portName, int bau
     pump.config.comPort = -1; // unknown unless the int overload fills it in
     pump.config.baudRate = baudRate;
     pump.config.modbusAddress = modbusAddress;
+    pump.config.model = model;
+    pump.config.microlitersPerRev = microlitersPerRev;
+    pump.purging = false;
+    pump.status = PumpStatus{};
 
     // Acquire the shared bus session for this adapter (8N1, pump default).
     // If another service already holds the adapter with the same settings the
@@ -188,8 +209,21 @@ bool SyringePumpService::connect(PumpId id, const std::string& portName, int bau
                     errorDetail);
         return false;
     }
-    SPDLOG_INFO("SyringePumpService: {} opened for {} pump (baud={}, addr={})",
-                portName, pumpName(id), baudRate, modbusAddress);
+    SPDLOG_INFO("SyringePumpService: {} opened for {} pump (baud={}, addr={}, model={})",
+                portName, pumpName(id), baudRate, modbusAddress,
+                model == PumpModel::TushuiPeristaltic ? "Tushui peristaltic" : "dLSP syringe");
+
+    if (model == PumpModel::TushuiPeristaltic) {
+        if (!peristalticConnect(idx)) {
+            SPDLOG_ERROR("SyringePumpService: {} pump not responding on {} addr={} — check wiring and address",
+                         pumpName(id), portName, modbusAddress);
+            pump.bus.reset();
+            return false;
+        }
+        pump.status.connected = true;
+        SPDLOG_INFO("SyringePumpService: {} pump connected on {}", pumpName(id), portName);
+        return true;
+    }
 
     // Verify communication by enabling the channel (required for start/stop commands)
     if (!writeSingleRegister(idx, REG_CHANNEL_ENABLE, 1)) {
@@ -226,7 +260,11 @@ void SyringePumpService::disconnect(PumpId id) {
     }
 
     // Try to stop the pump before disconnecting
-    if (pump.status.connected && pump.status.runStatus != RunStatus::Stop) {
+    if (pump.status.connected && pump.config.model == PumpModel::TushuiPeristaltic) {
+        // The peristaltic pump reports no run state until polled, so stop it
+        // unconditionally; this also restores the flow speed after a purge.
+        peristalticStop(idx);
+    } else if (pump.status.connected && pump.status.runStatus != RunStatus::Stop) {
         writeSingleRegister(idx, REG_RUN_COMMAND, 0);
     }
 
@@ -256,6 +294,9 @@ bool SyringePumpService::setFlowRate(PumpId id, double rate, uint16_t unit) {
     std::scoped_lock lock(pump.mutex);
 
     if (!pump.status.connected) return false;
+    if (pump.config.model == PumpModel::TushuiPeristaltic) {
+        return peristalticSetFlowRate(idx, rate, unit);
+    }
 
     uint16_t rateValue = static_cast<uint16_t>(std::clamp(rate, 1.0, 9999.0));
 
@@ -290,7 +331,12 @@ bool SyringePumpService::setDirection(PumpId id, Direction dir) {
 
     if (!pump.status.connected) return false;
 
-    if (!writeSingleRegister(idx, REG_MODE, static_cast<uint16_t>(dir))) {
+    if (pump.config.model == PumpModel::TushuiPeristaltic) {
+        if (!writeSingleRegister(idx, tushui::kRegDirection, peristalticRotation(idx, dir))) {
+            SPDLOG_ERROR("SyringePumpService: Failed to set direction for {} pump", pumpName(id));
+            return false;
+        }
+    } else if (!writeSingleRegister(idx, REG_MODE, static_cast<uint16_t>(dir))) {
         SPDLOG_ERROR("SyringePumpService: Failed to set direction for {} pump", pumpName(id));
         return false;
     }
@@ -307,6 +353,16 @@ bool SyringePumpService::start(PumpId id) {
     std::scoped_lock lock(pump.mutex);
 
     if (!pump.status.connected) return false;
+
+    if (pump.config.model == PumpModel::TushuiPeristaltic) {
+        if (!peristalticRun(idx, pump.status.speedRpm, pump.config.direction)) {
+            SPDLOG_ERROR("SyringePumpService: Failed to start {} pump", pumpName(id));
+            return false;
+        }
+        SPDLOG_INFO("SyringePumpService: {} pump started ({:.2f} rpm)", pumpName(id),
+                    pump.status.speedRpm);
+        return true;
+    }
 
     // Ensure channel is enabled before starting
     if (!writeSingleRegister(idx, REG_CHANNEL_ENABLE, 1)) {
@@ -329,7 +385,8 @@ bool SyringePumpService::stop(PumpId id) {
 
     if (!pump.status.connected) return false;
 
-    if (!writeSingleRegister(idx, REG_RUN_COMMAND, 0)) {
+    if (pump.config.model == PumpModel::TushuiPeristaltic ? !peristalticStop(idx)
+                                                          : !writeSingleRegister(idx, REG_RUN_COMMAND, 0)) {
         SPDLOG_ERROR("SyringePumpService: Failed to stop {} pump", pumpName(id));
         return false;
     }
@@ -344,6 +401,20 @@ bool SyringePumpService::purge(PumpId id, Direction dir) {
     std::scoped_lock lock(pump.mutex);
 
     if (!pump.status.connected) return false;
+
+    if (pump.config.model == PumpModel::TushuiPeristaltic) {
+        // The head runs at the fixed purge speed; stop/stopPurge restore the
+        // configured flow speed and direction.
+        pump.purging = true;
+        if (!peristalticRun(idx, tushui::kPurgeRpm, dir)) {
+            SPDLOG_ERROR("SyringePumpService: Failed to purge {} pump", pumpName(id));
+            peristalticStop(idx);
+            return false;
+        }
+        SPDLOG_INFO("SyringePumpService: {} pump purge started ({}, {:.0f} rpm)", pumpName(id),
+                    dir == Direction::Infuse ? "infuse" : "withdraw", tushui::kPurgeRpm);
+        return true;
+    }
 
     if (!writeSingleRegister(idx, REG_CHANNEL_ENABLE, 1)) {
         SPDLOG_WARN("SyringePumpService: Could not enable channel for {} pump", pumpName(id));
@@ -368,7 +439,8 @@ bool SyringePumpService::stopPurge(PumpId id) {
 
     if (!pump.status.connected) return false;
 
-    if (!writeSingleRegister(idx, REG_FULL_SPEED_RUN, 0)) {
+    if (pump.config.model == PumpModel::TushuiPeristaltic ? !peristalticStop(idx)
+                                                          : !writeSingleRegister(idx, REG_FULL_SPEED_RUN, 0)) {
         SPDLOG_ERROR("SyringePumpService: Failed to stop purge for {} pump", pumpName(id));
         return false;
     }
@@ -383,6 +455,11 @@ bool SyringePumpService::setSyringeVolume(PumpId id, uint16_t volume, uint16_t u
     std::scoped_lock lock(pump.mutex);
 
     if (!pump.status.connected) return false;
+    if (pump.config.model == PumpModel::TushuiPeristaltic) {
+        SPDLOG_WARN("SyringePumpService: {} pump is peristaltic; syringe volume does not apply",
+                    pumpName(id));
+        return false;
+    }
 
     uint16_t clampedVol = static_cast<uint16_t>(std::clamp(static_cast<int>(volume), 1, 9999));
     if (!writeSingleRegister(idx, REG_SYRINGE_VOLUME, clampedVol)) {
@@ -478,6 +555,10 @@ void SyringePumpService::pollStatus(PumpId id) {
     if (!pump.status.connected || !pump.bus) {
         return;
     }
+    if (pump.config.model == PumpModel::TushuiPeristaltic) {
+        peristalticPoll(idx);
+        return;
+    }
 
     // Read run state (0=stopped, 1=running)
     std::vector<uint8_t> runData;
@@ -520,6 +601,145 @@ void SyringePumpService::pollStatus(PumpId id) {
         pump.status.accumulatedVolume = registersToFloat(
             reinterpret_cast<const uint8_t*>(volData.data()));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Peristaltic (Tushui) pump — TushuiPumpProtocol.h. Callers hold pump.mutex.
+// ---------------------------------------------------------------------------
+uint16_t SyringePumpService::peristalticRotation(int pumpIdx, Direction dir) const {
+    (void)pumpIdx;
+    // Infuse turns the head clockwise; which way that pushes liquid depends on
+    // how the tubing is loaded, so swap the tubing ends if Infuse withdraws.
+    return dir == Direction::Infuse ? tushui::kClockwise : tushui::kCounterClockwise;
+}
+
+bool SyringePumpService::peristalticConnect(int pumpIdx) {
+    auto& pump = pumps_[static_cast<size_t>(pumpIdx)];
+    // Read-only: registers 100-107 prove the device answers and give its
+    // current setpoints. Nothing is written until the operator asks.
+    std::vector<uint8_t> data;
+    tushui::Status st;
+    if (!readHoldingRegisters(pumpIdx, tushui::kStatusFirst, tushui::kStatusCount, data) ||
+        !tushui::decodeStatus(data, st)) {
+        return false;
+    }
+    if (st.slaveId != pump.config.modbusAddress) {
+        SPDLOG_WARN("SyringePumpService: {} pump reports slave id {} but answered at {}",
+                    pumpName(pumpIdx), st.slaveId, pump.config.modbusAddress);
+    }
+    const double ulPerRev = pump.config.microlitersPerRev;
+    pump.status.minFlowRate = tushui::rpmToFlow(tushui::kMinRpm, ulPerRev);
+    pump.status.maxFlowRate = tushui::rpmToFlow(tushui::kMaxRpm, ulPerRev);
+    pump.status.speedRpm = st.speedRpm;
+    pump.config.flowRate = tushui::rpmToFlow(st.speedRpm, ulPerRev);
+    pump.config.flowRateUnit = UNIT_UL_PER_MIN;
+    pump.config.direction = st.direction == peristalticRotation(pumpIdx, Direction::Withdraw)
+                                ? Direction::Withdraw
+                                : Direction::Infuse;
+    pump.lastPoll = {};
+    SPDLOG_INFO("SyringePumpService: {} peristaltic pump: {:.2f} rpm ({:.2f} µL/min at {} µL/rev), "
+                "direction {}, run state {}",
+                pumpName(pumpIdx), st.speedRpm, pump.config.flowRate, ulPerRev,
+                st.direction == tushui::kClockwise ? "CW" : "CCW", st.rawRunState);
+    peristalticPoll(pumpIdx);
+    return true;
+}
+
+bool SyringePumpService::peristalticSetFlowRate(int pumpIdx, double rate, uint16_t unit) {
+    auto& pump = pumps_[static_cast<size_t>(pumpIdx)];
+    if (unit != UNIT_UL_PER_MIN && unit != UNIT_ML_PER_MIN) {
+        SPDLOG_ERROR("SyringePumpService: {} pump: flow unit {} is not supported (µL/min or mL/min)",
+                     pumpName(pumpIdx), unit);
+        return false;
+    }
+    const double ulPerMin = unit == UNIT_ML_PER_MIN ? rate * 1000.0 : rate;
+    const double rpm = tushui::flowToRpm(ulPerMin, pump.config.microlitersPerRev);
+    // Out-of-range rates fail instead of clamping: a silently different flow
+    // is worse than an error the operator sees.
+    if (rpm < tushui::kMinRpm || rpm > tushui::kMaxRpm) {
+        SPDLOG_ERROR("SyringePumpService: {} pump: {} µL/min needs {:.3f} rpm, outside {}-{} rpm",
+                     pumpName(pumpIdx), ulPerMin, rpm, tushui::kMinRpm, tushui::kMaxRpm);
+        return false;
+    }
+    const uint16_t value = tushui::rpmToRegister(rpm);
+    if (!writeSingleRegister(pumpIdx, tushui::kRegSpeed, value)) {
+        SPDLOG_ERROR("SyringePumpService: Failed to set speed for {} pump", pumpName(pumpIdx));
+        return false;
+    }
+    pump.status.speedRpm = value / 100.0;
+    pump.config.flowRate = rate;
+    pump.config.flowRateUnit = unit;
+    SPDLOG_INFO("SyringePumpService: {} pump flow rate {} {} -> {:.2f} rpm", pumpName(pumpIdx), rate,
+                unit == UNIT_ML_PER_MIN ? "mL/min" : "µL/min", pump.status.speedRpm);
+    return true;
+}
+
+bool SyringePumpService::peristalticRun(int pumpIdx, double rpm, Direction dir) {
+    // Turns = 0 makes the pump run until stopped; the vendor default is a
+    // fixed number of turns, which would end a run on its own.
+    return writeSingleRegister(pumpIdx, tushui::kRegSpeed, tushui::rpmToRegister(rpm)) &&
+           writeSingleRegister(pumpIdx, tushui::kRegDirection, peristalticRotation(pumpIdx, dir)) &&
+           writeMultipleRegisters(pumpIdx, tushui::kRegTurnsHigh, tushui::turnsPayload(0.0)) &&
+           writeSingleRegister(pumpIdx, tushui::kRegRunState,
+                               static_cast<uint16_t>(tushui::RunState::Running));
+}
+
+bool SyringePumpService::peristalticStop(int pumpIdx) {
+    auto& pump = pumps_[static_cast<size_t>(pumpIdx)];
+    // Stop first; restoring the flow speed after a purge is secondary.
+    const bool stopped = writeSingleRegister(pumpIdx, tushui::kRegRunState,
+                                             static_cast<uint16_t>(tushui::RunState::Stopped));
+    if (stopped) {
+        pump.status.runStatus = RunStatus::Stop;
+        pump.status.currentFlowRate = 0.0;
+    }
+    if (pump.purging) {
+        const bool restored =
+            writeSingleRegister(pumpIdx, tushui::kRegSpeed, tushui::rpmToRegister(pump.status.speedRpm)) &&
+            writeSingleRegister(pumpIdx, tushui::kRegDirection,
+                                peristalticRotation(pumpIdx, pump.config.direction));
+        if (restored) {
+            pump.purging = false;
+        } else {
+            SPDLOG_WARN("SyringePumpService: {} pump: could not restore flow speed after purge",
+                        pumpName(pumpIdx));
+        }
+    }
+    return stopped;
+}
+
+void SyringePumpService::peristalticPoll(int pumpIdx) {
+    auto& pump = pumps_[static_cast<size_t>(pumpIdx)];
+    std::vector<uint8_t> data;
+    tushui::Status st;
+    if (!readHoldingRegisters(pumpIdx, tushui::kStatusFirst, tushui::kStatusCount, data) ||
+        !tushui::decodeStatus(data, st)) {
+        return;
+    }
+    const bool moving = tushui::isMoving(st.runState);
+    if (st.runState == tushui::RunState::Stopped) {
+        pump.status.runStatus = RunStatus::Stop;
+    } else if (st.runState == tushui::RunState::Paused) {
+        pump.status.runStatus = RunStatus::Pause;
+    } else {
+        const bool infusing = st.direction == peristalticRotation(pumpIdx, Direction::Infuse) &&
+                              st.runState != tushui::RunState::SuckBack;
+        pump.status.runStatus = infusing ? RunStatus::Forward : RunStatus::Backward;
+    }
+    if (!pump.purging) {
+        pump.status.speedRpm = st.speedRpm; // a purge leaves the flow setpoint untouched
+    }
+    pump.status.currentFlowRate =
+        moving ? tushui::rpmToFlow(st.speedRpm, pump.config.microlitersPerRev) : 0.0;
+
+    // The pump has no volume counter: integrate the delivered volume (µL)
+    // between polls from the head speed.
+    const auto now = std::chrono::steady_clock::now();
+    if (moving && pump.lastPoll != std::chrono::steady_clock::time_point{}) {
+        const double minutes = std::chrono::duration<double>(now - pump.lastPoll).count() / 60.0;
+        pump.status.accumulatedVolume += pump.status.currentFlowRate * minutes;
+    }
+    pump.lastPoll = now;
 }
 
 } // namespace backend::services

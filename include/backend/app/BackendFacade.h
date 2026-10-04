@@ -272,6 +272,8 @@ namespace backend::bridge
         int scanStartAddress{1};
         int scanEndAddress{8};
         int scanTimeoutMs{300};
+        int model{0}; // Connect: contract pump_models (0 dLSP syringe, 1 Tushui peristaltic)
+        double microlitersPerRev{25.0}; // Connect, peristaltic: flow calibration
     };
 
     // Autofocus / nanopositioner commands (BE-8, #278) over AutofocusService.
@@ -747,6 +749,9 @@ namespace backend::bridge
         double configuredFlowRate{0.0};
         int flowRateUnit{100};
         int direction{0};
+        int model{0}; // contract pump_models
+        double microlitersPerRev{0.0};
+        double speedRpm{0.0}; // peristaltic head speed setpoint
     };
 
     // Autofocus / nanopositioner status snapshot (BE-8): connection, enable

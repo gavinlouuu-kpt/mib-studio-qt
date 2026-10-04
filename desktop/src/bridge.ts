@@ -61,6 +61,12 @@ export interface PumpStatus {
   configured_flow_rate: number;
   flow_rate_unit: number;
   direction: number;
+  /** Contract PUMP_MODELS value (v22). */
+  model?: number;
+  /** Peristaltic flow calibration, µL per head revolution (v22). */
+  microliters_per_rev?: number;
+  /** Peristaltic head speed setpoint, rpm (v22). */
+  speed_rpm?: number;
 }
 
 /** Per-dataset capabilities of the loaded review file (schema v9, BE-6). */
@@ -450,6 +456,9 @@ export const bridge = {
   fetchAutofocusConfig: () => invoke<AutofocusConfig>("fetch_autofocus_config"),
   // Syringe pumps (schema v10, BE-7): pump 0 = Sample, 1 = Sheath.
   pumpConnectEndpoint: (pump: number, portName: string, baudRate: number, modbusAddress: number) => invokeCommand("pump_connect_endpoint", {pump, portName, baudRate, modbusAddress}),
+  // v22: either pump model in either slot; microlitersPerRev calibrates peristaltic flow.
+  pumpConnectModel: (pump: number, model: number, portName: string, baudRate: number, modbusAddress: number, microlitersPerRev: number) =>
+    invokeCommand("pump_connect_model", { pump, model, portName, baudRate, modbusAddress, microlitersPerRev }),
   pumpConnect: (pump: number, comPort: number, baudRate: number, modbusAddress: number) =>
     invokeCommand("pump_connect", { pump, comPort, baudRate, modbusAddress }),
   pumpDisconnect: (pump: number) => invokeCommand("pump_disconnect", { pump }),

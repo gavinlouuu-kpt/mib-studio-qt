@@ -64,7 +64,8 @@ fn abi_version_is_stable() {
     // v20 Camera & Alignment: set_camera_overview, save_camera_roi,
     // fetch_camera_geometry (YOFO Studio; MindVision and Aravis cameras).
     // v21 fetch_platform_info: science on the PL (YOFO Studio ADR 0008).
-    assert_eq!(ffi::bridge_abi_version(), 21);
+    // v22 pump_connect_model: dLSP syringe or Tushui peristaltic per slot.
+    assert_eq!(ffi::bridge_abi_version(), 22);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
@@ -183,6 +184,10 @@ fn pump_commands_fail_safely_without_hardware() {
     assert!(!bridge.pin_mut().pump_connect(0, 3, 115200, 300).ok);
     assert!(!bridge.pin_mut().pump_set_flow_rate(0, -5.0, 100).ok);
     assert!(!bridge.pin_mut().pump_set_syringe_volume(0, 0, 1).ok);
+    assert_eq!(sample.model, 0, "slots default to the dLSP syringe model");
+    assert!(!bridge.pin_mut().pump_connect_model(0, 2, "/dev/ttyPS1", 115200, 3, 25.0).ok);
+    assert!(!bridge.pin_mut().pump_connect_model(0, 1, "/dev/ttyPS1", 115200, 3, 0.0).ok);
+    assert!(!bridge.pin_mut().pump_connect_model(0, 1, "/dev/ttyPS1", 115200, 300, 25.0).ok);
 
     // No hardware on this platform: a real connect fails without hanging, and
     // control commands on a disconnected pump fail cleanly.

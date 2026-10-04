@@ -547,11 +547,31 @@ pub struct PumpStatus {
     configured_flow_rate: f64,
     flow_rate_unit: i32,
     direction: u32,
+    model: u32,
+    microliters_per_rev: f64,
+    speed_rpm: f64,
 }
 
 pub fn pump_connect_endpoint(state: &AppState, pump: u32, port_name: String, baud_rate: i32, modbus_address: i32) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().pump_connect_endpoint(pump, &port_name, baud_rate, modbus_address).into())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn pump_connect_model(
+    state: &AppState,
+    pump: u32,
+    model: u32,
+    port_name: String,
+    baud_rate: i32,
+    modbus_address: i32,
+    microliters_per_rev: f64,
+) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard
+        .pin_mut()
+        .pump_connect_model(pump, model, &port_name, baud_rate, modbus_address, microliters_per_rev)
+        .into())
 }
 
 pub fn pump_connect(
@@ -639,6 +659,9 @@ pub fn fetch_pump_status(state: &AppState, pump: u32) -> Result<PumpStatus, Stri
         configured_flow_rate: s.configured_flow_rate,
         flow_rate_unit: s.flow_rate_unit,
         direction: s.direction,
+        model: s.model,
+        microliters_per_rev: s.microliters_per_rev,
+        speed_rpm: s.speed_rpm,
     })
 }
 

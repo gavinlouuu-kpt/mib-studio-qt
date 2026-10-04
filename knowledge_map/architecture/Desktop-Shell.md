@@ -541,6 +541,16 @@ remain active. Shell statistics polling is independent of a possibly stale UI dr
 of the realtime-enabled toggle. Raw MIBF v2 acquisition/store epochs require bridge
 ABI 18; processed preview recipe identity remains separately scoped.
 
+## Pump model per slot (2026-10-04)
+
+The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
+field (µL per revolution, default 25), pre-fills the instrument endpoint
+`/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe
+volume controls and shows head rpm and the estimated delivered volume.
+Connect goes through `pump_connect_model` (ABI 22, [[Rust-Bridge]]), which the
+WebSocket server allows for the controlling client.
+
 ## Remembered discovery and named pump endpoints (2026-09-23)
 
 Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.

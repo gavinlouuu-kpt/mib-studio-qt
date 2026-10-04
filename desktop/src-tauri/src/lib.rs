@@ -256,6 +256,12 @@ fn pump_connect_endpoint(state: State<AppState>, pump: u32, port_name: String, b
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn pump_connect_model(state: State<AppState>, pump: u32, model: u32, port_name: String, baud_rate: i32, modbus_address: i32, microliters_per_rev: f64) -> Result<cmds::CmdResult, String> {
+    cmds::pump_connect_model(&state, pump, model, port_name, baud_rate, modbus_address, microliters_per_rev)
+}
+
+#[tauri::command]
 fn pump_connect(state: State<AppState>, pump: u32, com_port: i32, baud_rate: i32, modbus_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_connect(&state, pump, com_port, baud_rate, modbus_address)
 }
@@ -687,6 +693,7 @@ pub fn run() {
             fetch_autofocus_status,
             fetch_autofocus_config,
             pump_connect_endpoint,
+            pump_connect_model,
             pump_connect,
             pump_disconnect,
             pump_set_flow_rate,
