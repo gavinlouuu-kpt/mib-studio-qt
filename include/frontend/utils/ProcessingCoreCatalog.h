@@ -106,4 +106,24 @@ bool isLoadableAbi(const NativePluginEntry& plugin);
 // decides, per version, whether this host may offer it and why not.
 QVector<CoreOption> buildCoreOptions(const QVector<ParseResult>& trees, const HostIdentity& host);
 
+// The core the app has loaded. artifactSha256 may be empty when unknown.
+struct ActiveCore {
+    QString line;
+    QString version;
+    QString artifactSha256;
+};
+
+enum class ActivationKind { AlreadyActive, Upgrade, Downgrade, LineSwitch };
+
+// What activating this row would do. The artifact hash decides "already
+// active" when both sides know it; otherwise line + version decide.
+ActivationKind classifyActivation(const CoreOption& option, const ActiveCore& active);
+
+// The line of the loaded core: the persisted line when the persisted selection
+// is the loaded artifact (by hash, or by version when a hash is missing),
+// otherwise the bundled line, subtract-ring.
+QString resolveActiveLine(const QString& persistedLine, const QString& persistedVersion,
+                          const QString& persistedSha256, const QString& activeVersion,
+                          const QString& activeSha256);
+
 } // namespace frontend::processingcorecatalog

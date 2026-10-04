@@ -279,5 +279,39 @@ int main() {
     MIB_EXPECT(options[0].version.line != options[2].version.line &&
                    options[0].version.version == options[2].version.version,
                "same version string on two lines stays two distinct rows");
+
+    // The active core is identified by artifact, never by version string alone.
+    auto ringRow = options[0];
+    ringRow.plugin.sha256 = "AAAA";
+    auto absdiffRow = options[2];
+    absdiffRow.plugin.sha256 = "bbbb";
+    const pc::ActiveCore ringActive{"subtract-ring", "2.0.0", "aaaa"};
+    MIB_EXPECT(pc::classifyActivation(ringRow, ringActive) == pc::ActivationKind::AlreadyActive,
+               "the loaded artifact is already active (sha compared case-insensitively)");
+    MIB_EXPECT(pc::classifyActivation(absdiffRow, ringActive) == pc::ActivationKind::LineSwitch,
+               "same version on another line is a line switch, not already active");
+    absdiffRow.version.version = "0.1.0";
+    MIB_EXPECT(pc::classifyActivation(absdiffRow, ringActive) == pc::ActivationKind::LineSwitch,
+               "moving to a lower-numbered line is a line switch, not a downgrade");
+    auto olderRing = ringRow;
+    olderRing.version.version = "1.0.0";
+    olderRing.plugin.sha256 = "cccc";
+    MIB_EXPECT(pc::classifyActivation(olderRing, ringActive) == pc::ActivationKind::Downgrade,
+               "lower version on the same line is a downgrade");
+    olderRing.version.version = "3.0.0";
+    MIB_EXPECT(pc::classifyActivation(olderRing, ringActive) == pc::ActivationKind::Upgrade,
+               "higher version on the same line is an upgrade");
+    MIB_EXPECT(pc::classifyActivation(ringRow, pc::ActiveCore{"subtract-ring", "2.0.0", ""}) ==
+                   pc::ActivationKind::AlreadyActive,
+               "unknown active artifact falls back to line + version");
+
+    MIB_EXPECT(pc::resolveActiveLine("absdiff-laplacian", "2.0.0", "bbbb", "2.0.0", "aaaa") == "subtract-ring",
+               "a persisted core with the same version but another artifact does not name the active line");
+    MIB_EXPECT(pc::resolveActiveLine("absdiff-laplacian", "0.1.0", "BBBB", "0.1.0", "bbbb") == "absdiff-laplacian",
+               "the persisted line names the loaded artifact");
+    MIB_EXPECT(pc::resolveActiveLine("absdiff-laplacian", "0.1.0", "", "0.1.0", "") == "absdiff-laplacian",
+               "without artifact hashes the version decides");
+    MIB_EXPECT(pc::resolveActiveLine("", "2.0.0", "aaaa", "2.0.0", "aaaa") == "subtract-ring",
+               "legacy settings without a line are subtract-ring");
     return mib::test::exitCode();
 }

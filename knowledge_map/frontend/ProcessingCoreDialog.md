@@ -50,6 +50,14 @@ from the active profile's `processing_contract_version` (listed, not offered).
 The persisted selection keeps its line (`ProcessingCore/Line`, default
 `subtract-ring`), shown in the active-core label.
 
+The loaded core is identified by artifact, not version string:
+`processingcorecatalog::resolveActiveLine` takes the persisted line only when
+the persisted `Sha256` is the loaded artifact (version when a hash is missing),
+and `classifyActivation` marks the "selected" row and picks the prompt. A row on
+another line is a line switch, never a downgrade or a no-op, even at the same
+version: a default-No "Switch processing-core line" prompt names both lines and
+contracts. Downgrade wording applies only within one line.
+
 ## Resolution and trust chain
 
 1. Fetch `{base}/{channel}/processing-core/index.json` over HTTPS with a

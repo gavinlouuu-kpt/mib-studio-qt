@@ -39,6 +39,8 @@ private:
     void loadTreeActive(int tree, processingcorecatalog::ParseResult index);
     void finishReload(const QString& note = {});
     QNetworkReply* startRegistryGet(const QUrl& url);
+    // The loaded core, with its line resolved from the persisted selection by artifact.
+    processingcorecatalog::ActiveCore activeCore() const;
     void updateActiveCoreLabel();
     void populate();
     void setBusy(bool busy, const QString& message = {});

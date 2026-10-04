@@ -494,13 +494,8 @@ void ProcessingCoreDialog::finishReload(const QString& note) {
 }
 
 void ProcessingCoreDialog::updateActiveCoreLabel() {
+    const QString line = activeCore().line;
     const auto current = backend_.processing().activeProcessingCoreIdentity();
-    QSettings settings;
-    const bool persisted = !settings.value(QStringLiteral("ProcessingCore/Version")).toString().isEmpty() &&
-                           settings.value(QStringLiteral("ProcessingCore/Version")).toString() ==
-                               QString::fromStdString(current.version);
-    const QString line = persisted ? processingcoresettings::persistedLine(settings)
-                                   : QStringLiteral("subtract-ring");
     activeLabel_->setText(
         backend_.processing().isProcessingCorePinSatisfied()
             ? tr("Active core: %1 %2 · contract %3 · ABI %4 · %5")
@@ -509,6 +504,20 @@ void ProcessingCoreDialog::updateActiveCoreLabel() {
                   .arg(current.engineAbiVersion)
                   .arg(QString::fromStdString(current.source))
             : tr("Processing core unavailable: the selected version must be repaired."));
+}
+
+processingcorecatalog::ActiveCore ProcessingCoreDialog::activeCore() const {
+    const auto current = backend_.processing().activeProcessingCoreIdentity();
+    QSettings settings;
+    processingcorecatalog::ActiveCore active;
+    active.version = QString::fromStdString(current.version);
+    active.artifactSha256 = QString::fromStdString(current.artifactSha256);
+    active.line = processingcorecatalog::resolveActiveLine(
+        processingcoresettings::persistedLine(settings),
+        settings.value(QStringLiteral("ProcessingCore/Version")).toString(),
+        settings.value(QStringLiteral("ProcessingCore/Sha256")).toString(), active.version,
+        active.artifactSha256);
+    return active;
 }
 
 void ProcessingCoreDialog::populate() {
@@ -526,6 +535,7 @@ void ProcessingCoreDialog::populate() {
     host.profileContractVersion =
         backend_.processing().getProcessingConfig().processing_contract_version;
     options_ = processingcorecatalog::buildCoreOptions(trees_, host);
+    const auto active = activeCore();
     for (const auto& option : options_) {
         const auto& entry = option.version;
         QString label = tr("%1 %2 · Contract %3 · ABI %4")
@@ -533,8 +543,8 @@ void ProcessingCoreDialog::populate() {
                             .arg(entry.contractVersion)
                             .arg(entry.engineAbiVersion);
         if (option.channelActive) label += tr("  — channel active");
-        if (entry.version.toStdString() == current.version &&
-            static_cast<int>(current.contractVersion) == entry.contractVersion) {
+        if (processingcorecatalog::classifyActivation(option, active) ==
+            processingcorecatalog::ActivationKind::AlreadyActive) {
             label += tr("  — selected");
         }
         if (!option.disabledReason.isEmpty()) label += tr("  — %1").arg(option.disabledReason);
@@ -571,25 +581,32 @@ void ProcessingCoreDialog::prepareAndActivateSelected() {
         return;
     }
     const auto plugin = option.plugin;
-    if (version.version.toStdString() != backend_.processing().activeProcessingCoreIdentity().version) {
-        const QString currentVersion = QString::fromStdString(
-            backend_.processing().activeProcessingCoreIdentity().version);
-        const bool downgrade = processingcorecatalog::isVersionDowngrade(
-            version.version, currentVersion);
-        const auto answer = QMessageBox::question(
-            this,
-            downgrade ? tr("Confirm processing-core downgrade")
-                      : tr("Activate processing core"),
-            downgrade
-                ? tr("Downgrade the active processing core from %1 to %2?\n\n"
-                     "Existing files keep their recorded core identity and will show a "
-                     "mismatch warning; the application never switches them automatically.")
-                      .arg(currentVersion, version.version)
-                : tr("Prepare and activate processing core %1?\n\n"
-                     "Capture, experiments, recording, and batch processing must be stopped first.")
-                      .arg(version.version),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No);
+    const auto active = activeCore();
+    const auto kind = processingcorecatalog::classifyActivation(option, active);
+    if (kind != processingcorecatalog::ActivationKind::AlreadyActive) {
+        QString title = tr("Activate processing core");
+        QString text = tr("Prepare and activate processing core %1 %2?\n\n"
+                          "Capture, experiments, recording, and batch processing must be stopped first.")
+                           .arg(version.line, version.version);
+        if (kind == processingcorecatalog::ActivationKind::Downgrade) {
+            title = tr("Confirm processing-core downgrade");
+            text = tr("Downgrade the active %1 core from %2 to %3?\n\n"
+                      "Existing files keep their recorded core identity and will show a "
+                      "mismatch warning; the application never switches them automatically.")
+                       .arg(active.line, active.version, version.version);
+        } else if (kind == processingcorecatalog::ActivationKind::LineSwitch) {
+            title = tr("Switch processing-core line");
+            text = tr("Switch from %1 %2 (Contract %3) to %4 %5 (Contract %6)?\n\n"
+                      "This changes the processing algorithm. Existing files keep their recorded "
+                      "core identity and will show a mismatch warning; the application never "
+                      "switches them automatically.")
+                       .arg(active.line, active.version)
+                       .arg(backend_.processing().activeProcessingCoreIdentity().contractVersion)
+                       .arg(version.line, version.version)
+                       .arg(version.contractVersion);
+        }
+        const auto answer = QMessageBox::question(this, title, text,
+                                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (answer != QMessageBox::Yes) return;
     }
 

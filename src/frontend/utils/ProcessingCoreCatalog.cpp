@@ -438,4 +438,38 @@ bool isVersionDowngrade(const QString& candidate, const QString& current) {
     return candidatePrerelease && candidate.mid(candidateSuffix) < current.mid(currentSuffix);
 }
 
+namespace {
+
+bool sameArtifact(const QString& a, const QString& b) {
+    return !a.isEmpty() && !b.isEmpty() && a.compare(b, Qt::CaseInsensitive) == 0;
+}
+
+QString lineOrDefault(const QString& line) {
+    return line.isEmpty() ? QStringLiteral("subtract-ring") : line;
+}
+
+} // namespace
+
+ActivationKind classifyActivation(const CoreOption& option, const ActiveCore& active) {
+    const QString& sha = option.plugin.sha256;
+    if (!sha.isEmpty() && !active.artifactSha256.isEmpty()) {
+        if (sameArtifact(sha, active.artifactSha256)) return ActivationKind::AlreadyActive;
+    } else if (lineOrDefault(option.version.line) == lineOrDefault(active.line) &&
+               option.version.version == active.version) {
+        return ActivationKind::AlreadyActive;
+    }
+    if (lineOrDefault(option.version.line) != lineOrDefault(active.line)) return ActivationKind::LineSwitch;
+    return isVersionDowngrade(option.version.version, active.version) ? ActivationKind::Downgrade
+                                                                      : ActivationKind::Upgrade;
+}
+
+QString resolveActiveLine(const QString& persistedLine, const QString& persistedVersion,
+                          const QString& persistedSha256, const QString& activeVersion,
+                          const QString& activeSha256) {
+    const bool loaded = !persistedSha256.isEmpty() && !activeSha256.isEmpty()
+                            ? sameArtifact(persistedSha256, activeSha256)
+                            : !persistedVersion.isEmpty() && persistedVersion == activeVersion;
+    return loaded ? lineOrDefault(persistedLine) : QStringLiteral("subtract-ring");
+}
+
 } // namespace frontend::processingcorecatalog
