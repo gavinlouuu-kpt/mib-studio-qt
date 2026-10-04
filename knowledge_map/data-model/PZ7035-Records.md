@@ -54,8 +54,41 @@ brightness, focus metric, counts and centroid. Coordinates are in ROI 1.
   payloads, passed through encode, decode and the profile decoder, equal the
   host Contract 3 science on the same frames.
 
+## Execution providers (YOFO S1)
+
+`include/backend/processing/IExecutionProvider.h` is the seam: one
+`ProviderFrame` per sensor frame on the provider's thread. It carries the
+frame identity, flags, the `UnetCell`s, and their `FilterResult` view
+(`filterResultFromUnetCell`). `include/backend/processing/pz/PzExecutionProviders.h`:
+
+- `PzRecordPipeline` — stream checks, then assembly into ProviderFrames,
+  with status counters for decode errors, gaps, overruns, incomplete frames,
+  orphans and unknown profiles.
+- `ReplayExecutionProvider` — replays a record stream at a frame rate. The
+  stream can be `pzres capture` files from the board, or encoded vectors.
+- `PzDevMemExecutionProvider` (Linux) — the PS path as `pzres` does it.
+  - Bridge registers at `0x40101000`; ring at `0x3F000000`, 1 MiB, mapped
+    uncached with `O_SYNC` (Linux booted with `mem=1008M`).
+  - start: ring base, `tail = head` (HEAD is not reset at ARM), run id, ARM.
+  - The reader thread drains every 500 µs, writes TAIL back raw, and drains
+    once more after STOP.
+  - **Only one reader at a time:** the TAIL register is shared, so stop
+    `pzres` first.
+
+Test `processing.pz_execution_provider` covers vector replay, a corrupted
+RESULT (counted; its frame incomplete; the gap reported) and a paced
+replay's rate. With `MIB_PZ_RING_CAPTURE=<ring.bin>` it replays a board
+capture. On 2026-10-04 these captures decoded with 0 errors, 0 sequence or
+frame-id gaps and 0 incomplete frames:
+
+| Capture | Frames | Cells |
+|---|---|---|
+| `results-hw-20261003/retrain-lit-run3` | 100,090 | 100,086 (all cut off) |
+| `results-hw-20261003/dark-120s` | 600,157 | 0 |
+| `results-hw-20261004/results4-dark` | 100,091 | 0 |
+
 ## Not yet
 
-- The device mapping (`/dev/mem` or UIO onto the ring and registers).
-- Ingest into accounting, monitoring and recording on the PZ7035 line
-  (W3.B2).
+- `ProcessingService::ingestProviderFrame` (accounting, monitoring rows
+  without images, identification, recording) and provider selection in
+  `AppBackend` (W3.B2).

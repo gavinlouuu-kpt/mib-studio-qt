@@ -18,6 +18,12 @@ pz7035-imx426 ABI bundle vendored and pinned (`third_party/pz7035-abi`,
 
 See [[../data-model/PZ7035-Records]].
 
+Execution providers (YOFO S1, first slice): the `IExecutionProvider` seam,
+`PzRecordPipeline`, `ReplayExecutionProvider`, and `PzDevMemExecutionProvider`
+(the PS result ring through `/dev/mem`, as `pzres`). Three board ring
+captures (800k frames) replay with 0 decode errors and 0 gaps
+(`processing.pz_execution_provider`).
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21

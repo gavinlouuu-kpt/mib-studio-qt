@@ -381,6 +381,12 @@ add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(pz_execution_provider_test processing/pz_execution_provider_test.cpp)
+mib_backend_test_link(pz_execution_provider_test PRIVATE Threads::Threads)
+add_test(NAME processing.pz_execution_provider COMMAND $<TARGET_FILE:mib_backend_tests> pz_execution_provider_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_execution_provider PROPERTIES LABELS "processing;backend;concurrency" TIMEOUT 90)
+
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_golden_test)
 set_tests_properties(processing.science_golden PROPERTIES LABELS "processing;backend" TIMEOUT 30)
