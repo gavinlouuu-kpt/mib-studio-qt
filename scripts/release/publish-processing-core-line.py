@@ -24,7 +24,8 @@ sys.modules.setdefault("publish_processing_core", core)
 _spec.loader.exec_module(core)
 
 LINES: dict[str, dict[str, int]] = {
-    "absdiff-laplacian": {"contract_version": 2, "engine_abi_version": 2},
+    "absdiff-laplacian": {"contract_version": 2, "engine_abi_version": 2,
+                          "entrypoint": "mib_processing_get_api_v2"},
 }
 # Lines that may only publish/promote on beta until the rollout plan's Phase 3
 # (opt-in on rigs) is approved; removing a line here is that approval.
@@ -80,6 +81,16 @@ def build_line_manifest(*, line: str, channel: str, version: str, release_tag: s
                              f"expected {identity['contract_version']}")
         if str(plugin.get("version")) != version:
             raise ValueError(f"{plugin.get('filename')}: version {plugin.get('version')!r}, expected {version}")
+        # Defence in depth for manual publishes (CI already checks the sidecars):
+        # an immutable registry entry must never name the wrong ABI or line.
+        if int(plugin.get("engine_abi_version", -1)) != identity["engine_abi_version"]:
+            raise ValueError(f"{plugin.get('filename')}: engine ABI {plugin.get('engine_abi_version')!r}, "
+                             f"expected {identity['engine_abi_version']}")
+        if plugin.get("entrypoint") != identity["entrypoint"]:
+            raise ValueError(f"{plugin.get('filename')}: entrypoint {plugin.get('entrypoint')!r}, "
+                             f"expected {identity['entrypoint']}")
+        if not str(plugin.get("filename", "")).startswith(f"mib_processing_core-{line}-{version}-"):
+            raise ValueError(f"{plugin.get('filename')}: filename is not a {line} {version} artifact")
         platforms.add((str(plugin.get("os")), str(plugin.get("arch"))))
     missing = sorted(REQUIRED_PLATFORMS - platforms)
     if missing:
@@ -220,8 +231,19 @@ def _promote(args, base: str, out: Path) -> int:
     manifest = core.parse_existing_json(version_bytes, version_key)
     if (manifest.get("line"), manifest.get("channel"), manifest.get("version")) != (args.line, args.channel, version):
         raise RuntimeError(f"{version_key} does not identify {args.line} {version} on {args.channel}")
+    if manifest.get("processing_core_line_manifest_schema_version") != LINE_MANIFEST_SCHEMA_VERSION:
+        raise RuntimeError(f"{version_key} has an unsupported line manifest schema")
+    if manifest.get("contract_version") != LINES[args.line]["contract_version"]:
+        raise RuntimeError(f"{version_key} is not a Contract-{LINES[args.line]['contract_version']} document")
+    try:
+        tagged = version_from_line_tag(args.line, str(manifest.get("release_tag", "")))
+    except ValueError as exc:
+        raise RuntimeError(f"{version_key} has an invalid release tag") from exc
+    if tagged != version:
+        raise RuntimeError(f"{version_key} release tag does not name {version}")
     index_bytes, index_ok = core.read_existing_object(args, f"{base}/index.json")
-    if not index_ok:
+    if not index_ok or index_bytes is None:
+        # A missing catalog would be rebuilt with only this version, dropping history.
         raise RuntimeError(f"Refusing to promote because {base}/index.json could not be read")
     index = merge_line_index(core.parse_existing_json(index_bytes, f"{base}/index.json"), manifest,
                              args.public_base_url)

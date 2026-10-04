@@ -28,7 +28,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: processing-core-registry-${{ inputs.channel }}-${{ inputs.line }}
+  # subtract-ring keeps the group of python-wheel.yml's release job (both write
+  # {channel}/processing-core/index.json); other lines match their own release
+  # job's group, e.g. processing-core-registry-beta-absdiff-laplacian.
+  group: processing-core-registry-${{ inputs.channel }}${{ inputs.line != 'subtract-ring' && format('-{0}', inputs.line) || '' }}
   cancel-in-progress: false
 
 jobs:

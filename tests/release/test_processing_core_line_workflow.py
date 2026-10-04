@@ -5,12 +5,16 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:  # python3-yaml (env/apt-packages.txt test-extras)
-    raise unittest.SkipTest("PyYAML is not installed")
+    yaml = None
+
+# A module-level SkipTest is an error when ctest runs this file as a script.
+needs_yaml = unittest.skipUnless(yaml is not None, "PyYAML is not installed")
 
 WF = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "processing-core-line.yml"
 TAG_REF = "refs/tags/mib-processing-absdiff-laplacian-v"
 
 
+@needs_yaml
 class LineWorkflow(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -48,6 +52,7 @@ class LineWorkflow(unittest.TestCase):
 PROMOTE = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "processing-core-promote.yml"
 
 
+@needs_yaml
 class PromoteWorkflow(unittest.TestCase):
     def test_line_input_routes_absdiff_to_the_line_publisher(self) -> None:
         wf = yaml.safe_load(PROMOTE.read_text(encoding="utf-8"))
@@ -59,6 +64,26 @@ class PromoteWorkflow(unittest.TestCase):
         self.assertIn("publish-processing-core-line.py", text)
         self.assertIn("processing-core/absdiff-laplacian/latest.json", text)
         self.assertIn("inputs.line", wf["concurrency"]["group"])
+
+
+WHEEL = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "python-wheel.yml"
+
+
+@needs_yaml
+class RegistryConcurrency(unittest.TestCase):
+    def test_subtract_ring_promote_shares_the_release_publish_group(self) -> None:
+        # Both write {channel}/processing-core/index.json: they must serialize.
+        promote = yaml.safe_load(PROMOTE.read_text(encoding="utf-8"))["concurrency"]["group"]
+        release = yaml.safe_load(WHEEL.read_text(encoding="utf-8"))["jobs"]["release"]["concurrency"]["group"]
+        self.assertEqual(release, "processing-core-registry-${{ needs.validate-source-version.outputs.channel }}")
+        self.assertTrue(promote.startswith("processing-core-registry-${{ inputs.channel }}${{ inputs.line != 'subtract-ring'"),
+                        promote)
+
+    def test_absdiff_promote_shares_the_line_release_group(self) -> None:
+        line = yaml.safe_load(WF.read_text(encoding="utf-8"))["jobs"]["release"]["concurrency"]["group"]
+        self.assertEqual(line, "processing-core-registry-beta-absdiff-laplacian")
+        promote = yaml.safe_load(PROMOTE.read_text(encoding="utf-8"))["concurrency"]["group"]
+        self.assertIn("format('-{0}', inputs.line)", promote)
 
 
 if __name__ == "__main__":

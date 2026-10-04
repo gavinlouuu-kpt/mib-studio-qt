@@ -21,10 +21,11 @@ TAG = "mib-processing-absdiff-laplacian-v0.1.0"
 BASE = "https://updates.example"
 
 
-def plugin(os_name: str, arch: str = "x86_64") -> dict:
+def plugin(os_name: str, arch: str = "x86_64", version: str = "0.1.0") -> dict:
     ext = "dll" if os_name == "windows" else "so"
-    return {"filename": f"mib_processing_core-{LINE}-0.1.0-{os_name}_{arch}.{ext}", "os": os_name, "arch": arch,
-            "version": "0.1.0", "contract_version": 2, "engine_abi_version": 2, "sha256": "a" * 64}
+    return {"filename": f"mib_processing_core-{LINE}-{version}-{os_name}_{arch}.{ext}", "os": os_name, "arch": arch,
+            "version": version, "contract_version": 2, "engine_abi_version": 2,
+            "entrypoint": "mib_processing_get_api_v2", "sha256": "a" * 64}
 
 
 def manifest(channel: str = "beta", version: str = "0.1.0", plugins=None) -> dict:
@@ -74,7 +75,7 @@ class LineManifestTest(unittest.TestCase):
     def test_index_merge_sorts_and_activates(self) -> None:
         first = line_pub.merge_line_index({}, manifest(version="0.1.0"), BASE)
         second = line_pub.merge_line_index(first, manifest(version="0.2.0", plugins=[
-            plugin("windows") | {"version": "0.2.0"}, plugin("linux") | {"version": "0.2.0"}]), BASE)
+            plugin("windows", version="0.2.0"), plugin("linux", version="0.2.0")]), BASE)
         self.assertEqual(second["active_version"], "0.2.0")
         self.assertEqual([v["version"] for v in second["versions"]], ["0.2.0", "0.1.0"])
         self.assertEqual(second["line"], LINE)
@@ -204,6 +205,53 @@ class LinePublishTest(unittest.TestCase):
                                   "--endpoint", "https://r2.invalid", "--upload-method", "s3"])
         self.assertEqual(code, 1)
         upload.assert_not_called()
+
+
+class LineIntegrityTest(unittest.TestCase):
+    def test_manifest_rejects_wrong_abi_entrypoint_or_line_filename(self) -> None:
+        cases = {
+            "engine ABI": plugin("linux") | {"engine_abi_version": 1},
+            "entrypoint": plugin("linux") | {"entrypoint": "mib_processing_get_api"},
+            "filename": plugin("linux") | {"filename": "mib_processing_core-subtract-ring-0.1.0-linux_x86_64.so"},
+        }
+        for label, bad in cases.items():
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, label):
+                manifest(plugins=[plugin("windows"), bad])
+
+    def published(self) -> dict:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_release(root)
+            _, uploads = LinePublishTest().run_publish(root)
+        return dict(uploads)
+
+    def promote(self, existing: dict) -> tuple[int, list]:
+        uploads = []
+        with (mock.patch.object(line_pub.core, "read_existing_object",
+                                side_effect=lambda _a, key: (existing.get(key), True)),
+              mock.patch.object(line_pub.core, "upload_object",
+                                side_effect=lambda **kw: uploads.append(kw["key"]))):
+            code = line_pub.main(["--line", LINE, "--channel", "beta", "--promote-version", "0.1.0",
+                                  "--published-at", "2026-10-05T00:00:00Z",
+                                  "--endpoint", "https://r2.invalid", "--upload-method", "s3"])
+        return code, uploads
+
+    def test_promote_refuses_a_missing_index(self) -> None:
+        existing = self.published()
+        del existing[f"beta/processing-core/{LINE}/index.json"]
+        code, uploads = self.promote(existing)
+        self.assertEqual((code, uploads), (1, []))
+
+    def test_promote_refuses_a_document_with_the_wrong_identity(self) -> None:
+        existing = self.published()
+        key = f"beta/processing-core/{LINE}/versions/0.1.0.json"
+        for field, value in (("processing_core_line_manifest_schema_version", 99),
+                             ("contract_version", 1),
+                             ("release_tag", "mib-processing-subtract-ring-v0.1.0")):
+            doc = json.loads(existing[key]) | {field: value}
+            with self.subTest(field=field):
+                code, uploads = self.promote(existing | {key: (json.dumps(doc, indent=2) + chr(10)).encode()})
+                self.assertEqual((code, uploads), (1, []))
 
 
 if __name__ == "__main__":

@@ -174,6 +174,10 @@ only until the rollout plan's Phase 3; roll back with **Promote or roll back
 processing core** and `line = absdiff-laplacian`. See
 `docs/portable-processing-sync.md` (absdiff-laplacian registry line).
 
+**Before the first absdiff tag:** if the `Production` environment restricts
+deployment branches/tags, add `mib-processing-absdiff-laplacian-v*` to its allowed tag rules, or the
+`sign-windows`, `sign-linux` and `release` jobs wait forever for an allowed ref.
+
 ### Crash reporting (Sentry) in the tagged release
 
 The tag-triggered CI release (`.github/workflows/release.yml`) also wires up

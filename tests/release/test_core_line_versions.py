@@ -50,5 +50,17 @@ class CoreLineVersions(unittest.TestCase):
         self.assertEqual(stale, [], "runbook lines still name the pre-rename tag prefix")
 
 
+    def test_workflow_structure_test_skips_cleanly_without_pyyaml(self) -> None:
+        # ctest runs the file as a script: a missing PyYAML must exit 0 (skipped), not error.
+        import subprocess
+        import sys
+        script = REPO / "tests" / "release" / "test_processing_core_line_workflow.py"
+        code = ("import sys, runpy; sys.modules['yaml'] = None; "
+                f"runpy.run_path({str(script)!r}, run_name='__main__')")
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("skipped", (result.stdout + result.stderr).lower())
+
+
 if __name__ == "__main__":
     unittest.main()
