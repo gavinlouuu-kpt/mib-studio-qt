@@ -203,6 +203,12 @@ deliberately in `mib_processing` so the backend-only CTest lane exercises it
   threshold, installs an identity preprocessing chain, and leaves the Laplacian
   gate disabled. It never selects or activates a core.
 
+Contract 3 (`kProcessingContractVersionV3`, `unet-cells`) is defined for the
+PZ7035 U-Net cell path. `filterProcessedObjects` dispatches it to
+`filterUnetCellObjects`; no kernel serves it yet, so a Contract 3 profile is
+refused like any mismatch. Gold: `processing.contract3_cells_conformance`
+against the PL conformance vectors. The predicates match contracts by equality.
+
 Rationale and the full compatibility matrix:
 `docs/decisions/0006-processing-contract-v2.md`,
 `docs/architecture/processing-contract-compatibility.md`.

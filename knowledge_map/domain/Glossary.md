@@ -57,6 +57,13 @@
   versioning / migration / compatibility boundary is
   `backend::processing::contract` (issue V2-1); later slices add the shared
   absdiff path, the object metric, ABI v2, and persistence migration.
+- **Processing Contract 3 (`unet-cells`)** — the U-Net cell science shared with
+  the PZ7035 PL cell stage: objects are top-level mask components, a size gate
+  in pixels (`min_cell_area_px`) splits cells from **blemishes** (small
+  components, counted per frame, never objects), a 1 px cut-off rule, and
+  brightness as mean and variance instead of quartiles. Defined in
+  `science::filterUnetCellObjects`; not yet served by a shipped core. See
+  `docs/architecture/processing-contract-compatibility.md`.
 - **`difference_threshold`** — the canonical Contract-v2 config key for the
   background-difference binarization threshold. Replaces the v1
   `bg_subtract_threshold`, which is accepted only through the v1→v2 migration /

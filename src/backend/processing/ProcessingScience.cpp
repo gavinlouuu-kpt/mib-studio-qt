@@ -10,6 +10,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -200,6 +201,42 @@ double calculateLaplacianVariance(const cv::Mat& originalImage,
     return stddev[0] * stddev[0]; // variance over the object's pixels
 }
 
+bool calculateBrightnessMoments(const cv::Mat& originalImage,
+                                const std::vector<cv::Point>& contour,
+                                double& mean,
+                                double& variance) {
+    mean = variance = std::numeric_limits<double>::quiet_NaN();
+    if (originalImage.empty() || contour.empty()) {
+        return false;
+    }
+    cv::Mat gray;
+    if (originalImage.channels() == 3) {
+        cv::cvtColor(originalImage, gray, cv::COLOR_BGR2GRAY);
+    } else {
+        gray = originalImage;
+    }
+    if (gray.type() != CV_8UC1) {
+        return false;
+    }
+    const cv::Rect crop = cv::boundingRect(contour) & cv::Rect(0, 0, gray.cols, gray.rows);
+    if (crop.width <= 0 || crop.height <= 0) {
+        return false;
+    }
+    cv::Mat mask(crop.size(), CV_8UC1, cv::Scalar(0));
+    const std::vector<std::vector<cv::Point>> polys{contour};
+    cv::drawContours(mask, polys, 0, cv::Scalar(255), cv::FILLED, cv::LINE_8, cv::noArray(),
+                     INT_MAX, cv::Point(-crop.x, -crop.y));
+    if (cv::countNonZero(mask) == 0) {
+        return false;
+    }
+    cv::Scalar m;
+    cv::Scalar sd;
+    cv::meanStdDev(gray(crop), m, sd, mask);
+    mean = m[0];
+    variance = sd[0] * sd[0]; // population variance
+    return true;
+}
+
 ContourAnalysis findContours(const cv::Mat& processedImage) {
     ContourAnalysis analysis;
     cv::findContours(processedImage, analysis.allContours, analysis.hierarchy, cv::RETR_TREE,
@@ -346,8 +383,13 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
         reasons.push_back(InvalidReasonCode::NoContour);
         return reasons;
     }
-    if (config.enable_border_check && result.touchesBorder) {
+    const bool unetCells = contract::contractObjectsAreUnetCells(config.processing_contract_version);
+    if ((config.enable_border_check || unetCells) && result.touchesBorder) {
         reasons.push_back(InvalidReasonCode::Border);
+        return reasons;
+    }
+    if (unetCells && result.degenerateContour) {
+        reasons.push_back(InvalidReasonCode::NoContour);
         return reasons;
     }
 
@@ -591,7 +633,156 @@ FilterResult evaluateOuterContourObject(
     return result;
 }
 
+struct UnetCell {
+    size_t contourIdx{0};
+    cv::Rect box;
+    int pixels{0};
+    bool cutOff{false};
+};
+
+FilterResult evaluateUnetCell(const std::vector<cv::Point>& contour, const UnetCell& cell,
+                              int objectId, int objectCount, int blemishCount,
+                              const ProcessingConfig& config, const cv::Mat& originalImage,
+                              double pixelToMicronFactor, const backend::EModulusLut* eModulusLut) {
+    FilterResult result{};
+    result.ringRatio = std::numeric_limits<double>::quiet_NaN(); // no ring width
+    result.objectId = objectId;
+    result.objectCount = objectCount;
+    result.pixelCount = cell.pixels;
+    result.blemishCount = blemishCount;
+
+    populateGeometry(result, contour); // degenerate: centroid at the bbox centre
+    result.contourArea = cv::contourArea(contour);
+    result.degenerateContour = !(result.contourArea > 0.0);
+    result.inChannel = centroidInChannelBand(result, config);
+    if (!originalImage.empty()) {
+        calculateBrightnessMoments(originalImage, contour, result.brightnessMean,
+                                   result.brightnessVariance);
+        result.laplacianVariance =
+            calculateLaplacianVariance(originalImage, contour, config.laplacian_kernel_size);
+    }
+    if (cell.cutOff) {
+        result.touchesBorder = true;
+        return result;
+    }
+    if (result.degenerateContour) {
+        return result;
+    }
+
+    std::vector<cv::Point> hull;
+    cv::convexHull(contour, hull);
+    const double hullArea = cv::contourArea(hull);
+    result.areaRatio = hullArea / result.contourArea;
+    const double perimeter = cv::arcLength(hull, true);
+    const double circularity = (perimeter > 0.0) ? std::sqrt(4 * M_PI * hullArea) / perimeter : 0.0;
+    result.deformability = 1.0 - circularity;
+    result.area = hullArea;
+
+    const double areaUm = hullArea * pixelToMicronFactor * pixelToMicronFactor;
+    const bool areaInRange =
+        !config.enable_area_range_check ||
+        (areaUm >= config.area_threshold_min && areaUm <= config.area_threshold_max);
+    const bool deformabilityInRange = !config.enable_deformability_range_check ||
+                                      (result.deformability >= config.deformability_threshold_min &&
+                                       result.deformability <= config.deformability_threshold_max);
+    const bool areaRatioInRange =
+        !config.enable_area_ratio_check || (result.areaRatio <= config.area_ratio_threshold_max);
+    const bool laplacianInRange =
+        !config.enable_laplacian_variance_check ||
+        (std::isfinite(result.laplacianVariance) &&
+         result.laplacianVariance >= config.laplacian_variance_min &&
+         result.laplacianVariance <= config.laplacian_variance_max);
+    if (result.inChannel && areaInRange && deformabilityInRange && areaRatioInRange &&
+        laplacianInRange) {
+        result.inRange = true;
+        result.isValid = true;
+    }
+
+    if (eModulusLut && eModulusLut->isLoaded()) {
+        result.youngsModulus = eModulusLut->lookup(areaUm, result.deformability);
+    }
+    if (result.isValid && config.enable_target_group) {
+        const bool tgArea =
+            (areaUm >= config.target_group_area_min && areaUm <= config.target_group_area_max);
+        const bool tgDeform = (result.deformability >= config.target_group_deformability_min &&
+                               result.deformability <= config.target_group_deformability_max);
+        const bool tgEmod = !config.enable_target_group_emodulus ||
+                            (!std::isnan(result.youngsModulus) &&
+                             result.youngsModulus >= config.target_group_emodulus_min &&
+                             result.youngsModulus <= config.target_group_emodulus_max);
+        result.isTargetGroup = tgArea && tgDeform && tgEmod;
+    }
+    return result;
+}
+
 } // namespace
+
+std::vector<services::FilterResult> filterUnetCellObjects(
+    const cv::Mat& processedImage,
+    const cv::Rect& roi,
+    const services::ProcessingConfig& config,
+    const cv::Mat& originalImage,
+    double pixelToMicronFactor,
+    const backend::EModulusLut* eModulusLut) {
+    cv::Mat binary;
+    cv::compare(processedImage, 0, binary, cv::CMP_NE);
+    std::vector<std::vector<cv::Point>> contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(binary, contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_NONE);
+    cv::Mat labels;
+    cv::Mat stats;
+    cv::Mat centroids;
+    cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
+
+    const cv::Rect window =
+        roi.area() > 0 ? roi : cv::Rect(0, 0, processedImage.cols, processedImage.rows);
+    std::vector<UnetCell> cells;
+    int blemishes = 0;
+    for (size_t i = 0; i < contours.size(); ++i) {
+        if (hierarchy[i][3] >= 0 || contours[i].empty()) {
+            continue; // holes and components inside holes are not objects
+        }
+        const int label = labels.at<int>(contours[i].front());
+        UnetCell cell;
+        cell.contourIdx = i;
+        cell.pixels = stats.at<int>(label, cv::CC_STAT_AREA);
+        cell.box = cv::Rect(stats.at<int>(label, cv::CC_STAT_LEFT),
+                            stats.at<int>(label, cv::CC_STAT_TOP),
+                            stats.at<int>(label, cv::CC_STAT_WIDTH),
+                            stats.at<int>(label, cv::CC_STAT_HEIGHT));
+        cell.cutOff = cell.box.x <= window.x || cell.box.y <= window.y ||
+                      cell.box.x + cell.box.width >= window.x + window.width ||
+                      cell.box.y + cell.box.height >= window.y + window.height;
+        if (cell.pixels < config.min_cell_area_px) {
+            ++blemishes;
+            continue;
+        }
+        cells.push_back(cell);
+    }
+    std::sort(cells.begin(), cells.end(), [](const UnetCell& a, const UnetCell& b) {
+        return std::tie(a.box.x, a.box.y, a.contourIdx) < std::tie(b.box.x, b.box.y, b.contourIdx);
+    });
+
+    auto sharedContours =
+        std::make_shared<const std::vector<std::vector<cv::Point>>>(std::move(contours));
+    if (cells.empty()) {
+        FilterResult empty{};
+        empty.ringRatio = std::numeric_limits<double>::quiet_NaN();
+        empty.blemishCount = blemishes;
+        empty.allContours = sharedContours;
+        return {std::move(empty)};
+    }
+    std::vector<FilterResult> results;
+    results.reserve(cells.size());
+    const int objectCount = static_cast<int>(cells.size());
+    for (size_t i = 0; i < cells.size(); ++i) {
+        results.push_back(evaluateUnetCell((*sharedContours)[cells[i].contourIdx], cells[i],
+                                           static_cast<int>(i + 1), objectCount, blemishes, config,
+                                           originalImage, pixelToMicronFactor, eModulusLut));
+        results.back().allContours = sharedContours;
+    }
+    return results;
+}
 
 std::vector<services::FilterResult> filterProcessedObjects(
     const cv::Mat& processedImage,
@@ -600,6 +791,10 @@ std::vector<services::FilterResult> filterProcessedObjects(
     const cv::Mat& originalImage,
     double pixelToMicronFactor,
     const backend::EModulusLut* eModulusLut) {
+    if (contract::contractObjectsAreUnetCells(config.processing_contract_version)) {
+        return filterUnetCellObjects(processedImage, roi, config, originalImage,
+                                     pixelToMicronFactor, eModulusLut);
+    }
     const ContourAnalysis analysis = findContours(processedImage);
 
     // One shared copy of the frame's contours, referenced by every result (and

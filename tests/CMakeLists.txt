@@ -343,6 +343,11 @@ mib_add_backend_test_executable(processing_contract2_conformance_test processing
 add_test(NAME processing.contract2_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract2_conformance_test)
 set_tests_properties(processing.contract2_conformance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(processing_contract3_cells_conformance_test processing/processing_contract3_cells_conformance_test.cpp)
+add_test(NAME processing.contract3_cells_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract3_cells_conformance_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
+
 mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
 add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
 set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)

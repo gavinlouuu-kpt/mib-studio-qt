@@ -1,5 +1,22 @@
 # Recent Work
 
+## 2026-10-04 — Contract 3 science (`unet-cells`) equal to the PZ7035 PL
+
+The host science for U-Net cells, the same rules as the PZ7035 PL cell stage:
+`science::filterUnetCellObjects`, dispatched for `processing_contract_version`
+3. It brings `min_cell_area_px` (cells versus blemishes), a 1 px cut-off,
+brightness mean and variance, `laplacian_kernel_size`, and `NoContour` for
+degenerate contours. The contract predicates now match by equality, so Contract
+3 inherits nothing by accident. `EModulusLut::loadGrid` loads a ready grid such
+as the PL profile table.
+
+Gold: `scripts/conformance/unet-cells-v2-pl-vectors.json`, 10 frames chosen to
+cover every reason and flag of the PL vectors. `processing.contract3_cells_conformance`
+equals the PL on all of them, and on the full set of 45 frames and 181 cells
+(`MIB_UNET_CELLS_VECTORS=`). Not yet served by a core, wheel or loader: that
+comes next, with the HDF5 fields and autofocus from the per-cell Laplacian. See
+[[../services/ProcessingService]].
+
 ## 2026-10-02 — Central profile registry foundation (#398, PR #402)
 
 Provider-neutral registry contract, canonical method envelope over the existing
