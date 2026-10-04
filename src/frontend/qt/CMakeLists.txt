@@ -247,11 +247,24 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_kde_density PROPERTIES LABELS "frontend;monitoring;concurrency;safety" TIMEOUT 240)
 
+    # Issue #466: ZoomableChartView tells a click from a drag (startDragDistance),
+    # optional double-click reset, lost-release recovery.
+    mib_test_runner_add(mib_frontend_tests zoomable_chart_view_test ${PROJECT_SOURCE_DIR}/tests/frontend/zoomable_chart_view_test.cpp)
+    add_test(NAME frontend.zoomable_chart_view COMMAND $<TARGET_FILE:mib_frontend_tests> zoomable_chart_view_test)
+    set_tests_properties(frontend.zoomable_chart_view PROPERTIES LABELS "frontend;utility" TIMEOUT 60)
+
     # Review tab draws the stored KDE core contours (full-run solid, live dashed).
     mib_test_runner_add(mib_frontend_tests hdf_review_core_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_review_core_test.cpp)
     add_test(NAME frontend.hdf_review_core COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_core_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.hdf_review_core PROPERTIES LABELS "frontend;monitoring;recording" TIMEOUT 120)
+
+    # Issue #467: Review scatter click-to-view with the docked frame pane, zoom/
+    # pan, export save/restore, the shared hit fixture, 20 000-cell cost.
+    mib_test_runner_add(mib_frontend_tests hdf_review_scatter_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_review_scatter_test.cpp)
+    add_test(NAME frontend.hdf_review_scatter COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_scatter_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.hdf_review_scatter PROPERTIES LABELS "frontend;recording;safety" TIMEOUT 180)
 
     # End-to-end: real MainWindow on the mock-camera pipeline with synthetic
     # cells; KDE off / on / off phases gated on ratios (capture, processing,
@@ -260,6 +273,15 @@ if(BUILD_TESTING)
     add_test(NAME integration.monitoring_kde_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_kde_e2e_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(integration.monitoring_kde_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring;performance" TIMEOUT 300)
+
+    # End-to-end (#467): real MainWindow records an experiment on the real
+    # 512x96 cell stream, then Review opens it and the Charts scatter is
+    # driven (click → docked pane, zoom, pan, prev/next, open in window,
+    # export). Screenshots to MIB_REVIEW_E2E_OUT. Skips (77) without the asset.
+    mib_test_runner_add(mib_frontend_tests review_scatter_e2e_test ${PROJECT_SOURCE_DIR}/tests/frontend/review_scatter_e2e_test.cpp)
+    add_test(NAME integration.review_scatter_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> review_scatter_e2e_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(integration.review_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;recording" TIMEOUT 300 SKIP_RETURN_CODE 77)
 
     mib_test_runner_add(mib_frontend_tests app_config_apply_test ${PROJECT_SOURCE_DIR}/tests/frontend/app_config_apply_test.cpp)
     add_test(NAME frontend.config_apply COMMAND $<TARGET_FILE:mib_frontend_tests> app_config_apply_test
@@ -279,6 +301,14 @@ if(BUILD_TESTING)
     mib_test_runner_add(mib_frontend_tests mindvision_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/mindvision_overview_test.cpp)
     add_test(NAME frontend.mindvision_overview COMMAND $<TARGET_FILE:mib_frontend_tests> mindvision_overview_test)
     set_tests_properties(frontend.mindvision_overview PROPERTIES LABELS "frontend;camera;safety" TIMEOUT 120)
+    # dot_grid config apply: exact 64-bit seeds, Wafer Grid toggle survives reloads.
+    mib_test_runner_add(mib_frontend_tests dot_grid_config_test ${PROJECT_SOURCE_DIR}/tests/frontend/dot_grid_config_test.cpp)
+    add_test(NAME frontend.dot_grid_config COMMAND $<TARGET_FILE:mib_frontend_tests> dot_grid_config_test)
+    set_tests_properties(frontend.dot_grid_config PROPERTIES LABELS "frontend;config" TIMEOUT 120)
+    # Dot-grid localization runs on the Overview tab only (paused elsewhere).
+    mib_test_runner_add(mib_frontend_tests dot_grid_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/dot_grid_overview_test.cpp)
+    add_test(NAME frontend.dot_grid_overview COMMAND $<TARGET_FILE:mib_frontend_tests> dot_grid_overview_test)
+    set_tests_properties(frontend.dot_grid_overview PROPERTIES LABELS "frontend;processing;concurrency" TIMEOUT 180)
     mib_test_runner_finalize(mib_frontend_tests ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     # Standalone: this test runs the application's event loop through quit.
     add_executable(mainwindow_shutdown_test ${PROJECT_SOURCE_DIR}/tests/frontend/mainwindow_shutdown_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)

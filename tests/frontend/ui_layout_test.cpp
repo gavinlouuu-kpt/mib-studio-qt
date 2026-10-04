@@ -154,10 +154,20 @@ int main(int argc, char* argv[])
         const QSize before = window->minimumSizeHint();
         auto* status = window->findChild<frontend::ElidingLabel*>(QStringLiteral("statusLabel"));
         MIB_REQUIRE(status, "status label");
-        status->setText(QString(2000, QLatin1Char('W')) + QStringLiteral(" | very long status | ") + QString(500, QLatin1Char('x')));
+        const QString longStatus =
+            QString(2000, QLatin1Char('W')) + QStringLiteral(" | very long status | ") + QString(500, QLatin1Char('x'));
+        status->setText(longStatus);
         auto* reviewPath = window->findChild<frontend::ElidingLabel*>(QStringLiteral("reviewFilePathLabel"));
         if (reviewPath) reviewPath->setText(QStringLiteral("/very/long/") + QString(1500, QLatin1Char('p')) + QStringLiteral("/recording.h5"));
         settle(6);
+        // Visiting Overview auto-started the camera; its controller reports
+        // "Camera running" from a GUI-thread timer poll, i.e. only through
+        // the event loop, and may replace the text during the settle above.
+        // Re-apply it, then lay out (LayoutRequest only) and paint
+        // synchronously: no timer or queued event can run before the checks.
+        status->setText(longStatus);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        status->repaint();
         MIB_EXPECT(window->minimumSizeHint().width() == before.width(), std::string(vp.name) + ": long status/path do not widen the window");
         MIB_EXPECT(status->isElided() || status->width() > 2000, "status text is elided");
         MIB_EXPECT(status->fullText().size() > 2500 && status->toolTip() == status->fullText(), "full status kept in tooltip");

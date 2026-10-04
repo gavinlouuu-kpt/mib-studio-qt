@@ -523,11 +523,15 @@ int main(int argc, char* argv[]) {
     }
     MIB_EXPECT(kdeOn.lastKdePoints >= 200 && kdeOn.lastKdeMs < 250,
                "estimate covers the buffer and stays ms-scale");
-    MIB_EXPECT(kdeOn.captured >= 0.9 * baseline.captured,
+    // Rates, not counts: a phase whose GUI stalls (TD-16) overruns its wall
+    // time, and raw counts over 9.4 s vs 8.0 s failed at an identical 200 fps.
+    auto perSecond = [](uint64_t count, double seconds) { return seconds > 0 ? count / seconds : 0.0; };
+    MIB_EXPECT(perSecond(kdeOn.captured, kdeOn.seconds) >= 0.9 * perSecond(baseline.captured, baseline.seconds),
                "capture throughput unaffected (>= 90% of baseline)");
     MIB_EXPECT(mean(kdeOn.algoFps) >= 0.85 * mean(baseline.algoFps),
                "processing algo FPS unaffected (>= 85% of baseline)");
-    MIB_EXPECT(kdeOn.monitoringAppended >= 0.8 * baseline.monitoringAppended,
+    MIB_EXPECT(perSecond(kdeOn.monitoringAppended, kdeOn.seconds) >=
+                   0.8 * perSecond(baseline.monitoringAppended, baseline.seconds),
                "monitoring ring keeps filling (>= 80% of baseline)");
     MIB_EXPECT(lateMean(kdeOn.lag) <= std::max(2.0 * lateMean(baseline.lag), 3.0),
                "realtime overlay lag stays bounded");

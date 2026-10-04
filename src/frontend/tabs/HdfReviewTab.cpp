@@ -61,6 +61,13 @@
 #include "frontend/utils/HdfReviewExportPaths.h"
 #include "backend/recording/HdfExportService.h"
 #include "frontend/utils/ElidingLabel.h"
+#include "frontend/widgets/ZoomableChartView.h"
+
+#include <QCursor>
+#include <QLabel>
+#include <QSplitter>
+#include <QStackedWidget>
+#include <QToolTip>
 
 #include <QToolButton>
 #include <QMenu>
@@ -396,21 +403,39 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
     // Load isoelastic curves overlay
     loadIsoelasticCurves();
     
-    scatterPlotView_ = new QChartView(scatterPlotChart_, ui->chartsTab);
+    // The selected cell: one point drawn above every other series.
+    scatterHighlight_ = new QScatterSeries();
+    scatterHighlight_->setObjectName(QStringLiteral("scatterHighlight"));
+    scatterHighlight_->setName(tr("Selected cell"));
+    scatterHighlight_->setMarkerSize(13.0);
+    scatterHighlight_->setColor(QColor(0xf2, 0x8e, 0x2b));
+    scatterHighlight_->setBorderColor(Qt::white);
+    scatterHighlight_->setVisible(false);
+    scatterPlotChart_->addSeries(scatterHighlight_);
+    scatterHighlight_->attachAxis(scatterXAxis_);
+    scatterHighlight_->attachAxis(scatterYAxis_);
+    raiseScatterHighlight();
+
+    // Wheel zoom, drag pan, single click selects a cell (issue #467).
+    scatterPlotView_ = new ZoomableChartView(scatterPlotChart_, ui->chartsTab);
+    scatterPlotView_->setObjectName(QStringLiteral("reviewScatterView"));
     scatterPlotView_->setRenderHint(QPainter::Antialiasing);
+    // A double-click on a point is two selects, not a zoom reset.
+    scatterPlotView_->setResetOnDoubleClick(false);
+    scatterPlotView_->setDefaultRange(scatterXAxis_, 0, 1000);
+    scatterPlotView_->setDefaultRange(scatterYAxis_, 0, 1);
     // Right-click: compute the authoritative (full-run) KDE core contour.
     scatterPlotView_->setContextMenuPolicy(Qt::ActionsContextMenu);
     computeCoreAction_ = new QAction(tr("Compute core contour from full run"), scatterPlotView_);
     computeCoreAction_->setObjectName(QStringLiteral("computeCoreAction"));
     computeCoreAction_->setEnabled(false);
     scatterPlotView_->addAction(computeCoreAction_);
+    scatterPlotView_->addAction(scatterPlotView_->resetZoomAction());
     connect(computeCoreAction_, &QAction::triggered, this, &HdfReviewTab::startFullRunCoreComputation);
+    connect(scatterPlotView_, &ZoomableChartView::plotClicked, this, &HdfReviewTab::onScatterClicked);
+    connect(scatterPlotView_, &ZoomableChartView::plotDoubleClicked, this, &HdfReviewTab::onScatterDoubleClicked);
+    connect(scatterPlotView_, &ZoomableChartView::hoverMoved, this, &HdfReviewTab::onScatterHover);
     scatterPlotView_->setMinimumHeight(300);
-    // Replace placeholder with actual chart view
-    int scatterIndex = ui->chartsLayout->indexOf(ui->scatterPlotViewPlaceholder);
-    ui->chartsLayout->removeWidget(ui->scatterPlotViewPlaceholder);
-    ui->scatterPlotViewPlaceholder->deleteLater();
-    ui->chartsLayout->insertWidget(scatterIndex, scatterPlotView_, 1);
     
     // Right side: Histogram chart
     histogramChart_ = new QChart();
@@ -444,12 +469,8 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
     
     histogramView_ = new QChartView(histogramChart_, ui->chartsTab);
     histogramView_->setRenderHint(QPainter::Antialiasing);
-    histogramView_->setMinimumHeight(300);
-    // Replace placeholder with actual chart view
-    int histogramIndex = ui->chartsLayout->indexOf(ui->histogramViewPlaceholder);
-    ui->chartsLayout->removeWidget(ui->histogramViewPlaceholder);
-    ui->histogramViewPlaceholder->deleteLater();
-    ui->chartsLayout->insertWidget(histogramIndex, histogramView_, 1);
+    histogramView_->setMinimumHeight(200);
+    setupChartsLayout();
 
     // Connect tab and table signals
     connect(ui->frameTypeTabs, QOverload<int>::of(&QTabWidget::currentChanged), 
@@ -469,6 +490,11 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
 }
 
 HdfReviewTab::~HdfReviewTab() {
+    if (chartsSplitter_ && chartsRightSplitter_) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("Review/ChartsSplitter"), chartsSplitter_->saveState());
+        settings.setValue(QStringLiteral("Review/ChartsRightSplitter"), chartsRightSplitter_->saveState());
+    }
     // The core job owns its input by value; only make sure it cannot call back.
     if (coreWatcher_) {
         coreWatcher_->disconnect(this);
@@ -710,12 +736,20 @@ void HdfReviewTab::populateFrames(const std::vector<backend::services::Processed
 }
 
 void HdfReviewTab::clearDisplay() {
+    scatterPoints_.clear();
+    scatterPointToFrame_.clear();
+    frameToScatterPoint_.clear();
+    scatterShowsLiveFile_ = false;
+    setScatterHighlight(-1);
+    paneFrame_ = -1;
+    if (framePaneStack_) framePaneStack_->setCurrentIndex(0);
     storedKdeLive_.clear();
     storedKdeAnalysis_.clear();
     drawStoredKdeContours(); // removes the previous file's contours
     validFrames_.clear();
     invalidFrames_.clear();
     selectedFrameIndex_ = -1;
+    selectedFrameValid_ = true;
     validThumbnailsLoaded_ = 0;
     invalidThumbnailsLoaded_ = 0;
     roi_ = {0, 0, 0, 0};
@@ -779,6 +813,11 @@ void HdfReviewTab::clearDisplay() {
     if (scatterXAxis_ && scatterYAxis_) {
         scatterXAxis_->setRange(0, 1000);
         scatterYAxis_->setRange(0, 1);
+    }
+    if (scatterPlotView_) {
+        scatterPlotView_->setDefaultRange(scatterXAxis_, 0, 1000);
+        scatterPlotView_->setDefaultRange(scatterYAxis_, 0, 1);
+        scatterPlotView_->resetZoom();
     }
 #if MIB_HAS_QHISTOGRAMSERIES
     if (histogramSeries_) {
@@ -1106,6 +1145,7 @@ void HdfReviewTab::onTabChanged(int index) {
     }
 
     isShowingValid_ = (index == 0);
+    if (chartsTabVisible()) refreshFramePane();
 
     // Do not rebuild image grids on tab switch; just refresh metrics view
     if (isShowingValid_) {
@@ -1125,15 +1165,15 @@ void HdfReviewTab::onTabChanged(int index) {
 }
 
 void HdfReviewTab::onThumbnailClicked(int frameIndex) {
-    setSelectedFrame(frameIndex);
+    setSelectedFrame(frameIndex, isShowingValid_);
 }
 
 void HdfReviewTab::onThumbnailDoubleClicked(int frameIndex) {
-    showFrameViewer(frameIndex);
+    showFrameViewer(frameIndex, isShowingValid_);
 }
 
 void HdfReviewTab::onViewFrameDetails(int frameIndex) {
-    showFrameViewer(frameIndex);
+    showFrameViewer(frameIndex, isShowingValid_);
 }
 
 void HdfReviewTab::onRegenerateMasks() {
@@ -1153,29 +1193,44 @@ void HdfReviewTab::onRegenerateMasks() {
 }
 
 void HdfReviewTab::onTableSelectionChanged() {
-    QTableView* table = isShowingValid_ ? ui->validMetricsTable : ui->invalidMetricsTable;
+    // The table that changed, not the visible tab: the scatter selects valid
+    // rows while the Charts tab (isShowingValid_ == false) is showing.
+    const bool valid = sender() != ui->invalidMetricsTable->selectionModel();
+    QTableView* table = valid ? ui->validMetricsTable : ui->invalidMetricsTable;
     if (!table || !table->selectionModel()) return;
     const QModelIndexList rows = table->selectionModel()->selectedRows();
     if (!rows.isEmpty()) {
-        setSelectedFrame(rows.first().row());
+        setSelectedFrame(rows.first().row(), valid);
     }
 }
 
-void HdfReviewTab::setSelectedFrame(int frameIndex) {
+void HdfReviewTab::setSelectedFrame(int frameIndex, bool valid) {
+    // Selecting the table row below re-enters through selectionChanged.
+    if (settingSelection_) return;
+    settingSelection_ = true;
+    struct Reset { bool& f; ~Reset() { f = false; } } reset{settingSelection_};
+
     if (frameIndex < 0) {
         selectedFrameIndex_ = -1;
         return;
     }
 
-    const auto& frames = isShowingValid_ ? validFrames_ : invalidFrames_;
+    const auto& frames = valid ? validFrames_ : invalidFrames_;
     if (frameIndex >= static_cast<int>(frames.size())) {
         return;
     }
 
     selectedFrameIndex_ = frameIndex;
+    selectedFrameValid_ = valid;
+    // The scatter highlight and the frame pane show the last *valid* cell
+    // chosen; an invalid-set selection changes neither.
+    if (valid && !isRecordingMode_) {
+        setScatterHighlight(frameIndex);
+        refreshFramePane();
+    }
 
     // Update thumbnail selection
-    QGridLayout* grid = isShowingValid_ ? ui->validImageGrid : ui->invalidImageGrid;
+    QGridLayout* grid = valid ? ui->validImageGrid : ui->invalidImageGrid;
     for (int i = 0; i < grid->count(); ++i) {
         QLayoutItem* item = grid->itemAt(i);
         if (item && item->widget()) {
@@ -1187,7 +1242,7 @@ void HdfReviewTab::setSelectedFrame(int frameIndex) {
     }
 
     // Update table selection
-    QTableView* table = isShowingValid_ ? ui->validMetricsTable : ui->invalidMetricsTable;
+    QTableView* table = valid ? ui->validMetricsTable : ui->invalidMetricsTable;
     if (table && table->model()) {
         QModelIndex idx = table->model()->index(frameIndex, 0);
         if (idx.isValid() && table->selectionModel()) {
@@ -1278,6 +1333,7 @@ void HdfReviewTab::onBatchExportMetrics() {
 
 void HdfReviewTab::onOverlayModeChanged(int index) {
     overlayMode_ = static_cast<OverlayMode>(index);
+    if (framePane_) framePane_->setOverlayMode(overlayMode_);
     SPDLOG_INFO("Overlay mode changed to index {} (OverlayMode={})", index, static_cast<int>(overlayMode_));
     thumbnailCache_.clear();
 
@@ -1301,6 +1357,7 @@ void HdfReviewTab::onOverlayModeChanged(int index) {
 
 void HdfReviewTab::onToggleRoiOverlay(bool enabled) {
     showRoiOverlay_ = enabled;
+    if (framePane_) framePane_->setShowRoiOverlay(enabled);
     SPDLOG_INFO("ROI overlay toggled: {}, ROI: x={}, y={}, w={}, h={}", 
                 enabled, roi_.x, roi_.y, roi_.w, roi_.h);
     thumbnailCache_.clear();
@@ -1597,131 +1654,81 @@ void HdfReviewTab::loadRecordingSeriesWindow(size_t frameIndex,
     }
 }
 
-void HdfReviewTab::showFrameViewer(int frameIndex) {
-    const auto& framesMeta = isShowingValid_ ? validFrames_ : invalidFrames_;
-    if (frameIndex < 0 || frameIndex >= static_cast<int>(framesMeta.size())) {
-        return;
+backend::services::ProcessedFrame HdfReviewTab::loadFrameForDisplay(int frameIndex, bool valid) const {
+    const auto& framesMeta = valid ? validFrames_ : invalidFrames_;
+    backend::services::ProcessedFrame frame = framesMeta[static_cast<size_t>(frameIndex)];
+    if (!hdfReader_) return frame;
+    const std::string imgPath = imagesPath(valid);
+    const std::string maskPath = masksPath(valid);
+    cv::Mat original, mask;
+    if (hdfReader_->readImageByIndex(imgPath, static_cast<size_t>(frameIndex), original)) {
+        frame.originalImage = original;
+        SPDLOG_TRACE("HdfReviewTab: viewer loaded original {}[{}] ({}x{}x{})",
+                     imgPath, frameIndex, original.cols, original.rows, original.channels());
     }
-    SPDLOG_INFO("HdfReviewTab: showFrameViewer index={} ({})", frameIndex, isShowingValid_ ? "valid" : "invalid");
-
-    // Build a full ProcessedFrame by fetching images on demand
-    backend::services::ProcessedFrame initialFrame = framesMeta[frameIndex];
-    const std::string imgPath = imagesPath(isShowingValid_);
-    const std::string maskPath = masksPath(isShowingValid_);
-
-    if (hdfReader_) {
-        cv::Mat original, mask;
-        if (hdfReader_->readImageByIndex(imgPath, static_cast<size_t>(frameIndex), original)) {
-            initialFrame.originalImage = original;
-            SPDLOG_TRACE("HdfReviewTab: viewer loaded original {}[{}] ({}x{}x{})",
-                         imgPath, frameIndex, original.cols, original.rows, original.channels());
-        }
-        if (!maskPath.empty() && hdfReader_->readImageByIndex(maskPath, static_cast<size_t>(frameIndex), mask)) {
-            initialFrame.processedImage = mask;
-            SPDLOG_TRACE("HdfReviewTab: viewer loaded mask {}[{}] ({}x{}x{})",
-                         maskPath, frameIndex, mask.cols, mask.rows, mask.channels());
-        }
-        // Load multi-image series data if available.
-        if (isShowingValid_) {
-            if (isRecordingMode_) {
-                loadRecordingSeriesWindow(static_cast<size_t>(frameIndex), initialFrame);
-            } else {
-                std::vector<cv::Mat> seriesImages;
-                if (hdfReader_->readSeriesImagesByIndex(static_cast<size_t>(frameIndex), seriesImages) && !seriesImages.empty()) {
-                    initialFrame.seriesImages = std::move(seriesImages);
-                    SPDLOG_DEBUG("HdfReviewTab: loaded {} series images for frame {}", initialFrame.seriesImages.size(), frameIndex);
-                }
+    if (!maskPath.empty() && hdfReader_->readImageByIndex(maskPath, static_cast<size_t>(frameIndex), mask)) {
+        frame.processedImage = mask;
+        SPDLOG_TRACE("HdfReviewTab: viewer loaded mask {}[{}] ({}x{}x{})",
+                     maskPath, frameIndex, mask.cols, mask.rows, mask.channels());
+    }
+    // Multi-image series data (valid set only).
+    if (valid) {
+        if (isRecordingMode_) {
+            loadRecordingSeriesWindow(static_cast<size_t>(frameIndex), frame);
+        } else {
+            std::vector<cv::Mat> seriesImages;
+            if (hdfReader_->readSeriesImagesByIndex(static_cast<size_t>(frameIndex), seriesImages) && !seriesImages.empty()) {
+                frame.seriesImages = std::move(seriesImages);
+                SPDLOG_DEBUG("HdfReviewTab: loaded {} series images for frame {}", frame.seriesImages.size(), frameIndex);
             }
         }
     }
+    return frame;
+}
+
+void HdfReviewTab::showFrameViewer(int frameIndex, bool valid) {
+    const auto& framesMeta = valid ? validFrames_ : invalidFrames_;
+    if (frameIndex < 0 || frameIndex >= static_cast<int>(framesMeta.size())) {
+        return;
+    }
+    SPDLOG_INFO("HdfReviewTab: showFrameViewer index={} ({})", frameIndex, valid ? "valid" : "invalid");
+    if (frameViewerSinkForTests_) {
+        frameViewerSinkForTests_(frameIndex, valid);
+        return;
+    }
+    if (scatterPlotView_) scatterPlotView_->cancelGesture();
 
     // Create dialog with current overlay mode and ROI overlay state
-    auto* dialog = new FrameViewerDialog(initialFrame, roi_, overlayMode_, showRoiOverlay_, this);
-    
-    // Store current index in a way that can be modified by lambdas
-    struct NavigationState {
-        int currentIndex;
-        bool isValidSet;
-    };
+    auto* dialog = new FrameViewerDialog(loadFrameForDisplay(frameIndex, valid), roi_, overlayMode_, showRoiOverlay_, this);
 
     // shared_ptr: each lambda co-owns the state, so its lifetime no longer
     // depends on the destroyed-signal connect ordering (a hand-rolled
     // new/delete-in-connect was one refactor away from a double free / leak).
-    auto navState = std::make_shared<NavigationState>(NavigationState{frameIndex, isShowingValid_});
-    
-    // Connect navigation signals
-    // Helper lambda to load series images for a frame.
-    auto loadSeriesImages = [this, navState](backend::services::ProcessedFrame& pf, int idx) {
-        if (navState->isValidSet && hdfReader_) {
-            if (isRecordingMode_) {
-                loadRecordingSeriesWindow(static_cast<size_t>(idx), pf);
-            } else {
-                std::vector<cv::Mat> seriesImages;
-                if (hdfReader_->readSeriesImagesByIndex(static_cast<size_t>(idx), seriesImages) && !seriesImages.empty()) {
-                    pf.seriesImages = std::move(seriesImages);
-                }
-            }
-        }
+    struct NavigationState {
+        int currentIndex;
+        bool isValidSet;
     };
+    auto navState = std::make_shared<NavigationState>(NavigationState{frameIndex, valid});
 
-    connect(dialog, &FrameViewerDialog::requestPreviousFrame, this, [this, dialog, navState, loadSeriesImages]() {
+    // Prev/next wrap around the dataset the viewer was opened on.
+    auto step = [this, dialog, navState](int delta) {
         const auto& frames = navState->isValidSet ? validFrames_ : invalidFrames_;
         if (frames.empty()) return;
-        navState->currentIndex = navState->currentIndex - 1;
-        if (navState->currentIndex < 0) {
-            navState->currentIndex = static_cast<int>(frames.size()) - 1; // Wrap to last
-        }
-        if (navState->currentIndex >= 0 && navState->currentIndex < static_cast<int>(frames.size())) {
-            // Fetch images on demand
-            backend::services::ProcessedFrame pf = frames[navState->currentIndex];
-            const std::string imgPath2 = imagesPath(navState->isValidSet);
-            const std::string maskPath2 = masksPath(navState->isValidSet);
-            if (hdfReader_) {
-                cv::Mat original2, mask2;
-                if (hdfReader_->readImageByIndex(imgPath2, static_cast<size_t>(navState->currentIndex), original2)) {
-                    pf.originalImage = original2;
-                }
-                if (!maskPath2.empty() && hdfReader_->readImageByIndex(maskPath2, static_cast<size_t>(navState->currentIndex), mask2)) {
-                    pf.processedImage = mask2;
-                }
-            }
-            loadSeriesImages(pf, navState->currentIndex);
-            dialog->setFrame(pf);
-            // Update selected frame in main view
-            setSelectedFrame(navState->currentIndex);
-        }
-    });
+        const int n = static_cast<int>(frames.size());
+        navState->currentIndex = ((navState->currentIndex + delta) % n + n) % n;
+        dialog->setFrame(loadFrameForDisplay(navState->currentIndex, navState->isValidSet));
+        // Update selected frame in main view
+        setSelectedFrame(navState->currentIndex, navState->isValidSet);
+    };
+    connect(dialog, &FrameViewerDialog::requestPreviousFrame, this, [step]() { step(-1); });
+    connect(dialog, &FrameViewerDialog::requestNextFrame, this, [step]() { step(+1); });
 
-    connect(dialog, &FrameViewerDialog::requestNextFrame, this, [this, dialog, navState, loadSeriesImages]() {
-        const auto& frames = navState->isValidSet ? validFrames_ : invalidFrames_;
-        if (frames.empty()) return;
-        navState->currentIndex = navState->currentIndex + 1;
-        if (navState->currentIndex >= static_cast<int>(frames.size())) {
-            navState->currentIndex = 0; // Wrap to first
-        }
-        if (navState->currentIndex >= 0 && navState->currentIndex < static_cast<int>(frames.size())) {
-            backend::services::ProcessedFrame pf = frames[navState->currentIndex];
-            const std::string imgPath2 = imagesPath(navState->isValidSet);
-            const std::string maskPath2 = masksPath(navState->isValidSet);
-            if (hdfReader_) {
-                cv::Mat original2, mask2;
-                if (hdfReader_->readImageByIndex(imgPath2, static_cast<size_t>(navState->currentIndex), original2)) {
-                    pf.originalImage = original2;
-                }
-                if (!maskPath2.empty() && hdfReader_->readImageByIndex(maskPath2, static_cast<size_t>(navState->currentIndex), mask2)) {
-                    pf.processedImage = mask2;
-                }
-            }
-            loadSeriesImages(pf, navState->currentIndex);
-            dialog->setFrame(pf);
-            // Update selected frame in main view
-            setSelectedFrame(navState->currentIndex);
-        }
-    });
-    
-    // Show dialog
+    // Show dialog. The pane (if the Charts tab is showing) catches up once.
     dialog->setAttribute(Qt::WA_DeleteOnClose);
+    modalViewerOpen_ = true;
     dialog->exec();
+    modalViewerOpen_ = false;
+    if (paneStale_) refreshFramePane();
 }
 
 void HdfReviewTab::onExportAll() {
@@ -1806,6 +1813,9 @@ void HdfReviewTab::onBatchExportAll() {
     batch->root = rootPath;
     batch->metricsOnly = false;
     batch_ = std::move(batch);
+    // Batch snapshots draw other files on this scatter; bring the live
+    // file's view back when the batch ends.
+    if (hdfReader_ && !isRecordingMode_) batchScatterRestore_ = saveScatterView();
     continueBatchExport();
 }
 
@@ -1986,19 +1996,30 @@ void HdfReviewTab::reportExportNotCompleted(const QString& title, const backend:
 std::map<std::string, cv::Mat> HdfReviewTab::renderChartSnapshots(
     const std::vector<backend::services::ProcessedFrame>& validFrames) {
     std::map<std::string, cv::Mat> snapshots;
+    // Snapshots are full extent without the selection; the live file's view
+    // (zoom, highlight) comes back afterwards. Batch snapshots of other files
+    // are restored once at the end of the batch (continueBatchExport).
+    const bool liveFile = (&validFrames == &validFrames_);
+    const ScatterViewState saved = saveScatterView();
     generateScatterPlot(validFrames);
     generateHistogram(validFrames);
+    if (scatterHighlight_) scatterHighlight_->setVisible(false);
     auto toBgr = [](const QPixmap& pixmap) {
         cv::Mat bgr;
         if (pixmap.isNull()) return bgr;
         QImage image = pixmap.toImage().convertToFormat(QImage::Format_RGB32);
-        cv::Mat rgba(image.height(), image.width(), CV_8UC4, const_cast<uchar*>(image.constBits()),
+        // Format_RGB32 is 0xAARRGGBB, i.e. B,G,R,A bytes in memory: BGRA to
+        // OpenCV. Converting it as RGBA swapped red and blue in every
+        // exported chart (blue points came out orange) until
+        // integration.review_scatter_e2e looked at the snapshot.
+        cv::Mat bgra(image.height(), image.width(), CV_8UC4, const_cast<uchar*>(image.constBits()),
                      static_cast<size_t>(image.bytesPerLine()));
-        cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR); // deep copy; independent of the QImage
+        cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR); // deep copy; independent of the QImage
         return bgr;
     };
     snapshots["scatter_plot.tiff"] = toBgr(chartToPixmap(scatterPlotView_));
     snapshots["ring_width_histogram.tiff"] = toBgr(chartToPixmap(histogramView_));
+    if (liveFile) restoreScatterView(saved);
     return snapshots;
 }
 
@@ -2078,7 +2099,9 @@ void HdfReviewTab::continueBatchExport() {
     finishExportUi();
     if (!batch->metricsOnly && hdfReader_ && (!validFrames_.empty() || !invalidFrames_.empty())) {
         updateCharts(); // restore the live file's charts after batch snapshots
+        if (batchScatterRestore_) restoreScatterView(*batchScatterRestore_);
     }
+    batchScatterRestore_.reset();
     if (batch->exported > 0) {
         if (batch->metricsOnly) rememberMetricsExportDir(batch->root);
         else rememberExportAllRootDir(batch->root);
@@ -2117,57 +2140,19 @@ void HdfReviewTab::onExportCharts() {
         return;
     }
 
-    QDir dir(dirPath);
+    // The same snapshots Export All embeds, written as files.
+    const QDir dir(dirPath);
     bool success = true;
-    
-    // Generate charts from current data
-    generateScatterPlot(validFrames_);
-    generateHistogram(validFrames_);
-    
-    // Export scatter plot
-    QString scatterPath = dir.filePath("scatter_plot.tiff");
-    QPixmap scatterPixmap = chartToPixmap(scatterPlotView_);
-    if (!scatterPixmap.isNull()) {
-        QImage scatterImage = scatterPixmap.toImage();
-        // Convert to RGB32 format for consistent handling
-        scatterImage = scatterImage.convertToFormat(QImage::Format_RGB32);
-        cv::Mat scatterMat(scatterImage.height(), scatterImage.width(), CV_8UC4, 
-                          const_cast<uchar*>(scatterImage.constBits()), 
-                          scatterImage.bytesPerLine());
-        cv::Mat scatterBGR;
-        cv::cvtColor(scatterMat, scatterBGR, cv::COLOR_RGBA2BGR);
-        if (!cv::imwrite(scatterPath.toStdString(), scatterBGR)) {
-            SPDLOG_WARN("Failed to write scatter plot TIFF: {}", scatterPath.toStdString());
+    for (const auto& [name, image] : renderChartSnapshots(validFrames_)) {
+        const QString path = dir.filePath(QString::fromStdString(name));
+        if (image.empty() || !cv::imwrite(path.toStdString(), image)) {
+            SPDLOG_WARN("Failed to write chart TIFF: {}", path.toStdString());
             success = false;
         } else {
-            SPDLOG_INFO("Exported scatter plot {}x{} to {}", scatterBGR.cols, scatterBGR.rows, scatterPath.toStdString());
+            SPDLOG_INFO("Exported chart {}x{} to {}", image.cols, image.rows, path.toStdString());
         }
-    } else {
-        success = false;
     }
-    
-    // Export histogram
-    QString histogramPath = dir.filePath("ring_width_histogram.tiff");
-    QPixmap histogramPixmap = chartToPixmap(histogramView_);
-    if (!histogramPixmap.isNull()) {
-        QImage histogramImage = histogramPixmap.toImage();
-        // Convert to RGB32 format for consistent handling
-        histogramImage = histogramImage.convertToFormat(QImage::Format_RGB32);
-        cv::Mat histogramMat(histogramImage.height(), histogramImage.width(), CV_8UC4, 
-                            const_cast<uchar*>(histogramImage.constBits()), 
-                            histogramImage.bytesPerLine());
-        cv::Mat histogramBGR;
-        cv::cvtColor(histogramMat, histogramBGR, cv::COLOR_RGBA2BGR);
-        if (!cv::imwrite(histogramPath.toStdString(), histogramBGR)) {
-            SPDLOG_WARN("Failed to write histogram TIFF: {}", histogramPath.toStdString());
-            success = false;
-        } else {
-            SPDLOG_INFO("Exported histogram {}x{} to {}", histogramBGR.cols, histogramBGR.rows, histogramPath.toStdString());
-        }
-    } else {
-        success = false;
-    }
-    
+
     if (success) {
         QMessageBox::information(this, tr("Export Complete"),
                                 tr("Charts exported successfully to:\n%1").arg(dirPath));
@@ -2295,6 +2280,7 @@ void HdfReviewTab::drawStoredKdeContours() {
     };
     drawFamily(storedKdeAnalysis_, storedKdeAnalysisFraction_, false);
     drawFamily(storedKdeLive_, storedKdeLiveFraction_, true);
+    raiseScatterHighlight();
 }
 
 QString HdfReviewTab::statusTextForTests() const {
@@ -2433,10 +2419,24 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
     scatterSeries_->clear();
     drawStoredKdeContours();
     updateComputeCoreActionState();
+    scatterPoints_.clear();
+    scatterPointToFrame_.clear();
+    frameToScatterPoint_.assign(validFrames.size(), -1);
+    scatterShowsLiveFile_ = (&validFrames == &validFrames_);
+    // Home ranges for double-click / "Reset zoom"; the data extent below.
+    auto setHome = [this](double x0, double x1, double y0, double y1) {
+        scatterXAxis_->setRange(x0, x1);
+        scatterYAxis_->setRange(y0, y1);
+        if (scatterPlotView_) {
+            scatterPlotView_->setDefaultRange(scatterXAxis_, x0, x1);
+            scatterPlotView_->setDefaultRange(scatterYAxis_, y0, y1);
+        }
+        if (scatterShowsLiveFile_) setScatterHighlight(highlightFrame_);
+        else if (scatterHighlight_) scatterHighlight_->setVisible(false);
+    };
 
     if (validFrames.empty()) {
-        scatterXAxis_->setRange(0, 1000);
-        scatterYAxis_->setRange(0, 1);
+        setHome(0, 1000, 0, 1);
         return;
     }
 
@@ -2445,20 +2445,24 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
     // Area conversion: pixels² to microns² = pixels² * (microns/pixel)²
     const double areaConversionFactor = conversionFactor * conversionFactor;
 
-    // Collect points
-    std::vector<std::pair<double, double>> points;
+    // Collect points: scatterPoints_ for hit tests, seriesPoints for the chart.
+    QList<QPointF> seriesPoints;
     double minArea = std::numeric_limits<double>::max();
     double maxArea = std::numeric_limits<double>::lowest();
     double minDeform = std::numeric_limits<double>::max();
     double maxDeform = std::numeric_limits<double>::lowest();
 
-    for (const auto& frame : validFrames) {
+    for (size_t i = 0; i < validFrames.size(); ++i) {
+        const auto& frame = validFrames[i];
         if (frame.validation.isValid) {
             // Convert area from pixels² to microns²
             double areaPixels = frame.validation.area;
             double areaMicrons = areaPixels * areaConversionFactor;
             double deform = frame.validation.deformability;
-            points.push_back({areaMicrons, deform});
+            frameToScatterPoint_[i] = static_cast<int>(scatterPoints_.size());
+            scatterPointToFrame_.push_back(static_cast<int>(i));
+            scatterPoints_.push_back({areaMicrons, deform, static_cast<int>(i)});
+            seriesPoints.append(QPointF(areaMicrons, deform));
 
             minArea = std::min(minArea, areaMicrons);
             maxArea = std::max(maxArea, areaMicrons);
@@ -2467,31 +2471,30 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
         }
     }
 
-    if (points.empty()) {
-        scatterXAxis_->setRange(0, 1000);
-        scatterYAxis_->setRange(0, 1);
+    if (seriesPoints.isEmpty()) {
+        setHome(0, 1000, 0, 1);
         return;
     }
 
-    // Add scatter points
-    for (const auto& p : points) {
-        scatterSeries_->append(p.first, p.second);
-    }
+    // One geometry rebuild for the whole set: replace() emits pointsReplaced
+    // once, while append() (per point, and QList append on Qt 6.4) emits
+    // pointAdded per point and rebuilds the series geometry each time —
+    // O(n²); a 20 000-cell file took minutes to open.
+    scatterSeries_->replace(seriesPoints);
 
-    // Set axis ranges with padding
+    // Axis ranges with padding
+    double x0 = 0, x1 = 1000, y0 = 0, y1 = 1;
     if (minArea < maxArea) {
-        double areaPadding = (maxArea - minArea) * 0.1;
-        scatterXAxis_->setRange(minArea - areaPadding, maxArea + areaPadding);
-    } else {
-        scatterXAxis_->setRange(0, 1000);
+        const double areaPadding = (maxArea - minArea) * 0.1;
+        x0 = minArea - areaPadding;
+        x1 = maxArea + areaPadding;
     }
-
     if (minDeform < maxDeform) {
-        double deformPadding = (maxDeform - minDeform) * 0.1;
-        scatterYAxis_->setRange(minDeform - deformPadding, maxDeform + deformPadding);
-    } else {
-        scatterYAxis_->setRange(0, 1);
+        const double deformPadding = (maxDeform - minDeform) * 0.1;
+        y0 = minDeform - deformPadding;
+        y1 = maxDeform + deformPadding;
     }
+    setHome(x0, x1, y0, y1);
 }
 
 void HdfReviewTab::generateHistogram(const std::vector<backend::services::ProcessedFrame>& validFrames) {
@@ -2625,6 +2628,251 @@ void HdfReviewTab::generateHistogram(const std::vector<backend::services::Proces
 #endif
 }
 
+// ---- Charts view: scatter interaction and docked frame pane (issue #467) ----
+
+void HdfReviewTab::setupChartsLayout() {
+    for (QWidget* placeholder : {static_cast<QWidget*>(ui->scatterPlotViewPlaceholder),
+                                 static_cast<QWidget*>(ui->histogramViewPlaceholder)}) {
+        ui->chartsLayout->removeWidget(placeholder);
+        placeholder->deleteLater();
+    }
+
+    // Frame pane: empty state, or the embedded viewer on the selected cell.
+    framePaneStack_ = new QStackedWidget(ui->chartsTab);
+    framePaneStack_->setObjectName(QStringLiteral("reviewFramePane"));
+    auto* empty = new QLabel(tr("Click a point on the scatter to view the cell"), framePaneStack_);
+    empty->setObjectName(QStringLiteral("reviewFramePaneEmpty"));
+    empty->setAlignment(Qt::AlignCenter);
+    empty->setWordWrap(true);
+    empty->setEnabled(false);
+    framePaneStack_->addWidget(empty);
+
+    auto* page = new QWidget(framePaneStack_);
+    auto* pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->setSpacing(2);
+    framePaneTitle_ = new QLabel(page);
+    framePaneTitle_->setObjectName(QStringLiteral("reviewFramePaneTitle"));
+    pageLayout->addWidget(framePaneTitle_);
+    framePane_ = new FrameViewerDialog(backend::services::ProcessedFrame{}, roi_, overlayMode_, showRoiOverlay_, page);
+    framePane_->setEmbedded(true);
+    framePane_->setObjectName(QStringLiteral("reviewFramePaneViewer"));
+    pageLayout->addWidget(framePane_, 1);
+    framePaneStack_->addWidget(page);
+    connect(framePane_, &FrameViewerDialog::requestPreviousFrame, this, [this]() { stepScatterSelection(-1); });
+    connect(framePane_, &FrameViewerDialog::requestNextFrame, this, [this]() { stepScatterSelection(+1); });
+    connect(framePane_, &FrameViewerDialog::requestOpenInWindow, this, [this]() {
+        if (highlightFrame_ >= 0) showFrameViewer(highlightFrame_, true);
+    });
+
+    // scatter | (frame pane over histogram); the pane never covers the plot.
+    chartsRightSplitter_ = new QSplitter(Qt::Vertical, ui->chartsTab);
+    chartsRightSplitter_->setObjectName(QStringLiteral("reviewChartsRightSplitter"));
+    chartsRightSplitter_->addWidget(framePaneStack_);
+    chartsRightSplitter_->addWidget(histogramView_);
+    chartsRightSplitter_->setStretchFactor(0, 3);
+    chartsRightSplitter_->setStretchFactor(1, 2);
+    chartsRightSplitter_->setChildrenCollapsible(false);
+    chartsSplitter_ = new QSplitter(Qt::Horizontal, ui->chartsTab);
+    chartsSplitter_->setObjectName(QStringLiteral("reviewChartsSplitter"));
+    chartsSplitter_->addWidget(scatterPlotView_);
+    chartsSplitter_->addWidget(chartsRightSplitter_);
+    chartsSplitter_->setStretchFactor(0, 3);
+    chartsSplitter_->setStretchFactor(1, 2);
+    chartsSplitter_->setChildrenCollapsible(false);
+    ui->chartsLayout->addWidget(chartsSplitter_);
+    // The scatter is the point of this view: it keeps a usable width and
+    // starts with 60 % of it; the pane scrolls its image instead of growing.
+    scatterPlotView_->setMinimumWidth(420);
+    framePaneStack_->setMinimumWidth(320);
+    chartsSplitter_->setSizes({600, 400});
+    chartsRightSplitter_->setSizes({550, 300});
+
+    QSettings settings;
+    chartsSplitter_->restoreState(settings.value(QStringLiteral("Review/ChartsSplitter")).toByteArray());
+    chartsRightSplitter_->restoreState(settings.value(QStringLiteral("Review/ChartsRightSplitter")).toByteArray());
+    // Saved once in the destructor; splitterMoved fires per pixel of a drag.
+}
+
+bool HdfReviewTab::chartsTabVisible() const {
+    return ui->frameTypeTabs->currentWidget() == ui->chartsTab;
+}
+
+scatterhit::Viewport HdfReviewTab::scatterViewport() const {
+    scatterhit::Viewport v;
+    const QRectF plot = scatterPlotChart_->plotArea();
+    v.x0 = scatterXAxis_->min();
+    v.x1 = scatterXAxis_->max();
+    v.y0 = scatterYAxis_->min();
+    v.y1 = scatterYAxis_->max();
+    v.left = plot.left();
+    v.top = plot.top();
+    v.width = plot.width();
+    v.height = plot.height();
+    return v;
+}
+
+std::optional<std::size_t> HdfReviewTab::scatterPointAt(QPointF viewPos) const {
+    if (!scatterShowsLiveFile_ || scatterPoints_.empty() || !scatterPlotView_) return std::nullopt;
+    // View (viewport) -> scene -> chart item coordinates, where plotArea() lives.
+    const QPointF chartPos = scatterPlotChart_->mapFromScene(scatterPlotView_->mapToScene(viewPos.toPoint()));
+    const double tolerance = std::max(scatterSeries_->markerSize(), 8.0);
+    return scatterhit::nearest(scatterPoints_, scatterViewport(), chartPos.x(), chartPos.y(), tolerance);
+}
+
+void HdfReviewTab::onScatterClicked(QPointF viewPos, Qt::MouseButton button) {
+    if (button != Qt::LeftButton) return;
+    // An export redraws the scatter (batch: with other files' data).
+    if (exportInProgress() || !hdfReader_ || isRecordingMode_) return;
+    const auto hit = scatterPointAt(viewPos);
+    if (!hit) return; // empty space: the selection only changes on a point
+    const int frame = scatterPointToFrame_[*hit];
+    SPDLOG_DEBUG("HdfReviewTab: scatter point {} -> valid frame {}", *hit, frame);
+    selectScatterFrame(frame);
+}
+
+void HdfReviewTab::onScatterDoubleClicked(QPointF viewPos) {
+    // Same guards as a click: an export is redrawing the scatter (batch:
+    // with other files' data), and a reset there would also drop the
+    // user-zoomed flag the restore relies on.
+    if (exportInProgress() || !scatterShowsLiveFile_ || !hdfReader_ || isRecordingMode_) return;
+    // Its first click already selected; a double-click on a point never
+    // zooms out from under the user.
+    if (scatterPointAt(viewPos)) return;
+    scatterPlotView_->resetZoom();
+}
+
+void HdfReviewTab::onScatterHover(QPointF viewPos) {
+    const auto hit = exportInProgress() ? std::nullopt : scatterPointAt(viewPos);
+    if (!hit) {
+        scatterPlotView_->unsetCursor();
+        QToolTip::hideText();
+        return;
+    }
+    scatterPlotView_->setCursor(Qt::PointingHandCursor);
+    const auto& p = scatterPoints_[*hit];
+    QToolTip::showText(scatterPlotView_->mapToGlobal(viewPos.toPoint()),
+                       tr("Frame %1 · %2 µm² · deformability %3")
+                           .arg(static_cast<qulonglong>(validFrames_[static_cast<size_t>(p.frame)].index))
+                           .arg(p.x, 0, 'f', 1)
+                           .arg(p.y, 0, 'f', 4),
+                       scatterPlotView_);
+}
+
+void HdfReviewTab::selectScatterFrame(int frameIndex) {
+    setSelectedFrame(frameIndex, true); // highlight + pane follow valid selections
+}
+
+void HdfReviewTab::stepScatterSelection(int delta) {
+    if (validFrames_.empty() || isRecordingMode_) return;
+    const int n = static_cast<int>(validFrames_.size());
+    const int from = highlightFrame_ >= 0 ? highlightFrame_ : (delta > 0 ? -1 : 0);
+    selectScatterFrame(((from + delta) % n + n) % n);
+}
+
+void HdfReviewTab::setScatterHighlight(int frameIndex) {
+    highlightFrame_ = frameIndex;
+    if (!scatterHighlight_) return;
+    scatterHighlight_->clear();
+    const int point = (scatterShowsLiveFile_ && frameIndex >= 0 &&
+                       frameIndex < static_cast<int>(frameToScatterPoint_.size()))
+                          ? frameToScatterPoint_[static_cast<size_t>(frameIndex)]
+                          : -1;
+    if (point < 0) {
+        scatterHighlight_->setVisible(false); // no point for this frame (failed validation)
+        return;
+    }
+    const auto& p = scatterPoints_[static_cast<size_t>(point)];
+    scatterHighlight_->append(p.x, p.y);
+    scatterHighlight_->setVisible(true);
+}
+
+void HdfReviewTab::raiseScatterHighlight() {
+    if (!scatterHighlight_ || !scatterPlotChart_) return;
+    // Series draw in insertion order; the selection goes last.
+    const auto series = scatterPlotChart_->series();
+    if (series.isEmpty() || series.last() != scatterHighlight_) {
+        scatterPlotChart_->removeSeries(scatterHighlight_);
+        scatterPlotChart_->addSeries(scatterHighlight_);
+        scatterHighlight_->attachAxis(scatterXAxis_);
+        scatterHighlight_->attachAxis(scatterYAxis_);
+    }
+    for (auto* marker : scatterPlotChart_->legend()->markers(scatterHighlight_)) marker->setVisible(false);
+}
+
+void HdfReviewTab::refreshFramePane() {
+    if (!framePane_ || !framePaneStack_) return;
+    const bool hasCell = highlightFrame_ >= 0 && highlightFrame_ < static_cast<int>(validFrames_.size()) &&
+                         !isRecordingMode_;
+    if (!hasCell) {
+        paneFrame_ = -1;
+        framePaneStack_->setCurrentIndex(0);
+        return;
+    }
+    // One HDF5 read per shown frame, only while the Charts tab shows the pane
+    // and no modal viewer hides it (its prev/next would read every frame twice).
+    if (!chartsTabVisible() || paneFrame_ == highlightFrame_) return;
+    if (modalViewerOpen_) {
+        paneStale_ = true;
+        return;
+    }
+    paneFrame_ = highlightFrame_;
+    paneStale_ = false;
+    framePane_->setRoi(roi_);
+    framePane_->setFrame(loadFrameForDisplay(paneFrame_, true));
+    // Recorded frame index (what the viewer and the metrics CSV show) first;
+    // the 1-based position in the valid set second.
+    const auto& frame = validFrames_[static_cast<size_t>(paneFrame_)];
+    const bool onScatter = paneFrame_ < static_cast<int>(frameToScatterPoint_.size()) &&
+                           frameToScatterPoint_[static_cast<size_t>(paneFrame_)] >= 0;
+    QString title = tr("Frame %1 · valid row %2 of %3")
+                        .arg(static_cast<qulonglong>(frame.index))
+                        .arg(paneFrame_ + 1)
+                        .arg(validFrames_.size());
+    if (!onScatter) title += tr(" · failed validation, not on the scatter");
+    framePaneTitle_->setText(title);
+    framePaneStack_->setCurrentIndex(1);
+}
+
+HdfReviewTab::ScatterViewState HdfReviewTab::saveScatterView() const {
+    ScatterViewState st;
+    st.x0 = scatterXAxis_->min();
+    st.x1 = scatterXAxis_->max();
+    st.y0 = scatterYAxis_->min();
+    st.y1 = scatterYAxis_->max();
+    st.userZoomed = scatterPlotView_ && scatterPlotView_->isUserZoomed();
+    st.highlightFrame = highlightFrame_;
+    return st;
+}
+
+void HdfReviewTab::restoreScatterView(const ScatterViewState& st) {
+    if (st.userZoomed) {
+        scatterXAxis_->setRange(st.x0, st.x1);
+        scatterYAxis_->setRange(st.y0, st.y1);
+        if (scatterPlotView_) scatterPlotView_->markUserZoomed();
+    }
+    setScatterHighlight(st.highlightFrame);
+}
+
+std::map<std::string, cv::Mat> HdfReviewTab::renderChartSnapshotsForTests() {
+    return renderChartSnapshots(validFrames_);
+}
+
+QWidget* HdfReviewTab::framePaneForTests() const {
+    return framePaneStack_;
+}
+
+std::optional<std::pair<int, bool>> HdfReviewTab::framePaneFrameForTests() const {
+    if (!framePaneStack_ || framePaneStack_->currentIndex() != 1 || paneFrame_ < 0) return std::nullopt;
+    return std::make_pair(paneFrame_, true);
+}
+
+QPointF HdfReviewTab::scatterPointViewPosForTests(int point) const {
+    const auto& p = scatterPoints_.at(static_cast<size_t>(point));
+    const QPointF chartPos = scatterPlotChart_->mapToPosition(QPointF(p.x, p.y), scatterSeries_);
+    return QPointF(scatterPlotView_->mapFromScene(scatterPlotChart_->mapToScene(chartPos)));
+}
+
 QPixmap HdfReviewTab::chartToPixmap(QChartView* chartView) const {
     if (!chartView || !chartView->chart()) {
         return QPixmap();
@@ -2747,6 +2995,7 @@ void HdfReviewTab::loadIsoelasticCurves() {
     // Enable legend to show all series and position it on the right
     scatterPlotChart_->legend()->setVisible(true);
     scatterPlotChart_->legend()->setAlignment(Qt::AlignRight);
+    raiseScatterHighlight();
     
     SPDLOG_INFO("Loaded {} isoelastic curves from {}", curvesByModulus.size(), filePath.toStdString());
 }
