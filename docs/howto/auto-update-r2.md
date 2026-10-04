@@ -182,13 +182,13 @@ clients append the normalized `mib-processing/` package path themselves. The
 publisher stores the package HTML at both `index.html` and the trailing-slash
 route because an R2 custom domain does not generate directory indexes.
 
-Normal publication is automatic. Pushing `mib-processing-v<version>` runs
+Normal publication is automatic. Pushing `mib-processing-subtract-ring-v<version>` (the legacy `mib-processing-v<version>` prefix no longer triggers anything) runs
 wheel/native conformance, creates the GitHub Release, then derives and hashes
 the release assets before updating R2:
 
 ```bash
 python scripts/release/publish-processing-core.py \
-  --from-release mib-processing-v0.1.0 \
+  --from-release mib-processing-subtract-ring-v0.3.3 \
   --channel stable \
   --upload-method s3
 ```
@@ -207,7 +207,7 @@ To preview already-downloaded release assets without GitHub or R2:
 
 ```bash
 python scripts/release/publish-processing-core.py \
-  --from-release mib-processing-v0.1.0 \
+  --from-release mib-processing-subtract-ring-v0.3.3 \
   --release-assets-dir ./dist \
   --published-at 2026-07-13T00:00:00Z \
   --dry-run \

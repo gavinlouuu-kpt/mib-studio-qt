@@ -181,7 +181,8 @@ builds, audits, and signature-rehearses the Linux x86_64 `.so`, and the live
 signed Linux publication plus distro validation remain tracked in A13/#245.
 
 Python wheels are architecture-independent from that native-plugin rollout.
-Each `mib-processing-v<version>` release requires the complete CPython
+Each subtract-ring release (`mib-processing-subtract-ring-v<version>`; legacy
+`mib-processing-v<version>`) requires the complete CPython
 3.10–3.13 × `manylinux_2_28_{x86_64,aarch64}` wheel matrix (8 wheels).
 Every wheel is installed and imported in its matching cibuildwheel container;
 ARM64 uses QEMU on the x86_64 Actions runner. Release creation and immutable
@@ -264,7 +265,7 @@ pipeline."
 
 ## Publishing and promotion
 
-The `mib-processing-v<version>` workflow runs wheel/native conformance, attaches
+The `mib-processing-subtract-ring-v<version>` workflow runs wheel/native conformance, attaches
 the assets to one GitHub Release, and invokes:
 
 ```bash
@@ -333,7 +334,31 @@ pointer plus all cross-links before succeeding.
 Use `scripts/bump_mib_processing_version.py <version>` to update the
 authoritative pyproject version and the import-time wrapper literal together.
 Commit those files, then rerun with `--create-tag`; the command refuses to tag
-an uncommitted bump so the tag cannot point at the old version.
+an uncommitted bump so the tag cannot point at the old version. `--line
+absdiff-laplacian` bumps `processing-cores/absdiff-laplacian.version` instead;
+its `--create-tag` is refused until a workflow releases
+`mib-processing-absdiff-laplacian-v<version>` tags (T1.1b PR 2).
+
+### Core lines (ADR 0007, T1.1b)
+
+Two processing-core lines build from one source tree, each with its own
+version, artifact name and release tag:
+
+| Line | Contract | Version source | Artifact | Tag |
+|---|---|---|---|---|
+| `subtract-ring` | 1 | `bindings/python/pyproject.toml` (shared with the wheel) | `mib_processing_core-subtract-ring-<version>-<os>_<arch>` | `mib-processing-subtract-ring-v<version>` |
+| `absdiff-laplacian` | 2 | `processing-cores/absdiff-laplacian.version` | `mib_processing_core-absdiff-laplacian-<version>-<os>_<arch>` | `mib-processing-absdiff-laplacian-v<version>` |
+
+Each sidecar carries `algorithm`, `contract_version`, `engine_abi_version`
+and `entrypoint`. The published `mib-processing-v0.1.0`…`v0.2.1` releases stay
+valid as legacy subtract-ring releases: the publisher still parses their tags,
+so they remain promotable. The native release jobs build, export-audit,
+signature-rehearse and gold-check both lines
+(`scripts/run_native_core_conformance.py` runs the built Contract-2 binary over
+the real-frame Contract-2 reference) and upload absdiff-laplacian as the
+`*-absdiff-laplacian-unsigned` artifacts. Only subtract-ring is signed and
+published so far; the absdiff-laplacian registry line (its own
+`{channel}/processing-core/absdiff-laplacian/` subtree) is T1.1b PR 2.
 
 ## Verifying a channel is reachable (no Qt, no app)
 

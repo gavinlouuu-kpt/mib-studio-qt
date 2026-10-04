@@ -108,7 +108,7 @@ try { $pin = -join ($sha256.ComputeHash($spki) | ForEach-Object { $_.ToString('x
 gh variable set MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256 --repo KPT1020/mib-studio-qt --body $pin
 ```
 
-The `mib-processing-v*` workflow independently derives the SPKI from the DLL
+The `mib-processing-subtract-ring-v*` workflow independently derives the SPKI from the DLL
 after signing and refuses to upload it unless it matches this repository
 variable. A certificate renewal that keeps the public key keeps the same pin;
 a new key requires a coordinated desktop/core rollout because the current
@@ -136,7 +136,7 @@ running MIB Studio install the same public root once (see
 
 ### Linux processing-core Ed25519 signing
 
-The `mib-processing-v*` tag workflow signs the Linux `.so` in a separate
+The `mib-processing-subtract-ring-v*` tag workflow signs the Linux `.so` in a separate
 tag-only `sign-native-plugin-linux` job, also isolated in the `Production`
 environment. The Linux build job uploads an unsigned, already-audited
 artifact whose sidecar carries only a rehearsal envelope from an ephemeral

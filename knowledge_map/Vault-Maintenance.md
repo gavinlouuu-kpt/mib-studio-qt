@@ -14,6 +14,7 @@ below is the policy it cannot check for you.
 | `src/backend/app/AppBackend.{cpp,h}` wiring | [[architecture/AppBackend]] |
 | Threading, data flow, or layering | [[architecture/Threading-Model]], [[architecture/Data-Flow]], [[architecture/Overview]] |
 | `src/backend/playback/FrameStore.*` | [[data-model/FrameStore]] |
+| Processing-core lines: `processing-cores/*.version`, `mib_add_processing_core_plugin` / `mib_set_processing_core_release_identity` (`src/backend/CMakeLists.txt`), `scripts/run_native_core_conformance.py`, `scripts/check_core_line_sidecars.py` | [[services/ProcessingService]] + `docs/portable-processing-sync.md` (Core lines) |
 | HDF5 schema / dataset paths (`Hdf5Service.cpp`) | [[data-model/HDF5-Storage]] + [[services/Hdf5Service]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |

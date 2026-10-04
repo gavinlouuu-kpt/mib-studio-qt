@@ -62,13 +62,13 @@ feature/fix branch ──PR──▶ develop ──PR──▶ main ──dispat
   are exercised repeatedly by `soak.yml` (nightly / manual) instead, so a
   release cut never waits on or fails because of them.
 - The repository **Latest** badge always belongs to the newest stable
-  desktop release: `mib-processing-v*` releases are created with
+  desktop release: `mib-processing-subtract-ring-v*` (legacy `mib-processing-v*`) releases are created with
   `--latest=false`, and betas are prereleases.
 
 ### Processing-core lane (independent)
 
 The hot-swappable processing core versions and releases independently of the
-desktop lanes: `mib-processing-v*` tags run `python-wheel.yml` (wheels +
+desktop lanes: `mib-processing-subtract-ring-v*` tags (legacy `mib-processing-v*` no longer triggers) run `python-wheel.yml` (wheels +
 signed native plugins → GitHub Release + R2 registry), and channel
 activation/rollback goes through **Actions → Promote or roll back processing
 core**. See [`release-workflow.md`](release-workflow.md).
@@ -83,7 +83,7 @@ core**. See [`release-workflow.md`](release-workflow.md).
 | `sanitizers.yml` | PR to `main`, `develop`; nightly; manual |
 | `build-windows.yml` | **push to `develop` (app paths only) → auto beta**; manual dispatch (beta any ref / release from `main`) |
 | `release.yml` | `v*.*.*` tags; manual |
-| `python-wheel.yml` | `mib-processing-v*` tags; core-path pushes/PRs (build+test only) |
+| `python-wheel.yml` | `mib-processing-subtract-ring-v*` tags (legacy `mib-processing-v*` no longer triggers); core-path pushes/PRs (build+test only) |
 
 `build-windows.yml` serializes with a `concurrency` group so rapid `develop`
 merges queue rather than race on the R2 publish.

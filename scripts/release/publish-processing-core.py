@@ -63,7 +63,8 @@ IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 PEP503_PACKAGE = "mib-processing"
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+!-]*$")
 _CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_TAG_PREFIX = "mib-processing-v"
+_TAG_PREFIX = "mib-processing-subtract-ring-v"
+_LEGACY_TAG_PREFIX = "mib-processing-v"  # releases before the line rename
 _NATIVE_LIBRARY_SUFFIXES = {
     "windows": (".dll",),
     "linux": (".so",),
@@ -127,9 +128,14 @@ def validate_channel(channel: str) -> str:
 
 
 def version_from_release_tag(release_tag: str) -> str:
-    if not release_tag.startswith(_TAG_PREFIX):
+    # subtract-ring releases published before the line rename keep their
+    # immutable mib-processing-v<version> tags and must stay promotable.
+    prefix = next(
+        (p for p in (_TAG_PREFIX, _LEGACY_TAG_PREFIX) if release_tag.startswith(p)), None
+    )
+    if prefix is None:
         raise ValueError(f"Release tag must have the form {_TAG_PREFIX}<version>: {release_tag!r}")
-    version = validate_version(release_tag[len(_TAG_PREFIX):])
+    version = validate_version(release_tag[len(prefix):])
     if not version:
         raise ValueError(f"Release tag must include a version: {release_tag!r}")
     return version
@@ -606,7 +612,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=str(Path(__file__).resolve().parents[2] / "bindings" / "python" / "pyproject.toml"),
         help="Path to the authoritative wheel pyproject.toml.",
     )
-    parser.add_argument("--release-tag", default=None, help="Defaults to mib-processing-v<wheel-version>")
+    parser.add_argument("--release-tag", default=None, help="Defaults to mib-processing-subtract-ring-v<wheel-version>")
     parser.add_argument(
         "--from-release",
         metavar="TAG",

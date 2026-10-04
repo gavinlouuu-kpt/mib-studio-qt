@@ -88,6 +88,10 @@ set_tests_properties(backend.hardware_shutdown PROPERTIES LABELS "backend;concur
 add_test(NAME backend.lifecycle_smoke COMMAND $<TARGET_FILE:mib_backend_tests> backend_lifecycle_smoke_test)
 set_tests_properties(backend.lifecycle_smoke PROPERTIES LABELS "backend")
 
+mib_add_backend_test_executable(opencv_threads_test backend/opencv_threads_test.cpp)
+add_test(NAME backend.opencv_threads COMMAND $<TARGET_FILE:mib_backend_tests> opencv_threads_test)
+set_tests_properties(backend.opencv_threads PROPERTIES LABELS "backend;processing" TIMEOUT 120)
+
 mib_add_backend_test_executable(frame_store_concurrency_test backend/frame_store_concurrency_test.cpp)
 find_package(Threads REQUIRED)
 mib_backend_test_link(frame_store_concurrency_test PRIVATE Threads::Threads)
@@ -435,6 +439,8 @@ set_tests_properties(processing.core_v2_plugin PROPERTIES LABELS "processing;bac
 
 mib_add_backend_test_executable(processing_core_contract2_equivalence_test processing/processing_core_contract2_equivalence_test.cpp)
 add_dependencies(processing_core_contract2_equivalence_test mib_processing_core_absdiff_laplacian)
+target_compile_definitions(processing_core_contract2_equivalence_test PRIVATE
+    MIB_ABSDIFF_LAPLACIAN_VERSION="${MIB_ABSDIFF_LAPLACIAN_VERSION}")
 add_test(NAME processing.core_contract2_equivalence
     COMMAND $<TARGET_FILE:processing_core_contract2_equivalence_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
 set_tests_properties(processing.core_contract2_equivalence PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -1021,6 +1027,24 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.core_line_versions
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_core_line_versions.py
+    )
+    set_tests_properties(scripts.core_line_versions PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.installer_excludes_cores
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_installer_excludes_cores.py
+    )
+    set_tests_properties(scripts.installer_excludes_cores PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.bump_mib_processing_version
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_bump_mib_processing_version.py
     )
@@ -1092,6 +1116,50 @@ if(Python3_Interpreter_FOUND)
         LABELS "scripts;contract;processing;hdf5"
         TIMEOUT 30
     )
+
+    # Release identity of both processing-core lines (T1.1b): artifact names
+    # and sidecars produced by mib_set_processing_core_release_identity.
+    if(WIN32)
+        set(_mib_core_os windows)
+        set(_mib_core_arch x86_64)
+    else()
+        set(_mib_core_os linux)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+            set(_mib_core_arch aarch64)
+        else()
+            set(_mib_core_arch x86_64)
+        endif()
+    endif()
+    add_test(
+        NAME release.core_line_sidecars
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_core_line_sidecars.py
+                $<TARGET_FILE_DIR:mib_processing_core> ${_mib_core_os} ${_mib_core_arch}
+    )
+    set_tests_properties(release.core_line_sidecars PROPERTIES
+        LABELS "release;processing"
+        TIMEOUT 30
+    )
+
+    # The built absdiff-laplacian (Contract 2) binary against the real-frame
+    # Contract-2 reference (rollout plan Phase 1 exit gate). Release CI runs
+    # the same script without the skip flag. Not under sanitizers: ctypes
+    # loads the core into an uninstrumented python, which cannot dlopen an
+    # ASan/TSan build (and the release lanes build without them).
+    if(NOT MIB_SANITIZER)
+        add_test(
+            NAME processing.native_core_contract2_gold
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/run_native_core_conformance.py
+                    --core $<TARGET_FILE:mib_processing_core_absdiff_laplacian>
+                    --frames-npz ${PROJECT_SOURCE_DIR}/scripts/conformance/focus-50v-real.npz
+                    --reference ${PROJECT_SOURCE_DIR}/scripts/conformance/focus-50v-real-contract2.json
+                    --skip-if-missing-numpy
+        )
+        set_tests_properties(processing.native_core_contract2_gold PROPERTIES
+            LABELS "processing;release"
+            TIMEOUT 120
+            SKIP_RETURN_CODE 77
+        )
+    endif()
 
     add_test(
         NAME scripts.kin10_hf_dataset_runner

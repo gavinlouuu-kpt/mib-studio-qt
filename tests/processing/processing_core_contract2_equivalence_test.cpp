@@ -97,14 +97,14 @@ int main(int argc, char** argv) {
     const auto host = proc::bundledProcessingCoreIdentity();
 
     proc::ProcessingCoreLoadRequirements requirements;
-    requirements.expectedVersion = host.version;
+    requirements.expectedVersion = MIB_ABSDIFF_LAPLACIAN_VERSION;
     requirements.expectedContractVersion = MIB_PROCESSING_CONTRACT_VERSION_2;
     requirements.expectedEngineAbiVersion = MIB_PROCESSING_ENGINE_ABI_VERSION_2;
     requirements.expectedRuntimeFingerprint = host.runtimeFingerprint;
     std::string hashError;
     requirements.artifactSha256 = proc::processingCoreFileSha256(pluginPath, &hashError);
     MIB_REQUIRE(requirements.artifactSha256.size() == 64, hashError);
-    requirements.releaseTag = "mib-processing-absdiff-laplacian-v" + host.version;
+    requirements.releaseTag = std::string("mib-processing-absdiff-laplacian-v") + MIB_ABSDIFF_LAPLACIAN_VERSION;
     requirements.manifestSha256 = std::string(64, 'b');
     requirements.trustVerifier = [&](const std::filesystem::path& candidate, std::string&) {
         return candidate == pluginPath;

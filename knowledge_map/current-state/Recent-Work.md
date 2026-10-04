@@ -1,5 +1,49 @@
 # Recent Work
 
+## 2026-10-03 — Processing-core lines named, versioned and gold-checked (T1.1b PR 1)
+
+Both processing-core lines now have their own release identity: `subtract-ring`
+(Contract 1, pyproject version shared with the wheel) and `absdiff-laplacian`
+(Contract 2, `processing-cores/absdiff-laplacian.version`, 0.1.0). Artifacts are
+`mib_processing_core-<line>-<version>-<os>_<arch>` with an `algorithm` sidecar
+field; tags are `mib-processing-<line>-v<version>` (`bump_mib_processing_version.py
+--line`). The release jobs build, export-audit, Ed25519-rehearse and gold-check
+both lines; `scripts/run_native_core_conformance.py` runs the built Contract-2
+binary over the real-frame reference (all 407 reference objects identical).
+Only subtract-ring is signed and published; the publisher still parses legacy
+`mib-processing-v` tags so v0.1.0–v0.2.1 stay promotable. The installer no
+longer packs `mib_processing_core*.dll` and removes old ones. Next: PR 2 (sign
+and publish absdiff-laplacian to its own registry subtree). Plan:
+[`2026-10-02-processing-core-lines-pr1`](../../docs/exec-plans/active/2026-10-02-processing-core-lines-pr1.md).
+
+## 2026-10-02 — OpenCV thread pool off: 5000 fps experiments no longer lose frames
+
+On the rig PC, experiments at 5000 fps processed only about 2900 frames/s
+after #452, so every run ended `incompleteLoss`. Bisected to #452; the cause
+was the Windows OpenCV Concurrency Runtime pool (one spinning worker per
+logical CPU) kept busy by a per-frame `parallel_for` on the experiment path,
+starving the processing thread (34 busy threads, about 30 cores).
+`AppBackend::initialize` now calls `cv::setNumThreads(0)` before processing
+starts, and every processing-core plugin applies the same setting to its own,
+statically linked OpenCV on its first `create_context` (shared parser
+`OpenCvThreads.h`); `MIB_OPENCV_THREADS=N|opencv` overrides both. Result on the rig: 5000
+frames/s during runs at 1.3 cores, runs complete, idle processing up from
+about 3000 to 4980 frames/s. Guard: `backend.opencv_threads`. See
+[[../architecture/AppBackend]] and
+`docs/evidence/2026-10-02-opencv-pool-5000fps/`.
+
+## 2026-10-01 — Windows (MSVC) build of `develop` restored
+
+Every `develop` push since 2026-09-26 failed the Build Windows workflow, so
+no beta was cut after `v1.1.2-beta.973463e`. Two MSVC-only breaks that the
+Linux PR lanes cannot see: a local named `far` in
+`include/backend/processing/MonitoringDensity.h` (`<windows.h>` defines `far`
+and `near` as empty macros; reached through `AppBackend.cpp`), and
+`tests/processing/processing_core_v2_plugin_test.cpp` including POSIX
+`<dlfcn.h>` (now a Win32 `LoadLibrary` shim). The same fixes were first made
+on `feat/trigger-frame-alignment` (73a0f232). Root cause of the escape: the
+Windows build runs only on `develop` pushes, not on PRs.
+
 ## 2026-10-02 — Central profile registry foundation (#398, PR #402)
 
 Provider-neutral registry contract, canonical method envelope over the existing

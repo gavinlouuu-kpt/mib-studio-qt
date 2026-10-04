@@ -14,6 +14,19 @@ if(MIB_PROCESSING_CORE_VERSION STREQUAL "")
     set(MIB_PROCESSING_CORE_VERSION "0.1.0")
 endif()
 
+# absdiff-laplacian (Contract 2) is versioned independently of subtract-ring
+# and the wheel (ADR 0007: releasing one line never rebuilds the other).
+# CACHE INTERNAL so tests/ (a sibling directory) sees it too.
+set(_mib_absdiff_version_file "${PROJECT_SOURCE_DIR}/processing-cores/absdiff-laplacian.version")
+file(STRINGS "${_mib_absdiff_version_file}" _mib_absdiff_version LIMIT_COUNT 1)
+string(STRIP "${_mib_absdiff_version}" _mib_absdiff_version)
+if(NOT _mib_absdiff_version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+")
+    message(FATAL_ERROR "Invalid absdiff-laplacian version in ${_mib_absdiff_version_file}")
+endif()
+set(MIB_ABSDIFF_LAPLACIAN_VERSION "${_mib_absdiff_version}" CACHE INTERNAL
+    "absdiff-laplacian processing-core line version")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mib_absdiff_version_file}")
+
 # Dot-grid codec core version (encoder + decoder build line, ADR 0010). One
 # source shared with the Python mask generator: scripts/dot_grid/dotgrid/VERSION.
 set(MIB_DOTGRID_CORE_VERSION "0.0.0")
@@ -186,7 +199,7 @@ endif()
 # implements exactly one contract (ADR 0007) and exports only that contract's
 # entry point: subtract-ring (Contract 1, mib_processing_get_api) and
 # absdiff-laplacian (Contract 2, mib_processing_get_api_v2).
-function(mib_add_processing_core_plugin target contract)
+function(mib_add_processing_core_plugin target contract line version)
     add_library(${target} MODULE
         ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
@@ -205,7 +218,7 @@ function(mib_add_processing_core_plugin target contract)
     mib_link_opencv(${target} PRIVATE)
     target_compile_definitions(${target} PRIVATE
         MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
-        MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+        MIB_PROCESSING_CORE_VERSION="${version}"
         MIB_PROCESSING_BUNDLED_CONTRACT=${contract}
     )
     set_target_properties(${target} PROPERTIES
@@ -225,58 +238,62 @@ function(mib_add_processing_core_plugin target contract)
     )
 endfunction()
 
-# subtract-ring (Contract 1): the released line (artifact naming, descriptor
-# and signing below are unchanged).
-mib_add_processing_core_plugin(mib_processing_core 1)
-# absdiff-laplacian (Contract 2): built for the ABI-v2 plugin tests. Release
-# naming, descriptor and signing arrive with the Contract 2 core line (T1.1).
-mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2)
-if(WIN32)
-    set(_mib_processing_native_basename
-        "mib_processing_core-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
-    set_target_properties(mib_processing_core PROPERTIES
-        OUTPUT_NAME "${_mib_processing_native_basename}")
-    if(MSVC)
-        set(_mib_processing_runtime_fingerprint
-            "windows-x86_64-msvc${MSVC_VERSION}-md-cxx17")
+# subtract-ring (Contract 1) and absdiff-laplacian (Contract 2): one target per
+# line, each with its own version, artifact name and sidecar (below). Release
+# CI builds, audits and gold-checks both; it signs and publishes subtract-ring
+# only until the absdiff-laplacian registry line exists (T1.1b PR 2).
+mib_add_processing_core_plugin(mib_processing_core 1 subtract-ring ${MIB_PROCESSING_CORE_VERSION})
+mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2 absdiff-laplacian ${MIB_ABSDIFF_LAPLACIAN_VERSION})
+
+# Release identity of one core line: artifact name and signing sidecar.
+# Names: mib_processing_core-<line>-<version>-<os>_<arch> (rollout plan T1.1).
+function(mib_set_processing_core_release_identity target line version contract abi entrypoint)
+    if(WIN32)
+        set(_os windows)
+        set(_arch x86_64)
+        set(_scheme authenticode)
+        if(MSVC)
+            set(_fingerprint "windows-x86_64-msvc${MSVC_VERSION}-md-cxx17")
+        else()
+            set(_fingerprint "windows-x86_64-unknown-cxx17")
+        endif()
+    elseif(UNIX AND NOT APPLE)
+        set(_os linux)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+            set(_arch x86_64)
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+            set(_arch aarch64)
+        else()
+            set(_arch "${CMAKE_SYSTEM_PROCESSOR}")
+        endif()
+        # The build cannot self-sign: release CI appends the Ed25519
+        # public_key_spki_base64/signature_base64/public_key_spki_sha256 fields
+        # after the artifact bytes are final.
+        set(_scheme ed25519)
+        # Must match runtimeFingerprint() in BundledProcessingKernel.cpp, which
+        # uses the compiler's major version.
+        string(REGEX MATCH "^[0-9]+" _cxx_major "${CMAKE_CXX_COMPILER_VERSION}")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            set(_fingerprint "linux-${_arch}-clang${_cxx_major}-cxx17")
+        elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            set(_fingerprint "linux-${_arch}-gcc${_cxx_major}-cxx17")
+        else()
+            set(_fingerprint "unknown-platform-cxx17")
+        endif()
     else()
-        set(_mib_processing_runtime_fingerprint "windows-x86_64-unknown-cxx17")
+        return()
     endif()
+    set(_basename "mib_processing_core-${line}-${version}-${_os}_${_arch}")
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME "${_basename}")
     file(GENERATE
-        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_native_basename}.json"
-        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core>\",\n  \"os\": \"windows\",\n  \"arch\": \"x86_64\",\n  \"engine_abi_version\": 1,\n  \"contract_version\": 1,\n  \"entrypoint\": \"mib_processing_get_api\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"authenticode\"}\n}\n")
-elseif(UNIX AND NOT APPLE)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
-        set(_mib_processing_native_arch "x86_64")
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
-        set(_mib_processing_native_arch "aarch64")
-    else()
-        set(_mib_processing_native_arch "${CMAKE_SYSTEM_PROCESSOR}")
-    endif()
-    set(_mib_processing_native_basename
-        "mib_processing_core-${MIB_PROCESSING_CORE_VERSION}-linux_${_mib_processing_native_arch}")
-    set_target_properties(mib_processing_core PROPERTIES
-        OUTPUT_NAME "${_mib_processing_native_basename}")
-    # The fingerprint must match runtimeFingerprint() in
-    # BundledProcessingKernel.cpp, which uses the compiler's major version.
-    string(REGEX MATCH "^[0-9]+" _mib_processing_cxx_major
-        "${CMAKE_CXX_COMPILER_VERSION}")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        set(_mib_processing_runtime_fingerprint
-            "linux-${_mib_processing_native_arch}-clang${_mib_processing_cxx_major}-cxx17")
-    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        set(_mib_processing_runtime_fingerprint
-            "linux-${_mib_processing_native_arch}-gcc${_mib_processing_cxx_major}-cxx17")
-    else()
-        set(_mib_processing_runtime_fingerprint "unknown-platform-cxx17")
-    endif()
-    # The build cannot self-sign: release CI appends the Ed25519
-    # public_key_spki_base64/signature_base64/public_key_spki_sha256 signing
-    # fields after the artifact bytes are final.
-    file(GENERATE
-        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_native_basename}.json"
-        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"engine_abi_version\": 1,\n  \"contract_version\": 1,\n  \"entrypoint\": \"mib_processing_get_api\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
-endif()
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"algorithm\": \"${line}\",\n  \"version\": \"${version}\",\n  \"filename\": \"$<TARGET_FILE_NAME:${target}>\",\n  \"os\": \"${_os}\",\n  \"arch\": \"${_arch}\",\n  \"engine_abi_version\": ${abi},\n  \"contract_version\": ${contract},\n  \"entrypoint\": \"${entrypoint}\",\n  \"runtime_fingerprint\": \"${_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"${_scheme}\"}\n}\n")
+endfunction()
+
+mib_set_processing_core_release_identity(mib_processing_core
+    subtract-ring ${MIB_PROCESSING_CORE_VERSION} 1 1 mib_processing_get_api)
+mib_set_processing_core_release_identity(mib_processing_core_absdiff_laplacian
+    absdiff-laplacian ${MIB_ABSDIFF_LAPLACIAN_VERSION} 2 2 mib_processing_get_api_v2)
 
 add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp

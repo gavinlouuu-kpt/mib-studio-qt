@@ -75,12 +75,69 @@ class VersionBumpTest(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "bump"], cwd=root, check=True)
             tag = bump.create_committed_tag(root, "0.2.0")
-            self.assertEqual(tag, "mib-processing-v0.2.0")
+            self.assertEqual(tag, "mib-processing-subtract-ring-v0.2.0")
             tagged = subprocess.run(
                 ["git", "show", f"{tag}:{bump.PYPROJECT.as_posix()}"],
                 cwd=root, check=True, capture_output=True, text=True,
             ).stdout
             self.assertIn('version = "0.2.0"', tagged)
+
+    def test_absdiff_line_bumps_only_its_version_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            make_repo(root)
+            version_file = root / "processing-cores" / "absdiff-laplacian.version"
+            version_file.parent.mkdir(parents=True)
+            version_file.write_text("0.1.0\n", encoding="utf-8")
+            updates, current = bump.plan_updates(root, "0.2.0", line="absdiff-laplacian")
+            self.assertEqual(current, "0.1.0")
+            self.assertEqual(set(updates), {version_file})
+            self.assertEqual(updates[version_file], "0.2.0\n")
+
+    def test_absdiff_version_file_must_hold_one_version_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            version_file = root / "processing-cores" / "absdiff-laplacian.version"
+            version_file.parent.mkdir(parents=True)
+            version_file.write_text("0.1.0\n0.2.0\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "exactly one version line"):
+                bump.plan_updates(root, "0.2.0", line="absdiff-laplacian")
+
+    def test_tag_prefix_per_line(self) -> None:
+        self.assertEqual(bump.tag_for("subtract-ring", "0.3.3"), "mib-processing-subtract-ring-v0.3.3")
+        self.assertEqual(
+            bump.tag_for("absdiff-laplacian", "0.1.0"), "mib-processing-absdiff-laplacian-v0.1.0"
+        )
+        with self.assertRaisesRegex(ValueError, "Unknown processing-core line"):
+            bump.tag_for("ring", "0.1.0")
+
+    def test_absdiff_tag_is_refused_until_its_release_workflow_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            make_repo(root)
+            version_file = root / "processing-cores" / "absdiff-laplacian.version"
+            version_file.parent.mkdir(parents=True)
+            version_file.write_text("0.1.0\n", encoding="utf-8")
+            for args in (["init", "-q"], ["config", "user.email", "test@example.invalid"],
+                         ["config", "user.name", "Test"], ["add", "."], ["commit", "-qm", "initial"]):
+                subprocess.run(["git", *args], cwd=root, check=True)
+            updates, _ = bump.plan_updates(root, "0.2.0", line="absdiff-laplacian")
+            bump.apply_updates_atomically(updates)
+            subprocess.run(["git", "commit", "-qam", "bump"], cwd=root, check=True)
+            # No release workflow handles absdiff-laplacian tags yet (T1.1b PR 2):
+            # a pushed tag would spend the version with no artifacts.
+            with self.assertRaisesRegex(RuntimeError, "no release workflow"):
+                bump.create_committed_tag(root, "0.2.0", line="absdiff-laplacian")
+            tags = subprocess.run(["git", "tag"], cwd=root, check=True, capture_output=True, text=True)
+            self.assertEqual(tags.stdout.strip(), "")
+
+    def test_publisher_uses_subtract_ring_tag_prefix(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "publish_processing_core", SCRIPT_PATH.parent / "release" / "publish-processing-core.py"
+        )
+        publisher = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(publisher)
+        self.assertEqual(publisher._TAG_PREFIX, "mib-processing-subtract-ring-v")
 
 
 if __name__ == "__main__":
