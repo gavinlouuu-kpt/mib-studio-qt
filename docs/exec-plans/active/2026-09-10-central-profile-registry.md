@@ -83,10 +83,13 @@ freeze exact revision identity/content into historical runs.
   with a pre-submit base-vs-head check that stops with a compared conflict and an
   explicit branch option; independent review / publish / archive / revoke with
   reasons; history; update-available helper. `profiles.registry_authoring`.
-- [ ] M3b: authoring/review UI in Qt and React (drafts, submit, conflict
-  compare / branch / new draft from head / discard, review actions by role,
-  release notes, history, update-available badge) and the bridge surface.
-- [ ] M3: local drafts, authoring/submission UI, conflict comparison/branch handling,
+- [x] M3b: authoring/review UI in Qt (Drafts tab, review actions by role with
+  reasons, details/history, "rN available") and React (same rules in
+  `registry.ts`), bridge authoring functions inside unreleased ABI 15.
+- [ ] M3: template drafts (a new method from a bundled template), a per-key
+  draft editor beyond "current config.json", and release-note display in a
+  method picker / context bar (#312).
+- [x] M3 core: local drafts, authoring/submission UI, conflict comparison/branch handling,
   release notes and review/publication management UI.
 - [ ] M4: operator execution entitlements, project distribution, role management,
   independent approval display and attributed execution/session journal integration.

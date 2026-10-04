@@ -1,5 +1,17 @@
 # Recent Work
 
+## 2026-10-04 — Central method authoring and review UI (#398 M3b)
+
+Both shells can now author and govern central methods. Qt **Central
+Methods…** gains a **Drafts** tab (new method from the current config.json,
+release notes, submit, and the explicit conflict choices with the compared
+changes) and, on the Methods tab, **New draft…**, role-gated **Approve /
+Reject / Publish / Archive / Revoke** with a required reason, **History**, a
+details pane and "rN available". React mirrors it through new facade/bridge
+authoring commands (inside unreleased ABI 15) and pure `registry.ts` rules.
+Guards: `frontend.central_methods` (author/reviewer/conflict flow),
+`profiles.registry_facade`, bridge cargo tests, `registry.test.ts`.
+
 ## 2026-10-04 — Central method authoring backend (#398 M3a)
 
 Supabase migration `202610040001_registry_authoring.sql` lets authors create

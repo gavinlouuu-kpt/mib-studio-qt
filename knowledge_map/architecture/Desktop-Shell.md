@@ -252,3 +252,17 @@ Record failed run…** (`@tauri-apps/plugin-dialog` picker →
 **Apply…** is rendered disabled with `APPLY_UNAVAILABLE`: the React shell has
 no config.json applier (it edits the processing-config document instead), so
 it cannot load a method exactly — a follow-up.
+
+#398 M3b: **Methods / Drafts** views. Methods adds **New draft** (optionally
+"from current config.json"), **Approve / Reject / Publish / Archive / Revoke**
+by project role with a required reason box, **History**, a details block and
+"rN available"; Drafts lists local drafts with base and status, edits release
+notes, submits, and on a conflict shows the compared changes with **Submit as
+branch**, **New draft from head** ("keep my config.json") and **Discard**;
+**New method from current config** takes a project and a name. Rules live in
+`registry.ts` (`reviewActionsFor`, `draftActionsFor`, `draftRows`,
+`conflictText`, `detailLines`), matching the Qt dialog; commands go through
+`registry_new_draft_from_revision`, `registry_new_method_draft`,
+`registry_set_draft_notes`, `registry_draft_from_head`,
+`registry_submit_draft`, `registry_delete_draft`, `registry_transition`,
+`registry_fetch_history` (each `{job_id, error}`).

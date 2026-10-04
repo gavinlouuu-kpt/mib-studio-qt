@@ -53,6 +53,20 @@ each missing hook disables its action with a tooltip):
 [[MainWindow]] builds the hooks from `AppBackend` and the Preview page's
 `AppConfigWatcher`.
 
+M3b authoring (Methods tab + **Drafts** tab, `MethodDraftsPanel`): **New
+draft…** on a selected revision (copy, or `currentConfigDraft` on top of it
+via `requestSaveDraft(draft, revisionId)`); **Approve… / Reject…** (reviewer,
+Submitted), **Publish…** (publisher, Approved), **Archive… / Revoke…**
+(publisher) — enabled by `hasProjectRole`, each asking a required reason
+(`hooks.askText`); **History** fills the details pane (lineage, release notes,
+reviews, audit events; "Update available: rN"); the "On this instrument"
+column adds "rN available". Drafts tab: base / status (draft, submitted as rN,
+CONFLICT), **New method from current config…** (project via
+`hooks.chooseItem`, name, notes), **Release notes…**, **Submit for review**
+(author, no conflict), and on a conflict the explanation (upstream vs draft
+changes) with **Submit as branch…**, **New draft from head…** (keep the
+draft's config or take the head's) and **Discard…**.
+
 ## Gotchas
 
 - The dialog never calls the network or the cache: it enqueues worker
@@ -66,7 +80,10 @@ each missing hook disables its action with a tooltip):
   registry generation).
 - No update-available badge or context-bar entry yet (later #398 milestones).
 
-Test: `frontend.central_methods` (offscreen dialog over the real worker and a
+Test: `frontend.central_methods` (M3b: author new method → submit, author cannot
+approve, reviewer approve (blank reason refused) → publish with history and notes,
+stale draft conflict → branch offered / plain submit withheld → new draft from
+head; offscreen dialog over the real worker and a
 fake Supabase from `tests/support/fake_supabase.h`; M2b: apply with declined
 and accepted confirmation, exact bytes, backup, APPLIED marker, revoked row
 disabled, validation refusal shown) and `frontend.config_apply`

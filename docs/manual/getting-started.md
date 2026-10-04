@@ -81,7 +81,18 @@ the full text; right-click to copy) rather than widening the window.
   administrator has configured the registry; cached methods stay listed and
   can be applied when the registry is offline, but validating needs a
   sign-in. Set `MIB_INSTRUMENT_NAME` (e.g. `MIB-01`) to label this PC in run
-  files.)
+  files. **Authoring** (needs the matching role in the project): select a
+  revision and press **New draft…** to start a local draft from it (or from
+  this instrument's current config.json on top of it); on the **Drafts** tab,
+  **New method from current config…** starts a new central method, **Release
+  notes…** edits the notes, and **Submit for review** sends the draft as an
+  immutable revision. If someone published a newer revision meanwhile, nothing
+  is sent: the dialog shows what changed and lets you submit it as a branch,
+  start a new draft from the newer revision, or discard it. Reviewers use
+  **Approve… / Reject…** and publishers **Publish… / Archive… / Revoke…**,
+  each with a reason that goes into the audit trail; **History** shows the
+  reviews and events, and a revision with a newer published one shows
+  "rN available". Authors cannot approve their own revisions.)
 - **Help** — *About*, *Software Updates…*, *Documentation* (opens the
   project page), *Report a Problem* (opens the issue tracker).
 
