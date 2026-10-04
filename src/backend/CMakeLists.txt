@@ -14,6 +14,17 @@ if(MIB_PROCESSING_CORE_VERSION STREQUAL "")
     set(MIB_PROCESSING_CORE_VERSION "0.1.0")
 endif()
 
+# Dot-grid codec core version (encoder + decoder build line, ADR 0010). One
+# source shared with the Python mask generator: scripts/dot_grid/dotgrid/VERSION.
+set(MIB_DOTGRID_CORE_VERSION "0.0.0")
+if(EXISTS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
+    file(STRINGS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION" _mib_dotgrid_version LIMIT_COUNT 1)
+    string(STRIP "${_mib_dotgrid_version}" MIB_DOTGRID_CORE_VERSION)
+    # A VERSION bump must re-run configure, or the compiled-in version goes stale.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
+endif()
+
 # mib_processing: the Qt-free deformability-cytometry processing core plus
 # its I/O adapters (HDF5 read/write, frame buffering). Depends only on
 # OpenCV, HDF5, spdlog, and the standard library -- no Qt, no camera SDKs,
@@ -38,6 +49,10 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
@@ -70,6 +85,7 @@ target_link_libraries(mib_processing PUBLIC
 )
 
 target_compile_definitions(mib_processing PUBLIC
+    MIB_DOTGRID_CORE_VERSION="${MIB_DOTGRID_CORE_VERSION}"
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
 )
 
@@ -263,6 +279,10 @@ elseif(UNIX AND NOT APPLE)
 endif()
 
 add_library(mib_backend STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileCache.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
@@ -282,6 +302,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
