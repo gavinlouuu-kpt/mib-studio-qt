@@ -63,6 +63,12 @@ LocalValidationView localValidationFor(const profiles::RegistryWorkerSnapshot& r
                                        const std::string& instrumentId,
                                        const std::string& contextHash);
 
+// "Update available" (#398 M2): the newest Published revision of the same
+// method with a higher revision number than `revision`, or "". Never applied
+// automatically.
+std::string newerPublishedRevision(const profiles::RegistryWorkerSnapshot& registry,
+                                   const profiles::CachedRevisionSummary& revision);
+
 // Empty when `runSnapshotJson` (the evidence file's run_snapshot_json) is
 // acceptable evidence for validating `revisionId`/`contentHash` on
 // `instrumentId` under `contextHash`; otherwise the reason.

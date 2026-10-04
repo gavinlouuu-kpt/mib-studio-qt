@@ -57,7 +57,20 @@ struct RegistryWorkerConfig {
 };
 
 // Contract-pinned (bridge-contract.json registry_job_kinds); append only.
-enum class RegistryJobKind { SignIn, SignOut, Refresh, Download, Materialize, RecordValidation };
+enum class RegistryJobKind {
+    SignIn,
+    SignOut,
+    Refresh,
+    Download,
+    Materialize,
+    RecordValidation,
+    // #398 M3 authoring.
+    SaveDraft,
+    DeleteDraft,
+    SubmitDraft,
+    Transition,
+    FetchHistory,
+};
 enum class RegistryJobState { Queued, Running, Succeeded, Partial, Failed, Cancelled };
 const char* toString(RegistryJobKind kind);
 const char* toString(RegistryJobState state);
@@ -88,6 +101,9 @@ struct CachedRevisionSummary {
     // Directory holding the verified materialized files; empty when not
     // materialized (or the files no longer match the revision).
     std::string materializedDir;
+    // #398 M3: lineage and the author's immutable notes.
+    std::string parentRevisionId;
+    std::string releaseNotes;
 };
 
 // An operator's explicit local validation of a cached revision (#398 M2):
@@ -120,6 +136,25 @@ struct RegistryWorkerSnapshot {
     std::vector<RegistryProject> projects;
     std::vector<CachedRevisionSummary> revisions;
     std::vector<LocalValidationRecord> validations; // newest first, every instrument
+    // #398 M3: the signed-in user's local drafts (newest first), the methods of
+    // every member project with their published heads (from the last refresh
+    // or authoring call), the last fetched revision history, and the last
+    // submit that stopped because the draft's base is no longer the head.
+    std::vector<MethodDraft> drafts;
+    std::vector<RegistryMethod> methods;
+    std::optional<RevisionHistory> history;
+    struct SubmitConflict {
+        std::string draftId;
+        std::string baseRevisionId;
+        std::string headRevisionId;
+        // config.json keys changed upstream (base -> head) and where the
+        // draft differs from the head; empty when either revision is not
+        // cached (refresh to compare).
+        std::vector<std::string> upstreamChanges;
+        std::vector<std::string> draftVsHead;
+        bool compared{false};
+    };
+    std::optional<SubmitConflict> submitConflict;
     std::vector<std::string> corruptRevisionIds; // failed verification on read
     std::string cacheError;                      // cache could not be opened/read
     std::optional<std::chrono::system_clock::time_point> lastSuccessfulRefresh;
@@ -150,6 +185,24 @@ public:
     // Needs a signed-in session; refused (0) without instrument id or file.
     std::uint64_t requestRecordValidation(LocalValidationRequest request);
 
+    // #398 M3 authoring. Drafts are local (work offline); submit/transition/
+    // history need a signed-in session.
+    // Saves (inserts or replaces) a draft; missing draft/method/revision IDs
+    // are generated. With `copyFromRevisionId`, the content (config, camera
+    // script, core, compatibility), method and base come from that cached
+    // revision. The draft must canonicalize (config schema 1).
+    std::uint64_t requestSaveDraft(MethodDraft draft, std::string copyFromRevisionId = {});
+    std::uint64_t requestDeleteDraft(std::string draftId);
+    // Submits a draft as a new immutable candidate revision. Stops with a
+    // SubmitConflict (job Failed) when the method's published head is no
+    // longer the draft's base, unless `asBranch`: then it is submitted with
+    // that base as parent (publishing it later needs explicit resolution).
+    std::uint64_t requestSubmitDraft(std::string draftId, bool asBranch = false);
+    // Review (Approved/Rejected), Published, Archived or Revoked with a
+    // reason (required). Uses the cached metadata version (stale = Conflict).
+    std::uint64_t requestTransition(std::string revisionId, CentralState target, std::string reason);
+    std::uint64_t requestHistory(std::string revisionId);
+
     // Drops queued jobs (Cancelled) and aborts the running one. Idempotent.
     void cancelAll();
 
@@ -169,6 +222,10 @@ private:
         std::string argument; // email (sign-in) or revision ID (download)
         std::string secret;   // password (sign-in only); cleared once taken
         std::optional<LocalValidationRequest> validation;
+        std::optional<MethodDraft> draft;
+        CentralState target{CentralState::Submitted};
+        std::string reason; // transition reason
+        bool flag{false};   // asBranch (submit)
     };
     struct Active; // per-user cache + provider + service (worker thread only)
 
@@ -181,6 +238,14 @@ private:
     RegistryJobStatus doDownload(const std::string& revisionId);
     RegistryJobStatus doMaterialize(const std::string& revisionId);
     RegistryJobStatus doRecordValidation(const LocalValidationRequest& request);
+    RegistryJobStatus doSaveDraft(MethodDraft draft, const std::string& copyFromRevisionId);
+    RegistryJobStatus doDeleteDraft(const std::string& draftId);
+    RegistryJobStatus doSubmitDraft(const std::string& draftId, bool asBranch);
+    RegistryJobStatus doTransition(const std::string& revisionId, CentralState target,
+                                   const std::string& reason);
+    RegistryJobStatus doHistory(const std::string& revisionId);
+    bool refreshMethods(const std::string& projectId); // methods_ for one project
+    RegistryWorkerSnapshot::SubmitConflict conflictFor(const MethodDraft& draft, const std::string& head);
     void scanMaterialized(); // methodsDir entries matching this user's cache
     bool openUser(const std::string& subject, const std::string& email, bool persistLastSession);
     void closeUser();
@@ -212,6 +277,9 @@ private:
     std::string cacheError_;
     std::optional<std::chrono::system_clock::time_point> lastSuccessfulRefresh_;
     std::map<std::string, std::string> materialized_; // revisionId -> dir (verified)
+    std::vector<RegistryMethod> methods_;
+    std::optional<RevisionHistory> history_;
+    std::optional<RegistryWorkerSnapshot::SubmitConflict> submitConflict_;
 
     mutable std::mutex mutex_;
     mutable std::condition_variable cv_;
