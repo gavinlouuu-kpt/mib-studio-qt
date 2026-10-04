@@ -248,5 +248,36 @@ int main() {
     QByteArray noLine = lineIndex;
     noLine.replace("\"line\":\"absdiff-laplacian\",", "");
     MIB_EXPECT(!frontend::processingcorecatalog::parseIndex(noLine).ok, "a line index without its line is refused");
+    namespace pc = frontend::processingcorecatalog;
+    auto legacy = parsed;           // subtract-ring tree (2.0.0 has a windows plugin, 1.0.0 none)
+    legacy.activeVersion = "2.0.0";
+    auto line = lineParsed;         // absdiff-laplacian tree
+    line.activeVersion = "0.1.0";
+    pc::HostIdentity host{"windows", "x86_64", "1.2.3", "windows-x86_64-msvc1942-md-cxx17", 1};
+    auto options = pc::buildCoreOptions({legacy, line}, host);
+    MIB_REQUIRE(options.size() == 3, "both trees merged");
+    MIB_EXPECT(options[0].version.line == "subtract-ring" && options[0].disabledReason.isEmpty() &&
+                   options[0].channelActive, "matching Contract-1 core offered on a Contract-1 profile");
+    MIB_EXPECT(options[1].disabledReason.contains("not published"), "missing platform explained");
+    MIB_EXPECT(options[2].version.line == "absdiff-laplacian" &&
+                   options[2].disabledReason == "requires a Contract-2 profile (active profile: Contract 1)",
+               "contract mismatch listed with its reason, not offered");
+    host.profileContractVersion = 2;
+    options = pc::buildCoreOptions({legacy, line}, host);
+    MIB_EXPECT(options[0].disabledReason.contains("Contract-1 profile") && options[2].disabledReason.isEmpty(),
+               "Contract-2 profile offers only the Contract-2 core");
+    host.runtimeFingerprint = "windows-x86_64-msvc1999-md-cxx17";
+    MIB_EXPECT(pc::buildCoreOptions({line}, host).front().disabledReason.contains("another runtime"),
+               "runtime fingerprint mismatch explained");
+    host.runtimeFingerprint = "windows-x86_64-msvc1942-md-cxx17";
+    host.profileContractVersion = 0;
+    MIB_EXPECT(pc::buildCoreOptions({legacy, line}, host)[2].disabledReason.isEmpty(),
+               "unknown profile contract does not block (legacy profiles)");
+    auto sameVersion = line;
+    sameVersion.versions.front().version = "2.0.0";
+    options = pc::buildCoreOptions({legacy, sameVersion}, host);
+    MIB_EXPECT(options[0].version.line != options[2].version.line &&
+                   options[0].version.version == options[2].version.version,
+               "same version string on two lines stays two distinct rows");
     return mib::test::exitCode();
 }

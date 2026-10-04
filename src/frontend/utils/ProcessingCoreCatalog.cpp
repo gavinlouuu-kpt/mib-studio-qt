@@ -376,6 +376,53 @@ bool isProcessingContractCompatible(int requiredContractVersion,
            requiredContractVersion == activeContractVersion;
 }
 
+bool isLoadableAbi(const NativePluginEntry& plugin) {
+    return (plugin.engineAbiVersion == 1 && plugin.contractVersion == 1 &&
+            plugin.entrypoint == QStringLiteral("mib_processing_get_api")) ||
+           (plugin.engineAbiVersion == 2 && plugin.contractVersion == 2 &&
+            plugin.entrypoint == QStringLiteral("mib_processing_get_api_v2"));
+}
+
+QVector<CoreOption> buildCoreOptions(const QVector<ParseResult>& trees, const HostIdentity& host) {
+    QVector<CoreOption> options;
+    for (const auto& tree : trees) {
+        for (const auto& version : tree.versions) {
+            CoreOption option;
+            option.version = version;
+            option.channelActive = !tree.activeVersion.isEmpty() && version.version == tree.activeVersion;
+            const auto* plugin = findNativePlugin(version, host.os, host.arch);
+            if (plugin) {
+                option.plugin = *plugin;
+                option.hasPlugin = true;
+            }
+            if (!plugin) {
+                option.disabledReason = QStringLiteral("not published for %1/%2").arg(host.os, host.arch);
+            } else if (!isAppCompatible(*plugin, host.appVersion)) {
+                option.disabledReason = QStringLiteral("requires app %1 to %2")
+                                            .arg(plugin->appMinVersion,
+                                                 plugin->appMaxVersion.isEmpty() ? QStringLiteral("any")
+                                                                                 : plugin->appMaxVersion);
+            } else if (!isLoadableAbi(*plugin)) {
+                option.disabledReason =
+                    QStringLiteral("engine ABI %1 / contract %2 is not loadable by this app")
+                        .arg(plugin->engineAbiVersion)
+                        .arg(plugin->contractVersion);
+            } else if (plugin->runtimeFingerprint != host.runtimeFingerprint) {
+                option.disabledReason =
+                    QStringLiteral("built for another runtime (%1)").arg(plugin->runtimeFingerprint);
+            } else if (host.profileContractVersion > 0 &&
+                       plugin->contractVersion != host.profileContractVersion) {
+                option.disabledReason =
+                    QStringLiteral("requires a Contract-%1 profile (active profile: Contract %2)")
+                        .arg(plugin->contractVersion)
+                        .arg(host.profileContractVersion);
+            }
+            options.push_back(std::move(option));
+        }
+    }
+    return options;
+}
+
 bool isVersionDowngrade(const QString& candidate, const QString& current) {
     if (candidate == current) return false;
     qsizetype candidateSuffix = 0;

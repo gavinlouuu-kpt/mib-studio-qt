@@ -81,4 +81,29 @@ bool isProcessingContractCompatible(int requiredContractVersion,
                                     int activeContractVersion);
 bool isVersionDowngrade(const QString& candidate, const QString& current);
 
+// The app and profile a core is offered to.
+struct HostIdentity {
+    QString os;
+    QString arch;
+    QString appVersion;
+    QString runtimeFingerprint;
+    int profileContractVersion{0};  // 0 = unknown/unset: the contract is not enforced
+};
+
+// One row of the Processing Core dialog: a published core version on one line.
+struct CoreOption {
+    VersionEntry version;
+    NativePluginEntry plugin;  // this platform's artifact (valid when hasPlugin)
+    bool hasPlugin{false};
+    bool channelActive{false};
+    QString disabledReason;  // empty = offerable
+};
+
+// (1, 1, mib_processing_get_api) or (2, 2, mib_processing_get_api_v2).
+bool isLoadableAbi(const NativePluginEntry& plugin);
+
+// Merges the registry trees (in the given order, each in its index order) and
+// decides, per version, whether this host may offer it and why not.
+QVector<CoreOption> buildCoreOptions(const QVector<ParseResult>& trees, const HostIdentity& host);
+
 } // namespace frontend::processingcorecatalog
