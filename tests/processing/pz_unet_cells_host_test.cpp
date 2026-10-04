@@ -38,11 +38,12 @@ std::vector<uint8_t> base64Decode(const std::string& in) {
     const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     for (int i = 0; i < 64; ++i) map[static_cast<unsigned char>(a[i])] = i;
     std::vector<uint8_t> out;
-    int acc = 0, bits = 0;
+    uint32_t acc = 0;
+    int bits = 0;
     for (char ch : in) {
         const int v = map[static_cast<unsigned char>(ch)];
         if (v < 0) continue;
-        acc = (acc << 6) | v;
+        acc = ((acc << 6) | static_cast<uint32_t>(v)) & 0xFFFFFFu; // keep 24 bits: no overflow
         bits += 6;
         if (bits >= 8) {
             bits -= 8;
