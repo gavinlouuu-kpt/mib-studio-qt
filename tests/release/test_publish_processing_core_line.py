@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib.util
 import json
 import sys
@@ -85,6 +87,123 @@ class LineManifestTest(unittest.TestCase):
             line_pub.merge_line_index(index | {"line": "subtract-ring"}, manifest(), BASE)
         with self.assertRaisesRegex(ValueError, "channel"):
             line_pub.merge_line_index(index | {"channel": "stable"}, manifest(), BASE)
+
+
+def write_release(root: Path, version: str = "0.1.0") -> None:
+    """Four signed-looking release assets: bytes plus sidecars the publisher accepts."""
+    for os_name, ext, scheme in (("windows", "dll", "authenticode"), ("linux", "so", "ed25519")):
+        stem = f"mib_processing_core-{LINE}-{version}-{os_name}_x86_64"
+        (root / f"{stem}.{ext}").write_bytes(f"{os_name} plugin {version}".encode())
+        signing = {"scheme": scheme, "required": True}
+        if scheme == "ed25519":
+            # Shape-valid detached envelope (the publisher checks sizes and the key hash).
+            spki = bytes(range(44))
+            signing |= {"public_key_spki_base64": base64.b64encode(spki).decode("ascii"),
+                        "public_key_spki_sha256": hashlib.sha256(spki).hexdigest(),
+                        "signature_base64": base64.b64encode(bytes(64)).decode("ascii")}
+        (root / f"{stem}.json").write_text(json.dumps({
+            "schema_version": 1, "algorithm": LINE, "version": version, "filename": f"{stem}.{ext}",
+            "os": os_name, "arch": "x86_64", "engine_abi_version": 2, "contract_version": 2,
+            "entrypoint": "mib_processing_get_api_v2", "runtime_fingerprint": f"{os_name}-fp",
+            "app_min_version": "1.1.2", "app_max_version": "1.1.2", "signing": signing}), encoding="utf-8")
+
+
+class LinePublishTest(unittest.TestCase):
+    def run_publish(self, root: Path, *extra: str, existing=None):
+        uploads = []
+        existing = existing or {}
+
+        def read(_args, key):
+            return existing.get(key), True
+
+        with (mock.patch.object(line_pub.core, "read_existing_object", side_effect=read),
+              mock.patch.object(line_pub.core, "upload_object",
+                                side_effect=lambda **kw: uploads.append((kw["key"], kw["file_path"].read_bytes())))):
+            code = line_pub.main(["--line", LINE, "--channel", "beta", "--from-release", TAG,
+                                  "--release-assets-dir", str(root), "--published-at", "2026-10-04T00:00:00Z",
+                                  "--endpoint", "https://r2.invalid", "--upload-method", "s3", *extra])
+        return code, uploads
+
+    def test_publish_uploads_version_then_index_then_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_release(root)
+            code, uploads = self.run_publish(root)
+        self.assertEqual(code, 0)
+        base = f"beta/processing-core/{LINE}"
+        self.assertEqual([key for key, _ in uploads],
+                         [f"{base}/versions/0.1.0.json", f"{base}/index.json", f"{base}/latest.json"])
+        latest = json.loads(uploads[-1][1])
+        self.assertEqual((latest["line"], latest["contract_version"], len(latest["native_plugins"])),
+                         (LINE, 2, 2))
+
+    def test_republish_identical_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_release(root)
+            _, first = self.run_publish(root)
+            version_key, version_bytes = first[0]
+            code, second = self.run_publish(root, existing={version_key: version_bytes})
+        self.assertEqual(code, 0)
+        self.assertNotIn(version_key, [key for key, _ in second])
+
+    def test_republish_different_content_fails_without_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_release(root)
+            key = f"beta/processing-core/{LINE}/versions/0.1.0.json"
+            code, uploads = self.run_publish(root, existing={key: b"{}\n"})
+        self.assertEqual(code, 1)
+        self.assertEqual(uploads, [])
+
+    def test_stable_channel_is_refused_without_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                mock.patch.object(line_pub.core, "upload_object") as upload:
+            root = Path(temp_dir)
+            write_release(root)
+            code = line_pub.main(["--line", LINE, "--channel", "stable", "--from-release", TAG,
+                                  "--release-assets-dir", str(root), "--published-at", "2026-10-04T00:00:00Z",
+                                  "--endpoint", "https://r2.invalid", "--upload-method", "s3"])
+        self.assertEqual(code, 1)
+        upload.assert_not_called()
+
+    def test_mutating_publish_requires_s3_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                mock.patch.object(line_pub.core, "upload_object") as upload:
+            root = Path(temp_dir)
+            write_release(root)
+            code = line_pub.main(["--line", LINE, "--channel", "beta", "--from-release", TAG,
+                                  "--release-assets-dir", str(root), "--published-at", "2026-10-04T00:00:00Z"])
+        self.assertEqual(code, 1)
+        upload.assert_not_called()
+
+    def test_promote_copies_immutable_version_to_latest_and_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_release(root)
+            _, first = self.run_publish(root)
+        existing = dict(first)
+        uploads = []
+        with (mock.patch.object(line_pub.core, "read_existing_object",
+                                side_effect=lambda _a, key: (existing.get(key), True)),
+              mock.patch.object(line_pub.core, "upload_object",
+                                side_effect=lambda **kw: uploads.append((kw["key"], kw["file_path"].read_bytes())))):
+            code = line_pub.main(["--line", LINE, "--channel", "beta", "--promote-version", "0.1.0",
+                                  "--published-at", "2026-10-05T00:00:00Z",
+                                  "--endpoint", "https://r2.invalid", "--upload-method", "s3"])
+        self.assertEqual(code, 0)
+        base = f"beta/processing-core/{LINE}"
+        self.assertEqual([key for key, _ in uploads], [f"{base}/index.json", f"{base}/latest.json"])
+        self.assertEqual(uploads[1][1], existing[f"{base}/versions/0.1.0.json"])  # copied byte for byte
+
+    def test_promote_unknown_version_fails_without_upload(self) -> None:
+        with mock.patch.object(line_pub.core, "read_existing_object", return_value=(None, True)), \
+                mock.patch.object(line_pub.core, "upload_object") as upload:
+            code = line_pub.main(["--line", LINE, "--channel", "beta", "--promote-version", "0.3.2",
+                                  "--published-at", "2026-10-05T00:00:00Z",
+                                  "--endpoint", "https://r2.invalid", "--upload-method", "s3"])
+        self.assertEqual(code, 1)
+        upload.assert_not_called()
 
 
 if __name__ == "__main__":

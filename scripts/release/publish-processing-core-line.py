@@ -124,3 +124,130 @@ def merge_line_index(existing: dict[str, Any], manifest: dict[str, Any],
         "updated_at": manifest["published_at"],
         "versions": versions,
     }
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--line", required=True, choices=sorted(LINES))
+    parser.add_argument("--channel", required=True)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--from-release", help="mib-processing-<line>-v<version> GitHub Release to publish")
+    action.add_argument("--promote-version", help="Existing immutable line version to activate")
+    parser.add_argument("--release-assets-dir", help="Use these downloaded assets instead of gh (tests, previews)")
+    parser.add_argument("--published-at")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--out-dir", help="Also write the rendered documents here")
+    parser.add_argument("--repo", default=core.DEFAULT_REPO)
+    parser.add_argument("--public-base-url", default=core.DEFAULT_PUBLIC_BASE_URL)
+    parser.add_argument("--bucket", default=core.DEFAULT_BUCKET)
+    parser.add_argument("--endpoint")
+    parser.add_argument("--upload-method", default="auto", choices=("auto", "s3", "wrangler"))
+    parser.add_argument("--profile")
+    parser.add_argument("--acl", default="")
+    parser.add_argument("--wrangler-bin", default="wrangler")
+    parser.add_argument("--gh-bin", default="gh")
+    parser.add_argument("--debug", action="store_true")
+    return parser
+
+
+def _upload(args, key: str, path: Path, cache_control: str) -> None:
+    if args.dry_run:
+        print(f"DRY RUN: would upload {key}")
+        return
+    core.upload_object(args=args, key=key, file_path=path, content_type="application/json",
+                       cache_control=cache_control)
+
+
+def _write(out: Path, name: str, value: dict[str, Any], args) -> Path:
+    path = out / name
+    core.write_json(path, value)
+    if args.out_dir:
+        core.write_json(Path(args.out_dir) / name, value)
+    return path
+
+
+def _publish(args, base: str, out: Path) -> int:
+    release_tag = args.from_release
+    version = version_from_line_tag(args.line, release_tag)
+    if args.release_assets_dir:
+        asset_dir = Path(args.release_assets_dir)
+        published_at = args.published_at
+        if not published_at:
+            raise ValueError("--release-assets-dir requires --published-at")
+    else:
+        metadata = core.inspect_github_release(args.repo, release_tag, args.gh_bin)
+        asset_dir = out / "assets"
+        core.download_github_release(args.repo, release_tag, asset_dir, args.gh_bin)
+        published_at = args.published_at or metadata.get("publishedAt")
+        if not published_at:
+            raise ValueError(f"GitHub Release {release_tag} did not provide publishedAt")
+    if any(asset_dir.glob("*.whl")):
+        raise ValueError(f"{release_tag}: a native-only line release must not carry wheels")
+    plugins = core.build_native_plugin_entries(
+        core.discover_native_descriptors(asset_dir), asset_dir=asset_dir, repo=args.repo,
+        release_tag=release_tag, expected_version=version,
+        expected_contract_version=LINES[args.line]["contract_version"])
+    manifest = build_line_manifest(line=args.line, channel=args.channel, version=version,
+                                   release_tag=release_tag, repo=args.repo, native_plugins=plugins,
+                                   published_at=published_at, public_base_url=args.public_base_url)
+    version_key = f"{base}/versions/{core.version_object_component(version)}.json"
+    existing_version, version_ok = core.read_existing_object(args, version_key)
+    upload_version = core.resolve_immutable_update(existing_version, version_ok, manifest, version_key)
+    index_bytes, index_ok = core.read_existing_object(args, f"{base}/index.json")
+    if not index_ok:
+        raise RuntimeError(f"Refusing to publish because {base}/index.json could not be read")
+    index = merge_line_index(core.parse_existing_json(index_bytes, f"{base}/index.json"), manifest,
+                             args.public_base_url)
+    version_path = _write(out, "version.json", manifest, args)
+    index_path = _write(out, "index.json", index, args)
+    latest_path = _write(out, "latest.json", manifest, args)
+    if upload_version:
+        _upload(args, version_key, version_path, core.IMMUTABLE_CACHE_CONTROL)
+    _upload(args, f"{base}/index.json", index_path, core.MUTABLE_CACHE_CONTROL)
+    _upload(args, f"{base}/latest.json", latest_path, core.MUTABLE_CACHE_CONTROL)
+    print(f"Published {args.line} {version} to {base}")
+    return 0
+
+
+def _promote(args, base: str, out: Path) -> int:
+    version = core.validate_version(args.promote_version)
+    if not args.published_at:
+        raise ValueError("--published-at is required for promotion")
+    version_key = f"{base}/versions/{core.version_object_component(version)}.json"
+    version_bytes, ok = core.read_existing_object(args, version_key)
+    if not ok or version_bytes is None:
+        raise RuntimeError(f"No immutable {args.line} version {version} at {version_key}")
+    manifest = core.parse_existing_json(version_bytes, version_key)
+    if (manifest.get("line"), manifest.get("channel"), manifest.get("version")) != (args.line, args.channel, version):
+        raise RuntimeError(f"{version_key} does not identify {args.line} {version} on {args.channel}")
+    index_bytes, index_ok = core.read_existing_object(args, f"{base}/index.json")
+    if not index_ok:
+        raise RuntimeError(f"Refusing to promote because {base}/index.json could not be read")
+    index = merge_line_index(core.parse_existing_json(index_bytes, f"{base}/index.json"), manifest,
+                             args.public_base_url)
+    index["updated_at"] = core.validate_published_at(args.published_at)
+    index_path = _write(out, "index.json", index, args)
+    latest_path = out / "latest.json"
+    latest_path.write_bytes(version_bytes)  # promotion never re-renders the immutable document
+    _upload(args, f"{base}/index.json", index_path, core.MUTABLE_CACHE_CONTROL)
+    _upload(args, f"{base}/latest.json", latest_path, core.MUTABLE_CACHE_CONTROL)
+    print(f"Activated {args.line} {version} on {args.channel}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    try:
+        check_channel(args.line, args.channel)
+        core.require_consistent_mutating_transport(args)
+        base = line_base_key(args.channel, args.line)
+        with tempfile.TemporaryDirectory(prefix="processing_core_line_") as temp:
+            out = Path(temp)
+            return _promote(args, base, out) if args.promote_version else _publish(args, base, out)
+    except (RuntimeError, ValueError, FileNotFoundError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
