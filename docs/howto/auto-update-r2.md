@@ -561,7 +561,7 @@ updates…**; a status-bar notice appears when a newer version is available.
 **One-time key setup (on the team's local server — the private key never goes
 into the repository, a chat or a cloud session).** The step-by-step
 procedure, including Tauri CLI pitfalls and an agent prompt, is
-[`docs/exec-plans/active/2026-10-04-yofo-review-update-key-handover.md`](../exec-plans/active/2026-10-04-yofo-review-update-key-handover.md);
+[`docs/exec-plans/completed/2026-10-04-yofo-review-update-key-handover.md`](../exec-plans/completed/2026-10-04-yofo-review-update-key-handover.md);
 in short:
 
 ```bash

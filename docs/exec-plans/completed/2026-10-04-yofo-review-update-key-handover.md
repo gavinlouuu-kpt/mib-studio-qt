@@ -1,9 +1,9 @@
 # Handover: generate the YOFO Review update key on the local server
 
-Status: active
+Status: completed
 
 Owner of the next step: whoever operates the team's local (on-premises) server.
-Parent plan: [2026-10-01-standalone-review-app.md](2026-10-01-standalone-review-app.md) (PR 6).
+Parent plan: [2026-10-01-standalone-review-app.md](../active/2026-10-01-standalone-review-app.md) (PR 6).
 
 ## Goal
 
@@ -29,16 +29,16 @@ When this handover is done, release builds sign update bundles and
 
 ## Acceptance criteria
 
-- [ ] Key pair generated on the local server, private key password-protected
+- [x] Key pair generated on the local server, private key password-protected
       (verified: signing fails with an empty or wrong password).
 - [ ] Private key + password stored in the team password manager, plus an
       offline backup; the server copy is mode `600`.
-- [ ] Repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+- [x] Repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
       `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` set on `gavinlouuu-kpt/mib-studio-qt`.
-- [ ] Public key committed to `desktop/src-tauri/tauri.review.conf.json`
+- [x] Public key committed to `desktop/src-tauri/tauri.review.conf.json`
       (`plugins.updater`), `scripts/release/review-updater-enabled.py` exits 0,
       pushed to `plan/standalone-review-app`, YOFO Review CI green.
-- [ ] This plan set to `Status: completed`, moved to `completed/`, parent plan
+- [x] This plan set to `Status: completed`, moved to `completed/`, parent plan
       PR 6 "Remaining" line closed.
 
 ## Decision log
@@ -52,6 +52,14 @@ When this handover is done, release builds sign update bundles and
   is passed with `-p`. `tauri signer sign` and the bundler read the password
   from `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Without `umask 077` the key files
   are written world-readable.
+
+- 2026-10-04: done on the local server (Tauri CLI 2.11.4). Key ID
+  `667DCA2806442716`; `~/.tauri/` is mode `700`, the three files `600`;
+  signing verified with the password and refused with an empty and a
+  wrong one. Secrets set by the owner from the key files; public key in
+  `tauri.review.conf.json` (`review-stable` endpoint). Still open with
+  the owner: copy key + password into the password manager and an
+  offline backup, then `shred -u ~/.tauri/yofo-review.key.password`.
 
 ## Procedure
 
@@ -143,7 +151,7 @@ the local server, from a checkout of the repository.
 You are on the team's local server, in a checkout of
 github.com/gavinlouuu-kpt/mib-studio-qt. Your task: generate YOFO Review's
 auto-update signing key here and wire up its public half, following
-docs/exec-plans/active/2026-10-04-yofo-review-update-key-handover.md exactly
+docs/exec-plans/completed/2026-10-04-yofo-review-update-key-handover.md exactly
 (read it first; it is the source of truth, including the Tauri CLI quirks in
 its decision log).
 
