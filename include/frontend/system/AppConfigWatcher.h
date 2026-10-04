@@ -37,6 +37,14 @@ public:
 	// says exactly which of persisted / applied / conflict happened. Nothing
 	// is written on conflict or validation failure.
 	ConfigApplyResult applyProcessingDraft(const ApplyProcessingDraftRequest& request);
+	// Central method Apply (#398 M2b): replace the watched config.json with
+	// `text` byte-for-byte (the exact materialized revision, so the backend
+	// recognises it), after copying the current file to
+	// config.json.bak-<yyyyMMdd-HHmmss>. Refuses when the file changed on disk
+	// and has not been reloaded. Then loads and applies it like any reload
+	// and announces configFileChanged. Returns "" on success, else the reason
+	// (nothing written).
+	QString applyMethodDocument(const QByteArray& text, QString* backupPath = nullptr);
 	// Persist camera.frame_delivery_mode into the watched config.json file,
 	// preserving all unrelated keys.
 	void writeBackCameraConfig(camera::common::FrameDeliveryMode mode);
