@@ -633,6 +633,60 @@ FilterResult evaluateOuterContourObject(
     return result;
 }
 
+struct ComponentTable {
+    cv::Mat labels;               // CV_32S, 0 = background, 1.. = components
+    std::vector<int> pixels;      // per label (index 0 unused)
+    std::vector<cv::Rect> boxes;  // per label
+};
+
+// Sequential 8-connected labelling of a 0/255 mask (flood fill with an
+// explicit stack).
+ComponentTable labelComponents8(const cv::Mat& binary) {
+    ComponentTable t;
+    t.labels = cv::Mat::zeros(binary.size(), CV_32S);
+    t.pixels.push_back(0);
+    t.boxes.emplace_back();
+    std::vector<cv::Point> stack;
+    for (int y = 0; y < binary.rows; ++y) {
+        const uchar* row = binary.ptr<uchar>(y);
+        for (int x = 0; x < binary.cols; ++x) {
+            if (!row[x] || t.labels.at<int>(y, x)) {
+                continue;
+            }
+            const int label = static_cast<int>(t.pixels.size());
+            int count = 0;
+            int x0 = x, y0 = y, x1 = x, y1 = y;
+            t.labels.at<int>(y, x) = label;
+            stack.assign(1, cv::Point(x, y));
+            while (!stack.empty()) {
+                const cv::Point p = stack.back();
+                stack.pop_back();
+                ++count;
+                x0 = std::min(x0, p.x);
+                x1 = std::max(x1, p.x);
+                y0 = std::min(y0, p.y);
+                y1 = std::max(y1, p.y);
+                for (int dy = -1; dy <= 1; ++dy) {
+                    const int ny = p.y + dy;
+                    if (ny < 0 || ny >= binary.rows) continue;
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const int nx = p.x + dx;
+                        if (nx < 0 || nx >= binary.cols || !binary.at<uchar>(ny, nx) ||
+                            t.labels.at<int>(ny, nx)) {
+                            continue;
+                        }
+                        t.labels.at<int>(ny, nx) = label;
+                        stack.emplace_back(nx, ny);
+                    }
+                }
+            }
+            t.pixels.push_back(count);
+            t.boxes.emplace_back(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+        }
+    }
+    return t;
+}
+
 struct UnetCell {
     size_t contourIdx{0};
     cv::Rect box;
@@ -731,10 +785,10 @@ std::vector<services::FilterResult> filterUnetCellObjects(
     std::vector<std::vector<cv::Point>> contours;
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(binary, contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_NONE);
-    cv::Mat labels;
-    cv::Mat stats;
-    cv::Mat centroids;
-    cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
+    // 8-connected component labels with pixel count and bounding box.
+    // Sequential on purpose: cv::connectedComponentsWithStats runs in parallel
+    // on the OpenCV thread pool, which the realtime path must not fan out into.
+    const ComponentTable components = labelComponents8(binary);
 
     const cv::Rect window =
         roi.area() > 0 ? roi : cv::Rect(0, 0, processedImage.cols, processedImage.rows);
@@ -744,14 +798,11 @@ std::vector<services::FilterResult> filterUnetCellObjects(
         if (hierarchy[i][3] >= 0 || contours[i].empty()) {
             continue; // holes and components inside holes are not objects
         }
-        const int label = labels.at<int>(contours[i].front());
+        const int label = components.labels.at<int>(contours[i].front());
         UnetCell cell;
         cell.contourIdx = i;
-        cell.pixels = stats.at<int>(label, cv::CC_STAT_AREA);
-        cell.box = cv::Rect(stats.at<int>(label, cv::CC_STAT_LEFT),
-                            stats.at<int>(label, cv::CC_STAT_TOP),
-                            stats.at<int>(label, cv::CC_STAT_WIDTH),
-                            stats.at<int>(label, cv::CC_STAT_HEIGHT));
+        cell.pixels = components.pixels[static_cast<size_t>(label)];
+        cell.box = components.boxes[static_cast<size_t>(label)];
         cell.cutOff = cell.box.x <= window.x || cell.box.y <= window.y ||
                       cell.box.x + cell.box.width >= window.x + window.width ||
                       cell.box.y + cell.box.height >= window.y + window.height;

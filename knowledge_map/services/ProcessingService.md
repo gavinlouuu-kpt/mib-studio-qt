@@ -208,6 +208,10 @@ PZ7035 U-Net cell path. `filterProcessedObjects` dispatches it to
 `filterUnetCellObjects`; no kernel serves it yet, so a Contract 3 profile is
 refused like any mismatch. Gold: `processing.contract3_cells_conformance`
 against the PL conformance vectors. The predicates match contracts by equality.
+The autofocus feed follows the active contract (`activeContract_`, set in
+`setProcessingConfig`). Contract 1 calls the ring-ratio callback, and
+Contracts 2 and 3 call `setFocusSampleCallback` with each valid object's
+Laplacian variance (see [[AutofocusService]]).
 
 Rationale and the full compatibility matrix:
 `docs/decisions/0006-processing-contract-v2.md`,

@@ -24,6 +24,15 @@ exports Contract 3 with brightness mean and variance instead of the quartiles.
 Tests: `recording.experiment_roundtrip` and `scripts.contract3_export_review`.
 See [[../data-model/HDF5-Storage]].
 
+Autofocus (V2-4 service wiring, for Contracts 2 and 3): ProcessingService
+sends per-object Laplacian samples instead of ring ratios when the contract
+has no ring width, and [[../services/AutofocusService]] runs the focus-score
+peak-seeker on them. Two fixes on the way, regression first
+(`backend.autofocus_focus_feed`):
+- the NaN ring ratio of Contract 2 objects no longer enters the ring
+  statistics;
+- ring mode enforces `minSamplesPerStep` on every step, not only the first.
+
 ## 2026-10-02 — Central profile registry foundation (#398, PR #402)
 
 Provider-neutral registry contract, canonical method envelope over the existing

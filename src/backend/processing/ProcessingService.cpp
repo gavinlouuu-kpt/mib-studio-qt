@@ -720,6 +720,7 @@ void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
         std::scoped_lock lk(configMutex_);
         processingConfig_ = config;
     }
+    activeContract_.store(config.processing_contract_version, std::memory_order_relaxed);
     configVersion_.fetch_add(1, std::memory_order_release);
     refreshRealtimeBatchPipelineConfig();
     if (const std::string mismatch = processingContractMismatch(); !mismatch.empty()) {
@@ -1751,6 +1752,11 @@ void ProcessingService::setRingRatioCallback(RingRatioCallback callback) {
     ringRatioCallback_ = std::move(callback);
 }
 
+void ProcessingService::setFocusSampleCallback(FocusSampleCallback callback) {
+    std::scoped_lock lk(ringRatioCallbackMutex_);
+    focusSampleCallback_ = std::move(callback);
+}
+
 void ProcessingService::setTargetGroupCallback(TargetGroupCallback callback) {
     std::scoped_lock lk(targetGroupCallbackMutex_);
     targetGroupCallback_ = std::move(callback);
@@ -2103,17 +2109,36 @@ void ProcessingService::publishRealtimeValidationCallbacks(
 
     // Hoist the callback copy out of the per-object loop: one mutex-guarded
     // std::function copy per frame, not per validation object (P7).
+    // Autofocus feed by contract: ring ratio (Contract 1) or per-object
+    // Laplacian variance (Contracts 2 and 3). `!(x > 0)` also drops NaN, which
+    // a `<= 0` test lets through.
+    const bool ringFeed = backend::processing::contract::contractHasRingWidth(
+        activeContract_.load(std::memory_order_relaxed));
     RingRatioCallback rrCb;
+    FocusSampleCallback fsCb;
     {
         std::scoped_lock cbLk(ringRatioCallbackMutex_);
-        rrCb = ringRatioCallback_;
+        if (ringFeed) {
+            rrCb = ringRatioCallback_;
+        } else {
+            fsCb = focusSampleCallback_;
+        }
     }
     if (rrCb) {
         for (const auto& validation : validations) {
-            if (!validation.isValid || validation.ringRatio <= 0.0) {
+            if (!validation.isValid || !(validation.ringRatio > 0.0)) {
                 continue;
             }
             rrCb(validation.ringRatio, static_cast<int64_t>(timestampNs));
+        }
+    }
+    if (fsCb) {
+        for (const auto& validation : validations) {
+            if (!validation.isValid || !std::isfinite(validation.laplacianVariance)) {
+                continue;
+            }
+            fsCb(validation.laplacianVariance, static_cast<int64_t>(timestampNs), timing.frameIndex,
+                 validation.objectId, validation.trackId);
         }
     }
 

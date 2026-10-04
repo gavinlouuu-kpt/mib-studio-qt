@@ -8,7 +8,8 @@
 `include/backend/services/AutofocusMath.h` (Contract-1 ring-width setpoint math),
 `include/backend/services/AutofocusFocusScore.h` (Contract-2 focus-score peak-seeker)
 **Tests:** `tests/backend/autofocus_math_test.cpp`,
-`tests/backend/autofocus_focus_score_test.cpp`
+`tests/backend/autofocus_focus_score_test.cpp`,
+`tests/backend/autofocus_focus_feed_test.cpp`
 `src/backend/nanopositioner/NanopositionerBackends.cpp`,
 `src/backend/nanopositioner/oeabt/OeabtProtocol.cpp`,
 `include/backend/services/AutofocusMath.h` (pure control math)
@@ -36,10 +37,21 @@ untouched for legacy execution.
   step after an overshoot, and holds when the change is within `holdTolerance`.
   Every commanded voltage is clamped to `[minVoltage, maxVoltage]`.
 
-Service/UI wiring (an `onFocusSample` feed, contract-gated controller
-selection, and the focus-score terminology rename) rides on the v2
-config/contract plumbing and lands with V2-6; the pure controller here is the
-tested core.
+**Service wiring (2026-10-04).**
+- [[ProcessingService]] chooses the feed by the active contract. Contract 1
+  sends each valid object's ring ratio (`onRingRatio`). Contracts 2 and 3 send
+  each valid object's finite Laplacian variance (`onFocusSample`,
+  `setFocusSampleCallback`, wired in [[../architecture/AppBackend]]).
+- The feed that delivers samples selects the metric (`getFocusMetric`). In
+  `LaplacianVariance` mode the control loop runs `FocusScoreController` on
+  the de-duplicated median (`getMedianFocusScore`). Every evaluation, a step
+  or a hold, starts a fresh median.
+- The steps, voltage limits, staleness (`ringRatioStaleMs`) and
+  `minSamplesPerStep` are shared with ring mode. `focusScoreHoldTolerance` is
+  the hold band.
+- The controller resets when control starts or the metric changes.
+- The UI still shows the ring-ratio terminology; the focus-score rename is
+  open.
 
 ## Responsibility
 
@@ -61,6 +73,8 @@ tested core.
 
 ## Config — `AutofocusService::Config`
 
+- `focusScoreHoldTolerance` — focus-score mode: a median change at or below
+  this counts as no change
 - `focusSetpoint`, `focusRange` — target ring-ratio and tolerance
 - `voltageStep`, `fineVoltageStep`, `maxVoltage`, `minVoltage`
 - `initialVoltage` remains readable for config compatibility but connect is
@@ -114,6 +128,14 @@ against configured limits and the controller-reported maximum; invalid values
 are rejected rather than silently clamped at the transport boundary.
 
 ## Gotchas
+
+- A NaN ring ratio (every Contract 2/3 object) used to pass the `<= 0.0`
+  guards and enter the statistics; both guards are now `!(x > 0)`
+  (`backend.autofocus_focus_feed`).
+- Until 2026-10-04, ring mode enforced `minSamplesPerStep` only before the
+  first step. The sample counter restarted at 0 while the applied sequence
+  kept its old value, so the unsigned difference wrapped. The applied
+  sequence now restarts with it.
 
 - Candidate VID/PID values do not establish identity. OEABT requires the
   `Oeabt pzt controller` response before connection or any voltage write.

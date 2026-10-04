@@ -177,6 +177,11 @@ mib_add_backend_test_executable(autofocus_focus_score_test backend/autofocus_foc
 add_test(NAME backend.autofocus_focus_score COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_score_test)
 set_tests_properties(backend.autofocus_focus_score PROPERTIES LABELS "backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(autofocus_focus_feed_test backend/autofocus_focus_feed_test.cpp)
+mib_backend_test_link(autofocus_focus_feed_test PRIVATE Threads::Threads)
+add_test(NAME backend.autofocus_focus_feed COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_feed_test)
+set_tests_properties(backend.autofocus_focus_feed PROPERTIES LABELS "backend;stress" TIMEOUT 60)
+
 mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_test.cpp)
 mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
 add_test(NAME backend.hdf_write_queue COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_test)
