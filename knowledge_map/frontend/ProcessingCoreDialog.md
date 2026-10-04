@@ -35,6 +35,21 @@ processing contract; ConfigTabs marks a mismatch incompatible. Regenerating a
 recorded HDF5 file with a different active identity warns the operator and
 records the newly leased identity without silently switching.
 
+### Core lines and contracts (T1.1c)
+
+The list merges the subtract-ring tree (`{channel}/processing-core/`, required)
+and the absdiff-laplacian line (`{channel}/processing-core/absdiff-laplacian/`,
+optional: a 404 means no cores on that line yet, other failures keep the
+Contract-1 rows and add a note). Each tree's `latest.json` is validated against
+its own index, and an index must declare the line it was fetched for. Rows read
+`<line> <version> · Contract <c> · ABI <a>`; `processingcorecatalog::buildCoreOptions`
+decides whether a row can be activated and why not: no artifact for this
+platform, app range, an ABI/contract/entrypoint this app cannot load ((1,1,
+`get_api`) or (2,2, `get_api_v2`)), another runtime, or a contract that differs
+from the active profile's `processing_contract_version` (listed, not offered).
+The persisted selection keeps its line (`ProcessingCore/Line`, default
+`subtract-ring`), shown in the active-core label.
+
 ## Resolution and trust chain
 
 1. Fetch `{base}/{channel}/processing-core/index.json` over HTTPS with a

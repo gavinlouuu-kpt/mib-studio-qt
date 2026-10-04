@@ -1,5 +1,14 @@
 # Recent Work
 
+## 2026-10-04 — Processing Core dialog reads both core lines, filters by contract (T1.1c)
+
+The dialog now lists the subtract-ring tree and the optional absdiff-laplacian line subtree,
+one row per core with line, contract and ABI. `processingcorecatalog::buildCoreOptions` decides
+offerability (platform, app range, loadable ABI/contract/entrypoint, runtime, and the active
+profile's contract; mismatches are listed with the reason, never offered). The catalog parses
+the line schemas and ties `entrypoint` to the ABI; the selection persists its line. Plan:
+[`2026-10-04-processing-core-dialog-lines`](../../docs/exec-plans/active/2026-10-04-processing-core-dialog-lines.md).
+
 ## 2026-10-04 — absdiff-laplacian release line: signed, beta registry, per-line promote (T1.1b PR 2)
 
 `mib-processing-absdiff-laplacian-v<version>` tags now run `processing-core-line.yml`: tag ==

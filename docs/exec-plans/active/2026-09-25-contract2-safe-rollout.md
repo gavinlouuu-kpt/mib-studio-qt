@@ -11,7 +11,9 @@ done 2026-10-03; PR 2 (native-only `processing-core-line.yml`, signed beta
 registry line `{channel}/processing-core/absdiff-laplacian/`, promote per line; plan
 [`2026-10-04-processing-core-lines-pr2`](2026-10-04-processing-core-lines-pr2.md))
 done 2026-10-04. Next: the first absdiff-laplacian tag (Phase 1 exit evidence)
-and T1.1c (Processing Core dialog shows and filters by contract).
+and T1.1c (Processing Core dialog shows and filters by contract; plan
+[`2026-10-04-processing-core-dialog-lines`](2026-10-04-processing-core-dialog-lines.md),
+implemented 2026-10-04).
 
 Builds on the [Processing Contract v2 plan](2026-07-21-processing-contract-v2.md),
 [ADR 0006](../../decisions/0006-processing-contract-v2.md) (what Contract 2

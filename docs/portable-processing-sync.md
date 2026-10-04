@@ -198,7 +198,11 @@ tags, downloads and SHA-256-verifies it, then fetches `profile_catalog_url` /
 
 MIB Studio's **Settings → Processing Core…** selector reads `index.json`,
 filters `native_plugins[]` for the running OS/architecture and declared app
-range, then fetches the selected immutable version manifest. It refuses the
+range, then fetches the selected immutable version manifest. It reads the
+subtract-ring tree and then the optional absdiff-laplacian line subtree, lists
+every core with its line, contract and ABI, and only offers cores whose contract
+equals the active profile's `processing_contract_version` (others are listed
+with the reason; see `knowledge_map/frontend/ProcessingCoreDialog.md`). It refuses the
 candidate unless the mutable and immutable metadata agree. The raw immutable
 manifest SHA-256 is retained alongside the artifact SHA-256 in experiment
 provenance.
