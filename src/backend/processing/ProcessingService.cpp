@@ -2200,9 +2200,28 @@ void ProcessingService::ingestProviderFrame(const backend::processing::ProviderF
     noteRealtimeValidation(idx, frame.objects);
     accumulateProviderIdentification(frame);
     const double p2m = getPixelToMicronFactor();
+    // Recording (YOFO S3): one metadata row per cell, as the inline loop
+    // records one per object; valid cells always, invalid ones sampled at
+    // invalidFrameSamplingRate. No images: the PL sends results only.
+    const bool recording =
+        !experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx);
     for (FilterResult v : frame.objects) {
         v.analysisPixelToMicronFactor = p2m; // the calibration the profile was compiled with
         appendProviderMonitoringRow(idx, frame.timestampNs, v);
+        if (!recording) continue;
+        bool save = v.isValid;
+        if (!save) {
+            const size_t counter = invalidFrameCounter_.fetch_add(1, std::memory_order_relaxed);
+            const size_t rate = invalidFrameSamplingRate_.load(std::memory_order_relaxed);
+            save = rate > 0 && (counter % rate) == 0;
+        }
+        if (save) {
+            ProcessedFrame row;
+            row.index = idx;
+            row.timestampNs = frame.timestampNs;
+            row.validation = v;
+            appendExperimentFrame(std::move(row), v.isValid);
+        }
     }
 }
 

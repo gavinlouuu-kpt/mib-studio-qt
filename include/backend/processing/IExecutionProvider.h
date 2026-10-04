@@ -67,9 +67,10 @@ public:
     virtual ProviderStatus status() const = 0;
 };
 
-// FilterResult view of one unet_cells_v2 cell (the fields the shared result
-// paths read). Profile values without a FilterResult field (brightness mean
-// and variance, Laplacian, pixel and blemish counts) stay in UnetCell.
+// FilterResult view of one unet_cells_v2 cell, including the Laplacian and
+// the cell fields (brightness mean/variance, contour area, pixel and blemish
+// counts). Profile values without a FilterResult field (hull perimeter and
+// count, area µm²) stay in UnetCell.
 services::FilterResult filterResultFromUnetCell(const backend::pz::UnetCell& cell);
 
 } // namespace backend::processing

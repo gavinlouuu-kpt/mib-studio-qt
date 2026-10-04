@@ -37,7 +37,14 @@ services::FilterResult filterResultFromUnetCell(const backend::pz::UnetCell& c) 
     f.deformability = std::isfinite(c.deformability) ? c.deformability : 0.0;
     f.ringRatio = nan; // no ring width in the U-Net cell profile
     f.youngsModulus = c.youngsModulusKpa;
-    f.brightness = {nan, nan, nan, nan}; // mean and variance replace the quartiles (UnetCell)
+    f.brightness = {nan, nan, nan, nan}; // mean and variance replace the quartiles
+    f.laplacianVariance = c.laplacianVariance;
+    f.brightnessMean = c.brightnessMean;
+    f.brightnessVariance = c.brightnessVariance;
+    f.contourArea = c.contourArea;
+    f.pixelCount = c.pixelCount;
+    f.blemishCount = c.blemishCount;
+    f.degenerateContour = c.degenerate();
     return f;
 }
 

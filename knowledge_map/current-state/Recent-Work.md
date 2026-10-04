@@ -32,6 +32,16 @@ arms it at Start and stops it before the drain at Stop, and `science.pl`
 readiness passes with a provider. Tests: `processing.pz_provider_ingest`,
 `backend.pl_science_provider`.
 
+Recording PL runs (S3): one metadata row per cell, with no images. The
+per-object HDF5 compound gains the Laplacian and the U-Net cell members, in
+develop's names and order. Readers accept groups without images, and the run
+snapshot records the science placement and the provider. A replayed run
+persists 810/810 rows and completes.
+
+On the board, the C++ provider (`tools/pz_provider_probe`, 120 s at 5 kHz)
+read 600,251 frames and 600,192 cells with 0 decode errors, 0 gaps and 0
+overruns. `pzres monitor` straight after agrees.
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21

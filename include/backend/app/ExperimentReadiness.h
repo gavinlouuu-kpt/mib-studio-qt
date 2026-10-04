@@ -95,6 +95,10 @@ struct RunConfigurationSnapshot {
 
     std::string outputPath;
     std::string realtimeMode;
+    // Where the science ran ("host" | "pl") and, for the PL, the execution
+    // provider that brought its results to the PS (YOFO S3 provenance).
+    std::string sciencePlacement;
+    std::string executionProvider;
 
     std::string applicationVersion;
     std::string buildId;

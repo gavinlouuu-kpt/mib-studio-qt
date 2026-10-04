@@ -23,6 +23,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -48,9 +49,16 @@ bool waitFor(const std::function<bool()>& pred, std::chrono::milliseconds timeou
     return pred();
 }
 
+struct Written {
+    uint64_t frames{0};
+    uint64_t validCells{0};
+    uint64_t invalidCells{0};
+};
+
 // The PL vectors as a record stream (FRAME + RESULTs per frame), `repeat`
-// times. Returns the frame count.
-uint64_t writeRecords(const std::string& vectorsPath, const fs::path& out, int repeat) {
+// times.
+Written writeRecords(const std::string& vectorsPath, const fs::path& out, int repeat) {
+    Written w;
     std::ifstream in(vectorsPath);
     MIB_REQUIRE(static_cast<bool>(in), "cannot open " + vectorsPath);
     const auto doc = nlohmann::json::parse(in);
@@ -84,6 +92,7 @@ uint64_t writeRecords(const std::string& vectorsPath, const fs::path& out, int r
                     r.payloadValidity = res.at("validity").get<uint32_t>();
                     r.payload = res.at("payload").get<std::vector<uint32_t>>();
                     append(bpz::encodeResultRecord(r, seq++));
+                    (res.at("reason").get<std::string>() == "NONE" ? w.validCells : w.invalidCells) += 1;
                 }
                 ++frameId;
             }
@@ -91,7 +100,8 @@ uint64_t writeRecords(const std::string& vectorsPath, const fs::path& out, int r
     }
     std::ofstream o(out, std::ios::binary);
     o.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return frameId - 1;
+    w.frames = frameId - 1;
+    return w;
 }
 
 } // namespace
@@ -103,7 +113,8 @@ int main(int argc, char** argv) {
     const fs::path frames = td.path() / "frames";
     MIB_REQUIRE(mib::test::writeFrames(frames, 16, 96, 96), "write mock frames");
     const fs::path records = td.path() / "ring.bin";
-    const uint64_t frameCount = writeRecords(argv[1], records, 30);
+    const Written written = writeRecords(argv[1], records, 30);
+    const uint64_t frameCount = written.frames;
 
     setenv("MIB_PL_SCIENCE", "1", 1);
     setenv("MIB_CAMERA_MODE", "mock", 1);
@@ -121,6 +132,7 @@ int main(int argc, char** argv) {
         coord.setApplicationIdentity("test-version", "test-build", "test-os");
         backend.processing().setPixelToMicronFactor(0.4886);
         backend.processing().setMonitoringActive(true);
+        backend.processing().setInvalidFrameSamplingRate(1); // record every invalid cell
 
         MIB_REQUIRE(backend.capture().requestStart() == backend::services::CaptureStartOutcome::Accepted,
                     "capture starts (preview path)");
@@ -166,6 +178,33 @@ int main(int argc, char** argv) {
         MIB_EXPECT(!backend.hdf5().isFileOpen() && fs::exists(out), "run file finalized");
         backend.capture().stop();
         backend.shutdown();
+
+        // The recording (YOFO S3): one metadata row per cell with the PL's
+        // values, no images, and the provider in the run provenance.
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(out), "run file opens");
+        std::vector<backend::services::ProcessedFrame> valid, invalid;
+        MIB_REQUIRE(reader.readValidMetadata(valid) && reader.readInvalidMetadata(invalid), "metadata reads");
+        MIB_EXPECT(valid.size() == written.validCells && invalid.size() == written.invalidCells,
+                   "one row per cell: valid " + std::to_string(valid.size()) + "/" +
+                       std::to_string(written.validCells) + ", invalid " + std::to_string(invalid.size()) + "/" +
+                       std::to_string(written.invalidCells));
+        bool values = !valid.empty();
+        for (const auto& f : valid) {
+            values = values && f.validation.isValid && std::isfinite(f.validation.brightnessMean) &&
+                     std::isfinite(f.validation.laplacianVariance) && f.validation.pixelCount > 0 &&
+                     f.validation.contourArea > 0 && std::isnan(f.validation.ringRatio);
+        }
+        MIB_EXPECT(values, "valid rows carry the PL cell values");
+        std::vector<backend::services::ProcessedFrame> full;
+        MIB_EXPECT(reader.readValidFrames(full) && full.size() == valid.size() && full.front().originalImage.empty(),
+                   "a PL run reads without images");
+        std::string snapshot;
+        MIB_EXPECT(reader.readRunSnapshotJson(snapshot) &&
+                       snapshot.find("\"science_placement\":\"pl\"") != std::string::npos &&
+                       snapshot.find("\"execution_provider\":\"replay\"") != std::string::npos,
+                   "the run snapshot records the PL and the provider");
+        reader.closeFile();
     }
 
     // A provider that cannot start rolls the Start back.

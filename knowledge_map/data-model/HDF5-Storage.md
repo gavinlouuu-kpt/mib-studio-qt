@@ -120,6 +120,27 @@
 - Dataset shape discovery: `getDatasetInfo(path, count, H, W, channels)`;
   `getSeriesImageInfo(count, seriesCount, H, W)`.
 
+## PL runs (YOFO S3)
+
+- With the science on the PL, a run records **metadata only**: one row per
+  cell (valid cells always; invalid ones at `invalidFrameSamplingRate`), and
+  no `images` or `masks` datasets.
+- `appendFrames` takes an all-imageless batch as metadata rows. Each group is
+  imageless or not for the whole run; a mixed batch is refused, because rows
+  and images would misalign.
+- `readValidFrames` / `readInvalidFrames` return metadata-only frames when
+  neither dataset exists.
+- **Per-object compound:** `laplacianVariance` and the U-Net cell members
+  (`brightness_mean`, `brightness_variance`, `contourArea`, `pixelCount`,
+  `blemishCount`, `degenerateContour`) are appended. The names and order are
+  develop's, so files from both lines share one layout. Older files read the
+  members as not present.
+- The run snapshot records `science_placement` and `execution_provider`.
+- Images can later come from the PL frame store (store drain, not yet built).
+- Tests: `recording.experiment_roundtrip` (imageless round trip, mixing
+  refused) and `backend.pl_science_provider` (810/810 rows persisted from a
+  replayed PL run).
+
 ## Gotchas
 
 - `writeConfigJson` **must** be called after `writeExperimentInfo` — see

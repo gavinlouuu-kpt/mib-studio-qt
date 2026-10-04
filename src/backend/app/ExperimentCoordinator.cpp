@@ -198,6 +198,8 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"bound\":" << (s.triggerBound ? "true" : "false") << ",\"generation\":" << s.triggerGeneration << "}"
       << ",\"output_path\":" << q(s.outputPath)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
+      << ",\"science_placement\":" << q(s.sciencePlacement)
+      << ",\"execution_provider\":" << q(s.executionProvider)
       << ",\"application\":{\"version\":" << q(s.applicationVersion) << ",\"build_id\":" << q(s.buildId)
       << ",\"os\":" << q(s.operatingSystem) << "}"
       << "}";
@@ -326,6 +328,8 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
 
     const auto roi = proc.getRealtimeRoi();
     s.roiX = roi.x; s.roiY = roi.y; s.roiW = roi.w; s.roiH = roi.h;
+    s.sciencePlacement = app::sciencePlacement();
+    if (auto* provider = backend_.executionProvider()) s.executionProvider = provider->name();
     if (auto store = backend_.getFrameStore()) {
         playback::Frame f;
         if (store->getLatest(f)) {

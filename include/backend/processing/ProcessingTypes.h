@@ -5,6 +5,7 @@
 // implementation (ProcessingScience). Qt-free by design.
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -80,8 +81,21 @@ struct FilterResult {
     double area{0.0};
     double areaRatio{0.0};
     double ringRatio{0.0};
+    // Per-object focus metric (variance of the Laplacian over the object);
+    // NaN when not computed. As on develop (Contract 2); here it comes from PL
+    // results (unet_cells_v2).
+    double laplacianVariance{std::numeric_limits<double>::quiet_NaN()};
     double youngsModulus{0.0}; // Young's modulus (kPa) from LUT lookup
     BrightnessQuantiles brightness;
+    // U-Net cell values (develop Contract 3; here from PL results); NaN / 0
+    // otherwise. Brightness mean and population variance over the filled
+    // outer contour replace the quartiles.
+    double brightnessMean{std::numeric_limits<double>::quiet_NaN()};
+    double brightnessVariance{std::numeric_limits<double>::quiet_NaN()};
+    double contourArea{0.0}; // area enclosed by the outer contour
+    int pixelCount{0};       // mask pixels of the cell's component
+    int blemishCount{0};     // per frame: components below min_cell_area_px
+    bool degenerateContour{false}; // the outer contour encloses no area
     bool isTargetGroup{false}; // True if valid AND matches target group criteria
     // Contours found during processing (for snapshot/display), in the same
     // coordinate space as the processedImage mask. Shared (not deep-copied) so

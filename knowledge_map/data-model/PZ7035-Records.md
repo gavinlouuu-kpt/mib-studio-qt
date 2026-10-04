@@ -115,11 +115,28 @@ frame-id gaps and 0 incomplete frames:
   - `backend.pl_science_provider`: 300 replayed frames through a real
     start/stop, accounting reconciles.
 
+Recording (S3): `ingestProviderFrame` appends one experiment row per cell:
+valid cells always, invalid ones sampled. The rows carry the PL values
+(Laplacian, brightness mean/variance, contour area, pixel and blemish
+counts) and no images. See [[HDF5-Storage]].
+
 ## Not yet
 
-- Recording the PL cells to HDF5 (metadata rows without images; S3).
-- Profile compiler and table upload (S2), and the store drain.
-- A board check of `PzDevMemExecutionProvider` against `pzres`.
-  `tools/pz_provider_probe` (cross-built with `build.sh` and the Yocto SDK)
-  runs the provider on the PS for N seconds and reports frames, cells,
-  decode errors and gaps, like `pzres monitor`. Stop `pzres` first.
+- Profile compiler and table upload (S2), and the store drain (images from
+  the PL frame store).
+- `scripts/export_hdf5.py` on this line still exports the quartiles, which are
+  NaN for PL rows. develop's contract-aware exporter comes with the merge.
+**Board check (2026-10-04, `tools/pz_provider_probe`).** The probe was
+cross-built with `build.sh` and the Yocto SDK, and run with `results4`, Linux,
+5 kHz and the strobe at 7/60 µs. Both runs pass:
+
+| Run | Frames | Cells | Invalid frames | Errors |
+|---|---|---|---|---|
+| 20 s | 100,129 (5,001/s) | 100,118 (all cut off) | 11 (LED ingress errors) | 0 |
+| 120 s | 600,251 | 600,192 | 59 | 0 |
+
+"Errors" covers decode errors, sequence and frame-id gaps, overruns and
+incomplete frames. `pzres monitor` straight after (120 s) agrees: 600,159
+FRAME and 600,124 RESULT, all zero, latency max 104.8 µs. Log:
+`/mnt/hdd/developer-data/IMX426/results-hw-20261004/pz_provider_probe_120s.log`.
+Stop `pzres` before running the probe: one reader at a time.
