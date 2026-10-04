@@ -110,6 +110,10 @@ subset of the PL conformance vectors (`scripts/build_unet_cells_vector_subset.py
 `processing.contract3_cells_conformance` checks every payload word within the
 profile tolerances. The full PL set (45 frames, 181 cells) also passes.
 
+`scripts/compare_metrics.py` compares Contract 3 documents: no quartiles,
+plus `brightness_mean`, `brightness_variance`, `contour_area`, `pixel_count`
+and `blemish_count`. A null brightness matches only null.
+
 No shipped core, wheel or loader serves Contract 3 yet. The science JSON adds
 a `unet_cells` block (`min_cell_area_px`, `laplacian_kernel_size`) only for
 Contract 3, so Contract 1/2 documents are unchanged.

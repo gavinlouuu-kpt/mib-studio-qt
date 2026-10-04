@@ -36,11 +36,20 @@ REQUIRED_NUMERIC_KEYS = [
 
 # Focus metric per processing contract (ADR 0006): Contract 1 records always
 # carry ring_ratio; Contract 2 records never do and carry laplacian_variance
-# (omitted when NaN, i.e. no detection).
-CONTRACT_REQUIRED_NUMERIC_KEYS = {1: ["ring_ratio"], 2: []}
+# (omitted when NaN, i.e. no detection). Contract 3 (unet-cells, schema
+# $defs/unet_cell_frame) replaces the brightness quartiles with mean and
+# variance (null when not computed) and adds the cell fields.
+CONTRACT_REQUIRED_NUMERIC_KEYS = {
+    1: ["ring_ratio"],
+    2: [],
+    3: ["brightness_mean", "brightness_variance", "contour_area"],
+}
+CONTRACT_REQUIRED_EXACT_KEYS = {3: ["pixel_count", "blemish_count"]}
+CONTRACT_DROPPED_KEYS = {3: ["brightness_q1", "brightness_q2", "brightness_q3", "brightness_q4"]}
 
 OPTIONAL_NUMERIC_KEYS = ["youngs_modulus", "laplacian_variance"]
-NUMERIC_KEYS = REQUIRED_NUMERIC_KEYS + ["ring_ratio"] + OPTIONAL_NUMERIC_KEYS
+NUMERIC_KEYS = (REQUIRED_NUMERIC_KEYS + ["ring_ratio"] + OPTIONAL_NUMERIC_KEYS
+                + ["brightness_mean", "brightness_variance", "contour_area"])
 
 # Keys that must match exactly (boolean or integer)
 REQUIRED_EXACT_KEYS = [
@@ -52,6 +61,7 @@ REQUIRED_EXACT_KEYS = [
 OPTIONAL_EXACT_KEYS = [
     "is_target_group", "track_id", "track_first_frame", "track_last_frame",
     "track_observation_count", "mask_sha256", "series_images_sha256",
+    "pixel_count", "blemish_count", "degenerate_contour",
 ]
 EXACT_KEYS = REQUIRED_EXACT_KEYS + OPTIONAL_EXACT_KEYS
 
@@ -180,7 +190,9 @@ def build_frame_index(frames: List[dict], match_by: str) -> Dict[Tuple[Any, ...]
 
 def required_compare_keys(contract_version: int = 1) -> set:
     """Keys every record of a document with this contract_version must carry."""
-    return REQUIRED_COMPARE_KEYS | set(CONTRACT_REQUIRED_NUMERIC_KEYS.get(contract_version, []))
+    keys = (REQUIRED_COMPARE_KEYS | set(CONTRACT_REQUIRED_NUMERIC_KEYS.get(contract_version, []))
+            | set(CONTRACT_REQUIRED_EXACT_KEYS.get(contract_version, [])))
+    return keys - set(CONTRACT_DROPPED_KEYS.get(contract_version, []))
 
 
 def compare_frames(
@@ -227,7 +239,13 @@ def compare_frames(
                 all_ok = False
             continue
 
-        # Numeric
+        # Numeric. null (NaN serialized) equals null and nothing else.
+        if g is None or c is None:
+            match = g is None and c is None
+            details[key] = {"match": match, "gold": g, "candidate": c}
+            if not match:
+                all_ok = False
+            continue
         try:
             gv, cv = float(g), float(c)
         except (TypeError, ValueError):
