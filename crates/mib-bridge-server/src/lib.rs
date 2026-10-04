@@ -139,7 +139,7 @@ const CONTROL_COMMANDS: &[&str] = &[
     "clear_background_image", "background_calibration_command", "startup_discovery_set_preference",
     "startup_discovery_run", "start_device_discovery", "start_camera_discovery", "cancel_device_discovery",
     "pulse_generator_command", "autofocus_connect_endpoint", "autofocus_connect", "autofocus_disconnect",
-    "autofocus_set_enabled", "autofocus_jog", "autofocus_set_config", "pump_connect_endpoint", "pump_connect",
+    "autofocus_set_enabled", "autofocus_jog", "autofocus_set_config", "pump_connect_endpoint", "pump_connect_model", "pump_connect",
     "pump_disconnect", "pump_set_flow_rate", "pump_set_direction", "pump_start", "pump_stop", "pump_purge",
     "pump_stop_purge", "pump_set_syringe_volume", "pump_scan_addresses", "monitoring_set_active",
     "monitoring_clear", "trigger_set_pulse_duration", "trigger_manual_pulse", "trigger_periodic_start",

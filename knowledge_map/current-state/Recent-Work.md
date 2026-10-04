@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-04 — Tushui peristaltic pump as a Sample/Sheath pump model (ABI 22)
+
+Each pump slot now takes a Longer dLSP syringe pump or the Tushui peristaltic
+pump fitted to the PZ7035 instrument (RS485 on PS UART1, `/dev/ttyPS1`,
+address 3). Flow rates convert to head speed with a µL/rev calibration
+(default 25: 0.4 rpm = 10 µL/min); connect only reads; out-of-range rates
+fail. `pump_connect_model` + a model select in the React Pumps panel. See
+[[../services/SyringePumpService]], [[../architecture/Rust-Bridge]],
+`docs/integration/tushui-peristaltic-pump.md`.
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21

@@ -343,6 +343,12 @@ pub mod ffi {
         pub configured_flow_rate: f64,
         pub flow_rate_unit: i32,
         pub direction: u32,
+        /// Contract `pump_models` value (v22).
+        pub model: u32,
+        /// Peristaltic flow calibration, µL per head revolution (v22).
+        pub microliters_per_rev: f64,
+        /// Peristaltic head speed setpoint in rpm (v22).
+        pub speed_rpm: f64,
     }
 
     /// Per-dataset capabilities of the loaded review file (schema v9, BE-6).
@@ -642,6 +648,18 @@ pub mod ffi {
             com_port: i32,
             baud_rate: i32,
             modbus_address: i32,
+        ) -> BridgeCommandResult;
+        /// Connect a pump slot to either model (v22): `model` is a contract
+        /// `pump_models` value; `microliters_per_rev` calibrates peristaltic
+        /// flow. A peristaltic connect only reads the pump.
+        fn pump_connect_model(
+            self: Pin<&mut BackendBridge>,
+            pump: u32,
+            model: u32,
+            port_name: &str,
+            baud_rate: i32,
+            modbus_address: i32,
+            microliters_per_rev: f64,
         ) -> BridgeCommandResult;
         /// Disconnect stops an active run/purge first.
         fn pump_disconnect(self: Pin<&mut BackendBridge>, pump: u32) -> BridgeCommandResult;

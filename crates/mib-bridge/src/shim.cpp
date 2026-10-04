@@ -73,6 +73,8 @@ static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::RunStatus::Pause) == 3);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::Direction::Infuse) == 0);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::Direction::Withdraw) == 1);
+static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpModel::DlspSyringe) == 0);
+static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpModel::TushuiPeristaltic) == 1);
 
 static_assert(static_cast<std::uint32_t>(bb::ReviewImageDataset::ValidImage) == 0);
 static_assert(static_cast<std::uint32_t>(bb::ReviewImageDataset::InvalidImage) == 1);
@@ -920,6 +922,23 @@ BridgeCommandResult BackendBridge::pump_connect_endpoint(std::uint32_t pump, rus
     }
 }
 
+BridgeCommandResult BackendBridge::pump_connect_model(std::uint32_t pump, std::uint32_t model,
+                                                      rust::Str port_name, std::int32_t baud_rate,
+                                                      std::int32_t modbus_address,
+                                                      double microliters_per_rev) {
+    try {
+        auto cmd = makePumpCommand(backend::bridge::PumpCommandAction::Connect, pump);
+        cmd.model = static_cast<int>(std::min<std::uint32_t>(model, 0x7fffffff));
+        cmd.portName = toStd(port_name);
+        cmd.baudRate = baud_rate;
+        cmd.modbusAddress = modbus_address;
+        cmd.microlitersPerRev = microliters_per_rev;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& error) {
+        return errorResult(std::string("pump_connect_model: ") + error.what());
+    }
+}
+
 BridgeCommandResult BackendBridge::pump_connect(std::uint32_t pump, std::int32_t com_port,
                                                 std::int32_t baud_rate,
                                                 std::int32_t modbus_address) {
@@ -1067,6 +1086,9 @@ BridgePumpStatus BackendBridge::fetch_pump_status(std::uint32_t pump) {
     out.configured_flow_rate = status.configuredFlowRate;
     out.flow_rate_unit = status.flowRateUnit;
     out.direction = static_cast<std::uint32_t>(status.direction);
+    out.model = static_cast<std::uint32_t>(status.model);
+    out.microliters_per_rev = status.microlitersPerRev;
+    out.speed_rpm = status.speedRpm;
     return out;
 }
 
@@ -1832,7 +1854,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 21; }
+std::uint32_t bridge_abi_version() { return 22; }
 
 } // namespace mib_bridge
 

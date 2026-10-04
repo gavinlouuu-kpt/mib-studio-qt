@@ -80,6 +80,7 @@ pub const COMMANDS: &[&str] = &[
     "fetch_autofocus_status",
     "fetch_autofocus_config",
     "pump_connect_endpoint",
+    "pump_connect_model",
     "pump_connect",
     "pump_disconnect",
     "pump_set_flow_rate",
@@ -371,6 +372,19 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::pump_connect_endpoint(state, a.pump, a.port_name, a.baud_rate, a.modbus_address).and_then(json)
+        }
+        "pump_connect_model" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "pump")] pump: u32,
+                #[serde(rename = "model")] model: u32,
+                #[serde(rename = "portName")] port_name: String,
+                #[serde(rename = "baudRate")] baud_rate: i32,
+                #[serde(rename = "modbusAddress")] modbus_address: i32,
+                #[serde(rename = "microlitersPerRev")] microliters_per_rev: f64,
+            }
+            let a: A = args(value)?;
+            crate::pump_connect_model(state, a.pump, a.model, a.port_name, a.baud_rate, a.modbus_address, a.microliters_per_rev).and_then(json)
         }
         "pump_connect" => {
             #[derive(Deserialize)]

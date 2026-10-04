@@ -350,6 +350,17 @@ experiment start does not start the host pipeline, and the readiness gates
 `processing.*` are replaced by `science.pl` (Warn until the record path B3
 connects the PL's results). Test: `backend.pl_science`.
 
+## ABI 22: pump models (2026-10-04)
+
+`pump_connect_model(pump, model, port_name, baud_rate, modbus_address,
+microliters_per_rev)` connects a Sample or Sheath slot to a contract
+`pump_models` device: 0 Longer dLSP syringe, 1 Tushui peristaltic.
+`BridgePumpStatus` gains `model`, `microliters_per_rev` and `speed_rpm`.
+`BackendFacade` validates the model and a calibration in (0, 100000] µL/rev;
+the peristaltic semantics are in [[../services/SyringePumpService]]. The old
+`pump_connect_endpoint` / `pump_connect` stay and connect a dLSP. Test:
+`contract.rs` `pump_commands_fail_safely_without_hardware`.
+
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
 `bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`

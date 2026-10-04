@@ -1698,6 +1698,11 @@ namespace backend::bridge
                 return fail("Invalid pump serial endpoint");
             if (command.modbusAddress < 1 || command.modbusAddress > 247)
                 return fail("Invalid Modbus address (1-247)");
+            if (command.model != static_cast<int>(Pump::PumpModel::DlspSyringe) &&
+                command.model != static_cast<int>(Pump::PumpModel::TushuiPeristaltic))
+                return fail("Invalid pump model");
+            if (!(command.microlitersPerRev > 0.0 && command.microlitersPerRev <= 100000.0))
+                return fail("Invalid peristaltic calibration (µL per revolution)");
             using Bus = services::serialbus::SerialBusManager;
             const auto otherId =
                 pumpId == Pump::PumpId::Sample ? Pump::PumpId::Sheath : Pump::PumpId::Sample;
@@ -1717,12 +1722,14 @@ namespace backend::bridge
                     : autofocus.getEndpointId();
             if (autofocus.isConnected() && Bus::samePort(autofocusPort, port))
                 return fail("Serial endpoint already in use by autofocus");
+            const auto model = static_cast<Pump::PumpModel>(command.model);
             const bool connected =
-                command.portName.empty()
+                command.portName.empty() && model == Pump::PumpModel::DlspSyringe
                     ? pumps.connect(pumpId, command.comPort, command.baudRate,
                                     static_cast<std::uint8_t>(command.modbusAddress))
                     : pumps.connect(pumpId, port, command.baudRate,
-                                    static_cast<std::uint8_t>(command.modbusAddress));
+                                    static_cast<std::uint8_t>(command.modbusAddress), model,
+                                    command.microlitersPerRev);
             if (!connected) return fail("Pump connect failed (no Modbus response)");
             return {true, BackendCommandType::Pump, "Pump connected"};
         }
@@ -1857,6 +1864,9 @@ namespace backend::bridge
         out.configuredFlowRate = config.flowRate;
         out.flowRateUnit = config.flowRateUnit;
         out.direction = static_cast<int>(config.direction);
+        out.model = static_cast<int>(config.model);
+        out.microlitersPerRev = config.microlitersPerRev;
+        out.speedRpm = status.speedRpm;
         return true;
     }
 

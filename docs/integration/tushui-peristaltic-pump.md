@@ -1,0 +1,78 @@
+# Tushui peristaltic pump
+
+The PZ7035 instrument (YOFO Studio) drives a Tushui (惠州徒水流体科技)
+peristaltic pump. It can fill either the Sample or the Sheath pump slot
+instead of a Longer dLSP syringe pump. The driver is the peristaltic path of
+`SyringePumpService`; the register map is `include/backend/services/TushuiPumpProtocol.h`.
+
+## Source document
+
+"徒水蠕动泵 Modbus 通信协议 V2.21" (Huizhou Lianhe Zhongwei / Tushui / Mango
+Fluid, Excel export dated 2025-07-16, 4 pages). The vendor PDF is not in the
+repository. A copy is at
+`/mnt/hdd/shared/projects/mib-studio-qt/tushui-pump-20261004/`.
+The document covers only the simplified command set (registers 100-107). The
+full "通用版本" protocol it mentions (suck-back, timed dosing, faults) is not
+in hand.
+
+## Wire protocol
+
+- Modbus RTU, 1 start / 8 data / no parity / 1 stop, default 115200 baud.
+- Function codes 03 (read), 06 (write one), 10 (write many). CRC-16 is
+  polynomial 0xA001, sent low byte first (the shared `ModbusRtu.h`).
+- Addresses 0x01-0xFE; 0x00 and 0xFF are broadcast (executed, never answered).
+
+| Register | Meaning | Scale / values | Access |
+|---|---|---|---|
+| 100 | Head speed | rpm x100; 0.01-500.00 rpm (model dependent) | R/W |
+| 101 | Direction | 0 clockwise, 1 counter-clockwise | R/W |
+| 102-103 | Turns per run | x1000, 32 bit high word first; 0 = run until stopped | R/W |
+| 104 | Run | write 0 stop / 1 run; reads may also be 2 suck-back, 3 timing, 4 paused | R/W |
+| 105-106 | Baud rate | 32 bit; 2400-115200 | R/W |
+| 107 | Slave address | 1-254 | R/W |
+
+The vendor's examples (`01 03 00 64 00 01 C5 D5`, `01 06 00 64 04 D2 4A 88`,
+`01 06 00 68 00 01 C9 D6`) check out against the shared CRC.
+
+## Observed on the instrument (2026-10-04)
+
+The pump was read from Linux on the PZ7035 PS. The path is PS UART1
+(MIO48 TxD / MIO49 RxD) through the SP3485 transceiver to `/dev/ttyPS1`. The
+transceiver switches direction by itself, so no RTS control is needed.
+
+- It answers at **slave address 3**, 115200 baud. Ten out of ten reads came
+  back clean.
+- State as found: 200.00 rpm, counter-clockwise, 1.000 turn, stopped, baud
+  register 115200, slave id 3.
+- It also answers registers 0-7 and 108-111, which are outside the
+  simplified set: 0-7 = `0001 C200 FFFF 0003 0007 0FA0 0001 00A8`,
+  108-111 = `0000 9C40 0001 4E20`. These probably belong to the full
+  protocol and are not used.
+- The motor has not been run under software control yet.
+
+## Integration decisions
+
+- **Slots:** the operator chooses the model per slot (Sample or Sheath).
+- **Flow:** flow rate = rpm x calibration. The default calibration is
+  25 µL/rev (operator: 0.4 rpm = 10 µL/min), to be replaced by a measured
+  value: run N turns, weigh or measure the volume, divide by N.
+- **No clamping:** rates outside 0.01-500 rpm fail instead of being clamped.
+  The fitted model's real maximum is unknown, and 500 rpm is the protocol
+  ceiling.
+- **Read-only connect:** connect writes nothing.
+- **Continuous runs:** start writes turns = 0 first, because the as-found
+  1.000 turn setting would stop each run after one revolution.
+- **Purge:** runs at 100 rpm. Stop restores the flow speed and direction.
+- **Volume:** delivered volume is estimated from speed between polls. The
+  pump has no counter in the simplified set.
+- **Direction:** Infuse = clockwise. If Infuse withdraws, swap the tubing
+  ends in the head.
+
+## Open
+
+- Measured µL/rev calibration for the instrument tubing.
+- First software-controlled run on the instrument; confirm the Infuse
+  direction.
+- The full protocol document (stall/fault status, suck-back).
+- Board image: give the YOFO Studio server access to `/dev/ttyPS1`
+  (currently `root:dialout 0660`).

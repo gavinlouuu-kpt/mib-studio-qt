@@ -88,6 +88,10 @@ public:
                                               std::int32_t baud_rate, std::int32_t modbus_address);
     BridgeCommandResult pump_connect(std::uint32_t pump, std::int32_t com_port,
                                      std::int32_t baud_rate, std::int32_t modbus_address);
+    BridgeCommandResult pump_connect_model(std::uint32_t pump, std::uint32_t model,
+                                           rust::Str port_name, std::int32_t baud_rate,
+                                           std::int32_t modbus_address,
+                                           double microliters_per_rev);
     BridgeCommandResult pump_disconnect(std::uint32_t pump);
     BridgeCommandResult pump_set_flow_rate(std::uint32_t pump, double rate, std::int32_t unit);
     BridgeCommandResult pump_set_direction(std::uint32_t pump, std::uint32_t direction);

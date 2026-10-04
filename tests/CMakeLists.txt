@@ -153,6 +153,12 @@ mib_add_backend_test_executable(syringe_pump_fake_serial_test backend/syringe_pu
 add_test(NAME backend.syringe_pump_fake_serial COMMAND $<TARGET_FILE:mib_backend_tests> syringe_pump_fake_serial_test)
 set_tests_properties(backend.syringe_pump_fake_serial PROPERTIES LABELS "backend" TIMEOUT 30)
 
+# Tushui peristaltic pump in a pump slot: read-only connect, flow -> rpm,
+# continuous run, purge restore, volume integration (TushuiPumpProtocol.h).
+mib_add_backend_test_executable(peristaltic_pump_fake_serial_test backend/peristaltic_pump_fake_serial_test.cpp)
+add_test(NAME backend.peristaltic_pump_fake_serial COMMAND $<TARGET_FILE:mib_backend_tests> peristaltic_pump_fake_serial_test)
+set_tests_properties(backend.peristaltic_pump_fake_serial PROPERTIES LABELS "backend" TIMEOUT 30)
+
 # BE-7 (#277): facade PumpCommand surface over the fake Modbus serial — both
 # pump identities, structured errors, COM-port conflict rules, safe disconnect.
 mib_add_backend_test_executable(pump_bridge_facade_test backend/pump_bridge_facade_test.cpp)
