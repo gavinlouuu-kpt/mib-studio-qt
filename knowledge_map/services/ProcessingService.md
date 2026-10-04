@@ -719,6 +719,16 @@ the PZ7035 PL runs, for desktop reprocessing with Contract 3.
   - with `MIB_UNET_C4_BOARD_CAPTURES`, the masks equal the ones the PL
     produced on the board: 85/85 frames from five runs with the promoted
     weights.
+- **Test `processing.pz_board_run_host`** (SKIP unless `MIB_PZ_BOARD_RUN`
+  and `MIB_UNET_C4_PARAMS` are set) — the whole chain on a board run, host
+  against PL:
+  - from each captured raw frame, `UnetC4` and Contract 3 compute the cells
+    with the run's `page.bin` and `lut.bin`;
+  - those cells must equal the PL's RESULT records for the same frame id
+    (from `ring.bin`).
+  - On 2026-10-04: 80/80 frames from four runs agree. Every live cell was
+    the static particle cut off at the border, so shape, E-modulus and gates
+    are covered by the vector tests only, until a run with cells flowing.
 - **Not yet:** the weights are not a pinned asset (`env/assets.json`), and no
   shipped core serves Contract 3 yet (A6).
 
