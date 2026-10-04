@@ -96,7 +96,9 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `BridgeRegistrySnapshot` (session, connectivity, projects, cached
   revisions with `central_state`, corrupt IDs, last job; never a token or
   password), `fetch_registry_job(job_id)`. New contract groups:
-  `registry_session_states`, `registry_connectivity`, `registry_job_kinds`,
+  `registry_session_states`, `registry_connectivity`, `registry_job_kinds`
+  (`Materialize` = 4 and `RecordValidation` = 5 appended for #398 M2 while
+  ABI 15 was still unreleased; no bridge command enqueues them yet),
   `registry_job_states`, `registry_central_states`. **Transport seam (ADR
   0002 addendum):** the shell installs its HTTPS POST with
   `set_registry_transport(fn(&BridgeHttpRequest) -> BridgeHttpResponse)`

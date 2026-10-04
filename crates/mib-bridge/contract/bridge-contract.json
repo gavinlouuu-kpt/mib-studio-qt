@@ -101,7 +101,9 @@
     "SignIn": 0,
     "SignOut": 1,
     "Refresh": 2,
-    "Download": 3
+    "Download": 3,
+    "Materialize": 4,
+    "RecordValidation": 5
   },
   "registry_job_states": {
     "Queued": 0,

@@ -116,6 +116,8 @@ export const REGISTRY_JOB_KINDS = {
   SignOut: 1,
   Refresh: 2,
   Download: 3,
+  Materialize: 4,
+  RecordValidation: 5,
 } as const;
 
 export const REGISTRY_JOB_STATES = {

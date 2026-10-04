@@ -56,6 +56,30 @@ std::string canonicalMethod(const std::string& configJson, const std::string& ca
 std::string contentHash(const std::string& bytes);
 void verifyRevision(const Revision& revision);
 
+// SHA-256 of a config.json in the canonical form used inside method envelopes
+// (sorted keys, compact, integral doubles as integers). Empty when the text is
+// not a valid JSON object. Lets the backend recognise an applied config.json
+// as exactly the config of a cached central revision (#398 M2).
+std::string canonicalConfigSha256(const std::string& configJson) noexcept;
+// The same hash of the config embedded in a canonical method envelope; empty
+// when the envelope is unreadable.
+std::string revisionConfigSha256(const std::string& canonicalContent) noexcept;
+
+// The local execution context a method validation is bound to (#398 M2): a
+// validation recorded on this instrument for this processing core build and
+// camera source does not carry over to a different core or camera source.
+struct MethodContext {
+    std::string instrumentId;          // InstrumentIdentity::id
+    std::string processingCoreVersion;
+    std::string processingCoreSha256;
+    std::string cameraSource;          // effective: "mock" | "egrabber" | "mindvision"
+};
+// Stable fingerprint of the context; empty when instrumentId is empty
+// (unknown instrument: nothing can be validated).
+std::string methodContextHash(const MethodContext& context);
+// Compact JSON object describing the context (stored with validations).
+std::string methodContextJson(const MethodContext& context);
+
 // A listed revision that failed integrity/canonical verification. It is never
 // cached; reporting it lets the cursor advance past it instead of stalling sync.
 struct RejectedRevision {

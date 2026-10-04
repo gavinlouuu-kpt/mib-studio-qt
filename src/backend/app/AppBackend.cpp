@@ -380,11 +380,23 @@ namespace backend
         }
 
         {
+            const char *instrumentName = std::getenv("MIB_INSTRUMENT_NAME");
+            std::string identityWarning;
+            instrumentIdentity_ = profiles::loadOrCreateInstrumentIdentity(
+                dataDir, instrumentName ? instrumentName : "", &identityWarning);
+            if (!identityWarning.empty()) SPDLOG_WARN("AppBackend: {}", identityWarning);
+            SPDLOG_INFO("AppBackend: instrument id {}{}",
+                        instrumentIdentity_.id.empty() ? "<unknown>" : instrumentIdentity_.id,
+                        instrumentIdentity_.name.empty() ? "" : " (" + instrumentIdentity_.name + ")");
+        }
+
+        {
             profiles::RegistryWorkerConfig registryConfig;
             if (const char *url = std::getenv("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = url;
             if (const char *key = std::getenv("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
                 registryConfig.publishableKey = key;
             registryConfig.cacheDir = std::filesystem::path(dataDir) / "profile_registry";
+            registryConfig.methodsDir = std::filesystem::path(dataDir) / "methods";
             if (registryConfig.configured() && !profileRegistryTransport_)
                 SPDLOG_WARN("AppBackend: profile registry configured but the shell supplied no "
                             "HTTP transport; registry disabled");
@@ -999,6 +1011,20 @@ namespace backend
     discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
     discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
     profiles::ProfileRegistryWorker &AppBackend::profileRegistry() { return *profileRegistry_; }
+
+    profiles::MethodContext AppBackend::methodContext() const
+    {
+        profiles::MethodContext context;
+        context.instrumentId = instrumentIdentity_.id;
+        if (processingService_)
+        {
+            const auto core = processingService_->activeProcessingCoreIdentity();
+            context.processingCoreVersion = core.version;
+            context.processingCoreSha256 = core.artifactSha256;
+        }
+        context.cameraSource = cameraSourceInfo().effective;
+        return context;
+    }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {
