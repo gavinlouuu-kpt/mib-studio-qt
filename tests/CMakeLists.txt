@@ -353,6 +353,12 @@ add_test(NAME processing.contract3_cells_conformance COMMAND $<TARGET_FILE:mib_b
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
 
+mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
+add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test
+         ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
+
 mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
 add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
 set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -991,6 +997,15 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(scripts.gold_standard_schema_contract PROPERTIES
         LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.pz7035_abi_vendor
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/vendor_pz7035_abi.py --check
+    )
+    set_tests_properties(scripts.pz7035_abi_vendor PROPERTIES
+        LABELS "scripts"
         TIMEOUT 30
     )
 

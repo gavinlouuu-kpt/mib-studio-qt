@@ -53,6 +53,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
@@ -77,6 +78,11 @@ set_target_properties(mib_processing PROPERTIES
 
 target_include_directories(mib_processing PUBLIC
     ${PROJECT_SOURCE_DIR}/include
+)
+# PZ7035 PS-PL ABI bundle (pz_mib_abi.h), vendored and pinned; private to
+# src/backend/pz (scripts/vendor_pz7035_abi.py).
+target_include_directories(mib_processing PRIVATE
+    ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
 )
 
 target_link_libraries(mib_processing PUBLIC
