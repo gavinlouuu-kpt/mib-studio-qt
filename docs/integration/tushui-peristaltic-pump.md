@@ -49,6 +49,21 @@ transceiver switches direction by itself, so no RTS control is needed.
   108-111 = `0000 9C40 0001 4E20`. These probably belong to the full
   protocol and are not used.
 - The motor has not been run under software control yet.
+- The ARMv7 build of `SyringePumpService` connected to the pump and read it
+  through `hardware.peristaltic_pump` (read-only mode) on the PS.
+
+## Hardware acceptance
+
+`tests/hardware/hw_peristaltic_pump_test.cpp` (CTest `hardware.peristaltic_pump`)
+skips unless `MIB_TEST_PERISTALTIC_PORT` is set. By default it only reads.
+`MIB_TEST_PERISTALTIC_RUN_MS=3000` turns the head at 20 rpm infuse
+(500 µL/min at 25 µL/rev) for 3 s, about one turn. It then stops the pump and
+restores the as-found speed and direction. On the PS:
+
+```bash
+sudo env MIB_TEST_PERISTALTIC_PORT=/dev/ttyPS1 MIB_TEST_PERISTALTIC_RUN_MS=3000 \
+    /tmp/yofo-pump/mib_backend_tests hw_peristaltic_pump_test
+```
 
 ## Integration decisions
 

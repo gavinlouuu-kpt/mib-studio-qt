@@ -675,6 +675,10 @@ mib_add_backend_test_executable(hw_syringe_pump_test hardware/hw_syringe_pump_te
 add_test(NAME hardware.syringe_pump COMMAND $<TARGET_FILE:mib_backend_tests> hw_syringe_pump_test)
 set_tests_properties(hardware.syringe_pump PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+mib_add_backend_test_executable(hw_peristaltic_pump_test hardware/hw_peristaltic_pump_test.cpp)
+add_test(NAME hardware.peristaltic_pump COMMAND $<TARGET_FILE:mib_backend_tests> hw_peristaltic_pump_test)
+set_tests_properties(hardware.peristaltic_pump PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 120)
+
 mib_add_backend_test_executable(hw_nanopositioner_test hardware/hw_nanopositioner_test.cpp)
 add_test(NAME hardware.nanopositioner COMMAND $<TARGET_FILE:mib_backend_tests> hw_nanopositioner_test)
 set_tests_properties(hardware.nanopositioner PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
