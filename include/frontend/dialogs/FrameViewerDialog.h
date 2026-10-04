@@ -39,6 +39,17 @@ public:
     void setOverlayMode(OverlayMode mode);
     void setShowRoiOverlay(bool show);
 
+    // Embedded mode: the viewer lives as a child widget (the Review tab's
+    // Charts frame pane). It never closes itself (done() is a no-op, Esc and
+    // Enter do nothing), the Close button becomes "Open in window…"
+    // (requestOpenInWindow), the info line wraps, and the overlay / ROI /
+    // zoom in-out / export controls are hidden (the host drives overlay, ROI
+    // and exports).
+    void setEmbedded(bool embedded);
+    bool isEmbedded() const { return embedded_; }
+
+    void done(int result) override;
+
 private slots:
     void onOverlayModeChanged(int index);
     void onToggleRoiOverlay(bool enabled);
@@ -54,6 +65,7 @@ private slots:
 signals:
     void requestPreviousFrame();
     void requestNextFrame();
+    void requestOpenInWindow();
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -78,6 +90,7 @@ private:
     QLabel* seriesLabel_;
     QPushButton* seriesPrevBtn_;
     QPushButton* seriesNextBtn_;
+    bool embedded_ = false;
 
     Ui::FrameViewerDialog* ui;
 };

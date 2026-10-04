@@ -55,11 +55,11 @@ public:
                         const cv::Mat& originalImage, double pixelToMicronFactor,
                         const backend::EModulusLut* eModulusLut,
                         std::vector<backend::services::FilterResult>& results,
-                        std::string* error) override {
+                        std::string* error, const cv::Mat& background) override {
         analyzeCalls.fetch_add(1, std::memory_order_relaxed);
         return IProcessingKernel::analyzeObjects(processedImage, roi, config, originalImage,
                                                  pixelToMicronFactor, eModulusLut, results,
-                                                 error);
+                                                 error, background);
     }
 
     bool matchTrack(const std::vector<backend::services::BatchTrack>& tracks,

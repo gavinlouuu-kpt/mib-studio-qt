@@ -18,8 +18,12 @@
 #include <QSpinBox>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QShowEvent>
+#include <QHideEvent>
+#include <QToolButton>
 #include "backend/camera/mindvision/MindVisionConfig.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/DotGridService.h"
 
 #include <spdlog/spdlog.h>
 #ifdef _WIN32
@@ -97,6 +101,18 @@ namespace frontend
             ui->controlsLayout->insertWidget(5, roiHeightSpin_);
         }
 
+        // Wafer Grid: dot-grid localization lives on the Overview only. The
+        // service is paused until this tab is shown (showEvent) and again
+        // whenever it is hidden, so it never decodes next to an experiment.
+        dotGridBtn_ = new QToolButton(this);
+        dotGridBtn_->setObjectName("overviewWaferGridBtn");
+        dotGridBtn_->setText(tr("Wafer Grid: Off"));
+        dotGridBtn_->setToolTip(tr("Decode the wafer dot-grid fiducial pattern in the live image and show "
+                                   "the design, chip and absolute position on the wafer (Overview tab only)"));
+        ui->controlsLayout->insertWidget(6, dotGridBtn_);
+        static_cast<SimpleImageCanvas*>(canvas_)->setDotGridOverlay(&dotGridOverlay_);
+        backend_.dotGrid().setPaused(true);
+
         modeLabel_ = new QLabel(this);
         modeLabel_->setObjectName("mindVisionOverviewStatus");
         modeLabel_->setWordWrap(true);
@@ -123,6 +139,7 @@ namespace frontend
         connect(ui->jsClearBtn, &QPushButton::clicked, this, &OverviewTab::onClearJs);
         connect(ui->fitBtn, &QToolButton::clicked, this, &OverviewTab::onToggleFit);
         connect(ui->roiOverlayBtn, &QToolButton::clicked, this, &OverviewTab::onToggleRoiOverlay);
+        connect(dotGridBtn_, &QToolButton::clicked, this, &OverviewTab::onToggleDotGrid);
         connect(static_cast<SimpleImageCanvas*>(canvas_), &SimpleImageCanvas::roiPositionChanged,
                 this, &OverviewTab::onRoiPositionChanged);
         connect(roiWidthSpin_, &QSpinBox::valueChanged,
@@ -152,7 +169,24 @@ namespace frontend
         if (timer_) {
             timer_->stop();
         }
+        // The only view of the pose is going away.
+        if (isVisible())
+            backend_.dotGrid().setPaused(true);
         delete ui;
+    }
+
+    void OverviewTab::showEvent(QShowEvent *event)
+    {
+        QWidget::showEvent(event);
+        backend_.dotGrid().setPaused(false);
+        updateDotGridOverlay();
+    }
+
+    void OverviewTab::hideEvent(QHideEvent *event)
+    {
+        QWidget::hideEvent(event);
+        // Tab switch (e.g. to Experiment) or minimised window: stop decoding.
+        backend_.dotGrid().setPaused(true);
     }
 
     QString OverviewTab::appDirIncludePath(const QString &fileName) const
@@ -203,6 +237,7 @@ namespace frontend
                 : QStringLiteral("egrabber");
         if (key != loadedCameraKey_) refreshCameraMode();
         if (!isVisible()) return;
+        updateDotGridOverlay();
         if (backend_.isMindVisionCameraSelected()) {
             updateMindVisionBounds();
             if (!backend_.isMindVisionOverview()) return;
@@ -685,6 +720,87 @@ namespace frontend
         {
             SPDLOG_ERROR("Failed to update ROI size in egrabberConfig.js: {}", err.toStdString());
         }
+    }
+
+    void OverviewTab::onToggleDotGrid()
+    {
+        backend::services::DotGridService::Config cfg = backend_.dotGrid().getConfig();
+        cfg.enabled = !cfg.enabled;
+        std::string err;
+        if (!backend_.dotGrid().setConfig(cfg, &err))
+        {
+            SPDLOG_WARN("OverviewTab: cannot toggle dot-grid localization: {}", err);
+            QMessageBox::warning(this, tr("Wafer Grid"),
+                                 tr("Dot-grid localization is not available: %1").arg(QString::fromStdString(err)));
+            return;
+        }
+        SPDLOG_INFO("OverviewTab: dot-grid localization {}", cfg.enabled ? "enabled" : "disabled");
+        updateDotGridOverlay(); // sees the enabled change: resets the overlay and the button text
+        if (canvas_)
+            canvas_->update();
+    }
+
+    void OverviewTab::updateDotGridOverlay()
+    {
+        // config.json (dot_grid.enabled) can switch the service too, so the
+        // button and overlay follow the service state rather than a local flag.
+        const bool enabled = backend_.dotGrid().isEnabled();
+        if (dotGridOverlay_.active != enabled)
+        {
+            dotGridOverlay_ = DotGridOverlay{};
+            dotGridOverlay_.active = enabled;
+            if (dotGridBtn_)
+                dotGridBtn_->setText(enabled ? tr("Wafer Grid: On") : tr("Wafer Grid: Off"));
+        }
+        if (!enabled)
+            return;
+
+        // A new pose arrives every ~250 ms while this runs at the display rate:
+        // copy it (and its dot list) only when the service published a new one.
+        const uint64_t sequence = backend_.dotGrid().poseSequence();
+        if (sequence == dotGridPoseSequence_ && !dotGridOverlay_.text.isEmpty())
+            return;
+        dotGridPoseSequence_ = sequence;
+
+        backend::services::DotGridService::Pose pose;
+        if (!backend_.dotGrid().getLatestPose(pose))
+        {
+            dotGridOverlay_.valid = false;
+            dotGridOverlay_.text = tr("Wafer grid: waiting for a frame");
+            return;
+        }
+        dotGridOverlay_.valid = pose.valid;
+        dotGridOverlay_.dots.clear();
+        if (!pose.valid)
+        {
+            dotGridOverlay_.text = tr("Wafer grid: %1 (%2 dots)")
+                                       .arg(QString::fromStdString(pose.reason))
+                                       .arg(pose.dots);
+            return;
+        }
+        dotGridOverlay_.dots.reserve(static_cast<int>(pose.dotsPx.size()));
+        for (const auto &d : pose.dotsPx)
+            dotGridOverlay_.dots.append(QPointF(d.x, d.y));
+        dotGridOverlay_.centre = QPointF(pose.imageWidth / 2.0, pose.imageHeight / 2.0);
+        // "<design>   chip R3C2" tells the operator which chip design is under the
+        // objective, not only where on the wafer.
+        QString chip;
+        if (!pose.designName.empty() || !pose.designId.empty())
+            chip = QString::fromStdString(pose.designName.empty() ? pose.designId : pose.designName) +
+                   QStringLiteral("   ");
+        if (!pose.chip.empty())
+            chip += tr("chip %1   ").arg(QString::fromStdString(pose.chip));
+        dotGridOverlay_.text =
+            QStringLiteral("Wafer X %1 \u00B5m   Y %2 \u00B5m\n\u03B8 %3\u00B0   %4 \u00B5m/px   %5\n%6%7 dots   votes %8   %9 ms")
+                .arg(QString::number(pose.centreXUm, 'f', 1))
+                .arg(QString::number(pose.centreYUm, 'f', 1))
+                .arg(QString::number(pose.thetaDeg, 'f', 2))
+                .arg(QString::number(pose.umPerPx, 'f', 4))
+                .arg(pose.mirrored ? tr("mirrored") : tr("direct"))
+                .arg(chip)
+                .arg(pose.dots)
+                .arg(pose.votes)
+                .arg(QString::number(pose.decodeMs, 'f', 1));
     }
 
 } // namespace frontend

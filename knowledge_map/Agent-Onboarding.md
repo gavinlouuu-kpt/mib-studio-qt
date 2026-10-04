@@ -26,6 +26,7 @@ Jump to the notes that match your task:
 |---|---|
 | Frame acquisition / camera | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`) |
 | Image analysis / metrics | [[services/ProcessingService]] + [[domain/Microscopy-Pipeline]] |
+| Monitoring scatter density (KDE) / core contour | [[services/MonitoringDensityService]] + [[frontend/ExperimentMonitoringTab]] |
 | Saving/reading experiment files | [[services/Hdf5Service]] + [[data-model/HDF5-Storage]] |
 | Exporting CSV/TIFF from HDF5 (native or PySide tool) | [[services/HdfExportService]] + [[frontend/HdfReviewTab]] + [[task/2026-08-24-exporter-stability]] |
 | Live preview / ROI / overlays | [[frontend/PreviewPage]], [[frontend/ConfigTabs]] |
@@ -33,6 +34,7 @@ Jump to the notes that match your task:
 | Live charts during a run | [[frontend/ExperimentMonitoringTab]] |
 | Processing-core versions / native hot-swap | [[frontend/ProcessingCoreDialog]] + [[services/ProcessingService]] |
 | Autofocus / nanopositioner | [[services/AutofocusService]] + [[frontend/NanopositionerTab]] |
+| Where on the wafer / which chip the camera sees (dot-grid fiducials) | [[services/DotGridService]] + [[frontend/OverviewTab]] (Wafer Grid toggle + overlay, Overview only) + [[task/2026-09-17-dot-grid-localization]] |
 | Device discovery (camera / nanopositioner / pulse-generator scans, startup auto-select) | [[services/DeviceDiscoveryService]] + [[frontend/System-Utilities]] (`DeviceInitManager`) + [[task/2026-09-15-device-discovery-service]] |
 | Hidden desktop / hardware held after close | [[frontend/DesktopInstance]] + [[task/2026-09-15-hardware-shutdown]] |
 | Syringe pumps | [[services/SyringePumpService]] (serial via [[services/ISerialPort]]) + [[frontend/SyringePumpTab]] |
@@ -93,3 +95,5 @@ grep -r '\[\[' knowledge_map/ | <verify each target exists>
 
 If your PR has code changes but no vault changes, expect reviewers to push
 back.
+
+Central method registry/cache (#398): [[services/ProfileRegistryService]].

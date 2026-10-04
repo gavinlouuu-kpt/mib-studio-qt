@@ -16,7 +16,9 @@
 - On scroll/selection, fetch image payloads by index using
   `readImageByIndex` / `readImagesRange` (hyperslab reads — bounded memory).
 - Display metrics in a `QTableView` backed by `HdfMetricsModel`.
-- Optional charts: scatter + histograms over the saved dataset.
+- Optional charts: scatter + histograms over the saved dataset; click a
+  scatter point to view the cell in the docked frame pane (see "Scatter
+  interaction and frame pane").
 - **Bounded file row** (issue #358): the `.ui` file row is now two rows
   (`fileRowLayout`: Select/Close/Export Metrics/Export All + a native
   **More…** `QToolButton` menu holding Batch Metrics, Batch Export All,
@@ -108,6 +110,124 @@ frames. The currently active
 `ProcessingConfig`, ROI, and background image (from
 `processing().getProcessingConfig()` / `getRealtimeRoi()` /
 `getRealtimeBackgroundGray()`) are used as inputs.
+
+## Stored KDE core contours
+
+On open, `readStoredKdeRecords()` reads `/analysis @kde_core_json` and
+`/monitoring @kde_live_json` through the retained reader and parses them with
+`backend/processing/KdeCoreRecord.h`; `generateScatterPlot` redraws them via
+`drawStoredKdeContours()` as `QLineSeries` on the scatter: full-run solid
+blue, live (provisional) dashed orange, one legend entry per record
+("Core 90% (full run)" / "Core 90% (live, provisional)"). An unreadable
+record is logged and skipped; `clearDisplay()` removes the previous file's
+contours. Test hooks: `loadHdfFileForTests`, `storedKdeContourSeriesForTests`.
+**Compute core contour from full run** (scatter right-click,
+`computeCoreAction`, enabled for experiment files with valid cells): the
+valid cells (µm² with the same factor as the scatter, see TD-17) go to
+`computeFullRunCoreRecord` (`KdeCoreRecord.h`: Silverman factor 1, core share
+from `Monitoring/KdeCoreFraction`, fixed-seed subsample above 5000 cells,
+grid over the padded data range) on `QtConcurrent`. On completion an existing
+full-run record needs confirmation to be replaced; saving closes the review
+reader, writes `/analysis @kde_core_json` through
+`Hdf5Service::openFileForUpdate`, and reopens the reader. When the file
+cannot be written (read-only, export running) the contour is still drawn and
+the status says it was not saved. A result for a file that is no longer open
+is dropped; the destructor drains the job. Guard: `frontend.hdf_review_core`
+(compute, save, decline/confirm overwrite, read-only).
+
+## Scatter interaction and frame pane (issue #467)
+
+The Charts view is a splitter: scatter | (frame pane over histogram), sizes
+persisted as `Review/ChartsSplitter` / `Review/ChartsRightSplitter` (written
+once, in the destructor). The pane sits beside the plot and never covers it.
+
+- **Scatter view** is a `ZoomableChartView` ([[System-Utilities]]): wheel
+  zoom, left/middle-drag pan, single click selects, double-click resets only
+  on empty space (`setResetOnDoubleClick(false)` + `onScatterDoubleClicked`),
+  "Reset zoom" in the right-click menu after "Compute core contour…".
+  `generateScatterPlot` registers the data extent with `setDefaultRange`.
+- **Point ≠ frame.** `generateScatterPlot` skips `!validation.isValid`, so it
+  builds `scatterPoints_` (µm², deformability, frame), `scatterPointToFrame_`
+  and `frameToScatterPoint_` (−1 when a frame has no point). It sets
+  `scatterShowsLiveFile_` only when drawing `validFrames_`; batch-export
+  snapshots draw other files, and clicks then select nothing.
+- **Dataset is explicit.** `setSelectedFrame(int, bool valid)` and
+  `showFrameViewer(int, bool valid)`: `isShowingValid_` is false on the
+  Charts tab. `onTableSelectionChanged` uses the sending table, not the tab.
+  `loadFrameForDisplay(int, bool)` is the one image/mask/series read shared
+  by the modal viewer and the pane.
+- **Hit test** (`include/frontend/utils/ScatterHitTest.h`, Qt-free): visible
+  points only, pixel distance ≤ max(marker, 8 px), ties → lowest frame index.
+  `tests/fixtures/review_scatter_hits.json` is the shared contract with the
+  React shell (#470). Hover uses the same function (cursor + tooltip).
+- **Selection** (`setSelectedFrame(frame, true)`) moves the one-point
+  `scatterHighlight_` (kept last in the chart's series by
+  `raiseScatterHighlight()`, hidden for frames without a point) and refreshes
+  the pane. Highlight and pane show the **last valid cell chosen**
+  (`highlightFrame_`); an invalid-set selection changes neither, and pane
+  prev/next continue from that cell. The pane reads a frame only while the
+  Charts tab is visible and no modal viewer covers it (`refreshFramePane`
+  marks it stale behind the modal and catches up when it closes, so the
+  modal's prev/next read each frame once). `setSelectedFrame` guards against
+  re-entry through the table's `selectionChanged`. Pane prev/next and ←/→
+  walk `validFrames_` with wrap; "Open in window…" opens the modal viewer on
+  that cell. Pane title and hover tooltip name the **recorded**
+  `ProcessedFrame::index` (what the viewer and the metrics CSV show), with
+  the 1-based valid-set position second. Close/reload clears maps,
+  highlight and pane.
+- **Exports**: `renderChartSnapshots` (Export All, Export Charts, batch)
+  saves the axes, the user-zoomed flag and the highlight
+  (`saveScatterView`), draws full extent without the highlight, then
+  restores (`restoreScatterView`, re-arming `markUserZoomed`); batch restores
+  once after the final `updateCharts()`. Export Charts writes those same
+  snapshots as TIFFs. While an export redraws the scatter, click, hover and
+  double-click are all ignored.
+- **Cost:** the scatter is filled with `QXYSeries::replace()`. On Qt 6.4
+  `append()` (per point and the `QList` overload) emits `pointAdded` per
+  point and rebuilds the series geometry each time — O(n²): a 20 000-cell
+  file did not finish opening in two minutes; with `replace()` it opens in
+  ~1.6 s. At 20 000 points the hit rule costs 0.14–0.18 ms per call, hover
+  (hit + tooltip) 1.2–3.2 ms median, a pan step's axis/geometry update
+  ~8–9 ms, but its repaint ~200–260 ms: Qt Charts draws one item per marker
+  on the CPU (TD-18). Linux container, system Qt 6.4, scatter ~800 px wide.
+  Gates: hit rule < 2 ms, hover < 5 ms, pan update < 60 ms, pan with
+  repaint < 1.5 s (catches O(n²)-class regressions only).
+- **Scaling (measured 2026-10-01, `MIB_REVIEW_SCATTER_CELLS=<n>` on
+  `frontend.hdf_review_scatter`, Linux container, system Qt 6.4):**
+
+  | valid cells | open (metadata + scatter) | RSS delta | hover | pan repaint |
+  |---|---|---|---|---|
+  | 20 000 | 1.5 s | +38 MB | 2 ms | 250 ms |
+  | 100 000 | 31–36 s | +208 MB | 11 ms | 1.3 s |
+  | 300 000 | > 3 min (watchdog) | — | — | — |
+
+  Memory is linear (~2 KB per cell, mostly the per-marker graphics item).
+  Open time is **quadratic inside Qt Charts**: `ScatterChartItem::createPoints`
+  adds each marker with `QGraphicsItemGroup::addToGroup`, which recomputes
+  the group's bounding rect per add (gdb samples during the 100 k load).
+  Our own `replace()` call is one rebuild; the maps and hit test are linear.
+  Practical ceiling today: tens of thousands of cells on the Charts tab;
+  the Valid/Invalid tabs are unaffected (virtualised). The fix is to spread
+  the points over several `QScatterSeries` of ~2 000 (PR 3b's eight density
+  level series do this for free when KDE is on) or OpenGL series (TD-18).
+- **Layout:** the scatter keeps ≥ 420 px and starts with 60 % of the width;
+  the embedded viewer hides its overlay / ROI / zoom in-out / export
+  controls (the tab's toolbar and Export All cover those) so its one
+  control row — Prev, Next, Fit to Window, Open in window… — fits a 400 px
+  pane.
+- **Chart export colours** (pre-existing bug fixed with #467):
+  `renderChartSnapshots` read the grabbed `Format_RGB32` image (B,G,R,A in
+  memory) as RGBA, so every exported chart TIFF had red and blue swapped —
+  blue points came out orange. Now `COLOR_BGRA2BGR`. Caught by
+  `integration.review_scatter_e2e`: the real `MainWindow` records a run on
+  the real 512x96 cells, opens it in Review and drives the scatter (click,
+  zoom, pan, prev/next, open in window, export), writing a screenshot of
+  every state to `MIB_REVIEW_E2E_OUT`; it skips (77) without the asset.
+- Test hooks: `scatterViewForTests`, `scatterHighlightForTests`,
+  `framePaneForTests`, `framePaneFrameForTests`, `scatterPointToFrameForTests`,
+  `scatterPointViewPosForTests`, `setFrameViewerSinkForTests` (replaces the
+  modal `exec()`), `stepScatterSelectionForTests`, `renderChartSnapshotsForTests`.
+  Guard: `frontend.hdf_review_scatter`.
 
 ## Run accounting (issue #367)
 

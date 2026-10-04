@@ -1,5 +1,172 @@
 # Recent Work
 
+## 2026-10-02 — Central profile registry foundation (#398, PR #402)
+
+Provider-neutral registry contract, canonical method envelope over the existing
+config/script payload, Supabase RPC provider, immutable origin/user-scoped SQLite
+cache with exact instrument/context validation, and PostgreSQL schema/RLS/lifecycle
+functions. Not yet wired into AppBackend, either shell or Start. Brought up to date
+with `develop` and built/tested under the full backend preset for the first time.
+Fixed on the way (regression-first): one noncanonical revision in a project used to
+stop sync for every later revision (pages hold one revision, and decoding threw);
+it is now reported in `RevisionPage::rejected`, counted in registry health, never
+cached, and the cursor advances. Guards: `profiles.registry` (CTest) and the PGlite
+suite (`npm test --prefix supabase`, `profile-registry-ci.yml`). See
+[[../services/ProfileRegistryService]] and
+`docs/exec-plans/active/2026-09-10-central-profile-registry.md`.
+
+## 2026-10-02 — Dot-grid review fixes (PR #472)
+
+Ten review findings fixed: the Overview Wafer Grid toggle survives
+`config.json` reloads (`enabled` applies only when the file value changes);
+exact 64-bit seeds from `config.json`; no exception leaves the
+[[../services/DotGridService]] thread and the bit grid is capped; a config
+change re-decodes the current frame; `DesignDecoder` keeps cross-core
+ambiguity and stage-ranked failures; the registry fingerprint covers names
+and chip outlines; `Codebook::loadJson` validates the m-sequence and phases;
+`VERSION` is a CMake configure dependency; the Overview copies a pose only
+when `poseSequence()` moves; the blob gate tolerates a 2× scale-hint error
+(0.2–5× area, C++ and Python). New test `frontend.dot_grid_config`;
+registry, decoder, codebook, service and Python tests extended.
+
+## 2026-10-02 — Dot-grid codec cores: contract + core version, gold references (phase 1)
+
+The dot-grid encoder/decoder now follow the processing-core model (ADR
+0010): a frozen **codec contract** (contract 1 = `mseq63-delta2`) separate
+from the **core version** (`scripts/dot_grid/dotgrid/VERSION`, compiled in as
+`MIB_DOTGRID_CORE_VERSION`). Registry designs require `codec_contract` and
+record their `encoder` core; `ICodec` / `bundledCodec()` / `CodecSet` /
+`DesignDecoder` route each design to the core of its contract and fail
+closed (unsupported designs are logged, never decoded); results and
+[[../services/DotGridService]] poses name the core. Frozen gold reference
+`scripts/dot_grid/gold/codec-contract1.json` (exact encode + 12 decode cases)
+is met by the C++ core (`processing.dot_grid_codec_gold`) and the Python
+reference (`dotgrid_cli.py gold`), and is guarded by `gold-reference-change`.
+Plugin ABI, signed loader, wheel encoder and catalog are planned in
+`docs/exec-plans/active/2026-10-02-dot-grid-codec-cores.md`.
+
+## 2026-10-02 — Wafer Grid moved to the Overview tab; no decoding next to experiments
+
+Dot-grid localization now lives on [[../frontend/OverviewTab]] only: the
+**Wafer Grid** toggle and overlay moved off the Experiment Preview page
+(`PlaybackPanel` is back to its pre-dot-grid state), and the Overview pauses
+[[../services/DotGridService]] (`setPaused`) whenever it is not on screen, so
+the service decodes nothing while the Experiment tab is current, even with
+Wafer Grid on. Resuming wakes the service (`wakeRequested_`) to decode the
+newest frame at once. Tests: new `frontend.dot_grid_overview`; pause/resume
+section in `backend.dot_grid_service`.
+
+## 2026-10-01 — Dot-grid design registry: the app knows which chip design it sees
+
+Every chip design with a dot grid is now registered once in
+`resources/defaults/dot_grid/registry.json` (bundled into the app) with a
+unique, never-reused seed; the seed is the design identity (ADR 0009).
+Developers run `scripts/dot_grid/dotgrid_cli.py register DESIGN.dxf --id …`
+(registry entry + GDS/DXF/CSV mask layer, after a synthetic cross-design
+check) and open a PR; `mask` regenerates a registered layer, `list` / `check`
+inspect the registry. `backend::dotgrid::Registry` (Qt-free) loads it; the
+decoder tries every design (detection once per dot geometry) and
+[[../services/DotGridService]] poses carry `designId` / `designName`; the
+Preview overlay shows them with the chip. `dot_grid.registry_path` merges a
+local registry for designs not yet shipped. New test
+`processing.dot_grid_registry`; service and Python tests extended. Task
+record: [[../task/2026-10-01-dot-grid-design-registry]].
+
+## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
+
+The Review tab's Charts scatter is now a `ZoomableChartView` and a single
+click on a point shows that cell in a frame pane docked beside the plot
+(never over it), highlights the point and selects its Valid Frames row;
+prev/next walk the valid set, "Open in window…" opens the modal viewer.
+`ZoomableChartView` tells a click from a drag by `startDragDistance()`
+(issue #466); the Review tab builds point ↔ frame maps (frames failing
+validation have no point), names the dataset explicitly (the Charts tab
+reads as "invalid" to `isShowingValid_`), and keeps the user's zoom and
+selection out of exported chart images. The hit rule is Qt-free and shared
+with the React shell through `tests/fixtures/review_scatter_hits.json`.
+Found on the way: filling the scatter with `append()` was O(n²) on Qt 6.4
+(20 000 cells never finished opening); `replace()` opens it in ~1.6 s —
+TD-16 gets the lead. An end-to-end on the real app and real cells
+(`integration.review_scatter_e2e`, screenshots per state) then exposed a
+pre-existing export bug: chart TIFFs had red and blue swapped (RGB32 read
+as RGBA); fixed. Guards: `frontend.zoomable_chart_view`,
+`frontend.hdf_review_scatter`, `integration.review_scatter_e2e`. Plan:
+[`2026-09-30-review-scatter-click-to-view`](../../docs/exec-plans/active/2026-09-30-review-scatter-click-to-view.md)
+(PR 1 + PR 2 of #465); task note
+[[../task/2026-09-30-review-scatter-click-to-view]].
+
+## 2026-09-26 — Monitoring density (KDE) moved into the backend
+
+The live scatter KDE and core contour now run in the Qt-free backend
+([[../services/MonitoringDensityService]]) instead of a Qt worker job in the
+Monitoring tab, so the React/Tauri shell can read the same result and the
+estimate cannot compete with acquisition: one worker at the lowest OS
+priority (SCHED_IDLE / THREAD_PRIORITY_LOWEST), ticks skipped while frames
+are dropped or the batch queue is ≥ 25% full, next wake ≥ 20× the last
+compute (≤ ~5% of one core). Its input is a metrics-only copy of the
+processing monitoring ring (`ProcessingService::getMonitoringValidPoints`),
+and it hands the provisional record to the coordinator itself. The kernel
+and record codec moved to `include/backend/processing/` (namespace
+`backend::monitoring`). The Qt tab pushes settings/axes and polls for new
+results. Guards: `backend.monitoring_density_service` (policy, back-off,
+concurrency under TSan), `performance.monitoring_density_contention`
+(processing throughput with the service on ≥ 90% of off, duty cycle within
+budget), `e2e.experiment_coordinator` (service-supplied record in the file),
+`processing.monitoring_density` (renamed from `frontend.monitoring_density`).
+Before the PR the mock-camera e2e ran in the Linux container on the
+Hugging Face `512x96stream` frames: it exposed ~600 ms CPU per estimate in
+the busy app, fixed by a separable contour grid, a one-pass normaliser and
+a budget charged on thread CPU time (~90 ms, processing fps unchanged).
+Bridge + React consumption is the follow-up. See
+[[../task/2026-09-23-monitoring-kde-density]].
+
+## 2026-09-24 — KDE core contour: live contour, reference, stored records
+
+The Monitoring scatter shows a solid contour around the densest `Core %`
+(default 90%) of the population while Density (KDE) is on: a true KDE
+iso-line (mass-fraction level, 128×64 grid, marching squares) computed in the
+existing worker job. A dashed reference contour can be pinned or taken from a
+previous experiment file (Monitoring Settings). Each experiment run with
+Density on stores the on-screen contour as a provisional record
+(`/monitoring @kde_live_json`, written by the coordinator at stop); the Review
+tab draws stored contours and, on right-click, computes the authoritative
+full-run contour of all recorded cells and saves it into the file
+(`/analysis @kde_core_json`, via the new `Hdf5Service::openFileForUpdate`).
+Guards: `frontend.monitoring_density`, `recording.kde_core_roundtrip`,
+`recording.kde_core_fault`, `recording.kde_full_run_core`,
+`e2e.experiment_coordinator`,
+`frontend.monitoring_kde_density`, `frontend.hdf_review_core`,
+`integration.monitoring_kde_e2e`. See
+[[../task/2026-09-23-monitoring-kde-density]] and
+`docs/exec-plans/completed/2026-09-24-kde-core-region-split.md`.
+
+## 2026-09-23 — Monitoring scatter density (KDE) colouring
+
+The Monitoring tab's deformability-vs-area scatter can now be coloured by
+local population density (**Density (KDE)** toggle in the top row): a
+Gaussian KDE with a per-axis Silverman bandwidth, evaluated at every sample
+by the Qt-free `MonitoringDensity.h` kernel on the Qt thread pool
+(`QtConcurrent` + `QFutureWatcher`, one job at a time, unchanged buffers
+skipped) on its own periodic timer (default 2 s), and re-applied to the
+series through per-point `QXYSeries` configuration on the ordinary 500 ms
+refresh. Target-group points keep their identity by marker shape while the
+mode is on. The never-called isotropic `computeKDE` grid and the grid
+resolution setting were removed; the settings dialog now exposes a bandwidth
+factor and the update interval, and toggle/factor/interval persist in
+`QSettings`. Points are rendered through eight density-level series rather
+than Qt's per-point configuration, which the new mock-camera end-to-end
+(`integration.monitoring_kde_e2e`, real `MainWindow` on the
+`512x96stream` asset at 200 fps) measured at ≈ +220 ms GUI stall per
+refresh; with level series the KDE-on refresh is ~45 ms while capture,
+processing and overlay lag are unchanged. The same run shows the
+pre-existing plain 1000-point scatter refresh stalling the GUI ~380 ms
+(follow-up). Guards: `frontend.monitoring_density` (kernel invariants,
+per-axis separation, ratio-gated cost), `frontend.monitoring_kde_density`
+(offscreen widget: toggle, asynchronous estimate, late points, hide/show,
+persistence, dialog) and `integration.monitoring_kde_e2e`. See
+[[../frontend/ExperimentMonitoringTab]] and
+[[../task/2026-09-23-monitoring-kde-density]].
+
 ## 2026-09-21 — doctor.ps1 / bootstrap.ps1 executed under PowerShell 7 (TD-15, partial)
 
 Running the Windows scripts under `mcr.microsoft.com/powershell` (Linux,
@@ -130,6 +297,26 @@ ignored, both credentials must be rotated by their owners, and golden
 principle 11 now states the rule. No other tracked file contained either
 value. See [[../../docs/exec-plans/completed/2026-09-21-self-provisioning-environment]].
 
+## 2026-09-17 — Dot-grid wafer localization (fiducial pattern + decoder + overlay)
+
+The camera can now tell where on the Wafer_soRT wafer, and on which chip, it
+is looking: an Anoto-style displaced-dot lattice (30 µm pitch, 12 µm dots,
+5 µm shift, seed 7) is generated into the channel-layer mask by
+`scripts/dot_grid/` (DXF → GDS + `codebook.json`), and the Qt-free
+`backend::dotgrid` codebook/decoder in `mib_processing` decodes any ~6 × 6 dot
+patch to absolute mask coordinates, rotation, measured µm/px, mirror flag
+(glass-side viewing) and chip id. [[../services/DotGridService]] samples the
+latest FrameStore frame every 250 ms on its own thread and publishes a
+`Pose`; `PlaybackPanel` shows it behind a **Wafer Grid** toggle;
+`config.json` gained `dot_grid`, `MIB_DISABLED_SERVICES` gained `dot_grid`.
+Tests: `processing.dot_grid_codebook` (C++/Python golden parity),
+`processing.dot_grid_decoder`, `backend.dot_grid_service`,
+`scripts.dot_grid_reference`. ADR 0008; design in
+`docs/architecture/dot-grid-localization.md`; how-to in
+`docs/howto/dot-grid-mask-generation.md`; exec plan
+`docs/exec-plans/active/2026-09-17-dot-grid-localization.md`.
+Task record: [[../task/2026-09-17-dot-grid-localization]].
+
 ## 2026-09-16 — Device discovery service with providers (#419)
 
 Device discovery moved into a backend job service
@@ -212,6 +399,169 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Contract-2 core builds its mask once per frame** (2026-09-27) — the ABI v2
+  adapter passes the core's own `process_mask` output as
+  `precomputed_mask`, so `process_objects` runs object science only.
+  Measured on real 1184x240 frames, the rebuilt mask had cost ~10-13% of a
+  Contract-2 frame. `processing.core_v2_plugin` checks identical objects with
+  and without the precomputed mask, that an empty or moved mask changes the
+  objects (so the core really uses it), and rejects a wrong-size mask. The
+  pointer sits in the first two reserved words, so the ABI v2 config layout is
+  unchanged for older hosts and cores (locked by `processing.core_abi_v2_c`).
+- **Contract-2 native core owns its science** (2026-09-27, Contract 2 rollout
+  T1.1a) — the loader negotiates engine ABI v2 for Contract-2 cores; the
+  absdiff-laplacian core receives the full profile config as JSON and runs
+  the host's own Contract-2 object science (the V2-5 prototype used default
+  gates and the Contract-1 inner-contour rule). `processing.core_contract2_equivalence`
+  proves field-for-field equality with the bundled Contract-2 kernel. See
+  [[../services/ProcessingService#Engine ABI v2 (v2)]].
+- **Real-frame Contract 2 reference** (2026-09-26, Contract 2 rollout T1.2) —
+  `run_processing_conformance.py --processing-contract 2` runs the 50 V
+  fixture under Contract 2 (same config, `difference_threshold` = the recorded
+  threshold) against `scripts/conformance/focus-50v-real-contract2.json` (407
+  records) in the wheel CI. The metrics schema's `contract_version` accepts 2,
+  and `compare_metrics.py` requires `ring_ratio` only in Contract-1 documents
+  (it rejected every Contract-2 record before). Finding for calibration (T2.2):
+  without the area gate, Contract 2 on full frames keeps noise blobs,
+  including on empty frames; see `docs/processing-contract-v2-validation.md`.
+- **Real-frame Contract 1 reference and reference change control**
+  (2026-09-26, Contract 2 rollout T0.3/T0.4) — `scripts/conformance/focus-50v-real.npz`
+  (13 real 1184x240 frames from the four 50 V focus recordings, with
+  per-recording backgrounds and the recorded Contract-1 config, 2.2 MB) and its
+  gold `focus-50v-real-contract1.json` (21 records: 14 valid, 4 invalid, 3
+  border). `run_processing_conformance.py --fixture-npz` processes each
+  recording with its own background; the wheel CI runs it next to the synthetic
+  reference. A difference threshold +1 changes all 21 records. `.github/CODEOWNERS`
+  covers the processing science and references;
+  `gold-reference-guard.yml` fails a PR that changes a reference or fixture
+  without the `gold-reference-change` label. See
+  [[../domain/Microscopy-Pipeline]].
+- **Full processing config in recordings** (2026-09-26, Contract 2 rollout
+  T0.2) — `/experiment_info` records the declared contract, difference
+  threshold, ring/area-ratio/Laplacian gates and the channel band
+  (`getEffectiveProcessingConfig()`); `Hdf5Service::readRecordedProcessingConfig`
+  reads them back. Research (wheel) builds record the executed contract, so a
+  Contract-2 `save_masks_to_hdf5` file now exports as Contract 2. See
+  [[../services/Hdf5Service#Processing-core provenance]].
+- **One contract per shipped core** (2026-09-26, ADR 0007, Contract 2 rollout
+  T0.1) — the bundled kernel's contract is fixed by
+  `MIB_PROCESSING_CORE_CONTRACT` (`1` default; `research` = both, Python wheel
+  only). Native plugins are built per contract: `mib_processing_core`
+  (subtract-ring) exports only `get_api`, and
+  `mib_processing_core_absdiff_laplacian` exports only `get_api_v2`.
+  `ProcessingService` refuses a profile whose contract the active core does
+  not serve (`processingContractMismatch()`), so a recording's contract (from
+  the core identity) is the executed one. C-7 now activates explicit
+  Contract-1 and Contract-2 kernels; the loader test checks that the
+  Contract-1 plugin serves Contract 1 only. See
+  [[../services/ProcessingService#Processing-core selection]].
+- **Processing Contract v2 — runtime selection (V2-8)** (2026-09-24, epic
+  #296) — the stack was merged with `develop` and Contract 2 became
+  executable from a config: `ProcessingConfig::processing_contract_version`
+  drives one shared `differenceImage()` (absdiff vs subtract) across the
+  bundled kernel, empty-frame helpers and realtime/batch loops; ring width is
+  `NaN`/ungated under Contract 2; `AppConfigWatcher` reads the root contract
+  key + `difference_threshold`; wheel 0.3.0 accepts the contract in its config
+  dict, omits `ring_ratio` / emits `laplacian_variance` under Contract 2 and
+  adds `compute_processed_objects`. Conformance C-7 + pytest; Contract-1
+  golden unchanged. See `docs/exec-plans/active/2026-07-21-processing-contract-v2.md`.
+
+- **Processing Contract v2 — HDF5 focus metric + reviewable export** (2026-07-21,
+  issue #302 follow-on, epic #296) — closes the e2e generate→review loop.
+  `laplacianVariance` is appended to the HDF5 per-object compound (offsets
+  preserved; Contract-1 files read `NaN`), verified by
+  `recording.experiment_roundtrip`. `scripts/export_hdf5.py` is now
+  contract-aware (keyed off `processing_contract_version`): a Contract-2 export
+  emits `laplacian_variance` and omits `ring_ratio`; Contract 1 keeps ring.
+  e2e review test `scripts.contract2_export_review` generates compound-shaped
+  records, exports them, and validates a schema-valid v2 review document. So:
+  the C++ pipeline generates + persists the focus metric and the exporter makes
+  it reviewable.
+- **Processing Contract v2 — native ABI-v2 plugin** (2026-07-21, issue #301
+  follow-on, epic #296) — `mib_processing_core` now exports
+  `mib_processing_get_api_v2` alongside the unchanged v1 `get_api`. Its
+  `process_objects` compiles the ABI filter chain, builds the absolute
+  difference, runs the science, and returns full per-object metrics (finite
+  `laplacian_variance`, no ring) into the host-owned buffer with deterministic
+  `BUFFER_TOO_SMALL`; the v2 descriptor advertises the Contract-2 capabilities
+  and passes a v2 self-test. End-to-end dlopen test: `processing.core_v2_plugin`.
+  The loader's v2 activation path + native signing remain follow-on.
+- **Processing Contract v2 — validation release gate (deterministic)**
+  (2026-07-21, issue #303, epic #296) — seventh slice (V2-7). Adds
+  `processing.contract2_conformance`, one deterministic synthetic gate tying the
+  v2 properties together (absdiff polarity symmetry, filter identity/order,
+  blur lowers focus, inversion preserves it, object isolation, tiny/no-object
+  NaN, invalid-background rejection, focus gate default-off), and
+  `docs/processing-contract-v2-validation.md` recording the calibration
+  decisions (gate ships disabled; no threshold converted from ring) and the
+  full list of remaining real-corpus / hardware / MLflow / native-plugin work.
+  The deterministic portion is complete; the resource-dependent portion stays
+  open on the gate.
+- **Processing Contract v2 — contract-aware metrics schema** (2026-07-21, issue
+  #302, epic #296) — sixth slice (V2-6), persisted/contract surface. Makes
+  `docs/gold_standard_metrics.schema.json` contract-aware: `ring_ratio` is now
+  optional and documented as **legacy Contract 1**, and a new optional
+  `laplacian_variance` (Contract-2 focus metric, `NaN`→`null`) is declared, so
+  a Contract-1 document (ring, no laplacian) and a Contract-2 document
+  (laplacian, no ring) both validate under `additionalProperties:false`. No
+  global `contract_version` bump (v2 stays a coexisting per-document contract).
+  Docs (`gold_standard_metrics.md`) updated. Test:
+  `scripts.gold_standard_schema_contract`. The HDF5 compound round-trip, the
+  Python/JSON/CSV exporters, and the review/monitoring UI + screenshots are
+  larger surfaces tracked as follow-on within V2-6.
+- **Processing Contract v2 — engine ABI v2 surface** (2026-07-21, issue #301,
+  epic #296) — fifth slice (V2-5). Adds engine ABI v2 to `ProcessingCoreAbi.h`
+  **additively** (v1 layout pinned unchanged): POD filter-chain / v2-config /
+  per-object-metrics structs (`laplacian_variance`, no ring), a host-owned
+  object buffer with deterministic `BUFFER_TOO_SMALL`, `mib_processing_api_v2`
+  with `process_objects`, and `get_api_v2` negotiation. Capability flags
+  (`MIB_PROCESSING_CAP_*`) plus `ProcessingCoreCapabilities.h` host negotiation
+  (`coreSatisfiesContract2`, `abiV1ServesContract`, `engineAbiForContract`).
+  Native v2 plugin + loader v2 activation are follow-on. Tests:
+  `processing.core_abi_v2_c`, `processing.core_capabilities`.
+- **Processing Contract v2 — focus-score autofocus controller** (2026-07-21,
+  issue #300, epic #296) — fourth slice (V2-4). Adds the Qt-free
+  `AutofocusFocusScore.h`: `FocusSample` (Laplacian variance/frame/timestamp/
+  object/track), a finite-only validity policy, `medianFocusScore` (de-dups by
+  `(frame, identity)`, `NaN` when empty — never manufactured), and
+  `FocusScoreController`, a maximize-score hill-climb (direction probe,
+  reverse-on-wrong-way stays coarse, reverse+refine on overshoot, hold within
+  tolerance, clamped). The Contract-1 ring-width setpoint controller
+  (`AutofocusMath.h`) is untouched. Service/UI wiring rides on V2-6. Test:
+  `backend.autofocus_focus_score`.
+- **Processing Contract v2 — per-object Laplacian variance** (2026-07-21,
+  issue #299, epic #296) — third slice (V2-3). Adds
+  `science::calculateLaplacianVariance` (filled object mask, crop to bbox+kernel
+  context, `cv::Laplacian` on the unmasked crop, variance via `meanStdDev` over
+  the mask so only object pixels contribute; `NaN` for unusable samples).
+  Computed once per emitted object from its own contour (inner for nested,
+  top-level for outer-only — never the parent/halo). New `laplacianVariance`
+  result field and `laplacian_variance_min/max` +
+  `enable_laplacian_variance_check` config (parsed by `AppConfigWatcher` +
+  Python bridge), plus `InvalidReasonCode::Laplacian` (histogram 6→7). Gate
+  **disabled by default**, so Contract-1 output is unchanged; ring width stays
+  for v1. Test: `processing.laplacian_variance`.
+- **Processing Contract v2 — preprocessing filters + shared absdiff path**
+  (2026-07-21, issue #298, epic #296) — second slice (V2-2). Adds the Qt-free
+  `ImageFilterPipeline` (identity/invert/linear_contrast/gamma/clahe, compiled
+  once, fail-closed on bad stages) and one shared `buildDifferenceImage`
+  (input filters applied symmetrically, `cv::absdiff` under Contract 2 vs
+  saturating `cv::subtract` under Contract 1, incompatible-background error
+  under v2). The bundled kernel routes `processMask` **and** `isEmpty` through
+  it, and the host `isFrameEmpty` helpers too, so mask + empty-frame can't
+  diverge. Contract-1 output unchanged (golden/seam/multi-object tests pass).
+  Test: `processing.image_filter_pipeline`.
+- **Processing Contract v2 — schema/migration boundary** (2026-07-21, issue
+  #297, epic #296) — first slice (V2-1) of the Contract-v2 epic. Adds the
+  Qt-free `backend::processing::contract` module
+  (`ProcessingContract.{h,cpp}`): two version axes, `classifyConfigSchema`
+  (same/upgrade/incompatible), the canonical `difference_threshold` adapter
+  (`resolveDifferenceThreshold`), and `migrateProfileConfigV1ToV2` (removes
+  ring science, installs an identity preprocessing chain, disables the
+  Laplacian gate, preserves unrelated values, never activates a core). Plus
+  ADR `docs/decisions/0006-processing-contract-v2.md`, the compatibility-matrix
+  doc, and the active exec-plan. Contract v1 is unchanged. Test:
+  `processing.contract_v2_migration`.
 - **Cross-platform OEABT nanopositioner backend** (2026-08-31) — Added a
   Qt-free C++17 protocol core, native ISerialPort adapter, guarded `oeabtctl`
   diagnostic/acceptance CLI, and Linux/Windows MIB Studio backend selection
@@ -1201,6 +1551,30 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
   an always-on live acquisition→pulse latency gauge, status-bar surfacing,
   [[../diagnostics/CrashStateMirror]] loss fields, and a funnel/loss section in
   `analyze_pipeline_timing.py`. Test: `processing.identification_metrics`.
+- **Auto-fit processing ROI from background** (2026-07-21, issue #295) —
+  new pure detector `detectChannelRoi` (`ChannelRoiDetect.{h,cpp}`, OpenCV-only,
+  in the Qt-free `mib_processing` core) locates the microfluidic channel walls
+  from a captured background's vertical-gradient row profile and returns a
+  full-width ROI with the wall rows excluded, failing safe to the full frame on
+  empty/flat/ambiguous input. `ProcessingConfig::auto_roi_from_background`
+  (default off, + `auto_roi_wall_gradient_ratio`, `auto_roi_wall_margin`) gates
+  it; `setRealtimeBackgroundGray` — the single background-capture chokepoint —
+  applies the derived ROI via `setRealtimeRoi` and fires a new
+  `SuggestedRoiCallback`. Keeps full-frame capture in realtime while excluding
+  the wall noise that both pollutes detections and defeats the empty-frame fast
+  path. Guard: `processing.channel_roi_detect`. Config threaded through
+  `AppConfigWatcher` (`image_processing`). Task:
+  [[../task/2026-07-21-auto-roi-warmup]]. Landed on the Contract-2 branch
+  2026-09-25 with the two fixes validated on the cells-different-focus
+  dataset: the band is the wall-bounded run with the strongest walls (not the
+  longest run, which is the flat glass outside a mid-frame channel) and
+  `minBandFraction` defaults to 0.15 (the MIB channel is ~22% of 1184x240).
+  Same day the band stopped cropping the ROI: it now gates objects by
+  **centroid** (`FilterResult::inChannel`, invalid reason `Channel`, wheel
+  0.3.2 `channel_band_y/h` → `in_channel`), so debris stuck on a wall is
+  rejected without clipping cells near the walls. See
+  [[../services/ProcessingService#Channel band from background]].
+
 - **Trigger-path hardening** (2026-07-18, issue #227) — the
   [[../services/TriggerService]] thread elevates itself to
   `THREAD_PRIORITY_TIME_CRITICAL` on Windows (best-effort `SCHED_FIFO`

@@ -36,6 +36,8 @@ set(MIB_STANDALONE_BACKEND_TESTS
     kin6_batch_pipeline_evidence        # uses argv[0]
     kin10_hf_dataset_pipeline_test      # uses argv[0]; the harness passes the binary path
     processing_core_loader_test         # add_dependencies on the plugin fixtures
+    processing_core_v2_plugin_test      # add_dependencies on the plugin (Contract v2 dlopen test)
+    processing_core_contract2_equivalence_test # add_dependencies on the Contract-2 plugin
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
     processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
@@ -171,6 +173,9 @@ if(UNIX AND NOT APPLE)
         LABELS "backend;nanopositioner;concurrency"
         TIMEOUT 30)
 endif()
+mib_add_backend_test_executable(autofocus_focus_score_test backend/autofocus_focus_score_test.cpp)
+add_test(NAME backend.autofocus_focus_score COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_score_test)
+set_tests_properties(backend.autofocus_focus_score PROPERTIES LABELS "backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_test.cpp)
 mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
@@ -189,6 +194,26 @@ set_tests_properties(backend.recording_isframeempty_roi PROPERTIES LABELS "backe
 mib_add_backend_test_executable(monitoring_roi_crop_test frontend/monitoring_roi_crop_test.cpp)
 add_test(NAME frontend.monitoring_roi_crop COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_roi_crop_test)
 set_tests_properties(frontend.monitoring_roi_crop PROPERTIES LABELS "frontend;safety" TIMEOUT 30)
+
+# Monitoring scatter density (KDE): invariants, per-axis bandwidth, degenerate
+# input, colour ramp and a ratio-gated cost budget (no Qt).
+mib_add_backend_test_executable(monitoring_density_test processing/monitoring_density_test.cpp)
+add_test(NAME processing.monitoring_density COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_test)
+set_tests_properties(processing.monitoring_density PROPERTIES LABELS "processing;monitoring;performance" TIMEOUT 60)
+
+# MonitoringDensityService (backend-owned live KDE): settings, lowest-priority
+# worker, fingerprint skip, load back-off, compute budget, record sink, stop,
+# and concurrent callers (TSan lane).
+mib_add_backend_test_executable(monitoring_density_service_test backend/monitoring_density_service_test.cpp)
+add_test(NAME backend.monitoring_density_service COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_service_test)
+set_tests_properties(backend.monitoring_density_service PROPERTIES LABELS "backend;monitoring;concurrency;safety" TIMEOUT 120)
+
+# The density worker never costs the processing pipeline throughput: real
+# computeProcessedFrame on every core, density service off vs on (ratio gate),
+# duty cycle within the compute budget when uncontended.
+mib_add_backend_test_executable(monitoring_density_contention_test performance/monitoring_density_contention_test.cpp)
+add_test(NAME performance.monitoring_density_contention COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_contention_test)
+set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 120)
 
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
@@ -326,9 +351,49 @@ mib_add_backend_test_executable(processing_science_seam_test processing/processi
 add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_seam_test)
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(processing_contract_v2_migration_test processing/processing_contract_v2_migration_test.cpp)
+add_test(NAME processing.contract_v2_migration COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract_v2_migration_test)
+set_tests_properties(processing.contract_v2_migration PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_contract2_conformance_test processing/processing_contract2_conformance_test.cpp)
+add_test(NAME processing.contract2_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract2_conformance_test)
+set_tests_properties(processing.contract2_conformance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
+add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
+set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_laplacian_variance_test processing/processing_laplacian_variance_test.cpp)
+add_test(NAME processing.laplacian_variance COMMAND $<TARGET_FILE:mib_backend_tests> processing_laplacian_variance_test)
+set_tests_properties(processing.laplacian_variance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_golden_test)
 set_tests_properties(processing.science_golden PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+# Dot-grid wafer localization (docs/architecture/dot-grid-localization.md).
+mib_add_backend_test_executable(dot_grid_codebook_test processing/dot_grid_codebook_test.cpp)
+add_test(NAME processing.dot_grid_codebook COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_codebook_test)
+set_tests_properties(processing.dot_grid_codebook PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(dot_grid_decoder_test processing/dot_grid_decoder_test.cpp)
+add_test(NAME processing.dot_grid_decoder COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_decoder_test)
+set_tests_properties(processing.dot_grid_decoder PROPERTIES LABELS "processing;backend" TIMEOUT 120)
+
+mib_add_backend_test_executable(dot_grid_registry_test processing/dot_grid_registry_test.cpp)
+add_test(NAME processing.dot_grid_registry COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_registry_test
+         ${PROJECT_SOURCE_DIR}/resources/defaults/dot_grid/registry.json)
+set_tests_properties(processing.dot_grid_registry PROPERTIES LABELS "processing;backend" TIMEOUT 120)
+
+mib_add_backend_test_executable(dot_grid_codec_gold_test processing/dot_grid_codec_gold_test.cpp)
+add_test(NAME processing.dot_grid_codec_gold COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_codec_gold_test
+         ${PROJECT_SOURCE_DIR}/scripts/dot_grid/gold/codec-contract1.json)
+set_tests_properties(processing.dot_grid_codec_gold PROPERTIES LABELS "processing;backend;gold" TIMEOUT 120)
+
+mib_add_backend_test_executable(dot_grid_service_test backend/dot_grid_service_test.cpp)
+mib_backend_test_link(dot_grid_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.dot_grid_service COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_service_test)
+set_tests_properties(backend.dot_grid_service PROPERTIES LABELS "backend;processing;stress" TIMEOUT 120)
 
 mib_add_backend_test_executable(processing_identification_metrics_test processing/processing_identification_metrics_test.cpp)
 add_test(NAME processing.identification_metrics COMMAND $<TARGET_FILE:mib_backend_tests> processing_identification_metrics_test)
@@ -337,6 +402,10 @@ set_tests_properties(processing.identification_metrics PROPERTIES LABELS "proces
 mib_add_backend_test_executable(processing_pipeline_smoke_test processing/processing_pipeline_smoke_test.cpp)
 add_test(NAME processing.pipeline_smoke COMMAND $<TARGET_FILE:mib_backend_tests> processing_pipeline_smoke_test)
 set_tests_properties(processing.pipeline_smoke PROPERTIES LABELS "processing;backend")
+
+mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
+add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
+set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_executable(processing_core_abi_c_test
     ${PROJECT_SOURCE_DIR}/tests/processing/processing_core_abi_c_test.c
@@ -351,11 +420,40 @@ set_target_properties(processing_core_abi_c_test PROPERTIES
 add_test(NAME processing.core_abi_c COMMAND $<TARGET_FILE:processing_core_abi_c_test>)
 set_tests_properties(processing.core_abi_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+add_executable(processing_core_abi_v2_c_test
+    ${PROJECT_SOURCE_DIR}/tests/processing/processing_core_abi_v2_c_test.c
+)
+target_include_directories(processing_core_abi_v2_c_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(processing_core_abi_v2_c_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+)
+add_test(NAME processing.core_abi_v2_c COMMAND $<TARGET_FILE:processing_core_abi_v2_c_test>)
+set_tests_properties(processing.core_abi_v2_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_capabilities_test processing/processing_core_capabilities_test.cpp)
+add_test(NAME processing.core_capabilities COMMAND $<TARGET_FILE:mib_backend_tests> processing_core_capabilities_test)
+set_tests_properties(processing.core_capabilities PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_core_loader_test processing/processing_core_loader_test.cpp)
 add_dependencies(processing_core_loader_test mib_processing_core)
 add_test(NAME processing.core_loader
     COMMAND $<TARGET_FILE:processing_core_loader_test> $<TARGET_FILE:mib_processing_core>)
 set_tests_properties(processing.core_loader PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_v2_plugin_test processing/processing_core_v2_plugin_test.cpp)
+add_dependencies(processing_core_v2_plugin_test mib_processing_core_absdiff_laplacian)
+add_test(NAME processing.core_v2_plugin
+    COMMAND $<TARGET_FILE:processing_core_v2_plugin_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
+set_tests_properties(processing.core_v2_plugin PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_contract2_equivalence_test processing/processing_core_contract2_equivalence_test.cpp)
+add_dependencies(processing_core_contract2_equivalence_test mib_processing_core_absdiff_laplacian)
+add_test(NAME processing.core_contract2_equivalence
+    COMMAND $<TARGET_FILE:processing_core_contract2_equivalence_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
+set_tests_properties(processing.core_contract2_equivalence PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_subdirectory(processing/fixtures)
 mib_add_backend_test_executable(processing_core_fixture_matrix_test processing/processing_core_fixture_matrix_test.cpp)
@@ -459,6 +557,18 @@ set_tests_properties(recording.hdf5_save_performance PROPERTIES LABELS "recordin
 mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_roundtrip_test.cpp)
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> experiment_roundtrip_test)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
+
+# KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
+# round-trip + fault injection for the save path and the frontend codec.
+mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
+add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
+set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)
+mib_add_backend_test_executable(kde_core_fault_test recording/kde_core_fault_test.cpp)
+add_test(NAME recording.kde_core_fault COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_fault_test)
+set_tests_properties(recording.kde_core_fault PROPERTIES LABELS "recording;backend;monitoring;safety" TIMEOUT 30)
+mib_add_backend_test_executable(kde_full_run_core_test recording/kde_full_run_core_test.cpp)
+add_test(NAME recording.kde_full_run_core COMMAND $<TARGET_FILE:mib_backend_tests> kde_full_run_core_test)
+set_tests_properties(recording.kde_full_run_core PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 60)
 
 # Issue #344: native Qt-free export service (round-trip, cancellation, faults,
 # bounded names, repeated runs with HDF5 open-object accounting). The
@@ -882,6 +992,24 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.gold_standard_schema_contract
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_gold_standard_schema_contract.py
+    )
+    set_tests_properties(scripts.gold_standard_schema_contract PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.contract2_export_review
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_contract2_export_review.py
+    )
+    set_tests_properties(scripts.contract2_export_review PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.publish_processing_core
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_processing_core.py
     )
@@ -963,6 +1091,16 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.dot_grid_reference
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/dot_grid/test_dotgrid.py
+    )
+    set_tests_properties(scripts.dot_grid_reference PROPERTIES
+        LABELS "scripts;processing"
+        TIMEOUT 120
+        SKIP_RETURN_CODE 77
+    )
+
+    add_test(
         NAME scripts.run_processing_conformance_input
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_run_processing_conformance.py
     )
@@ -999,6 +1137,10 @@ set_tests_properties(backend.frame_identity PROPERTIES LABELS "backend;bridge;st
 mib_add_backend_test_executable(processed_preview_packet_test backend/processed_preview_packet_test.cpp)
 add_test(NAME backend.processed_preview_packet COMMAND $<TARGET_FILE:mib_backend_tests> processed_preview_packet_test)
 set_tests_properties(backend.processed_preview_packet PROPERTIES LABELS "backend;bridge;processing;concurrency" TIMEOUT 45)
+
+mib_add_backend_test_executable(profile_registry_test profiles/profile_registry_test.cpp)
+add_test(NAME profiles.registry COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_test)
+set_tests_properties(profiles.registry PROPERTIES LABELS "backend;profiles;roundtrip;fault-injection" TIMEOUT 30)
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)

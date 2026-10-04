@@ -23,9 +23,11 @@ namespace backend::services
     class CameraControlService;
     class AutofocusService;
     class TriggerService;
+    class DotGridService;
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
+    class MonitoringDensityService;
     namespace serialbus
     {
         class SerialBusManager;
@@ -88,6 +90,7 @@ namespace backend
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
         services::TriggerService &trigger();
+        services::DotGridService &dotGrid();
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
@@ -182,6 +185,10 @@ namespace backend
 
         // Backend-owned experiment readiness + Start transaction (issue #369).
         app::ExperimentCoordinator& experiment();
+        // Live Monitoring scatter density (KDE) and core contour: the shells
+        // push settings and read results; the provisional record goes to the
+        // experiment coordinator from the backend worker.
+        services::MonitoringDensityService& monitoringDensity();
         // Shared RS485 bus registry (pump, pulse generator); tests inject a
         // fake serial-port factory here.
         services::serialbus::SerialBusManager& serialBus();
@@ -244,6 +251,7 @@ namespace backend
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;
         std::unique_ptr<services::TriggerService> triggerService_;
+        std::unique_ptr<services::DotGridService> dotGridService_;
         std::unique_ptr<services::YoloService> yoloService_;
         // Shared RS485/Modbus bus registry — declared before the serial
         // services so it outlives their sessions.
@@ -285,6 +293,9 @@ namespace backend
         std::string effectiveCameraSource_{"unknown"};
         std::string cameraFallbackReason_;
         std::unique_ptr<app::ExperimentCoordinator> experimentCoordinator_;
+        // Declared after the coordinator and processing so it is destroyed
+        // first: its worker reads the monitoring ring and feeds the coordinator.
+        std::unique_ptr<services::MonitoringDensityService> monitoringDensity_;
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;

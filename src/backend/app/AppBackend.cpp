@@ -25,10 +25,12 @@
 #include "backend/services/CameraControlService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/TriggerService.h"
+#include "backend/services/DotGridService.h"
 #include "backend/services/YoloService.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/MonitoringDensityService.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
 #include "backend/discovery/providers/CameraEnumerationProvider.h"
@@ -212,7 +214,43 @@ namespace backend
         }
     }
 
-    AppBackend::AppBackend() = default;
+    AppBackend::AppBackend()
+    {
+        // Exists from construction so shells can bind to it before
+        // initialize(); it stays idle until a shell enables it, and its
+        // callbacks tolerate services that are not built yet.
+        monitoringDensity_ = std::make_unique<services::MonitoringDensityService>(
+            [this] {
+                // Valid monitoring cells in chart units (µm², deformability).
+                services::MonitoringDensityInput in;
+                if (!processingService_) return in;
+                in.pixelToMicron = processingService_->getPixelToMicronFactor();
+                const double areaFactor = in.pixelToMicron * in.pixelToMicron;
+                const auto cells = processingService_->getMonitoringValidPoints();
+                in.frameIndices.reserve(cells.size());
+                in.points.reserve(cells.size());
+                for (const auto& c : cells) {
+                    in.frameIndices.push_back(c.index);
+                    in.points.push_back({c.area * areaFactor, c.deformability});
+                }
+                return in;
+            },
+            [this] {
+                // Falling behind: frames dropped by the batch queue or the
+                // experiment buffer, or a batch queue backlog.
+                services::MonitoringPipelineLoad load;
+                if (!processingService_) return load;
+                const auto batch = processingService_->getBatchPipelineStats();
+                load.droppedFrames = batch.framesDropped + processingService_->getDroppedValidFrames() +
+                                     processingService_->getDroppedInvalidFrames();
+                load.queueDepth = batch.running ? batch.currentQueueDepth : 0;
+                load.queueCapacity = batch.running ? batch.queueCapacity : 0;
+                return load;
+            },
+            [this](std::string json) {
+                if (experimentCoordinator_) experimentCoordinator_->setLiveKdeCoreRecord(std::move(json));
+            });
+    }
 
     AppBackend::~AppBackend() {
         shutdown();
@@ -237,6 +275,12 @@ namespace backend
         // die before processingService_ — a still-running realtime loop would
         // invoke its callbacks on freed services. Every call below is
         // idempotent, so shutdown() may run more than once.
+
+        // The density worker reads the monitoring ring and hands records to
+        // the coordinator: join it before either is finalized or stopped.
+        if (monitoringDensity_) {
+            monitoringDensity_->stop();
+        }
 
         // An active experiment is finalized (file closed, accounting written)
         // while every service it needs is still alive.
@@ -267,6 +311,10 @@ namespace backend
         }
         if (captureService_) {
             captureService_->setCameraReadyCallback({});
+        }
+        if (dotGridService_) {
+            dotGridService_->setPoseCallback({});
+            dotGridService_->stop();
         }
         stopFrameRecording();
         if (processingService_) {
@@ -346,6 +394,8 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
+        dotGridService_ = std::make_unique<services::DotGridService>();
+        dotGridService_->setFrameStore(frameStore_);
 
         // Device discovery (issue #419, ADR 0005): one job service, compiled-in
         // providers wrapping the existing enumeration/probe code, a camera
@@ -402,6 +452,7 @@ namespace backend
         bool bootYolo = true;
         bool bootAutofocus = true;
         bool bootTrigger = true;
+        bool bootDotGrid = true;
         bool bootCapture = true;
         bool bootPlayback = true;
         if (const char *rawDisabledServices = std::getenv("MIB_DISABLED_SERVICES"))
@@ -437,6 +488,7 @@ namespace backend
                     bootTrigger = false;
                     bootCapture = false;
                     bootPlayback = false;
+                    bootDotGrid = false;
                 }
                 else if (token == "sqlite")
                 {
@@ -462,6 +514,10 @@ namespace backend
                 {
                     bootTrigger = false;
                 }
+                else if (token == "dot_grid" || token == "dotgrid")
+                {
+                    bootDotGrid = false;
+                }
                 else if (token == "capture" || token == "camera")
                 {
                     bootCapture = false;
@@ -486,8 +542,19 @@ namespace backend
             }
         }
 
-        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}",
-                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback);
+        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}, dot_grid={}",
+                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback, bootDotGrid);
+
+        // Dot-grid wafer localization: the thread idles until the frontend
+        // enables it (config "dot_grid.enabled"); it only ever reads FrameStore.
+        if (bootDotGrid)
+        {
+            dotGridService_->start();
+        }
+        else
+        {
+            SPDLOG_WARN("AppBackend: dot-grid localization disabled by MIB_DISABLED_SERVICES");
+        }
 
         if (bootSqlite)
         {
@@ -910,6 +977,7 @@ namespace backend
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
     services::TriggerService &AppBackend::trigger() { return *triggerService_; }
+    services::DotGridService &AppBackend::dotGrid() { return *dotGridService_; }
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
@@ -1356,6 +1424,8 @@ namespace backend
     }
 
     app::ExperimentCoordinator &AppBackend::experiment() { return *experimentCoordinator_; }
+
+    services::MonitoringDensityService &AppBackend::monitoringDensity() { return *monitoringDensity_; }
 
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 

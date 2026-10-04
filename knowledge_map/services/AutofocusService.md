@@ -5,6 +5,10 @@
 
 **Source:** `src/backend/services/AutofocusService.cpp`,
 `include/backend/services/AutofocusService.h`,
+`include/backend/services/AutofocusMath.h` (Contract-1 ring-width setpoint math),
+`include/backend/services/AutofocusFocusScore.h` (Contract-2 focus-score peak-seeker)
+**Tests:** `tests/backend/autofocus_math_test.cpp`,
+`tests/backend/autofocus_focus_score_test.cpp`
 `src/backend/nanopositioner/NanopositionerBackends.cpp`,
 `src/backend/nanopositioner/oeabt/OeabtProtocol.cpp`,
 `include/backend/services/AutofocusMath.h` (pure control math)
@@ -13,7 +17,29 @@
 `tests/backend/autofocus_backend_safety_test.cpp`,
 `tests/backend/oeabt_serial_pty_test.cpp`
 **Related:** [[ProcessingService]], [[../frontend/NanopositionerTab]],
-[[../domain/Glossary]] (ring ratio)
+[[../domain/Glossary]] (ring ratio, Laplacian variance)
+
+## Contract-2 focus-score controller (v2)
+
+`AutofocusFocusScore.h` is the Contract-2 control math, kept **separate** from
+the Contract-1 ring-width setpoint controller (`AutofocusMath.h`), which stays
+untouched for legacy execution.
+
+- `FocusSample` — one object's observation (Laplacian variance, timestamp,
+  frame index, object id, track id). `focusSampleValid` accepts only finite
+  detected-object samples; `medianFocusScore` de-duplicates by
+  `(frameIndex, identity)` (track id preferred over object id) and returns
+  `NaN` when no valid sample exists — it never manufactures a frame-level value.
+- `FocusScoreController` — a hill-climb that **maximizes** the score: probes a
+  direction, keeps stepping while the score improves, reverses (staying coarse)
+  if the initial probe went the wrong way, reverses **and** refines to the fine
+  step after an overshoot, and holds when the change is within `holdTolerance`.
+  Every commanded voltage is clamped to `[minVoltage, maxVoltage]`.
+
+Service/UI wiring (an `onFocusSample` feed, contract-gated controller
+selection, and the focus-score terminology rename) rides on the v2
+config/contract plumbing and lands with V2-6; the pure controller here is the
+tested core.
 
 ## Responsibility
 

@@ -33,9 +33,12 @@ timeout, avoiding the unbounded `FlushFileBuffers` wait. See
 | Autofocus stats | [[../services/AutofocusService]] `statsLoop()` | `pendingSamplesCV_` + 10 ms drain interval | Drains ring-ratio samples pushed by `ProcessingService` realtime thread, maintains 1000-sample deque, refreshes `{median,average,min,max}RingRatio_` atomics. Runs for the full lifetime of the service, not just while connected. |
 | Autofocus control | [[../services/AutofocusService]] `controlLoop()` | selected nanopositioner transport | Owns all OEABT/CoreMOR reads and writes, consumes ring-ratio stats atomics, and writes voltage only after explicit manual/autofocus requests. Runs only between `connect()` / `disconnect()`. |
 | Trigger | [[../services/TriggerService]] `triggerLoop()` | `triggerCV_` | Issues camera digital-output pulse on target-group events |
+| Dot-grid localization | [[../services/DotGridService]] `loop()` | `wakeCv_` (+ `wakeRequested_`) + `interval_ms` timeout; paused while the Overview tab is hidden | Samples the latest committed FrameStore frame at a low rate, decodes the wafer fiducial pattern, publishes a pose snapshot + callback; never on the capture/realtime threads |
 | Syringe pump poll | [[../services/SyringePumpService]] per pump | serial (Modbus RTU) | UI-driven status polls |
 | Frame-recording | `AppBackend` `frameRecordingThread_` | FrameStore | Only active in recording mode; drains non-empty frames into HDF5 |
 | Discovery workers | [[../services/DeviceDiscoveryService]] (one per job, ≤ 4) | provider enumeration / probe, retry-delay CV | Camera SDK enumeration, nanopositioner identity probes, pulse-generator FC03 scans; cooperative cancel between steps; joined at `shutdownDiscovery()` |
+| Monitoring density | [[../services/MonitoringDensityService]] worker | `cv_` (interval / request / settings) | **Lowest OS priority** (`SCHED_IDLE` / `THREAD_PRIORITY_LOWEST`): the live scatter KDE + core contour over the monitoring ring. Skips a tick when frames were dropped or the batch queue is ≥ 25% full; next wake ≥ 20× the last estimate's thread CPU time (≤ ~5% of one core). Publishes an immutable result + generation; hands the provisional record to the coordinator. Stopped first in `AppBackend::shutdown()`. |
+| Qt global thread pool (`QtConcurrent::run`) | frontend, per job | — | Short value-typed jobs owned by a widget through a `QFutureWatcher`: HDF export and the full-run core contour of [[../frontend/HdfReviewTab]]. Never touches services or widgets; results are applied on the GUI thread. |
 
 ## Sync primitives
 

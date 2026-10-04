@@ -21,8 +21,10 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/services/DotGridService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CaptureService.h"
 #include "frontend/system/ConfigDocumentStore.h"
@@ -58,6 +60,66 @@ namespace frontend
 #endif
 			// Development: use ../include/ relative to executable
 			return QDir(appDir).absoluteFilePath("../include");
+		}
+
+		// A dot-grid seed is a full uint64 (codec contract 1). JSON numbers are
+		// read as exact integers (never through double, which rounds above
+		// 2^53); seeds above 2^63 can be written as a decimal string.
+		bool parseDotGridSeed(const QJsonValue &v, uint64_t &out)
+		{
+			if (v.isString())
+			{
+				bool ok = false;
+				const qulonglong s = v.toString().trimmed().toULongLong(&ok, 10);
+				if (ok)
+					out = s;
+				return ok;
+			}
+			if (v.isDouble())
+			{
+				const qint64 i = v.toInteger(-1); // -1 for fractions and negatives
+				if (i < 0)
+					return false;
+				out = static_cast<uint64_t>(i);
+				return true;
+			}
+			return false;
+		}
+
+		// Dot-grid design registry: the bundled one (resources/defaults/dot_grid/
+		// registry.json) plus, when dot_grid.registry_path is set, a local file
+		// for designs not yet shipped with a build (relative paths resolve
+		// against the config directory). Clashing local entries are skipped.
+		std::shared_ptr<const backend::dotgrid::Registry> loadDotGridRegistry(const QString &extraPath)
+		{
+			backend::dotgrid::Registry registry;
+			QFile bundled(QStringLiteral(":/defaults/dot_grid_registry.json"));
+			if (bundled.open(QIODevice::ReadOnly))
+			{
+				std::string err;
+				if (!backend::dotgrid::Registry::parse(bundled.readAll().toStdString(), registry, &err))
+					SPDLOG_WARN("AppConfigWatcher: bundled dot-grid registry rejected: {}", err);
+			}
+			if (!extraPath.isEmpty())
+			{
+				const QString path = QDir::isAbsolutePath(extraPath)
+										 ? extraPath
+										 : QDir(getUserConfigDir()).absoluteFilePath(extraPath);
+				backend::dotgrid::Registry local;
+				std::string err;
+				if (backend::dotgrid::Registry::loadFile(path.toStdString(), local, &err))
+				{
+					std::vector<std::string> warnings;
+					registry.merge(local, &warnings);
+					for (const auto &w : warnings)
+						SPDLOG_WARN("AppConfigWatcher: dot-grid registry '{}': {}", path.toStdString(), w);
+				}
+				else
+				{
+					SPDLOG_WARN("AppConfigWatcher: dot-grid registry '{}' rejected: {}", path.toStdString(), err);
+				}
+			}
+			return std::make_shared<const backend::dotgrid::Registry>(std::move(registry));
 		}
 	}
 
@@ -281,12 +343,29 @@ namespace frontend
 		{
 			// Start from current config to preserve unspecified values
 			pcfg = backend_.processing().getProcessingConfig();
+			// Contract selection (ADR 0006): a profile declares
+			// processing_contract_version at its root; absent means Contract 1.
+			// Unsupported values fall back to Contract 1 with a warning rather
+			// than silently running v2 science.
+			{
+				const int declared = root.value("processing_contract_version").toInt(1);
+				if (backend::processing::contract::isSupportedProcessingContract(declared))
+					pcfg.processing_contract_version = declared;
+				else
+				{
+					SPDLOG_WARN("AppConfigWatcher: unsupported processing_contract_version {}; using Contract 1", declared);
+					pcfg.processing_contract_version = 1;
+				}
+			}
 			if (root.contains("image_processing") && root.value("image_processing").isObject())
 			{
 				const QJsonObject ip = root.value("image_processing").toObject();
 				if (ip.contains("gaussian_blur_size"))
 					pcfg.gaussian_blur_size = ip.value("gaussian_blur_size").toInt(pcfg.gaussian_blur_size);
-				if (ip.contains("bg_subtract_threshold"))
+				// v2 canonical key wins; the legacy key is accepted for Contract 1.
+				if (ip.contains("difference_threshold"))
+					pcfg.bg_subtract_threshold = ip.value("difference_threshold").toInt(pcfg.bg_subtract_threshold);
+				else if (ip.contains("bg_subtract_threshold"))
 					pcfg.bg_subtract_threshold = ip.value("bg_subtract_threshold").toInt(pcfg.bg_subtract_threshold);
 				if (ip.contains("morph_kernel_size"))
 					pcfg.morph_kernel_size = ip.value("morph_kernel_size").toInt(pcfg.morph_kernel_size);
@@ -306,6 +385,10 @@ namespace frontend
 					pcfg.ring_ratio_min = ip.value("ring_ratio_min").toDouble(pcfg.ring_ratio_min);
 				if (ip.contains("ring_ratio_max"))
 					pcfg.ring_ratio_max = ip.value("ring_ratio_max").toDouble(pcfg.ring_ratio_max);
+				if (ip.contains("laplacian_variance_min"))
+					pcfg.laplacian_variance_min = ip.value("laplacian_variance_min").toDouble(pcfg.laplacian_variance_min);
+				if (ip.contains("laplacian_variance_max"))
+					pcfg.laplacian_variance_max = ip.value("laplacian_variance_max").toDouble(pcfg.laplacian_variance_max);
 				if (ip.contains("empty_frame_pixel_threshold"))
 					pcfg.empty_frame_pixel_threshold = ip.value("empty_frame_pixel_threshold").toInt(pcfg.empty_frame_pixel_threshold);
 				if (ip.contains("auto_background_enabled"))
@@ -314,6 +397,12 @@ namespace frontend
 					pcfg.auto_background_empty_frames = ip.value("auto_background_empty_frames").toInt(pcfg.auto_background_empty_frames);
 				if (ip.contains("auto_background_cooldown_frames"))
 					pcfg.auto_background_cooldown_frames = ip.value("auto_background_cooldown_frames").toInt(pcfg.auto_background_cooldown_frames);
+				if (ip.contains("auto_roi_from_background"))
+					pcfg.auto_roi_from_background = ip.value("auto_roi_from_background").toBool(pcfg.auto_roi_from_background);
+				if (ip.contains("auto_roi_wall_gradient_ratio"))
+					pcfg.auto_roi_wall_gradient_ratio = ip.value("auto_roi_wall_gradient_ratio").toDouble(pcfg.auto_roi_wall_gradient_ratio);
+				if (ip.contains("auto_roi_wall_margin"))
+					pcfg.auto_roi_wall_margin = ip.value("auto_roi_wall_margin").toInt(pcfg.auto_roi_wall_margin);
 				if (ip.contains("filters") && ip.value("filters").isObject())
 				{
 					const QJsonObject fl = ip.value("filters").toObject();
@@ -327,6 +416,8 @@ namespace frontend
 						pcfg.enable_area_ratio_check = fl.value("enable_area_ratio_check").toBool(pcfg.enable_area_ratio_check);
 					if (fl.contains("enable_ring_ratio_check"))
 						pcfg.enable_ring_ratio_check = fl.value("enable_ring_ratio_check").toBool(pcfg.enable_ring_ratio_check);
+					if (fl.contains("enable_laplacian_variance_check"))
+						pcfg.enable_laplacian_variance_check = fl.value("enable_laplacian_variance_check").toBool(pcfg.enable_laplacian_variance_check);
 					if (fl.contains("require_single_inner_contour"))
 						pcfg.require_single_inner_contour = fl.value("require_single_inner_contour").toBool(pcfg.require_single_inner_contour);
 				}
@@ -449,6 +540,57 @@ namespace frontend
 			{
 				backend_.processing().setPixelToMicronFactor(factor);
 				SPDLOG_INFO("AppConfigWatcher: applied pixel_to_micron_factor={}", factor);
+			}
+		}
+
+		// 2.6) Dot-grid wafer localization (knowledge_map/services/DotGridService.md).
+		// um_per_px_hint <= 0 falls back to pixel_to_micron_factor; the decoder
+		// measures the true scale itself, the hint only sizes the blob detector.
+		if (root.contains("dot_grid") && root.value("dot_grid").isObject())
+		{
+			const QJsonObject dg = root.value("dot_grid").toObject();
+			backend::services::DotGridService::Config cfg = backend_.dotGrid().getConfig();
+			// `enabled` follows the file only when the file's value changes: the
+			// Overview's Wafer Grid button toggles the service at runtime, and an
+			// unrelated config.json write must not undo that.
+			if (dg.value("enabled").isBool())
+			{
+				const int onDisk = dg.value("enabled").toBool() ? 1 : 0;
+				if (onDisk != lastDotGridEnabledOnDisk_)
+					cfg.enabled = onDisk == 1;
+				lastDotGridEnabledOnDisk_ = onDisk;
+			}
+			cfg.intervalMs = dg.value("interval_ms").toInt(cfg.intervalMs);
+			const double hint = dg.value("um_per_px_hint").toDouble(0.0);
+			cfg.umPerPxHint = hint > 0.0 ? hint : backend_.processing().getPixelToMicronFactor();
+			cfg.minVotes = dg.value("min_votes").toInt(cfg.minVotes);
+			cfg.minAgreement = dg.value("min_agreement").toDouble(cfg.minAgreement);
+			cfg.codebookPath = dg.value("codebook_path").toString().toStdString();
+			cfg.registry = loadDotGridRegistry(dg.value("registry_path").toString());
+			if (dg.contains("codebook") && dg.value("codebook").isObject())
+			{
+				const QJsonObject cb = dg.value("codebook").toObject();
+				auto &c = cfg.codebook;
+				if (cb.contains("seed") && !parseDotGridSeed(cb.value("seed"), c.seed))
+					SPDLOG_WARN("AppConfigWatcher: dot_grid.codebook.seed must be a non-negative integer "
+								"(a decimal string above 2^63); keeping seed {}", c.seed);
+				c.columns = cb.value("columns").toInt(c.columns);
+				c.rows = cb.value("rows").toInt(c.rows);
+				c.pitchUm = cb.value("pitch_um").toDouble(c.pitchUm);
+				c.dotDiameterUm = cb.value("dot_diameter_um").toDouble(c.dotDiameterUm);
+				c.displacementUm = cb.value("displacement_um").toDouble(c.displacementUm);
+				c.originXUm = cb.value("origin_x_um").toDouble(c.originXUm);
+				c.originYUm = cb.value("origin_y_um").toDouble(c.originYUm);
+			}
+			std::string err;
+			if (backend_.dotGrid().setConfig(cfg, &err))
+			{
+				SPDLOG_INFO("AppConfigWatcher: applied dot_grid (enabled={}, interval_ms={}, designs={}, codebook='{}')",
+							cfg.enabled, cfg.intervalMs, cfg.registry ? cfg.registry->size() : 0, cfg.codebookPath);
+			}
+			else
+			{
+				SPDLOG_WARN("AppConfigWatcher: dot_grid config rejected: {}", err);
 			}
 		}
 
