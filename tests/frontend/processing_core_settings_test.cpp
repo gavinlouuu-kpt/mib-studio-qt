@@ -76,5 +76,22 @@ int main() {
                    QStringLiteral("1.0.0"),
                "failed candidate write leaves the last synchronized selection on disk");
 
+    // Core line (T1.1c): persisted with the selection; older selections read as subtract-ring.
+    {
+        const auto linePath = root / "line.ini";
+        QSettings lineSettings(QString::fromStdString(linePath.string()), QSettings::IniFormat);
+        MIB_EXPECT(frontend::processingcoresettings::persistedLine(lineSettings) == QStringLiteral("subtract-ring"),
+                   "a selection without a line reads as subtract-ring");
+        auto c2 = selection(QStringLiteral("0.1.0"), QString::fromStdString((root / "c2.dll").string()));
+        c2.line = QStringLiteral("absdiff-laplacian");
+        c2.contractVersion = 2;
+        c2.engineAbiVersion = 2;
+        QString lineError;
+        MIB_REQUIRE(frontend::processingcoresettings::persistSelection(lineSettings, c2, &lineError),
+                    lineError.toStdString());
+        MIB_EXPECT(frontend::processingcoresettings::persistedLine(lineSettings) ==
+                       QStringLiteral("absdiff-laplacian"),
+                   "the selection's line round-trips");
+    }
     return mib::test::exitCode();
 }

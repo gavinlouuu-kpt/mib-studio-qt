@@ -10,6 +10,7 @@ namespace frontend::processingcoresettings {
 
 struct Selection {
     QString version;
+    QString line;  // core line (ADR 0007); empty persists as "subtract-ring"
     QString sha256;
     std::uint32_t contractVersion{0};
     std::uint32_t engineAbiVersion{0};
@@ -30,5 +31,9 @@ struct Selection {
 // success. On a sync failure, the prior in-memory values are restored so a
 // failed candidate never becomes the logical selection for this process.
 bool persistSelection(QSettings& settings, const Selection& selection, QString* error = nullptr);
+
+// The persisted selection's core line; selections saved before lines existed
+// (and the bundled core) read as "subtract-ring".
+QString persistedLine(const QSettings& settings);
 
 } // namespace frontend::processingcoresettings

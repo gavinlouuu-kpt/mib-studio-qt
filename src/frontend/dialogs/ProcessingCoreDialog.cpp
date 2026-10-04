@@ -43,6 +43,17 @@ namespace frontend {
 namespace {
 
 constexpr qint64 kMaxRegistryBytes = 2 * 1024 * 1024;
+
+// Registry trees the dialog reads (ADR 0007 core lines). The subtract-ring tree
+// is the legacy layout; native-only lines live in their own subtree.
+struct RegistryTree {
+    QString path;
+    QString line;
+};
+const QVector<RegistryTree> kRegistryTrees{
+    {QStringLiteral("processing-core"), QStringLiteral("subtract-ring")},
+    {QStringLiteral("processing-core/absdiff-laplacian"), QStringLiteral("absdiff-laplacian")},
+};
 constexpr qint64 kMaxNetworkBufferBytes = 1024 * 1024;
 
 bool isHttps(const QUrl& url) {
@@ -119,13 +130,6 @@ QString platformArch() {
     }
     if (architecture == QStringLiteral("arm64")) return QStringLiteral("aarch64");
     return architecture;
-}
-
-bool isHostCompatible(const processingcorecatalog::NativePluginEntry& plugin) {
-    const auto host = backend::processing::bundledProcessingCoreIdentity();
-    return plugin.engineAbiVersion == static_cast<int>(MIB_PROCESSING_ENGINE_ABI_VERSION) &&
-           plugin.contractVersion == static_cast<int>(MIB_PROCESSING_CONTRACT_VERSION) &&
-           plugin.runtimeFingerprint == QString::fromStdString(host.runtimeFingerprint);
 }
 
 std::function<bool(const std::filesystem::path&, std::string&)> trustVerifier(
@@ -339,118 +343,168 @@ bool ProcessingCoreDialog::restorePersistedCore(backend::AppBackend& backend, QS
     return true;
 }
 
+QNetworkReply* ProcessingCoreDialog::startRegistryGet(const QUrl& url) {
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setTransferTimeout(20000);
+    request.setAttribute(QNetworkRequest::MaximumDownloadBufferSizeAttribute,
+                         kMaxRegistryBytes);
+    auto* reply = network_->get(request);
+    installAbsoluteDeadline(reply, 20000);
+    installDownloadLimit(reply, kMaxRegistryBytes);
+    return reply;
+}
+
 void ProcessingCoreDialog::reload() {
     if (busy_) return;
     setBusy(true, tr("Loading processing-core history…"));
+    trees_.clear();
+    options_.clear();
+    notes_.clear();
+    versions_->clear();
+    fetchTree(0);
+}
+
+void ProcessingCoreDialog::fetchTree(int tree) {
+    if (tree >= kRegistryTrees.size()) {
+        finishReload();
+        return;
+    }
     const QString channel = channelBox_->currentData().toString();
-    const QUrl url(QStringLiteral("%1/%2/processing-core/index.json")
+    const bool required = tree == 0;
+    const QUrl url(QStringLiteral("%1/%2/%3/index.json")
                        .arg(registryBaseUrl().remove(QRegularExpression(QStringLiteral("/+$"))),
-                            channel));
+                            channel, kRegistryTrees[tree].path));
     if (!isHttps(url)) {
-        catalog_ = {};
+        trees_.clear();
         versions_->clear();
         setBusy(false, tr("Processing-core registry URL must use HTTPS."));
         return;
     }
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setTransferTimeout(20000);
-    request.setAttribute(QNetworkRequest::MaximumDownloadBufferSizeAttribute,
-                         kMaxRegistryBytes);
-    auto* reply = network_->get(request);
-    installAbsoluteDeadline(reply, 20000);
-    installDownloadLimit(reply, kMaxRegistryBytes);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, channel]() {
+    auto* reply = startRegistryGet(url);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, channel, tree, required]() {
         const bool oversized = reply->bytesAvailable() > kMaxRegistryBytes;
         const QByteArray body = oversized ? QByteArray{} : reply->readAll();
         const QString networkError = reply->errorString();
         const bool requestOk = reply->error() == QNetworkReply::NoError;
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         reply->deleteLater();
         if (!requestOk || oversized) {
-            catalog_ = {};
-            versions_->clear();
-            setBusy(false, oversized ? tr("Registry response exceeded the size limit.")
-                                     : tr("Registry unavailable: %1").arg(networkError));
+            if (required) {
+                trees_.clear();
+                versions_->clear();
+                setBusy(false, oversized ? tr("Registry response exceeded the size limit.")
+                                         : tr("Registry unavailable: %1").arg(networkError));
+                return;
+            }
+            // An optional core line that has no releases on this channel yet.
+            if (status == 404 && !oversized) {
+                fetchTree(tree + 1);
+                return;
+            }
+            finishReload(tr("%1 line unavailable: %2")
+                             .arg(kRegistryTrees[tree].line,
+                                  oversized ? tr("response exceeded the size limit") : networkError));
             return;
         }
-        catalog_ = processingcorecatalog::parseIndex(body);
-        if (!catalog_.ok) {
-            versions_->clear();
-            setBusy(false, tr("Invalid registry index: %1").arg(catalog_.error));
+        auto index = processingcorecatalog::parseIndex(body);
+        QString problem;
+        if (!index.ok) {
+            problem = tr("Invalid registry index: %1").arg(index.error);
+        } else if (index.channel != channel) {
+            problem = tr("Registry returned a different channel; history refused.");
+        } else if (index.line != kRegistryTrees[tree].line) {
+            problem = tr("Registry returned the %1 line where %2 was expected; history refused.")
+                          .arg(index.line, kRegistryTrees[tree].line);
+        }
+        if (!problem.isEmpty()) {
+            if (required) {
+                trees_.clear();
+                versions_->clear();
+                setBusy(false, problem);
+            } else {
+                finishReload(problem);
+            }
             return;
         }
-        if (catalog_.channel != channel) {
-            versions_->clear();
-            catalog_ = {};
-            setBusy(false, tr("Registry returned a different channel; history refused."));
-            return;
-        }
-        loadCanonicalActive(channel);
+        loadTreeActive(tree, std::move(index));
     });
 }
 
-void ProcessingCoreDialog::loadCanonicalActive(const QString& channel) {
-    const QUrl url(QStringLiteral("%1/%2/processing-core/latest.json")
+void ProcessingCoreDialog::loadTreeActive(int tree, processingcorecatalog::ParseResult index) {
+    const QString channel = channelBox_->currentData().toString();
+    const bool required = tree == 0;
+    const QUrl url(QStringLiteral("%1/%2/%3/latest.json")
                        .arg(registryBaseUrl().remove(QRegularExpression(QStringLiteral("/+$"))),
-                            channel));
+                            channel, kRegistryTrees[tree].path));
     if (!isHttps(url)) {
-        catalog_ = {};
+        trees_.clear();
         versions_->clear();
         setBusy(false, tr("Processing-core active pointer URL must use HTTPS."));
         return;
     }
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setTransferTimeout(20000);
-    request.setAttribute(QNetworkRequest::MaximumDownloadBufferSizeAttribute,
-                         kMaxRegistryBytes);
-    auto* reply = network_->get(request);
-    installAbsoluteDeadline(reply, 20000);
-    installDownloadLimit(reply, kMaxRegistryBytes);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    auto* reply = startRegistryGet(url);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, tree, required, index]() mutable {
         const bool oversized = reply->bytesAvailable() > kMaxRegistryBytes;
         const QByteArray body = oversized ? QByteArray{} : reply->readAll();
         const QString networkError = reply->errorString();
         const bool requestOk = reply->error() == QNetworkReply::NoError;
         reply->deleteLater();
+        QString problem;
         if (!requestOk || oversized) {
-            catalog_ = {};
-            versions_->clear();
-            setBusy(false, oversized ? tr("Active pointer exceeded the size limit.")
-                                     : tr("Active pointer unavailable: %1").arg(networkError));
+            problem = oversized ? tr("Active pointer exceeded the size limit.")
+                                : tr("Active pointer unavailable: %1").arg(networkError);
+        }
+        processingcorecatalog::ManifestResult latest;
+        if (problem.isEmpty()) {
+            latest = processingcorecatalog::parseVersionManifest(body);
+            if (!latest.ok) problem = tr("Invalid active pointer: %1").arg(latest.error);
+        }
+        processingcorecatalog::ActivePointerResult active;
+        if (problem.isEmpty()) {
+            active = processingcorecatalog::validateCanonicalActive(index, latest);
+            if (!active.ok) problem = tr("Invalid active pointer: %1").arg(active.error);
+        }
+        if (!problem.isEmpty()) {
+            if (required) {
+                trees_.clear();
+                versions_->clear();
+                setBusy(false, problem);
+            } else {
+                finishReload(tr("%1 line: %2").arg(kRegistryTrees[tree].line, problem));
+            }
             return;
         }
-        const auto latest = processingcorecatalog::parseVersionManifest(body);
-        if (!latest.ok) {
-            catalog_ = {};
-            versions_->clear();
-            setBusy(false, tr("Invalid active pointer: %1").arg(latest.error));
-            return;
-        }
-        const auto active = processingcorecatalog::validateCanonicalActive(catalog_, latest);
-        if (!active.ok) {
-            catalog_ = {};
-            versions_->clear();
-            setBusy(false, tr("Invalid active pointer: %1").arg(active.error));
-            return;
-        }
-        catalog_.activeVersion = active.version;
-        populate();
-        const QString summary = tr("%n published version(s).", "", catalog_.versions.size());
-        setBusy(false, active.warning.isEmpty()
-                           ? summary
-                           : tr("%1 %2").arg(summary, active.warning));
+        index.activeVersion = active.version;
+        trees_.push_back(std::move(index));
+        if (!active.warning.isEmpty()) notes_ << active.warning;
+        fetchTree(tree + 1);
     });
+}
+
+void ProcessingCoreDialog::finishReload(const QString& note) {
+    populate();
+    int published = 0;
+    for (const auto& tree : trees_) published += tree.versions.size();
+    QStringList parts{tr("%n published version(s).", "", published)};
+    parts << notes_;
+    if (!note.isEmpty()) parts << note;
+    setBusy(false, parts.join(QLatin1Char(' ')));
 }
 
 void ProcessingCoreDialog::updateActiveCoreLabel() {
     const auto current = backend_.processing().activeProcessingCoreIdentity();
+    QSettings settings;
+    const bool persisted = !settings.value(QStringLiteral("ProcessingCore/Version")).toString().isEmpty() &&
+                           settings.value(QStringLiteral("ProcessingCore/Version")).toString() ==
+                               QString::fromStdString(current.version);
+    const QString line = persisted ? processingcoresettings::persistedLine(settings)
+                                   : QStringLiteral("subtract-ring");
     activeLabel_->setText(
         backend_.processing().isProcessingCorePinSatisfied()
-            ? tr("Active core: %1 · contract %2 · ABI %3 · %4")
-                  .arg(QString::fromStdString(current.version))
+            ? tr("Active core: %1 %2 · contract %3 · ABI %4 · %5")
+                  .arg(line, QString::fromStdString(current.version))
                   .arg(current.contractVersion)
                   .arg(current.engineAbiVersion)
                   .arg(QString::fromStdString(current.source))
@@ -463,18 +517,29 @@ void ProcessingCoreDialog::populate() {
     const auto current = backend_.processing().activeProcessingCoreIdentity();
     const QString hardPin =
         qEnvironmentVariable("MIB_STUDIO_PROCESSING_CORE_VERSION").trimmed();
-    for (const auto& entry : catalog_.versions) {
-        QString label = entry.version;
-        if (entry.version == catalog_.activeVersion) label += tr("  — channel active");
-        if (entry.version.toStdString() == current.version) label += tr("  — selected");
-        const auto* plugin = processingcorecatalog::findNativePlugin(
-            entry, platformOs(), platformArch());
-        const bool appCompatible = plugin && processingcorecatalog::isAppCompatible(
-            *plugin, QCoreApplication::applicationVersion()) && isHostCompatible(*plugin);
-        if (!plugin) label += tr("  — incompatible on this platform");
-        else if (!appCompatible) label += tr("  — incompatible with this app/runtime");
+    processingcorecatalog::HostIdentity host;
+    host.os = platformOs();
+    host.arch = platformArch();
+    host.appVersion = QCoreApplication::applicationVersion();
+    host.runtimeFingerprint =
+        QString::fromStdString(backend::processing::bundledProcessingCoreIdentity().runtimeFingerprint);
+    host.profileContractVersion =
+        backend_.processing().getProcessingConfig().processing_contract_version;
+    options_ = processingcorecatalog::buildCoreOptions(trees_, host);
+    for (const auto& option : options_) {
+        const auto& entry = option.version;
+        QString label = tr("%1 %2 · Contract %3 · ABI %4")
+                            .arg(entry.line, entry.version)
+                            .arg(entry.contractVersion)
+                            .arg(entry.engineAbiVersion);
+        if (option.channelActive) label += tr("  — channel active");
+        if (entry.version.toStdString() == current.version &&
+            static_cast<int>(current.contractVersion) == entry.contractVersion) {
+            label += tr("  — selected");
+        }
+        if (!option.disabledReason.isEmpty()) label += tr("  — %1").arg(option.disabledReason);
         auto* item = new QListWidgetItem(label, versions_);
-        if (!appCompatible || (!hardPin.isEmpty() && hardPin != entry.version)) {
+        if (!option.disabledReason.isEmpty() || (!hardPin.isEmpty() && hardPin != entry.version)) {
             item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
         }
     }
@@ -487,26 +552,25 @@ void ProcessingCoreDialog::populate() {
 
 int ProcessingCoreDialog::selectedVersionIndex() const {
     const int row = versions_->currentRow();
-    return row >= 0 && row < catalog_.versions.size() ? row : -1;
+    return row >= 0 && row < options_.size() ? row : -1;
 }
 
 void ProcessingCoreDialog::prepareAndActivateSelected() {
     const int row = selectedVersionIndex();
     if (row < 0 || busy_) return;
-    const auto version = catalog_.versions[row];
-    const auto* selectedPlugin = processingcorecatalog::findNativePlugin(
-        version, platformOs(), platformArch());
-    if (!selectedPlugin) return;
+    const auto option = options_[row];
+    const auto version = option.version;
+    if (!option.hasPlugin || !option.disabledReason.isEmpty()) {
+        setBusy(false, option.disabledReason.isEmpty()
+                           ? tr("Selected core is not published for this platform.")
+                           : tr("Selected core cannot be activated: %1").arg(option.disabledReason));
+        return;
+    }
     if (backend_.capture().isRunning() || backend_.isFrameRecording()) {
         setBusy(false, tr("Stop capture and frame recording before changing processing core."));
         return;
     }
-    const auto plugin = *selectedPlugin;
-    if (!processingcorecatalog::isAppCompatible(
-            plugin, QCoreApplication::applicationVersion()) || !isHostCompatible(plugin)) {
-        setBusy(false, tr("Selected core is incompatible with this application/runtime."));
-        return;
-    }
+    const auto plugin = option.plugin;
     if (version.version.toStdString() != backend_.processing().activeProcessingCoreIdentity().version) {
         const QString currentVersion = QString::fromStdString(
             backend_.processing().activeProcessingCoreIdentity().version);
@@ -564,6 +628,8 @@ void ProcessingCoreDialog::prepareAndActivateSelected() {
             ? processingcorecatalog::findNativePlugin(manifest.version, platformOs(), platformArch())
             : nullptr;
         const bool matchesIndex = manifest.ok && manifestPlugin &&
+            manifest.version.line == version.line &&
+            manifest.version.engineAbiVersion == version.engineAbiVersion &&
             manifest.version.channel == version.channel &&
             manifest.version.version == version.version &&
             manifest.version.contractVersion == version.contractVersion &&
@@ -669,12 +735,13 @@ void ProcessingCoreDialog::downloadAndActivate(
         }
         std::string activationError;
         const bool activated = backend_.processing().activateProcessingKernel(
-            loaded.kernel, &activationError, [&loaded, &cached, &plugin](std::string& commitError) {
+            loaded.kernel, &activationError, [&loaded, &cached, &plugin, &version](std::string& commitError) {
                 QSettings settings;
                 QString persistenceError;
                 const auto& identity = loaded.kernel->identity();
                 processingcoresettings::Selection selection;
                 selection.version = QString::fromStdString(identity.version);
+                selection.line = version.line;
                 selection.sha256 = QString::fromStdString(identity.artifactSha256);
                 selection.contractVersion = identity.contractVersion;
                 selection.engineAbiVersion = identity.engineAbiVersion;

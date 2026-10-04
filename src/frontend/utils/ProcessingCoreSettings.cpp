@@ -12,6 +12,7 @@ namespace {
 const QStringList& selectionKeys() {
     static const QStringList keys{
         QStringLiteral("ProcessingCore/Version"),
+        QStringLiteral("ProcessingCore/Line"),
         QStringLiteral("ProcessingCore/Sha256"),
         QStringLiteral("ProcessingCore/ContractVersion"),
         QStringLiteral("ProcessingCore/EngineAbiVersion"),
@@ -48,6 +49,11 @@ void restorePreviousValues(QSettings& settings, const std::vector<PreviousValue>
 
 } // namespace
 
+QString persistedLine(const QSettings& settings) {
+    const QString line = settings.value(QStringLiteral("ProcessingCore/Line")).toString().trimmed();
+    return line.isEmpty() ? QStringLiteral("subtract-ring") : line;
+}
+
 bool persistSelection(QSettings& settings, const Selection& selection, QString* error) {
     std::vector<PreviousValue> previous;
     previous.reserve(static_cast<std::size_t>(selectionKeys().size()));
@@ -56,6 +62,8 @@ bool persistSelection(QSettings& settings, const Selection& selection, QString* 
     }
 
     settings.setValue(QStringLiteral("ProcessingCore/Version"), selection.version);
+    settings.setValue(QStringLiteral("ProcessingCore/Line"),
+                      selection.line.isEmpty() ? QStringLiteral("subtract-ring") : selection.line);
     settings.setValue(QStringLiteral("ProcessingCore/Sha256"), selection.sha256);
     settings.setValue(QStringLiteral("ProcessingCore/ContractVersion"),
                       static_cast<qulonglong>(selection.contractVersion));

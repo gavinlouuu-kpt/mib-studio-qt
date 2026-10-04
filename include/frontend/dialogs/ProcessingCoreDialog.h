@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QStringList>
 #include <QDialog>
 #include <QVector>
 
@@ -9,6 +10,8 @@ class QComboBox;
 class QLabel;
 class QListWidget;
 class QNetworkAccessManager;
+class QNetworkReply;
+class QUrl;
 class QPushButton;
 
 namespace backend { class AppBackend; }
@@ -30,7 +33,12 @@ private slots:
 
 private:
     int selectedVersionIndex() const;
-    void loadCanonicalActive(const QString& channel);
+    // Registry trees, fetched in order: the subtract-ring tree (required),
+    // then each native-only core line (optional: absent on a channel = no cores yet).
+    void fetchTree(int tree);
+    void loadTreeActive(int tree, processingcorecatalog::ParseResult index);
+    void finishReload(const QString& note = {});
+    QNetworkReply* startRegistryGet(const QUrl& url);
     void updateActiveCoreLabel();
     void populate();
     void setBusy(bool busy, const QString& message = {});
@@ -47,7 +55,9 @@ private:
     QLabel* statusLabel_{nullptr};
     QPushButton* prepareButton_{nullptr};
     QPushButton* refreshButton_{nullptr};
-    processingcorecatalog::ParseResult catalog_;
+    QVector<processingcorecatalog::ParseResult> trees_;
+    QVector<processingcorecatalog::CoreOption> options_;
+    QStringList notes_;  // registry warnings collected during one reload
     bool busy_{false};
 };
 
