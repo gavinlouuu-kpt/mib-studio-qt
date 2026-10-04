@@ -65,6 +65,29 @@ sudo env MIB_TEST_PERISTALTIC_PORT=/dev/ttyPS1 MIB_TEST_PERISTALTIC_RUN_MS=3000 
     /tmp/yofo-pump/mib_backend_tests hw_peristaltic_pump_test
 ```
 
+## End-to-end through the UI
+
+`scripts/yofo/e2e_pump_ui.py` drives the YOFO Studio UI in headless Chromium
+against a `yofo-studio-server` on the PS. It runs the Sample slot through these
+steps: Peristaltic, connect, 500 µL/min, Infuse, Service mode + arm, Run,
+Stop, restore the as-found settings, disconnect. `RUN_SECONDS` 0 skips the
+run. A mock-camera server leaves the PL alone:
+
+```bash
+# on the PS (from /tmp/yofo-pump: server, dist/, token); systemd-run survives ssh logout
+sudo systemd-run --unit=yofo-pump-e2e --setenv=MIB_CAMERA_MODE=mock \
+    --setenv=MIB_MOCK_CAMERA_DIR=/tmp/yofo-pump/mock_frames /tmp/yofo-pump/yofo-studio-server \
+    --listen 0.0.0.0:8427 --token-file /tmp/yofo-pump/token --dist /tmp/yofo-pump/dist \
+    --data-dir /tmp/yofo-pump/data
+# on the host
+python3 scripts/yofo/e2e_pump_ui.py http://192.168.137.2:8427 "$TOKEN" /tmp/pump-e2e 3
+```
+
+On 2026-10-04 the no-motion pass (`RUN_SECONDS` 0) passed on the instrument.
+Connect showed 200 rpm Withdraw, and 500 µL/min read back as head 20.00 rpm.
+Restore and disconnect left the pump as found. The run step is still to be
+done.
+
 ## Integration decisions
 
 - **Slots:** the operator chooses the model per slot (Sample or Sheath).
