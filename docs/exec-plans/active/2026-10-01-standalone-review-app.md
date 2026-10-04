@@ -660,7 +660,8 @@ accounting text and the same saved core record; the differences list in
       `AppHandle::restart` suffices); the SHA-256 pin lives in
       `review_update.rs` rather than reusing `updater.rs` (different manifest
       shape). Remaining: the user-generated public key (decision
-      2026-10-04: the key pair is generated on the owner's machine, only the
-      public half enters the repo).
+      2026-10-04: the key pair is generated on the team's local server, only
+      the public half enters the repo) — handover:
+      [2026-10-04-yofo-review-update-key-handover.md](2026-10-04-yofo-review-update-key-handover.md).
 - [x] PR 7 — removed: no signing (user decision 2026-10-01)
 - [ ] PR 8 — manual, screenshots, parity sign-off, tracker, plan → completed

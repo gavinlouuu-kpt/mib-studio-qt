@@ -558,12 +558,17 @@ pin, failing closed (`desktop/src-tauri/src/review_update.rs`). Users pick
 the channel under **File ▸ Preferences** and update from **Help ▸ Check for
 updates…**; a status-bar notice appears when a newer version is available.
 
-**One-time key setup (on your own machine — the private key never goes into
-the repository or a chat):**
+**One-time key setup (on the team's local server — the private key never goes
+into the repository, a chat or a cloud session).** The step-by-step
+procedure, including Tauri CLI pitfalls and an agent prompt, is
+[`docs/exec-plans/active/2026-10-04-yofo-review-update-key-handover.md`](../exec-plans/active/2026-10-04-yofo-review-update-key-handover.md);
+in short:
 
 ```bash
 cd desktop
-npx tauri signer generate -w ~/.tauri/yofo-review.key     # asks for a password
+umask 077
+npx tauri signer generate -w ~/.tauri/yofo-review.key     # prompts for a password
+# non-interactive: --ci -p "<password>" (with --ci but no -p the key is UNENCRYPTED)
 ```
 
 1. Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the contents of
