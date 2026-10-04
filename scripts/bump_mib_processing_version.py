@@ -26,9 +26,9 @@ LINES: dict[str, Path | None] = {
     "subtract-ring": None,
     "absdiff-laplacian": Path("processing-cores/absdiff-laplacian.version"),
 }
-# Lines whose mib-processing-<line>-v* tag triggers a release workflow
-# (.github/workflows/python-wheel.yml).
-RELEASED_LINES = {"subtract-ring"}
+# Lines whose mib-processing-<line>-v* tag triggers a release workflow:
+# subtract-ring -> python-wheel.yml, absdiff-laplacian -> processing-core-line.yml.
+RELEASED_LINES = {"subtract-ring", "absdiff-laplacian"}
 _SAFE_VERSION = re.compile(r"^[0-9][A-Za-z0-9._+!-]*$")
 _LINE_VERSION_FILE = re.compile(r"^([0-9][A-Za-z0-9._+!-]*)\r?\n$")
 _PYPROJECT_VERSION = re.compile(r'(?m)^(version\s*=\s*)"([^"]+)"\s*$')
