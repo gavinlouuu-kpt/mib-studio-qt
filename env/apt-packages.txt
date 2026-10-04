@@ -56,3 +56,5 @@ xvfb
 # section: test-extras
 # Conformance-input test in the backend/sanitizer lanes.
 python3-numpy
+# Release-workflow structure tests (tests/release/test_processing_core_line_workflow.py).
+python3-yaml

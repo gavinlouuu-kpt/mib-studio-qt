@@ -1,0 +1,706 @@
+# absdiff-laplacian (Contract 2) processing-core release: native-only, beta channel
+# (T1.1b PR 2, ADR 0007). Derived from python-wheel.yml's native build and signing
+# recipes: keep the shared steps in step. Contract-1 releases stay in python-wheel.yml.
+name: Processing core line (absdiff-laplacian)
+'on':
+  push:
+    tags:
+    - mib-processing-absdiff-laplacian-v*
+  pull_request:
+    paths:
+    - processing-cores/**
+    - scripts/release/publish-processing-core-line.py
+    - scripts/release/publish-processing-core.py
+    - scripts/run_native_core_conformance.py
+    - scripts/conformance/**
+    - src/backend/processing/**
+    - include/backend/processing/**
+    - src/backend/CMakeLists.txt
+    - tests/processing/**
+    - conanfile.py
+    - .github/workflows/processing-core-line.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    name: Require the tag to match the line version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+    - name: Read absdiff-laplacian version
+      id: identity
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/mib-processing-absdiff-laplacian-v') && github.ref_name || '' }}
+      run: |
+        set -euo pipefail
+        version="$(head -n1 processing-cores/absdiff-laplacian.version | tr -d '[:space:]')"
+        if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "mib-processing-absdiff-laplacian-v${version}" ]; then
+          echo "::error::release tag $RELEASE_TAG does not match processing-cores/absdiff-laplacian.version ($version)"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "absdiff-laplacian version: $version (channel beta)"
+  build-windows:
+    name: Build absdiff-laplacian core (Windows x64)
+    needs: validate
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - name: Install Conan and configure MSVC profile
+      shell: pwsh
+      env:
+        CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+        CONAN_REMOTE_USER: ${{ secrets.CONAN_REMOTE_USER }}
+        CONAN_REMOTE_PASSWORD: ${{ secrets.CONAN_REMOTE_PASSWORD }}
+      run: |
+        python -m pip install --upgrade pip conan
+        conan profile detect --force
+        # Host/build profile lives in the repo (conan/profiles/windows-msvc194); the
+        # same file serves local builds, so CI and a developer PC resolve one graph.
+        conan profile show -pr conan/profiles/windows-msvc194
+        if ($env:CONAN_REMOTE_URL) {
+          conan remote add team-conan $env:CONAN_REMOTE_URL --index 0 --force
+          conan remote login team-conan $env:CONAN_REMOTE_USER -p $env:CONAN_REMOTE_PASSWORD
+        }
+    - name: Restore Conan cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.conan2/p
+          ~/.conan2/dl
+        key: conan-${{ runner.os }}-processing-core-msvc194-${{ hashFiles('conanfile.py', 'conanfile.txt') }}
+        restore-keys: conan-${{ runner.os }}-processing-core-msvc194-
+    - name: Install dependencies
+      shell: pwsh
+      run: conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194 -o "opencv/*:shared=False"
+    - name: Provision pinned MindVision SDK
+      shell: pwsh
+      run: |
+        $sdk = ./scripts/provision-mindvision-sdk.ps1 -PassThru
+        "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
+        "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
+    - name: Provision pinned assets (env/assets.json)
+      shell: pwsh
+      run: python scripts/provision-assets.py --required-only
+    - name: Configure and build the absdiff-laplacian core
+      shell: pwsh
+      env:
+        APP_MIN_VERSION: ${{ vars.MIB_PROCESSING_CORE_APP_MIN_VERSION }}
+        APP_MAX_VERSION: ${{ vars.MIB_PROCESSING_CORE_APP_MAX_VERSION }}
+      run: |
+        cmake --preset windows-default `
+          -DMIB_BUILD_BACKEND_ONLY=ON `
+          -DMIB_ENABLE_HARDWARE_SDKS=OFF `
+          -DMIB_ENABLE_WINDOWS_PACKAGING=OFF `
+          -DMIB_USE_SENTRY=OFF `
+          -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-absdiff-laplacian-v') && 'ON' || 'OFF' }} `
+          -DMIB_PROCESSING_CORE_APP_MIN_VERSION="$env:APP_MIN_VERSION" `
+          -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$env:APP_MAX_VERSION"
+        cmake --build build --config Release --target `
+          mib_processing_core_absdiff_laplacian `
+          processing_core_abi_v2_c_test `
+          processing_core_v2_plugin_test
+    - name: Verify the ABI-v2 surface and plugin
+      shell: pwsh
+      run: |
+        $command = 'call build\conanrun.bat && ctest --test-dir build -C Release -R "processing\.core_(abi_v2_c|v2_plugin)" --output-on-failure'
+        & cmd.exe /d /s /c $command
+        if ($LASTEXITCODE -ne 0) {
+          throw "Native processing-core tests failed with exit code $LASTEXITCODE"
+        }
+    - name: Locate and validate absdiff-laplacian release assets
+      id: native-assets-c2
+      shell: pwsh
+      run: |
+        # Contract-2 line (T1.1b): built, audited and gold-checked here;
+        # signed and published once its registry line exists (PR 2).
+        $version = (Get-Content processing-cores/absdiff-laplacian.version -TotalCount 1).Trim()
+        $stem = "mib_processing_core-absdiff-laplacian-$version-windows_x86_64"
+        $dll = Get-Item -LiteralPath "build\Release\$stem.dll" -ErrorAction SilentlyContinue
+        $descriptor = Get-Item -LiteralPath "build\Release\$stem.json" -ErrorAction SilentlyContinue
+        if (-not $dll -or -not $descriptor) {
+          throw "Expected release assets $stem.dll and $stem.json under build/Release"
+        }
+        $metadata = Get-Content $descriptor.FullName -Raw | ConvertFrom-Json
+        if ($metadata.filename -ne $dll.Name -or $metadata.version -ne $version -or
+            $metadata.algorithm -ne 'absdiff-laplacian' -or $metadata.contract_version -ne 2 -or
+            $metadata.engine_abi_version -ne 2 -or $metadata.entrypoint -ne 'mib_processing_get_api_v2') {
+          throw 'Native sidecar identity does not match the built absdiff-laplacian DLL/version'
+        }
+        $nativeDist = Join-Path $env:RUNNER_TEMP 'mib-processing-native-dist-absdiff-laplacian'
+        Remove-Item -LiteralPath $nativeDist -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path $nativeDist | Out-Null
+        $stagedDll = Join-Path $nativeDist $dll.Name
+        Copy-Item -LiteralPath $dll.FullName -Destination $stagedDll
+        Copy-Item -LiteralPath $descriptor.FullName -Destination (Join-Path $nativeDist $descriptor.Name)
+        "dll=$stagedDll" >> $env:GITHUB_OUTPUT
+    - name: Contract-2 gold against the built absdiff-laplacian DLL
+      shell: pwsh
+      run: |
+        python -m pip install numpy
+        python scripts/run_native_core_conformance.py `
+          --core '${{ steps.native-assets-c2.outputs.dll }}' `
+          --frames-npz scripts/conformance/focus-50v-real.npz `
+          --reference scripts/conformance/focus-50v-real-contract2.json
+        if ($LASTEXITCODE -ne 0) {
+          throw "Native Contract-2 gold failed with exit code $LASTEXITCODE"
+        }
+    - name: Audit native plugin exports and imports
+      shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $installation = & $vswhere -latest -products * `
+          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+          -property installationPath
+        $dumpbin = Get-ChildItem "$installation\VC\Tools\MSVC" `
+          -Recurse -File -Filter dumpbin.exe |
+          Where-Object { $_.FullName -match '\\bin\\Hostx64\\x64\\dumpbin\.exe$' } |
+          Sort-Object FullName -Descending |
+          Select-Object -First 1
+        if (-not $dumpbin) { throw 'MSVC x64 dumpbin.exe was not found' }
+
+        # ADR 0007: each core line implements one contract and exports only
+        # that contract's entry point.
+        $plugins = @(
+          @{ dll = '${{ steps.native-assets-c2.outputs.dll }}'; export = 'mib_processing_get_api_v2' }
+        )
+        foreach ($plugin in $plugins) {
+          $exports = & $dumpbin.FullName /nologo /exports $plugin.dll
+          Write-Host ($exports -join "`n")
+          $exportNames = @($exports | ForEach-Object {
+            # dumpbin may append an alias/forwarder after the name. Parse the
+            # stable ordinal/hint/RVA/name prefix and still count every row.
+            if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') {
+              $matches[1]
+            }
+          })
+          if ($exportNames.Count -ne 1 -or $exportNames[0] -ne $plugin.export) {
+            throw "$($plugin.dll) must export exactly $($plugin.export); found: $($exportNames -join ', ')"
+          }
+
+          $dependents = & $dumpbin.FullName /nologo /dependents $plugin.dll
+          Write-Host ($dependents -join "`n")
+          $dependencyNames = @($dependents | ForEach-Object {
+            if ($_ -match '^\s+([A-Za-z0-9_.+\-]+\.dll)\s*$') { $matches[1] }
+          })
+          $forbidden = @($dependencyNames | Where-Object {
+            $_ -match '^(Qt|hdf5|opencv|python|mib_studio)'
+          })
+          if ($forbidden.Count -ne 0) {
+            throw "$($plugin.dll) imports forbidden host/framework DLLs: $($forbidden -join ', ')"
+          }
+          Write-Host "Native imports of $($plugin.dll): $($dependencyNames -join ', ')"
+        }
+    - name: Upload unsigned absdiff-laplacian plugin artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: mib_processing-native-windows-x86_64-absdiff-laplacian-unsigned
+        path: ${{ runner.temp }}/mib-processing-native-dist-absdiff-laplacian/*
+        if-no-files-found: error
+  build-linux:
+    name: Build absdiff-laplacian core (Linux x86_64)
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Set up Linux build environment
+      uses: ./.github/actions/setup-linux-env
+      with:
+        sections: base,backend,frontend
+        conan: 'false'
+        mindvision: 'true'
+        assets: none
+    - name: Configure and build the absdiff-laplacian core
+      shell: bash
+      env:
+        APP_MIN_VERSION: ${{ vars.MIB_PROCESSING_CORE_APP_MIN_VERSION }}
+        APP_MAX_VERSION: ${{ vars.MIB_PROCESSING_CORE_APP_MAX_VERSION }}
+      run: |
+        set -euo pipefail
+        cmake --preset linux-backend-only \
+          -DMIB_USE_SENTRY=OFF \
+          -DMIB_REQUIRE_PROCESSING_CORE_APP_COMPAT=${{ startsWith(github.ref, 'refs/tags/mib-processing-absdiff-laplacian-v') && 'ON' || 'OFF' }} \
+          -DMIB_PROCESSING_CORE_APP_MIN_VERSION="$APP_MIN_VERSION" \
+          -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$APP_MAX_VERSION"
+        cmake --build --preset linux-backend-only-build --parallel --target \
+                    mib_processing_core_absdiff_laplacian \
+                    processing_core_abi_v2_c_test \
+                    processing_core_v2_plugin_test
+    - name: Verify the ABI-v2 surface and plugin
+      shell: bash
+      env:
+        MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: file:///nonexistent/mib-lut-manifest.json
+      run: |
+        set -euo pipefail
+        ctest --preset linux-backend-only-test \
+          -R "processing\.core_(abi_v2_c|v2_plugin)" \
+          --output-on-failure
+    - name: Locate and validate absdiff-laplacian release assets
+      id: native-assets-c2
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="$(head -n1 processing-cores/absdiff-laplacian.version | tr -d '[:space:]')"
+        stem="mib_processing_core-absdiff-laplacian-${version}-linux_x86_64"
+        shared_library="build/linux-backend/Release/${stem}.so"
+        descriptor="build/linux-backend/Release/${stem}.json"
+        test -f "$shared_library"
+        test -f "$descriptor"
+        python3 - "$descriptor" "$stem.so" "$version" <<'EOF'
+        import json, sys
+        descriptor, filename, version = sys.argv[1:]
+        with open(descriptor, encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        assert metadata["filename"] == filename, "sidecar filename mismatch"
+        assert metadata["version"] == version, "sidecar version mismatch"
+        assert metadata["os"] == "linux" and metadata["arch"] == "x86_64"
+        assert metadata["signing"] == {"required": True, "scheme": "ed25519"}
+        assert metadata["algorithm"] == "absdiff-laplacian" and metadata["contract_version"] == 2
+        assert metadata["engine_abi_version"] == 2 and metadata["entrypoint"] == "mib_processing_get_api_v2"
+        EOF
+        staging="$RUNNER_TEMP/mib-processing-native-dist-absdiff-laplacian"
+        rm -rf "$staging"
+        mkdir -p "$staging"
+        cp "$shared_library" "$descriptor" "$staging/"
+        echo "so=$staging/${stem}.so" >> "$GITHUB_OUTPUT"
+        echo "descriptor=$staging/${stem}.json" >> "$GITHUB_OUTPUT"
+    - name: Contract-2 gold against the built absdiff-laplacian library
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get install -y --no-install-recommends python3-numpy
+        python3 scripts/run_native_core_conformance.py \
+          --core '${{ steps.native-assets-c2.outputs.so }}' \
+          --frames-npz scripts/conformance/focus-50v-real.npz \
+          --reference scripts/conformance/focus-50v-real-contract2.json
+    - name: Audit native plugin exports and imports
+      shell: bash
+      run: |
+        set -euo pipefail
+        # ADR 0007: each core line implements one contract and exports only
+        # that contract's entry point.
+        for pair in \
+          '${{ steps.native-assets-c2.outputs.so }}:mib_processing_get_api_v2'; do
+        shared_library="${pair%%:*}"
+        expected_export="${pair##*:}"
+        exports="$(nm -D --defined-only "$shared_library" | awk '$2 == "T" {print $3}')"
+        echo "Exports of $shared_library: $exports"
+        if [ "$exports" != "$expected_export" ]; then
+          echo "::error::$shared_library must export exactly $expected_export"
+          exit 1
+        fi
+        needed="$(readelf -d "$shared_library" | awk '/NEEDED/ {gsub(/[\[\]]/, "", $5); print $5}')"
+        echo "Native imports:"
+        echo "$needed"
+        # The Windows lane forbids OpenCV because Conan links it statically.
+        # This lane uses distro OpenCV, so the dynamic libopencv/libspdlog
+        # dependencies are reported but allowed; pinning them down across
+        # supported distro baselines is part of the remaining A13 live gate.
+        if echo "$needed" | grep -Eiq '^(libQt|libhdf5|libpython|libmib_studio)'; then
+          echo "::error::$shared_library imports forbidden host/framework libraries"
+          exit 1
+        fi
+        done
+    - name: Rehearse detached Ed25519 signing with an ephemeral key
+      shell: bash
+      run: |
+        set -euo pipefail
+        for pair in \
+          '${{ steps.native-assets-c2.outputs.so }}|${{ steps.native-assets-c2.outputs.descriptor }}'; do
+        shared_library="${pair%%|*}"
+        descriptor="${pair##*|}"
+        workdir="$RUNNER_TEMP/mib-processing-ed25519/$(basename "$shared_library")"
+        rm -rf "$workdir"
+        mkdir -p "$workdir"
+        openssl genpkey -algorithm ed25519 -out "$workdir/signer.pem"
+        openssl pkey -in "$workdir/signer.pem" -pubout -outform DER -out "$workdir/signer-spki.der"
+        openssl pkeyutl -sign -inkey "$workdir/signer.pem" -rawin \
+          -in "$shared_library" -out "$workdir/artifact.sig"
+        openssl pkeyutl -verify -pubin -inkey <(openssl pkey -in "$workdir/signer.pem" -pubout) \
+          -rawin -in "$shared_library" -sigfile "$workdir/artifact.sig"
+        python3 - "$descriptor" "$workdir" <<'EOF'
+        import base64, hashlib, json, sys
+        descriptor_path, workdir = sys.argv[1:]
+        with open(f"{workdir}/signer-spki.der", "rb") as handle:
+            spki = handle.read()
+        with open(f"{workdir}/artifact.sig", "rb") as handle:
+            signature = handle.read()
+        assert len(spki) == 44 and len(signature) == 64
+        with open(descriptor_path, encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        metadata["signing"].update({
+            "public_key_spki_base64": base64.b64encode(spki).decode("ascii"),
+            "public_key_spki_sha256": hashlib.sha256(spki).hexdigest(),
+            "signature_base64": base64.b64encode(signature).decode("ascii"),
+        })
+        with open(descriptor_path, "w", encoding="utf-8") as handle:
+            json.dump(metadata, handle, indent=2)
+            handle.write("\n")
+        EOF
+        done
+    - name: Validate the signed descriptor through the registry publisher
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - '${{ steps.native-assets-c2.outputs.descriptor }}' <<'EOF'
+        import importlib.util, json, sys
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "publish_processing_core", "scripts/release/publish-processing-core.py")
+        publisher = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(publisher)
+        for argument in sys.argv[1:]:
+            descriptor = Path(argument)
+            metadata = json.loads(descriptor.read_text(encoding="utf-8"))
+            line, version = metadata["algorithm"], metadata["version"]
+            entries = publisher.build_native_plugin_entries(
+                [descriptor],
+                asset_dir=descriptor.parent,
+                repo="OWNER/REPO",
+                release_tag=f"mib-processing-{line}-v{version}",
+                expected_version=version,
+                expected_contract_version=metadata["contract_version"],
+            )
+            signing = entries[0]["signing"]
+            assert signing["scheme"] == "ed25519" and signing["required"] is True
+            assert signing["public_key_spki_sha256"]
+            print(f"publisher accepted the ed25519-signed Linux {line} descriptor")
+        EOF
+    - name: Upload unsigned absdiff-laplacian plugin artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: mib_processing-native-linux-x86_64-absdiff-laplacian-unsigned
+        path: ${{ runner.temp }}/mib-processing-native-dist-absdiff-laplacian/*
+        if-no-files-found: error
+  sign-windows:
+    name: Sign absdiff-laplacian core (Windows x64, Production)
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/mib-processing-absdiff-laplacian-v')
+    runs-on: windows-2022
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+    - name: Download verified unsigned native plugin
+      uses: actions/download-artifact@v6
+      with:
+        name: mib_processing-native-windows-x86_64-absdiff-laplacian-unsigned
+        path: native-dist
+    - name: Checkout signing trust anchors
+      uses: actions/checkout@v6
+      with:
+        path: repo
+        sparse-checkout: |
+          deploy/signing
+        sparse-checkout-cone-mode: false
+    - name: Trust the committed organizational signing root
+      shell: pwsh
+      run: |
+        $root = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+          (Resolve-Path 'repo/deploy/signing/kpt-mib-studio-root-ca.cer').Path)
+        $basicConstraints = $root.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.19' }
+        if (-not $basicConstraints) {
+          throw 'Committed trust anchor is missing basic constraints'
+        }
+        $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine')
+        $store.Open('ReadWrite')
+        try { $store.Add($root) } finally { $store.Dispose() }
+        Write-Host "Trusted organizational root: $($root.Subject) ($($root.Thumbprint))"
+    - name: Sign and verify native plugin
+      shell: pwsh
+      env:
+        SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+        SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        PROCESSING_CORE_SIGNER_SPKI_SHA256: ${{ vars.MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256 }}
+      run: |
+        if (-not $env:SIGNING_CERTIFICATE_BASE64 -or -not $env:SIGNING_CERTIFICATE_PASSWORD) {
+          throw 'Release tags require WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD'
+        }
+        if ($env:PROCESSING_CORE_SIGNER_SPKI_SHA256 -notmatch '^[0-9A-Fa-f]{64}$') {
+          throw 'Release tags require repository variable MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256 as a non-empty 64-hex DER-SPKI SHA-256'
+        }
+
+        function Get-SignerSpkiSha256(
+          [System.Security.Cryptography.X509Certificates.X509Certificate2] $Certificate
+        ) {
+          $key = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($Certificate)
+          if (-not $key) {
+            $key = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPublicKey($Certificate)
+          }
+          if (-not $key) {
+            throw 'The Authenticode signer uses an unsupported public-key algorithm'
+          }
+          try {
+            $subjectPublicKeyInfo = $key.ExportSubjectPublicKeyInfo()
+          } finally {
+            $key.Dispose()
+          }
+          $sha256 = [System.Security.Cryptography.SHA256]::Create()
+          try {
+            $digest = $sha256.ComputeHash($subjectPublicKeyInfo)
+          } finally {
+            $sha256.Dispose()
+          }
+          return (($digest | ForEach-Object { $_.ToString('x2') }) -join '')
+        }
+
+        $dlls = @(Get-ChildItem native-dist -File -Filter 'mib_processing_core-absdiff-laplacian-*-windows_x86_64.dll')
+        if ($dlls.Count -ne 1) {
+          throw "Expected exactly one native plugin DLL, found $($dlls.Count)"
+        }
+        $dll = $dlls[0]
+        $certificate = Join-Path $env:RUNNER_TEMP 'mib-processing-signing.pfx'
+        try {
+          [IO.File]::WriteAllBytes(
+            $certificate,
+            [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64)
+          )
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+            -Recurse -File -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe (x64) was not found' }
+          & $signtool.FullName sign /fd SHA256 /td SHA256 `
+            /tr http://timestamp.digicert.com `
+            /f $certificate /p $env:SIGNING_CERTIFICATE_PASSWORD `
+            $dll.FullName
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE" }
+          $signature = Get-AuthenticodeSignature $dll.FullName
+          if ($signature.Status -ne 'Valid') {
+            throw "Authenticode verification failed: $($signature.Status) $($signature.StatusMessage)"
+          }
+          if (-not $signature.SignerCertificate) {
+            throw 'Authenticode verification did not return the signer certificate'
+          }
+          $actualSignerSpki = Get-SignerSpkiSha256 $signature.SignerCertificate
+          $approvedSignerSpki = $env:PROCESSING_CORE_SIGNER_SPKI_SHA256.ToLowerInvariant()
+          if ($actualSignerSpki -ne $approvedSignerSpki) {
+            throw "Signed DLL DER-SPKI SHA-256 $actualSignerSpki does not match repository trust pin $approvedSignerSpki"
+          }
+          Write-Host "Signed DLL DER-SPKI SHA-256 matches the repository trust pin: $actualSignerSpki"
+        } finally {
+          Remove-Item $certificate -Force -ErrorAction SilentlyContinue
+        }
+    - name: Upload signed native plugin artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: mib_processing-native-windows-x86_64-absdiff-laplacian
+        path: native-dist/*
+        if-no-files-found: error
+  sign-linux:
+    name: Sign absdiff-laplacian core (Linux x86_64, Production)
+    needs: build-linux
+    if: startsWith(github.ref, 'refs/tags/mib-processing-absdiff-laplacian-v')
+    runs-on: ubuntu-24.04
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+    - name: Download verified unsigned native plugin
+      uses: actions/download-artifact@v6
+      with:
+        name: mib_processing-native-linux-x86_64-absdiff-laplacian-unsigned
+        path: native-dist
+    - name: Sign with the production Ed25519 key and inject the envelope
+      shell: bash
+      env:
+        ED25519_SIGNING_KEY_PEM: ${{ secrets.LINUX_ED25519_SIGNING_KEY_PEM }}
+        PROCESSING_CORE_ED25519_SPKI_SHA256: ${{ vars.MIB_PROCESSING_CORE_ED25519_SPKI_SHA256 }}
+      run: |
+        set -euo pipefail
+        if [ -z "${ED25519_SIGNING_KEY_PEM:-}" ]; then
+          echo "::error::Release tags require the Production secret LINUX_ED25519_SIGNING_KEY_PEM"
+          exit 1
+        fi
+        if ! printf '%s' "${PROCESSING_CORE_ED25519_SPKI_SHA256:-}" | grep -Eqx '[0-9A-Fa-f]{64}'; then
+          echo "::error::Release tags require repository variable MIB_PROCESSING_CORE_ED25519_SPKI_SHA256 as a non-empty 64-hex DER-SPKI SHA-256"
+          exit 1
+        fi
+        shopt -s nullglob
+        libraries=(native-dist/mib_processing_core-absdiff-laplacian-*-linux_x86_64.so)
+        if [ "${#libraries[@]}" -ne 1 ]; then
+          echo "::error::Expected exactly one native plugin .so, found ${#libraries[@]}"
+          exit 1
+        fi
+        shared_library="${libraries[0]}"
+        descriptor="${shared_library%.so}.json"
+        test -f "$descriptor"
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
+        umask 077
+        printf '%s\n' "$ED25519_SIGNING_KEY_PEM" > "$workdir/signer.pem"
+        openssl pkey -in "$workdir/signer.pem" -pubout -outform DER -out "$workdir/signer-spki.der"
+        actual_spki="$(openssl dgst -sha256 -r "$workdir/signer-spki.der" | cut -d' ' -f1)"
+        approved_spki="$(printf '%s' "$PROCESSING_CORE_ED25519_SPKI_SHA256" | tr 'A-F' 'a-f')"
+        if [ "$actual_spki" != "$approved_spki" ]; then
+          echo "::error::Signing key DER-SPKI SHA-256 $actual_spki does not match repository trust pin $approved_spki"
+          exit 1
+        fi
+        openssl pkeyutl -sign -inkey "$workdir/signer.pem" -rawin \
+          -in "$shared_library" -out "$workdir/artifact.sig"
+        openssl pkeyutl -verify -pubin -inkey "$workdir/signer-spki.der" -keyform DER \
+          -rawin -in "$shared_library" -sigfile "$workdir/artifact.sig"
+        python3 - "$descriptor" "$workdir" "$approved_spki" <<'EOF'
+        import base64, hashlib, json, sys
+        descriptor_path, workdir, approved_spki = sys.argv[1:]
+        with open(f"{workdir}/signer-spki.der", "rb") as handle:
+            spki = handle.read()
+        with open(f"{workdir}/artifact.sig", "rb") as handle:
+            signature = handle.read()
+        if len(spki) != 44 or len(signature) != 64:
+            raise SystemExit("non-canonical Ed25519 SPKI or signature length")
+        if hashlib.sha256(spki).hexdigest() != approved_spki:
+            raise SystemExit("SPKI hash diverged from the approved repository pin")
+        with open(descriptor_path, encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        signing = metadata.get("signing", {})
+        if signing.get("scheme") != "ed25519" or signing.get("required") is not True:
+            raise SystemExit("descriptor does not declare the required ed25519 scheme")
+        signing.update({
+            "public_key_spki_base64": base64.b64encode(spki).decode("ascii"),
+            "public_key_spki_sha256": hashlib.sha256(spki).hexdigest(),
+            "signature_base64": base64.b64encode(signature).decode("ascii"),
+        })
+        metadata["signing"] = signing
+        with open(descriptor_path, "w", encoding="utf-8") as handle:
+            json.dump(metadata, handle, indent=2)
+            handle.write("\n")
+        print("injected production ed25519 envelope into the sidecar descriptor")
+        EOF
+    - name: Upload signed native plugin artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: mib_processing-native-linux-x86_64-absdiff-laplacian
+        path: native-dist/*
+        if-no-files-found: error
+  release:
+    name: Release and publish absdiff-laplacian (beta)
+    needs:
+    - validate
+    - sign-windows
+    - sign-linux
+    if: startsWith(github.ref, 'refs/tags/mib-processing-absdiff-laplacian-v')
+    runs-on: ubuntu-24.04
+    environment: Production
+    permissions:
+      contents: write
+    concurrency:
+      group: processing-core-registry-beta-absdiff-laplacian
+      cancel-in-progress: false
+    steps:
+    - name: Download signed Windows plugin
+      uses: actions/download-artifact@v6
+      with:
+        name: mib_processing-native-windows-x86_64-absdiff-laplacian
+        path: release-assets
+    - name: Download signed Linux plugin
+      uses: actions/download-artifact@v6
+      with:
+        name: mib_processing-native-linux-x86_64-absdiff-laplacian
+        path: release-assets
+    - name: Validate flat release asset set
+      shell: bash
+      env:
+        VERSION: ${{ needs.validate.outputs.version }}
+      run: |
+        set -euo pipefail
+        expected="$(printf '%s\n' \
+          "mib_processing_core-absdiff-laplacian-${VERSION}-linux_x86_64.json" \
+          "mib_processing_core-absdiff-laplacian-${VERSION}-linux_x86_64.so" \
+          "mib_processing_core-absdiff-laplacian-${VERSION}-windows_x86_64.dll" \
+          "mib_processing_core-absdiff-laplacian-${VERSION}-windows_x86_64.json" | sort)"
+        actual="$(find release-assets -mindepth 1 -printf '%P\n' | sort)"
+        if [ "$expected" != "$actual" ]; then
+          echo "::error::release assets differ from the 4 expected native files"
+          diff <(echo "$expected") <(echo "$actual") || true
+          exit 1
+        fi
+    - name: Create or verify immutable processing-core release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        set -euo pipefail
+        if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > existing.json 2>/dev/null; then
+          python3 - <<'PY'
+        import json, os
+        existing = sorted(a['name'] for a in json.load(open('existing.json'))['assets'])
+        local = sorted(os.listdir('release-assets'))
+        if existing != local:
+            raise SystemExit(f'existing release assets {existing} differ from {local}')
+        print('existing immutable release has the identical asset set')
+        PY
+        else
+          gh release create "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" --notes "absdiff-laplacian (Contract 2) processing core, beta channel." \
+            --prerelease --latest=false --verify-tag
+        fi
+    - name: Checkout publisher
+      uses: actions/checkout@v6
+    - name: Set up registry publisher
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+    - name: 'Publish the beta line: immutable version, index, then active pointer'
+      shell: bash
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        MIB_STUDIO_R2_ENDPOINT: ${{ secrets.MIB_STUDIO_R2_ENDPOINT }}
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        set -euo pipefail
+        if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || [ -z "${MIB_STUDIO_R2_ENDPOINT:-}" ]; then
+          echo "::error::publication requires R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and MIB_STUDIO_R2_ENDPOINT"
+          exit 1
+        fi
+        python -m pip install --upgrade pip boto3
+        python scripts/release/publish-processing-core-line.py \
+          --line absdiff-laplacian \
+          --channel beta \
+          --from-release "$TAG" \
+          --repo "$GITHUB_REPOSITORY" \
+          --endpoint "$MIB_STUDIO_R2_ENDPOINT" \
+          --upload-method s3
+    - name: Verify the public beta pointer
+      shell: bash
+      env:
+        VERSION: ${{ needs.validate.outputs.version }}
+      run: |
+        set -euo pipefail
+        url="https://updates.yofo.bio/beta/processing-core/absdiff-laplacian/latest.json?run=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        python3 - "$url" "$VERSION" <<'PY'
+        import json, sys
+        from urllib.request import Request, urlopen
+        url, expected = sys.argv[1:]
+        with urlopen(Request(url, headers={'User-Agent': 'MIB-Processing-Line/1.0'}), timeout=30) as response:
+            manifest = json.load(response)
+        assert manifest['line'] == 'absdiff-laplacian', manifest.get('line')
+        assert manifest['version'] == expected, (manifest['version'], expected)
+        assert manifest['contract_version'] == 2, manifest['contract_version']
+        assert len(manifest['native_plugins']) == 2, manifest['native_plugins']
+        print(f"public beta pointer resolves absdiff-laplacian {manifest['version']}")
+        PY

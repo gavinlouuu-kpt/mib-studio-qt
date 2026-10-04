@@ -1018,6 +1018,15 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.processing_core_line_workflow
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_processing_core_line_workflow.py
+    )
+    set_tests_properties(scripts.processing_core_line_workflow PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.publish_profiles
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_profiles.py
     )
