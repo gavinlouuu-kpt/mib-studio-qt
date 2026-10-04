@@ -16,6 +16,7 @@ use tauri::{Manager, State};
 mod event_transport;
 mod frame_packet;
 mod platform;
+mod registry_transport;
 pub mod updater;
 
 struct AppState {
@@ -1110,6 +1111,174 @@ fn cancel_device_discovery(state: State<AppState>, job_id: String) -> Result<boo
     Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?))
 }
 
+// ---- Central profile registry (schema v15, #398) ----
+
+/// Registry job status for the webview; `kind`/`state` are contract
+/// `registry_job_kinds` / `registry_job_states` values.
+#[derive(Serialize, Clone, Default)]
+struct RegistryJob {
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    job_id: u64,
+    kind: u32,
+    state: u32,
+    message: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+struct RegistryProject {
+    project_id: String,
+    display_name: String,
+    roles: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Default)]
+struct RegistryRevision {
+    revision_id: String,
+    method_id: String,
+    project_id: String,
+    display_name: String,
+    author_id: String,
+    content_hash: String,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    revision_number: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    metadata_version: u64,
+    central_state: u32,
+}
+
+/// Registry worker snapshot (schema v15). No token or password, ever.
+#[derive(Serialize, Clone, Default)]
+struct RegistrySnapshot {
+    valid: bool,
+    configured: bool,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    generation: u64,
+    origin: String,
+    session: u32,
+    subject_id: String,
+    email: String,
+    connectivity: u32,
+    health_message: String,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    successful_requests: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    failed_requests: u64,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    rejected_revisions: u64,
+    projects: Vec<RegistryProject>,
+    revisions: Vec<RegistryRevision>,
+    corrupt_revision_ids: Vec<String>,
+    cache_error: String,
+    has_last_successful_refresh: bool,
+    last_successful_refresh_unix_ms: i64,
+    last_job: RegistryJob,
+    #[serde(serialize_with = "event_transport::serialize_u64")]
+    queued_jobs: u64,
+    busy: bool,
+}
+
+impl From<ffi::BridgeRegistryJob> for RegistryJob {
+    fn from(j: ffi::BridgeRegistryJob) -> Self {
+        RegistryJob { job_id: j.job_id, kind: j.kind, state: j.state, message: j.message }
+    }
+}
+
+impl From<ffi::BridgeRegistrySnapshot> for RegistrySnapshot {
+    fn from(s: ffi::BridgeRegistrySnapshot) -> Self {
+        RegistrySnapshot {
+            valid: s.valid,
+            configured: s.configured,
+            generation: s.generation,
+            origin: s.origin,
+            session: s.session,
+            subject_id: s.subject_id,
+            email: s.email,
+            connectivity: s.connectivity,
+            health_message: s.health_message,
+            successful_requests: s.successful_requests,
+            failed_requests: s.failed_requests,
+            rejected_revisions: s.rejected_revisions,
+            projects: s
+                .projects
+                .into_iter()
+                .map(|p| RegistryProject { project_id: p.project_id, display_name: p.display_name, roles: p.roles })
+                .collect(),
+            revisions: s
+                .revisions
+                .into_iter()
+                .map(|r| RegistryRevision {
+                    revision_id: r.revision_id,
+                    method_id: r.method_id,
+                    project_id: r.project_id,
+                    display_name: r.display_name,
+                    author_id: r.author_id,
+                    content_hash: r.content_hash,
+                    revision_number: r.revision_number,
+                    metadata_version: r.metadata_version,
+                    central_state: r.central_state,
+                })
+                .collect(),
+            corrupt_revision_ids: s.corrupt_revision_ids,
+            cache_error: s.cache_error,
+            has_last_successful_refresh: s.has_last_successful_refresh,
+            last_successful_refresh_unix_ms: s.last_successful_refresh_unix_ms,
+            last_job: s.last_job.into(),
+            queued_jobs: s.queued_jobs,
+            busy: s.busy,
+        }
+    }
+}
+
+/// Job IDs go to JS as decimal strings (exact u64); "0" means refused.
+fn job_id_string(id: u64) -> String {
+    id.to_string()
+}
+
+/// Queue a registry sign-in. The password is handed straight to the backend
+/// worker and is not stored, logged or echoed by the shell.
+#[tauri::command]
+fn registry_sign_in(state: State<AppState>, email: String, password: String) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(job_id_string(guard.pin_mut().registry_sign_in(&email, &password)))
+}
+
+#[tauri::command]
+fn registry_sign_out(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(job_id_string(guard.pin_mut().registry_sign_out()))
+}
+
+#[tauri::command]
+fn registry_refresh(state: State<AppState>) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(job_id_string(guard.pin_mut().registry_refresh()))
+}
+
+#[tauri::command]
+fn registry_download(state: State<AppState>, revision_id: String) -> Result<String, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(job_id_string(guard.pin_mut().registry_download(&revision_id)))
+}
+
+#[tauri::command]
+fn registry_cancel_all(state: State<AppState>) -> Result<bool, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().registry_cancel_all())
+}
+
+/// Registry worker snapshot; never waits on a registry request.
+#[tauri::command]
+fn fetch_registry_snapshot(state: State<AppState>) -> Result<RegistrySnapshot, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_registry_snapshot().into())
+}
+
+#[tauri::command]
+fn fetch_registry_job(state: State<AppState>, job_id: String) -> Result<RegistryJob, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_registry_job(parse_frame_index(&job_id)?).into())
+}
+
 /// Pull the authoritative selected-device snapshot.
 #[tauri::command]
 fn fetch_camera_selection(state: State<AppState>) -> Result<CameraSelection, String> {
@@ -1498,7 +1667,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
-            bridge: Mutex::new(ffi::new_backend_bridge()),
+            bridge: Mutex::new({
+                let mut bridge = ffi::new_backend_bridge();
+                // The registry HTTPS transport must be installed before the
+                // backend initializes (it is read once in AppBackend::initialize).
+                bridge.pin_mut().set_registry_transport(registry_transport::post);
+                bridge
+            }),
         })
         .invoke_handler(tauri::generate_handler![
             abi_version,
@@ -1570,6 +1745,13 @@ pub fn run() {
             start_camera_discovery,
             fetch_device_discovery,
             cancel_device_discovery,
+            registry_sign_in,
+            registry_sign_out,
+            registry_refresh,
+            registry_download,
+            registry_cancel_all,
+            fetch_registry_snapshot,
+            fetch_registry_job,
             fetch_camera_selection,
             select_hardware_camera,
             select_mindvision_camera,

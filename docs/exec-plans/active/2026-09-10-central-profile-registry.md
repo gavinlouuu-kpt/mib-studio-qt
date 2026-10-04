@@ -55,8 +55,10 @@ freeze exact revision identity/content into historical runs.
 - [x] M1 (Qt): Settings → Central Methods… dialog over the worker: sign-in/out,
   refresh, cancel, cached revisions with their separate central states, offline
   listing; refresh on open; no select/apply.
-- [ ] M1: shared backend snapshots/commands through BackendFacade and Rust bridge;
-  React method discovery/details showing separate central/cache states.
+- [x] M1 (bridge + React): `BackendFacade` registry commands/snapshot, bridge ABI
+  15 (`registry_*` contract groups, `set_registry_transport` with polled cancel
+  handles), Tauri `ureq` HTTPS transport, React Central Methods panel over a pure
+  view model shared in wording with the Qt dialog.
 - [ ] M2: authoritative selected/applied/verified method aggregate; compatibility
   validator tied to real core/camera/calibration context; explicit update selection.
 - [ ] M2: Start readiness binds revision/hash and local execution permission;
@@ -93,6 +95,12 @@ freeze exact revision identity/content into historical runs.
   Tests: `profiles.registry_worker`, `profiles.registry_backend` (hung registry
   vs running mock capture; shutdown abort), `frontend.registry_http_transport`;
   all three behaviour mutations of the worker were caught; TSan clean (3 repeats).
+
+- 2026-10-04 (M1 bridge + React): found and fixed on the way — `BackendFacade::
+  shutdown()` did not stop the registry worker, so a hung registry request outlived
+  facade shutdown (caught by the new `profiles.registry_facade` test); the facade
+  now stops it first. ABI 15 was free on `develop`; the review-scatter plan also
+  names "14 → 15", so whichever lands second takes the next number.
 
 ## Validation
 

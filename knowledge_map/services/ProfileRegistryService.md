@@ -9,9 +9,10 @@ Central method registry for #398: provider-neutral revisions, Supabase RPC and
 Auth clients, immutable per-user local cache, explicit sync operations, and the
 backend-owned `ProfileRegistryWorker` that runs them on one thread. Owned by
 [[../architecture/AppBackend]] (`profileRegistry()`); the Qt shell injects the
-HTTPS transport; the Qt [[../frontend/CentralMethodsDialog]] signs in, refreshes
-and lists cached revisions. Not yet in a method picker, the React/Tauri bridge,
-Apply/Verify or run provenance.
+HTTPS transport; the Qt [[../frontend/CentralMethodsDialog]] and the React
+Central Methods panel (through `BackendFacade` registry calls, bridge ABI 15,
+see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
+revisions. Not yet in a method picker, Apply/Verify or run provenance.
 
 ## Key APIs
 
@@ -59,7 +60,9 @@ Tests: `profiles.registry` (integrity/cache/provider), `profiles.registry_worker
 (fake Supabase: auth, rotation, outage, restart offline, user switch, sign-out,
 cancel, bounds, concurrent snapshot traffic + shutdown), `profiles.registry_backend`
 (AppBackend wiring; a hung registry leaves mock capture running; shutdown aborts
-it), `frontend.central_methods` (dialog over the real worker), `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
+it), `profiles.registry_facade` (facade mapping + contract integers + shutdown abort),
+the bridge `registry_*` cargo tests, `desktop/src/registry.test.ts`,
+`frontend.central_methods` (dialog over the real worker), `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
 worker thread), and the PGlite SQL suite.
 
 Setup, current scope, tests and recovery: `supabase/README.md`.

@@ -8,6 +8,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/SyringePumpService.h"
 
@@ -18,6 +19,9 @@
 #include <windows.h>
 #endif
 #include <algorithm>
+#include <map>
+#include <functional>
+#include <atomic>
 #include <cstdlib>
 #include <deque>
 #include <mutex>
@@ -114,6 +118,36 @@ static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Cancelled) == 10);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Overflow) == 11);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::ShuttingDown) == 12);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::TooManyJobs) == 13);
+// ABI 15 (#398): central profile registry groups.
+namespace bp = backend::profiles;
+using RegistrySession = bp::RegistryWorkerSnapshot::Session;
+using RegistryConnectivity = bp::RegistryHealth::Connectivity;
+static_assert(static_cast<std::uint32_t>(RegistrySession::SignedOut) == 0);
+static_assert(static_cast<std::uint32_t>(RegistrySession::SignedIn) == 1);
+static_assert(static_cast<std::uint32_t>(RegistrySession::CachedOffline) == 2);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Unknown) == 0);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Online) == 1);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Offline) == 2);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::AuthenticationRequired) == 3);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::PermissionDenied) == 4);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Failed) == 5);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SignIn) == 0);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SignOut) == 1);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Refresh) == 2);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Download) == 3);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Queued) == 0);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Running) == 1);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Succeeded) == 2);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Partial) == 3);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Failed) == 4);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Cancelled) == 5);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Submitted) == 0);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Approved) == 1);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Rejected) == 2);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Published) == 3);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Superseded) == 4);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Archived) == 5);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Revoked) == 6);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::None) == 0);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Mock) == 1);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Hardware) == 2);
@@ -1237,6 +1271,169 @@ bool BackendBridge::cancel_device_discovery(std::uint64_t job_id) {
     return impl_->facade.cancelDeviceDiscovery(job_id);
 }
 
+// ---- Central profile registry (schema v15, #398) ----
+namespace {
+// In-flight registry requests: handle -> the backend's cancel predicate. The
+// Rust transport polls registry_request_cancelled(handle) while it waits.
+std::mutex& registryCancelMutex() {
+    static std::mutex m;
+    return m;
+}
+std::map<std::uint64_t, std::function<bool()>>& registryCancels() {
+    static std::map<std::uint64_t, std::function<bool()>> m;
+    return m;
+}
+std::atomic<std::uint64_t> nextRegistryCancelHandle{1};
+
+BridgeRegistryJob toBridge(const backend::bridge::BackendRegistryJob& job) {
+    BridgeRegistryJob out{};
+    out.job_id = job.jobId;
+    out.kind = static_cast<std::uint32_t>(job.kind);
+    out.state = static_cast<std::uint32_t>(job.state);
+    out.message = rust::String(job.message);
+    return out;
+}
+} // namespace
+
+bool registry_request_cancelled(std::uint64_t cancel_handle) {
+    std::function<bool()> cancelled;
+    {
+        std::scoped_lock lock(registryCancelMutex());
+        const auto it = registryCancels().find(cancel_handle);
+        if (it == registryCancels().end()) return true;
+        cancelled = it->second;
+    }
+    try {
+        return cancelled ? cancelled() : false; // no predicate: never cancelled
+    } catch (...) {
+        return true;
+    }
+}
+
+bool BackendBridge::set_registry_transport(
+    rust::Fn<BridgeHttpResponse(const BridgeHttpRequest&)> transport) {
+    if (impl_->facade.isInitialized()) return false; // read once at initialize()
+    impl_->app.setProfileRegistryTransport(
+        [transport](const backend::profiles::RegistryHttpRequest& request) {
+            backend::profiles::RegistryHttpResponse out; // status 0 = transport failure
+            const std::uint64_t handle = nextRegistryCancelHandle.fetch_add(1);
+            {
+                std::scoped_lock lock(registryCancelMutex());
+                registryCancels()[handle] = request.cancelled;
+            }
+            try {
+                BridgeHttpRequest req{};
+                req.url = rust::String(request.url);
+                req.body = rust::String(request.body);
+                for (const auto& [name, value] : request.headers) {
+                    BridgeHttpHeader h{};
+                    h.name = rust::String(name);
+                    h.value = rust::String(value);
+                    req.headers.push_back(std::move(h));
+                }
+                req.timeout_ms = request.timeoutMs;
+                req.max_response_bytes = static_cast<std::uint64_t>(request.maxResponseBytes);
+                req.cancel_handle = handle;
+                const BridgeHttpResponse response = transport(req);
+                out.status = response.status;
+                out.body.assign(reinterpret_cast<const char*>(response.body.data()),
+                                response.body.size());
+            } catch (...) {
+                out = {};
+            }
+            std::scoped_lock lock(registryCancelMutex());
+            registryCancels().erase(handle);
+            return out;
+        });
+    return true;
+}
+
+std::uint64_t BackendBridge::registry_sign_in(rust::Str email, rust::Str password) {
+    try {
+        return impl_->facade.registrySignIn(toStd(email), toStd(password));
+    } catch (...) {
+        return 0;
+    }
+}
+
+std::uint64_t BackendBridge::registry_sign_out() { return impl_->facade.registrySignOut(); }
+std::uint64_t BackendBridge::registry_refresh() { return impl_->facade.registryRefresh(); }
+
+std::uint64_t BackendBridge::registry_download(rust::Str revision_id) {
+    try {
+        return impl_->facade.registryDownload(toStd(revision_id));
+    } catch (...) {
+        return 0;
+    }
+}
+
+bool BackendBridge::registry_cancel_all() { return impl_->facade.registryCancelAll(); }
+
+BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
+    BridgeRegistrySnapshot out{};
+    backend::bridge::BackendRegistrySnapshot s;
+    try {
+        if (!impl_->facade.fetchRegistrySnapshot(s)) return out; // valid=false
+    } catch (...) {
+        return out;
+    }
+    try {
+        out.valid = s.valid;
+        out.configured = s.configured;
+        out.generation = s.generation;
+        out.origin = rust::String(s.origin);
+        out.session = static_cast<std::uint32_t>(s.session);
+        out.subject_id = rust::String(s.subjectId);
+        out.email = rust::String(s.email);
+        out.connectivity = static_cast<std::uint32_t>(s.connectivity);
+        out.health_message = rust::String(s.healthMessage);
+        out.successful_requests = s.successfulRequests;
+        out.failed_requests = s.failedRequests;
+        out.rejected_revisions = s.rejectedRevisions;
+        for (const auto& p : s.projects) {
+            BridgeRegistryProject bp{};
+            bp.project_id = rust::String(p.projectId);
+            bp.display_name = rust::String(p.displayName);
+            for (const auto& role : p.roles) bp.roles.push_back(rust::String(role));
+            out.projects.push_back(std::move(bp));
+        }
+        for (const auto& r : s.revisions) {
+            BridgeRegistryRevision br{};
+            br.revision_id = rust::String(r.revisionId);
+            br.method_id = rust::String(r.methodId);
+            br.project_id = rust::String(r.projectId);
+            br.display_name = rust::String(r.displayName);
+            br.author_id = rust::String(r.authorId);
+            br.content_hash = rust::String(r.contentHash);
+            br.revision_number = r.revisionNumber;
+            br.metadata_version = r.metadataVersion;
+            br.central_state = static_cast<std::uint32_t>(r.centralState);
+            out.revisions.push_back(std::move(br));
+        }
+        for (const auto& id : s.corruptRevisionIds) out.corrupt_revision_ids.push_back(rust::String(id));
+        out.cache_error = rust::String(s.cacheError);
+        out.has_last_successful_refresh = s.hasLastSuccessfulRefresh;
+        out.last_successful_refresh_unix_ms = s.lastSuccessfulRefreshUnixMs;
+        out.last_job = toBridge(s.lastJob);
+        out.queued_jobs = s.queuedJobs;
+        out.busy = s.busy;
+    } catch (...) {
+        // Never let a conversion failure (e.g. non-UTF-8 text) cross the FFI.
+        return BridgeRegistrySnapshot{};
+    }
+    return out;
+}
+
+BridgeRegistryJob BackendBridge::fetch_registry_job(std::uint64_t job_id) {
+    try {
+        backend::bridge::BackendRegistryJob job;
+        impl_->facade.fetchRegistryJob(job_id, job);
+        return toBridge(job);
+    } catch (...) {
+        return BridgeRegistryJob{};
+    }
+}
+
 BridgeDiscoverySnapshot BackendBridge::fetch_device_discovery(std::uint64_t job_id) {
     BridgeDiscoverySnapshot out{};
     backend::bridge::BackendDiscoverySnapshot snapshot;
@@ -1618,8 +1815,11 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // (BE-8); v14 replaced the synchronous fetch_camera_discovery with the
 // device-discovery job trio (start_device_discovery / start_camera_discovery,
 // fetch_device_discovery, cancel_device_discovery) and the discovery contract
-// groups (#419, ADR 0005). All additive over v1 (ADR 0003/0004). Must match
+// groups (#419, ADR 0005); v15 added the central profile registry
+// (registry_sign_in/sign_out/refresh/download/cancel_all,
+// fetch_registry_snapshot/job, set_registry_transport and the registry_*
+// contract groups — #398). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
-std::uint32_t bridge_abi_version() { return 14; }
+std::uint32_t bridge_abi_version() { return 15; }
 
 } // namespace mib_bridge

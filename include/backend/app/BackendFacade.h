@@ -638,6 +638,66 @@ namespace backend::bridge
         std::string origin;
     };
 
+    // ---- Central profile registry (issue #398, ABI 15) ----
+    // Frontend-neutral mirror of backend::profiles::ProfileRegistryWorker.
+    // Integer fields are contract-pinned (bridge-contract.json):
+    // `session` = registry_session_states, `connectivity` =
+    // registry_connectivity, job `kind`/`state` = registry_job_kinds /
+    // registry_job_states, revision `centralState` = registry_central_states.
+    // No token or password is ever part of these values.
+    struct BackendRegistryProject
+    {
+        std::string projectId;
+        std::string displayName;
+        std::vector<std::string> roles;
+    };
+
+    struct BackendRegistryRevision
+    {
+        std::string revisionId;
+        std::string methodId;
+        std::string projectId;
+        std::string displayName;
+        std::string authorId;
+        std::string contentHash;
+        std::uint64_t revisionNumber{0};
+        std::uint64_t metadataVersion{0};
+        int centralState{0};
+    };
+
+    struct BackendRegistryJob
+    {
+        std::uint64_t jobId{0}; // 0: unknown, evicted or refused
+        int kind{0};
+        int state{0};
+        std::string message;
+    };
+
+    struct BackendRegistrySnapshot
+    {
+        bool valid{false}; // false only when the facade is not initialized
+        bool configured{false};
+        std::uint64_t generation{0};
+        std::string origin;
+        int session{0};
+        std::string subjectId;
+        std::string email;
+        int connectivity{0};
+        std::string healthMessage;
+        std::uint64_t successfulRequests{0};
+        std::uint64_t failedRequests{0};
+        std::uint64_t rejectedRevisions{0};
+        std::vector<BackendRegistryProject> projects;
+        std::vector<BackendRegistryRevision> revisions;
+        std::vector<std::string> corruptRevisionIds;
+        std::string cacheError;
+        bool hasLastSuccessfulRefresh{false};
+        std::int64_t lastSuccessfulRefreshUnixMs{0};
+        BackendRegistryJob lastJob;
+        std::uint64_t queuedJobs{0};
+        bool busy{false};
+    };
+
     // Authoritative selected-device snapshot (BE-2). `mode` values are
     // contract-pinned: 0 None, 1 Mock, 2 Hardware, 3 MindVision.
     struct BackendCameraSelection
@@ -801,6 +861,18 @@ namespace backend::bridge
         // job deadline). Worker-thread callers only; never call from a UI
         // thread. New consumers use the asynchronous trio above.
         bool fetchCameraDiscovery(BackendCameraDiscovery &out) const;
+        // Central profile registry (issue #398, ABI 15): enqueue commands on
+        // the backend registry worker (job IDs; 0 = refused) and read its
+        // value snapshot. Never blocks on the network; never touches capture,
+        // recording or Start. The password is handed to the worker and not
+        // retained here.
+        std::uint64_t registrySignIn(const std::string &email, std::string password);
+        std::uint64_t registrySignOut();
+        std::uint64_t registryRefresh();
+        std::uint64_t registryDownload(const std::string &revisionId);
+        bool registryCancelAll();
+        bool fetchRegistrySnapshot(BackendRegistrySnapshot &out) const;
+        bool fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const;
         bool fetchCameraSelection(BackendCameraSelection &out) const;
         bool fetchPumpStatus(int pumpId, BackendPumpStatus &out) const;
         bool fetchAutofocusStatus(BackendAutofocusStatus &out) const;
