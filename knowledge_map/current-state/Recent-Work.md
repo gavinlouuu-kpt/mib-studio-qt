@@ -52,6 +52,11 @@ Settings plumbing for the PL profile: the size gate, Laplacian aperture and
 Laplacian gate are `config.json` `image_processing` keys (in the defaults,
 validated, applied through the config transaction).
 
+Channel band from the off-path background (T3.7). With the science on the PL,
+background calibration takes the median of preview frames; the channel walls
+are detected in it (develop's `ChannelRoiDetect`, `auto_roi_*` keys), and the
+band reaches the PL profile page.
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21

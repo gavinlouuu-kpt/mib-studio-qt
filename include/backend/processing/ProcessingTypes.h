@@ -48,6 +48,14 @@ struct ProcessingConfig {
     bool auto_background_enabled{false};
     int auto_background_empty_frames{30};
     int auto_background_cooldown_frames{1000};
+    // Auto channel band (develop): detect the channel walls in each captured
+    // background and reject cells whose centroid lies outside the band. Off by
+    // default. On the PZ7035 the band goes into the PL profile page.
+    bool auto_roi_from_background{false};
+    // Row mean-gradient multiple over the channel baseline that marks a wall row.
+    double auto_roi_wall_gradient_ratio{2.5};
+    // Extra rows trimmed inward from each detected wall edge, for margin.
+    int auto_roi_wall_margin{1};
     // Target group sort trigger (second gate within valid frames)
     bool enable_target_group{false};
     int target_group_area_min{72};   // μm²

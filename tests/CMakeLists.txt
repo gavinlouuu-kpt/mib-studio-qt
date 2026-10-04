@@ -386,6 +386,15 @@ add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
+add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
+set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(pl_preview_background_test processing/pl_preview_background_test.cpp)
+mib_backend_test_link(pl_preview_background_test PRIVATE Threads::Threads)
+add_test(NAME processing.pl_preview_background COMMAND $<TARGET_FILE:mib_backend_tests> pl_preview_background_test)
+set_tests_properties(processing.pl_preview_background PROPERTIES LABELS "processing;backend;concurrency" TIMEOUT 60)
+
 mib_add_backend_test_executable(pz_profile_compiler_test processing/pz_profile_compiler_test.cpp)
 add_test(NAME processing.pz_profile_compiler COMMAND $<TARGET_FILE:mib_backend_tests> pz_profile_compiler_test
          ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)

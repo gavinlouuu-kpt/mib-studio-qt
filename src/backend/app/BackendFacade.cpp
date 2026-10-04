@@ -2777,7 +2777,11 @@ BackendCommandResult BackendFacade::backgroundCalibrationCommandJson(const std::
         request.timeoutMs = static_cast<std::uint64_t>(timeout);
         BackendCommandResult result{false, type, "Experiment must be idle for background calibration"};
         backend_.experiment().withIdleConfiguration([&] {
-            result.ok = backend_.processing().startBackgroundCalibration(request, &result.message);
+            // PL science: no host frame is classified; median of preview frames.
+            result.ok = app::hostProcessingAvailable()
+                            ? backend_.processing().startBackgroundCalibration(request, &result.message)
+                            : backend_.processing().startPreviewBackgroundCalibration(backend_.getFrameStore(),
+                                                                                      request, &result.message);
             if (result.ok) result.message = "Background calibration started; previous background remains active until success";
         });
         return result;

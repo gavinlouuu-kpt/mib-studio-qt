@@ -163,7 +163,7 @@ static backend::processing::pz::CompiledProfile compilePlProfile(AppBackend& bac
 {
     auto& proc = backend.processing();
     backend::processing::pz::UnetCellsProfileInputs in;
-    in.config = proc.getProcessingConfig();
+    in.config = proc.getEffectiveProcessingConfig(); // includes the detected channel band
     in.pixelToMicron = proc.getPixelToMicronFactor();
     in.storeInvalidEveryN = static_cast<uint32_t>(std::min<size_t>(proc.getInvalidFrameSamplingRate(), 0xFFFF));
     in.lut = proc.eModulusLut().isLoaded() ? &proc.eModulusLut() : nullptr;

@@ -38,6 +38,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     # Science placement is a leaf (no dependencies); it lives with ProcessingService, which
     # consults it, so processing-only binaries link.

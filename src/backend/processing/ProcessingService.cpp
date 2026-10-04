@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingService.h"
+#include "backend/processing/ChannelRoiDetect.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/processing/ProcessingCoreLoader.h"
@@ -108,6 +109,8 @@ void ProcessingService::CoreOperationLease::release() noexcept {
 }
 
 ProcessingService::~ProcessingService() {
+    cancelBackgroundCalibration();
+    if (bgCalPreviewThread_.joinable()) bgCalPreviewThread_.join();
     // A joinable realtimeThread_ at destruction would std::terminate; do not
     // rely on the GUI teardown path having called stopRealtime() first.
     stopRealtime();
@@ -449,6 +452,7 @@ ProcessingService::Roi ProcessingService::getRealtimeRoi() const {
 }
 
 void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
+    std::shared_ptr<cv::Mat> stored;
     {
         std::scoped_lock lk(rtMutex_);
         if (!bg.empty() && bg.type() == CV_8UC1) {
@@ -460,6 +464,17 @@ void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
         } else {
             rtBgGray_.reset();
         }
+        stored = rtBgGray_;
+    }
+    // Detect the channel band (develop): cells whose centroid sits outside it
+    // (debris on a wall) are rejected. Off unless opted in; a cleared
+    // background or a disabled setting clears the band. Published before the
+    // background generation bump.
+    const Roi band = (stored && !stored->empty()) ? computeAutoRoiFromBackground(*stored) : Roi{};
+    const bool haveBand = band.w > 0 && band.h > 0;
+    {
+        std::scoped_lock lk(channelBandMutex_);
+        channelBand_ = haveBand ? band : Roi{};
     }
     // Every publication (or clear) is a new background identity (issue #369).
     backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
@@ -715,6 +730,38 @@ void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
     }
     configVersion_.fetch_add(1, std::memory_order_release);
     refreshRealtimeBatchPipelineConfig();
+}
+
+ProcessingConfig ProcessingService::getEffectiveProcessingConfig() const {
+    ProcessingConfig config = getProcessingConfig();
+    if (config.auto_roi_from_background) {
+        const Roi band = getChannelBand();
+        config.channel_band_y = band.h > 0 ? band.y : 0;
+        config.channel_band_h = band.h > 0 ? band.h : 0;
+    }
+    return config;
+}
+
+ProcessingService::Roi
+ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const {
+    ProcessingConfig config;
+    {
+        std::scoped_lock lk(configMutex_);
+        config = processingConfig_;
+    }
+    if (!config.auto_roi_from_background || backgroundGray.empty()) {
+        return Roi{}; // disabled / no background: empty ROI == full frame
+    }
+    backend::processing::ChannelRoiParams params;
+    params.wallGradientRatio = config.auto_roi_wall_gradient_ratio;
+    params.marginRows = config.auto_roi_wall_margin;
+    const backend::processing::ChannelRoi detected = backend::processing::detectChannelRoi(backgroundGray, params);
+    return Roi{detected.x, detected.y, detected.w, detected.h};
+}
+
+ProcessingService::Roi ProcessingService::getChannelBand() const {
+    std::scoped_lock lk(channelBandMutex_);
+    return channelBand_;
 }
 
 ProcessingConfig ProcessingService::getProcessingConfig() const {
@@ -1027,6 +1074,119 @@ bool ProcessingService::startBackgroundCalibration(const BackgroundCalibrationRe
     return true;
 }
 
+void ProcessingService::publishCalibratedBackgroundLocked(cv::Mat background) {
+    // Atomic publication: the previous background stays active until the
+    // candidate is installed here.
+    const Roi band = computeAutoRoiFromBackground(background);
+    {
+        std::scoped_lock rtLk(rtMutex_);
+        rtBgGray_ = std::make_shared<cv::Mat>(std::move(background));
+    }
+    {
+        std::scoped_lock lk(channelBandMutex_);
+        channelBand_ = band.w > 0 && band.h > 0 ? band : Roi{};
+    }
+    backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    configVersion_.fetch_add(1, std::memory_order_release);
+    refreshRealtimeBatchPipelineConfig();
+    bgCalStatus_.publishedBackgroundGeneration = backgroundGeneration_.load(std::memory_order_acquire);
+    bgCalStatus_.publishedSha256 = backgroundSha256();
+}
+
+bool ProcessingService::startPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
+                                                          const BackgroundCalibrationRequest& request,
+                                                          std::string* error) {
+    if (!store) {
+        if (error) *error = "no preview frame source";
+        return false;
+    }
+    if (request.requiredAccepted == 0 || request.requiredAccepted > 1000) {
+        if (error) *error = "invalid calibration request (1 to 1000 preview frames)";
+        return false;
+    }
+    uint64_t generation = 0;
+    {
+        std::scoped_lock lk(bgCalMutex_);
+        if (bgCalStatus_.state == BackgroundCalibrationState::Running) {
+            if (error) *error = "a background calibration is already running";
+            return false;
+        }
+        bgCalRequest_ = request;
+        bgCalStatus_ = BackgroundCalibrationStatus{};
+        bgCalStatus_.state = BackgroundCalibrationState::Running;
+        bgCalStatus_.operationGeneration = generation = ++bgCalOperationCounter_;
+        bgCalStatus_.frozenConfigVersion = configVersion_.load(std::memory_order_acquire);
+        bgCalDeadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(request.timeoutMs);
+    }
+    if (bgCalPreviewThread_.joinable()) bgCalPreviewThread_.join();
+    bgCalPreviewThread_ = std::thread(&ProcessingService::runPreviewBackgroundCalibration, this, std::move(store),
+                                      generation);
+    SPDLOG_INFO("Preview background calibration started: {} frames, timeout {} ms", request.requiredAccepted,
+                request.timeoutMs);
+    return true;
+}
+
+void ProcessingService::runPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
+                                                        uint64_t generation) {
+    std::vector<cv::Mat> frames;
+    uint64_t seen = store->totalWritten();
+    auto stillRunning = [&] {
+        std::scoped_lock lk(bgCalMutex_);
+        return bgCalStatus_.state == BackgroundCalibrationState::Running &&
+               bgCalStatus_.operationGeneration == generation;
+    };
+    while (stillRunning()) {
+        uint32_t required = 0;
+        {
+            std::scoped_lock lk(bgCalMutex_);
+            required = bgCalRequest_.requiredAccepted;
+            if (std::chrono::steady_clock::now() >= bgCalDeadline_) {
+                bgCalFinishLocked(BackgroundCalibrationState::FailedTimeout,
+                                  "timed out with " + std::to_string(frames.size()) + "/" +
+                                      std::to_string(required) + " preview frames");
+                return;
+            }
+        }
+        if (frames.size() >= required) break;
+        const uint64_t total = store->waitForFrame(seen, std::chrono::milliseconds(100));
+        if (total <= seen) continue;
+        seen = total;
+        backend::playback::Frame frame;
+        if (!store->getLatest(frame)) continue;
+        cv::Mat gray = makeGrayCopy(frame);
+        std::scoped_lock lk(bgCalMutex_);
+        ++bgCalStatus_.attempted;
+        if (gray.empty() || (!frames.empty() && gray.size() != frames.front().size())) {
+            ++bgCalStatus_.rejectedProcessingFailed;
+            continue;
+        }
+        frames.push_back(std::move(gray));
+        bgCalStatus_.accepted = static_cast<uint32_t>(frames.size());
+    }
+    if (frames.empty()) return; // cancelled
+    // Per-pixel median of the frames: cells passing through are outliers.
+    cv::Mat median(frames.front().size(), CV_8UC1);
+    std::vector<uint8_t> values(frames.size());
+    for (int y = 0; y < median.rows; ++y) {
+        for (int x = 0; x < median.cols; ++x) {
+            for (size_t k = 0; k < frames.size(); ++k) values[k] = frames[k].at<uint8_t>(y, x);
+            std::nth_element(values.begin(), values.begin() + values.size() / 2, values.end());
+            median.at<uint8_t>(y, x) = values[values.size() / 2];
+        }
+    }
+    std::scoped_lock lk(bgCalMutex_);
+    if (bgCalStatus_.state != BackgroundCalibrationState::Running || bgCalStatus_.operationGeneration != generation) {
+        return; // cancelled meanwhile
+    }
+    publishCalibratedBackgroundLocked(std::move(median));
+    const Roi band = getChannelBand();
+    bgCalFinishLocked(BackgroundCalibrationState::Succeeded,
+                      "published the median of " + std::to_string(frames.size()) + " preview frames" +
+                          (band.h > 0 ? "; channel band rows " + std::to_string(band.y) + "-" +
+                                            std::to_string(band.y + band.h - 1)
+                                      : std::string()));
+}
+
 void ProcessingService::cancelBackgroundCalibration() {
     std::scoped_lock lk(bgCalMutex_);
     if (bgCalStatus_.state != BackgroundCalibrationState::Running) return;
@@ -1098,17 +1258,7 @@ void ProcessingService::bgCalObserve(backend::recording::FrameOutcome outcome,
     if (bgCalStatus_.accepted >= bgCalRequest_.requiredAccepted) {
         cv::Mat mean;
         bgCalAccumulator_.convertTo(mean, CV_8UC1, 1.0 / static_cast<double>(bgCalStatus_.accepted));
-        // Atomic publication: the previous background stays active until the
-        // candidate is installed here.
-        {
-            std::scoped_lock rtLk(rtMutex_);
-            rtBgGray_ = std::make_shared<cv::Mat>(std::move(mean));
-        }
-        backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        configVersion_.fetch_add(1, std::memory_order_release);
-        refreshRealtimeBatchPipelineConfig();
-        bgCalStatus_.publishedBackgroundGeneration = backgroundGeneration_.load(std::memory_order_acquire);
-        bgCalStatus_.publishedSha256 = backgroundSha256();
+        publishCalibratedBackgroundLocked(std::move(mean));
         bgCalFinishLocked(BackgroundCalibrationState::Succeeded,
                           "published background from " + std::to_string(bgCalStatus_.accepted) + " empty frames");
         return;

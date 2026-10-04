@@ -152,8 +152,18 @@ the `EModulusLut`.
 ## Not yet
 
 - The store drain (images from the PL frame store).
-- The channel band from the off-path background (T3.7). `channel_band_*` is a
-  runtime field and stays 0 (off) for now.
+Channel band (T3.7): with `auto_roi_from_background`, the band is detected
+from the background (`ChannelRoiDetect`, identical to develop). It goes into
+the effective config (`getEffectiveProcessingConfig`), and from there into
+page word 1 of the compiled profile.
+
+- **Where the background comes from:** with the science on the PL, background
+  calibration (`startPreviewBackgroundCalibration`, the bridge's calibration
+  command in PL mode) takes the per-pixel median of N preview frames from the
+  FrameStore. Cells passing through are removed by the median.
+- **Status, cancel and publication** are the same as the host calibration's.
+- **Test:** `processing.pl_preview_background` (median removes a moving cell,
+  band, page word, cancel, timeout).
 
 Settings: `config.json` `image_processing` carries develop's
 `laplacian_variance_min/max` and `filters.enable_laplacian_variance_check`,

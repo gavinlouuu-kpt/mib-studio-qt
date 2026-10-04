@@ -251,6 +251,14 @@ public:
     // Configuration
     void setProcessingConfig(const ProcessingConfig& config);
     ProcessingConfig getProcessingConfig() const;
+    // getProcessingConfig() plus the runtime channel band detected from the
+    // background when auto_roi_from_background is on (develop's semantics).
+    ProcessingConfig getEffectiveProcessingConfig() const;
+    // Channel band detected from the current background (empty when off).
+    Roi getChannelBand() const;
+    // Channel walls of a background (develop): the band, or an empty ROI when
+    // auto_roi_from_background is off.
+    Roi computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const;
     
     // Pixel to micron conversion factor (1 pixel = X micron)
     void setPixelToMicronFactor(double factor);
@@ -392,6 +400,13 @@ public:
     // maxAttempts, timeout, or cancel. Returns false if realtime is not
     // running or another calibration is active.
     bool startBackgroundCalibration(const BackgroundCalibrationRequest& request, std::string* error = nullptr);
+    // PL science (ADR 0008): no host frame is classified, so the background is
+    // the per-pixel median of `requiredAccepted` distinct preview frames from
+    // the store (cells passing through are rejected by the median); same
+    // status, cancel and publication as startBackgroundCalibration. Detects
+    // the channel band from it when auto_roi_from_background is on.
+    bool startPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
+                                           const BackgroundCalibrationRequest& request, std::string* error);
     void cancelBackgroundCalibration();
     BackgroundCalibrationStatus backgroundCalibrationStatus() const;
 
@@ -683,6 +698,11 @@ private:
     BackgroundCalibrationRequest bgCalRequest_;
     uint64_t bgCalOperationCounter_{0};
     cv::Mat bgCalAccumulator_; // CV_64FC1 running sum of accepted frames
+    std::thread bgCalPreviewThread_; // PL science: preview-median calibration
+    void runPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store, uint64_t generation);
+    // Install a calibrated background (caller holds bgCalMutex_): the
+    // background, the channel band from it, and the generation bumps.
+    void publishCalibratedBackgroundLocked(cv::Mat background);
     std::chrono::steady_clock::time_point bgCalDeadline_{};
     std::atomic<bool> bgCalActive_{false};
     std::atomic<bool> processedPreviewEnabled_{false};
@@ -820,6 +840,8 @@ private:
 
     // Young's modulus LUT (read-only after loading, thread-safe)
     EModulusLut eModulusLut_;
+    mutable std::mutex channelBandMutex_;
+    Roi channelBand_{};
 };
 
 } // namespace backend::services

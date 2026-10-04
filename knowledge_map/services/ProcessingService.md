@@ -560,3 +560,9 @@ the identification funnel (PL reasons, 8 codes) and the monitoring rows,
 which carry no images. It never fires the target-group callback. See
 [[../data-model/PZ7035-Records]].
 
+Background calibration with the science on the PL:
+`startPreviewBackgroundCalibration` (the per-pixel median of preview frames,
+on its own thread, joined at destruction). The channel band
+(`getChannelBand`, `getEffectiveProcessingConfig`, as on develop) is
+recomputed whenever a background is published.
+
