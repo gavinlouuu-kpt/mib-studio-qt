@@ -375,6 +375,12 @@ mib_add_backend_test_executable(processing_science_seam_test processing/processi
 add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_seam_test)
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
+add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test
+         ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
+
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_golden_test)
 set_tests_properties(processing.science_golden PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -927,6 +933,15 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(scripts.convert_legacy_csv_to_json PROPERTIES
         LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.pz7035_abi_vendor
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/vendor_pz7035_abi.py --check
+    )
+    set_tests_properties(scripts.pz7035_abi_vendor PROPERTIES
+        LABELS "scripts"
         TIMEOUT 30
     )
 

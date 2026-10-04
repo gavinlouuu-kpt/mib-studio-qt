@@ -1,5 +1,23 @@
 # Recent Work
 
+## 2026-10-04 — PZ7035 result record decoder (#447 E3, W3.B1)
+
+Decoder for the records the PZ7035 PL writes to the PS result ring, with the
+pz7035-imx426 ABI bundle vendored and pinned (`third_party/pz7035-abi`,
+`scripts/vendor_pz7035_abi.py`). It provides:
+- record decode with the bundle's error rules, and sequence/epoch/generation
+  stream checks;
+- a ring reader with wrap and overrun handling, and FRAME/RESULT assembly;
+- the `unet_cells_v2` profile decoder into plain cell values (`UnetCell`).
+
+`processing.pz_records` checks it:
+- all 26 bundle fixtures decode with the expected outcome;
+- FRAME and RESULT re-encode byte-identically;
+- 60 frames pass through a wrapping ring;
+- the PL vectors' RESULT payloads decode to the cells they list.
+
+See [[../data-model/PZ7035-Records]].
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21
