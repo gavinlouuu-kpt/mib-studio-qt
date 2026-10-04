@@ -359,6 +359,11 @@ add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(pz_unet_cells_host_test processing/pz_unet_cells_host_test.cpp)
+add_test(NAME processing.pz_unet_cells_host COMMAND $<TARGET_FILE:mib_backend_tests> pz_unet_cells_host_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_unet_cells_host PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
+
 mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
 add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
 set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)

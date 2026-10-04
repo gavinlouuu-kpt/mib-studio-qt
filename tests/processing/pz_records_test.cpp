@@ -1,19 +1,16 @@
 // PZ7035 result records (#447 E3): the decoder against the ABI bundle's
 // fixtures, encode/decode round trips, the result ring (wrap, overrun), frame
-// assembly, and the unet_cells_v2 profile decoder against the host Contract 3
-// science on the PL conformance vectors.
+// assembly, and the unet_cells_v2 profile decoder on the PL conformance
+// vectors. (processing.pz_unet_cells_host compares the decoded cells with the
+// host Contract 3 science.)
 //
 // argv[1]: third_party/pz7035-abi (fixtures/fixtures.json + *.bin)
 // argv[2]: scripts/conformance/unet-cells-v2-pl-vectors.json
 #include "backend/pz/PzRecords.h"
 
-#include "backend/processing/EModulusLut.h"
-#include "backend/processing/ProcessingContract.h"
-#include "backend/processing/ProcessingScience.h"
 #include "support/assert.h"
 
 #include <nlohmann/json.hpp>
-#include <opencv2/core.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -24,9 +21,6 @@
 #include <vector>
 
 namespace pz = backend::pz;
-namespace science = backend::processing::science;
-using backend::services::FilterResult;
-using backend::services::ProcessingConfig;
 
 namespace {
 
@@ -264,67 +258,24 @@ void testRingAndAssembly() {
                "a missing RESULT marks the frame incomplete");
 }
 
-std::vector<uint8_t> base64Decode(const std::string& in) {
-    std::vector<int> map(256, -1);
-    const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for (int i = 0; i < 64; ++i) map[static_cast<unsigned char>(a[i])] = i;
-    std::vector<uint8_t> out;
-    int acc = 0, bits = 0;
-    for (char ch : in) {
-        const int v = map[static_cast<unsigned char>(ch)];
-        if (v < 0) continue;
-        acc = (acc << 6) | v;
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            out.push_back(static_cast<uint8_t>((acc >> bits) & 0xFF));
-        }
-    }
-    return out;
-}
-
-// The PL's RESULT payloads, encoded and decoded through the record path,
-// describe the same cells as the host Contract 3 science on the same frame.
-void testProfileAgainstHostScience(const std::string& vectorsPath) {
+// unet_cells_v2: the PL vectors' RESULTs, encoded and decoded through the
+// record path, decode to the cells the vectors list (ids, reasons, flags,
+// bbox, counts).
+void testProfileDecodesVectors(const std::string& vectorsPath) {
+    static const std::map<std::string, pz::UnetCellReason> reasons = {
+        {"NONE", pz::UnetCellReason::None},           {"NO_CONTOUR", pz::UnetCellReason::NoContour},
+        {"BORDER", pz::UnetCellReason::Border},       {"AREA", pz::UnetCellReason::Area},
+        {"DEFORM", pz::UnetCellReason::Deform},       {"AREA_RATIO", pz::UnetCellReason::AreaRatio},
+        {"LAPLACIAN", pz::UnetCellReason::Laplacian}, {"CHANNEL", pz::UnetCellReason::Channel}};
     const auto doc = readJson(vectorsPath);
     int cells = 0;
+    uint32_t seq = 1;
     for (const auto& kase : doc.at("cases")) {
-        // Page values that matter here: p2m, ksize, min px, band, gates off.
-        std::map<std::string, double> page;
-        for (const auto& fld : doc.at("page_fields")) {
-            const uint32_t word = kase.at("page").at(fld.at("word").get<int>()).get<uint32_t>();
-            const int lo = fld.at("lo").get<int>(), hi = fld.at("hi").get<int>();
-            double v = static_cast<double>((word >> lo) & ((uint64_t{1} << (hi - lo + 1)) - 1));
-            const auto fmt = fld.at("format").get<std::string>();
-            if (fmt == "q16_16" || fmt == "q0_16") v /= 65536.0;
-            if (fmt == "q24_8") v /= 256.0;
-            page[fld.at("name").get<std::string>()] = v;
-        }
-        ProcessingConfig cfg;
-        cfg.processing_contract_version = backend::processing::contract::kProcessingContractVersionV3;
-        cfg.min_cell_area_px = static_cast<int>(page["min_cell_area_px"]);
-        cfg.laplacian_kernel_size = static_cast<int>(page["laplacian_ksize"]);
-        cfg.channel_band_y = static_cast<int>(page["channel_band_y"]);
-        cfg.channel_band_h = static_cast<int>(page["channel_band_h"]);
-        cfg.enable_area_range_check = cfg.enable_deformability_range_check = false;
-        cfg.enable_area_ratio_check = cfg.enable_laplacian_variance_check = false;
-        const double p2m = page["pixel_to_micron"];
-
-        uint32_t seq = 1;
         for (const auto& frame : kase.at("frames")) {
-            const auto gray = base64Decode(frame.at("gray_b64").get<std::string>());
-            const auto bits = base64Decode(frame.at("mask_b64").get<std::string>());
-            cv::Mat image(96, 512, CV_8UC1);
-            std::copy(gray.begin(), gray.end(), image.data);
-            cv::Mat mask(96, 512, CV_8UC1);
-            for (int i = 0; i < 512 * 96; ++i) mask.data[i] = (bits[i / 8] >> (i % 8) & 1) ? 255 : 0;
-            const auto host = science::filterProcessedObjects(mask, cv::Rect(0, 0, 512, 96), cfg, image, p2m, nullptr);
-            const auto& expected = frame.at("results");
-            for (size_t i = 0; i < expected.size() && i < host.size(); ++i) {
-                const auto& e = expected[i];
+            for (const auto& e : frame.at("results")) {
                 pz::ResultRecord r;
-                r.frameId = 42;
-                r.resultIndex = static_cast<uint16_t>(i);
+                r.frameId = 7;
+                r.resultIndex = static_cast<uint16_t>(e.at("object_id").get<int>() - 1);
                 r.flags = e.at("target").get<bool>() ? pz::kResultTarget : 0;
                 r.scienceProfile = pz::kScienceProfileUnetCells;
                 r.profileVersion = pz::kUnetCellsProfileVersion;
@@ -337,39 +288,29 @@ void testProfileAgainstHostScience(const std::string& vectorsPath) {
                 const auto bytes = pz::encodeResultRecord(r, seq++);
                 const auto d = pz::decodeRecord(bytes.data(), bytes.size());
                 MIB_REQUIRE(d.ok(), "vector RESULT decodes");
-                const auto cell = pz::decodeUnetCellsV2(std::get<pz::ResultRecord>(d.record->body));
-                MIB_REQUIRE(cell.has_value(), "unet_cells_v2 payload decodes");
-                const FilterResult& pl = cell->result;
-                const FilterResult& h = host[i];
+                const auto c = pz::decodeUnetCellsV2(std::get<pz::ResultRecord>(d.record->body));
+                MIB_REQUIRE(c.has_value(), "unet_cells_v2 payload decodes");
                 const std::string where = kase.at("name").get<std::string>() + "/" +
-                                          frame.at("name").get<std::string>() + "#" + std::to_string(i + 1);
-                MIB_EXPECT(pl.objectId == h.objectId && pl.objectCount == h.objectCount, where + " ids");
-                MIB_EXPECT(pl.bboxX == h.bboxX && pl.bboxY == h.bboxY && pl.bboxWidth == h.bboxWidth &&
-                               pl.bboxHeight == h.bboxHeight,
-                           where + " bbox");
-                MIB_EXPECT(pl.touchesBorder == h.touchesBorder && pl.degenerateContour == h.degenerateContour,
-                           where + " cut-off / degenerate");
-                MIB_EXPECT(pl.contourArea == h.contourArea && pl.pixelCount == h.pixelCount &&
-                               pl.blemishCount == h.blemishCount,
-                           where + " areas and counts");
-                MIB_EXPECT(std::abs(pl.centroidX - h.centroidX) <= 1.0 / 256 &&
-                               std::abs(pl.centroidY - h.centroidY) <= 1.0 / 256,
-                           where + " centroid");
-                MIB_EXPECT(std::abs(pl.brightnessMean - h.brightnessMean) <= 1.0 / 65536 &&
-                               std::abs(pl.brightnessVariance - h.brightnessVariance) <= 1.0 / 256,
-                           where + " brightness");
-                if (!pl.touchesBorder && !pl.degenerateContour) {
-                    MIB_EXPECT(pl.area == h.area && std::abs(pl.areaRatio - h.areaRatio) <= 1e-4 &&
-                                   std::abs(pl.deformability - h.deformability) <= 1e-4,
-                               where + " shape metrics");
-                    MIB_EXPECT(std::abs(cell->areaUm2 - h.area * p2m * p2m) <= 1e-4, where + " area um2");
-                }
+                                          frame.at("name").get<std::string>();
+                MIB_EXPECT(c->objectId == e.at("object_id").get<int>(), where + " object id");
+                MIB_EXPECT(c->reason == reasons.at(e.at("reason").get<std::string>()), where + " reason");
+                MIB_EXPECT(c->cutOff == e.at("cut_off").get<bool>() && c->target == e.at("target").get<bool>(),
+                           where + " flags");
+                MIB_EXPECT(c->bboxX == r.bboxX && c->bboxWidth == r.bboxW, where + " bbox");
+                MIB_EXPECT(c->cellCount == frame.at("cells").get<int>() &&
+                               c->blemishCount == frame.at("blemishes").get<int>(),
+                           where + " frame counts");
+                MIB_EXPECT(std::isfinite(c->brightnessMean) && std::isfinite(c->laplacianVariance) &&
+                               std::isfinite(c->centroidX),
+                           where + " always-present words");
+                MIB_EXPECT(std::isfinite(c->deformability) == !(c->cutOff || c->degenerate()),
+                           where + " metrics only for measured cells");
                 ++cells;
             }
         }
     }
-    std::printf("unet_cells_v2: %d PL results decoded through the record path equal the host science\n", cells);
-    MIB_EXPECT(cells > 0, "compared cells");
+    std::printf("unet_cells_v2: %d PL results decoded through the record path\n", cells);
+    MIB_EXPECT(cells > 0, "decoded cells");
 
     pz::ResultRecord other = cellResult(1, 0, 0);
     other.scienceProfile = 1;
@@ -385,6 +326,6 @@ int main(int argc, char** argv) {
     MIB_REQUIRE(argc > 2, "usage: pz_records_test <third_party/pz7035-abi> <unet-cells-v2-pl-vectors.json>");
     testBundleFixtures(argv[1]);
     testRingAndAssembly();
-    testProfileAgainstHostScience(argv[2]);
+    testProfileDecodesVectors(argv[2]);
     return mib::test::exitCode();
 }
