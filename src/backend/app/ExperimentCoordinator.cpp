@@ -1,4 +1,5 @@
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/processing/IExecutionProvider.h"
 #include "backend/app/SciencePlacement.h"
 
 #include "backend/app/AppBackend.h"
@@ -463,11 +464,16 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "wait for the first frame"));
     }
     if (!app::hostProcessingAvailable()) {
-        // The PL processes every frame; the host pipeline's gates do not apply. The record
-        // path that brings its results to the PS is not connected yet (YOFO B3).
-        r.gates.push_back(gate("science.pl", GateStatus::Warn,
-                               "processing runs on the PL; its results do not reach the PS yet",
-                               "the record path (B3) is pending; previews and recording work"));
+        // The PL processes every frame; the host pipeline's gates do not apply. Its
+        // results reach the PS through an execution provider (YOFO S1).
+        if (auto* provider = backend_.executionProvider()) {
+            r.gates.push_back(gate("science.pl", GateStatus::Pass, {}, {},
+                                   "results from execution provider '" + provider->name() + "'"));
+        } else {
+            r.gates.push_back(gate("science.pl", GateStatus::Warn,
+                                   "processing runs on the PL; no execution provider brings its results to the PS",
+                                   "set MIB_EXECUTION_PROVIDER=pz on the instrument"));
+        }
     } else if (c.roiW > 0 && c.roiH > 0) {
         r.gates.push_back(gate("processing.roi", GateStatus::Pass, {}, {},
                                std::to_string(c.roiW) + "x" + std::to_string(c.roiH) + "@" +
@@ -744,6 +750,29 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     if (app::hostProcessingAvailable()) {
         proc.setRealtimeEnabled(true);
         proc.startRealtime(backend_.getFrameStore());
+    } else if (auto* provider = backend_.executionProvider()) {
+        // PL science: arm after the run's accounting started, so every frame the
+        // PL reports from here on is admitted once.
+        const uint64_t runId = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                         std::chrono::system_clock::now().time_since_epoch())
+                                                         .count());
+        std::string providerError;
+        if (!provider->start(runId, &providerError)) {
+            // Roll back as for a provenance failure; the results source is a
+            // start prerequisite, so the outcome is NotReady with the reason.
+            proc.endExperiment();
+            hdf5.closeFile();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            state_ = ExperimentRunState::Idle;
+            result.outcome = ExperimentStartOutcome::NotReady;
+            result.message = "execution provider '" + provider->name() + "' did not start: " + providerError;
+            SPDLOG_ERROR("ExperimentCoordinator: {}", result.message);
+            restoreModeOnFailure();
+            publishLocked(lk, "start failed");
+            return result;
+        }
+        SPDLOG_INFO("ExperimentCoordinator: PL results from '{}' (run id {})", provider->name(), runId);
     }
     activeRun_ = run;
     lastRun_ = run;
@@ -919,6 +948,19 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     const bool restoreMode = restoreRealtimeMode_;
     restoreRealtimeMode_ = false;
     lk.unlock();
+
+    // PL science: stop the provider first. It delivers what the device wrote
+    // before STOP, so the run's last frames are ingested before the drain.
+    if (!app::hostProcessingAvailable()) {
+        if (auto* provider = backend_.executionProvider()) {
+            provider->stop();
+            const auto st = provider->status();
+            SPDLOG_INFO("ExperimentCoordinator: provider '{}' stopped: {} frames, {} results, {} incomplete, "
+                        "{} decode errors, {} sequence gaps, {} overruns",
+                        provider->name(), st.frames, st.results, st.incompleteFrames, st.decodeErrors,
+                        st.sequenceGaps, st.overruns);
+        }
+    }
 
     bool ok = true;
     bool flushOk = true;

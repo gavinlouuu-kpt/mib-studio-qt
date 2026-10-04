@@ -66,8 +66,12 @@ enum class InvalidReasonCode : uint8_t {
     Ring,
     Deform,
     AreaRatio,
+    Laplacian, // per-object focus gate (develop Contract 2/3; here from PL results)
+    Channel,   // centroid outside the channel band (develop; here from PL results)
 };
-inline constexpr int kInvalidReasonCount = 6;
+// Laplacian and Channel are reported only by PL results (unet_cells_v2) on
+// this line; the host classifier never returns them here.
+inline constexpr int kInvalidReasonCount = 8;
 
 // Returns the reasons `result` is invalid. Empty for a valid detection.
 // pixelToMicronFactor converts result.area (pixels) to μm² to compare against

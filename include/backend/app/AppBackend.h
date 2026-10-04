@@ -13,6 +13,8 @@
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/recording/RecordingAccounting.h"
 
+namespace backend::processing { class IExecutionProvider; }
+
 namespace backend::services
 {
     class SqliteService;
@@ -84,6 +86,9 @@ namespace backend
         services::Hdf5Service &hdf5();
         services::CaptureService &capture();
         services::ProcessingService &processing();
+        // Source of per-frame results when the science runs on the PL
+        // (MIB_EXECUTION_PROVIDER, YOFO S1); null when none is configured.
+        processing::IExecutionProvider *executionProvider();
         services::PlaybackService &playback();
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
@@ -263,6 +268,9 @@ namespace backend
         std::unique_ptr<services::Hdf5Service> hdf5Service_;
         std::unique_ptr<services::CaptureService> captureService_;
         std::unique_ptr<services::ProcessingService> processingService_;
+        // Declared after processingService_: destroyed (and its thread stopped)
+        // before the service it feeds.
+        std::unique_ptr<processing::IExecutionProvider> executionProvider_;
         std::unique_ptr<services::PlaybackService> playbackService_;
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;

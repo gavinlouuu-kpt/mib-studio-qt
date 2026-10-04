@@ -118,6 +118,12 @@ std::vector<InvalidReason> getInvalidReasons(
                                    .arg(result.areaRatio, 0, 'f', 2)
                                    .arg(config.area_ratio_threshold_max, 0, 'f', 2)});
             break;
+        case science::InvalidReasonCode::Laplacian: // PL results only (not classified here)
+            reasons.push_back({"Focus", "Laplacian variance outside its range"});
+            break;
+        case science::InvalidReasonCode::Channel: // PL results only (not classified here)
+            reasons.push_back({"Channel", "Centroid outside the channel band"});
+            break;
         }
     }
 

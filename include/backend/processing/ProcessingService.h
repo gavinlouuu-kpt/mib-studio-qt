@@ -25,6 +25,7 @@
 #include "backend/recording/HdfWriteQueue.h"
 
 namespace backend { namespace playback { class FrameStore; struct Frame; } }
+namespace backend::processing { struct ProviderFrame; }
 
 namespace backend::services {
 
@@ -284,8 +285,8 @@ public:
         uint64_t unservedTargetGroupObjects{0}; // target-group objects beyond the frame's
                                                 // first — no pulse is dispatched for them
         // Invalid-reason histogram, indexed by science::InvalidReasonCode:
-        // {NoContour, Border, Area, Ring, Deform, AreaRatio}.
-        uint64_t reasonCounts[6]{};
+        // {NoContour, Border, Area, Ring, Deform, AreaRatio, Laplacian, Channel}.
+        uint64_t reasonCounts[8]{};
     };
     IdentificationCounters getIdentificationCounters() const;
     void resetIdentificationCounters();
@@ -480,6 +481,16 @@ public:
     using RingRatioCallback = std::function<void(double ringRatio, int64_t timestampNs)>;
     void setRingRatioCallback(RingRatioCallback callback);
 
+    // PL science (ADR 0008, YOFO S1): one frame of results from an execution
+    // provider, called on the provider thread. Feeds what the inline loop
+    // feeds after metrics: run accounting (admitted; Empty, Processed /
+    // RejectedByScientificFilter, or StoreMalformed for an ingress-error
+    // FRAME.INVALID/PARTIAL), the identification funnel and reason histogram
+    // (from the PL's reasons), and monitoring rows (without images). It never
+    // calls the target-group callback: the PL owns the trigger, so a PL
+    // decision must not cause a second pulse from the PS.
+    void ingestProviderFrame(const backend::processing::ProviderFrame& frame);
+
     // Target group trigger callback (one deterministic event per source frame)
     using TargetGroupCallback = std::function<void(const TargetGroupEvent& event)>;
     void setTargetGroupCallback(TargetGroupCallback callback);
@@ -536,6 +547,8 @@ private:
     void accumulateIdentificationCounters(const std::vector<FilterResult>& validations,
                                           const ProcessingConfig& config,
                                           double pixelToMicronFactor);
+    void appendProviderMonitoringRow(uint64_t index, uint64_t timestampNs, const FilterResult& validation);
+    void accumulateProviderIdentification(const backend::processing::ProviderFrame& frame);
     void appendRealtimeMonitoringFrame(uint64_t index,
                                        uint64_t timestampNs,
                                        const FilterResult& validation,
@@ -797,7 +810,7 @@ private:
     std::atomic<uint64_t> idInvalidObjects_{0};
     std::atomic<uint64_t> idTargetGroupObjects_{0};
     std::atomic<uint64_t> idUnservedTargetGroupObjects_{0};
-    std::atomic<uint64_t> idReasonCounts_[6]{};
+    std::atomic<uint64_t> idReasonCounts_[8]{};
     
     // Pixel to micron conversion factor (default: 0.4886)
     std::atomic<double> pixelToMicronFactor_{0.4886};

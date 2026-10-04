@@ -550,3 +550,13 @@ persisted HDF5 schemas are unchanged. Primary-target bounds describe only the se
 snapshot object; contours may include other objects and are not all labelled targets.
 
 Processed preview capture-session identity is copied from the immutable input frame through inline and async batch host metadata, independently of processing-session/store epochs. It is never sampled from a newer live capture session; the UI labels both generations. Portable core ABI and recorded HDF5 layout are unchanged.
+
+## PL science ingest (YOFO S1)
+
+With the science on the PL (`MIB_PL_SCIENCE`), per-frame results come from
+an execution provider instead of the realtime loops.
+`ingestProviderFrame(const ProviderFrame&)` books the run accounting and feeds
+the identification funnel (PL reasons, 8 codes) and the monitoring rows,
+which carry no images. It never fires the target-group callback. See
+[[../data-model/PZ7035-Records]].
+

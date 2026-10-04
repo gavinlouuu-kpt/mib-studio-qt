@@ -17,6 +17,8 @@
 #include "backend/recording/RoiCrop.h"
 #include "backend/services/CaptureService.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/app/SciencePlacement.h"
+#include "backend/processing/pz/ExecutionProviderFactory.h"
 #include "backend/playback/PlaybackService.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/camera/egrabber/EGrabberCamera.h"
@@ -252,6 +254,9 @@ namespace backend
         }
 
         // Stop admitting new trigger requests before anything is torn down.
+        if (executionProvider_) {
+            executionProvider_->stop(); // no further ingest into processing
+        }
         if (processingService_) {
             processingService_->setTargetGroupCallback({});
             processingService_->setBackgroundCaptureCallback({});
@@ -594,6 +599,24 @@ namespace backend
             SPDLOG_WARN("AppBackend: processing bootstrap disabled by MIB_DISABLED_SERVICES");
         }
         // Note: startRealtime() is now called when Experiment tab becomes active, not during initialization
+
+        // PL science (ADR 0008): per-frame results come from an execution
+        // provider instead of the host pipeline (YOFO S1).
+        if (bootProcessing && !app::hostProcessingAvailable())
+        {
+            std::string providerError;
+            executionProvider_ = processing::pz::makeExecutionProviderFromEnv(&providerError);
+            if (executionProvider_)
+            {
+                executionProvider_->setSink([this](processing::ProviderFrame &&frame)
+                                            { processingService_->ingestProviderFrame(frame); });
+                SPDLOG_INFO("AppBackend: PL results from execution provider '{}'", executionProvider_->name());
+            }
+            else if (!providerError.empty())
+            {
+                SPDLOG_ERROR("AppBackend: {}", providerError);
+            }
+        }
 
         // Wire autofocus service to receive ring ratios from processing service
         if (bootProcessing && bootAutofocus)
@@ -988,6 +1011,7 @@ namespace backend
     services::Hdf5Service &AppBackend::hdf5() { return *hdf5Service_; }
     services::CaptureService &AppBackend::capture() { return *captureService_; }
     services::ProcessingService &AppBackend::processing() { return *processingService_; }
+    processing::IExecutionProvider *AppBackend::executionProvider() { return executionProvider_.get(); }
     services::PlaybackService &AppBackend::playback() { return *playbackService_; }
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }

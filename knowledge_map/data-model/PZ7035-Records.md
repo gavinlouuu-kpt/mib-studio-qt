@@ -87,8 +87,37 @@ frame-id gaps and 0 incomplete frames:
 | `results-hw-20261003/dark-120s` | 600,157 | 0 |
 | `results-hw-20261004/results4-dark` | 100,091 | 0 |
 
+## Ingest and lifecycle (YOFO S1)
+
+- **Selection** — `MIB_EXECUTION_PROVIDER` (`ExecutionProviderFactory`):
+  `pz` for `/dev/mem`, or `replay:<file>[@fps]`. With `MIB_PL_SCIENCE`,
+  `AppBackend` creates the provider, sets its sink to
+  `ProcessingService::ingestProviderFrame`, and stops it at shutdown before
+  the service.
+- **Ingest** — `ProcessingService::ingestProviderFrame` feeds what the inline
+  loop feeds after metrics:
+  - run accounting: an ingress-error frame (FRAME.INVALID/PARTIAL) is booked
+    `StoreMalformed`, not a processing failure;
+  - the identification funnel, with the PL's own reasons; the histogram has 8
+    codes, matching develop (Laplacian, Channel);
+  - monitoring rows without images, carrying the configured p2m.
+  - It never calls the target-group callback: the PL owns the trigger.
+- **Readiness** — `science.pl` passes with the provider named, and warns
+  without one.
+- **Start** — the coordinator arms the provider after the run's accounting
+  started. If the provider cannot start, the Start rolls back (`NotReady`,
+  file removed).
+- **Stop** — the provider stops before the final drain, so the frames the
+  device wrote before STOP are ingested.
+- **Tests:**
+  - `processing.pz_provider_ingest`: accounting, funnel, monitoring, no
+    trigger;
+  - `backend.pl_science_provider`: 300 replayed frames through a real
+    start/stop, accounting reconciles.
+
 ## Not yet
 
-- `ProcessingService::ingestProviderFrame` (accounting, monitoring rows
-  without images, identification, recording) and provider selection in
-  `AppBackend` (W3.B2).
+- Recording the PL cells to HDF5 (metadata rows without images; S3).
+- Profile compiler and table upload (S2), and the store drain.
+- A board check of `PzDevMemExecutionProvider` against `pzres` (needs a board
+  slot).

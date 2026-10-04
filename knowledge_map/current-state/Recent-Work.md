@@ -24,6 +24,14 @@ Execution providers (YOFO S1, first slice): the `IExecutionProvider` seam,
 captures (800k frames) replay with 0 decode errors and 0 gaps
 (`processing.pz_execution_provider`).
 
+PL results reach the application: `ProcessingService::ingestProviderFrame`
+feeds run accounting, the identification funnel (8 reason codes) and
+monitoring rows without images; it never fires a PS trigger. `AppBackend`
+selects the provider with `MIB_EXECUTION_PROVIDER`. `ExperimentCoordinator`
+arms it at Start and stops it before the drain at Stop, and `science.pl`
+readiness passes with a provider. Tests: `processing.pz_provider_ingest`,
+`backend.pl_science_provider`.
+
 ## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
 
 `MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21

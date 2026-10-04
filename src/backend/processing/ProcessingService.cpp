@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingService.h"
+#include "backend/processing/IExecutionProvider.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingScience.h"
@@ -2041,7 +2042,7 @@ void ProcessingService::accumulateIdentificationCounters(
     const std::vector<FilterResult>& validations, const ProcessingConfig& config,
     double pixelToMicronFactor) {
     namespace science = backend::processing::science;
-    static_assert(science::kInvalidReasonCount == 6,
+    static_assert(science::kInvalidReasonCount == 8,
                   "idReasonCounts_ / IdentificationCounters.reasonCounts size must match "
                   "science::kInvalidReasonCount");
 
@@ -2101,7 +2102,7 @@ ProcessingService::IdentificationCounters ProcessingService::getIdentificationCo
     c.invalidObjects = idInvalidObjects_.load(std::memory_order_relaxed);
     c.targetGroupObjects = idTargetGroupObjects_.load(std::memory_order_relaxed);
     c.unservedTargetGroupObjects = idUnservedTargetGroupObjects_.load(std::memory_order_relaxed);
-    for (size_t i = 0; i < 6; ++i) {
+    for (size_t i = 0; i < 8; ++i) {
         c.reasonCounts[i] = idReasonCounts_[i].load(std::memory_order_relaxed);
     }
     return c;
@@ -2142,6 +2143,66 @@ void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t t
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
         monitoringInvalidFrames_.push_back(std::move(monitoringFrame));
+    }
+}
+
+void ProcessingService::appendProviderMonitoringRow(uint64_t index, uint64_t timestampNs,
+                                                    const FilterResult& validation) {
+    if (!monitoringActive_.load(std::memory_order_relaxed)) return;
+    ProcessedFrame row; // no images: the PL sends results only
+    row.index = index;
+    row.timestampNs = timestampNs;
+    row.validation = validation;
+    std::scoped_lock monitoringLk(monitoringFramesMutex_);
+    if (validation.isValid) {
+        monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringValidFrames_.push_back(std::move(row));
+    } else {
+        monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringInvalidFrames_.push_back(std::move(row));
+    }
+}
+
+void ProcessingService::accumulateProviderIdentification(const backend::processing::ProviderFrame& frame) {
+    idFramesProcessed_.fetch_add(1, std::memory_order_relaxed);
+    if (!frame.cells.empty()) idFramesWithObjects_.fetch_add(1, std::memory_order_relaxed);
+    uint64_t targets = 0;
+    for (const auto& cell : frame.cells) {
+        if (cell.valid()) {
+            idValidObjects_.fetch_add(1, std::memory_order_relaxed);
+            targets += cell.target ? 1 : 0;
+            continue;
+        }
+        idInvalidObjects_.fetch_add(1, std::memory_order_relaxed);
+        // PL reason code = InvalidReasonCode + 1 (code 4, Ring, is unused).
+        const int code = static_cast<int>(cell.reason);
+        if (code >= 1 && code <= backend::processing::science::kInvalidReasonCount) {
+            idReasonCounts_[static_cast<size_t>(code - 1)].fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Target-group cells the PL marked. Unserved targets need the PL's EVENT
+    // records (trigger output), which this image does not emit yet.
+    if (targets) idTargetGroupObjects_.fetch_add(targets, std::memory_order_relaxed);
+}
+
+void ProcessingService::ingestProviderFrame(const backend::processing::ProviderFrame& frame) {
+    const uint64_t idx = frame.frameId;
+    noteRealtimeAdmitted(idx);
+    if (frame.invalid()) {
+        // An ingress-error frame: the input was unusable, nothing was measured.
+        noteRealtimeOutcome(idx, backend::recording::FrameOutcome::StoreMalformed);
+        return;
+    }
+    if (frame.objects.empty()) {
+        noteRealtimeOutcome(idx, backend::recording::FrameOutcome::Empty);
+        return;
+    }
+    noteRealtimeValidation(idx, frame.objects);
+    accumulateProviderIdentification(frame);
+    const double p2m = getPixelToMicronFactor();
+    for (FilterResult v : frame.objects) {
+        v.analysisPixelToMicronFactor = p2m; // the calibration the profile was compiled with
+        appendProviderMonitoringRow(idx, frame.timestampNs, v);
     }
 }
 

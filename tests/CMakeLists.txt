@@ -128,6 +128,11 @@ set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;
 mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
 add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
 set_tests_properties(backend.pl_science PROPERTIES LABELS "backend" TIMEOUT 60)
+mib_add_backend_test_executable(pl_science_provider_test backend/pl_science_provider_test.cpp)
+mib_backend_test_link(pl_science_provider_test PRIVATE Threads::Threads)
+add_test(NAME backend.pl_science_provider COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_provider_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(backend.pl_science_provider PROPERTIES LABELS "backend;recording;concurrency" TIMEOUT 120)
 mib_add_backend_test_executable(backend_lifecycle_smoke_test backend/backend_lifecycle_smoke_test.cpp)
 mib_add_backend_test_executable(hardware_shutdown_test backend/hardware_shutdown_test.cpp)
 add_test(NAME backend.hardware_shutdown COMMAND $<TARGET_FILE:mib_backend_tests> hardware_shutdown_test)
@@ -386,6 +391,12 @@ mib_backend_test_link(pz_execution_provider_test PRIVATE Threads::Threads)
 add_test(NAME processing.pz_execution_provider COMMAND $<TARGET_FILE:mib_backend_tests> pz_execution_provider_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_execution_provider PROPERTIES LABELS "processing;backend;concurrency" TIMEOUT 90)
+
+mib_add_backend_test_executable(pz_provider_ingest_test processing/pz_provider_ingest_test.cpp)
+mib_backend_test_link(pz_provider_ingest_test PRIVATE Threads::Threads)
+add_test(NAME processing.pz_provider_ingest COMMAND $<TARGET_FILE:mib_backend_tests> pz_provider_ingest_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_provider_ingest PROPERTIES LABELS "processing;backend;recording;concurrency" TIMEOUT 90)
 
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_golden_test)
