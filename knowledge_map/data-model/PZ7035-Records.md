@@ -10,6 +10,8 @@
 `PROVENANCE.json`; `scripts/vendor_pz7035_abi.py --from <repo>` refreshes it,
 `--check` verifies it)
 **Tests:** `processing.pz_records`, `scripts.pz7035_abi_vendor`
+(`processing.pz_unet_cells_host`, the comparison with the host Contract 3
+science, lives on `develop`, which has Contract 3)
 **Related:** [[HDF5-Storage]], [[../services/ProcessingService]]
 
 ## Wire format
@@ -41,11 +43,16 @@
 ## Profile `unet_cells_v2`
 
 `decodeUnetCellsV2` turns a RESULT of science profile 2, version 2 into a
-Contract 3 `FilterResult` plus the profile reason, coverage flag, area µm²
-and hull perimeter. Coordinates are in ROI 1. Any other profile, or a short
-payload, gives `nullopt`: the payload is unavailable, never zero. The test
-checks that the PL vectors' payloads, passed through encode, decode and the
-profile decoder, equal the host science on the same frames.
+`UnetCell`: plain host-unit values with the profile reason, flags, shape,
+brightness, focus metric, counts and centroid. Coordinates are in ROI 1.
+
+- The module does not depend on the processing contracts, so the PZ7035
+  application line can take it as is.
+- Any other profile, or a short payload, gives `nullopt`: the payload is
+  unavailable, never zero.
+- On `develop`, `processing.pz_unet_cells_host` checks that the PL vectors'
+  payloads, passed through encode, decode and the profile decoder, equal the
+  host Contract 3 science on the same frames.
 
 ## Not yet
 

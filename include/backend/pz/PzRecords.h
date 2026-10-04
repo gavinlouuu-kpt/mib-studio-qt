@@ -12,9 +12,8 @@
 // reference decoder (src/imx426/mib_abi.py) and are checked against its
 // fixtures (processing.pz_records).
 //
-// Qt-free; part of mib_processing.
-
-#include "backend/processing/ProcessingTypes.h"
+// Qt-free and independent of the processing contracts (the profile decoder
+// returns plain values); part of mib_processing.
 
 #include <array>
 #include <cstddef>
@@ -264,19 +263,51 @@ private:
 inline constexpr uint16_t kScienceProfileUnetCells = 2;
 inline constexpr uint16_t kUnetCellsProfileVersion = 2;
 
+// Profile reason codes (the host InvalidReasonCode + 1; 4 is unused).
+enum class UnetCellReason : uint8_t {
+    None = 0,
+    NoContour = 1,
+    Border = 2,
+    Area = 3,
+    Deform = 5,
+    AreaRatio = 6,
+    Laplacian = 7,
+    Channel = 8,
+};
+
+// One cell of profile unet_cells_v2, in host units. Coordinates are in ROI 1
+// (the sensor window). Values the validity mask leaves out are NaN (doubles)
+// or 0; cut-off and degenerate cells carry only the always-present words.
 struct UnetCell {
-    services::FilterResult result; // Contract-3 fields, coordinates in ROI 1
-    int reason{0};                 // profile reason code (0 NONE ... 8 CHANNEL)
+    int objectId{0};    // 1-based, in bounding-box order
+    int cellCount{0};   // cells of the frame that passed the size gate
+    int blemishCount{0};
+    int pixelCount{0};  // mask pixels of this cell's component
+    UnetCellReason reason{UnetCellReason::None};
+    bool cutOff{false}; // touches the ROI 2 edge (1 px rule)
+    bool target{false};
     bool emodulusOutOfCoverage{false};
-    double areaUm2{std::numeric_limits<double>::quiet_NaN()};
+    double bboxX{0}, bboxY{0}, bboxWidth{0}, bboxHeight{0}; // from the envelope
+    double contourArea{0};                                  // px
+    double hullArea{0};                                     // px (the host's area)
     double hullPerimeter{std::numeric_limits<double>::quiet_NaN()};
     int hullCount{0};
+    double areaRatio{std::numeric_limits<double>::quiet_NaN()};
+    double deformability{std::numeric_limits<double>::quiet_NaN()};
+    double areaUm2{std::numeric_limits<double>::quiet_NaN()};
+    double youngsModulusKpa{std::numeric_limits<double>::quiet_NaN()};
+    double brightnessMean{std::numeric_limits<double>::quiet_NaN()};
+    double brightnessVariance{std::numeric_limits<double>::quiet_NaN()};
+    double laplacianVariance{std::numeric_limits<double>::quiet_NaN()};
+    double centroidX{std::numeric_limits<double>::quiet_NaN()};
+    double centroidY{std::numeric_limits<double>::quiet_NaN()};
+    bool valid() const { return reason == UnetCellReason::None; }
+    bool degenerate() const { return reason == UnetCellReason::NoContour; }
 };
 
 // Decode a RESULT of profile unet_cells_v2. nullopt for any other profile or
 // version (the envelope stays usable; the payload is unavailable, never zero)
-// or a payload shorter than 15 words. Words the validity mask leaves out
-// decode as NaN / 0.
+// or a payload shorter than 15 words.
 std::optional<UnetCell> decodeUnetCellsV2(const ResultRecord& result);
 
 } // namespace backend::pz

@@ -378,42 +378,35 @@ std::optional<UnetCell> decodeUnetCellsV2(const ResultRecord& r) {
     auto sq16 = [&](int i) { return valid(i) ? static_cast<int32_t>(w[i]) / 65536.0 : nan; };
     auto q8 = [&](int i) { return valid(i) ? w[i] / 256.0 : nan; };
 
-    UnetCell cell;
-    services::FilterResult& f = cell.result;
-    cell.reason = static_cast<int>(w[0] >> 16 & 15u);
-    cell.emodulusOutOfCoverage = (w[0] >> 23 & 1u) != 0;
-    f.objectId = static_cast<int>(w[0] & 0xFFFFu);
-    f.touchesBorder = (w[0] >> 20 & 1u) != 0;
-    f.isTargetGroup = (w[0] >> 24 & 1u) != 0;
-    f.isValid = cell.reason == 0;
-    f.inRange = f.isValid;
-    f.inChannel = cell.reason != 8;
-    f.degenerateContour = cell.reason == 1;
-    f.ringRatio = nan;
-    f.brightness = {nan, nan, nan, nan};
-    f.bboxX = r.bboxX;
-    f.bboxY = r.bboxY;
-    f.bboxWidth = r.bboxW;
-    f.bboxHeight = r.bboxH;
-    f.contourArea = valid(1) ? w[1] / 65536.0 : 0.0;
-    f.area = valid(2) ? w[2] / 65536.0 : 0.0;
-    cell.hullPerimeter = q16(3);
-    f.areaRatio = valid(4) ? w[4] / 65536.0 : 0.0;
+    UnetCell c;
+    c.objectId = static_cast<int>(w[0] & 0xFFFFu);
+    c.reason = static_cast<UnetCellReason>(w[0] >> 16 & 15u);
+    c.cutOff = (w[0] >> 20 & 1u) != 0;
+    c.emodulusOutOfCoverage = (w[0] >> 23 & 1u) != 0;
+    c.target = (w[0] >> 24 & 1u) != 0;
+    c.bboxX = r.bboxX;
+    c.bboxY = r.bboxY;
+    c.bboxWidth = r.bboxW;
+    c.bboxHeight = r.bboxH;
+    c.contourArea = valid(1) ? w[1] / 65536.0 : 0.0;
+    c.hullArea = valid(2) ? w[2] / 65536.0 : 0.0;
+    c.hullPerimeter = q16(3);
+    c.areaRatio = q16(4);
     if (valid(5)) {
-        f.deformability = (w[5] & 0xFFFFu) / 65536.0;
-        cell.hullCount = static_cast<int>(w[5] >> 16 & 0xFFu);
+        c.deformability = (w[5] & 0xFFFFu) / 65536.0;
+        c.hullCount = static_cast<int>(w[5] >> 16 & 0xFFu);
     }
-    f.objectCount = static_cast<int>(w[5] >> 24);
-    f.brightnessMean = q16(6);
-    f.centroidX = sq16(7);
-    f.centroidY = sq16(8);
-    cell.areaUm2 = q16(9);
-    f.youngsModulus = q16(10);
-    f.laplacianVariance = q8(11);
-    f.pixelCount = static_cast<int>(w[13] & 0xFFFFu);
-    f.blemishCount = static_cast<int>(w[13] >> 16);
-    f.brightnessVariance = q8(14);
-    return cell;
+    c.cellCount = static_cast<int>(w[5] >> 24); // present for every cell
+    c.brightnessMean = q16(6);
+    c.centroidX = sq16(7);
+    c.centroidY = sq16(8);
+    c.areaUm2 = q16(9);
+    c.youngsModulusKpa = q16(10);
+    c.laplacianVariance = q8(11);
+    c.pixelCount = static_cast<int>(w[13] & 0xFFFFu);
+    c.blemishCount = static_cast<int>(w[13] >> 16);
+    c.brightnessVariance = q8(14);
+    return c;
 }
 
 } // namespace backend::pz
