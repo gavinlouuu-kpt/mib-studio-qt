@@ -1157,7 +1157,7 @@ fn local_profiles_roundtrip_and_conflict() {
     assert_eq!(stale["ok"],false);
     assert!(data_dir.as_path().join("profiles/test/config.json").exists());
     bridge.pin_mut().shutdown();
-    std::fs::remove_dir_all(data_dir).unwrap();
+    let _ = std::fs::remove_dir_all(data_dir);
 }
 
 #[test]
@@ -1175,7 +1175,8 @@ fn processing_core_management_bundled_roundtrip() {
     let restored:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"restore"}"#)).unwrap();
     assert_eq!(restored["ok"],true);
     assert_eq!(activate["active_version"],restored["active_version"]);
-    bridge.pin_mut().shutdown();std::fs::remove_dir_all(data_dir).unwrap();
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data_dir);
 }
 
 #[test]
@@ -1192,5 +1193,5 @@ fn recovery_refuses_unconfirmed_or_absent_fault_and_reports_capture_lifecycle() 
     assert_eq!(status["generation"], "0");
     assert_eq!(status["state"], "idle");
     bridge.pin_mut().shutdown();
-    std::fs::remove_dir_all(dir).unwrap();
+    let _ = std::fs::remove_dir_all(dir);
 }
