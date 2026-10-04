@@ -422,8 +422,9 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
   index, and `"algorithm"` on each native entry. Each line discovers only its own
   `mib_processing_core-[<line>-]<version>-<os>_<arch>` assets and refuses a
   descriptor, tag, catalog or immutable manifest of another line. Not yet
-  consumed: the Processing Core dialog reads only `processing-core/`, and the
-  release workflow does not invoke the new line yet. See
+  consumed by the desktop yet: the Processing Core dialog reads only
+  `processing-core/`. The release workflow publishes the line on
+  `mib-processing-absdiff-laplacian-v*` tags (see "Per-line core releases"). See
   `docs/portable-processing-sync.md` ("Core lines").
 - **absdiff-laplacian core built and audited in CI** (2026-09-27, Contract 2
   rollout T1.1b step 1) — `mib_processing_core_absdiff_laplacian` now builds
