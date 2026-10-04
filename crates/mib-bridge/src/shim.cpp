@@ -1860,8 +1860,8 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // (registry_sign_in/sign_out/refresh/download/cancel_all,
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
 // contract groups — #398; registry_job_kinds Materialize/RecordValidation,
-// registry_local_validation, registry_materialize and
-// registry_record_validation were added before v15 shipped). All additive over v1 (ADR 0003/0004). Must match
+// registry_local_validation, registry_materialize, registry_record_validation
+// and the authoring job kinds 6-10 were added before v15 shipped). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 std::uint32_t bridge_abi_version() { return 15; }
 
