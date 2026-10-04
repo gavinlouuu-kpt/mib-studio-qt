@@ -1854,8 +1854,9 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // groups (#419, ADR 0005); v15 added the central profile registry
 // (registry_sign_in/sign_out/refresh/download/cancel_all,
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
-// contract groups — #398; registry_job_kinds Materialize/RecordValidation were
-// appended before v15 shipped). All additive over v1 (ADR 0003/0004). Must match
+// contract groups — #398; registry_job_kinds Materialize/RecordValidation,
+// registry_local_validation, registry_materialize and
+// registry_record_validation were added before v15 shipped). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 std::uint32_t bridge_abi_version() { return 15; }
 

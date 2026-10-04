@@ -1,5 +1,24 @@
 # Recent Work
 
+## 2026-10-04 — Apply and Mark validated for central methods (#398 M2b)
+
+Qt **Settings → Central Methods…** can now **Apply** a cached published or
+superseded revision: it is materialized if needed, the config.json keys that
+change are listed for confirmation, the current config.json is backed up
+(`config.json.bak-<UTC>`), and `AppConfigWatcher::applyMethodDocument` writes
+the revision byte-for-byte and reloads, so the `method.revision` gate and the
+run's `/run_provenance` name it. **Mark validated… / Record failed run…** (Qt
+and React) take a test-run `.h5`; `AppBackend::requestMethodValidation` only
+accepts a run whose frozen provenance names that exact revision on this
+instrument under the current core/camera context. Rows show local validation
+and the applied revision; the bridge gains `registry_materialize`,
+`registry_record_validation` and the `registry_local_validation` group
+(inside unreleased ABI 15). React shows Apply disabled with the reason (no
+config.json applier in that shell yet). Guards: `backend.method_provenance`
+(diff/evidence/local view), `e2e.method_gate` (evidence through real runs),
+`profiles.registry_facade`, `frontend.central_methods`, `frontend.config_apply`,
+bridge cargo tests, `registry.test.ts`; two guard mutations were caught.
+
 ## 2026-10-04 — Central method provenance + `method.revision` gate (#398 M2a, backend)
 
 The applied config.json is now recognised as a cached central revision by its
