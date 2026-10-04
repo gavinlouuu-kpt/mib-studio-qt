@@ -25,6 +25,7 @@
 #include "backend/services/CameraControlService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/TriggerService.h"
+#include "backend/services/DotGridService.h"
 #include "backend/services/YoloService.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
@@ -335,6 +336,10 @@ namespace backend
         if (captureService_) {
             captureService_->setCameraReadyCallback({});
         }
+        if (dotGridService_) {
+            dotGridService_->setPoseCallback({});
+            dotGridService_->stop();
+        }
         stopFrameRecording();
         if (processingService_) {
             SPDLOG_INFO("AppBackend: shutdown stopping processing");
@@ -413,6 +418,8 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
+        dotGridService_ = std::make_unique<services::DotGridService>();
+        dotGridService_->setFrameStore(frameStore_);
 
         // Device discovery (issue #419, ADR 0005): one job service, compiled-in
         // providers wrapping the existing enumeration/probe code, a camera
@@ -463,6 +470,7 @@ namespace backend
         bool bootYolo = true;
         bool bootAutofocus = true;
         bool bootTrigger = true;
+        bool bootDotGrid = true;
         bool bootCapture = true;
         bool bootPlayback = true;
         if (const char *rawDisabledServices = std::getenv("MIB_DISABLED_SERVICES"))
@@ -498,6 +506,7 @@ namespace backend
                     bootTrigger = false;
                     bootCapture = false;
                     bootPlayback = false;
+                    bootDotGrid = false;
                 }
                 else if (token == "sqlite")
                 {
@@ -523,6 +532,10 @@ namespace backend
                 {
                     bootTrigger = false;
                 }
+                else if (token == "dot_grid" || token == "dotgrid")
+                {
+                    bootDotGrid = false;
+                }
                 else if (token == "capture" || token == "camera")
                 {
                     bootCapture = false;
@@ -547,8 +560,19 @@ namespace backend
             }
         }
 
-        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}",
-                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback);
+        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}, dot_grid={}",
+                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback, bootDotGrid);
+
+        // Dot-grid wafer localization: the thread idles until the frontend
+        // enables it (config "dot_grid.enabled"); it only ever reads FrameStore.
+        if (bootDotGrid)
+        {
+            dotGridService_->start();
+        }
+        else
+        {
+            SPDLOG_WARN("AppBackend: dot-grid localization disabled by MIB_DISABLED_SERVICES");
+        }
 
         if (bootSqlite)
         {
@@ -972,6 +996,7 @@ namespace backend
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
     services::TriggerService &AppBackend::trigger() { return *triggerService_; }
+    services::DotGridService &AppBackend::dotGrid() { return *dotGridService_; }
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }

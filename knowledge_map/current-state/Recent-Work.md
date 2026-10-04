@@ -44,6 +44,78 @@ and `near` as empty macros; reached through `AppBackend.cpp`), and
 on `feat/trigger-frame-alignment` (73a0f232). Root cause of the escape: the
 Windows build runs only on `develop` pushes, not on PRs.
 
+## 2026-10-02 — Central profile registry foundation (#398, PR #402)
+
+Provider-neutral registry contract, canonical method envelope over the existing
+config/script payload, Supabase RPC provider, immutable origin/user-scoped SQLite
+cache with exact instrument/context validation, and PostgreSQL schema/RLS/lifecycle
+functions. Not yet wired into AppBackend, either shell or Start. Brought up to date
+with `develop` and built/tested under the full backend preset for the first time.
+Fixed on the way (regression-first): one noncanonical revision in a project used to
+stop sync for every later revision (pages hold one revision, and decoding threw);
+it is now reported in `RevisionPage::rejected`, counted in registry health, never
+cached, and the cursor advances. Guards: `profiles.registry` (CTest) and the PGlite
+suite (`npm test --prefix supabase`, `profile-registry-ci.yml`). See
+[[../services/ProfileRegistryService]] and
+`docs/exec-plans/active/2026-09-10-central-profile-registry.md`.
+
+## 2026-10-02 — Dot-grid review fixes (PR #472)
+
+Ten review findings fixed: the Overview Wafer Grid toggle survives
+`config.json` reloads (`enabled` applies only when the file value changes);
+exact 64-bit seeds from `config.json`; no exception leaves the
+[[../services/DotGridService]] thread and the bit grid is capped; a config
+change re-decodes the current frame; `DesignDecoder` keeps cross-core
+ambiguity and stage-ranked failures; the registry fingerprint covers names
+and chip outlines; `Codebook::loadJson` validates the m-sequence and phases;
+`VERSION` is a CMake configure dependency; the Overview copies a pose only
+when `poseSequence()` moves; the blob gate tolerates a 2× scale-hint error
+(0.2–5× area, C++ and Python). New test `frontend.dot_grid_config`;
+registry, decoder, codebook, service and Python tests extended.
+
+## 2026-10-02 — Dot-grid codec cores: contract + core version, gold references (phase 1)
+
+The dot-grid encoder/decoder now follow the processing-core model (ADR
+0010): a frozen **codec contract** (contract 1 = `mseq63-delta2`) separate
+from the **core version** (`scripts/dot_grid/dotgrid/VERSION`, compiled in as
+`MIB_DOTGRID_CORE_VERSION`). Registry designs require `codec_contract` and
+record their `encoder` core; `ICodec` / `bundledCodec()` / `CodecSet` /
+`DesignDecoder` route each design to the core of its contract and fail
+closed (unsupported designs are logged, never decoded); results and
+[[../services/DotGridService]] poses name the core. Frozen gold reference
+`scripts/dot_grid/gold/codec-contract1.json` (exact encode + 12 decode cases)
+is met by the C++ core (`processing.dot_grid_codec_gold`) and the Python
+reference (`dotgrid_cli.py gold`), and is guarded by `gold-reference-change`.
+Plugin ABI, signed loader, wheel encoder and catalog are planned in
+`docs/exec-plans/active/2026-10-02-dot-grid-codec-cores.md`.
+
+## 2026-10-02 — Wafer Grid moved to the Overview tab; no decoding next to experiments
+
+Dot-grid localization now lives on [[../frontend/OverviewTab]] only: the
+**Wafer Grid** toggle and overlay moved off the Experiment Preview page
+(`PlaybackPanel` is back to its pre-dot-grid state), and the Overview pauses
+[[../services/DotGridService]] (`setPaused`) whenever it is not on screen, so
+the service decodes nothing while the Experiment tab is current, even with
+Wafer Grid on. Resuming wakes the service (`wakeRequested_`) to decode the
+newest frame at once. Tests: new `frontend.dot_grid_overview`; pause/resume
+section in `backend.dot_grid_service`.
+
+## 2026-10-01 — Dot-grid design registry: the app knows which chip design it sees
+
+Every chip design with a dot grid is now registered once in
+`resources/defaults/dot_grid/registry.json` (bundled into the app) with a
+unique, never-reused seed; the seed is the design identity (ADR 0009).
+Developers run `scripts/dot_grid/dotgrid_cli.py register DESIGN.dxf --id …`
+(registry entry + GDS/DXF/CSV mask layer, after a synthetic cross-design
+check) and open a PR; `mask` regenerates a registered layer, `list` / `check`
+inspect the registry. `backend::dotgrid::Registry` (Qt-free) loads it; the
+decoder tries every design (detection once per dot geometry) and
+[[../services/DotGridService]] poses carry `designId` / `designName`; the
+Preview overlay shows them with the chip. `dot_grid.registry_path` merges a
+local registry for designs not yet shipped. New test
+`processing.dot_grid_registry`; service and Python tests extended. Task
+record: [[../task/2026-10-01-dot-grid-design-registry]].
+
 ## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
 
 The Review tab's Charts scatter is now a `ZoomableChartView` and a single
@@ -268,6 +340,26 @@ and the team Conan remote) since 2026-03-24; the file is untracked and
 ignored, both credentials must be rotated by their owners, and golden
 principle 11 now states the rule. No other tracked file contained either
 value. See [[../../docs/exec-plans/completed/2026-09-21-self-provisioning-environment]].
+
+## 2026-09-17 — Dot-grid wafer localization (fiducial pattern + decoder + overlay)
+
+The camera can now tell where on the Wafer_soRT wafer, and on which chip, it
+is looking: an Anoto-style displaced-dot lattice (30 µm pitch, 12 µm dots,
+5 µm shift, seed 7) is generated into the channel-layer mask by
+`scripts/dot_grid/` (DXF → GDS + `codebook.json`), and the Qt-free
+`backend::dotgrid` codebook/decoder in `mib_processing` decodes any ~6 × 6 dot
+patch to absolute mask coordinates, rotation, measured µm/px, mirror flag
+(glass-side viewing) and chip id. [[../services/DotGridService]] samples the
+latest FrameStore frame every 250 ms on its own thread and publishes a
+`Pose`; `PlaybackPanel` shows it behind a **Wafer Grid** toggle;
+`config.json` gained `dot_grid`, `MIB_DISABLED_SERVICES` gained `dot_grid`.
+Tests: `processing.dot_grid_codebook` (C++/Python golden parity),
+`processing.dot_grid_decoder`, `backend.dot_grid_service`,
+`scripts.dot_grid_reference`. ADR 0008; design in
+`docs/architecture/dot-grid-localization.md`; how-to in
+`docs/howto/dot-grid-mask-generation.md`; exec plan
+`docs/exec-plans/active/2026-09-17-dot-grid-localization.md`.
+Task record: [[../task/2026-09-17-dot-grid-localization]].
 
 ## 2026-09-16 — Device discovery service with providers (#419)
 
