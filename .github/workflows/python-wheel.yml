@@ -363,6 +363,8 @@ jobs:
             -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$env:APP_MAX_VERSION"
           cmake --build build --config Release --target `
             mib_processing_core `
+            mib_processing_core_absdiff_laplacian `
+            processing_core_contract2_equivalence_test `
             processing_core_abi_c_test `
             processing_core_loader_test `
             processing_core_cache_test `
@@ -372,7 +374,7 @@ jobs:
       - name: Verify native ABI, loader, and cache
         shell: pwsh
         run: |
-          $command = 'call build\conanrun.bat && ctest --test-dir build -C Release -R "processing\.core_(abi_c|loader|cache|fixture_matrix)" --output-on-failure'
+          $command = 'call build\conanrun.bat && ctest --test-dir build -C Release -R "processing\.core_(abi_c|loader|cache|fixture_matrix|contract2_equivalence)" --output-on-failure'
           & cmd.exe /d /s /c $command
           if ($LASTEXITCODE -ne 0) {
             throw "Native processing-core tests failed with exit code $LASTEXITCODE"
@@ -494,6 +496,66 @@ jobs:
           path: ${{ runner.temp }}/mib-processing-native-dist/*
           if-no-files-found: error
 
+      # ADR 0007: the absdiff-laplacian (Contract 2) line, staged apart from
+      # the subtract-ring assets so the signing job's DLL glob never sees it.
+      - name: Locate and audit the absdiff-laplacian (Contract 2) core
+        shell: pwsh
+        run: |
+          $pyproject = Get-Content bindings/python/pyproject.toml -Raw
+          if ($pyproject -notmatch '(?m)^version\s*=\s*"([^"]+)"\s*$') {
+            throw 'Could not read mib-processing version from pyproject.toml'
+          }
+          $version = $matches[1]
+          $stem = "mib_processing_core-absdiff-laplacian-$version-windows_x86_64"
+          $dll = Get-Item -LiteralPath "build\Release\$stem.dll" -ErrorAction SilentlyContinue
+          $descriptor = Get-Item -LiteralPath "build\Release\$stem.json" -ErrorAction SilentlyContinue
+          if (-not $dll -or -not $descriptor) {
+            throw "Expected Contract-2 assets $stem.dll and $stem.json under build/Release"
+          }
+          $metadata = Get-Content $descriptor.FullName -Raw | ConvertFrom-Json
+          if ($metadata.filename -ne $dll.Name -or $metadata.version -ne $version -or
+              $metadata.algorithm -ne 'absdiff-laplacian' -or $metadata.contract_version -ne 2 -or
+              $metadata.engine_abi_version -ne 2 -or $metadata.entrypoint -ne 'mib_processing_get_api_v2') {
+            throw 'Contract-2 sidecar identity does not match the built DLL/version/contract'
+          }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          $dumpbin = Get-ChildItem "$installation\VC\Tools\MSVC" `
+            -Recurse -File -Filter dumpbin.exe |
+            Where-Object { $_.FullName -match '\\bin\\Hostx64\\x64\\dumpbin\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $dumpbin) { throw 'MSVC x64 dumpbin.exe was not found' }
+          $exports = & $dumpbin.FullName /nologo /exports $dll.FullName
+          $exportNames = @($exports | ForEach-Object {
+            if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') { $matches[1] }
+          })
+          if ($exportNames.Count -ne 1 -or $exportNames[0] -ne 'mib_processing_get_api_v2') {
+            throw "Contract-2 core must export exactly mib_processing_get_api_v2; found: $($exportNames -join ', ')"
+          }
+          $dependents = & $dumpbin.FullName /nologo /dependents $dll.FullName
+          $dependencyNames = @($dependents | ForEach-Object {
+            if ($_ -match '^\s+([A-Za-z0-9_.+\-]+\.dll)\s*$') { $matches[1] }
+          })
+          $forbidden = @($dependencyNames | Where-Object { $_ -match '^(Qt|hdf5|opencv|python|mib_studio)' })
+          if ($forbidden.Count -ne 0) {
+            throw "Contract-2 core imports forbidden host/framework DLLs: $($forbidden -join ', ')"
+          }
+          $c2Dist = Join-Path $env:RUNNER_TEMP 'mib-processing-native-c2-dist'
+          Remove-Item -LiteralPath $c2Dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $c2Dist | Out-Null
+          Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $c2Dist $dll.Name)
+          Copy-Item -LiteralPath $descriptor.FullName -Destination (Join-Path $c2Dist $descriptor.Name)
+
+      - name: Upload unsigned Contract-2 core artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: mib_processing-native-windows-x86_64-absdiff-laplacian-unsigned
+          path: ${{ runner.temp }}/mib-processing-native-c2-dist/*
+          if-no-files-found: error
+
   build-native-plugin-linux:
     name: Build native processing core (Linux x86_64)
     needs: validate-source-version
@@ -528,11 +590,14 @@ jobs:
             -DMIB_PROCESSING_CORE_APP_MAX_VERSION="$APP_MAX_VERSION"
           cmake --build --preset linux-backend-only-build --parallel --target \
             mib_processing_core \
+            mib_processing_core_absdiff_laplacian \
             processing_core_abi_c_test \
             processing_core_loader_test \
             processing_core_cache_test \
             processing_core_fixture_matrix_test \
-            processing_core_ed25519_test
+            processing_core_ed25519_test \
+            processing_core_v2_plugin_test \
+            processing_core_contract2_equivalence_test
 
       - name: Verify native ABI, loader, cache, and Ed25519 trust
         shell: bash
@@ -541,7 +606,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset linux-backend-only-test \
-            -R "processing\.core_(abi_c|loader|cache|fixture_matrix|ed25519)" \
+            -R "processing\.core_(abi_c|loader|cache|fixture_matrix|ed25519|v2_plugin|contract2_equivalence)" \
             --output-on-failure
 
       - name: Locate and validate release assets
@@ -667,6 +732,59 @@ jobs:
         with:
           name: mib_processing-native-linux-x86_64-unsigned
           path: ${{ runner.temp }}/mib-processing-native-dist/*
+          if-no-files-found: error
+
+      # ADR 0007: the absdiff-laplacian (Contract 2) line. Staged in its own
+      # directory and artifact so the subtract-ring signing/release jobs never
+      # pick it up; per-line signing and publishing come later.
+      - name: Locate and audit the absdiff-laplacian (Contract 2) core
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 - <<'EOF'
+          import tomllib
+          with open("bindings/python/pyproject.toml", "rb") as handle:
+              print(tomllib.load(handle)["project"]["version"])
+          EOF
+          )"
+          stem="mib_processing_core-absdiff-laplacian-${version}-linux_x86_64"
+          shared_library="build/linux-backend/Release/${stem}.so"
+          descriptor="build/linux-backend/Release/${stem}.json"
+          test -f "$shared_library"
+          test -f "$descriptor"
+          python3 - "$descriptor" "$stem.so" "$version" <<'EOF'
+          import json, sys
+          descriptor, filename, version = sys.argv[1:]
+          with open(descriptor, encoding="utf-8") as handle:
+              metadata = json.load(handle)
+          assert metadata["filename"] == filename, "sidecar filename mismatch"
+          assert metadata["version"] == version, "sidecar version mismatch"
+          assert metadata["algorithm"] == "absdiff-laplacian"
+          assert metadata["contract_version"] == 2 and metadata["engine_abi_version"] == 2
+          assert metadata["entrypoint"] == "mib_processing_get_api_v2"
+          assert metadata["signing"] == {"required": True, "scheme": "ed25519"}
+          EOF
+          exports="$(nm -D --defined-only "$shared_library" | awk '$2 == "T" {print $3}')"
+          echo "Exports: $exports"
+          if [ "$exports" != "mib_processing_get_api_v2" ]; then
+            echo "::error::Contract-2 core must export exactly mib_processing_get_api_v2"
+            exit 1
+          fi
+          needed="$(readelf -d "$shared_library" | awk '/NEEDED/ {gsub(/[\[\]]/, "", $5); print $5}')"
+          if echo "$needed" | grep -Eiq '^(libQt|libhdf5|libpython|libmib_studio)'; then
+            echo "::error::Contract-2 core imports forbidden host/framework libraries"
+            exit 1
+          fi
+          staging="$RUNNER_TEMP/mib-processing-native-c2-dist"
+          rm -rf "$staging"
+          mkdir -p "$staging"
+          cp "$shared_library" "$descriptor" "$staging/"
+
+      - name: Upload unsigned Contract-2 core artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: mib_processing-native-linux-x86_64-absdiff-laplacian-unsigned
+          path: ${{ runner.temp }}/mib-processing-native-c2-dist/*
           if-no-files-found: error
 
   sign-native-plugin:
