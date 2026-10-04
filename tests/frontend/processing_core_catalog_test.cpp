@@ -208,5 +208,45 @@ int main() {
         ed25519Template.arg(truncatedFields).toUtf8());
     MIB_EXPECT(!truncatedSignature.ok,
                "an ed25519 entry with a non-canonical signature length is rejected");
+    // ---- absdiff-laplacian line (native-only, ABI 2, Contract 2) ----------------
+    const QByteArray linePlugin = R"({"filename":"mib_processing_core-absdiff-laplacian-0.1.0-windows_x86_64.dll",
+       "os":"windows","arch":"x86_64","url":"https://example/c2.dll",
+       "sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+       "size_bytes":7,"engine_abi_version":2,"contract_version":2,
+       "runtime_fingerprint":"windows-x86_64-msvc1942-md-cxx17","entrypoint":"mib_processing_get_api_v2",
+       "app_min_version":"1.0.0","app_max_version":null,"signing":{"scheme":"authenticode","required":true}})";
+    const QByteArray lineIndex = R"({"processing_core_line_index_schema_version":1,"line":"absdiff-laplacian",
+       "channel":"beta","active_version":"0.1.0","versions":[{"version":"0.1.0","contract_version":2,
+       "engine_abi_version":2,"published_at":"2026-10-04T00:00:00Z",
+       "release_tag":"mib-processing-absdiff-laplacian-v0.1.0","release_url":"https://example/r",
+       "manifest_url":"https://updates.example/beta/processing-core/absdiff-laplacian/versions/0.1.0.json",
+       "native_plugins":[)" + linePlugin + R"(]}]})";
+    const auto lineParsed = frontend::processingcorecatalog::parseIndex(lineIndex);
+    MIB_REQUIRE(lineParsed.ok, lineParsed.error.toStdString());
+    MIB_EXPECT(lineParsed.line == "absdiff-laplacian" && lineParsed.versions.front().line == "absdiff-laplacian" &&
+                   lineParsed.versions.front().engineAbiVersion == 2,
+               "line index carries its line and ABI");
+    MIB_EXPECT(parsed.line == "subtract-ring" && parsed.versions.front().line == "subtract-ring" &&
+                   parsed.versions.front().engineAbiVersion == 1,
+               "legacy index is the subtract-ring line at ABI 1");
+    const QByteArray lineManifest = R"({"processing_core_line_manifest_schema_version":1,"line":"absdiff-laplacian",
+       "channel":"beta","version":"0.1.0","published_at":"2026-10-04T00:00:00Z","contract_version":2,
+       "engine_abi_version":2,"release_tag":"mib-processing-absdiff-laplacian-v0.1.0","release_url":"https://example/r",
+       "manifest_url":"https://updates.example/beta/processing-core/absdiff-laplacian/versions/0.1.0.json",
+       "native_plugins":[)" + linePlugin + R"(]})";
+    const auto lineLatest = frontend::processingcorecatalog::parseVersionManifest(lineManifest);
+    MIB_REQUIRE(lineLatest.ok, lineLatest.error.toStdString());
+    MIB_EXPECT(lineLatest.version.releaseTag == "mib-processing-absdiff-laplacian-v0.1.0" &&
+                   lineLatest.version.line == "absdiff-laplacian",
+               "line manifest identity parsed from top-level fields");
+    const auto lineActive = frontend::processingcorecatalog::validateCanonicalActive(lineParsed, lineLatest);
+    MIB_EXPECT(lineActive.ok && lineActive.version == "0.1.0", "line latest.json validates against its index");
+    QByteArray wrongEntry = lineIndex;
+    wrongEntry.replace("\"entrypoint\":\"mib_processing_get_api_v2\"", "\"entrypoint\":\"mib_processing_get_api\"");
+    MIB_EXPECT(!frontend::processingcorecatalog::parseIndex(wrongEntry).ok,
+               "an ABI-2 plugin with the v1 entrypoint is refused");
+    QByteArray noLine = lineIndex;
+    noLine.replace("\"line\":\"absdiff-laplacian\",", "");
+    MIB_EXPECT(!frontend::processingcorecatalog::parseIndex(noLine).ok, "a line index without its line is refused");
     return mib::test::exitCode();
 }

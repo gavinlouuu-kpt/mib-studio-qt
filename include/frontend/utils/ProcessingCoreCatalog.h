@@ -31,6 +31,9 @@ struct NativePluginEntry {
 };
 
 struct VersionEntry {
+    // Core line (ADR 0007): "subtract-ring" for the legacy registry schemas,
+    // else the line manifest's `line` (e.g. "absdiff-laplacian").
+    QString line;
     QString channel;
     QString version;
     QString publishedAt;
@@ -38,12 +41,14 @@ struct VersionEntry {
     QString releaseUrl;
     QString manifestUrl;
     int contractVersion{0};
+    int engineAbiVersion{0};
     QVector<NativePluginEntry> nativePlugins;
 };
 
 struct ParseResult {
     bool ok{false};
     QString error;
+    QString line;
     QString channel;
     QString indexActiveVersion;
     QString activeVersion;

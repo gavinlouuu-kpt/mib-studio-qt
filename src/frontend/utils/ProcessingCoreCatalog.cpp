@@ -111,7 +111,8 @@ bool parseNativePlugin(const QJsonObject& object,
            httpsUrl(plugin.url) &&
            sha256(plugin.sha256) && plugin.sizeBytes >= 0 && plugin.engineAbiVersion > 0 &&
            plugin.contractVersion > 0 &&
-           plugin.entrypoint == QStringLiteral("mib_processing_get_api") &&
+           ((plugin.engineAbiVersion == 1 && plugin.entrypoint == QStringLiteral("mib_processing_get_api")) ||
+            (plugin.engineAbiVersion == 2 && plugin.entrypoint == QStringLiteral("mib_processing_get_api_v2"))) &&
            !plugin.runtimeFingerprint.isEmpty() && !plugin.signingScheme.isEmpty() &&
            plugin.signingRequired && validRange && validDetachedSignature;
 }
@@ -162,7 +163,8 @@ bool samePlugin(const NativePluginEntry& left, const NativePluginEntry& right) {
 }
 
 bool samePublishedVersion(const VersionEntry& index, const VersionEntry& manifest) {
-    if (index.channel != manifest.channel || index.version != manifest.version ||
+    if (index.line != manifest.line || index.channel != manifest.channel ||
+        index.version != manifest.version ||
         index.publishedAt != manifest.publishedAt || index.releaseTag != manifest.releaseTag ||
         index.releaseUrl != manifest.releaseUrl || index.contractVersion != manifest.contractVersion ||
         index.nativePlugins.size() != manifest.nativePlugins.size()) {
@@ -187,8 +189,17 @@ ParseResult parseIndex(const QByteArray& bytes) {
         return result;
     }
     const auto root = document.object();
-    if (root.value(QStringLiteral("processing_core_index_schema_version")).toInt() != 1) {
+    // Legacy (subtract-ring, with wheels) or a native-only core line index.
+    const bool lineSchema =
+        root.value(QStringLiteral("processing_core_line_index_schema_version")).toInt() == 1;
+    if (!lineSchema && root.value(QStringLiteral("processing_core_index_schema_version")).toInt() != 1) {
         result.error = QStringLiteral("unsupported processing-core index schema");
+        return result;
+    }
+    result.line = lineSchema ? root.value(QStringLiteral("line")).toString().trimmed()
+                             : QStringLiteral("subtract-ring");
+    if (result.line.isEmpty()) {
+        result.error = QStringLiteral("processing-core line index is missing its line");
         return result;
     }
     result.channel = root.value(QStringLiteral("channel")).toString().trimmed();
@@ -211,8 +222,10 @@ ParseResult parseIndex(const QByteArray& bytes) {
         }
         const auto object = value.toObject();
         VersionEntry entry;
+        entry.line = result.line;
         entry.channel = result.channel;
         entry.version = object.value(QStringLiteral("version")).toString().trimmed();
+        entry.engineAbiVersion = lineSchema ? object.value(QStringLiteral("engine_abi_version")).toInt() : 1;
         entry.publishedAt = object.value(QStringLiteral("published_at")).toString().trimmed();
         entry.releaseTag = object.value(QStringLiteral("release_tag")).toString().trimmed();
         entry.releaseUrl = object.value(QStringLiteral("release_url")).toString().trimmed();
@@ -287,7 +300,9 @@ ManifestResult parseVersionManifest(const QByteArray& bytes) {
         return result;
     }
     const auto root = document.object();
-    if (root.value(QStringLiteral("processing_core_manifest_schema_version")).toInt() != 2) {
+    const bool lineSchema =
+        root.value(QStringLiteral("processing_core_line_manifest_schema_version")).toInt() == 1;
+    if (!lineSchema && root.value(QStringLiteral("processing_core_manifest_schema_version")).toInt() != 2) {
         result.error = QStringLiteral("unsupported processing-core manifest schema");
         return result;
     }
@@ -296,11 +311,24 @@ ManifestResult parseVersionManifest(const QByteArray& bytes) {
     entry.version = root.value(QStringLiteral("version")).toString().trimmed();
     entry.contractVersion = root.value(QStringLiteral("contract_version")).toInt();
     entry.publishedAt = root.value(QStringLiteral("published_at")).toString().trimmed();
-    const auto wheel = root.value(QStringLiteral("wheel")).toObject();
-    entry.releaseTag = wheel.value(QStringLiteral("release_tag")).toString().trimmed();
-    entry.releaseUrl = wheel.value(QStringLiteral("release_url")).toString().trimmed();
+    bool identityConsistent = true;
+    if (lineSchema) {
+        // Native-only core line: identity at the top level, no wheel.
+        entry.line = root.value(QStringLiteral("line")).toString().trimmed();
+        entry.engineAbiVersion = root.value(QStringLiteral("engine_abi_version")).toInt();
+        entry.releaseTag = root.value(QStringLiteral("release_tag")).toString().trimmed();
+        entry.releaseUrl = root.value(QStringLiteral("release_url")).toString().trimmed();
+        identityConsistent = !entry.line.isEmpty() && entry.engineAbiVersion > 0;
+    } else {
+        entry.line = QStringLiteral("subtract-ring");
+        entry.engineAbiVersion = 1;
+        const auto wheel = root.value(QStringLiteral("wheel")).toObject();
+        entry.releaseTag = wheel.value(QStringLiteral("release_tag")).toString().trimmed();
+        entry.releaseUrl = wheel.value(QStringLiteral("release_url")).toString().trimmed();
+        identityConsistent = wheel.value(QStringLiteral("version")).toString().trimmed() == entry.version;
+    }
     if (entry.channel.isEmpty() || !safeVersion(entry.version) || entry.contractVersion <= 0 ||
-        wheel.value(QStringLiteral("version")).toString().trimmed() != entry.version) {
+        !identityConsistent) {
         result.error = QStringLiteral("processing-core manifest identity is inconsistent");
         return result;
     }
@@ -308,8 +336,12 @@ ManifestResult parseVersionManifest(const QByteArray& bytes) {
                             entry.contractVersion, entry.nativePlugins, result.error))
         return result;
     for (const auto& plugin : entry.nativePlugins) {
-        if (plugin.contractVersion != entry.contractVersion) {
-            result.error = QStringLiteral("processing-core native contract does not match manifest");
+        if (plugin.contractVersion != entry.contractVersion) {
+            result.error = QStringLiteral("processing-core native contract does not match manifest");
+            return result;
+        }
+        if (plugin.engineAbiVersion != entry.engineAbiVersion) {
+            result.error = QStringLiteral("processing-core native ABI does not match manifest");
             return result;
         }
     }
