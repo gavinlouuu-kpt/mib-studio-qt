@@ -159,6 +159,15 @@ freeze exact revision identity/content into historical runs.
   own 409 remains the authority; (4) drafts live in the per-user cache, so they
   follow the registry account, not the instrument.
 
+- 2026-10-04 (ABI hold): ADR 0011 (PR #484) freezes bridge-ABI bumps on `develop`
+  until #450 (`dev/react-tauri`) lands, then renumbers once. #474/#475 do not touch
+  the bridge; #477 introduces the registry surface as ABI 15 and #478-#482 extend it
+  inside that unreleased 15, so none of them lands before #450. After the
+  renumbering the stack is rebased (version + changelog only; contract groups and
+  function names stay). ADR 0011 also limits Qt to fixes until #450 reaches parity,
+  which bears on the Qt-only parts of #479 (Apply) and #482 (authoring UI); owner's
+  call.
+
 ## Validation
 
 `profiles.registry` runs in backend CTest (`linux-backend-only` preset; built and
