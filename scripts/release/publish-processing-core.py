@@ -34,10 +34,9 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import sys as _sys
 from pathlib import Path as _Path
@@ -84,12 +83,13 @@ _NATIVE_ARCH_ALIASES = {
 }
 
 
-@dataclass(frozen=True)
-class CoreLine:
+class CoreLine(NamedTuple):
     """One shipped processing-core line (ADR 0007 point 7).
 
     A line fixes its contract, engine ABI and entry point, and owns its
-    release tags, artifact names and registry prefix.
+    release tags, artifact names and registry prefix. A NamedTuple, not a
+    dataclass: CI loads this file through importlib without registering it in
+    sys.modules, which dataclasses (with postponed annotations) require.
     """
 
     name: str
