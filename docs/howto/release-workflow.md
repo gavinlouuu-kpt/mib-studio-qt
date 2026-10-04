@@ -156,6 +156,24 @@ non-numeric, or reversed bounds. The current supported loader range is
 `1.0.6` through `1.0.99`; update it deliberately when desktop compatibility
 is requalified.
 
+### absdiff-laplacian processing-core line (Contract 2, beta)
+
+The Contract-2 core releases independently of the wheel and of subtract-ring:
+
+```bash
+python scripts/bump_mib_processing_version.py --line absdiff-laplacian 0.2.0
+git commit -am "absdiff-laplacian 0.2.0" && git push
+python scripts/bump_mib_processing_version.py --line absdiff-laplacian 0.2.0 --create-tag
+git push origin mib-processing-absdiff-laplacian-v0.2.0
+```
+
+The tag runs `processing-core-line.yml`: build, gold-check, sign (same
+Production signer), immutable GitHub prerelease, then
+`beta/processing-core/absdiff-laplacian/` in the registry. The line is beta
+only until the rollout plan's Phase 3; roll back with **Promote or roll back
+processing core** and `line = absdiff-laplacian`. See
+`docs/portable-processing-sync.md` (absdiff-laplacian registry line).
+
 ### Crash reporting (Sentry) in the tagged release
 
 The tag-triggered CI release (`.github/workflows/release.yml`) also wires up

@@ -308,6 +308,12 @@ runs the built Contract-2 binary over the real-frame Contract-2 reference throug
 (all reference objects identical; extra valid objects are ones the host tracker does not
 record). See `docs/portable-processing-sync.md` (Core lines).
 
+**absdiff-laplacian release line (T1.1b PR 2).** `processing-core-line.yml` releases
+`mib-processing-absdiff-laplacian-v*` tags natively (no wheel), signed by the same production
+signer, into the beta-only registry subtree `beta/processing-core/absdiff-laplacian/`
+(`scripts/release/publish-processing-core-line.py`; promote with `line=absdiff-laplacian`).
+No app reads that subtree until T1.1c.
+
 ## Accumulation modes
 
 - **Monitoring rings** — `monitoringValidFrames_` / `monitoringInvalidFrames_`,

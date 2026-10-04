@@ -1,5 +1,17 @@
 # Recent Work
 
+## 2026-10-04 — absdiff-laplacian release line: signed, beta registry, per-line promote (T1.1b PR 2)
+
+`mib-processing-absdiff-laplacian-v<version>` tags now run `processing-core-line.yml`: tag ==
+`processing-cores/absdiff-laplacian.version`, build + ABI-v2 tests + native Contract-2 gold +
+export audit on Windows and Linux, signing with the existing production Authenticode certificate
+and Ed25519 key, an immutable prerelease with the 4 native files, and
+`publish-processing-core-line.py` writing `beta/processing-core/absdiff-laplacian/` (immutable
+version document, index, then `latest.json`). The line is beta only (`BETA_ONLY_LINES`) until
+Phase 3; `processing-core-promote.yml` takes a `line` input. The bump script now tags the line.
+No app reads the subtree until T1.1c. Plan:
+[`2026-10-04-processing-core-lines-pr2`](../../docs/exec-plans/active/2026-10-04-processing-core-lines-pr2.md).
+
 ## 2026-10-03 — Processing-core lines named, versioned and gold-checked (T1.1b PR 1)
 
 Both processing-core lines now have their own release identity: `subtract-ring`

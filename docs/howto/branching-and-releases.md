@@ -84,6 +84,7 @@ core**. See [`release-workflow.md`](release-workflow.md).
 | `build-windows.yml` | **push to `develop` (app paths only) → auto beta**; manual dispatch (beta any ref / release from `main`) |
 | `release.yml` | `v*.*.*` tags; manual |
 | `python-wheel.yml` | `mib-processing-subtract-ring-v*` tags (legacy `mib-processing-v*` no longer triggers); core-path pushes/PRs (build+test only) |
+| `processing-core-line.yml` | `mib-processing-absdiff-laplacian-v*` tags (native-only, beta registry line); core-path PRs (build+test only) |
 
 `build-windows.yml` serializes with a `concurrency` group so rapid `develop`
 merges queue rather than race on the R2 publish.

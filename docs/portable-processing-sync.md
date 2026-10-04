@@ -335,9 +335,9 @@ Use `scripts/bump_mib_processing_version.py <version>` to update the
 authoritative pyproject version and the import-time wrapper literal together.
 Commit those files, then rerun with `--create-tag`; the command refuses to tag
 an uncommitted bump so the tag cannot point at the old version. `--line
-absdiff-laplacian` bumps `processing-cores/absdiff-laplacian.version` instead;
-its `--create-tag` is refused until a workflow releases
-`mib-processing-absdiff-laplacian-v<version>` tags (T1.1b PR 2).
+absdiff-laplacian` bumps `processing-cores/absdiff-laplacian.version` instead
+and tags `mib-processing-absdiff-laplacian-v<version>`, which
+`processing-core-line.yml` releases (see below).
 
 ### Core lines (ADR 0007, T1.1b)
 
@@ -356,9 +356,33 @@ so they remain promotable. The native release jobs build, export-audit,
 signature-rehearse and gold-check both lines
 (`scripts/run_native_core_conformance.py` runs the built Contract-2 binary over
 the real-frame Contract-2 reference) and upload absdiff-laplacian as the
-`*-absdiff-laplacian-unsigned` artifacts. Only subtract-ring is signed and
-published so far; the absdiff-laplacian registry line (its own
-`{channel}/processing-core/absdiff-laplacian/` subtree) is T1.1b PR 2.
+`*-absdiff-laplacian-unsigned` artifacts.
+
+### absdiff-laplacian registry line (T1.1b PR 2)
+
+`mib-processing-absdiff-laplacian-v<version>` tags run
+`.github/workflows/processing-core-line.yml`, a native-only release (no wheel):
+
+1. The tag must equal `processing-cores/absdiff-laplacian.version`.
+2. Build, ABI-v2-test, gold-check and export-audit the core on Windows and Linux.
+3. Sign with the same production Authenticode certificate and Ed25519 key as
+   subtract-ring (`Production` environment; the desktop SPKI pins are unchanged).
+4. Create an immutable GitHub prerelease with exactly the 4 native files.
+5. `scripts/release/publish-processing-core-line.py --line absdiff-laplacian
+   --channel beta` writes, in order:
+   - `beta/processing-core/absdiff-laplacian/versions/<version>.json` (immutable;
+     an identical re-run is skipped, a different document is refused)
+   - `beta/processing-core/absdiff-laplacian/index.json`
+   - `beta/processing-core/absdiff-laplacian/latest.json` (active pointer, last)
+
+The line manifest (`processing_core_line_manifest_schema_version` 1) carries
+`line`, `channel`, `version`, `contract_version` 2, `engine_abi_version` 2,
+`release_tag`, `release_url`, `manifest_url` and the signed `native_plugins`
+(both `windows/x86_64` and `linux/x86_64` are required). No current app reads
+this subtree; the Processing Core dialog learns it in T1.1c. The line is
+**beta only**: the publisher refuses `stable` until the rollout plan's Phase 3
+(opt-in on rigs) removes it from `BETA_ONLY_LINES`. Promote or roll back with
+**Actions → Promote or roll back processing core**, `line = absdiff-laplacian`.
 
 ## Verifying a channel is reachable (no Qt, no app)
 

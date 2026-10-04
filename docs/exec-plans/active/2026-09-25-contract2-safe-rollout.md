@@ -7,9 +7,11 @@ lines built, audited, signed, published) is split: PR 1 (both lines named,
 versioned, built, export-audited and gold-checked in release CI; installer
 stops shipping cores; plan
 [`2026-10-02-processing-core-lines-pr1`](2026-10-02-processing-core-lines-pr1.md))
-done 2026-10-03; PR 2 (sign and publish absdiff-laplacian to its own registry
-subtree, promote per line) and T1.1c (Processing Core dialog shows and filters
-by contract) next.
+done 2026-10-03; PR 2 (native-only `processing-core-line.yml`, signed beta
+registry line `{channel}/processing-core/absdiff-laplacian/`, promote per line; plan
+[`2026-10-04-processing-core-lines-pr2`](2026-10-04-processing-core-lines-pr2.md))
+done 2026-10-04. Next: the first absdiff-laplacian tag (Phase 1 exit evidence)
+and T1.1c (Processing Core dialog shows and filters by contract).
 
 Builds on the [Processing Contract v2 plan](2026-07-21-processing-contract-v2.md),
 [ADR 0006](../../decisions/0006-processing-contract-v2.md) (what Contract 2
