@@ -3,7 +3,9 @@
 Status: active. Phase 0 merged 2026-09-26 (#455, #457, #458); T1.2 done
 (real-frame Contract 2 reference, #459). T1.1 split: T1.1a (loader + core
 owns Contract-2 science) done 2026-09-27; T1.1b (release pipeline: both core
-lines built, audited, signed, published) and T1.1c (Processing Core dialog
+lines built, audited, signed, published; step 1 = CI build/audit/upload of
+the absdiff-laplacian core, 2026-09-27; step 2 = per-line signing and
+publishing, needs a registry decision) and T1.1c (Processing Core dialog
 shows and filters by contract) next.
 
 Builds on the [Processing Contract v2 plan](2026-07-21-processing-contract-v2.md),

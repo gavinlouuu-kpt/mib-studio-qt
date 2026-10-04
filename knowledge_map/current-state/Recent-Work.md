@@ -399,6 +399,17 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **absdiff-laplacian core built and audited in CI** (2026-09-27, Contract 2
+  rollout T1.1b step 1) — `mib_processing_core_absdiff_laplacian` now builds
+  as `mib_processing_core-absdiff-laplacian-<version>-<os>_<arch>` with its
+  own descriptor (`algorithm`, contract 2, engine ABI 2,
+  `mib_processing_get_api_v2`). The Linux and Windows native-core jobs build
+  it, run `processing.core_contract2_equivalence` (and the v2 plugin test on
+  Linux), audit its exports (exactly `get_api_v2`) and imports, and upload it
+  as a separate unsigned artifact the subtract-ring signing/release jobs never
+  download. `tests/release/test_contract_version_consistency.py` checks both
+  Contract-2 sidecars against the ABI header. Signing and publishing per line
+  are step 2.
 - **Contract-2 core builds its mask once per frame** (2026-09-27) — the ABI v2
   adapter passes the core's own `process_mask` output as
   `precomputed_mask`, so `process_objects` runs object science only.
