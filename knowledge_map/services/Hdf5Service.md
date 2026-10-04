@@ -166,7 +166,8 @@ See [[../data-model/HDF5-Storage]].
 `writeRunSnapshotJson(runJson, readinessJson)` / `readRunSnapshotJson(...)`
 store the frozen `RunConfigurationSnapshot` and the readiness evaluation it
 was started from as variable-length UTF-8 string attributes
-(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` = 1)
+(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` = 2;
+v2 adds the #398 `method` block)
 on the `/run_provenance` group. [[../architecture/ExperimentCoordinator]]
 writes them immediately after `initializeDatasets()` and before the run may
 enter Running; a failure rolls the Start back and removes the file.

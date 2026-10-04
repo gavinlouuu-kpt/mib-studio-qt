@@ -64,12 +64,14 @@
   `saveChartSnapshot(path, image)`.
 
 - **Run configuration snapshot (issue #369, `run_snapshot_schema_version`
-  = 1)** — `Hdf5Service::writeRunSnapshotJson` stores the frozen
+  = 2 since #398 M2; v1 files lack the `method` block)** — `Hdf5Service::writeRunSnapshotJson` stores the frozen
   `RunConfigurationSnapshot` (`run_snapshot_json`, stable key order: camera
   requested/effective/simulated/fallback, delivery mode, timestamp
   descriptor, ROI, frame geometry, processing core + pin, config version /
   sha, `config.json` sha, profile, pixel-to-micron, background
-  generation/sha, trigger binding, output path, application identity) and
+  generation/sha, trigger binding, output path, application identity, and the
+  `method` block naming the exact central revision + content hash + local
+  validation, or a local method) and
   the readiness evaluation (`readiness_json`, per-gate status/reason) as
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for

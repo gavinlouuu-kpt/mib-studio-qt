@@ -239,6 +239,25 @@ void ProfileCache::recordValidation(const LocalValidation& v) {
     q.bind(7, uint64_t(v.passed));
     q.step();
 }
+std::vector<LocalValidationRecord> ProfileCache::listValidations() const {
+    Statement q(impl_->db,
+                "SELECT revision_id,instrument_id,hash,context_hash,validator_id,evidence,passed,"
+                "validated_at FROM registry_validations ORDER BY validated_at DESC,revision_id");
+    std::vector<LocalValidationRecord> result;
+    while (q.step() == SQLITE_ROW) {
+        LocalValidationRecord record;
+        record.validation.revisionId = q.text(0);
+        record.validation.instrumentId = q.text(1);
+        record.validation.contentHash = q.text(2);
+        record.validation.contextHash = q.text(3);
+        record.validation.validatorId = q.text(4);
+        record.validation.evidence = q.text(5);
+        record.validation.passed = sqlite3_column_int(q.value, 6) == 1;
+        record.validatedAtUtc = q.text(7);
+        result.push_back(std::move(record));
+    }
+    return result;
+}
 Eligibility ProfileCache::eligibility(const std::string& id, const std::string& instrument,
                                       const std::string& context) const {
     try {

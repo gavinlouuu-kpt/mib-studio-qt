@@ -12,7 +12,11 @@ backend-owned `ProfileRegistryWorker` that runs them on one thread. Owned by
 HTTPS transport; the Qt [[../frontend/CentralMethodsDialog]] and the React
 Central Methods panel (through `BackendFacade` registry calls, bridge ABI 15,
 see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
-revisions. Not yet in a method picker, Apply/Verify or run provenance.
+revisions. M2a (backend): the worker materializes a cached revision's files and
+records operator-confirmed local validations; [[../architecture/ExperimentCoordinator]]
+matches the applied config.json to a cached revision, gates Start on it
+(`method.revision`) and freezes it into `/run_provenance`. No Apply / "Mark
+validated" UI yet (M2b).
 
 ## Key APIs
 
@@ -36,6 +40,27 @@ revisions. Not yet in a method picker, Apply/Verify or run provenance.
   corrupt IDs, last job); `job(id)`. A refresh covers every member project,
   bounded by `maxPagesPerRefresh` / `refreshBudget` (else Partial). Tokens are
   rotated before `tokenRefreshMargin` and once on a 401, then retried once.
+- `ProfileRegistryWorker::requestMaterialize(revisionId)` (M2): writes the
+  verified revision to `<dataDir>/methods/<revisionId>/` — `config.json`
+  (pretty), `egrabberConfig.js`, `method.canonical.json` (byte-exact
+  envelope) — read-only, staged then swapped in; idempotent; tampered files are
+  rewritten; works from the offline cache. Only plain-token revision IDs may
+  name a directory (`../x` is refused). The snapshot reports
+  `materializedDir` per revision (verified scan on cache open).
+- `ProfileRegistryWorker::requestRecordValidation(LocalValidationRequest)` (M2):
+  needs a **signed-in** session (the validator is the authenticated user, not
+  a remembered name) and a published/superseded revision; hashes the evidence
+  test-run file (cancellable, `processing::fileSha256`) and stores who, the
+  instrument UUID, `methodContextHash` (core version + core SHA-256 + camera
+  source), the content hash and evidence JSON (`run_file`, `run_file_sha256`,
+  bytes, instrument name, validator email, UTC time). The latest outcome per
+  revision/instrument/context replaces earlier ones. Snapshot: `validations`.
+- `canonicalConfigSha256(configJson)` / `revisionConfigSha256(envelope)` (M2):
+  key-order/whitespace/integral-double independent config hash; every
+  `CachedRevisionSummary` carries `configSha256`.
+- `InstrumentIdentity` (M2): UUID v4 in `<dataDir>/instrument_identity.json`
+  plus `MIB_INSTRUMENT_NAME`; a corrupt file is moved to `.corrupt-<n>` and
+  replaced (old validations stop matching, the gate warns).
 
 ## Gotchas
 
@@ -55,6 +80,11 @@ noncanonical bytes; the server checks only the hash) must not stall sync for eve
 later revision, so `listRevisions` reports it instead of throwing; transport, auth
 and cross-project errors still fail the whole page. Corrupt cache rows fail closed;
 automatic repair and historical pins remain pending.
+Matching an applied config to a revision is by canonical config.json only; any
+local edit (including default-key merge or camera delivery-mode write-back by
+`AppConfigWatcher`) makes it a local method. Explicit sign-out closes the cache,
+so the coordinator then cannot recognise (or know revocation of) central
+methods: runs are recorded as local, never silently as validated.
 
 Tests: `profiles.registry` (integrity/cache/provider), `profiles.registry_worker`
 (fake Supabase: auth, rotation, outage, restart offline, user switch, sign-out,
@@ -62,7 +92,9 @@ cancel, bounds, concurrent snapshot traffic + shutdown), `profiles.registry_back
 (AppBackend wiring; a hung registry leaves mock capture running; shutdown aborts
 it), `profiles.registry_facade` (facade mapping + contract integers + shutdown abort),
 the bridge `registry_*` cargo tests, `desktop/src/registry.test.ts`,
-`frontend.central_methods` (dialog over the real worker), `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
+`frontend.central_methods` (dialog over the real worker), `profiles.registry_method`
+(canonical config hash, materialize, record validation, restart, cancel while hashing),
+`profiles.instrument_identity`, `backend.method_provenance`, `e2e.method_gate`, `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
 worker thread), and the PGlite SQL suite.
 
 Setup, current scope, tests and recovery: `supabase/README.md`.

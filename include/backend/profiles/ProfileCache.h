@@ -4,6 +4,13 @@
 #include <memory>
 
 namespace backend::profiles {
+// A stored local validation plus when it was recorded (SQLite UTC
+// "YYYY-MM-DD HH:MM:SS").
+struct LocalValidationRecord {
+    LocalValidation validation;
+    std::string validatedAtUtc;
+};
+
 // One instance/SQLite connection per registry worker. Database is scoped to
 // one registry origin + authenticated subject. No access tokens are persisted.
 // No background threads, eviction, selected profile, or hardware side effects.
@@ -22,6 +29,8 @@ public:
     // IDs reported in `corrupt` (never silently dropped, never returned).
     std::vector<Revision> listAll(std::vector<std::string>* corrupt = nullptr) const;
     void recordValidation(const LocalValidation& validation);
+    // Every recorded validation, newest first.
+    std::vector<LocalValidationRecord> listValidations() const;
     Eligibility eligibility(const std::string& revisionId, const std::string& instrumentId,
                             const std::string& contextHash) const;
     // Revocation is sticky. Historical reads remain available. A server must

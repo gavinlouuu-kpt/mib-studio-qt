@@ -1,11 +1,13 @@
 #include "backend/app/ExperimentCoordinator.h"
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/MethodProvenance.h"
 #include "backend/app/Tools.h"
 #include "backend/camera/common/TimestampValue.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/TriggerService.h"
@@ -189,6 +191,7 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"processing_config_sha256\":" << q(s.processingConfigSha256)
       << ",\"config_json_sha256\":" << q(s.configJsonSha256)
       << ",\"profile_id\":" << q(s.profileId)
+      << ",\"method\":" << methodProvenanceToJson(s.method)
       << ",\"pixel_to_micron\":" << s.pixelToMicron
       << ",\"background\":{\"present\":" << (s.backgroundPresent ? "true" : "false")
       << ",\"generation\":" << s.backgroundGeneration << ",\"sha256\":" << q(s.backgroundSha256) << "}"
@@ -229,7 +232,8 @@ bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o
            coreSha256 == o.coreSha256 && corePinSatisfied == o.corePinSatisfied &&
            backgroundGeneration == o.backgroundGeneration && roiX == o.roiX && roiY == o.roiY &&
            roiW == o.roiW && roiH == o.roiH && pixelToMicron == o.pixelToMicron &&
-           outputPath == o.outputPath && profileId == o.profileId && faulted == o.faulted;
+           outputPath == o.outputPath && profileId == o.profileId && method == o.method &&
+           faulted == o.faulted;
 }
 
 ExperimentCoordinator::ExperimentCoordinator(AppBackend& backend) : backend_(backend) {}
@@ -313,8 +317,31 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
     s.processingCorePinSatisfied = proc.isProcessingCorePinSatisfied();
     s.processingConfigVersion = proc.getConfigVersion();
     s.processingConfigSha256 = sha256Of(canonicalProcessingConfig(proc.getProcessingConfig()));
-    s.configJsonSha256 = sha256Of(backend_.getLastConfigJson());
+    const auto configJson = backend_.getLastConfigJson();
+    s.configJsonSha256 = sha256Of(configJson);
     s.profileId = profileId;
+    {
+        const auto context = backend_.methodContext();
+        const auto contextHash = profiles::methodContextHash(context);
+        const auto& instrumentName = backend_.instrumentIdentity().name;
+        auto& registry = backend_.profileRegistry();
+        const auto generation = registry.generation();
+        auto& memo = methodMemo_;
+        if (!memo.valid || memo.rawConfigSha256 != s.configJsonSha256 ||
+            memo.registryGeneration != generation || memo.contextHash != contextHash ||
+            memo.instrumentName != instrumentName) {
+            const auto canonical =
+                configJson.empty() ? std::string{} : profiles::canonicalConfigSha256(configJson);
+            memo.method = resolveMethodProvenance(canonical, registry.snapshot(), context,
+                                                  instrumentName);
+            memo.rawConfigSha256 = s.configJsonSha256;
+            memo.registryGeneration = generation;
+            memo.contextHash = contextHash;
+            memo.instrumentName = instrumentName;
+            memo.valid = true;
+        }
+        s.method = memo.method;
+    }
     s.pixelToMicron = proc.getPixelToMicronFactor();
 
     const auto bg = proc.getRealtimeBackgroundGrayShared();
@@ -357,6 +384,7 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     k.pixelToMicron = c.pixelToMicron;
     k.outputPath = outputPath;
     k.profileId = profileId;
+    k.method = methodInvalidationKey(c.method);
     k.faulted = faultActive_;
     return k;
 }
@@ -458,6 +486,7 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     r.gates.push_back(gate("processing.config", GateStatus::Pass, {}, {},
                            "version " + std::to_string(c.processingConfigVersion) + " sha " +
                                c.processingConfigSha256.substr(0, 12)));
+    r.gates.push_back(methodRevisionGate(c.method));
     if (c.pixelToMicron > 0.0) {
         r.gates.push_back(gate("calibration.pixelToMicron", GateStatus::Pass, {}, {},
                                std::to_string(c.pixelToMicron)));
