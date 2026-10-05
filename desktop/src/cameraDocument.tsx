@@ -1,6 +1,6 @@
 import {useRef,useState} from "react";
-import {invoke} from "@tauri-apps/api/core";
-import {open,save} from "@tauri-apps/plugin-dialog";
+import {invoke} from "./transport";
+import {open,save} from "./transport/dialogs";
 import {bridge} from "./bridge";
 import {CAMERA_SELECTION_MODES} from "./bridgeContract";
 import type {CameraScriptContext} from "./cameraScript";

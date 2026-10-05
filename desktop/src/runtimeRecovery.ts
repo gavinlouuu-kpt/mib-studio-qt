@@ -1,4 +1,4 @@
-import {invoke} from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import {bridge} from "./bridge";
 import {EXPERIMENT_STATES} from "./bridgeContract";
 export interface RuntimeFlags {capture_running:boolean;recording:boolean}

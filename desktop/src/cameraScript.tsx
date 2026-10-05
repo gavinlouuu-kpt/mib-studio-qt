@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import {open} from "./transport/dialogs";
 import { bridge, type CameraSelection } from "./bridge";
 import { CAMERA_SELECTION_MODES } from "./bridgeContract";
 

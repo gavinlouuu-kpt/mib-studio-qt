@@ -1,0 +1,15 @@
+# Optional Aravis consumer recipe. This is a source/build pin, not a machine
+# path; local prefixes belong in CMakeUserPresets.json or PKG_CONFIG_PATH.
+[aravis]
+version = "0.9.3"
+source = "https://github.com/AravisProject/aravis.git"
+revision = "086b1a7829e1655fb2140658a262a9876581af4c"
+pkg_config = "aravis-0.10"
+
+[build]
+usb = false
+packet_socket = false
+viewer = false
+gst_plugin = false
+tests = false
+gentl_producer = true

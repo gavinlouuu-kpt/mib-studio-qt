@@ -69,6 +69,52 @@ function(mib_backend_test_link target)
     endif()
 endfunction()
 
+if(MIB_HAS_ARAVIS)
+    find_package(Threads REQUIRED)
+    mib_add_backend_test_executable(aravis_camera_test camera/aravis_camera_test.cpp)
+    add_test(NAME camera.aravis_fake COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_test)
+    set_tests_properties(camera.aravis_fake PROPERTIES LABELS "camera;aravis;concurrency" TIMEOUT 30)
+    mib_add_backend_test_executable(aravis_capture_lifecycle_test backend/aravis_capture_lifecycle_test.cpp)
+    mib_backend_test_link(aravis_capture_lifecycle_test PRIVATE Threads::Threads)
+    add_test(NAME backend.aravis_capture_lifecycle
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_capture_lifecycle_test)
+    set_tests_properties(backend.aravis_capture_lifecycle PROPERTIES
+                         LABELS "backend;camera;aravis;concurrency;stress" TIMEOUT 30)
+    mib_add_backend_test_executable(aravis_camera_stress_test camera/aravis_camera_stress_test.cpp)
+    mib_backend_test_link(aravis_camera_stress_test PRIVATE Threads::Threads)
+    add_test(NAME camera.aravis_stress COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_stress_test)
+    set_tests_properties(camera.aravis_stress PROPERTIES LABELS "camera;aravis;concurrency;stress" TIMEOUT 90)
+    # The PZ7035 GenTL producer's pattern device (pz7035-imx426 gentl/); opt-in
+    # because the producer lives in another repository.
+    set(MIB_PZ7035_GENTL_CTI "" CACHE FILEPATH "PZ7035 GenTL producer (.cti) for camera.aravis_pz7035_pattern")
+    mib_add_backend_test_executable(aravis_pz7035_pattern_test camera/aravis_pz7035_pattern_test.cpp)
+    if(MIB_PZ7035_GENTL_CTI)
+        get_filename_component(_mib_pz7035_cti_dir "${MIB_PZ7035_GENTL_CTI}" DIRECTORY)
+        add_test(NAME camera.aravis_pz7035_pattern
+                 COMMAND $<TARGET_FILE:mib_backend_tests> aravis_pz7035_pattern_test)
+        set_tests_properties(camera.aravis_pz7035_pattern PROPERTIES
+                             LABELS "camera;aravis;pz7035" TIMEOUT 90
+                             ENVIRONMENT "GENICAM_GENTL64_PATH=${_mib_pz7035_cti_dir};PZ_GENTL_PATTERN=1")
+    endif()
+    mib_add_backend_test_executable(aravis_camera_overview_test backend/aravis_camera_overview_test.cpp)
+    add_test(NAME backend.aravis_camera_overview
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_overview_test)
+    set_tests_properties(backend.aravis_camera_overview PROPERTIES LABELS "backend;camera;aravis" TIMEOUT 60)
+    mib_add_backend_test_executable(aravis_pipeline_e2e integration/aravis_pipeline_e2e_test.cpp)
+    mib_backend_test_link(aravis_pipeline_e2e PRIVATE Threads::Threads)
+    add_test(NAME integration.aravis_pipeline_e2e
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_pipeline_e2e)
+    set_tests_properties(integration.aravis_pipeline_e2e PROPERTIES
+                         LABELS "backend;camera;aravis;integration;e2e;concurrency"
+                         TIMEOUT 90)
+endif()
+
+# Explicit Aravis source selection is validated in both ON and OFF builds:
+# OFF must remain visibly unavailable instead of silently falling back.
+mib_add_backend_test_executable(aravis_appbackend_source_test backend/aravis_appbackend_source_test.cpp)
+add_test(NAME backend.aravis_appbackend_source COMMAND $<TARGET_FILE:mib_backend_tests> aravis_appbackend_source_test)
+set_tests_properties(backend.aravis_appbackend_source PROPERTIES LABELS "backend;aravis" TIMEOUT 60)
+
 mib_add_backend_test_executable(mib_backend_smoke_test backend/backend_smoke_test.cpp)
 add_test(NAME backend.smoke COMMAND $<TARGET_FILE:mib_backend_smoke_test>)
 set_tests_properties(backend.smoke PROPERTIES LABELS "backend")
@@ -81,6 +127,14 @@ mib_add_backend_test_executable(emodulus_lut_degenerate_test backend/emodulus_lu
 add_test(NAME backend.emodulus_lut_degenerate COMMAND $<TARGET_FILE:mib_backend_tests> emodulus_lut_degenerate_test)
 set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;processing")
 
+mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
+add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
+set_tests_properties(backend.pl_science PROPERTIES LABELS "backend" TIMEOUT 60)
+mib_add_backend_test_executable(pl_science_provider_test backend/pl_science_provider_test.cpp)
+mib_backend_test_link(pl_science_provider_test PRIVATE Threads::Threads)
+add_test(NAME backend.pl_science_provider COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_provider_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(backend.pl_science_provider PROPERTIES LABELS "backend;recording;concurrency" TIMEOUT 120)
 mib_add_backend_test_executable(backend_lifecycle_smoke_test backend/backend_lifecycle_smoke_test.cpp)
 mib_add_backend_test_executable(hardware_shutdown_test backend/hardware_shutdown_test.cpp)
 add_test(NAME backend.hardware_shutdown COMMAND $<TARGET_FILE:mib_backend_tests> hardware_shutdown_test)
@@ -109,6 +163,12 @@ set_tests_properties(backend.modbus_rtu PROPERTIES LABELS "backend" TIMEOUT 30)
 mib_add_backend_test_executable(syringe_pump_fake_serial_test backend/syringe_pump_fake_serial_test.cpp)
 add_test(NAME backend.syringe_pump_fake_serial COMMAND $<TARGET_FILE:mib_backend_tests> syringe_pump_fake_serial_test)
 set_tests_properties(backend.syringe_pump_fake_serial PROPERTIES LABELS "backend" TIMEOUT 30)
+
+# Tushui peristaltic pump in a pump slot: read-only connect, flow -> rpm,
+# continuous run, purge restore, volume integration (TushuiPumpProtocol.h).
+mib_add_backend_test_executable(peristaltic_pump_fake_serial_test backend/peristaltic_pump_fake_serial_test.cpp)
+add_test(NAME backend.peristaltic_pump_fake_serial COMMAND $<TARGET_FILE:mib_backend_tests> peristaltic_pump_fake_serial_test)
+set_tests_properties(backend.peristaltic_pump_fake_serial PROPERTIES LABELS "backend" TIMEOUT 30)
 
 # BE-7 (#277): facade PumpCommand surface over the fake Modbus serial — both
 # pump identities, structured errors, COM-port conflict rules, safe disconnect.
@@ -379,6 +439,31 @@ add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
+add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
+set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(pl_preview_background_test processing/pl_preview_background_test.cpp)
+mib_backend_test_link(pl_preview_background_test PRIVATE Threads::Threads)
+add_test(NAME processing.pl_preview_background COMMAND $<TARGET_FILE:mib_backend_tests> pl_preview_background_test)
+set_tests_properties(processing.pl_preview_background PROPERTIES LABELS "processing;backend;concurrency" TIMEOUT 60)
+
+mib_add_backend_test_executable(pz_profile_compiler_test processing/pz_profile_compiler_test.cpp)
+add_test(NAME processing.pz_profile_compiler COMMAND $<TARGET_FILE:mib_backend_tests> pz_profile_compiler_test
+         ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
+set_tests_properties(processing.pz_profile_compiler PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(pz_execution_provider_test processing/pz_execution_provider_test.cpp)
+mib_backend_test_link(pz_execution_provider_test PRIVATE Threads::Threads)
+add_test(NAME processing.pz_execution_provider COMMAND $<TARGET_FILE:mib_backend_tests> pz_execution_provider_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_execution_provider PROPERTIES LABELS "processing;backend;concurrency" TIMEOUT 90)
+
+mib_add_backend_test_executable(pz_provider_ingest_test processing/pz_provider_ingest_test.cpp)
+mib_backend_test_link(pz_provider_ingest_test PRIVATE Threads::Threads)
+add_test(NAME processing.pz_provider_ingest COMMAND $<TARGET_FILE:mib_backend_tests> pz_provider_ingest_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_provider_ingest PROPERTIES LABELS "processing;backend;recording;concurrency" TIMEOUT 90)
 mib_add_backend_test_executable(pz_unet_cells_host_test processing/pz_unet_cells_host_test.cpp)
 add_test(NAME processing.pz_unet_cells_host COMMAND $<TARGET_FILE:mib_backend_tests> pz_unet_cells_host_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
@@ -437,10 +522,6 @@ set_tests_properties(processing.identification_metrics PROPERTIES LABELS "proces
 mib_add_backend_test_executable(processing_pipeline_smoke_test processing/processing_pipeline_smoke_test.cpp)
 add_test(NAME processing.pipeline_smoke COMMAND $<TARGET_FILE:mib_backend_tests> processing_pipeline_smoke_test)
 set_tests_properties(processing.pipeline_smoke PROPERTIES LABELS "processing;backend")
-
-mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
-add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
-set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_executable(processing_core_abi_c_test
     ${PROJECT_SOURCE_DIR}/tests/processing/processing_core_abi_c_test.c
@@ -764,6 +845,10 @@ set_tests_properties(backend.processing_object_tracking PROPERTIES LABELS "proce
 mib_add_backend_test_executable(hw_syringe_pump_test hardware/hw_syringe_pump_test.cpp)
 add_test(NAME hardware.syringe_pump COMMAND $<TARGET_FILE:mib_backend_tests> hw_syringe_pump_test)
 set_tests_properties(hardware.syringe_pump PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+mib_add_backend_test_executable(hw_peristaltic_pump_test hardware/hw_peristaltic_pump_test.cpp)
+add_test(NAME hardware.peristaltic_pump COMMAND $<TARGET_FILE:mib_backend_tests> hw_peristaltic_pump_test)
+set_tests_properties(hardware.peristaltic_pump PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 120)
 
 mib_add_backend_test_executable(hw_nanopositioner_test hardware/hw_nanopositioner_test.cpp)
 add_test(NAME hardware.nanopositioner COMMAND $<TARGET_FILE:mib_backend_tests> hw_nanopositioner_test)

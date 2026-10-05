@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from "react";
-import {invoke} from "@tauri-apps/api/core";
-import {open,confirm} from "@tauri-apps/plugin-dialog";
-import {openUrl} from "@tauri-apps/plugin-opener";
+import {invoke,isRemote} from "./transport";
+import {open,confirm} from "./transport/dialogs";
+import {openUrl} from "./transport/dialogs";
 interface Release {token:string;version:string;url:string;artifact_family:string;os:string;arch:string;installer_size_bytes:number}
 export function ApplicationUpdateControls({channel,blocked,onBusy}:{channel:string;blocked:boolean;onBusy:(busy:boolean)=>void}){
  const [release,setRelease]=useState<Release|null>(null),[verified,setVerified]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
@@ -38,6 +38,8 @@ export function ApplicationUpdateControls({channel,blocked,onBusy}:{channel:stri
    setVerified(false);setRelease(null);setMessage("Verified installer launch accepted. Complete the native installer, then close this application when appropriate. Installation completion has not been confirmed.");
   }catch(e){setMessage(String(e));}finally{pending.current=false;setBusy(false);onBusy(false);}
  }
+ // The installer updater belongs to the desktop shell; the instrument is updated with its image.
+ if(isRemote)return <section aria-label="Application installer update"><h5>Application update</h5><p>Installer updates are not available in the browser; the instrument is updated with its system image.</p></section>;
  return <section aria-label="Application installer update"><h5>Application update</h5>
  <p>Only explicitly identified Tauri packages for this platform are accepted. Existing Qt installers are never launched.</p>
  <button disabled={blocked||busy} onClick={()=>void run("check")}>Check Tauri App Releases</button>

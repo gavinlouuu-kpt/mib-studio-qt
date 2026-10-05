@@ -1,4 +1,7 @@
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/processing/IExecutionProvider.h"
+#include "backend/processing/pz/PzProfileCompiler.h"
+#include "backend/app/SciencePlacement.h"
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/Tools.h"
@@ -155,6 +158,18 @@ bool outputWritable(const std::string& path, std::string& reason)
 // JSON serializers
 // ---------------------------------------------------------------------------
 
+// PL science (YOFO S2): the profile the PL runs, from the current settings.
+static backend::processing::pz::CompiledProfile compilePlProfile(AppBackend& backend)
+{
+    auto& proc = backend.processing();
+    backend::processing::pz::UnetCellsProfileInputs in;
+    in.config = proc.getEffectiveProcessingConfig(); // includes the detected channel band
+    in.pixelToMicron = proc.getPixelToMicronFactor();
+    in.storeInvalidEveryN = static_cast<uint32_t>(std::min<size_t>(proc.getInvalidFrameSamplingRate(), 0xFFFF));
+    in.lut = proc.eModulusLut().isLoaded() ? &proc.eModulusLut() : nullptr;
+    return backend::processing::pz::compileUnetCellsV2(in);
+}
+
 std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
 {
     std::ostringstream o;
@@ -196,6 +211,12 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"bound\":" << (s.triggerBound ? "true" : "false") << ",\"generation\":" << s.triggerGeneration << "}"
       << ",\"output_path\":" << q(s.outputPath)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
+      << ",\"science_placement\":" << q(s.sciencePlacement)
+      << ",\"execution_provider\":" << q(s.executionProvider)
+      << ",\"pl_core\":{\"valid\":" << (s.plCoreValid ? "true" : "false")
+      << ",\"abi_version\":" << s.plAbiVersion << ",\"science_profile\":" << s.plScienceProfile
+      << ",\"profile_version\":" << s.plProfileVersion << ",\"build_id\":" << q(s.plBuildId)
+      << ",\"weights_sha256_prefix\":" << q(s.plWeightsId) << "}"
       << ",\"application\":{\"version\":" << q(s.applicationVersion) << ",\"build_id\":" << q(s.buildId)
       << ",\"os\":" << q(s.operatingSystem) << "}"
       << "}";
@@ -324,6 +345,17 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
 
     const auto roi = proc.getRealtimeRoi();
     s.roiX = roi.x; s.roiY = roi.y; s.roiW = roi.w; s.roiH = roi.h;
+    s.sciencePlacement = app::sciencePlacement();
+    if (auto* provider = backend_.executionProvider()) {
+        s.executionProvider = provider->name();
+        const auto core = provider->identity();
+        s.plCoreValid = core.valid;
+        s.plAbiVersion = core.abiVersion;
+        s.plScienceProfile = core.scienceProfile;
+        s.plProfileVersion = core.profileVersion;
+        s.plBuildId = core.buildId;
+        s.plWeightsId = core.profileId;
+    }
     if (auto store = backend_.getFrameStore()) {
         playback::Frame f;
         if (store->getLatest(f)) {
@@ -402,9 +434,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     r.generation = readinessGeneration_.load();
     r.candidate.readinessGeneration = r.generation;
 
-    if (backend_.isMindVisionCameraSelected() && backend_.isMindVisionOverview()) {
+    if (backend_.isCameraOverview()) {
         r.gates.push_back(gate("camera.mode", GateStatus::Fail,
-                               "MindVision is showing the full sensor overview",
+                               "The camera is showing the full sensor overview",
                                "Switch to Experiment to apply the selected camera ROI"));
     }
 
@@ -429,9 +461,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "select the mock camera explicitly, or install/connect the hardware",
                                "effective=" + c.camera.effective));
     } else if (c.camera.simulated) {
-        r.gates.push_back(gate("camera.source", GateStatus::Warn, "simulated (mock) camera selected",
+        r.gates.push_back(gate("camera.source", GateStatus::Warn, "simulated camera source selected",
                                "expected for development/tests; not a hardware run",
-                               "effective=mock label=" + c.camera.label));
+                               "effective=" + c.camera.effective + " label=" + c.camera.label));
     } else if (c.camera.effective == "unknown") {
         r.gates.push_back(gate("camera.source", GateStatus::Unavailable, "no camera source configured",
                                "connect a camera or configure the mock camera"));
@@ -461,7 +493,30 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("camera.geometry", GateStatus::Unavailable, "no frame has been received yet",
                                "wait for the first frame"));
     }
-    if (c.roiW > 0 && c.roiH > 0) {
+    if (!app::hostProcessingAvailable()) {
+        // The PL processes every frame; the host pipeline's gates do not apply. Its
+        // results reach the PS through an execution provider (YOFO S1).
+        if (auto* provider = backend_.executionProvider()) {
+            r.gates.push_back(gate("science.pl", GateStatus::Pass, {}, {},
+                                   "results from execution provider '" + provider->name() + "'"));
+            // The settings must compile into the PL profile page (S2).
+            const auto profile = compilePlProfile(backend_);
+            if (profile.ok()) {
+                r.gates.push_back(gate("processing.profileCompile", GateStatus::Pass, {}, {},
+                                       "unet_cells_v2" + std::string(profile.table0.empty() ? ", no E-modulus table"
+                                                                                           : ", E-modulus table")));
+            } else {
+                std::string why;
+                for (const auto& e : profile.errors) why += (why.empty() ? "" : "; ") + e;
+                r.gates.push_back(gate("processing.profileCompile", GateStatus::Fail, why,
+                                       "correct the processing settings"));
+            }
+        } else {
+            r.gates.push_back(gate("science.pl", GateStatus::Warn,
+                                   "processing runs on the PL; no execution provider brings its results to the PS",
+                                   "set MIB_EXECUTION_PROVIDER=pz on the instrument"));
+        }
+    } else if (c.roiW > 0 && c.roiH > 0) {
         r.gates.push_back(gate("processing.roi", GateStatus::Pass, {}, {},
                                std::to_string(c.roiW) + "x" + std::to_string(c.roiH) + "@" +
                                    std::to_string(c.roiX) + "," + std::to_string(c.roiY)));
@@ -470,7 +525,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     }
 
     // --- processing core / config / calibration ---------------------------
-    if (c.processingCorePinSatisfied) {
+    if (!app::hostProcessingAvailable()) {
+        // none of the host pipeline's prerequisites apply
+    } else if (c.processingCorePinSatisfied) {
         r.gates.push_back(gate("processing.core", GateStatus::Pass, {}, {},
                                c.processingCore.version + " contract " +
                                    std::to_string(c.processingCore.contractVersion)));
@@ -480,9 +537,10 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                    backend_.processing().requiredProcessingCoreVersion() + " is not active",
                                "activate the pinned core in Settings > Processing Core"));
     }
-    r.gates.push_back(gate("processing.config", GateStatus::Pass, {}, {},
-                           "version " + std::to_string(c.processingConfigVersion) + " sha " +
-                               c.processingConfigSha256.substr(0, 12)));
+    if (app::hostProcessingAvailable())
+        r.gates.push_back(gate("processing.config", GateStatus::Pass, {}, {},
+                               "version " + std::to_string(c.processingConfigVersion) + " sha " +
+                                   c.processingConfigSha256.substr(0, 12)));
     if (c.pixelToMicron > 0.0) {
         r.gates.push_back(gate("calibration.pixelToMicron", GateStatus::Pass, {}, {},
                                std::to_string(c.pixelToMicron)));
@@ -491,7 +549,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "pixel-to-micron factor is not positive",
                                "set the conversion factor in Settings"));
     }
-    if (c.backgroundPresent) {
+    if (!app::hostProcessingAvailable()) {
+        // backgrounds live in the PL's table bank (B6 profile); checked there
+    } else if (c.backgroundPresent) {
         r.gates.push_back(gate("processing.background", GateStatus::Pass, {}, {},
                                "generation " + std::to_string(c.backgroundGeneration) + " sha " +
                                    c.backgroundSha256.substr(0, 12)));
@@ -501,7 +561,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "capture a background (Set Background / calibration)"));
     }
 
-    if (backend_.processing().backgroundCalibrationStatus().state ==
+    if (!app::hostProcessingAvailable()) {
+        // no host calibration
+    } else if (backend_.processing().backgroundCalibrationStatus().state ==
         services::ProcessingService::BackgroundCalibrationState::Running) {
         r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Fail,
                                "background calibration is still running",
@@ -727,8 +789,37 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     proc.startExperiment();
     // The shared lifecycle must own a live consumer. Qt previously started it
     // from a visible tab; a headless/Tauri Start otherwise finalized zero work.
-    proc.setRealtimeEnabled(true);
-    proc.startRealtime(backend_.getFrameStore());
+    if (app::hostProcessingAvailable()) {
+        proc.setRealtimeEnabled(true);
+        proc.startRealtime(backend_.getFrameStore());
+    } else if (auto* provider = backend_.executionProvider()) {
+        // PL science: arm after the run's accounting started, so every frame the
+        // PL reports from here on is admitted once.
+        const uint64_t runId = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                         std::chrono::system_clock::now().time_since_epoch())
+                                                         .count());
+        std::string providerError;
+        const auto profile = compilePlProfile(backend_);
+        bool providerOk = profile.ok() && provider->configure(profile, &providerError);
+        if (!profile.ok()) providerError = "the settings do not compile into the PL profile";
+        providerOk = providerOk && provider->start(runId, &providerError);
+        if (!providerOk) {
+            // Roll back as for a provenance failure; the results source is a
+            // start prerequisite, so the outcome is NotReady with the reason.
+            proc.endExperiment();
+            hdf5.closeFile();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            state_ = ExperimentRunState::Idle;
+            result.outcome = ExperimentStartOutcome::NotReady;
+            result.message = "execution provider '" + provider->name() + "' did not start: " + providerError;
+            SPDLOG_ERROR("ExperimentCoordinator: {}", result.message);
+            restoreModeOnFailure();
+            publishLocked(lk, "start failed");
+            return result;
+        }
+        SPDLOG_INFO("ExperimentCoordinator: PL results from '{}' (run id {})", provider->name(), runId);
+    }
     activeRun_ = run;
     lastRun_ = run;
     liveKdeCoreJson_.clear();
@@ -913,6 +1004,19 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     const std::string liveKdeCoreJson = std::move(liveKdeCoreJson_);
     liveKdeCoreJson_.clear();
     lk.unlock();
+
+    // PL science: stop the provider first. It delivers what the device wrote
+    // before STOP, so the run's last frames are ingested before the drain.
+    if (!app::hostProcessingAvailable()) {
+        if (auto* provider = backend_.executionProvider()) {
+            provider->stop();
+            const auto st = provider->status();
+            SPDLOG_INFO("ExperimentCoordinator: provider '{}' stopped: {} frames, {} results, {} incomplete, "
+                        "{} decode errors, {} sequence gaps, {} overruns",
+                        provider->name(), st.frames, st.results, st.incompleteFrames, st.decodeErrors,
+                        st.sequenceGaps, st.overruns);
+        }
+    }
 
     bool ok = true;
     bool flushOk = true;

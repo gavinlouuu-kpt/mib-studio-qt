@@ -32,6 +32,8 @@ std::string arch() {
     return "aarch64";
 #elif defined(__x86_64__) || defined(_M_X64)
     return "x86_64";
+#elif defined(__arm__) && defined(__ARM_ARCH) && __ARM_ARCH == 7
+    return "armv7"; // PZ7035 PS (YOFO Studio)
 #else
     return "unsupported";
 #endif

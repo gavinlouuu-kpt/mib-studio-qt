@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import {open, save} from "./transport/dialogs";
 import { bridge } from "./bridge";
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 
