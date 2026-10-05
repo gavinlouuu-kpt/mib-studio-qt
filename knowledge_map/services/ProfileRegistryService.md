@@ -17,7 +17,9 @@ records operator-confirmed local validations; [[../architecture/ExperimentCoordi
 matches the applied config.json to a cached revision, gates Start on it
 (`method.revision`) and freezes it into `/run_provenance`. M2b: Apply (Qt;
 `planMethodApply` + `AppConfigWatcher::applyMethodDocument`) and "Mark
-validated" (both shells; `AppBackend::requestMethodValidation` accepts only a
+validated" (both shells; React Apply through `app::applyCentralMethod` /
+`applyConfigDocument` in `include/backend/app/ConfigDocumentApply.h`;
+`AppBackend::requestMethodValidation` accepts only a
 test run whose `/run_provenance` names the revision on this instrument under
 the current context — `checkValidationEvidence`). See
 `include/backend/app/MethodApply.h`.

@@ -249,9 +249,13 @@ built — before the UI's `init`. Enabled by the same
 label. **Materialize** (`registry_materialize`) and **Mark validated… /
 Record failed run…** (`@tauri-apps/plugin-dialog` picker →
 `registry_record_validation`; the backend refusal is shown) work as in Qt.
-**Apply…** is rendered disabled with `APPLY_UNAVAILABLE`: the React shell has
-no config.json applier (it edits the processing-config document instead), so
-it cannot load a method exactly — a follow-up.
+**Apply…** (#398 M2c, materialized published/superseded rows) calls
+`registry_plan_apply` and shows the changed config.json keys and the camera
+script path (`applyConfirmText`); **Apply** then calls `registry_apply_method`,
+which runs the backend config.json applier (`app::applyCentralMethod` →
+`applyConfigDocument`, refused while a run is in flight) and reports applied
+and not-applicable sections (`applyResultText`). The React shell has no
+config.json file: the applied method lives in the backend for the session.
 
 #398 M3b: **Methods / Drafts** views. Methods adds **New draft** (optionally
 "from current config.json"), **Approve / Reject / Publish / Archive / Revoke**

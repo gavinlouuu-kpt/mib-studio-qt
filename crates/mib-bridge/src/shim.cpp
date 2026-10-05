@@ -1556,6 +1556,40 @@ BridgeRegistryCommand BackendBridge::registry_fetch_history(rust::Str revision_i
     return registryCommand([&] { return impl_->facade.registryFetchHistory(toStd(revision_id)); });
 }
 
+BridgeMethodApplyPlan BackendBridge::registry_plan_apply(rust::Str revision_id) {
+    BridgeMethodApplyPlan out{};
+    try {
+        const auto p = impl_->facade.registryPlanApply(toStd(revision_id));
+        out.ok = p.ok;
+        out.error = rust::String(p.error);
+        out.revision_id = rust::String(p.revisionId);
+        out.display_name = rust::String(p.displayName);
+        out.revision_number = p.revisionNumber;
+        out.central_state = rust::String(p.centralState);
+        for (const auto& k : p.changedKeys) out.changed_keys.push_back(rust::String(k));
+        out.camera_script_path = rust::String(p.cameraScriptPath);
+    } catch (...) {
+        out = BridgeMethodApplyPlan{};
+        out.error = rust::String("registry_plan_apply failed");
+    }
+    return out;
+}
+
+BridgeMethodApplyResult BackendBridge::registry_apply_method(rust::Str revision_id) {
+    BridgeMethodApplyResult out{};
+    try {
+        const auto r = impl_->facade.registryApplyMethod(toStd(revision_id));
+        out.ok = r.ok;
+        out.error = rust::String(r.error);
+        for (const auto& s : r.applied) out.applied.push_back(rust::String(s));
+        for (const auto& s : r.notApplied) out.not_applied.push_back(rust::String(s));
+    } catch (...) {
+        out = BridgeMethodApplyResult{};
+        out.error = rust::String("registry_apply_method failed");
+    }
+    return out;
+}
+
 BridgeRegistryJob BackendBridge::fetch_registry_job(std::uint64_t job_id) {
     try {
         backend::bridge::BackendRegistryJob job;
@@ -1952,8 +1986,9 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
 // contract groups — #398; registry_job_kinds Materialize/RecordValidation,
 // registry_local_validation, registry_materialize, registry_record_validation,
-// the authoring job kinds 6-10 and the registry_* authoring functions were
-// added before v15 shipped). All additive over v1 (ADR 0003/0004). Must match
+// the authoring job kinds 6-10, the registry_* authoring functions and
+// registry_plan_apply / registry_apply_method were added before v15 shipped;
+// v15 is held unreleased by ADR 0011 until #450 lands). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 std::uint32_t bridge_abi_version() { return 15; }
 

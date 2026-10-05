@@ -71,8 +71,12 @@ freeze exact revision identity/content into historical runs.
   `registry_materialize` / `registry_record_validation` /
   `registry_local_validation`. The readiness panels list `method.revision` like
   any gate.
-- [ ] M2: Apply in the React shell (needs a backend config.json applier; the
-  shell edits the processing-config document today).
+- [x] M2c: Apply in the React shell through the backend config.json applier
+  (`app::applyConfigDocument`: the watcher's section semantics, staged and
+  fail-closed, exact text recorded; dot_grid / display_fps reported as Qt-only;
+  refused while a run is in flight).
+- [ ] M2c: persist the applied method across Tauri restarts (today it lives in
+  the backend for the session; the Qt shell persists through config.json).
 - [ ] M2: compatibility validator against declared hardware compatibility and
   calibration context; camera script compared as well as config.json; explicit
   update selection when a newer revision is published.

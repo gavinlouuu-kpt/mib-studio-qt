@@ -69,7 +69,10 @@ the full text; right-click to copy) rather than widening the window.
   on this instrument. Select a revision and press **Apply…** to load it: the
   dialog lists the config.json settings that will change (instrument
   settings such as COM ports or the save directory come with the method),
-  backs up your current config.json next to it as `config.json.bak-<time>`,
+  backs up your current config.json next to it as `config.json.bak-<time>`
+  (in the browser-style app, Apply shows the same list and loads the method for
+  the session; wafer dot-grid and display settings stay Qt-only and are listed
+  as not applied),
   and loads the method exactly. The camera script is not applied
   automatically; its file path is shown. To validate a method on this
   instrument, record a short test run with it applied, then select it and

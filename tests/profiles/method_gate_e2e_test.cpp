@@ -12,8 +12,12 @@
 //    (run snapshot schema v2 "method" block), readable after close;
 //  - a revoked revision (applied directly, or revoked centrally after a
 //    refresh) blocks Start with NotReady;
-//  - a locally edited config is a local method (NotRequired).
+//  - a locally edited config is a local method (NotRequired);
+//  - (M2c) r1 is applied through the backend config.json applier with its
+//    exact bytes, a revoked revision is not applied, and Apply is refused
+//    while a run is in flight.
 #include "backend/app/AppBackend.h"
+#include "backend/app/ConfigDocumentApply.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
 #include "backend/camera/mock/MockCamera.h"
@@ -161,8 +165,17 @@ int main() {
                "unmatched config: local method");
 
     wd.mark("applied central revision, not validated: Warn");
-    // What the Qt AppConfigWatcher does when the operator applies the method.
-    backend.setLastConfigJson(r1Config);
+    // Apply through the backend config.json applier (the React/Tauri path,
+    // #398 M2c); the Qt AppConfigWatcher records the same exact bytes.
+    {
+        const auto applied = backend::app::applyCentralMethod(backend, "r1");
+        MIB_REQUIRE(applied.ok, applied.error);
+        MIB_EXPECT(backend.getLastConfigJson() == r1Config, "applier recorded r1's exact bytes");
+        const auto revoked = backend::app::applyCentralMethod(backend, "r2");
+        MIB_EXPECT(!revoked.ok && revoked.error.find("revoked") != std::string::npos &&
+                       backend.getLastConfigJson() == r1Config,
+                   "a revoked revision is not applied");
+    }
     r = coord.evaluateReadiness(out);
     dumpGates(r);
     MIB_EXPECT(r.candidate.method.source == "central" && r.candidate.method.revisionId == "r1",
@@ -181,6 +194,9 @@ int main() {
         req.outputPath = path;
         req.readinessGeneration = ready.generation;
         MIB_REQUIRE(coord.start(req).outcome == ExperimentStartOutcome::Started, "Started");
+        const auto midRun = backend::app::applyCentralMethod(backend, "r1");
+        MIB_EXPECT(!midRun.ok && midRun.error.find("in progress") != std::string::npos,
+                   "Apply is refused while a run is in flight");
         MIB_EXPECT(coord.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop");
         MIB_REQUIRE(waitFor([&] { return coord.status().terminal; }, 20s), "run finalizes");
         backend::services::Hdf5Service reader;

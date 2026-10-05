@@ -1252,6 +1252,12 @@ fn registry_commands_through_shell_transport() {
         let submit = bridge.pin_mut().registry_submit_draft("d1", false);
         let job = wait_registry_job(&mut bridge, submit.job_id);
         assert_eq!((job.kind, job.state), (8, 4), "SubmitDraft needs a session");
+
+        // #398 M2c Apply: refusals cross the bridge as values.
+        let plan = bridge.pin_mut().registry_plan_apply("r1");
+        assert!(!plan.ok && plan.error.contains("cache"), "uncached revision: {}", plan.error);
+        let applied = bridge.pin_mut().registry_apply_method("r1");
+        assert!(!applied.ok && !applied.error.is_empty() && applied.applied.is_empty());
         bridge.pin_mut().shutdown();
     }
 

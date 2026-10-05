@@ -1,5 +1,18 @@
 # Recent Work
 
+## 2026-10-05 — Apply central methods in the React/Tauri shell (#398 M2c)
+
+A Qt-free backend config.json applier (`app::applyConfigDocument`, with
+`applyCentralMethod` for registry revisions) gives the React shell an exact
+Apply: same section semantics as the Qt `AppConfigWatcher` (v2
+`difference_threshold`, Laplacian keys, contract version, buffers, realtime,
+delivery mode, pixel factor, autofocus, ROI), staged and fail-closed, exact
+text recorded as applied; `dot_grid` / `display_fps` reported as Qt-only.
+Refused while a run is in flight. Bridge `registry_plan_apply` /
+`registry_apply_method` (inside held ABI 15); React previews the changed keys
+before applying. Guards: `backend.config_document_apply`, `e2e.method_gate`
+(applier path + mid-run refusal), bridge cargo, `registry.test.ts`.
+
 ## 2026-10-04 — Central method authoring and review UI (#398 M3b)
 
 Both shells can now author and govern central methods. Qt **Central

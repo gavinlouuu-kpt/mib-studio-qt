@@ -760,6 +760,27 @@ namespace backend::bridge
         BackendRegistryConflict submitConflict;
     };
 
+    // #398 M2c Apply (React/Tauri): what applying a revision would change, and
+    // the outcome of applying it through the backend config.json applier.
+    struct BackendMethodApplyPlan
+    {
+        bool ok{false};
+        std::string error;
+        std::string revisionId;
+        std::string displayName;
+        std::uint64_t revisionNumber{0};
+        std::string centralState;
+        std::vector<std::string> changedKeys;
+        std::string cameraScriptPath; // not applied automatically
+    };
+    struct BackendMethodApplyResult
+    {
+        bool ok{false};
+        std::string error;
+        std::vector<std::string> applied;
+        std::vector<std::string> notApplied;
+    };
+
     // Outcome of an authoring command: jobId 0 = refused, `error` says why.
     struct BackendRegistryCommand
     {
@@ -972,6 +993,12 @@ namespace backend::bridge
         // Archived, Revoked); reason required.
         BackendRegistryCommand registryTransition(const std::string &revisionId, int state, const std::string &reason);
         BackendRegistryCommand registryFetchHistory(const std::string &revisionId);
+        // #398 M2c: preview, then apply a materialized published/superseded
+        // revision exactly (backend config.json applier; refused while an
+        // experiment is starting, active or stopping). Synchronous and local:
+        // no network.
+        BackendMethodApplyPlan registryPlanApply(const std::string &revisionId) const;
+        BackendMethodApplyResult registryApplyMethod(const std::string &revisionId);
         bool fetchRegistrySnapshot(BackendRegistrySnapshot &out) const;
         bool fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const;
         bool fetchCameraSelection(BackendCameraSelection &out) const;

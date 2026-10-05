@@ -1169,3 +1169,16 @@ button.btn:disabled,
   gap: 4px;
   font-size: 12px;
 }
+
+.registry-confirm {
+  border: 1px solid var(--accent);
+  padding: 6px 8px;
+  margin: 4px 0;
+}
+.registry-confirm pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0 0 4px;
+  max-height: 180px;
+  overflow: auto;
+}
