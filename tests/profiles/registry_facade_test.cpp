@@ -1,4 +1,4 @@
-// registry_facade_test (issue #398, bridge ABI 15)
+// registry_facade_test (issue #398, bridge ABI 24)
 //
 // Frontend-neutral facade surface for the central profile registry:
 //  - an uninitialized facade refuses every registry command and returns an

@@ -2228,7 +2228,7 @@ namespace backend::bridge
         return out.valid;
     }
 
-    // ---- Central profile registry (issue #398, ABI 15) ----
+    // ---- Central profile registry (issue #398, ABI 24) ----
     namespace
     {
         BackendRegistryJob toRegistryJob(const profiles::RegistryJobStatus &job)

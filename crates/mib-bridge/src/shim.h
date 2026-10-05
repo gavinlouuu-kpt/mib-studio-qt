@@ -151,7 +151,7 @@ public:
     bool cancel_device_discovery(std::uint64_t job_id);
     BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id);
     BridgeCameraSelection fetch_camera_selection();
-    // Central profile registry (schema v15, #398).
+    // Central profile registry (schema v24, #398).
     bool set_registry_transport(
         rust::Fn<BridgeHttpResponse(const BridgeHttpRequest&)> transport);
     std::uint64_t registry_sign_in(rust::Str email, rust::Str password);

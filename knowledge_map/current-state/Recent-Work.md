@@ -18,10 +18,10 @@ unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
 
-## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 15)
+## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 24)
 
 `BackendFacade` gained registry commands and a value snapshot; the bridge
-exposes them (ABI 15, five new `registry_*` contract groups pinned in C++,
+exposes them (ABI 24, five new `registry_*` contract groups pinned in C++,
 Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
 installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
 a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**

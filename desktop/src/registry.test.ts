@@ -1,4 +1,4 @@
-// Central profile registry view model (bridge schema v15, #398): the same
+// Central profile registry view model (bridge schema v24, #398): the same
 // truth the Qt dialog shows — connectivity separate from the account, each
 // central state as itself, revoked marked, button enablement, and warnings.
 import { describe, expect, it } from "vitest";

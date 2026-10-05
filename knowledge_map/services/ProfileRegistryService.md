@@ -9,7 +9,7 @@ Central method registry for #398: provider-neutral revisions, Supabase RPC and
 Auth clients, immutable per-user local cache, explicit sync operations, and the
 backend-owned `ProfileRegistryWorker` that runs them on one thread. Owned by
 [[../architecture/AppBackend]] (`profileRegistry()`); the Qt shell injects the
-HTTPS transport; the React Central Methods panel (through `BackendFacade` registry calls, bridge ABI 15,
+HTTPS transport; the React Central Methods panel (through `BackendFacade` registry calls, bridge ABI 24,
 see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
 revisions. Not yet in a method picker, Apply/Verify or run provenance.
 

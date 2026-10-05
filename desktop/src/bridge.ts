@@ -170,7 +170,7 @@ export interface CameraDiscovery {
   framegrabbers: DiscoveredFramegrabber[];
 }
 
-/** Central profile registry (bridge schema v15, #398). Integers are contract
+/** Central profile registry (bridge schema v24, #398). Integers are contract
  *  values: `session` REGISTRY_SESSION_STATES, `connectivity`
  *  REGISTRY_CONNECTIVITY, job `kind`/`state` REGISTRY_JOB_KINDS /
  *  REGISTRY_JOB_STATES, `central_state` REGISTRY_CENTRAL_STATES. u64 values
@@ -590,7 +590,7 @@ export const bridge = {
       },
       opts,
     ),
-  // Central profile registry (bridge schema v15, #398). Commands return a job
+  // Central profile registry (bridge schema v24, #398). Commands return a job
   // ID as a decimal string; "0" means refused (not configured / not ready).
   registrySignIn: (email: string, password: string) =>
     invoke<string>("registry_sign_in", { email, password }),

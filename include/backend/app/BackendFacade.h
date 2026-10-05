@@ -653,7 +653,7 @@ namespace backend::bridge
         std::string origin;
     };
 
-    // ---- Central profile registry (issue #398, ABI 15) ----
+    // ---- Central profile registry (issue #398, ABI 24) ----
     // Frontend-neutral mirror of backend::profiles::ProfileRegistryWorker.
     // Integer fields are contract-pinned (bridge-contract.json):
     // `session` = registry_session_states, `connectivity` =
@@ -897,7 +897,7 @@ namespace backend::bridge
         // job deadline). Worker-thread callers only; never call from a UI
         // thread. New consumers use the asynchronous trio above.
         bool fetchCameraDiscovery(BackendCameraDiscovery &out) const;
-        // Central profile registry (issue #398, ABI 15): enqueue commands on
+        // Central profile registry (issue #398, ABI 24): enqueue commands on
         // the backend registry worker (job IDs; 0 = refused) and read its
         // value snapshot. Never blocks on the network; never touches capture,
         // recording or Start. The password is handed to the worker and not

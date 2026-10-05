@@ -330,7 +330,7 @@ completion / gate-status values; `bridge.ts` exposes
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
 
-## Central profile registry (ABI 15, issue #398)
+## Central profile registry (ABI 24, issue #398)
 
 **Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
 sign in/out, refresh (also on open when signed in), cancel, and the cached

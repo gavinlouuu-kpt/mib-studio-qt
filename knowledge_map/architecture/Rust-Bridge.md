@@ -89,7 +89,7 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `discovery_identity_strengths`, `discovery_identification_statuses`,
   `discovery_error_kinds`. Windows `cargo test` against the `windows-ninja`
   tree uses `tools/gen_bridge_link_manifest_ninja.py`.
-- **Central profile registry (v15, #398):** `registry_sign_in(email,
+- **Central profile registry (v24, #398):** `registry_sign_in(email,
   password)`, `registry_sign_out()`, `registry_refresh()`,
   `registry_download(revision_id)` → job ID (0 = refused),
   `registry_cancel_all()`, `fetch_registry_snapshot()` →

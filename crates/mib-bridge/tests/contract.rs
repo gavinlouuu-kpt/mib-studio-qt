@@ -68,7 +68,10 @@ fn abi_version_is_stable() {
     // v23 develop (19) and the instrument line (20-22) as one contract; no
     // new commands (ADR 0011 single renumber, so no release build carries an
     // interim number).
-    assert_eq!(ffi::bridge_abi_version(), 23);
+    // v24 the central profile registry (#398): registry_* commands, snapshot
+    // and contract groups, and the shell-injected HTTPS transport. Built as a
+    // provisional 15 and renumbered once; 15 and 19-23 are never reused.
+    assert_eq!(ffi::bridge_abi_version(), 24);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
@@ -673,7 +676,7 @@ fn rust_enums_match_contract_json() {
                                     ("Timeout", 5), ("MalformedResponse", 6), ("Unsupported", 7), ("MissingSdk", 8),
                                     ("ProviderException", 9), ("Cancelled", 10), ("Overflow", 11), ("ShuttingDown", 12),
                                     ("TooManyJobs", 13)]),
-        // ABI 15 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
+        // ABI 24 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
         ("registry_session_states", &[("SignedOut", 0), ("SignedIn", 1), ("CachedOffline", 2)]),
         ("registry_connectivity", &[("Unknown", 0), ("Online", 1), ("Offline", 2), ("AuthenticationRequired", 3),
                                     ("PermissionDenied", 4), ("Failed", 5)]),
@@ -1151,7 +1154,7 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_file(&rec_path);
 }
 
-// ---- Central profile registry (schema v15, #398) ----
+// ---- Central profile registry (schema v24, #398) ----
 // The shell-injected transport is a plain `fn` pointer, so the test
 // transports report through statics.
 static REGISTRY_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
