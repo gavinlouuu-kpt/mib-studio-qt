@@ -1,0 +1,1241 @@
+{
+  "abi": {
+    "name": "pz_mib",
+    "major": 1,
+    "minor": 2,
+    "identity_magic": "0x505A4D42",
+    "record_magic": "0x524D5A50",
+    "board_id": "0x7035",
+    "byte_order": "little",
+    "register_base": "0x40100000",
+    "register_window_bytes": 4096,
+    "notes": [
+      "All multi-byte fields are little-endian, fixed width, naturally aligned; no native pointers, no compiler padding.",
+      "Records are 8-byte aligned; length includes the 16-byte header; crc32 (IEEE, reflected 0xEDB88320) covers the whole record with the crc field zeroed.",
+      "Legacy diagnostic images identify as 0x70350001 / 0x70351001 and are rejected before arm.",
+      "Processing results are carried as an opaque payload inside RESULT records. Their layout is defined per (science_profile, profile_version) by the processing track (pz7035-imx426#7), not by this platform ABI.",
+      "Frame store (capability FRAME_STORE): every accepted frame is written to a round-robin ring in PS DDR as a store record = the frame's wire record set (FRAME, RESULT*, EVENT*, IMAGE*) followed by the image blocks the IMAGE records point at. The same bytes are drained to local storage (capability STORE_DRAIN). Store records are self-describing and 512-byte aligned.",
+      "ABI 1.2 (2026-09-30, docs/decisions/0002): additive profile parameter page (PROFILE_PAGE_SHADOW/APPLIED, committed with the config epoch), table loader for PS-computed backgrounds and profile tables, LIMIT_FRAME_PERIOD_TICKS, RESULT flags VALID and UNSERVED. Profile-specific meaning of the page and payload is defined per profile under abi/profiles/."
+    ]
+  },
+  "compatibility": {
+    "rules": [
+      "identity must equal identity_magic and board_id must match, else reject before arm",
+      "abi major must be equal; abi minor on the device must be >= the minor the host was generated from",
+      "every capability the selected operating mode requires must be set in CAPABILITIES, else reject before arm",
+      "record version must be <= the generated version for that record type; unknown trailing bytes within length are ignored (additive fields)",
+      "a record whose length is below the generated minimum for its type is invalid",
+      "a RESULT payload is interpreted only if the host has a decoder for its (science_profile, profile_version); otherwise the envelope is still delivered and the payload is reported unavailable, never zero",
+      "the host must reject arm if SCIENCE_PROFILE names a profile the selected operating mode does not expect"
+    ]
+  },
+  "enums": {
+    "state": {
+      "RESET": 0,
+      "IDLE": 1,
+      "CONFIGURED": 2,
+      "ARMED": 3,
+      "RUNNING": 4,
+      "DRAINING": 5,
+      "FAULT": 6
+    },
+    "record_type": {
+      "FRAME": 1,
+      "RESULT": 2,
+      "EVENT": 3,
+      "COUNTERS": 4,
+      "PREVIEW": 5,
+      "DESCRIPTOR": 6,
+      "IMAGE": 7
+    },
+    "pixel_format": {
+      "MONO8": 1,
+      "RAW12_PACKED": 2,
+      "GRAY8_FROM_RAW12": 3,
+      "MASK1": 4,
+      "INT8_CODES": 5
+    },
+    "science_profile": {
+      "NONE": 0,
+      "CLASSICAL_CONTRACT1": 1,
+      "UNET_W8A8_C4_SINGLE": 2
+    },
+    "buffer_state": {
+      "FREE": 0,
+      "DEVICE_OWNED": 1,
+      "READY": 2,
+      "CPU_OWNED": 3
+    },
+    "buffer_kind": {
+      "RESULT": 1,
+      "PREVIEW": 2
+    },
+    "commit_status": {
+      "NONE": 0,
+      "PENDING": 1,
+      "ACKED": 2,
+      "REJECTED_RUNNING": 3,
+      "REJECTED_INVALID": 4
+    },
+    "decode_error": {
+      "OK": 0,
+      "BAD_MAGIC": 1,
+      "BAD_LENGTH": 2,
+      "BAD_CRC": 3,
+      "UNKNOWN_TYPE": 4,
+      "BAD_VERSION": 5,
+      "TRUNCATED": 6,
+      "OVERSIZED": 7,
+      "DUPLICATE_SEQUENCE": 8,
+      "SEQUENCE_GAP": 9,
+      "STALE_EPOCH": 10,
+      "STALE_GENERATION": 11,
+      "RESULT_LIMIT": 12,
+      "BAD_STATE": 13
+    },
+    "event_decision": {
+      "ISSUED": 1,
+      "LATE": 2,
+      "MISSED": 3,
+      "INHIBITED": 4,
+      "NONE": 0
+    },
+    "store_mode": {
+      "OFF": 0,
+      "CONTINUOUS": 1,
+      "TRIGGER": 2
+    },
+    "store_state": {
+      "IDLE": 0,
+      "ARMED": 1,
+      "CAPTURING": 2,
+      "DRAINING": 3,
+      "FAULT": 4
+    },
+    "table_id": {
+      "NONE": 0,
+      "BACKGROUND": 1,
+      "PROFILE_TABLE0": 2
+    }
+  },
+  "bitmasks": {
+    "capabilities": {
+      "SENSOR_INGRESS": 0,
+      "RESULTS": 1,
+      "EVENTS": 2,
+      "PREVIEW": 3,
+      "TRIGGER_OUTPUT": 4,
+      "OUTPUT_INHIBIT": 5,
+      "BACKGROUND_COMMIT": 6,
+      "RESULT_DMA": 7,
+      "PREVIEW_DMA": 8,
+      "COUNTER_SNAPSHOT": 9,
+      "WATCHDOG": 10,
+      "FRAME_STORE": 11,
+      "STORE_DRAIN": 12,
+      "PROFILE_PAGE": 13,
+      "TABLE_LOADER": 14,
+      "RUNTIME_GEOMETRY": 15
+    },
+    "fault": {
+      "RX_LINK": 0,
+      "RX_OVERFLOW": 1,
+      "MODEL": 2,
+      "RESULT_OVERFLOW": 3,
+      "DMA": 4,
+      "WATCHDOG": 5,
+      "CONFIG": 6,
+      "TRIGGER_LATE": 7,
+      "STORE_DRAIN": 8
+    },
+    "control": {
+      "ARM": 0,
+      "STOP": 1,
+      "FLUSH": 2,
+      "RESET_GENERATION": 3,
+      "INHIBIT": 4,
+      "FAULT_CLEAR": 5,
+      "RELEASE_INHIBIT": 6
+    },
+    "irq": {
+      "RESULT_READY": 0,
+      "PREVIEW_READY": 1,
+      "COMMIT_ACK": 2,
+      "FAULT": 3,
+      "OVERFLOW": 4,
+      "STOPPED": 5,
+      "STORE_WINDOW_DONE": 6
+    },
+    "frame_flags": {
+      "EMPTY": 0,
+      "PARTIAL": 1,
+      "INVALID": 2,
+      "RESULTS_TRUNCATED": 3,
+      "RESULTS_OVERFLOW": 4,
+      "PREVIEW_AVAILABLE": 5,
+      "PREVIEW_DROPPED": 6,
+      "FIRST_OF_EPOCH": 7,
+      "STORED": 8,
+      "STORE_OVERWRITTEN": 9
+    },
+    "descriptor_flags": {
+      "LAST_OF_FRAME": 0,
+      "PARTIAL": 1
+    },
+    "result_flags": {
+      "TARGET": 0,
+      "TRUNCATED": 1,
+      "INVALID": 2,
+      "VALID": 3,
+      "UNSERVED": 4
+    },
+    "image_flags": {
+      "INCOMPLETE": 0,
+      "NO_RESULT": 1
+    }
+  },
+  "constants": {
+    "RECORD_HEADER_BYTES": 16,
+    "RECORD_ALIGN_BYTES": 8,
+    "MAX_RECORD_BYTES": 4096,
+    "CONFIG_WORDS": 16,
+    "COUNTER_WORDS": 16,
+    "TIMESTAMP_HZ_DEFAULT": 59400000,
+    "MAX_INFLIGHT_FRAMES": 4,
+    "REGISTER_WINDOW_BYTES": 4096,
+    "MAX_RESULTS_PER_FRAME": 64,
+    "MAX_RESULT_PAYLOAD_WORDS": 240,
+    "PROFILE_PARAM_WORDS": 7,
+    "STORE_SET_BYTES_DEFAULT": 4096,
+    "PROFILE_PAGE_WORDS": 32,
+    "BACKGROUND_BANKS": 2
+  },
+  "registers": {
+    "word_bytes": 4,
+    "map": [
+      {
+        "offset": "0x000",
+        "name": "IDENTITY",
+        "access": "RO",
+        "reset": "identity_magic",
+        "doc": "0x505A4D42 'PZMB'; legacy images return 0x7035xxxx and are rejected"
+      },
+      {
+        "offset": "0x004",
+        "name": "ABI_VERSION",
+        "access": "RO",
+        "doc": "major[31:16] minor[15:0]"
+      },
+      {
+        "offset": "0x008",
+        "name": "BOARD_ID",
+        "access": "RO",
+        "doc": "0x7035"
+      },
+      {
+        "offset": "0x00C",
+        "name": "BUILD_ID0",
+        "access": "RO",
+        "doc": "bytes 0-3 of the source bundle sha256"
+      },
+      {
+        "offset": "0x010",
+        "name": "BUILD_ID1",
+        "access": "RO"
+      },
+      {
+        "offset": "0x014",
+        "name": "BUILD_ID2",
+        "access": "RO"
+      },
+      {
+        "offset": "0x018",
+        "name": "BUILD_ID3",
+        "access": "RO"
+      },
+      {
+        "offset": "0x020",
+        "name": "CAPABILITIES",
+        "access": "RO",
+        "doc": "bitmask capabilities (platform features only; science is identified by SCIENCE_PROFILE)"
+      },
+      {
+        "offset": "0x028",
+        "name": "SCIENCE_PROFILE",
+        "access": "RO",
+        "doc": "enum science_profile (registry; the profile's internals belong to the processing track) [15:0], profile_version [31:16]"
+      },
+      {
+        "offset": "0x02C",
+        "name": "PROFILE_ID0",
+        "access": "RO",
+        "doc": "bytes 0-3 of the sha256 identifying the profile's assets (for example a model); zero when none"
+      },
+      {
+        "offset": "0x030",
+        "name": "PROFILE_ID1",
+        "access": "RO"
+      },
+      {
+        "offset": "0x034",
+        "name": "PROFILE_ID2",
+        "access": "RO"
+      },
+      {
+        "offset": "0x038",
+        "name": "PROFILE_ID3",
+        "access": "RO"
+      },
+      {
+        "offset": "0x040",
+        "name": "STATE",
+        "access": "RO",
+        "doc": "enum state"
+      },
+      {
+        "offset": "0x044",
+        "name": "FAULT",
+        "access": "RO",
+        "doc": "sticky bitmask fault; cleared only by CONTROL.FAULT_CLEAR"
+      },
+      {
+        "offset": "0x048",
+        "name": "GENERATION",
+        "access": "RO",
+        "doc": "reset generation; descriptors and completions carry it"
+      },
+      {
+        "offset": "0x050",
+        "name": "CONTROL",
+        "access": "WO",
+        "doc": "bitmask control; self-clearing pulses. INHIBIT asserts the output inhibit; RELEASE_INHIBIT clears it only while ARMED/RUNNING without fault. ARM, STOP, fault and reset leave or put outputs inhibited."
+      },
+      {
+        "offset": "0x054",
+        "name": "RUN_ID_LO",
+        "access": "RW",
+        "doc": "64-bit run id written by the host before ARM; copied into every record"
+      },
+      {
+        "offset": "0x058",
+        "name": "RUN_ID_HI",
+        "access": "RW"
+      },
+      {
+        "offset": "0x05C",
+        "name": "EPOCH",
+        "access": "RO",
+        "doc": "currently applied configuration epoch"
+      },
+      {
+        "offset": "0x060",
+        "name": "CONFIG_COMMIT",
+        "access": "WO",
+        "doc": "write the new epoch value to request an atomic apply of the shadow block at the next frame boundary"
+      },
+      {
+        "offset": "0x064",
+        "name": "COMMIT_STATUS",
+        "access": "RO",
+        "doc": "enum commit_status"
+      },
+      {
+        "offset": "0x068",
+        "name": "FIRST_EFFECTIVE_FRAME_LO",
+        "access": "RO",
+        "doc": "frame id of the first frame processed with the acked epoch"
+      },
+      {
+        "offset": "0x06C",
+        "name": "FIRST_EFFECTIVE_FRAME_HI",
+        "access": "RO"
+      },
+      {
+        "offset": "0x080",
+        "name": "IRQ_STATUS",
+        "access": "RO",
+        "doc": "bitmask irq"
+      },
+      {
+        "offset": "0x084",
+        "name": "IRQ_ENABLE",
+        "access": "RW"
+      },
+      {
+        "offset": "0x088",
+        "name": "IRQ_ACK",
+        "access": "W1C"
+      },
+      {
+        "offset": "0x090",
+        "name": "GEOMETRY",
+        "access": "RO",
+        "doc": "width[15:0] height[31:16] of the applied configuration"
+      },
+      {
+        "offset": "0x094",
+        "name": "PIXEL_FORMAT",
+        "access": "RO",
+        "doc": "enum pixel_format[7:0], stride_bytes[31:8]"
+      },
+      {
+        "offset": "0x098",
+        "name": "ROI_ORIGIN",
+        "access": "RO",
+        "doc": "x[15:0] y[31:16]"
+      },
+      {
+        "offset": "0x09C",
+        "name": "ROI_SIZE",
+        "access": "RO",
+        "doc": "w[15:0] h[31:16]"
+      },
+      {
+        "offset": "0x0A0",
+        "name": "TIMESTAMP_HZ",
+        "access": "RO",
+        "doc": "tick rate of all timestamps; 64-bit free-running, reset only by RESET_GENERATION, never wraps in practice (2^64 ticks)"
+      },
+      {
+        "offset": "0x0A4",
+        "name": "TIMESTAMP_LO",
+        "access": "RO",
+        "doc": "latched by SNAPSHOT together with the counters"
+      },
+      {
+        "offset": "0x0A8",
+        "name": "TIMESTAMP_HI",
+        "access": "RO"
+      },
+      {
+        "offset": "0x0B0",
+        "name": "SNAPSHOT",
+        "access": "WO",
+        "doc": "write 1: latch TIMESTAMP and all COUNTER words coherently from the counter clock domain"
+      },
+      {
+        "offset": "0x0B4",
+        "name": "SNAPSHOT_SEQ",
+        "access": "RO",
+        "doc": "increments when a snapshot completes; read before and after the counters to detect a torn read"
+      },
+      {
+        "offset": "0x0C0",
+        "name": "LIMIT_RESULTS",
+        "access": "RO",
+        "doc": "results per frame the image can emit"
+      },
+      {
+        "offset": "0x0C4",
+        "name": "LIMIT_RESULT_BYTES",
+        "access": "RO",
+        "doc": "result bytes per frame the image can emit"
+      },
+      {
+        "offset": "0x0C8",
+        "name": "LIMIT_INFLIGHT",
+        "access": "RO",
+        "doc": "frames the device may own at once"
+      },
+      {
+        "offset": "0x0CC",
+        "name": "LIMIT_RESULT_PAYLOAD_WORDS",
+        "access": "RO",
+        "doc": "payload words per RESULT record"
+      },
+      {
+        "offset": "0x0D0",
+        "name": "LIMIT_FRAME_PERIOD_TICKS",
+        "access": "RO",
+        "doc": "minimum frame period (TIMESTAMP_HZ ticks) the applied profile sustains; 0 = no profile limit. The PS combines it with the sensor geometry and store admission to report the achievable frame rate"
+      },
+      {
+        "offset": "0x100",
+        "name": "COUNTER",
+        "access": "RO",
+        "count": 16,
+        "doc": "snapshot copies, index order in counters[]"
+      },
+      {
+        "offset": "0x200",
+        "name": "CONFIG_SHADOW",
+        "access": "RW",
+        "count": 16,
+        "doc": "inactive candidate; readback returns what was written"
+      },
+      {
+        "offset": "0x280",
+        "name": "CONFIG_APPLIED",
+        "access": "RO",
+        "count": 16,
+        "doc": "configuration in effect since EPOCH"
+      },
+      {
+        "offset": "0x300",
+        "name": "RESULT_RING_BASE_LO",
+        "access": "RW",
+        "doc": "kernel-provided bus address of the result descriptor ring; host never passes arbitrary userspace addresses"
+      },
+      {
+        "offset": "0x304",
+        "name": "RESULT_RING_BASE_HI",
+        "access": "RW"
+      },
+      {
+        "offset": "0x308",
+        "name": "RESULT_RING_ENTRIES",
+        "access": "RW",
+        "doc": "power of two"
+      },
+      {
+        "offset": "0x30C",
+        "name": "RESULT_RING_HEAD",
+        "access": "RO",
+        "doc": "device write index"
+      },
+      {
+        "offset": "0x310",
+        "name": "RESULT_RING_TAIL",
+        "access": "RW",
+        "doc": "cpu release index"
+      },
+      {
+        "offset": "0x320",
+        "name": "PREVIEW_RING_BASE_LO",
+        "access": "RW",
+        "doc": "bus address of preview slot 0; slot n is at base + n * PREVIEW_SLOT_BYTES"
+      },
+      {
+        "offset": "0x324",
+        "name": "PREVIEW_RING_BASE_HI",
+        "access": "RW"
+      },
+      {
+        "offset": "0x328",
+        "name": "PREVIEW_RING_ENTRIES",
+        "access": "RW",
+        "doc": "number of preview slots (<= 8)"
+      },
+      {
+        "offset": "0x32C",
+        "name": "PREVIEW_RING_HEAD",
+        "access": "RO",
+        "doc": "newest READY slot + 1; 0 when none"
+      },
+      {
+        "offset": "0x330",
+        "name": "PREVIEW_RING_TAIL",
+        "access": "RW",
+        "doc": "reserved (previews are latest-value slots, not a ring)"
+      },
+      {
+        "offset": "0x334",
+        "name": "PREVIEW_SLOT_BYTES",
+        "access": "RW",
+        "doc": "bytes per preview slot; multiple of 128"
+      },
+      {
+        "offset": "0x338",
+        "name": "PREVIEW_HOLD",
+        "access": "RW",
+        "doc": "write: bitmask of slots the CPU wants to hold; the device grants a bit only for a slot that is READY and not being written. read: granted mask. A held slot is never written; clearing its bit frees it."
+      },
+      {
+        "offset": "0x33C",
+        "name": "PREVIEW_READY",
+        "access": "RO",
+        "doc": "bitmask of READY slots"
+      },
+      {
+        "offset": "0x340",
+        "name": "PREVIEW_SLOT_FRAME",
+        "access": "RO",
+        "count": 16,
+        "doc": "frame id of each slot's content, slot n at words 2n (low) and 2n+1 (high); authoritative after a hold is granted"
+      },
+      {
+        "offset": "0x380",
+        "name": "STORE_BASE_LO",
+        "access": "RW",
+        "doc": "bus address of the frame store ring (PS DDR); kernel-provided"
+      },
+      {
+        "offset": "0x384",
+        "name": "STORE_BASE_HI",
+        "access": "RW",
+        "doc": ""
+      },
+      {
+        "offset": "0x388",
+        "name": "STORE_RECORDS",
+        "access": "RW",
+        "doc": "number of store records in the ring = floor(region bytes / STORE_RECORD_BYTES); written by the host before ARM (<= 65535)"
+      },
+      {
+        "offset": "0x38C",
+        "name": "STORE_RECORD_BYTES",
+        "access": "RO",
+        "doc": "bytes per store record for the applied configuration; multiple of 512"
+      },
+      {
+        "offset": "0x390",
+        "name": "STORE_MODE",
+        "access": "RW",
+        "doc": "enum store_mode[7:0]; bit 8 include INT8_CODES image; applied at ARM"
+      },
+      {
+        "offset": "0x394",
+        "name": "STORE_PRE_FRAMES",
+        "access": "RW",
+        "doc": "TRIGGER mode: frames kept before the trigger"
+      },
+      {
+        "offset": "0x398",
+        "name": "STORE_POST_FRAMES",
+        "access": "RW",
+        "doc": "TRIGGER mode: frames kept after the trigger"
+      },
+      {
+        "offset": "0x39C",
+        "name": "STORE_TRIGGER",
+        "access": "WO",
+        "doc": "write 1: trigger (TRIGGER mode, once per run)"
+      },
+      {
+        "offset": "0x3A0",
+        "name": "STORE_STATE",
+        "access": "RO",
+        "doc": "enum store_state[7:0]; bit 8 window done (sticky until ARM)"
+      },
+      {
+        "offset": "0x3A4",
+        "name": "STORE_HEAD_SEQ",
+        "access": "RO",
+        "doc": "store sequence of the newest record (frame index within the run)"
+      },
+      {
+        "offset": "0x3A8",
+        "name": "STORE_DRAIN_SEQ",
+        "access": "RO",
+        "doc": "first store sequence not yet drained"
+      },
+      {
+        "offset": "0x3AC",
+        "name": "STORE_LOST",
+        "access": "RO",
+        "doc": "records overwritten before they were drained (round-robin)"
+      },
+      {
+        "offset": "0x3B0",
+        "name": "STORE_DRAINED",
+        "access": "RO",
+        "doc": "records written to local storage this run"
+      },
+      {
+        "offset": "0x3B4",
+        "name": "STORE_DRAIN_ERRORS",
+        "access": "RO",
+        "doc": "failed storage commands (retried); STORE_DRAIN fault after 4 in a row"
+      },
+      {
+        "offset": "0x3B8",
+        "name": "STORE_TRIGGER_SEQ",
+        "access": "RO",
+        "doc": "store sequence at the trigger"
+      },
+      {
+        "offset": "0x3C0",
+        "name": "STORE_DRAIN_LBA_LO",
+        "access": "RW",
+        "doc": "next 512-byte sector on the local drive; written by the host before ARM, advanced by the device"
+      },
+      {
+        "offset": "0x3C4",
+        "name": "STORE_DRAIN_LBA_HI",
+        "access": "RW",
+        "doc": ""
+      },
+      {
+        "offset": "0x3C8",
+        "name": "STORE_DRAIN_ENABLE",
+        "access": "RW",
+        "doc": "bit 0 drain to local storage; bit 1 storage link enable"
+      },
+      {
+        "offset": "0x3CC",
+        "name": "STORE_SET_BYTES",
+        "access": "RO",
+        "doc": "bytes reserved at the start of every store record for its record set (FRAME, IMAGE*, RESULT*, EVENT*); a power of two fixed by the image. A set that does not fit keeps only the FRAME record with RESULTS_OVERFLOW; the image blocks stay at their fixed offsets: MONO8 at STORE_SET_BYTES, then MASK1, then INT8_CODES"
+      },
+      {
+        "offset": "0x400",
+        "name": "PROFILE_PAGE_SHADOW",
+        "access": "RW",
+        "count": 32,
+        "doc": "capability PROFILE_PAGE: profile parameter page candidate, meaning defined by the active science profile (abi/profiles/); committed atomically with CONFIG_SHADOW by CONFIG_COMMIT"
+      },
+      {
+        "offset": "0x480",
+        "name": "PROFILE_PAGE_APPLIED",
+        "access": "RO",
+        "count": 32,
+        "doc": "profile page in effect since EPOCH"
+      },
+      {
+        "offset": "0x500",
+        "name": "TABLE_SELECT",
+        "access": "RW",
+        "doc": "capability TABLE_LOADER: enum table_id [7:0]; writing it resets TABLE_ADDR and the running crc. BACKGROUND writes the inactive bank, which becomes current at the next committed BACKGROUND_EPOCH (swap at SOF)"
+      },
+      {
+        "offset": "0x504",
+        "name": "TABLE_ADDR",
+        "access": "RW",
+        "doc": "byte address inside the selected table; advances by 4 on every TABLE_DATA write"
+      },
+      {
+        "offset": "0x508",
+        "name": "TABLE_DATA",
+        "access": "WO",
+        "doc": "little-endian table word at TABLE_ADDR"
+      },
+      {
+        "offset": "0x50C",
+        "name": "TABLE_STATUS",
+        "access": "RO",
+        "doc": "[0] busy, [1] address out of range (sticky until TABLE_SELECT), [31:8] bytes written since TABLE_SELECT"
+      },
+      {
+        "offset": "0x510",
+        "name": "TABLE_CRC32",
+        "access": "RO",
+        "doc": "crc32 (IEEE, reflected) of the bytes written since TABLE_SELECT; the host compares it before committing"
+      },
+      {
+        "offset": "0x514",
+        "name": "TABLE_BYTES",
+        "access": "RO",
+        "doc": "capacity in bytes of the selected table; 0 = table absent in this image"
+      },
+      {
+        "offset": "0xFFC",
+        "name": "SCRATCH",
+        "access": "RW",
+        "doc": "host bus sanity check"
+      }
+    ]
+  },
+  "counters": [
+    "FRAMES_OBSERVED",
+    "FRAMES_ACCEPTED",
+    "FRAMES_PROCESSED",
+    "FRAMES_SKIPPED",
+    "FRAMES_LOST",
+    "FRAMES_INFLIGHT",
+    "RESULTS_PRODUCED",
+    "RESULTS_OVERFLOW",
+    "PREVIEW_PRODUCED",
+    "PREVIEW_DROPPED",
+    "RX_LINE_ERRORS",
+    "RX_RESYNCS",
+    "TRIGGERS_ISSUED",
+    "TRIGGERS_LATE",
+    "TRIGGERS_MISSED",
+    "COMMITS_ACKED"
+  ],
+  "config_words": [
+    {
+      "index": 0,
+      "name": "GEOMETRY",
+      "doc": "width[15:0] height[31:16]",
+      "requires_drain": true
+    },
+    {
+      "index": 1,
+      "name": "ROI_ORIGIN",
+      "requires_drain": true
+    },
+    {
+      "index": 2,
+      "name": "ROI_SIZE",
+      "requires_drain": true
+    },
+    {
+      "index": 3,
+      "name": "PIXEL_FORMAT",
+      "requires_drain": true
+    },
+    {
+      "index": 4,
+      "name": "BACKGROUND_EPOCH",
+      "doc": "background generation to use from the commit boundary",
+      "requires_drain": false
+    },
+    {
+      "index": 5,
+      "name": "PREVIEW_DECIMATION",
+      "doc": "emit one preview every N frames; 0 disables preview",
+      "requires_drain": false
+    },
+    {
+      "index": 6,
+      "name": "TRIGGER_DELAY_TICKS",
+      "requires_drain": false
+    },
+    {
+      "index": 7,
+      "name": "TRIGGER_WIDTH_TICKS",
+      "requires_drain": false
+    },
+    {
+      "index": 8,
+      "name": "TRIGGER_DEADLINE_TICKS",
+      "requires_drain": false
+    },
+    {
+      "index": 9,
+      "name": "PROFILE_PARAM0",
+      "doc": "opaque to the platform; meaning defined by the active science profile",
+      "requires_drain": false
+    },
+    {
+      "index": 10,
+      "name": "PROFILE_PARAM1",
+      "doc": "opaque to the platform; meaning defined by the active science profile",
+      "requires_drain": false
+    },
+    {
+      "index": 11,
+      "name": "PROFILE_PARAM2",
+      "doc": "opaque to the platform; meaning defined by the active science profile",
+      "requires_drain": false
+    },
+    {
+      "index": 12,
+      "name": "PROFILE_PARAM3",
+      "doc": "opaque to the platform; meaning defined by the active science profile",
+      "requires_drain": false
+    },
+    {
+      "index": 13,
+      "name": "PROFILE_PARAM4",
+      "doc": "opaque to the platform; meaning defined by the active science profile",
+      "requires_drain": false
+    },
+    {
+      "index": 14,
+      "name": "PROFILE_PARAM5",
+      "doc": "opaque to the platform; meaning defined by the active science profile",
+      "requires_drain": false
+    },
+    {
+      "index": 15,
+      "name": "PROFILE_PARAM6",
+      "doc": "opaque to the platform; meaning defined by the active science profile",
+      "requires_drain": false
+    }
+  ],
+  "records": {
+    "header": {
+      "fields": [
+        {
+          "name": "magic",
+          "type": "u32",
+          "doc": "record_magic"
+        },
+        {
+          "name": "type",
+          "type": "u8",
+          "doc": "enum record_type"
+        },
+        {
+          "name": "version",
+          "type": "u8"
+        },
+        {
+          "name": "length",
+          "type": "u16",
+          "doc": "total bytes including header, multiple of 8, <= MAX_RECORD_BYTES"
+        },
+        {
+          "name": "sequence",
+          "type": "u32",
+          "doc": "per-run, per-ring monotonic; wraps at 2^32; a gap is reported, a repeat is rejected"
+        },
+        {
+          "name": "crc32",
+          "type": "u32"
+        }
+      ]
+    },
+    "types": {
+      "FRAME": {
+        "version": 1,
+        "fields": [
+          {
+            "name": "run_id",
+            "type": "u64"
+          },
+          {
+            "name": "frame_id",
+            "type": "u64",
+            "doc": "physical sensor frame counter, monotonic within a generation"
+          },
+          {
+            "name": "timestamp",
+            "type": "u64",
+            "doc": "ticks at SOF"
+          },
+          {
+            "name": "epoch",
+            "type": "u32"
+          },
+          {
+            "name": "flags",
+            "type": "u32",
+            "doc": "bitmask frame_flags"
+          },
+          {
+            "name": "result_count",
+            "type": "u16"
+          },
+          {
+            "name": "result_limit",
+            "type": "u16"
+          },
+          {
+            "name": "science_profile",
+            "type": "u16"
+          },
+          {
+            "name": "profile_version",
+            "type": "u16"
+          },
+          {
+            "name": "width",
+            "type": "u16"
+          },
+          {
+            "name": "height",
+            "type": "u16"
+          },
+          {
+            "name": "pixel_format",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": "u8[3]"
+          }
+        ]
+      },
+      "RESULT": {
+        "version": 1,
+        "doc": "platform envelope for one processing result; the payload words are profile-defined",
+        "variable": {
+          "field": "payload_words",
+          "element": "word",
+          "element_bytes": 4,
+          "max": "MAX_RESULT_PAYLOAD_WORDS"
+        },
+        "fields": [
+          {
+            "name": "frame_id",
+            "type": "u64"
+          },
+          {
+            "name": "result_index",
+            "type": "u16"
+          },
+          {
+            "name": "flags",
+            "type": "u16",
+            "doc": "bitmask result_flags"
+          },
+          {
+            "name": "science_profile",
+            "type": "u16"
+          },
+          {
+            "name": "profile_version",
+            "type": "u16"
+          },
+          {
+            "name": "bbox_x",
+            "type": "u16",
+            "unit": "px"
+          },
+          {
+            "name": "bbox_y",
+            "type": "u16",
+            "unit": "px"
+          },
+          {
+            "name": "bbox_w",
+            "type": "u16",
+            "unit": "px"
+          },
+          {
+            "name": "bbox_h",
+            "type": "u16",
+            "unit": "px"
+          },
+          {
+            "name": "payload_validity",
+            "type": "u32",
+            "doc": "profile-defined validity bits for payload fields"
+          },
+          {
+            "name": "payload_words",
+            "type": "u16"
+          },
+          {
+            "name": "reserved",
+            "type": "u16"
+          }
+        ],
+        "element": [
+          {
+            "name": "word",
+            "type": "u32"
+          }
+        ]
+      },
+      "EVENT": {
+        "version": 1,
+        "doc": "a decision and, if issued, the physical output it produced",
+        "fields": [
+          {
+            "name": "frame_id",
+            "type": "u64"
+          },
+          {
+            "name": "decision_timestamp",
+            "type": "u64",
+            "doc": "ticks when the decision was taken"
+          },
+          {
+            "name": "output_timestamp",
+            "type": "u64",
+            "doc": "ticks when the physical output asserted; 0 unless decision == ISSUED"
+          },
+          {
+            "name": "result_index",
+            "type": "u16"
+          },
+          {
+            "name": "decision",
+            "type": "u8",
+            "doc": "enum event_decision"
+          },
+          {
+            "name": "reason",
+            "type": "u8",
+            "doc": "bitmask fault at decision time"
+          },
+          {
+            "name": "latency_ticks",
+            "type": "u32",
+            "doc": "output_timestamp - frame SOF timestamp"
+          },
+          {
+            "name": "epoch",
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "type": "u32"
+          }
+        ]
+      },
+      "COUNTERS": {
+        "version": 1,
+        "fields": [
+          {
+            "name": "snapshot_seq",
+            "type": "u32"
+          },
+          {
+            "name": "generation",
+            "type": "u32"
+          },
+          {
+            "name": "timestamp",
+            "type": "u64"
+          },
+          {
+            "name": "counters",
+            "type": "u32[16]",
+            "doc": "index order of counters[]"
+          }
+        ]
+      },
+      "PREVIEW": {
+        "version": 1,
+        "doc": "describes one sampled preview image in the preview ring; replaceable, never required data",
+        "fields": [
+          {
+            "name": "frame_id",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "u64"
+          },
+          {
+            "name": "buffer_index",
+            "type": "u16"
+          },
+          {
+            "name": "pixel_format",
+            "type": "u8"
+          },
+          {
+            "name": "reserved0",
+            "type": "u8"
+          },
+          {
+            "name": "width",
+            "type": "u16"
+          },
+          {
+            "name": "height",
+            "type": "u16"
+          },
+          {
+            "name": "stride",
+            "type": "u32"
+          },
+          {
+            "name": "byte_length",
+            "type": "u32"
+          },
+          {
+            "name": "epoch",
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "type": "u32"
+          }
+        ]
+      },
+      "DESCRIPTOR": {
+        "version": 1,
+        "fields": [
+          {
+            "name": "buffer_index",
+            "type": "u16"
+          },
+          {
+            "name": "kind",
+            "type": "u8",
+            "doc": "enum buffer_kind"
+          },
+          {
+            "name": "state",
+            "type": "u8",
+            "doc": "enum buffer_state"
+          },
+          {
+            "name": "flags",
+            "type": "u16",
+            "doc": "bitmask descriptor_flags"
+          },
+          {
+            "name": "generation",
+            "type": "u16",
+            "doc": "low 16 bits of GENERATION; mismatch is STALE_GENERATION"
+          },
+          {
+            "name": "byte_length",
+            "type": "u32"
+          },
+          {
+            "name": "epoch",
+            "type": "u32"
+          }
+        ]
+      },
+      "IMAGE": {
+        "version": 1,
+        "doc": "describes one image block of a store record; the block follows the record set at byte_offset from the start of the store record and is never inline (MAX_RECORD_BYTES)",
+        "fields": [
+          {
+            "name": "frame_id",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "u64"
+          },
+          {
+            "name": "byte_offset",
+            "type": "u32",
+            "doc": "from the first byte of the store record; multiple of 8"
+          },
+          {
+            "name": "byte_length",
+            "type": "u32"
+          },
+          {
+            "name": "pixel_format",
+            "type": "u8",
+            "doc": "enum pixel_format: MONO8 raw, MASK1 packed LSB-first, INT8_CODES"
+          },
+          {
+            "name": "flags",
+            "type": "u8",
+            "doc": "bitmask image_flags"
+          },
+          {
+            "name": "width",
+            "type": "u16"
+          },
+          {
+            "name": "height",
+            "type": "u16"
+          },
+          {
+            "name": "stride",
+            "type": "u16",
+            "doc": "bytes per row"
+          },
+          {
+            "name": "epoch",
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "type": "u32"
+          }
+        ]
+      }
+    }
+  },
+  "stream": {
+    "axi4_stream": {
+      "data_width_bits": 64,
+      "tuser_bits": {
+        "SOF": 0,
+        "EOL": 1,
+        "INVALID": 2
+      },
+      "tlast": "end of line (EOL) on the pixel stream; the DMA packetizer converts to end-of-frame-packet TLAST and must assert it exactly once per frame after the last EOL",
+      "backpressure": "TREADY may deassert anywhere; the ingress FIFO absorbs at most one line, beyond which the frame is marked INVALID and FRAMES_LOST increments; the sensor link itself is never stalled"
+    },
+    "reset_order": [
+      "INHIBIT outputs",
+      "STOP admission (state DRAINING)",
+      "wait FRAMES_INFLIGHT == 0 or timeout",
+      "FLUSH rings",
+      "RESET_GENERATION (GENERATION++, timestamps and sequence restart)",
+      "clear IRQ_STATUS",
+      "state IDLE"
+    ],
+    "interrupt_order": "RESULT_READY is raised only after the descriptor state is READY and the record bytes are visible to the CPU (write barrier in the DMA engine); COMMIT_ACK is raised after FIRST_EFFECTIVE_FRAME is valid",
+    "partial_frames": "a frame with INVALID or PARTIAL flags never produces RESULT or EVENT records; its FRAME record is still emitted so accounting stays complete",
+    "resynchronization": "after RX_LINK fault the receiver resyncs on the next Start Code; FRAMES_LOST counts frames observed by XVS but not accepted",
+    "preview": "Preview frames are chosen at SOF: every PREVIEW_DECIMATION-th RUNNING frame. The slot is the lowest FREE slot, else the oldest READY slot (its unread preview counts as dropped). The slot becomes READY at frame end if the frame is valid and the write completed; otherwise it returns to FREE and the preview counts as dropped."
+  }
+}
