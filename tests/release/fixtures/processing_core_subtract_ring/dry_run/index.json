@@ -1,0 +1,79 @@
+{
+  "processing_core_index_schema_version": 1,
+  "channel": "stable",
+  "active_version": "0.1.0",
+  "updated_at": "2026-07-13T00:00:00Z",
+  "versions": [
+    {
+      "version": "0.1.0",
+      "contract_version": 1,
+      "published_at": "2026-07-13T00:00:00Z",
+      "release_tag": "mib-processing-v0.1.0",
+      "release_url": "https://github.com/KPT1020/mib-studio-qt/releases/tag/mib-processing-v0.1.0",
+      "manifest_url": "https://updates.yofo.bio/stable/processing-core/versions/0.1.0.json",
+      "wheels": [
+        {
+          "filename": "mib_processing-0.1.0-cp311-cp311-linux_x86_64.whl",
+          "platform_tag": "cp311-cp311-linux_x86_64",
+          "url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-v0.1.0/mib_processing-0.1.0-cp311-cp311-linux_x86_64.whl",
+          "sha256": "c7f976829f9cea3b84f8fefcb6e8d3ff2140e826691ed3a8410d9090bd3626a1",
+          "size_bytes": 17
+        },
+        {
+          "filename": "mib_processing-0.1.0-cp313-cp313-linux_x86_64.whl",
+          "platform_tag": "cp313-cp313-linux_x86_64",
+          "url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-v0.1.0/mib_processing-0.1.0-cp313-cp313-linux_x86_64.whl",
+          "sha256": "ab480d586dc85487c61e0db516a399f2782544af5c20314b9df186e47842fb20",
+          "size_bytes": 17
+        }
+      ],
+      "native_plugins": [
+        {
+          "filename": "mib_processing_core-0.1.0-linux_x86_64.so",
+          "os": "linux",
+          "arch": "x86_64",
+          "artifact_kind": "shared_library",
+          "version": "0.1.0",
+          "contract_version": 1,
+          "engine_abi_version": 1,
+          "runtime_fingerprint": "linux-x86_64-gcc13-cxx17",
+          "app_min_version": "0.8.0",
+          "app_max_version": null,
+          "entrypoint": "mib_processing_get_api",
+          "url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-v0.1.0/mib_processing_core-0.1.0-linux_x86_64.so",
+          "sha256": "abedccecb0d358b247b55b102644fc25364d074c4e791f915f102d444c7ea6f6",
+          "size_bytes": 20,
+          "descriptor_url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-v0.1.0/mib_processing_core-0.1.0-linux_x86_64.json",
+          "signing": {
+            "required": true,
+            "scheme": "ed25519",
+            "public_key_spki_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "signature_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "public_key_spki_sha256": "85759b3811ff7dc47b03792ac85317be51431a3f9e01dcafce317ed736a391b0"
+          }
+        },
+        {
+          "filename": "mib_processing_core-0.1.0-windows_x86_64.dll",
+          "os": "windows",
+          "arch": "x86_64",
+          "artifact_kind": "shared_library",
+          "version": "0.1.0",
+          "contract_version": 1,
+          "engine_abi_version": 1,
+          "runtime_fingerprint": "windows-x86_64-msvc1942-md-cxx17",
+          "app_min_version": "0.8.0",
+          "app_max_version": null,
+          "entrypoint": "mib_processing_get_api",
+          "url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-v0.1.0/mib_processing_core-0.1.0-windows_x86_64.dll",
+          "sha256": "8fce8c72af75f9e268f0e11584efe251d5d9c60a6fed3fa246abf169c9b4d1a2",
+          "size_bytes": 22,
+          "descriptor_url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-v0.1.0/mib_processing_core-0.1.0-windows_x86_64.json",
+          "signing": {
+            "required": true,
+            "scheme": "authenticode"
+          }
+        }
+      ]
+    }
+  ]
+}

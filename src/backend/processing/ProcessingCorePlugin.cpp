@@ -397,6 +397,11 @@ std::vector<backend::services::FilterResult> runContract2Pipeline(
     const backend::processing::ImageFilterPipeline& inputStages,
     const backend::processing::ImageFilterPipeline& differenceStages,
     double pixelToMicronFactor, cv::Mat& mask, std::string& error) {
+    if (!mask.empty()) {
+        // Precomputed by this core's process_mask: objects only.
+        return backend::processing::science::filterProcessedObjects(mask, region, science, gray,
+                                                                    pixelToMicronFactor, nullptr);
+    }
     cv::Mat difference;
     if (!backend::processing::buildDifferenceImage(gray, background, region, inputStages,
                                                    differenceStages, config.gaussian_blur_size,
@@ -478,6 +483,18 @@ mib_processing_status MIB_PROCESSING_CALL processObjects(
 
         const cv::Rect region = clampRegion(gray, *roi);
         cv::Mat mask;
+        if (config->precomputed_mask) {
+            if (!validImage(config->precomputed_mask, detail) ||
+                config->precomputed_mask->width != input->width ||
+                config->precomputed_mask->height != input->height) {
+                writeError(error, errorCapacity,
+                           detail.empty() ? "precomputed mask dimensions do not match input"
+                                          : detail);
+                return MIB_PROCESSING_STATUS_INVALID_ARGUMENT;
+            }
+            // Read-only view: the object science never writes its mask.
+            mask = borrowedMat(*config->precomputed_mask);
+        }
         const auto results = runContract2Pipeline(gray, backgroundMat, region, *config, science,
                                                   inputStages,
                                                   differenceStages, pixelToMicronFactor, mask,

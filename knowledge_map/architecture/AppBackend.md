@@ -1,5 +1,16 @@
 # AppBackend
 
+## Central profile registry worker (2026-10-02, #398)
+
+`initialize()` builds a `profiles::ProfileRegistryWorker` before any service,
+configured from `MIB_PROFILE_REGISTRY_URL` + `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY`
+with its cache under `<dataDir>/profile_registry/`. The shell injects the HTTPS
+POST via `setProfileRegistryTransport()` before `initialize()` (ADR 0002 seam;
+Qt: `makeQtRegistryHttpTransport()`); without env or transport the worker is
+inert. `shutdown()` stops it **first**: it shares nothing with the instrument,
+and its shutdown aborts an in-flight request rather than waiting out the
+timeout. Accessor: `profileRegistry()`. See [[../services/ProfileRegistryService]].
+
 ## Device discovery ownership (2026-09-16, #419)
 
 `initialize()` constructs [[../services/DeviceDiscoveryService]] after the

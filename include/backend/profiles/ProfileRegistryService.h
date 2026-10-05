@@ -28,6 +28,7 @@ public:
     ProfileRegistryService(ProfileRegistry& registry, ProfileCache& cache)
         : registry_(registry), cache_(cache) {}
     bool download(const std::string& revisionId);
+    std::optional<std::vector<RegistryProject>> listProjects();
     // Pages contain immutable revision IDs. Restart a full scan on refresh;
     // never use the cursor as a metadata watermark (revocations update in place).
     std::optional<std::string> syncPage(const std::string& projectId,

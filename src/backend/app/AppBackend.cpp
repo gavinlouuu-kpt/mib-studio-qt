@@ -37,6 +37,7 @@
 #include "backend/discovery/providers/NanopositionerProvider.h"
 #include "backend/discovery/providers/PulseGeneratorProvider.h"
 #include "backend/processing/EModulusLutCatalog.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 
 #include "backend/camera/mindvision/MindVisionConfig.h"
 
@@ -282,6 +283,11 @@ namespace backend
 
     void AppBackend::shutdown() {
         SPDLOG_INFO("AppBackend: shutdown begin");
+        // The registry worker shares nothing with the instrument; stop it
+        // first so an in-flight request is aborted rather than waited out.
+        if (profileRegistry_) {
+            profileRegistry_->shutdown();
+        }
         // Discovery first (issue #419): stop the startup policy so no late
         // result can select or connect anything, refuse new jobs, cancel and
         // join every discovery worker. Only then may serial adapters and the
@@ -395,6 +401,21 @@ namespace backend
                             "(MIB_PIPELINE_TIMING), dump dir: {}",
                             pipelineTimingDir_);
             }
+        }
+
+        {
+            profiles::RegistryWorkerConfig registryConfig;
+            if (const char *url = std::getenv("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = url;
+            if (const char *key = std::getenv("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
+                registryConfig.publishableKey = key;
+            registryConfig.cacheDir = std::filesystem::path(dataDir) / "profile_registry";
+            if (registryConfig.configured() && !profileRegistryTransport_)
+                SPDLOG_WARN("AppBackend: profile registry configured but the shell supplied no "
+                            "HTTP transport; registry disabled");
+            profileRegistry_ = std::make_unique<profiles::ProfileRegistryWorker>(
+                std::move(registryConfig), profileRegistryTransport_);
+            SPDLOG_INFO("AppBackend: central profile registry {}",
+                        profileRegistry_->snapshot().configured ? "enabled" : "disabled");
         }
 
         sqliteService_ = std::make_unique<services::SqliteService>();
@@ -1002,6 +1023,7 @@ namespace backend
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
     discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
     discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
+    profiles::ProfileRegistryWorker &AppBackend::profileRegistry() { return *profileRegistry_; }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {
