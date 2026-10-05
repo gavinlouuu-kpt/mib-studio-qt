@@ -26,6 +26,7 @@ consumer). `consumers` lists what depends on it; `notes` says why.
 | `512x96stream-mock-frames` | dataset (indexed TIFFs) | same | MockCamera folder, `mock_pipeline_timing_run`, `synthetic_condition_validation.py` |
 | `z-adjustment-50v` | dataset, **private**, token | `gavinlouuu/z_adjustment-data` | real-corpus conformance (`run_processing_conformance.py --hdf5`) |
 | `dc-ds` | dataset (`datasets` lib) | `gavinlouuu/dc_ds` (public) | `empty_frame_detection.py`, kedro pipeline |
+| `unet-c4-multiline-v1` | model, **private**, token | `gavinlouuu/yofo-unet-c4` | `UnetC4` weights and 240 bit-exact fixtures: `processing.unet_c4` (CTest points at the provisioned files and skips without them; run in the `network-tests` workflow with `HF_TOKEN`), `processing.pz_board_run_host` (`MIB_UNET_C4_PARAMS`) |
 
 ## Provisioning
 

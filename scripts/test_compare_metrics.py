@@ -83,6 +83,32 @@ class CompareMetricsTest(unittest.TestCase):
         self.assertFalse(results[0][2])
         self.assertFalse(results[0][3]["laplacian_variance"]["match"])
 
+    def contract3(self, mean=116.5, variance=30.25, pixels=840) -> dict:
+        record = frame()
+        del record["ring_ratio"]
+        for q in ("brightness_q1", "brightness_q2", "brightness_q3", "brightness_q4"):
+            del record[q]
+        record.update(laplacian_variance=140.0, brightness_mean=mean, brightness_variance=variance,
+                      contour_area=800.5, pixel_count=pixels, blemish_count=3, degenerate_contour=False)
+        doc = document([record])
+        doc["contract_version"] = 3
+        return doc
+
+    def test_contract3_document_needs_no_quartiles(self) -> None:
+        matched, total, results = self.compare(self.contract3(), self.contract3())
+        self.assertEqual((matched, total), (1, 1))
+        self.assertTrue(all(result[2] for result in results))
+
+    def test_contract3_cell_drift_fails(self) -> None:
+        _, _, results = self.compare(self.contract3(), self.contract3(mean=117.0))
+        self.assertFalse(results[0][3]["brightness_mean"]["match"])
+        _, _, results = self.compare(self.contract3(), self.contract3(pixels=841))
+        self.assertFalse(results[0][3]["pixel_count"]["match"])
+
+    def test_contract3_null_brightness_only_matches_null(self) -> None:
+        self.assertTrue(self.compare(self.contract3(variance=None), self.contract3(variance=None))[2][0][2])
+        self.assertFalse(self.compare(self.contract3(variance=None), self.contract3())[2][0][2])
+
     def test_contract1_document_still_requires_ring_ratio(self) -> None:
         gold = document([frame()])
         del gold["frames"][0]["ring_ratio"]

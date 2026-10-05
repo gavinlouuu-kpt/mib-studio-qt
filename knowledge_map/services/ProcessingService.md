@@ -203,6 +203,16 @@ deliberately in `mib_processing` so the backend-only CTest lane exercises it
   threshold, installs an identity preprocessing chain, and leaves the Laplacian
   gate disabled. It never selects or activates a core.
 
+Contract 3 (`kProcessingContractVersionV3`, `unet-cells`) is defined for the
+PZ7035 U-Net cell path. `filterProcessedObjects` dispatches it to
+`filterUnetCellObjects`; no kernel serves it yet, so a Contract 3 profile is
+refused like any mismatch. Gold: `processing.contract3_cells_conformance`
+against the PL conformance vectors. The predicates match contracts by equality.
+The autofocus feed follows the active contract (`activeContract_`, set in
+`setProcessingConfig`). Contract 1 calls the ring-ratio callback, and
+Contracts 2 and 3 call `setFocusSampleCallback` with each valid object's
+Laplacian variance (see [[AutofocusService]]).
+
 Rationale and the full compatibility matrix:
 `docs/decisions/0006-processing-contract-v2.md`,
 `docs/architecture/processing-contract-compatibility.md`.
@@ -297,7 +307,14 @@ bundled science ignores it, so Contract 1 is unchanged). Test:
 through the loader and requires field-for-field equality with a bundled
 Contract-2 kernel across objects, holes, border, ROI, noise with and without
 the area gate, channel band, Laplacian gate, target group and empty frames;
-a Contract-1 config is refused.
+a Contract-1 config is refused. The adapter hands the core back its own
+`process_mask` output (`mib_processing_kernel_config_v2::precomputed_mask`),
+so the mask is built once per frame; both sides then analyse exactly the same
+mask, including the cropped-ROI realtime loop. The field overlays the first
+two of the config's reserved words (`reserved_u32[14]` follows), so the v2
+config keeps its size (120 bytes on 64-bit) and offsets: hosts built before it
+zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
+`processing.core_abi_v2_c` locks the layout.
 
 ## Accumulation modes
 
@@ -692,3 +709,71 @@ current/max queue depth, batch size, worker count, and running state. See
   not the whole ROI). It also uses row pointers instead of `cv::Mat::at<>`
   and skips the `clone()` for already-single-channel input. These were
   per-object allocator/CPU costs that scaled with objects-per-frame.
+
+### Shared offline reanalysis inputs
+
+`BatchMaskSources::buildSyntheticBackground` now owns the unchanged quiet-tile
+background algorithm formerly in Qt BatchMaskDialog (64-pixel tiles; temporal
+neighbour difference; mean of the quietest 3–10 frames). Qt and facade reanalysis
+call the same implementation; facade cancellation is checked between tiles.
+Folder/AVI loaders accept optional range, byte/frame budgets and cancellation
+without changing default Qt behavior. Tauri's reanalysis job uses these loaders,
+`ProcessingService::processBatch` and `saveMasksToHdf5`; no science is implemented
+in React. Its local processing configuration and ROI are per-job snapshots,
+never changes to realtime configuration.
+
+Tauri now exposes existing finite background calibration through BackendFacade JSON
+commands/status. The adapter validates positive bounded integers before narrowing,
+serializes start against experiment lifecycle, and preserves service-owned frozen
+recipe, empty-frame rejection, cancellation and atomic publication semantics. u64
+operation/config/background generations are decimal strings at the webview boundary.
+
+### Coherent processed preview snapshots (2026-09-23)
+
+RealtimeSnapshot now optionally retains the exact immutable grayscale source alongside
+its mask, full-frame contours, effective ROI and primary-object bounds. Source retention
+is opt-in; default Qt/realtime workloads do not retain source pixels or hash recipes.
+Inline full-frame and async modes share existing frozen Mats; the ROI fast path transfers
+ownership of its already-copied input Frame rather than making another full-frame copy.
+The snapshot carries processing-session generation, FrameStore epoch, absolute index,
+source-native timestamp (unit explicitly unknown) and host monotonic microseconds.
+StartRealtime resets the snapshot and advances session generation.
+
+The preview recipe SHA-256 covers the exact copied processing parameters, requested ROI
+and background bytes. Async workers stamp their copied batch recipe into host-only
+ProcessedFrame metadata, including on runtime config refresh. This identity is **not**
+claimed to be complete calibration/LUT/core/run provenance. ProcessingCoreAbi layout and
+persisted HDF5 schemas are unchanged. Primary-target bounds describe only the selected
+snapshot object; contours may include other objects and are not all labelled targets.
+
+Processed preview capture-session identity is copied from the immutable input frame through inline and async batch host metadata, independently of processing-session/store epochs. It is never sampled from a newer live capture session; the UI labels both generations. Portable core ABI and recorded HDF5 layout are unchanged.
+
+## Host U-Net (`UnetC4`, plan W3.D)
+
+`include/backend/processing/UnetC4.h` is the bit-exact integer C4 U-Net that
+the PZ7035 PL runs, for desktop reprocessing with Contract 3.
+
+- **Parameters:** the `.npz` that pz7035-imx426 `dump_unet_params.py`
+  writes, read directly (stored zip; C or Fortran order).
+- **API:** `run(codes)` gives the 96x512 output codes; `foregroundMask(gray)`
+  gives the PL's mask.
+- **Speed:** about 35 ms per frame, single-threaded.
+- **Test `processing.unet_c4`** (runs on the provisioned asset; SKIP
+  without it):
+  - 240/240 release fixtures bit-exact;
+  - with `MIB_UNET_C4_BOARD_CAPTURES`, the masks equal the ones the PL
+    produced on the board: 85/85 frames from five runs with the promoted
+    weights.
+- **Test `processing.pz_board_run_host`** (SKIP unless `MIB_PZ_BOARD_RUN`
+  and `MIB_UNET_C4_PARAMS` are set) — the whole chain on a board run, host
+  against PL:
+  - from each captured raw frame, `UnetC4` and Contract 3 compute the cells
+    with the run's `page.bin` and `lut.bin`;
+  - those cells must equal the PL's RESULT records for the same frame id
+    (from `ring.bin`).
+  - On 2026-10-04: 80/80 frames from four runs agree. Every live cell was
+    the static particle cut off at the border, so shape, E-modulus and gates
+    are covered by the vector tests only, until a run with cells flowing.
+- **Weights:** the private Hub asset `unet-c4-multiline-v1`
+  (`gavinlouuu/yofo-unet-c4`, see [[../build-and-run/Assets]]).
+- **Not yet:** no shipped core serves Contract 3 (A6).

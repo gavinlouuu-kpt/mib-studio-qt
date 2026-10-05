@@ -1,0 +1,2 @@
+# Golden registry bytes are compared byte-for-byte; never translate newlines.
+* -text
