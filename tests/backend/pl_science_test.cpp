@@ -13,11 +13,22 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
+namespace {
+// POSIX setenv is not available with MSVC.
+void setEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+}  // namespace
+
 int main()
 {
-    setenv("MIB_PL_SCIENCE", "1", 1);
-    setenv("MIB_CAMERA_MODE", "mock", 1);
-    setenv("MIB_DISABLED_SERVICES", "sqlite,hdf5,yolo,autofocus,trigger,playback", 1);
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,yolo,autofocus,trigger,playback");
     MIB_REQUIRE(!backend::app::hostProcessingAvailable(), "MIB_PL_SCIENCE=1 places the science on the PL");
     MIB_EXPECT(std::string(backend::app::sciencePlacement()) == "pl", "placement reads pl");
 
