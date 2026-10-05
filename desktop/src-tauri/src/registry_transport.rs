@@ -60,8 +60,17 @@ fn exchange(
     Some(ffi::BridgeHttpResponse { status, body })
 }
 
+/// A request that passed `validated`, ready to send.
+struct Validated {
+    url: String,
+    body: String,
+    headers: Vec<(String, String)>,
+    timeout: Duration,
+    max_bytes: u64,
+}
+
 /// Validates the request without any network access. `None` = refuse.
-fn validated(request: &ffi::BridgeHttpRequest) -> Option<(String, String, Vec<(String, String)>, Duration, u64)> {
+fn validated(request: &ffi::BridgeHttpRequest) -> Option<Validated> {
     if !request.url.starts_with("https://") || request.timeout_ms == 0 || request.max_response_bytes == 0 {
         return None;
     }
@@ -73,13 +82,13 @@ fn validated(request: &ffi::BridgeHttpRequest) -> Option<(String, String, Vec<(S
     if headers.iter().any(|(n, v)| n.contains(['\r', '\n']) || v.contains(['\r', '\n'])) {
         return None;
     }
-    Some((
-        request.url.clone(),
-        request.body.clone(),
+    Some(Validated {
+        url: request.url.clone(),
+        body: request.body.clone(),
         headers,
-        Duration::from_millis(u64::from(request.timeout_ms)),
-        request.max_response_bytes,
-    ))
+        timeout: Duration::from_millis(u64::from(request.timeout_ms)),
+        max_bytes: request.max_response_bytes,
+    })
 }
 
 /// The `fn` pointer handed to `BackendBridge::set_registry_transport`. The
@@ -91,7 +100,7 @@ pub fn post(request: &ffi::BridgeHttpRequest) -> ffi::BridgeHttpResponse {
 }
 
 fn post_inner(request: &ffi::BridgeHttpRequest, cancelled: fn(u64) -> bool) -> ffi::BridgeHttpResponse {
-    let Some((url, body, headers, timeout, max_bytes)) = validated(request) else {
+    let Some(Validated { url, body, headers, timeout, max_bytes }) = validated(request) else {
         return failure();
     };
     let handle = request.cancel_handle;
