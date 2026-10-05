@@ -171,7 +171,9 @@ Decoded decodeRecord(const uint8_t* data, size_t size, std::optional<uint16_t> r
         ResultRecord out{r.frame_id, r.result_index, r.flags, r.science_profile, r.profile_version,
                          r.bbox_x, r.bbox_y, r.bbox_w, r.bbox_h, r.payload_validity, {}};
         out.payload.resize(r.payload_words);
-        std::memcpy(out.payload.data(), p + PZ_MIB_RESULT_PAYLOAD_BYTES, 4u * r.payload_words);
+        if (r.payload_words != 0) {
+            std::memcpy(out.payload.data(), p + PZ_MIB_RESULT_PAYLOAD_BYTES, 4u * r.payload_words);
+        }
         rec.body = std::move(out);
         break;
     }
