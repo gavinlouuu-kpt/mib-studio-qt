@@ -30,6 +30,11 @@ bool ProfileRegistryService::attempt(const std::function<void()>& action) {
 bool ProfileRegistryService::download(const std::string& id) {
     return attempt([&] { cache_.store(registry_.fetchRevision(id)); });
 }
+std::optional<std::vector<RegistryProject>> ProfileRegistryService::listProjects() {
+    std::vector<RegistryProject> projects;
+    if (!attempt([&] { projects = registry_.listProjects(); })) return std::nullopt;
+    return projects;
+}
 std::optional<std::string> ProfileRegistryService::syncPage(const std::string& project,
                                                             const std::string& cursor) {
     std::string next;

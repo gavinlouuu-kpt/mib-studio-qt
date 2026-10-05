@@ -1,5 +1,19 @@
 # Recent Work
 
+## 2026-10-02 — Central registry worker: sign-in, refresh, offline cache (#398 M1)
+
+`AppBackend` now owns a `profiles::ProfileRegistryWorker` (one thread): Supabase
+password sign-in with in-memory tokens and refresh-token rotation, explicit
+refresh across every member project (new `registry_list_projects` RPC) bounded
+by pages and time, revision download, and a per-user SQLite cache that reopens
+offline for the last user after a restart (`last_session.json`, no tokens).
+Enabled by `MIB_PROFILE_REGISTRY_URL` + `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY`;
+the Qt shell injects a QtNetwork HTTPS POST (ADR 0002 seam). It is stopped
+first at shutdown and aborts its in-flight request. No picker UI or bridge yet.
+Guards: `profiles.registry_worker`, `profiles.registry_backend`,
+`frontend.registry_http_transport`, PGlite suite. See
+[[../services/ProfileRegistryService]].
+
 ## 2026-10-02 — Central profile registry foundation (#398, PR #402)
 
 Provider-neutral registry contract, canonical method envelope over the existing
