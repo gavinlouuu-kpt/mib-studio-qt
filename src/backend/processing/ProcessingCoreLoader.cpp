@@ -269,6 +269,12 @@ public:
         configValue.flags = MIB_PROCESSING_KERNEL_FLAG_ABSOLUTE_BACKGROUND_DIFFERENCE;
         configValue.science_config_json = scienceJson.c_str();
         configValue.science_config_json_size = scienceJson.size();
+        // processedImage is this core's own process_mask output for
+        // originalImage: hand it back so the core does not rebuild it.
+        const auto maskView = imageView(processedImage);
+        if (processedImage.type() == CV_8UC1) {
+            configValue.precomputed_mask = &maskView;
+        }
         const auto roiValue = abiRoi(KernelRoi{roi.x, roi.y, roi.width, roi.height});
 
         std::vector<mib_processing_object_metrics> storage(16);

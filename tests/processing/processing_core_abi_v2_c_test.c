@@ -29,6 +29,28 @@ _Static_assert(offsetof(mib_processing_object_buffer, struct_size) == 0u, "objec
 _Static_assert(offsetof(mib_processing_api_v2, struct_size) == 0u, "api v2");
 _Static_assert(offsetof(mib_processing_api_v2, engine_abi_version) == 4u, "api v2 version slot");
 
+/* precomputed_mask lives in what used to be the first two reserved words, so
+ * the v2 config keeps its size and every other offset on 32- and 64-bit
+ * targets: hosts built before it zero-fill the slot (NULL), cores built
+ * before it ignore it. */
+_Static_assert(sizeof(((mib_processing_kernel_config_v2*)0)->reserved_mask_slot) ==
+                   2u * sizeof(uint32_t),
+               "precomputed_mask slot is two reserved words");
+_Static_assert(offsetof(mib_processing_kernel_config_v2, precomputed_mask) ==
+                   offsetof(mib_processing_kernel_config_v2, reserved_mask_slot),
+               "precomputed_mask overlays the slot");
+_Static_assert(offsetof(mib_processing_kernel_config_v2, reserved_u32) ==
+                   offsetof(mib_processing_kernel_config_v2, precomputed_mask) +
+                       2u * sizeof(uint32_t),
+               "reserved words follow the slot");
+_Static_assert(sizeof(((mib_processing_kernel_config_v2*)0)->reserved_u32) == 14u * sizeof(uint32_t),
+               "16 reserved words minus the two used by precomputed_mask");
+#if UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFu
+_Static_assert(offsetof(mib_processing_kernel_config_v2, precomputed_mask) == 56u,
+               "v2 config: precomputed_mask offset (64-bit)");
+_Static_assert(sizeof(mib_processing_kernel_config_v2) == 120u, "v2 config size (64-bit)");
+#endif
+
 /* The per-object result advertises the v2 focus metric and no ring field. */
 _Static_assert(sizeof(((mib_processing_object_metrics*)0)->laplacian_variance) == sizeof(double),
                "laplacian variance is a double");

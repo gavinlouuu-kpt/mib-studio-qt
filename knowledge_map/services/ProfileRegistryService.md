@@ -1,12 +1,16 @@
 # ProfileRegistryService
 
-Source: `include/backend/profiles/`, `src/backend/profiles/`.
+Source: `include/backend/profiles/`, `src/backend/profiles/`;
+Qt transport `src/frontend/system/RegistryHttpTransport.cpp`.
 
 ## Responsibility
 
-Foundation for #398: provider-neutral central method revisions, Supabase RPC
-serialization, immutable local cache and explicit one-request sync operations.
-Not yet wired into AppBackend, Qt, React/Tauri or experiment execution.
+Central method registry for #398: provider-neutral revisions, Supabase RPC and
+Auth clients, immutable per-user local cache, explicit sync operations, and the
+backend-owned `ProfileRegistryWorker` that runs them on one thread. Owned by
+[[../architecture/AppBackend]] (`profileRegistry()`); the Qt shell injects the
+HTTPS transport. Not yet in any picker UI, the React/Tauri bridge, Apply/Verify
+or run provenance.
 
 ## Key APIs
 
@@ -21,11 +25,26 @@ Not yet wired into AppBackend, Qt, React/Tauri or experiment execution.
   never cached, and is counted in `RegistryHealth::rejectedRevisions`; the cursor
   still advances past it.
 - `SupabaseProfileRegistry`: injected user access token and bounded HTTP request
-  contract. Transport must enforce TLS/no redirects/response cap/timeout.
+  contract. Transport must enforce TLS/no redirects/response cap/timeout and
+  abort when `RegistryHttpRequest::cancelled` turns true.
+- `SupabaseAuth`: password sign-in, refresh-token rotation, best-effort sign-out.
+- `ProfileRegistryWorker`: `requestSignIn/SignOut/Refresh/Download` enqueue and
+  return a job ID (0 = refused); `cancelAll()`; `snapshot()` (value copy:
+  session SignedOut/SignedIn/CachedOffline, health, projects, cached revisions,
+  corrupt IDs, last job); `job(id)`. A refresh covers every member project,
+  bounded by `maxPagesPerRefresh` / `refreshBudget` (else Partial). Tokens are
+  rotated before `tokenRefreshMargin` and once on a 401, then retried once.
 
 ## Gotchas
 
-All objects are worker-confined. No background thread or execution readiness is
+Everything except `ProfileRegistryWorker`'s public API is confined to the
+worker thread. Snapshots never wait on SQLite or the network (the cache is read
+outside the lock). A cancelled/aborted request is not counted as an outage.
+Tokens are in memory only; `last_session.json` (origin, subject, email) reopens
+the last user's cache as CachedOffline after a restart, and explicit sign-out
+removes it and closes that cache (another operator then sees nothing). A
+rejected refresh token drops to CachedOffline: cached revisions stay listable.
+All provider/cache objects are worker-confined. No background thread or execution readiness is
 owned here. Cache eligibility does not mean applied, hardware verified, or allowed
 to Start. New central revisions never select themselves. Known revocation is sticky;
 archived/revoked content remains readable for history. Refresh scans must restart:
@@ -34,6 +53,13 @@ noncanonical bytes; the server checks only the hash) must not stall sync for eve
 later revision, so `listRevisions` reports it instead of throwing; transport, auth
 and cross-project errors still fail the whole page. Corrupt cache rows fail closed;
 automatic repair and historical pins remain pending.
+
+Tests: `profiles.registry` (integrity/cache/provider), `profiles.registry_worker`
+(fake Supabase: auth, rotation, outage, restart offline, user switch, sign-out,
+cancel, bounds, concurrent snapshot traffic + shutdown), `profiles.registry_backend`
+(AppBackend wiring; a hung registry leaves mock capture running; shutdown aborts
+it), `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
+worker thread), and the PGlite SQL suite.
 
 Setup, current scope, tests and recovery: `supabase/README.md`.
 Execution plan: `docs/exec-plans/active/2026-09-10-central-profile-registry.md`.

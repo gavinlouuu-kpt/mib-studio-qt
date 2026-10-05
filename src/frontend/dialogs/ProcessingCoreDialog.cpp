@@ -121,11 +121,26 @@ QString platformArch() {
     return architecture;
 }
 
+// The host loads a core of either line (ADR 0007): engine ABI v1 with
+// Contract 1 and mib_processing_get_api, or engine ABI v2 with Contract 2 and
+// mib_processing_get_api_v2, built for this runtime.
 bool isHostCompatible(const processingcorecatalog::NativePluginEntry& plugin) {
     const auto host = backend::processing::bundledProcessingCoreIdentity();
-    return plugin.engineAbiVersion == static_cast<int>(MIB_PROCESSING_ENGINE_ABI_VERSION) &&
-           plugin.contractVersion == static_cast<int>(MIB_PROCESSING_CONTRACT_VERSION) &&
-           plugin.runtimeFingerprint == QString::fromStdString(host.runtimeFingerprint);
+    if (plugin.runtimeFingerprint != QString::fromStdString(host.runtimeFingerprint)) return false;
+    for (const auto& line : processingcorecatalog::coreLines()) {
+        if (plugin.engineAbiVersion == line.engineAbiVersion &&
+            plugin.contractVersion == line.contractVersion && plugin.entrypoint == line.entrypoint) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString lineLabel(int contractVersion) {
+    for (const auto& line : processingcorecatalog::coreLines()) {
+        if (line.contractVersion == contractVersion) return line.name;
+    }
+    return QStringLiteral("contract %1").arg(contractVersion);
 }
 
 std::function<bool(const std::filesystem::path&, std::string&)> trustVerifier(
@@ -228,6 +243,18 @@ ProcessingCoreDialog::ProcessingCoreDialog(backend::AppBackend& backend, QWidget
     channelRow->addWidget(refreshButton_);
     root->addLayout(channelRow);
 
+    auto* lineRow = new QHBoxLayout();
+    lineRow->addWidget(new QLabel(tr("Core line:"), this));
+    lineBox_ = new QComboBox(this);
+    lineBox_->addItem(tr("Subtract + Ring width (Contract 1)"), QStringLiteral("subtract-ring"));
+    lineBox_->addItem(tr("Absdiff + Laplacian (Contract 2)"), QStringLiteral("absdiff-laplacian"));
+    const QString savedLine = QSettings().value(
+        QStringLiteral("ProcessingCore/Line"), QStringLiteral("subtract-ring")).toString();
+    const int lineIndex = lineBox_->findData(savedLine);
+    if (lineIndex >= 0) lineBox_->setCurrentIndex(lineIndex);
+    lineRow->addWidget(lineBox_, 1);
+    root->addLayout(lineRow);
+
     versions_ = new QListWidget(this);
     root->addWidget(versions_, 1);
     statusLabel_ = new QLabel(this);
@@ -247,6 +274,12 @@ ProcessingCoreDialog::ProcessingCoreDialog(backend::AppBackend& backend, QWidget
             [this](int) {
                 QSettings().setValue(QStringLiteral("ProcessingCore/Channel"),
                                      channelBox_->currentData());
+                reload();
+            });
+    connect(lineBox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+                QSettings().setValue(QStringLiteral("ProcessingCore/Line"),
+                                     lineBox_->currentData());
                 reload();
             });
     connect(versions_, &QListWidget::itemSelectionChanged, this,
@@ -343,9 +376,10 @@ void ProcessingCoreDialog::reload() {
     if (busy_) return;
     setBusy(true, tr("Loading processing-core history…"));
     const QString channel = channelBox_->currentData().toString();
-    const QUrl url(QStringLiteral("%1/%2/processing-core/index.json")
+    const QString lineName = selectedLine().name;
+    const QUrl url(QStringLiteral("%1/%2/%3/index.json")
                        .arg(registryBaseUrl().remove(QRegularExpression(QStringLiteral("/+$"))),
-                            channel));
+                            channel, selectedLine().registryDir));
     if (!isHttps(url)) {
         catalog_ = {};
         versions_->clear();
@@ -361,7 +395,7 @@ void ProcessingCoreDialog::reload() {
     auto* reply = network_->get(request);
     installAbsoluteDeadline(reply, 20000);
     installDownloadLimit(reply, kMaxRegistryBytes);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, channel]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, channel, lineName]() {
         const bool oversized = reply->bytesAvailable() > kMaxRegistryBytes;
         const QByteArray body = oversized ? QByteArray{} : reply->readAll();
         const QString networkError = reply->errorString();
@@ -386,14 +420,20 @@ void ProcessingCoreDialog::reload() {
             setBusy(false, tr("Registry returned a different channel; history refused."));
             return;
         }
+        if (catalog_.line != lineName) {
+            versions_->clear();
+            catalog_ = {};
+            setBusy(false, tr("Registry returned a different core line; history refused."));
+            return;
+        }
         loadCanonicalActive(channel);
     });
 }
 
 void ProcessingCoreDialog::loadCanonicalActive(const QString& channel) {
-    const QUrl url(QStringLiteral("%1/%2/processing-core/latest.json")
+    const QUrl url(QStringLiteral("%1/%2/%3/latest.json")
                        .arg(registryBaseUrl().remove(QRegularExpression(QStringLiteral("/+$"))),
-                            channel));
+                            channel, selectedLine().registryDir));
     if (!isHttps(url)) {
         catalog_ = {};
         versions_->clear();
@@ -449,7 +489,8 @@ void ProcessingCoreDialog::updateActiveCoreLabel() {
     const auto current = backend_.processing().activeProcessingCoreIdentity();
     activeLabel_->setText(
         backend_.processing().isProcessingCorePinSatisfied()
-            ? tr("Active core: %1 · contract %2 · ABI %3 · %4")
+            ? tr("Active core: %1 %2 · contract %3 · ABI %4 · %5")
+                  .arg(lineLabel(static_cast<int>(current.contractVersion)))
                   .arg(QString::fromStdString(current.version))
                   .arg(current.contractVersion)
                   .arg(current.engineAbiVersion)
@@ -463,6 +504,7 @@ void ProcessingCoreDialog::populate() {
     const auto current = backend_.processing().activeProcessingCoreIdentity();
     const QString hardPin =
         qEnvironmentVariable("MIB_STUDIO_PROCESSING_CORE_VERSION").trimmed();
+    const int profileContract = profileContractVersion();
     for (const auto& entry : catalog_.versions) {
         QString label = entry.version;
         if (entry.version == catalog_.activeVersion) label += tr("  — channel active");
@@ -471,10 +513,16 @@ void ProcessingCoreDialog::populate() {
             entry, platformOs(), platformArch());
         const bool appCompatible = plugin && processingcorecatalog::isAppCompatible(
             *plugin, QCoreApplication::applicationVersion()) && isHostCompatible(*plugin);
+        const bool profileCompatible = plugin && plugin->contractVersion == profileContract;
         if (!plugin) label += tr("  — incompatible on this platform");
         else if (!appCompatible) label += tr("  — incompatible with this app/runtime");
+        else if (!profileCompatible)
+            label += tr("  — needs a Contract %1 profile (current profile: Contract %2)")
+                         .arg(plugin->contractVersion)
+                         .arg(profileContract);
         auto* item = new QListWidgetItem(label, versions_);
-        if (!appCompatible || (!hardPin.isEmpty() && hardPin != entry.version)) {
+        if (!appCompatible || !profileCompatible ||
+            (!hardPin.isEmpty() && hardPin != entry.version)) {
             item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
         }
     }
@@ -483,6 +531,16 @@ void ProcessingCoreDialog::populate() {
                                   .arg(hardPin));
     }
     updateButtons();
+}
+
+const processingcorecatalog::CoreLine& ProcessingCoreDialog::selectedLine() const {
+    const auto* line = processingcorecatalog::findCoreLine(
+        lineBox_ ? lineBox_->currentData().toString() : QStringLiteral("subtract-ring"));
+    return line ? *line : processingcorecatalog::coreLines().front();
+}
+
+int ProcessingCoreDialog::profileContractVersion() const {
+    return backend_.processing().getProcessingConfig().processing_contract_version;
 }
 
 int ProcessingCoreDialog::selectedVersionIndex() const {
@@ -505,6 +563,13 @@ void ProcessingCoreDialog::prepareAndActivateSelected() {
     if (!processingcorecatalog::isAppCompatible(
             plugin, QCoreApplication::applicationVersion()) || !isHostCompatible(plugin)) {
         setBusy(false, tr("Selected core is incompatible with this application/runtime."));
+        return;
+    }
+    if (plugin.contractVersion != profileContractVersion()) {
+        setBusy(false, tr("This core implements Contract %1, but the current profile requires "
+                          "Contract %2. Load a matching profile first.")
+                           .arg(plugin.contractVersion)
+                           .arg(profileContractVersion()));
         return;
     }
     if (version.version.toStdString() != backend_.processing().activeProcessingCoreIdentity().version) {
