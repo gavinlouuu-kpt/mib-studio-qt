@@ -62,6 +62,7 @@
 - `task/2026-08-31-oeabt-nanopositioner.md`
 
 ### HDF Review scalability & crashes
+- [[../task/2026-09-30-review-scatter-click-to-view]] — Review scatter click-to-view, docked frame pane, click vs drag, Qt 6.4 `append()` O(n²) (#466/#467)
 - `task/review_2gb_scalability.md`
 - `task/review_hdf_thumbnail_spacer_crash.md`
 - `task/2026-06-02-long-run-frame-growth.md`

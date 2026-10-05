@@ -177,6 +177,24 @@ bool EModulusLut::loadFromFile(const std::string& basePath) {
     return true;
 }
 
+bool EModulusLut::loadGrid(double areaMin, double areaStep, size_t areaBins, double deformMin,
+                           double deformStep, size_t deformBins, std::vector<double> grid) {
+    loaded_ = false;
+    if (areaBins < 2 || deformBins < 2 || grid.size() != areaBins * deformBins ||
+        !(areaStep > 0.0) || !(deformStep > 0.0)) {
+        return false;
+    }
+    grid_ = std::move(grid);
+    numAreaBins_ = areaBins;
+    numDeformBins_ = deformBins;
+    areaMin_ = areaMin;
+    areaMax_ = areaMin + areaStep * static_cast<double>(areaBins - 1);
+    deformMin_ = deformMin;
+    deformMax_ = deformMin + deformStep * static_cast<double>(deformBins - 1);
+    loaded_ = true;
+    return true;
+}
+
 double EModulusLut::lookup(double area_um, double deformability) const {
     if (!loaded_) return std::numeric_limits<double>::quiet_NaN();
 

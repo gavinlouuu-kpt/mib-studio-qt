@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import re
 import subprocess
@@ -52,6 +54,115 @@ def make_manifest(root: Path, version: str, published_at: str = "2026-07-13T00:0
         public_base_url="https://updates.example",
         published_at=published_at,
     )
+
+
+SUBTRACT_RING_GOLDEN_DIR = REPO_ROOT / "tests" / "release" / "fixtures" / "processing_core_subtract_ring"
+GOLDEN_PUBLISHED_AT = "2026-07-13T00:00:00Z"
+
+
+def write_subtract_ring_release_assets(assets: Path, version: str = "0.1.0") -> None:
+    """Deterministic Contract-1 release assets: two wheels plus Windows/Linux cores."""
+    assets.mkdir(parents=True, exist_ok=True)
+    make_wheel(assets, version, "cp311")
+    make_wheel(assets, version, "cp313")
+    dll = assets / f"mib_processing_core-{version}-windows_x86_64.dll"
+    dll.write_bytes(b"signed windows fixture")
+    (assets / f"mib_processing_core-{version}-windows_x86_64.json").write_text(json.dumps({
+        "schema_version": 1,
+        "version": version,
+        "filename": dll.name,
+        "os": "windows",
+        "arch": "x86_64",
+        "engine_abi_version": 1,
+        "contract_version": 1,
+        "entrypoint": "mib_processing_get_api",
+        "runtime_fingerprint": "windows-x86_64-msvc1942-md-cxx17",
+        "app_min_version": "0.8.0",
+        "app_max_version": None,
+        "signing": {"required": True, "scheme": "authenticode"},
+    }), encoding="utf-8")
+    shared_library = assets / f"mib_processing_core-{version}-linux_x86_64.so"
+    shared_library.write_bytes(b"signed linux fixture")
+    (assets / f"mib_processing_core-{version}-linux_x86_64.json").write_text(json.dumps({
+        "schema_version": 1,
+        "version": version,
+        "filename": shared_library.name,
+        "os": "linux",
+        "arch": "x86_64",
+        "engine_abi_version": 1,
+        "contract_version": 1,
+        "entrypoint": "mib_processing_get_api",
+        "runtime_fingerprint": "linux-x86_64-gcc13-cxx17",
+        "app_min_version": "0.8.0",
+        "app_max_version": None,
+        "signing": {
+            "required": True,
+            "scheme": "ed25519",
+            "public_key_spki_base64": base64.b64encode(bytes(44)).decode("ascii"),
+            "signature_base64": base64.b64encode(bytes(64)).decode("ascii"),
+        },
+    }), encoding="utf-8")
+
+
+def run_subtract_ring_golden_scenario(module, root: Path, assets: Path) -> dict[str, bytes]:
+    """Produce every subtract-ring registry document the publisher emits.
+
+    The same scenario generated tests/release/fixtures/processing_core_subtract_ring
+    from the publisher before core lines existed, so comparing against those
+    bytes proves the default line is unchanged.
+    """
+    pyproject = make_pyproject(root)
+    out = root / "dry-run"
+    result = module.main([
+        "--from-release", "mib-processing-v0.1.0",
+        "--pyproject", str(pyproject),
+        "--release-assets-dir", str(assets),
+        "--published-at", GOLDEN_PUBLISHED_AT,
+        "--dry-run",
+        "--manifest-out", str(out / "latest.json"),
+        "--version-manifest-out", str(out / "version.json"),
+        "--index-out", str(out / "index.json"),
+        "--pep503-out", str(out / "index.html"),
+    ])
+    if result != 0:
+        raise AssertionError(f"golden dry run failed with {result}")
+    documents = {
+        f"dry_run/{name}": (out / name).read_bytes()
+        for name in ("latest.json", "version.json", "index.json", "index.html")
+    }
+
+    # A real (mocked) publication that merges into an existing catalog.
+    previous_dir = root / "previous"
+    previous_dir.mkdir()
+    previous = module.merge_index(
+        {}, make_manifest(previous_dir, "0.0.9", "2026-07-01T00:00:00Z"), "https://updates.yofo.bio",
+    )
+    existing_index = module.serialize_json(previous)
+    uploads: list[str] = []
+
+    def capture(**kwargs) -> None:
+        index = len(uploads) + 1
+        documents[f"publish/{index}"] = kwargs["file_path"].read_bytes()
+        uploads.append(f"{kwargs['key']}\t{kwargs['content_type']}\t{kwargs['cache_control']}")
+
+    argv = ["--pyproject", str(pyproject), "--published-at", GOLDEN_PUBLISHED_AT,
+            "--endpoint", "https://r2.invalid", "--upload-method", "s3"]
+    for wheel in sorted(assets.glob("mib_processing-*.whl")):
+        argv += ["--wheel", str(wheel)]
+    for descriptor in sorted(assets.glob("mib_processing_core-0.1.0-*.json")):
+        argv += ["--native-plugin-descriptor", str(descriptor)]
+    with (
+        mock.patch.object(
+            module, "read_existing_object",
+            side_effect=[(None, True), (existing_index, True)],
+        ),
+        mock.patch.object(module, "upload_object", side_effect=capture),
+    ):
+        result = module.main(argv)
+    if result != 0:
+        raise AssertionError(f"golden publication failed with {result}")
+    documents["publish/uploads.tsv"] = ("\n".join(uploads) + "\n").encode("utf-8")
+    return documents
 
 
 class VersionAndWheelTest(unittest.TestCase):
@@ -736,6 +847,603 @@ class CommandLineTest(unittest.TestCase):
             result = publish_processing_core.main(["--promote-version", "", "--dry-run"])
         self.assertEqual(result, 1)
         read.assert_not_called()
+
+
+def quiet_main(argv: list[str]) -> int:
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        return publish_processing_core.main(argv)
+
+
+class SubtractRingRegressionTest(unittest.TestCase):
+    """The default line must emit exactly the pre-core-line registry bytes."""
+
+    def assert_matches_golden(self, documents: dict[str, bytes]) -> None:
+        expected_names = sorted(
+            path.relative_to(SUBTRACT_RING_GOLDEN_DIR).as_posix()
+            for path in SUBTRACT_RING_GOLDEN_DIR.rglob("*") if path.is_file()
+        )
+        self.assertEqual(sorted(documents), expected_names)
+        for name, data in documents.items():
+            with self.subTest(document=name):
+                self.assertEqual(data, (SUBTRACT_RING_GOLDEN_DIR / name).read_bytes())
+
+    def run_scenario(self, root: Path, assets: Path) -> dict[str, bytes]:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return run_subtract_ring_golden_scenario(publish_processing_core, root, assets)
+
+    def test_default_line_documents_are_byte_identical_to_pre_line_publisher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_subtract_ring_release_assets(root / "assets")
+            self.assert_matches_golden(self.run_scenario(root, root / "assets"))
+
+    def test_default_line_ignores_absdiff_laplacian_assets_in_the_same_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_subtract_ring_release_assets(root / "assets")
+            write_absdiff_laplacian_release_assets(root / "assets")
+            self.assert_matches_golden(self.run_scenario(root, root / "assets"))
+
+    def test_explicit_subtract_ring_line_is_the_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_subtract_ring_release_assets(root / "assets")
+            outputs = []
+            for extra in ([], ["--line", "subtract-ring"]):
+                out = root / f"out{len(outputs)}.json"
+                self.assertEqual(quiet_main([
+                    "--from-release", "mib-processing-v0.1.0",
+                    "--pyproject", str(make_pyproject(root)),
+                    "--release-assets-dir", str(root / "assets"),
+                    "--published-at", GOLDEN_PUBLISHED_AT,
+                    "--dry-run", "--manifest-out", str(out),
+                    *extra,
+                ]), 0)
+                outputs.append(out.read_bytes())
+            self.assertEqual(outputs[0], outputs[1])
+            self.assertEqual(outputs[0], (SUBTRACT_RING_GOLDEN_DIR / "dry_run" / "latest.json").read_bytes())
+
+    def test_subtract_ring_rejects_other_line_contract_abi_or_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_subtract_ring_release_assets(root)
+            descriptor = root / "mib_processing_core-0.1.0-linux_x86_64.json"
+            original = json.loads(descriptor.read_text(encoding="utf-8"))
+            cases = {
+                "engine ABI": {"engine_abi_version": 2},
+                "entrypoint": {"entrypoint": "mib_processing_get_api_v2"},
+                "algorithm": {"algorithm": "absdiff-laplacian"},
+                "declares contract": {"contract_version": 2},
+            }
+            for message, change in cases.items():
+                with self.subTest(field=message):
+                    descriptor.write_text(json.dumps({**original, **change}), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, message):
+                        publish_processing_core.build_native_plugin_entries(
+                            [descriptor], asset_dir=root, repo="O/R",
+                            release_tag="mib-processing-v0.1.0",
+                            expected_version="0.1.0", expected_contract_version=1,
+                        )
+            descriptor.write_text(json.dumps({**original, "algorithm": "subtract-ring"}), encoding="utf-8")
+            entry = publish_processing_core.build_native_plugin_entries(
+                [descriptor], asset_dir=root, repo="O/R", release_tag="mib-processing-v0.1.0",
+                expected_version="0.1.0", expected_contract_version=1,
+            )[0]
+            self.assertNotIn("algorithm", entry)
+            with self.assertRaisesRegex(ValueError, "implements contract 1"):
+                publish_processing_core.build_native_plugin_entries(
+                    [descriptor], asset_dir=root, repo="O/R", release_tag="mib-processing-v0.1.0",
+                    expected_version="0.1.0", expected_contract_version=2,
+                )
+
+    def test_subtract_ring_rejects_contract_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_subtract_ring_release_assets(root / "assets")
+            self.assertEqual(quiet_main([
+                "--from-release", "mib-processing-v0.1.0",
+                "--pyproject", str(make_pyproject(root)),
+                "--release-assets-dir", str(root / "assets"),
+                "--contract-version", "2", "--dry-run",
+            ]), 1)
+
+
+C2 = "absdiff-laplacian"
+C2_TAG = "mib-processing-absdiff-laplacian-v0.1.0"
+C2_PREFIX = "stable/processing-core-absdiff-laplacian"
+
+
+def c2_descriptor(artifact: str, native_os: str, version: str = "0.1.0", **overrides) -> dict:
+    signing = (
+        {"required": True, "scheme": "authenticode"}
+        if native_os == "windows"
+        else {
+            "required": True,
+            "scheme": "ed25519",
+            "public_key_spki_base64": base64.b64encode(bytes(44)).decode("ascii"),
+            "signature_base64": base64.b64encode(bytes(64)).decode("ascii"),
+        }
+    )
+    payload = {
+        "schema_version": 1,
+        "version": version,
+        "filename": artifact,
+        "os": native_os,
+        "arch": "x86_64",
+        "algorithm": C2,
+        "engine_abi_version": 2,
+        "contract_version": 2,
+        "entrypoint": "mib_processing_get_api_v2",
+        "runtime_fingerprint": f"{native_os}-x86_64-fixture-cxx17",
+        "app_min_version": "1.2.0",
+        "app_max_version": None,
+        "signing": signing,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def write_absdiff_laplacian_release_assets(assets: Path, version: str = "0.1.0") -> list[Path]:
+    """Contract-2 native cores for Windows and Linux. Returns the descriptors."""
+    assets.mkdir(parents=True, exist_ok=True)
+    descriptors = []
+    for native_os, suffix in (("windows", ".dll"), ("linux", ".so")):
+        stem = f"mib_processing_core-absdiff-laplacian-{version}-{native_os}_x86_64"
+        (assets / f"{stem}{suffix}").write_bytes(f"signed {native_os} contract 2 fixture".encode())
+        descriptor = assets / f"{stem}.json"
+        descriptor.write_text(json.dumps(c2_descriptor(f"{stem}{suffix}", native_os, version)), encoding="utf-8")
+        descriptors.append(descriptor)
+    return descriptors
+
+
+def make_c2_manifest(root: Path, version: str, published_at: str = "2026-07-13T00:00:00Z") -> dict:
+    assets = root / f"c2-{version}"
+    descriptors = write_absdiff_laplacian_release_assets(assets, version)
+    tag = f"mib-processing-absdiff-laplacian-v{version}"
+    plugins = publish_processing_core.build_native_plugin_entries(
+        descriptors, asset_dir=assets, repo="KPT1020/mib-studio-qt", release_tag=tag,
+        expected_version=version, line=C2,
+    )
+    return publish_processing_core.build_manifest(
+        channel="stable",
+        version=version,
+        release_tag=tag,
+        repo="KPT1020/mib-studio-qt",
+        public_base_url="https://updates.example",
+        native_plugins=plugins,
+        published_at=published_at,
+        line=C2,
+    )
+
+
+class AbsdiffLaplacianLineTest(unittest.TestCase):
+    def dry_run(self, root: Path, assets: Path, *extra: str) -> tuple[int, dict, dict]:
+        out = root / "out"
+        result = quiet_main([
+            "--line", C2,
+            "--from-release", C2_TAG,
+            "--pyproject", str(make_pyproject(root)),
+            "--release-assets-dir", str(assets),
+            "--published-at", GOLDEN_PUBLISHED_AT,
+            "--dry-run",
+            "--manifest-out", str(out / "latest.json"),
+            "--version-manifest-out", str(out / "version.json"),
+            "--index-out", str(out / "index.json"),
+            *extra,
+        ])
+        if result != 0:
+            return result, {}, {}
+        self.assertEqual((out / "latest.json").read_bytes(), (out / "version.json").read_bytes())
+        return (
+            result,
+            json.loads((out / "latest.json").read_text(encoding="utf-8")),
+            json.loads((out / "index.json").read_text(encoding="utf-8")),
+        )
+
+    def test_registry_key_paths_and_upload_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            descriptors = write_absdiff_laplacian_release_assets(root / "assets")
+            uploaded: list[str] = []
+            argv = [
+                "--line", C2,
+                "--pyproject", str(make_pyproject(root)),
+                "--published-at", GOLDEN_PUBLISHED_AT,
+                "--endpoint", "https://r2.invalid", "--upload-method", "s3",
+            ]
+            for descriptor in descriptors:
+                argv += ["--native-plugin-descriptor", str(descriptor)]
+            with (
+                mock.patch.object(
+                    publish_processing_core, "read_existing_object",
+                    side_effect=[(None, True), (None, True)],
+                ) as read,
+                mock.patch.object(
+                    publish_processing_core, "upload_object",
+                    side_effect=lambda **kwargs: uploaded.append(kwargs["key"]),
+                ),
+            ):
+                self.assertEqual(quiet_main(argv), 0)
+            self.assertEqual(
+                [call.args[1] for call in read.call_args_list],
+                [f"{C2_PREFIX}/versions/0.1.0.json", f"{C2_PREFIX}/index.json"],
+            )
+            self.assertEqual(uploaded, [
+                f"{C2_PREFIX}/versions/0.1.0.json",
+                f"{C2_PREFIX}/index.json",
+                f"{C2_PREFIX}/latest.json",
+            ])
+            self.assertEqual(
+                publish_processing_core.registry_base_key("beta", C2),
+                "beta/processing-core-absdiff-laplacian",
+            )
+            self.assertEqual(publish_processing_core.registry_base_key("beta"), "beta/processing-core")
+
+    def test_manifest_and_index_carry_no_wheel_and_no_pep503_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            assets = root / "assets"
+            write_absdiff_laplacian_release_assets(assets)
+            make_wheel(assets, "0.1.0", "cp311")  # a stray research wheel is ignored
+            result, manifest, index = self.dry_run(root, assets)
+            self.assertEqual(result, 0)
+            self.assertNotIn("wheel", manifest)
+            self.assertEqual(manifest["line"], C2)
+            self.assertEqual(manifest["contract_version"], 2)
+            self.assertEqual(manifest["processing_core_manifest_schema_version"], 2)
+            self.assertEqual(manifest["release_tag"], C2_TAG)
+            self.assertEqual(
+                manifest["release_url"],
+                f"https://github.com/KPT1020/mib-studio-qt/releases/tag/{C2_TAG}",
+            )
+            self.assertEqual(len(manifest["native_plugins"]), 2)
+            for plugin in manifest["native_plugins"]:
+                self.assertEqual(plugin["algorithm"], C2)
+                self.assertEqual(plugin["contract_version"], 2)
+                self.assertEqual(plugin["engine_abi_version"], 2)
+                self.assertEqual(plugin["entrypoint"], "mib_processing_get_api_v2")
+                self.assertIn(f"/releases/download/{C2_TAG}/mib_processing_core-absdiff-laplacian-0.1.0-", plugin["url"])
+            self.assertEqual(index["line"], C2)
+            self.assertEqual(index["active_version"], "0.1.0")
+            [entry] = index["versions"]
+            self.assertNotIn("wheels", entry)
+            self.assertEqual(entry["line"], C2)
+            self.assertEqual(entry["release_tag"], C2_TAG)
+            self.assertEqual(
+                entry["manifest_url"],
+                f"https://updates.yofo.bio/{C2_PREFIX}/versions/0.1.0.json",
+            )
+            self.assertEqual(entry["native_plugins"], manifest["native_plugins"])
+
+            with self.assertRaisesRegex(ValueError, "no PEP 503 page"):
+                publish_processing_core.render_pep503_index(index)
+            self.assertEqual(self.dry_run(root, assets, "--pep503-out", str(root / "p.html"))[0], 1)
+            self.assertFalse((root / "p.html").exists())
+            with self.assertRaisesRegex(ValueError, "publishes no wheel"):
+                publish_processing_core.build_manifest(
+                    channel="stable", version="0.1.0", release_tag=C2_TAG, repo="O/R",
+                    public_base_url="https://updates.example",
+                    wheel_paths=[make_wheel(root)], native_plugins=manifest["native_plugins"],
+                    published_at=GOLDEN_PUBLISHED_AT, line=C2,
+                )
+            with self.assertRaisesRegex(ValueError, "native processing core is required"):
+                publish_processing_core.build_manifest(
+                    channel="stable", version="0.1.0", release_tag=C2_TAG, repo="O/R",
+                    public_base_url="https://updates.example", published_at=GOLDEN_PUBLISHED_AT,
+                    line=C2,
+                )
+
+    def test_explicit_wheel_input_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            descriptors = write_absdiff_laplacian_release_assets(root)
+            with mock.patch.object(publish_processing_core, "upload_object") as upload:
+                result = quiet_main([
+                    "--line", C2, "--pyproject", str(make_pyproject(root)), "--dry-run",
+                    "--wheel", str(make_wheel(root)),
+                    "--native-plugin-descriptor", str(descriptors[0]),
+                ])
+            self.assertEqual(result, 1)
+            upload.assert_not_called()
+
+    def test_release_without_line_assets_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_subtract_ring_release_assets(root / "assets")
+            self.assertEqual(self.dry_run(root, root / "assets")[0], 1)
+
+    def test_mixed_line_asset_directory_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            assets = root / "assets"
+            write_subtract_ring_release_assets(assets)
+            c2_descriptors = write_absdiff_laplacian_release_assets(assets)
+            (assets / "release-notes.json").write_text(json.dumps({"filename": "x", "engine_abi_version": 1}))
+            self.assertEqual(
+                publish_processing_core.discover_native_descriptors(assets),
+                [
+                    assets / "mib_processing_core-0.1.0-linux_x86_64.json",
+                    assets / "mib_processing_core-0.1.0-windows_x86_64.json",
+                ],
+            )
+            self.assertEqual(
+                publish_processing_core.discover_native_descriptors(assets, "subtract-ring"),
+                publish_processing_core.discover_native_descriptors(assets),
+            )
+            self.assertEqual(
+                publish_processing_core.discover_native_descriptors(assets, C2),
+                sorted(c2_descriptors),
+            )
+            result, manifest, _index = self.dry_run(root, assets)
+            self.assertEqual(result, 0)
+            self.assertEqual(
+                sorted(plugin["filename"] for plugin in manifest["native_plugins"]),
+                [
+                    "mib_processing_core-absdiff-laplacian-0.1.0-linux_x86_64.so",
+                    "mib_processing_core-absdiff-laplacian-0.1.0-windows_x86_64.dll",
+                ],
+            )
+
+    def test_descriptor_must_match_line_contract_abi_algorithm_entrypoint_and_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            stem = "mib_processing_core-absdiff-laplacian-0.1.0-linux_x86_64"
+            (root / f"{stem}.so").write_bytes(b"contract 2 fixture")
+            (root / "mib_processing_core-0.1.0-linux_x86_64.so").write_bytes(b"contract 1 fixture")
+            descriptor = root / f"{stem}.json"
+            cases = {
+                "declares contract 1": {"contract_version": 1},
+                "must declare contract_version": {"contract_version": None},
+                "engine ABI 1": {"engine_abi_version": 1},
+                "algorithm 'subtract-ring'": {"algorithm": "subtract-ring"},
+                "must declare algorithm": {"algorithm": None},
+                "entrypoint 'mib_processing_get_api'": {"entrypoint": "mib_processing_get_api"},
+                "not named for the absdiff-laplacian line": {
+                    "filename": "mib_processing_core-0.1.0-linux_x86_64.so"
+                },
+            }
+            for message, change in cases.items():
+                with self.subTest(case=message):
+                    payload = c2_descriptor(f"{stem}.so", "linux", **change)
+                    payload = {key: value for key, value in payload.items() if value is not None or key == "app_max_version"}
+                    descriptor.write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, message):
+                        publish_processing_core.build_native_plugin_entries(
+                            [descriptor], asset_dir=root, repo="O/R", release_tag=C2_TAG,
+                            expected_version="0.1.0", line=C2,
+                        )
+            with self.assertRaisesRegex(ValueError, "implements contract 2"):
+                publish_processing_core.build_native_plugin_entries(
+                    [descriptor], asset_dir=root, repo="O/R", release_tag=C2_TAG,
+                    expected_version="0.1.0", expected_contract_version=1, line=C2,
+                )
+            # A Contract-2 descriptor is refused by the default subtract-ring line too.
+            descriptor.write_text(json.dumps(c2_descriptor(f"{stem}.so", "linux")), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not named for the subtract-ring line"):
+                publish_processing_core.build_native_plugin_entries(
+                    [descriptor], asset_dir=root, repo="O/R", release_tag="mib-processing-v0.1.0",
+                    expected_version="0.1.0", expected_contract_version=1,
+                )
+
+    def test_release_tag_must_match_line(self) -> None:
+        tag_version = publish_processing_core.version_from_release_tag
+        self.assertEqual(tag_version(C2_TAG, C2), "0.1.0")
+        self.assertEqual(tag_version("mib-processing-v0.1.0"), "0.1.0")
+        with self.assertRaisesRegex(ValueError, "belongs to the subtract-ring line"):
+            tag_version("mib-processing-v0.1.0", C2)
+        with self.assertRaisesRegex(ValueError, "belongs to the absdiff-laplacian line"):
+            tag_version(C2_TAG)
+        with self.assertRaisesRegex(ValueError, "form mib-processing-absdiff-laplacian-v"):
+            tag_version("other-v0.1.0", C2)
+        with self.assertRaises(ValueError):
+            tag_version("mib-processing-absdiff-laplacian-v", C2)
+        with self.assertRaisesRegex(ValueError, "Unknown processing-core line"):
+            tag_version(C2_TAG, "absdiff")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_absdiff_laplacian_release_assets(root / "assets")
+            write_subtract_ring_release_assets(root / "assets")
+            pyproject = str(make_pyproject(root))
+            common = ["--pyproject", pyproject, "--release-assets-dir", str(root / "assets"), "--dry-run"]
+            self.assertEqual(quiet_main(["--line", C2, "--from-release", "mib-processing-v0.1.0", *common]), 1)
+            self.assertEqual(quiet_main(["--from-release", C2_TAG, *common]), 1)
+            self.assertEqual(quiet_main(["--line", C2, "--from-release", C2_TAG, *common]), 0)
+            self.assertEqual(quiet_main([
+                "--line", C2, "--from-release", C2_TAG, "--contract-version", "1", *common,
+            ]), 1)
+            self.assertEqual(quiet_main([
+                "--line", C2, "--from-release", C2_TAG, "--version", "0.1.0", *common,
+            ]), 0)
+            self.assertEqual(quiet_main([
+                "--line", C2, "--from-release", C2_TAG, "--version", "0.2.0", *common,
+            ]), 1)
+            descriptor = root / "assets" / "mib_processing_core-absdiff-laplacian-0.1.0-linux_x86_64.json"
+            self.assertEqual(quiet_main([
+                "--line", C2, "--pyproject", pyproject, "--dry-run",
+                "--release-tag", "mib-processing-v0.1.0",
+                "--native-plugin-descriptor", str(descriptor),
+            ]), 1)
+
+    def test_from_release_downloads_the_line_tag(self) -> None:
+        downloads: list[str] = []
+
+        def download(_repo: str, tag: str, destination: Path, _gh_bin: str) -> None:
+            downloads.append(tag)
+            write_absdiff_laplacian_release_assets(destination)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch.object(
+                publish_processing_core, "inspect_github_release",
+                return_value={"tagName": C2_TAG, "publishedAt": GOLDEN_PUBLISHED_AT},
+            ) as inspect,
+            mock.patch.object(publish_processing_core, "download_github_release", side_effect=download),
+        ):
+            root = Path(temp_dir)
+            out = root / "latest.json"
+            result = quiet_main([
+                "--line", C2, "--from-release", C2_TAG,
+                "--pyproject", str(make_pyproject(root)),
+                "--dry-run", "--manifest-out", str(out),
+            ])
+            self.assertEqual(result, 0)
+            inspect.assert_called_once_with("KPT1020/mib-studio-qt", C2_TAG, "gh")
+            self.assertEqual(downloads, [C2_TAG])
+            manifest = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["published_at"], GOLDEN_PUBLISHED_AT)
+            self.assertEqual(len(manifest["native_plugins"]), 2)
+
+    def test_immutable_version_republish_is_idempotent_and_conflict_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            descriptors = write_absdiff_laplacian_release_assets(root / "assets")
+            pyproject = str(make_pyproject(root))
+            argv = ["--line", C2, "--pyproject", pyproject, "--published-at", GOLDEN_PUBLISHED_AT]
+            for descriptor in descriptors:
+                argv += ["--native-plugin-descriptor", str(descriptor)]
+            preview = root / "version.json"
+            index_preview = root / "index.json"
+            self.assertEqual(quiet_main([
+                *argv, "--dry-run", "--version-manifest-out", str(preview),
+                "--index-out", str(index_preview),
+            ]), 0)
+            immutable = preview.read_bytes()
+            live = argv + ["--endpoint", "https://r2.invalid", "--upload-method", "s3"]
+
+            uploaded: list[str] = []
+            with (
+                mock.patch.object(
+                    publish_processing_core, "read_existing_object",
+                    side_effect=[(immutable, True), (index_preview.read_bytes(), True)],
+                ),
+                mock.patch.object(
+                    publish_processing_core, "upload_object",
+                    side_effect=lambda **kwargs: uploaded.append(kwargs["key"]),
+                ),
+            ):
+                self.assertEqual(quiet_main(live), 0)
+            self.assertEqual(uploaded, [f"{C2_PREFIX}/index.json", f"{C2_PREFIX}/latest.json"])
+
+            conflicting = json.loads(immutable)
+            conflicting["native_plugins"] = conflicting["native_plugins"][:1]
+            with (
+                mock.patch.object(
+                    publish_processing_core, "read_existing_object",
+                    side_effect=[(publish_processing_core.serialize_json(conflicting), True), (None, True)],
+                ),
+                mock.patch.object(publish_processing_core, "upload_object") as upload,
+            ):
+                self.assertEqual(quiet_main(live), 1)
+            upload.assert_not_called()
+
+            with (
+                mock.patch.object(
+                    publish_processing_core, "read_existing_object",
+                    side_effect=[(None, False), (None, True)],
+                ),
+                mock.patch.object(publish_processing_core, "upload_object") as upload,
+            ):
+                self.assertEqual(quiet_main(live), 1)
+            upload.assert_not_called()
+
+    def test_merge_index_keeps_history_and_refuses_other_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            base = "https://updates.example"
+            v010 = make_c2_manifest(root, "0.1.0", "2026-07-10T00:00:00Z")
+            v020 = make_c2_manifest(root, "0.2.0", "2026-07-11T00:00:00Z")
+            index = publish_processing_core.merge_index({}, v010, base)
+            index = publish_processing_core.merge_index(index, v020, base)
+            self.assertEqual(list(index)[:3], ["processing_core_index_schema_version", "channel", "line"])
+            self.assertEqual(index["line"], C2)
+            self.assertEqual([entry["version"] for entry in index["versions"]], ["0.2.0", "0.1.0"])
+            self.assertEqual(index["active_version"], "0.2.0")
+            self.assertEqual(
+                index["versions"][1]["manifest_url"],
+                f"{base}/{C2_PREFIX}/versions/0.1.0.json",
+            )
+            for entry in index["versions"]:
+                self.assertNotIn("wheels", entry)
+                self.assertEqual(entry["contract_version"], 2)
+
+            rolled_back = publish_processing_core.merge_index(index, v010, base)
+            self.assertEqual(rolled_back["active_version"], "0.1.0")
+            self.assertEqual(len(rolled_back["versions"]), 2)
+
+            c1_manifest = make_manifest(root, "0.1.0")
+            c1_index = publish_processing_core.merge_index({}, c1_manifest, base)
+            self.assertNotIn("line", c1_index)
+            with self.assertRaisesRegex(ValueError, "Existing index line is None"):
+                publish_processing_core.merge_index(c1_index, v010, base)
+            with self.assertRaisesRegex(ValueError, "Existing index line is 'absdiff-laplacian'"):
+                publish_processing_core.merge_index(index, c1_manifest, base)
+
+            with_wheels = json.loads(json.dumps(index))
+            with_wheels["versions"][0]["wheels"] = []
+            with self.assertRaisesRegex(ValueError, "carries wheel data"):
+                publish_processing_core.merge_index(with_wheels, v010, base)
+            wrong_contract = json.loads(json.dumps(index))
+            wrong_contract["versions"][0]["contract_version"] = 1
+            with self.assertRaisesRegex(ValueError, "declares contract 1"):
+                publish_processing_core.merge_index(wrong_contract, v010, base)
+            wrong_line = json.loads(json.dumps(index))
+            del wrong_line["versions"][0]["line"]
+            with self.assertRaisesRegex(ValueError, "belongs to line None"):
+                publish_processing_core.merge_index(wrong_line, v010, base)
+
+            with_wheel = dict(v010, wheel={"wheels": []})
+            with self.assertRaisesRegex(ValueError, "must not carry wheel data"):
+                publish_processing_core.index_entry_from_manifest(with_wheel, base)
+
+    def test_promote_copies_bytes_without_pep503_and_refuses_other_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            v010 = make_c2_manifest(root, "0.1.0", "2026-07-10T00:00:00Z")
+            v020 = make_c2_manifest(root, "0.2.0", "2026-07-11T00:00:00Z")
+            index = publish_processing_core.merge_index(
+                publish_processing_core.merge_index({}, v010, "https://updates.example"),
+                v020, "https://updates.example",
+            )
+            immutable = json.dumps(v010, separators=(",", ":")).encode() + b"\n"
+            uploaded: list[tuple[str, bytes]] = []
+            with (
+                mock.patch.object(
+                    publish_processing_core, "read_existing_object",
+                    side_effect=[(immutable, True), (json.dumps(index).encode(), True)],
+                ) as read,
+                mock.patch.object(
+                    publish_processing_core, "upload_object",
+                    side_effect=lambda **kwargs: uploaded.append(
+                        (kwargs["key"], kwargs["file_path"].read_bytes())
+                    ),
+                ),
+            ):
+                result = quiet_main([
+                    "--line", C2, "--promote-version", "0.1.0",
+                    "--published-at", "2026-07-13T01:02:03Z",
+                    "--endpoint", "https://r2.invalid", "--upload-method", "s3",
+                ])
+            self.assertEqual(result, 0)
+            self.assertEqual(read.call_args_list[0].args[1], f"{C2_PREFIX}/versions/0.1.0.json")
+            self.assertEqual([key for key, _ in uploaded], [f"{C2_PREFIX}/index.json", f"{C2_PREFIX}/latest.json"])
+            self.assertEqual(uploaded[-1][1], immutable)
+            self.assertEqual(json.loads(uploaded[0][1])["active_version"], "0.1.0")
+
+            c1_immutable = publish_processing_core.serialize_json(make_manifest(root, "0.1.0"))
+            for line_args, manifest_bytes, catalog in (
+                (["--line", C2], c1_immutable, index),
+                ([], publish_processing_core.serialize_json(v010), index),
+            ):
+                with self.subTest(line=line_args), (
+                    mock.patch.object(
+                        publish_processing_core, "read_existing_object",
+                        side_effect=[(manifest_bytes, True), (json.dumps(catalog).encode(), True)],
+                    )
+                ), mock.patch.object(publish_processing_core, "upload_object") as upload:
+                    result = quiet_main([*line_args, "--promote-version", "0.1.0", "--dry-run"])
+                    self.assertEqual(result, 1)
+                    upload.assert_not_called()
 
 
 class ReadWheelVersionTest(unittest.TestCase):

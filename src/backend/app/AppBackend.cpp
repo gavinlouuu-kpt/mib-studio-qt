@@ -26,6 +26,7 @@
 #include "backend/services/CameraControlService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/TriggerService.h"
+#include "backend/services/DotGridService.h"
 #include "backend/services/YoloService.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
@@ -37,6 +38,7 @@
 #include "backend/discovery/providers/NanopositionerProvider.h"
 #include "backend/discovery/providers/PulseGeneratorProvider.h"
 #include "backend/processing/EModulusLutCatalog.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 
 #include "backend/camera/mindvision/MindVisionConfig.h"
 
@@ -53,6 +55,8 @@
 #include <string>
 #include <utility>
 #include <spdlog/spdlog.h>
+#include <opencv2/core.hpp>
+#include "backend/processing/OpenCvThreads.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
@@ -69,6 +73,28 @@ namespace backend
 {
     namespace
     {
+    // OpenCV's MSVC build parallelises through the Concurrency Runtime: one worker
+    // per logical CPU whose idle workers spin. A per-frame parallel call in the
+    // realtime loop kept ~31 of 32 workers busy on the rig PC and starved the
+    // processing thread (5000 fps experiments fell to ~2900 processed/s).
+    // Processing already spreads frames over its own threads, so OpenCV's inner
+    // parallel_for is off by default (OpenCvThreads.h; processing-core plugins
+    // apply the same setting to their own, statically linked OpenCV).
+    void configureOpenCvThreads()
+    {
+        const auto setting = processing::applyOpenCvThreadsFromEnvironment();
+        if (setting.invalid)
+        {
+            SPDLOG_WARN("AppBackend: ignoring invalid MIB_OPENCV_THREADS='{}'", setting.raw);
+        }
+        if (setting.keepOpenCvDefault)
+        {
+            SPDLOG_INFO("AppBackend: OpenCV threads left at OpenCV default ({})", cv::getNumThreads());
+            return;
+        }
+        SPDLOG_INFO("AppBackend: OpenCV threads set to {} (getNumThreads={})", setting.threads, cv::getNumThreads());
+    }
+
     // Builds the capture-owned MindVision camera for `path`. When the saved
     // profile enables illuminated Live View, the same validated parse the
     // camera uses at start (parseConfig: connection, range and timing rules)
@@ -258,6 +284,11 @@ namespace backend
 
     void AppBackend::shutdown() {
         SPDLOG_INFO("AppBackend: shutdown begin");
+        // The registry worker shares nothing with the instrument; stop it
+        // first so an in-flight request is aborted rather than waited out.
+        if (profileRegistry_) {
+            profileRegistry_->shutdown();
+        }
         // Discovery first (issue #419): stop the startup policy so no late
         // result can select or connect anything, refuse new jobs, cancel and
         // join every discovery worker. Only then may serial adapters and the
@@ -317,6 +348,10 @@ namespace backend
         if (captureService_) {
             captureService_->setCameraReadyCallback({});
         }
+        if (dotGridService_) {
+            dotGridService_->setPoseCallback({});
+            dotGridService_->stop();
+        }
         stopFrameRecording();
         if (processingService_) {
             SPDLOG_INFO("AppBackend: shutdown stopping processing");
@@ -374,6 +409,21 @@ namespace backend
             }
         }
 
+        {
+            profiles::RegistryWorkerConfig registryConfig;
+            if (const char *url = std::getenv("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = url;
+            if (const char *key = std::getenv("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
+                registryConfig.publishableKey = key;
+            registryConfig.cacheDir = std::filesystem::path(dataDir) / "profile_registry";
+            if (registryConfig.configured() && !profileRegistryTransport_)
+                SPDLOG_WARN("AppBackend: profile registry configured but the shell supplied no "
+                            "HTTP transport; registry disabled");
+            profileRegistry_ = std::make_unique<profiles::ProfileRegistryWorker>(
+                std::move(registryConfig), profileRegistryTransport_);
+            SPDLOG_INFO("AppBackend: central profile registry {}",
+                        profileRegistry_->snapshot().configured ? "enabled" : "disabled");
+        }
+
         sqliteService_ = std::make_unique<services::SqliteService>();
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
@@ -407,6 +457,8 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
+        dotGridService_ = std::make_unique<services::DotGridService>();
+        dotGridService_->setFrameStore(frameStore_);
 
         // Device discovery (issue #419, ADR 0005): one job service, compiled-in
         // providers wrapping the existing enumeration/probe code, a camera
@@ -433,20 +485,26 @@ namespace backend
             return autofocusService_ && autofocusService_->isConnected();
         };
         hooks.selectCamera = [this](const discovery::DiscoveredDevice &device) {
-            if (!device.camera) return false;
-            const auto &cam = *device.camera;
-            if (cam.cameraType == services::CameraType::MindVision)
-            {
-                setMindVisionCameraSelection(cam.cameraIndex, cam.label);
-            }
-            else
-            {
-                setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
-            }
-            return true;
+            if (!device.camera || !experimentCoordinator_) return false;
+            bool selected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || isCameraConfigured()) return;
+                const auto &cam = *device.camera;
+                if (cam.cameraType == services::CameraType::MindVision)
+                    setMindVisionCameraSelection(cam.cameraIndex, cam.label);
+                else setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
+                selected = true;
+            });
+            return selected;
         };
         hooks.connectNanopositioner = [this](const nanopositioner::Endpoint &endpoint) {
-            return autofocusService_ && autofocusService_->connect(endpoint);
+            if (!experimentCoordinator_) return false;
+            bool connected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || !autofocusService_ || autofocusService_->isConnected()) return;
+                connected = autofocusService_->connect(endpoint);
+            });
+            return connected;
         };
         startupDiscovery_ =
             std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
@@ -457,6 +515,7 @@ namespace backend
         bool bootYolo = true;
         bool bootAutofocus = true;
         bool bootTrigger = true;
+        bool bootDotGrid = true;
         bool bootCapture = true;
         bool bootPlayback = true;
         if (const char *rawDisabledServices = std::getenv("MIB_DISABLED_SERVICES"))
@@ -492,6 +551,7 @@ namespace backend
                     bootTrigger = false;
                     bootCapture = false;
                     bootPlayback = false;
+                    bootDotGrid = false;
                 }
                 else if (token == "sqlite")
                 {
@@ -517,6 +577,10 @@ namespace backend
                 {
                     bootTrigger = false;
                 }
+                else if (token == "dot_grid" || token == "dotgrid")
+                {
+                    bootDotGrid = false;
+                }
                 else if (token == "capture" || token == "camera")
                 {
                     bootCapture = false;
@@ -541,8 +605,19 @@ namespace backend
             }
         }
 
-        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}",
-                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback);
+        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}, dot_grid={}",
+                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback, bootDotGrid);
+
+        // Dot-grid wafer localization: the thread idles until the frontend
+        // enables it (config "dot_grid.enabled"); it only ever reads FrameStore.
+        if (bootDotGrid)
+        {
+            dotGridService_->start();
+        }
+        else
+        {
+            SPDLOG_WARN("AppBackend: dot-grid localization disabled by MIB_DISABLED_SERVICES");
+        }
 
         if (bootSqlite)
         {
@@ -565,7 +640,7 @@ namespace backend
         // Initialize YOLO service - resolve model path relative to data directory
         // dataDir is typically {exeDir}/data, so we go up one level to get exeDir
         std::filesystem::path dataPath(dataDir);
-        std::filesystem::path exeDir = dataPath.parent_path();
+        std::filesystem::path exeDir = resourceRoot_.empty() ? dataPath.parent_path() : std::filesystem::path(resourceRoot_);
         std::filesystem::path modelPath = exeDir / "resources" / "models" / "yolo11n-seg.onnx";
         if (bootYolo)
         {
@@ -634,6 +709,7 @@ namespace backend
                         lutInfo.remoteUpdated,
                         lutInfo.usedBundledFallback,
                         lutInfo.manifestUrl);
+            configureOpenCvThreads();
             processingService_->start();
         }
         else
@@ -650,10 +726,22 @@ namespace backend
                 if (autofocusService_) {
                     autofocusService_->onRingRatio(ringRatio, timestampNs);
                 } });
+            // Contracts 2 and 3: per-object Laplacian variance drives the
+            // focus-score peak-seeker instead of the ring-width setpoint.
+            processingService_->setFocusSampleCallback(
+                [this](double laplacianVariance, int64_t timestampNs, uint64_t frameIndex,
+                       int objectId, int trackId)
+                {
+                    if (autofocusService_) {
+                        autofocusService_->onFocusSample(backend::services::autofocus::FocusSample{
+                            laplacianVariance, timestampNs, frameIndex, objectId, trackId});
+                    }
+                });
         }
         else
         {
             processingService_->setRingRatioCallback({});
+            processingService_->setFocusSampleCallback({});
             if (!bootAutofocus)
             {
                 SPDLOG_WARN("AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES");
@@ -965,11 +1053,13 @@ namespace backend
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
     services::TriggerService &AppBackend::trigger() { return *triggerService_; }
+    services::DotGridService &AppBackend::dotGrid() { return *dotGridService_; }
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
     discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
     discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
+    profiles::ProfileRegistryWorker &AppBackend::profileRegistry() { return *profileRegistry_; }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {

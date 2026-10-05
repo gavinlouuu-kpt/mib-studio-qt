@@ -130,6 +130,12 @@ container WebKitGTK workarounds (`WEBKIT_DISABLE_DMABUF_RENDERER=1`,
 - [[Build]] for presets and commands.
 - `docs/howto/runtime-deploy.md` for runtime deployment details.
 
+## Profile registry (#398)
+
+No new C++ dependency: registry sources reuse nlohmann JSON, SQLite and the
+shared SHA-256 already in `mib_backend`. The PostgreSQL policy tests need Node
+(`.nvmrc`) and the pinned PGlite dev dependency in `supabase/package-lock.json`;
+commands are in [[Build]].
 
 ### Independent nanopositioner support (2026-09-15)
 

@@ -1,5 +1,16 @@
 # AppBackend
 
+## Central profile registry worker (2026-10-02, #398)
+
+`initialize()` builds a `profiles::ProfileRegistryWorker` before any service,
+configured from `MIB_PROFILE_REGISTRY_URL` + `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY`
+with its cache under `<dataDir>/profile_registry/`. The shell injects the HTTPS
+POST via `setProfileRegistryTransport()` before `initialize()` (ADR 0002 seam;
+Qt: `makeQtRegistryHttpTransport()`); without env or transport the worker is
+inert. `shutdown()` stops it **first**: it shares nothing with the instrument,
+and its shutdown aborts an in-flight request rather than waiting out the
+timeout. Accessor: `profileRegistry()`. See [[../services/ProfileRegistryService]].
+
 ## Device discovery ownership (2026-09-16, #419)
 
 `initialize()` constructs [[../services/DeviceDiscoveryService]] after the
@@ -41,7 +52,7 @@ All services are `std::unique_ptr`; [[../data-model/FrameStore]] is
 sqliteService_, hdf5Service_,
 captureService_, processingService_, playbackService_,
 cameraControlService_, autofocusService_,
-triggerService_, yoloService_, syringePumpService_,
+triggerService_, dotGridService_, yoloService_, syringePumpService_,
 pulseGeneratorService_,
 deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
@@ -129,6 +140,7 @@ Supported backend tokens:
 - `yolo`
 - `autofocus` (disables ring-ratio callback wiring from processing)
 - `trigger` (disables processing/camera trigger wiring)
+- `dot_grid` (alias: `dotgrid`; leaves [[../services/DotGridService]] constructed but not started)
 - `capture` (alias: `camera`)
 - `playback`
 - `all` (disables all backend startup paths above)
@@ -151,6 +163,33 @@ is joined), and `shutdown()` dumps again as a final snapshot. Runtime API:
 `frameIndex` + `hostTimestampUs` from `TargetGroupEvent` to
 `TargetGroupSignal` so [[../services/TriggerService]] can correlate pulses
 with source frames. See `docs/howto/pipeline-latency-diagnosis.md`.
+
+### OpenCV thread pool (`MIB_OPENCV_THREADS`)
+
+Just before `processingService_->start()`, `initialize` calls
+`cv::setNumThreads(0)`, so OpenCV runs every operation inline on the calling
+thread.
+- **Why:** the Conan OpenCV on Windows parallelises through the MSVC
+  Concurrency Runtime: one worker per logical CPU, and idle workers spin.
+  The realtime path processes one small frame per call, so any OpenCV call
+  there that reaches `parallel_for` keeps the whole pool spinning and starves
+  the processing thread. Dev builds share one `opencv_core` DLL between the
+  host and the processing cores, but **released cores link OpenCV
+  statically** (the release audit forbids `opencv*` imports; v0.2.1 imports
+  only `CONCRT140.dll`), so the host's call never reaches them. Each core
+  therefore applies the same setting to its own OpenCV on its first
+  `create_context` (`ProcessingCorePlugin.cpp`). Both use the parser in
+  `include/backend/processing/OpenCvThreads.h`.
+- **Measured on the rig PC** (i9-13900, 32 logical CPUs, Coaxlink camera,
+  448x116 at 5000 fps, 2026-10-02): during a recorded run the pool kept 34
+  threads busy (~30 cores) and processing fell to ~2900 frames/s, ending
+  every run `incompleteLoss`. With the pool off: 5000 frames/s, 1.4 cores,
+  run complete. Evidence:
+  `docs/evidence/2026-10-02-opencv-pool-5000fps/`.
+- **Override:** `MIB_OPENCV_THREADS=N` (0–256) passes N instead;
+  `MIB_OPENCV_THREADS=opencv` keeps OpenCV's own default. An invalid value
+  logs a warning and keeps 0. The chosen value is logged at startup.
+- Guard: `backend.opencv_threads`.
 
 ## Shutdown
 

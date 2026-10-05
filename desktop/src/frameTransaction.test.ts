@@ -6,7 +6,7 @@ function packet(index: bigint, value: number, kind: number, width = 2, height = 
   const buf = new ArrayBuffer(96 + width * height);
   const d = new DataView(buf);
   new Uint8Array(buf).set([77, 73, 66, 70]);
-  d.setUint16(4, 1, true); d.setUint16(6, 96, true);
+  d.setUint16(4, 2, true); d.setUint16(6, 96, true);
   d.setUint32(8, 1, true); d.setUint32(12, kind, true);
   [index, 18446744073709551615n, BigInt(width), BigInt(height), 0x01080001n, BigInt(width), BigInt(width * height), 0n, 0n, 0n]
     .forEach((v, i) => d.setBigUint64(16 + i * 8, v, true));

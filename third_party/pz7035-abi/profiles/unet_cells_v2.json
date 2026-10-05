@@ -1,0 +1,641 @@
+{
+  "$comment": "U-Net cell profile (science_profile 2, version 2): the U-Net mask gives the cells; per cell the host's outer-contour path (evaluateOuterContourObject) without ring features, plus the Contract 2 Laplacian variance. Decisions 2026-10-02 (docs/PZ7035_UNET_PIPELINE_PLAN.md on feat/unet-lut-dsp-split). Version 1 of this profile was the mask pixel count only. Reason code 4 (Ring) is unused. The channel-band gate is kept (user, 2026-10-02: U-Net blemishes near the walls).",
+  "science_profile": 2,
+  "profile_version": 2,
+  "requires_abi": {
+    "major": 1,
+    "minor": 2
+  },
+  "requires_capabilities": [
+    "PROFILE_PAGE",
+    "TABLE_LOADER"
+  ],
+  "geometry": {
+    "roi2_width": 512,
+    "roi2_height": 96,
+    "note": "fixed processing window; ROI_SIZE must equal it"
+  },
+  "formats": {
+    "u8": "unsigned",
+    "u16": "unsigned",
+    "u24": "unsigned",
+    "u32": "unsigned",
+    "bool": "1 bit",
+    "q16_16": "unsigned fixed point, 16 fractional bits",
+    "q0_16": "unsigned fixed point in [0,1), 16 fractional bits",
+    "q8_8": "unsigned fixed point, 8 fractional bits",
+    "enum:reason": "see enums.reason",
+    "q24_8": "unsigned fixed point, 8 fractional bits",
+    "q0_8": "unsigned fixed point in [0,1), 8 fractional bits",
+    "u4": "unsigned"
+  },
+  "enums": {
+    "reason": {
+      "NONE": 0,
+      "NO_CONTOUR": 1,
+      "BORDER": 2,
+      "AREA": 3,
+      "DEFORM": 5,
+      "AREA_RATIO": 6,
+      "LAPLACIAN": 7,
+      "CHANNEL": 8
+    }
+  },
+  "page_words": 32,
+  "page": [
+    {
+      "name": "enable_area_range_check",
+      "word": 0,
+      "bits": [
+        27,
+        27
+      ],
+      "format": "bool",
+      "source": "filters.enable_area_range_check"
+    },
+    {
+      "name": "enable_deformability_range_check",
+      "word": 0,
+      "bits": [
+        28,
+        28
+      ],
+      "format": "bool",
+      "source": "filters.enable_deformability_range_check"
+    },
+    {
+      "name": "enable_area_ratio_check",
+      "word": 0,
+      "bits": [
+        29,
+        29
+      ],
+      "format": "bool",
+      "source": "filters.enable_area_ratio_check"
+    },
+    {
+      "name": "enable_laplacian_variance_check",
+      "word": 0,
+      "bits": [
+        30,
+        30
+      ],
+      "format": "bool",
+      "source": "filters.enable_laplacian_variance_check (Contract 2; default off)"
+    },
+    {
+      "name": "target_group_enabled",
+      "word": 0,
+      "bits": [
+        31,
+        31
+      ],
+      "format": "bool",
+      "source": "target_group.enabled"
+    },
+    {
+      "name": "channel_band_y",
+      "word": 1,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "channel_band_y (ROI 1 rows; set by the PS from detectChannelRoi on a background of EMPTY previews)"
+    },
+    {
+      "name": "channel_band_h",
+      "word": 1,
+      "bits": [
+        16,
+        31
+      ],
+      "format": "u16",
+      "source": "channel_band_h; 0 = off. A cell whose centroid row is outside [y, y + h) is invalid (reason CHANNEL)"
+    },
+    {
+      "name": "min_cell_area_px",
+      "word": 2,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "cell size gate, in PIXELS (host and PL count mask pixels)",
+      "doc": "top-level U-Net components with fewer pixels are blemishes: counted, not listed or measured"
+    },
+    {
+      "name": "laplacian_ksize",
+      "word": 3,
+      "bits": [
+        16,
+        19
+      ],
+      "format": "u4",
+      "source": "laplacian_kernel_size (1 or 3; default 3)",
+      "doc": "other values are rejected at readiness"
+    },
+    {
+      "name": "target_group_emodulus_enabled",
+      "word": 3,
+      "bits": [
+        31,
+        31
+      ],
+      "format": "bool",
+      "source": "target_group.emodulus_enabled"
+    },
+    {
+      "name": "pixel_to_micron",
+      "word": 4,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "p2m (um per px)"
+    },
+    {
+      "name": "area_min_um2",
+      "word": 5,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "area_threshold_min"
+    },
+    {
+      "name": "area_max_um2",
+      "word": 6,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "area_threshold_max"
+    },
+    {
+      "name": "deformability_min",
+      "word": 7,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "deformability_threshold_min"
+    },
+    {
+      "name": "deformability_max",
+      "word": 8,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "deformability_threshold_max"
+    },
+    {
+      "name": "area_ratio_max",
+      "word": 9,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "area_ratio_threshold_max"
+    },
+    {
+      "name": "laplacian_variance_min",
+      "word": 10,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q24_8",
+      "source": "laplacian_variance_min"
+    },
+    {
+      "name": "laplacian_variance_max",
+      "word": 11,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q24_8",
+      "source": "laplacian_variance_max"
+    },
+    {
+      "name": "target_area_min_um2",
+      "word": 12,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.area_min"
+    },
+    {
+      "name": "target_area_max_um2",
+      "word": 13,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.area_max"
+    },
+    {
+      "name": "target_deformability_min",
+      "word": 14,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "target_group.deformability_min"
+    },
+    {
+      "name": "target_deformability_max",
+      "word": 15,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "target_group.deformability_max"
+    },
+    {
+      "name": "target_emodulus_min_kpa",
+      "word": 16,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.emodulus_min"
+    },
+    {
+      "name": "target_emodulus_max_kpa",
+      "word": 17,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.emodulus_max"
+    },
+    {
+      "name": "store_invalid_every_n",
+      "word": 18,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "invalidFrameSamplingRate (default 100); 0 = never"
+    },
+    {
+      "name": "store_multi_image_frames",
+      "word": 18,
+      "bits": [
+        16,
+        23
+      ],
+      "format": "u8",
+      "source": "multi_image.count when multi_image.enabled"
+    },
+    {
+      "name": "store_valid_anchored",
+      "word": 18,
+      "bits": [
+        24,
+        24
+      ],
+      "format": "bool",
+      "source": "recording policy"
+    },
+    {
+      "name": "store_mask",
+      "word": 18,
+      "bits": [
+        25,
+        25
+      ],
+      "format": "bool",
+      "source": "recording policy"
+    },
+    {
+      "name": "store_all_frames",
+      "word": 18,
+      "bits": [
+        26,
+        26
+      ],
+      "format": "bool",
+      "source": "raw recording mode (needs the admission gate)"
+    },
+    {
+      "name": "lut_area_min_um2",
+      "word": 19,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "EModulusLut grid origin"
+    },
+    {
+      "name": "lut_area_step_um2",
+      "word": 20,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "EModulusLut grid step"
+    },
+    {
+      "name": "lut_deformability_min",
+      "word": 21,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "EModulusLut grid origin"
+    },
+    {
+      "name": "lut_deformability_step",
+      "word": 21,
+      "bits": [
+        16,
+        31
+      ],
+      "format": "q0_16",
+      "source": "EModulusLut grid step"
+    }
+  ],
+  "payload_words": 15,
+  "payload_validity": "bit n set = payload word n valid; a cut-off or degenerate cell carries words 0, 1, 6, 7, 8, 11, 12, 13, 14 (brightness, centroid and Laplacian are computed before the border exit, as on the host)",
+  "payload": [
+    {
+      "name": "object_id",
+      "word": 0,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "objectId (1..N, cell bbox order)"
+    },
+    {
+      "name": "reason",
+      "word": 0,
+      "bits": [
+        16,
+        19
+      ],
+      "format": "enum:reason",
+      "source": "invalid reason; NONE when valid; NO_CONTOUR for a degenerate contour (contourArea 0: the host exits early with the centroid at the bbox centre and no metrics)"
+    },
+    {
+      "name": "cut_off",
+      "word": 0,
+      "bits": [
+        20,
+        20
+      ],
+      "format": "bool",
+      "source": "a cell pixel on the ROI 2 edge (1-px rule; host touchesBorder with margin 1)"
+    },
+    {
+      "name": "emodulus_out_of_coverage",
+      "word": 0,
+      "bits": [
+        23,
+        23
+      ],
+      "format": "bool",
+      "source": "youngsModulus = NaN on the host"
+    },
+    {
+      "name": "target_group",
+      "word": 0,
+      "bits": [
+        24,
+        24
+      ],
+      "format": "bool",
+      "source": "isTargetGroup"
+    },
+    {
+      "name": "contour_area",
+      "word": 1,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "contourArea(cell contour), px2 (exact)"
+    },
+    {
+      "name": "hull_area",
+      "word": 2,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "contourArea(convexHull) = FilterResult.area"
+    },
+    {
+      "name": "hull_perimeter",
+      "word": 3,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "arcLength(hull)"
+    },
+    {
+      "name": "area_ratio",
+      "word": 4,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "hull / contour area"
+    },
+    {
+      "name": "deformability",
+      "word": 5,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "1 - sqrt(4 pi hull) / perimeter"
+    },
+    {
+      "name": "hull_count",
+      "word": 5,
+      "bits": [
+        16,
+        23
+      ],
+      "format": "u8",
+      "source": "hull points"
+    },
+    {
+      "name": "cell_count",
+      "word": 5,
+      "bits": [
+        24,
+        31
+      ],
+      "format": "u8",
+      "source": "cells passing the size gate in the frame (saturates at 255)"
+    },
+    {
+      "name": "brightness_mean",
+      "word": 6,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "mean of the raw gray over the filled cell (cv::meanStdDev over the filled object mask)"
+    },
+    {
+      "name": "centroid_x",
+      "word": 7,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "moments(contour) m10/m00, ROI 1 coordinates"
+    },
+    {
+      "name": "centroid_y",
+      "word": 8,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "m01/m00, ROI 1 coordinates"
+    },
+    {
+      "name": "area_um2",
+      "word": 9,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "hull_area * p2m^2 (the E-modulus LUT input)"
+    },
+    {
+      "name": "emodulus_kpa",
+      "word": 10,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "youngsModulus (bilinear LUT)"
+    },
+    {
+      "name": "laplacian_variance",
+      "word": 11,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q24_8",
+      "source": "calculateLaplacianVariance: cv::Laplacian(ksize) of the raw gray, population variance over the filled contour"
+    },
+    {
+      "name": "class_id",
+      "word": 12,
+      "bits": [
+        0,
+        7
+      ],
+      "format": "u8",
+      "source": "reserved: majority U-Net class over the cell's pixels (K = 1: 1)"
+    },
+    {
+      "name": "class_share",
+      "word": 12,
+      "bits": [
+        8,
+        15
+      ],
+      "format": "q0_8",
+      "source": "reserved: share of that class (K = 1: 255)"
+    },
+    {
+      "name": "class_confidence",
+      "word": 12,
+      "bits": [
+        16,
+        23
+      ],
+      "format": "q0_8",
+      "source": "reserved: mean class confidence (K = 1: 255)"
+    },
+    {
+      "name": "pixel_count",
+      "word": 13,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "mask pixels of the cell (the size gate's measure)"
+    },
+    {
+      "name": "blemish_count",
+      "word": 13,
+      "bits": [
+        16,
+        31
+      ],
+      "format": "u16",
+      "source": "components below min_cell_area_px in the frame"
+    },
+    {
+      "name": "brightness_variance",
+      "word": 14,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q24_8",
+      "source": "population variance of the raw gray over the filled cell (meanStdDev stddev^2)"
+    }
+  ],
+  "frame_flags": "EMPTY = no cell passed the size gate; RESULTS_TRUNCATED = more cells than the stage lists, or the stage deadline (PL register 49, default 180 us after SOF) stopped the list (cell and blemish counts stay complete; the measured cells are reported); DEADLINE = the deadline cut the list (stage flag bit 5)",
+  "tables": {
+    "PROFILE_TABLE0": {
+      "name": "emodulus_lut",
+      "layout": "row-major [deformability][area], 200 x 200 u16 kPa in q8_8, little-endian; 0xFFFF = no value (NaN on the host)",
+      "bytes": 80000,
+      "axes": "page words 19-21",
+      "source": "EModulusLut grid (IDW from the TSV), built on the PS"
+    }
+  },
+  "conformance_tolerances": {
+    "integer_fields": "exact",
+    "ratios_and_deformability": "1e-4 absolute",
+    "emodulus": "within one LUT cell of the host bilinear value",
+    "centroid": "1/256 px",
+    "laplacian_variance": "exact integer sums; Q24.8 rounding of the variance (relative 2.3e-8 measured)",
+    "brightness": "exact integer sums; Q16.16 / Q24.8 rounding of mean and variance"
+  }
+}

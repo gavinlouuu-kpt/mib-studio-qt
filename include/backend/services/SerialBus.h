@@ -143,6 +143,11 @@ public:
                                               BusError* error = nullptr,
                                               std::string* errorDetail = nullptr);
 
+    // Reuse bus identity normalization for facade collision checks.
+    static bool samePort(const std::string& a, const std::string& b) {
+        return normalizeKey(a) == normalizeKey(b);
+    }
+
 private:
     static std::string normalizeKey(const std::string& portName);
 

@@ -1,3 +1,9 @@
+include("${PROJECT_SOURCE_DIR}/cmake/GenerateReviewIsoelastic.cmake")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt")
+mib_generate_review_isoelastic(
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/ReviewIsoelasticData.h")
 include(MIBLinkHelpers)
 
 # The Python wheel version is the processing-core release identity. Keep a
@@ -12,6 +18,17 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/bindings/python/pyproject.toml")
 endif()
 if(MIB_PROCESSING_CORE_VERSION STREQUAL "")
     set(MIB_PROCESSING_CORE_VERSION "0.1.0")
+endif()
+
+# Dot-grid codec core version (encoder + decoder build line, ADR 0010). One
+# source shared with the Python mask generator: scripts/dot_grid/dotgrid/VERSION.
+set(MIB_DOTGRID_CORE_VERSION "0.0.0")
+if(EXISTS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
+    file(STRINGS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION" _mib_dotgrid_version LIMIT_COUNT 1)
+    string(STRIP "${_mib_dotgrid_version}" MIB_DOTGRID_CORE_VERSION)
+    # A VERSION bump must re-run configure, or the compiled-in version goes stale.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
 endif()
 
 # mib_processing: the Qt-free deformability-cytometry processing core plus
@@ -32,14 +49,22 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/UnetC4.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ProcessingOverlay.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/PipelineTimingRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
@@ -60,8 +85,14 @@ set_target_properties(mib_processing PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+target_include_directories(mib_processing PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(mib_processing PUBLIC
     ${PROJECT_SOURCE_DIR}/include
+)
+# PZ7035 PS-PL ABI bundle (pz_mib_abi.h), vendored and pinned; private to
+# src/backend/pz (scripts/vendor_pz7035_abi.py).
+target_include_directories(mib_processing PRIVATE
+    ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
 )
 
 target_link_libraries(mib_processing PUBLIC
@@ -70,6 +101,7 @@ target_link_libraries(mib_processing PUBLIC
 )
 
 target_compile_definitions(mib_processing PUBLIC
+    MIB_DOTGRID_CORE_VERSION="${MIB_DOTGRID_CORE_VERSION}"
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
 )
 
@@ -262,9 +294,45 @@ elseif(UNIX AND NOT APPLE)
         CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"engine_abi_version\": 1,\n  \"contract_version\": 1,\n  \"entrypoint\": \"mib_processing_get_api\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
 endif()
 
+# absdiff-laplacian (Contract 2) line (ADR 0007): engine ABI v2, entry point
+# mib_processing_get_api_v2. CI builds, audits, tests and uploads it next to
+# the subtract-ring core; signing and publishing are per-line release work.
+# The descriptors above must stay first: release tests read the subtract-ring
+# sidecar's contract_version/engine_abi_version from the first match.
+if(WIN32)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"windows\",\n  \"arch\": \"x86_64\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"authenticode\"}\n}\n")
+elseif(UNIX AND NOT APPLE)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-linux_${_mib_processing_native_arch}")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
+endif()
+
 add_library(mib_backend STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileCache.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseAuth.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryWorker.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileStore.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileCatalog.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
@@ -283,6 +351,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
@@ -341,6 +410,8 @@ set_target_properties(mib_backend PROPERTIES
 target_compile_definitions(mib_backend PUBLIC
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
     MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
+    MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"
+    MIB_PROCESSING_CORE_ED25519_SPKI_SHA256="${MIB_PROCESSING_CORE_ED25519_SPKI_SHA256}"
 )
 
 if(MIB_HAS_EGRABBER)

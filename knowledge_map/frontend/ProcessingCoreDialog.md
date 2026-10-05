@@ -13,8 +13,15 @@
 
 ## User flow
 
-Open **Settings → Processing Core…**, choose the stable or beta channel, then
-select **Prepare & Activate**. The list marks the channel-active version from
+Open **Settings → Processing Core…**, choose the stable or beta channel and
+the **core line** (ADR 0007: *Subtract + Ring width (Contract 1)* or *Absdiff +
+Laplacian (Contract 2)*, persisted as `ProcessingCore/Line`), then select
+**Prepare & Activate**. Each line reads its own registry directory
+(`processing-core/` or `processing-core-absdiff-laplacian/`, from
+`processingcorecatalog::coreLines()`); an index or `latest.json` of another
+line is refused. Only cores whose contract equals the current profile's
+`processing_contract_version` can be selected; others are listed as "needs a
+Contract N profile", and activation re-checks it. The list marks the channel-active version from
 the independently fetched `latest.json` pointer, the
 currently selected version, and entries incompatible with the current OS,
 architecture, or app-version range. The status bar always shows the active
@@ -37,9 +44,9 @@ records the newly leased identity without silently switching.
 
 ## Resolution and trust chain
 
-1. Fetch `{base}/{channel}/processing-core/index.json` over HTTPS with a
+1. Fetch `{base}/{channel}/<line registry dir>/index.json` over HTTPS with a
    20-second timeout and parse the schema-v1 history index defensively.
-2. Fetch and validate `{base}/{channel}/processing-core/latest.json`
+2. Fetch and validate `{base}/{channel}/<line registry dir>/latest.json`
    independently. Its manifest version is the sole channel-active pointer;
    `index.active_version` is advisory and a disagreement produces a partial-
    publication warning rather than leading the selector.
@@ -120,3 +127,40 @@ Release paths now require and validate the repository SPKI and compare it with
 the DLL's actual Authenticode signer, but provisioning the real certificate,
 pin, R2 publication, and an on-hardware Windows exercise remain live-environment
 gates tracked under A12.
+
+### Shared Tauri trust/activation policy (2026-09-23)
+
+Qt and Tauri now obtain their signature verifier from
+`backend/app/ProcessingCoreTrust`: the existing Authenticode/Ed25519 implementations,
+compiled SPKI allowlists and debug-only overrides remain authoritative. Catalog metadata
+never provides its own trusted key. Backend CMake receives the same pins as Qt.
+
+Tauri's `ProcessingCoreManagement` uses the existing content-addressed cache and portable
+loader. Selected index metadata must match the immutable version manifest, platform,
+ABI, processing contract, runtime fingerprint and app bounds; activation persists its
+selection in the service's pre-commit callback, so persistence failure leaves the previous
+kernel active. Startup re-verifies the cached artifact and fails readiness closed on a
+corrupt/missing selection; explicit bundled recovery remains subject to administrator pins.
+The shell presents registry/latest checks, downloaded-artifact verification/activation,
+and bundled recovery. Artifact download currently opens the HTTPS URL in the browser;
+select the downloaded file for native verification. This is not silent automatic updating.
+
+Tauri application-installer freshness compares the feed against `AppHandle::package_info().version`, the installed shell package version. Backend/core compatibility identity remains independent and is not used as the installed application version. Native idle/finalization checks return only lifecycle authorization; they do not select or mutate either version.
+
+Verified app-installer staging has a 4 GiB aggregate regular-file budget before
+any new copy. Accepted launches leave their package in place for the external
+installer; there is no automatic age deletion. Clear Installer Cache requires
+explicit confirmation that external installers are closed and authoritative idle
+backend checks. It invalidates the update ticket, removes only top-level regular
+packages named by a 64-hex token plus exe/msi/deb/rpm extension, preserves symlinks,
+subdirectories and unrelated names, and reports locked/removal failures for retry.
+
+## Gotchas
+
+- Tests that persist dialog choices (`ProcessingCore/Line`) must give
+  `QSettings` an organization name and a temp INI path. On Windows a bare
+  `QSettings()` uses the registry, drops the write without an organization
+  name, and `QStandardPaths::setTestModeEnabled` does not isolate it.
+- The registry publisher writes every published document as bytes (JSON and
+  the PEP 503 page), so a Windows run cannot introduce CRLF and break the
+  byte-identical comparison with the Linux CI output.
