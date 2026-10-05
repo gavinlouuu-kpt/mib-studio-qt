@@ -399,6 +399,16 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Processing Core dialog shows both core lines** (2026-10-05, Contract 2
+  rollout T1.1c) — a core-line selector (subtract-ring / absdiff-laplacian)
+  picks the registry directory; `ProcessingCoreCatalog` parses each line's
+  documents (`line`, wheel-less Contract-2 manifests with a top-level release
+  tag, ABI/entry-point pairing per line, `algorithm`) and refuses cross-line
+  catalogs, pointers and entries. The host accepts either line's ABI/contract
+  pair, and only cores matching the profile's contract can be activated.
+  Tests: `frontend.processing_core_catalog` (Contract-2 cases),
+  `frontend.processing_core_dialog` (line selector). Built and run locally
+  against system Qt 6 (`linux-system-release`).
 - **Per-line core releases** (2026-10-04, Contract 2 rollout T1.1b step 2) —
   the wheel workflow now also triggers on `mib-processing-absdiff-laplacian-v<ver>`.
   `validate-source-version` maps the tag to a core line (`line`,

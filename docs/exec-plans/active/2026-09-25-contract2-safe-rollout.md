@@ -7,8 +7,8 @@ lines built, audited, signed, published; step 1 = CI build/audit/upload of
 the absdiff-laplacian core, 2026-09-27; step 2 = per-line signing and
 publishing, decided 2026-10-04: own tag `mib-processing-absdiff-laplacian-v<ver>`
 and own registry path `<channel>/processing-core-absdiff-laplacian/`, no
-wheel; the subtract-ring tag and path are unchanged) and T1.1c (Processing Core dialog
-shows and filters by contract) next.
+wheel; the subtract-ring tag and path are unchanged; merged #488/#489/#491)
+and T1.1c (Processing Core dialog shows and filters by contract; 2026-10-05).
 
 Builds on the [Processing Contract v2 plan](2026-07-21-processing-contract-v2.md),
 [ADR 0006](../../decisions/0006-processing-contract-v2.md) (what Contract 2
