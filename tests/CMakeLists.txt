@@ -384,6 +384,16 @@ add_test(NAME processing.pz_unet_cells_host COMMAND $<TARGET_FILE:mib_backend_te
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_unet_cells_host PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
 
+mib_add_backend_test_executable(unet_c4_test processing/unet_c4_test.cpp)
+add_test(NAME processing.unet_c4 COMMAND $<TARGET_FILE:mib_backend_tests> unet_c4_test)
+set_tests_properties(processing.unet_c4 PROPERTIES LABELS "processing;backend;gold" TIMEOUT 300 SKIP_RETURN_CODE 77
+    ENVIRONMENT "MIB_UNET_C4_PARAMS=${MIB_ASSETS_DIR}/models/unet-c4-multiline-v1/c4_multiline_params.npz;MIB_UNET_C4_FIXTURES=${MIB_ASSETS_DIR}/models/unet-c4-multiline-v1/fixtures")
+
+mib_add_backend_test_executable(pz_board_run_host_test processing/pz_board_run_host_test.cpp)
+add_test(NAME processing.pz_board_run_host COMMAND $<TARGET_FILE:mib_backend_tests> pz_board_run_host_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_board_run_host PROPERTIES LABELS "processing;backend;gold" TIMEOUT 300 SKIP_RETURN_CODE 77)
+
 mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
 add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
 set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)

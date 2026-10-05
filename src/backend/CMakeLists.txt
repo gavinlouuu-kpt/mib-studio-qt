@@ -49,6 +49,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/UnetC4.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp

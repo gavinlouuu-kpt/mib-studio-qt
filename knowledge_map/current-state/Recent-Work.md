@@ -1,5 +1,18 @@
 # Recent Work
 
+## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
+
+`UnetC4` runs the integer C4 U-Net on the host from the model release's
+`.npz`, so desktop reprocessing gets the PL's masks.
+- 240/240 release fixtures are bit-exact.
+- The masks equal those the PL produced on the board for 85/85 live IMX426
+  frames.
+- About 35 ms per frame.
+- Weights and fixtures are the private Hub asset `unet-c4-multiline-v1`
+  (`gavinlouuu/yofo-unet-c4`). `processing.unet_c4` runs on the provisioned
+  files, and the `network-tests` workflow provisions them with `HF_TOKEN`.
+  See [[../services/ProcessingService]].
+
 ## 2026-10-04 — PZ7035 result record decoder (#447 E3, W3.B1)
 
 Decoder for the records the PZ7035 PL writes to the PS result ring, with the

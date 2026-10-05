@@ -747,3 +747,33 @@ persisted HDF5 schemas are unchanged. Primary-target bounds describe only the se
 snapshot object; contours may include other objects and are not all labelled targets.
 
 Processed preview capture-session identity is copied from the immutable input frame through inline and async batch host metadata, independently of processing-session/store epochs. It is never sampled from a newer live capture session; the UI labels both generations. Portable core ABI and recorded HDF5 layout are unchanged.
+
+## Host U-Net (`UnetC4`, plan W3.D)
+
+`include/backend/processing/UnetC4.h` is the bit-exact integer C4 U-Net that
+the PZ7035 PL runs, for desktop reprocessing with Contract 3.
+
+- **Parameters:** the `.npz` that pz7035-imx426 `dump_unet_params.py`
+  writes, read directly (stored zip; C or Fortran order).
+- **API:** `run(codes)` gives the 96x512 output codes; `foregroundMask(gray)`
+  gives the PL's mask.
+- **Speed:** about 35 ms per frame, single-threaded.
+- **Test `processing.unet_c4`** (runs on the provisioned asset; SKIP
+  without it):
+  - 240/240 release fixtures bit-exact;
+  - with `MIB_UNET_C4_BOARD_CAPTURES`, the masks equal the ones the PL
+    produced on the board: 85/85 frames from five runs with the promoted
+    weights.
+- **Test `processing.pz_board_run_host`** (SKIP unless `MIB_PZ_BOARD_RUN`
+  and `MIB_UNET_C4_PARAMS` are set) — the whole chain on a board run, host
+  against PL:
+  - from each captured raw frame, `UnetC4` and Contract 3 compute the cells
+    with the run's `page.bin` and `lut.bin`;
+  - those cells must equal the PL's RESULT records for the same frame id
+    (from `ring.bin`).
+  - On 2026-10-04: 80/80 frames from four runs agree. Every live cell was
+    the static particle cut off at the border, so shape, E-modulus and gates
+    are covered by the vector tests only, until a run with cells flowing.
+- **Weights:** the private Hub asset `unet-c4-multiline-v1`
+  (`gavinlouuu/yofo-unet-c4`, see [[../build-and-run/Assets]]).
+- **Not yet:** no shipped core serves Contract 3 (A6).
