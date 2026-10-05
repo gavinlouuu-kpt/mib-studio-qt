@@ -1,11 +1,12 @@
 {
   "repository": "gavinlouuu-kpt/pz7035-imx426",
-  "commit": "2904f965e19a5d718d809827bcad99581adbfc0d",
-  "bundle_sha256": "8b0622f8507b8534b218ac6971921bb0545183a980b85749420f05aa59ddf052",
+  "commit": "c726d338d43f8547991b260cafec6b83d131c4fb",
+  "tag": "abi-v1.2.0",
+  "bundle_sha256": "5353bf902f4ba7728f0a46ed85a27f3430c9065544e45cca0844d6fd82d3ff29",
   "files": {
-    "pz_mib_abi.json": "3eb6f40f76e1c6b32f910236af4de81a0cf6c43ce22a04aa3ac82ac8fa5a5248",
+    "pz_mib_abi.json": "7b64dc628f4e39ae1e5305ebd68b5ab504a2fc848b17274298eeb13fe9f93968",
     "pz_mib_abi.h": "349c49b30372c68884aee9dc1fb3b2f6b30ac6a0971c3d2cca2b311016cd62f7",
-    "BUNDLE.sha256": "8b0622f8507b8534b218ac6971921bb0545183a980b85749420f05aa59ddf052",
+    "BUNDLE.sha256": "5353bf902f4ba7728f0a46ed85a27f3430c9065544e45cca0844d6fd82d3ff29",
     "fixtures/fixtures.json": "441b013427abd3ea93885e3f3465d2ac4097ce2417a8ba48f210ff9823d4bbf6",
     "fixtures/bad_crc.bin": "8a839f281a4286de486b2224bfd8d006f6bde317e1ac1a6fb57f95fdabc60648",
     "fixtures/bad_magic.bin": "2467ddd0ee318f3c96bd91a6e08d176fa669d18a35125f489de1c63dab8c1a05",
