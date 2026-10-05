@@ -4,6 +4,9 @@
 > macOS and Windows with no camera, hardware or experiment code. Built from
 > the same `desktop/` tree as the React + Tauri MIB Studio shell.
 
+**Operator manual:** `docs/manual/yofo-review.md` (keep it in step with the
+menus, exports and update flow below).
+
 **Source:** `desktop/review.html`, `desktop/src/review/` (`main.tsx`,
 `ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx`, `review.css`,
 `charts/`, `exports/`),

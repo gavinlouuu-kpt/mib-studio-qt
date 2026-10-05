@@ -67,30 +67,10 @@ compare configurations on identical input.
 
 ## YOFO Review (standalone review app)
 
-**YOFO Review** is the Review tab as its own app for macOS and Windows: it
-opens the same `.h5` / `.hdf5` files on a machine with no camera or
-hardware. Double-click a recording (the app registers for `.h5` / `.hdf5`)
-or use **File ▸ Open…**. Browsing, the frame viewer, overlays and the
-Charts tab work as described above, with these differences:
-
-- **Exports run behind a progress dialog** with **Cancel**; a cancelled
-  export leaves nothing behind. When it finishes, **Show in folder** opens
-  the output. Only one export runs at a time.
-- **Batch Metrics, Batch Export All, Export Charts** and **Regenerate
-  masks** are under **More…** on the toolbar. **Export Charts** writes
-  `scatter_plot.tiff` and `ring_width_histogram.tiff` (1200 × 1200) into a
-  folder you choose.
-- **Regenerate masks** uses the file's *recorded* processing settings, ROI
-  and background by default (untick to use the defaults); AVI and folder
-  sources always use the defaults. The new file opens when it is done.
-- **Pixel-to-micron** — files record the factor they were taken with, and
-  the app always uses it. For older files that do not, set the factor under
-  **File ▸ Preferences…**; the status line marks it "(fallback)".
-- The ring-width histogram spans the ring-ratio limits the file was
-  recorded with.
-- The app is not signed: on first launch, macOS asks you to confirm in
-  **System Settings ▸ Privacy & Security** and Windows SmartScreen needs
-  **More info ▸ Run anyway**.
+**YOFO Review** is this Review tab as its own app for macOS and Windows,
+for reviewing recordings on a computer without the instrument. See
+[YOFO Review](yofo-review.md) for installation, updates and how it differs
+from this tab.
 
 ## Standalone tools
 

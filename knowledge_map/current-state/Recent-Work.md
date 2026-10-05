@@ -1,5 +1,18 @@
 # Recent Work
 
+## 2026-10-05 — YOFO Review parity sign-off and manual (plan PR 8)
+
+YOFO Review matches the Qt Review tab on four inputs (z-adjustment-50v, the
+512x96 real-cell run, two 0.25 µm/px fixtures; 40 checks,
+`tools/review_parity/`). Fixes that came with it: the core record's
+`cell_count` is the in-core count, the fallback px→µm is 0.4886, batch
+exports use each file's recorded factor, and the Qt tab reads the recorded
+factor too (TD-17 closed). Accepted differences are listed in
+[[../frontend/YofoReview]]. The operator manual has a YOFO Review page
+(`docs/manual/yofo-review.md`): install, open, export, regenerate,
+pixel-to-micron, updates. TD-18 (Qt Charts scatter cost) is superseded by
+the standalone app.
+
 ## 2026-10-04 — YOFO Review-only release tags
 
 `review-vX.Y.Z[-beta.N]` tags release YOFO Review alone

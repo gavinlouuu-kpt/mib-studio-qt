@@ -702,7 +702,14 @@ accounting text and the same saved core record; the differences list in
       `computed_at_ns`), the core status text, and the recording-file
       accounting text. Accepted: the experiment-file status line and the
       histogram y-axis rounding. Fixes that came with it are in the
-      2026-10-04 decision-log entries; TD-17 is closed. Remaining in PR 8:
-      manual page, screenshot harness, tech-debt TD-18 note, the
-      decoupling-plan parity row, the scatter plan → completed,
-      `Recent-Work.md`.
+      2026-10-04 decision-log entries; TD-17 is closed.
+      **2026-10-05 (coordination decision):** the manual page
+      (`docs/manual/yofo-review.md`, linked from `review-and-postprocess.md`,
+      the manual README and `mkdocs.yml`) and `Recent-Work.md` are done.
+      TD-18 is marked superseded by YOFO Review rather than fixed (Qt is
+      fixes-only under ADR 0011). The screenshot harness moved out of PR 8
+      to a follow-up issue. Remaining: bring the branch up to date with
+      develop (blocked on the review-stack decision for MIB Studio's shell;
+      develop now carries its own review exports, reanalysis and charts on
+      the old `Hdf5Service` state), the decoupling-plan parity row, the
+      scatter plan → completed.
