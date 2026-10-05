@@ -1,4 +1,5 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/app/ProfileCatalog.h"
@@ -681,6 +682,14 @@ namespace backend::bridge
                         " at (" + std::to_string(command.roiX) + ", " + std::to_string(command.roiY) + ")"};
         }
         case CameraCommandAction::StartCapture:
+            if (backend_.instrumentMode() == pz::InstrumentMode::Run)
+            {
+                // #501 P1: the producer stays stopped while the U-Net cell path runs.
+                const std::string message = "In Run mode the live camera stays stopped (previews come from the PL); "
+                                            "switch to Align for the live camera";
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             emitEvent(makeCameraStatus(CameraState::Starting));
             if (!backend_.capture().start())
             {
@@ -2439,10 +2448,19 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
         {"egrabber_script", host},
         {"pl_identity", !host},
         {"led_strobe", !host},
-        // Backend-owned camera modes arrive with P0b.
-        {"align_mode", false},
-        {"run_mode", false},
+        // Backend-owned camera modes (#501 P1): with the PZ7035 register writer.
+        {"align_mode", backend_.instrumentControlAvailable()},
+        {"run_mode", backend_.instrumentControlAvailable()},
     };
+    if (backend_.instrumentControlAvailable()) {
+        const auto limits = [](pz::InstrumentMode m) {
+            const auto l = pz::ledLimits(m);
+            return nlohmann::json{{"delay_min_us", l.delayMinUs}, {"delay_max_us", l.delayMaxUs},
+                                  {"width_min_us", l.widthMinUs}, {"width_max_us", l.widthMaxUs}};
+        };
+        capabilities["led_limits"] = {{"run", limits(pz::InstrumentMode::Run)},
+                                      {"align", limits(pz::InstrumentMode::Align)}};
+    }
     // The PZ7035's two peristaltic pumps share RS485 on /dev/ttyPS1: slave 3
     // feeds the sample, slave 4 the sheath (confirmed on the bench 2026-10-05).
     capabilities["pump"] = host ? nlohmann::json(nullptr)
@@ -2460,10 +2478,17 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
 }
 
 std::string BackendFacade::fetchInstrumentStatusJson() {
+    // Camera mode the backend applied last (#501 P1); "unknown" until the operator picks one.
+    const auto [runX, runY] = backend_.instrumentRunOffset();
+    const nlohmann::json mode{{"name", pz::instrumentModeName(backend_.instrumentMode())},
+                              {"run_x", runX},
+                              {"run_y", runY},
+                              {"service", backend_.serviceMode()}};
     auto* monitor = initialized_ ? backend_.pzPlatformMonitor() : nullptr;
     if (!monitor) {
         return nlohmann::json{{"available", false},
-                              {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"}}
+                              {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
+                              {"mode", mode}}
             .dump();
     }
     const auto nowUs = static_cast<uint64_t>(
@@ -2471,7 +2496,8 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
             .count());
     const auto s = monitor->sample(nowUs);
     if (!s.available) {
-        return nlohmann::json{{"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}}
+        return nlohmann::json{
+            {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode}}
             .dump();
     }
     nlohmann::json expected = nullptr;
@@ -2515,6 +2541,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"max_us", s.latencyMaxUs},
           {"over_budget", s.latencyOverBudget},
           {"frames", s.latencyFrames}}},
+        {"mode", mode},
     }.dump();
 }
 

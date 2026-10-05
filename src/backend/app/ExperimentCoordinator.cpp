@@ -1,4 +1,5 @@
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/pz/PzInstrumentControl.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/app/SciencePlacement.h"
@@ -434,7 +435,24 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     r.generation = readinessGeneration_.load();
     r.candidate.readinessGeneration = r.generation;
 
-    if (backend_.isCameraOverview()) {
+    // PZ7035 (#501 P1): a run needs Run mode, where the producer stream is deliberately stopped
+    // (the PL takes every frame; previews come from the cell capture). Its gates replace the
+    // live-camera ones (session, delivery mode, geometry, overview).
+    const bool instrumentModes = backend_.instrumentControlAvailable();
+    if (instrumentModes) {
+        const auto mode = backend_.instrumentMode();
+        if (mode == pz::InstrumentMode::Run) {
+            const auto [x, y] = backend_.instrumentRunOffset();
+            r.gates.push_back(gate("instrument.mode", GateStatus::Pass, {}, {},
+                                   "Run: 512x96 at (" + std::to_string(x) + ", " + std::to_string(y) +
+                                       "), 5 kHz, U-Net cell path on"));
+        } else {
+            r.gates.push_back(gate("instrument.mode", GateStatus::Fail,
+                                   std::string("the instrument is in ") +
+                                       (mode == pz::InstrumentMode::Align ? "Align" : "no camera mode"),
+                                   "Choose the window in Camera & Alignment and switch to Run"));
+        }
+    } else if (backend_.isCameraOverview()) {
         r.gates.push_back(gate("camera.mode", GateStatus::Fail,
                                "The camera is showing the full sensor overview",
                                "Switch to Experiment to apply the selected camera ROI"));
@@ -442,7 +460,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
 
     // --- camera session / hardware-vs-mock --------------------------------
     const auto lifecycle = backend_.capture().lifecycleSnapshot();
-    if (c.cameraReady) {
+    if (instrumentModes) {
+        // live-camera session gates do not apply in Run (see instrument.mode)
+    } else if (c.cameraReady) {
         r.gates.push_back(gate("camera.session", GateStatus::Pass, {}, {},
                                "generation " + std::to_string(c.captureGeneration)));
     } else {
@@ -471,7 +491,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("camera.source", GateStatus::Pass, {}, {},
                                c.camera.effective + " " + c.camera.label));
     }
-    if (!c.cameraReady) {
+    if (instrumentModes) {
+        // no live-camera delivery in Run
+    } else if (!c.cameraReady) {
         r.gates.push_back(gate("camera.deliveryMode", GateStatus::Unavailable,
                                "delivery mode is confirmed only by a running camera"));
     } else if (!c.deliveryModeConfirmed) {
@@ -485,7 +507,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     } else {
         r.gates.push_back(gate("camera.deliveryMode", GateStatus::Pass, {}, {}, c.deliveryModeActive));
     }
-    if (c.frameGeometryKnown) {
+    if (instrumentModes) {
+        // the PL frame is the fixed 512x96 U-Net window
+    } else if (c.frameGeometryKnown) {
         r.gates.push_back(gate("camera.geometry", GateStatus::Pass, {}, {},
                                std::to_string(c.frameWidth) + "x" + std::to_string(c.frameHeight) +
                                    " pf=0x" + [&] { char b[20]; std::snprintf(b, sizeof(b), "%llx", (unsigned long long)c.pixelFormat); return std::string(b); }()));
@@ -625,7 +649,11 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     // --- telemetry capability relevant to a hard gate -----------------------
     {
         const auto t = backend_.capture().telemetrySnapshot();
-        if (!c.cameraReady) {
+        if (instrumentModes) {
+            // Run: the PL records every frame itself; FRAME sequence gaps and the link counters
+            // (instrument status) report loss, not the stopped producer stream.
+            r.gates.push_back(gate("telemetry.transportLoss", GateStatus::Pass, {}, {}, "PL frame records"));
+        } else if (!c.cameraReady) {
             r.gates.push_back(gate("telemetry.transportLoss", GateStatus::Unavailable,
                                    "no active session"));
         } else if (t.transportLostFrames.validity == services::MetricValidity::Unsupported) {

@@ -6,6 +6,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "backend/app/BackgroundFrame.h"
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
@@ -15,7 +17,7 @@
 #include "backend/recording/RecordingAccounting.h"
 
 namespace backend::processing { class IExecutionProvider; }
-namespace backend::pz { class PzPlatformMonitor; }
+namespace backend::pz { class PzPlatformMonitor; class PzInstrumentControl; class IPzControlRegisters; enum class InstrumentMode; }
 
 namespace backend::services
 {
@@ -106,6 +108,29 @@ namespace backend
         processing::IExecutionProvider *executionProvider();
         // Read-only PZ7035 identity and health (#501); null off the instrument.
         pz::PzPlatformMonitor *pzPlatformMonitor();
+
+        // ---- PZ7035 camera modes (#501 P1) ----
+        // Align = the full sensor at 500 fps, LED 0/125 µs, the producer streaming previews.
+        // Run = the 512x96 window at (x, y), 5 kHz, the U-Net cell path on, LED 7/60 µs, the
+        // producer stopped (its AcquisitionStart would clear the U-Net enable): previews come
+        // from the PL cell capture (fetchRunPreview). The producer applies timing, ROI and the
+        // receiver reset at AcquisitionStart; PzInstrumentControl writes the LED and cell path.
+        // Refused during an experiment or recording, and when the PL is not configured.
+        bool instrumentControlAvailable() const;
+        bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
+        pz::InstrumentMode instrumentMode() const;
+        // The Run window (x, y) last applied or requested; snapped to the producer's steps.
+        std::pair<int, int> instrumentRunOffset() const;
+        // Service / Commissioning mode, latched by the shell: raw LED values are refused
+        // outside it, on the backend side (not only in the UI).
+        void setServiceMode(bool on);
+        bool serviceMode() const;
+        // Service mode only, within the current mode's limits (pz::checkLed); refused during
+        // an experiment. The next mode switch restores the preset.
+        bool setInstrumentLed(double delayUs, double widthUs, std::string *errorOut);
+        // Run mode: one cell capture as a run-preview packet (pz::encodeRunPreview).
+        bool fetchRunPreview(std::vector<uint8_t> &out, std::string *errorOut);
+        void setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers);
         services::PlaybackService &playback();
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
@@ -298,6 +323,11 @@ namespace backend
         // before the service it feeds.
         std::unique_ptr<processing::IExecutionProvider> executionProvider_;
         std::unique_ptr<pz::PzPlatformMonitor> pzPlatformMonitor_;
+        std::unique_ptr<pz::PzInstrumentControl> pzControl_;
+        mutable std::mutex instrumentModeMutex_; // serialises mode switches
+        std::atomic<int> instrumentMode_{0};      // pz::InstrumentMode
+        std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
+        std::atomic<bool> serviceMode_{false};
         std::unique_ptr<services::PlaybackService> playbackService_;
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;

@@ -130,6 +130,10 @@ set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;
 mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
 add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
 set_tests_properties(backend.pl_science PROPERTIES LABELS "backend" TIMEOUT 60)
+mib_add_backend_test_executable(instrument_modes_test backend/instrument_modes_test.cpp)
+mib_backend_test_link(instrument_modes_test PRIVATE Threads::Threads)
+add_test(NAME backend.instrument_modes COMMAND $<TARGET_FILE:mib_backend_tests> instrument_modes_test)
+set_tests_properties(backend.instrument_modes PROPERTIES LABELS "backend;concurrency" TIMEOUT 90)
 mib_add_backend_test_executable(pl_science_provider_test backend/pl_science_provider_test.cpp)
 mib_backend_test_link(pl_science_provider_test PRIVATE Threads::Threads)
 add_test(NAME backend.pl_science_provider COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_provider_test
