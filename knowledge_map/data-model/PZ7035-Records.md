@@ -74,6 +74,13 @@ pz7035-imx426 `docs/YOFO_HOST_INTERFACE.md` (PR #10, 5b30761):
   frames, `P[6]` dropped. Rates come from deltas; a decrease is a reset.
 - **Latency:** `S[47..51]`, 175 MHz clocks.
 
+**Bus guard.** Every sample, and the provider's identity, configure and
+start, first check DEVCFG `INT_STS` (`0xF800700C`) bit 2, PCFG_DONE
+(`pzPlConfigured`). A read of the PL window while the PL is blank (power-up,
+JTAG reload) stalls the AXI bus. The register is only read; it is
+write-1-to-clear. The provider creates its mapping once, under a mutex,
+because identity polls and configure/start run on different threads.
+
 It never writes: sensor timing, the command word and the LED belong to the
 single mode owner (P0b). `AppBackend` creates it beside the `pz-devmem`
 provider. Test `processing.pz_platform_monitor` uses fake registers.
@@ -119,7 +126,8 @@ frame-id gaps and 0 incomplete frames:
 ## Ingest and lifecycle (YOFO S1)
 
 - **Selection** — `MIB_EXECUTION_PROVIDER` (`ExecutionProviderFactory`):
-  `pz` for `/dev/mem`, or `replay:<file>[@fps]`. With `MIB_PL_SCIENCE`,
+  `pz` for `/dev/mem`, `replay:<file>[@fps]`, or `none`. Unset means `pz` in
+  a `MIB_PL_SCIENCE` build (#501) and none elsewhere. With `MIB_PL_SCIENCE`,
   `AppBackend` creates the provider, sets its sink to
   `ProcessingService::ingestProviderFrame`, and stops it at shutdown before
   the service.

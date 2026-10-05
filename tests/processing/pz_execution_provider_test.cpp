@@ -5,6 +5,7 @@
 // incomplete frames and gaps, and a paced replay holding its frame rate.
 //
 // argv[1]: scripts/conformance/unet-cells-v2-pl-vectors.json
+#include "backend/processing/pz/ExecutionProviderFactory.h"
 #include "backend/processing/pz/PzExecutionProviders.h"
 
 #include "support/assert.h"
@@ -218,6 +219,20 @@ void testCoreIdFormat() {
     MIB_EXPECT(!replay.identity().valid, "a replay has no device identity");
 }
 
+// #501: the PZ7035 image runs without MIB_EXECUTION_PROVIDER, so a PL-science build defaults to
+// the /dev/mem provider; the variable still overrides it, and "none" disables it.
+void testProviderSpecDefault() {
+    using backend::processing::pz::executionProviderSpec;
+    using backend::processing::pz::makeExecutionProvider;
+    MIB_EXPECT(executionProviderSpec(nullptr, true) == "pz", "a PL-science build defaults to pz");
+    MIB_EXPECT(executionProviderSpec(nullptr, false).empty(), "the desktop has no provider by default");
+    MIB_EXPECT(executionProviderSpec("none", true) == "none", "the variable overrides the default");
+    MIB_EXPECT(executionProviderSpec("replay:/x", true) == "replay:/x", "a replay overrides it too");
+    std::string error;
+    MIB_EXPECT(!makeExecutionProvider("none", &error) && error.empty(), "none disables the provider cleanly");
+    MIB_EXPECT(!makeExecutionProvider("host", &error) && error.empty(), "host still means none");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -234,5 +249,6 @@ int main(int argc, char** argv) {
         watchdog.mark("board capture");
         testBoardCapture(capture);
     }
+    testProviderSpecDefault();
     return mib::test::exitCode();
 }
