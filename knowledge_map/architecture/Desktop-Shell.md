@@ -330,6 +330,28 @@ completion / gate-status values; `bridge.ts` exposes
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
 
+## Central profile registry (ABI 25, issue #398)
+
+**Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
+sign in/out, refresh (also on open when signed in), cancel, and the cached
+revisions with each central state shown as itself. All wording and enablement
+come from the pure `desktop/src/registry.ts` view model (vitest
+`registry.test.ts`). The panel polls
+`fetch_registry_snapshot` every 250 ms only while open and re-renders on a
+generation/busy change; the password field is cleared on submit. The HTTPS
+transport is `src-tauri/src/registry_transport.rs` (`ureq` + rustls with the
+platform verifier; HTTPS only, no redirects, global timeout, response cap,
+CR/LF header refusal, helper thread so a cancel returns at once, never panics
+across the FFI), installed with `set_registry_transport` when `AppState` is
+built — before the UI's `init`. Enabled by the same
+`MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY` environment as the backend
+worker. The registry commands live in the desktop crate's `registry` module
+(`src-tauri/src/registry.rs`), not in `mib-app-commands`: they need the shell's
+transport, and a sign-in carries a password that must not cross the YOFO Studio
+WebSocket. `dispatch::tests::every_command_is_dispatchable` exempts `registry::`
+commands for that reason.
+
+
 ## September 23 catch-up: camera setup
 
 `desktop/src/cameraScript.tsx` wires the existing EGrabber script apply/reset

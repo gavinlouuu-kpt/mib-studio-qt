@@ -1349,6 +1349,11 @@ mib_backend_test_link(profile_registry_backend_test PRIVATE Threads::Threads)
 add_test(NAME profiles.registry_backend COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_backend_test)
 set_tests_properties(profiles.registry_backend PROPERTIES LABELS "backend;profiles;concurrency" TIMEOUT 60)
 
+mib_add_backend_test_executable(registry_facade_test profiles/registry_facade_test.cpp)
+mib_backend_test_link(registry_facade_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_facade COMMAND $<TARGET_FILE:mib_backend_tests> registry_facade_test)
+set_tests_properties(profiles.registry_facade PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 60)
+
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # The vendored PZ7035 ABI header, for tests that fake bridge registers

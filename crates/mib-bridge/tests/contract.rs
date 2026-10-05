@@ -71,7 +71,11 @@ fn abi_version_is_stable() {
     // v24 #501 instrument UI P0: fetch_platform_info capabilities and
     // fetch_instrument_status (PZ7035 PL core, LED, link, latency).
     // 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
-    assert_eq!(ffi::bridge_abi_version(), 24);
+    // v25 the central profile registry (#398): registry_* commands, snapshot
+    // and contract groups, and the shell-injected HTTPS transport. Built as a
+    // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
+    // never reused.
+    assert_eq!(ffi::bridge_abi_version(), 25);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
@@ -703,6 +707,15 @@ fn rust_enums_match_contract_json() {
                                     ("Timeout", 5), ("MalformedResponse", 6), ("Unsupported", 7), ("MissingSdk", 8),
                                     ("ProviderException", 9), ("Cancelled", 10), ("Overflow", 11), ("ShuttingDown", 12),
                                     ("TooManyJobs", 13)]),
+        // ABI 25 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
+        ("registry_session_states", &[("SignedOut", 0), ("SignedIn", 1), ("CachedOffline", 2)]),
+        ("registry_connectivity", &[("Unknown", 0), ("Online", 1), ("Offline", 2), ("AuthenticationRequired", 3),
+                                    ("PermissionDenied", 4), ("Failed", 5)]),
+        ("registry_job_kinds", &[("SignIn", 0), ("SignOut", 1), ("Refresh", 2), ("Download", 3)]),
+        ("registry_job_states", &[("Queued", 0), ("Running", 1), ("Succeeded", 2), ("Partial", 3), ("Failed", 4),
+                                  ("Cancelled", 5)]),
+        ("registry_central_states", &[("Submitted", 0), ("Approved", 1), ("Rejected", 2), ("Published", 3),
+                                      ("Superseded", 4), ("Archived", 5), ("Revoked", 6)]),
     ];
     for (group, values) in groups {
         let obj = contract[*group].as_object().unwrap_or_else(|| panic!("missing contract group {group}"));
@@ -1172,6 +1185,76 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_file(&rec_path);
 }
 
+// ---- Central profile registry (schema v25, #398) ----
+// The shell-injected transport is a plain `fn` pointer, so the test
+// transports report through statics.
+static REGISTRY_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static REGISTRY_HANDLE_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static REGISTRY_SAW_APIKEY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static REGISTRY_HUNG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Answers every request like Supabase Auth rejecting the credentials.
+fn registry_transport_reject(request: &ffi::BridgeHttpRequest) -> ffi::BridgeHttpResponse {
+    use std::sync::atomic::Ordering;
+    REGISTRY_CALLS.fetch_add(1, Ordering::SeqCst);
+    REGISTRY_HANDLE_LIVE.store(!ffi::registry_request_cancelled(request.cancel_handle), Ordering::SeqCst);
+    REGISTRY_SAW_APIKEY.store(
+        request.headers.iter().any(|h| h.name == "apikey" && h.value == "sb_publishable_test")
+            && request.url.starts_with("https://registry.example/auth/v1/token")
+            && request.timeout_ms > 0
+            && request.max_response_bytes > 0,
+        Ordering::SeqCst,
+    );
+    ffi::BridgeHttpResponse { status: 400, body: br#"{"error_code":"invalid_credentials"}"#.to_vec() }
+}
+
+/// Blocks until the backend cancels the request, then reports a transport failure.
+fn registry_transport_hang(request: &ffi::BridgeHttpRequest) -> ffi::BridgeHttpResponse {
+    use std::sync::atomic::Ordering;
+    REGISTRY_HUNG.fetch_add(1, Ordering::SeqCst);
+    while !ffi::registry_request_cancelled(request.cancel_handle) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    ffi::BridgeHttpResponse { status: 0, body: Vec::new() }
+}
+
+fn wait_registry_job(bridge: &mut cxx::UniquePtr<ffi::BackendBridge>, job_id: u64) -> ffi::BridgeRegistryJob {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let job = bridge.pin_mut().fetch_registry_job(job_id);
+        assert_eq!(job.job_id, job_id, "registry job {job_id} unknown");
+        // 2 Succeeded, 3 Partial, 4 Failed, 5 Cancelled (registry_job_states).
+        if job.state >= 2 {
+            return job;
+        }
+        assert!(Instant::now() < deadline, "registry job {job_id} did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+#[serial]
+fn registry_unconfigured_is_inert() {
+    std::env::remove_var("MIB_PROFILE_REGISTRY_URL");
+    std::env::remove_var("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_registry_off_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let before = bridge.pin_mut().fetch_registry_snapshot();
+    assert!(!before.valid, "no registry snapshot before initialize");
+    assert_eq!(bridge.pin_mut().registry_refresh(), 0, "uninitialized bridge refuses");
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let s = bridge.pin_mut().fetch_registry_snapshot();
+    assert!(s.valid && !s.configured, "no registry env: valid snapshot, not configured");
+    assert_eq!(bridge.pin_mut().registry_sign_in("a@b", "pw"), 0, "inert registry refuses sign-in");
+    assert_eq!(bridge.pin_mut().registry_refresh(), 0);
+    assert!(
+        !bridge.pin_mut().set_registry_transport(registry_transport_reject),
+        "the transport is fixed once the backend is initialized"
+    );
+    assert!(ffi::registry_request_cancelled(424_242), "unknown cancel handle reads as cancelled");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
 
 #[test]
 #[serial]
@@ -1200,6 +1283,74 @@ fn checked_config_document_roundtrip_and_conflict() {
     assert!(!missing.ok && !missing.error.is_empty());
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+#[serial]
+fn registry_commands_through_shell_transport() {
+    use std::sync::atomic::Ordering;
+    std::env::set_var("MIB_PROFILE_REGISTRY_URL", "https://registry.example");
+    std::env::set_var("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY", "sb_publishable_test");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_registry_{}", std::process::id()));
+
+    // A rejected sign-in travels through the shell transport and comes back
+    // as contract values: job kind 0 SignIn, state 4 Failed; connectivity 3
+    // AuthenticationRequired; session 0 SignedOut.
+    {
+        let mut bridge = ffi::new_backend_bridge();
+        assert!(bridge.pin_mut().set_registry_transport(registry_transport_reject));
+        assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert!(s.valid && s.configured && s.origin == "https://registry.example");
+        let job_id = bridge.pin_mut().registry_sign_in("bob@lab", "wrong");
+        assert_ne!(job_id, 0, "sign-in queued");
+        let job = wait_registry_job(&mut bridge, job_id);
+        assert_eq!((job.kind, job.state), (0, 4), "rejected sign-in: {}", job.message);
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert_eq!(s.session, 0);
+        assert_eq!(s.connectivity, 3);
+        assert!(!s.health_message.contains("wrong"), "password never echoed");
+        assert!(REGISTRY_CALLS.load(Ordering::SeqCst) >= 1, "shell transport was used");
+        assert!(REGISTRY_HANDLE_LIVE.load(Ordering::SeqCst), "cancel handle live during the call");
+        assert!(REGISTRY_SAW_APIKEY.load(Ordering::SeqCst), "request shape (url, apikey, bounds)");
+        assert_eq!(s.last_job.job_id, job_id);
+        bridge.pin_mut().shutdown();
+    }
+
+    // A hung transport is aborted by registry_cancel_all (state 5 Cancelled)
+    // and by backend shutdown, through the polled cancel handle.
+    {
+        let mut bridge = ffi::new_backend_bridge();
+        assert!(bridge.pin_mut().set_registry_transport(registry_transport_hang));
+        assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+        let hung_before = REGISTRY_HUNG.load(Ordering::SeqCst);
+        let job_id = bridge.pin_mut().registry_sign_in("bob@lab", "pw");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while REGISTRY_HUNG.load(Ordering::SeqCst) == hung_before {
+            assert!(Instant::now() < deadline, "transport never called");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(bridge.pin_mut().fetch_registry_snapshot().busy, "snapshot answers while hung");
+        assert!(bridge.pin_mut().registry_cancel_all());
+        let job = wait_registry_job(&mut bridge, job_id);
+        assert_eq!(job.state, 5, "cancel aborts the hung request");
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert_ne!(s.connectivity, 2, "an aborted request is not an outage");
+
+        let hung_before = REGISTRY_HUNG.load(Ordering::SeqCst);
+        bridge.pin_mut().registry_sign_in("bob@lab", "pw");
+        while REGISTRY_HUNG.load(Ordering::SeqCst) == hung_before {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let started = Instant::now();
+        bridge.pin_mut().shutdown();
+        assert!(started.elapsed() < Duration::from_secs(8), "shutdown aborts the hung request");
+        assert_eq!(bridge.pin_mut().registry_refresh(), 0, "shut-down bridge refuses");
+    }
+
+    std::env::remove_var("MIB_PROFILE_REGISTRY_URL");
+    std::env::remove_var("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY");
+    let _ = std::fs::remove_dir_all(&data_dir);
 }
 
 #[test]

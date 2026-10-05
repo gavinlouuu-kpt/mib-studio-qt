@@ -10,6 +10,8 @@ use tauri::ipc::Response;
 use tauri::{Manager, State};
 
 mod platform;
+mod registry;
+mod registry_transport;
 pub mod updater;
 mod app_update;
 
@@ -627,8 +629,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new())
+        .manage({
+            // The registry HTTPS transport must be installed before the
+            // backend initializes (it is read once in AppBackend::initialize).
+            let state = AppState::new();
+            if let Ok(mut bridge) = state.bridge.lock() {
+                bridge.pin_mut().set_registry_transport(registry_transport::post);
+            }
+            state
+        })
         .invoke_handler(tauri::generate_handler![
+            registry::registry_sign_in,
+            registry::registry_sign_out,
+            registry::registry_refresh,
+            registry::registry_download,
+            registry::registry_cancel_all,
+            registry::fetch_registry_snapshot,
+            registry::fetch_registry_job,
             abi_version,
             is_initialized,
             init,

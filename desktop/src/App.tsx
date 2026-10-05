@@ -46,6 +46,7 @@ import {
   DEFAULT_MODE,
   type OperatingMode,
 } from "./commissioning";
+import { CentralMethodsPanel } from "./CentralMethodsPanel";
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
@@ -158,6 +159,7 @@ export default function App() {
   );
   const [fitWindow, setFitWindow] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
+  const [showCentralMethods, setShowCentralMethods] = useState(false);
 
   // Camera discovery/selection (bridge schema v7, BE-2). The selection
   // snapshot from the backend is authoritative — no local mirror of it.
@@ -1166,6 +1168,7 @@ export default function App() {
             { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+            { label: "Central Methods…", onClick: () => setShowCentralMethods(true) },
             { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           ]}
         />
@@ -2285,6 +2288,11 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ---- Central Methods (registry, #398) ---- */}
+      {showCentralMethods && (
+        <CentralMethodsPanel onClose={() => setShowCentralMethods(false)} onError={append} />
       )}
 
       {/* ---- About modal ---- */}

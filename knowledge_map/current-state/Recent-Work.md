@@ -49,7 +49,7 @@ See [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]] and
 
 ADR 0011's single renumber: develop (19) and the instrument line (20-22)
 merged into one contract that takes 23, so no release build from `develop`
-carries an interim number. No new commands. The #398 stack takes 24. See
+carries an interim number. No new commands. The #398 stack takes 25 (24 went to #501 P0). See
 [[../architecture/Rust-Bridge]].
 
 ## 2026-10-05 — FC04 in the shared Modbus layer; Z stage spec (#464, slice 1)
@@ -84,6 +84,20 @@ most significant word in ID3. Register map, header and fixtures are
 unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
+
+## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 25)
+
+`BackendFacade` gained registry commands and a value snapshot; the bridge
+exposes them (ABI 25, five new `registry_*` contract groups pinned in C++,
+Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
+installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
+a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**
+in the React app renders the worker snapshot through a pure view model. A Qt
+dialog was prototyped (#475) and dropped: Qt is fixes-only (ADR 0011).
+Fixed on the way: facade shutdown left the registry worker running. Guards:
+`profiles.registry_facade`, bridge `registry_*` tests, Tauri
+`registry_transport` tests, `registry.test.ts`. See
+[[../architecture/Desktop-Shell]] and [[../services/ProfileRegistryService]].
 
 ## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
 

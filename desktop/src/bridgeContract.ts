@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 24;
+export const BRIDGE_ABI_VERSION = 25;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -95,6 +95,47 @@ export const DISCOVERY_ERROR_KINDS = {
   Overflow: 11,
   ShuttingDown: 12,
   TooManyJobs: 13,
+} as const;
+
+export const REGISTRY_SESSION_STATES = {
+  SignedOut: 0,
+  SignedIn: 1,
+  CachedOffline: 2,
+} as const;
+
+export const REGISTRY_CONNECTIVITY = {
+  Unknown: 0,
+  Online: 1,
+  Offline: 2,
+  AuthenticationRequired: 3,
+  PermissionDenied: 4,
+  Failed: 5,
+} as const;
+
+export const REGISTRY_JOB_KINDS = {
+  SignIn: 0,
+  SignOut: 1,
+  Refresh: 2,
+  Download: 3,
+} as const;
+
+export const REGISTRY_JOB_STATES = {
+  Queued: 0,
+  Running: 1,
+  Succeeded: 2,
+  Partial: 3,
+  Failed: 4,
+  Cancelled: 5,
+} as const;
+
+export const REGISTRY_CENTRAL_STATES = {
+  Submitted: 0,
+  Approved: 1,
+  Rejected: 2,
+  Published: 3,
+  Superseded: 4,
+  Archived: 5,
+  Revoked: 6,
 } as const;
 
 export const REVIEW_IMAGE_DATASETS = {
