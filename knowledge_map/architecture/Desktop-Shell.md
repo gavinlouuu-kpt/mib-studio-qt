@@ -229,12 +229,11 @@ with typed fields, readiness gates, unknown enum refusal),
 
 ## Central profile registry (ABI 15, issue #398)
 
-**Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`,
-the twin of the Qt [[../frontend/CentralMethodsDialog]]: sign in/out,
-refresh (also on open when signed in), cancel, and the cached revisions with
-each central state shown as itself. All wording and enablement come from the
-pure `desktop/src/registry.ts` view model (vitest `registry.test.ts`), so both
-shells present the same backend truth. The panel polls
+**Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
+sign in/out, refresh (also on open when signed in), cancel, and the cached
+revisions with each central state shown as itself. All wording and enablement
+come from the pure `desktop/src/registry.ts` view model (vitest
+`registry.test.ts`). The panel polls
 `fetch_registry_snapshot` every 250 ms only while open and re-renders on a
 generation/busy change; the password field is cleared on submit. The HTTPS
 transport is `src-tauri/src/registry_transport.rs` (`ureq` + rustls with the
@@ -242,7 +241,8 @@ platform verifier; HTTPS only, no redirects, global timeout, response cap,
 CR/LF header refusal, helper thread so a cancel returns at once, never panics
 across the FFI), installed with `set_registry_transport` when `AppState` is
 built — before the UI's `init`. Enabled by the same
-`MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY` environment as the Qt app.
+`MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY` environment as the backend
+worker.
 
 
 ## September 23 catch-up: camera setup

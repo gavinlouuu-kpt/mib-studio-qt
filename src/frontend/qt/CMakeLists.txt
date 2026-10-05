@@ -60,8 +60,6 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/SyringePumpSettingsDialog.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/SyringePumpSettingsDialog.h
     ${PROJECT_SOURCE_DIR}/resources/ui/SyringePumpSettingsDialog.ui
-    ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/CentralMethodsDialog.cpp
-    ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/CentralMethodsDialog.h
     ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/SoftwareUpdatesDialog.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/SoftwareUpdatesDialog.h
     # Controllers
@@ -317,11 +315,6 @@ if(BUILD_TESTING)
     mib_test_runner_add(mib_frontend_tests dot_grid_overview_test ${PROJECT_SOURCE_DIR}/tests/frontend/dot_grid_overview_test.cpp)
     add_test(NAME frontend.dot_grid_overview COMMAND $<TARGET_FILE:mib_frontend_tests> dot_grid_overview_test)
     set_tests_properties(frontend.dot_grid_overview PROPERTIES LABELS "frontend;processing;concurrency" TIMEOUT 180)
-    # Issue #398 M1: Central Methods dialog over the real registry worker
-    # (fake Supabase): sign-in, refresh, outage, hung request + cancel, offline.
-    mib_test_runner_add(mib_frontend_tests central_methods_dialog_test ${PROJECT_SOURCE_DIR}/tests/frontend/central_methods_dialog_test.cpp)
-    add_test(NAME frontend.central_methods COMMAND $<TARGET_FILE:mib_frontend_tests> central_methods_dialog_test)
-    set_tests_properties(frontend.central_methods PROPERTIES LABELS "frontend;profiles;concurrency" TIMEOUT 120)
     mib_test_runner_finalize(mib_frontend_tests ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     # Standalone: this test runs the application's event loop through quit.
     add_executable(mainwindow_shutdown_test ${PROJECT_SOURCE_DIR}/tests/frontend/mainwindow_shutdown_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)

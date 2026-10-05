@@ -62,13 +62,7 @@ the full text; right-click to copy) rather than widening the window.
 - **Settings** — *Processing*, *Monitoring*, *Pixel-to-Micron*, *Syringe
   Pump* settings dialogs; *Boot Service Toggles…* (disable selected
   services on next launch, e.g. auto-update); *Profiles…* (jumps to the
-  config/profiles editor on Experiment ▸ Preview); *Central Methods…*
-  (sign in to your lab's central method registry, refresh, and see the
-  centrally published method revisions cached on this PC with their central
-  state, e.g. Published, Superseded or REVOKED. It only lists methods: it
-  does not select or apply one. Available when your administrator has
-  configured the registry; cached methods stay listed when the registry is
-  offline).
+  config/profiles editor on Experiment ▸ Preview).
 - **Help** — *About*, *Software Updates…*, *Documentation* (opens the
   project page), *Report a Problem* (opens the issue tracker).
 

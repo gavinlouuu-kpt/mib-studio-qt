@@ -7,22 +7,12 @@ exposes them (ABI 15, five new `registry_*` contract groups pinned in C++,
 Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
 installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
 a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**
-in the React app mirrors the Qt dialog through a shared-wording view model.
+in the React app renders the worker snapshot through a pure view model. A Qt
+dialog was prototyped (#475) and dropped: Qt is fixes-only (ADR 0011).
 Fixed on the way: facade shutdown left the registry worker running. Guards:
 `profiles.registry_facade`, bridge `registry_*` tests, Tauri
 `registry_transport` tests, `registry.test.ts`. See
 [[../architecture/Desktop-Shell]] and [[../services/ProfileRegistryService]].
-
-## 2026-10-02 — Central Methods dialog (#398 M1, Qt)
-
-**Settings → Central Methods…** signs in to the central registry, refreshes
-(also on open when signed in), cancels, signs out, and lists the revisions
-cached for the user with each central state shown as itself (REVOKED in bold
-red), project names and hash prefixes. Offline it lists the last user's cached
-methods. Read-only: no select/apply. The GUI only enqueues worker commands and
-renders snapshots. Guard: `frontend.central_methods`. See
-[[../frontend/CentralMethodsDialog]].
-
 
 ## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
 
