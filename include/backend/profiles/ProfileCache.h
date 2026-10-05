@@ -18,6 +18,9 @@ public:
     void store(const Revision& revision);
     Revision read(const std::string& revisionId) const;
     std::vector<Revision> list(const std::string& projectId) const;
+    // Every cached revision. Rows failing verification are skipped and their
+    // IDs reported in `corrupt` (never silently dropped, never returned).
+    std::vector<Revision> listAll(std::vector<std::string>* corrupt = nullptr) const;
     void recordValidation(const LocalValidation& validation);
     Eligibility eligibility(const std::string& revisionId, const std::string& instrumentId,
                             const std::string& contextHash) const;
