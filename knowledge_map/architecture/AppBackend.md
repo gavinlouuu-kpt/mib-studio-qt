@@ -11,6 +11,14 @@ inert. `shutdown()` stops it **first**: it shares nothing with the instrument,
 and its shutdown aborts an in-flight request rather than waiting out the
 timeout. Accessor: `profileRegistry()`. See [[../services/ProfileRegistryService]].
 
+M2a (2026-10-04): `initialize()` also loads the instrument identity
+(`instrumentIdentity()`: UUID in `<dataDir>/instrument_identity.json` +
+`MIB_INSTRUMENT_NAME`) before the worker, and gives the worker
+`methodsDir = <dataDir>/methods` for materialized revisions.
+`methodContext()` returns the context a local method validation binds to
+(instrument UUID, active processing core version + SHA-256, effective camera
+source); the coordinator and validation requests both use it.
+
 ## Device discovery ownership (2026-09-16, #419)
 
 `initialize()` constructs [[../services/DeviceDiscoveryService]] after the

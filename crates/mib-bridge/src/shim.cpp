@@ -137,6 +137,8 @@ static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SignIn) == 0);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SignOut) == 1);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Refresh) == 2);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Download) == 3);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Materialize) == 4);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::RecordValidation) == 5);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Queued) == 0);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Running) == 1);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Succeeded) == 2);
@@ -2059,9 +2061,11 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // test); v25 added the central profile registry
 // (registry_sign_in/sign_out/refresh/download/cancel_all,
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
-// contract groups — #398; built as a provisional 15, renumbered once to 25:
-// 23 = the instrument line, 24 = #501 P0; 15 and 19-24 are never reused).
-// All additive over v1 (ADR 0003/0004). Must match
+// contract groups — #398; registry_job_kinds Materialize/RecordValidation were
+// appended; built as a provisional 15, renumbered once to 25: 23 = the
+// instrument line, 24 = #501 P0; 15 and 19-24 are never reused). All additive
+// over
+// v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 

@@ -11,6 +11,7 @@
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
+#include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
 
@@ -126,6 +127,14 @@ namespace backend
         // the per-user revision cache on its own thread. Shells enqueue commands
         // and poll snapshots; it never touches capture, recording or Start.
         profiles::ProfileRegistryWorker &profileRegistry();
+        // This instrument PC's stable identity (#398 M2): UUID persisted in
+        // <dataDir>/instrument_identity.json plus MIB_INSTRUMENT_NAME. Local
+        // method validations and run provenance are keyed by it. Empty id
+        // before initialize() or when the data dir is unwritable.
+        const profiles::InstrumentIdentity &instrumentIdentity() const { return instrumentIdentity_; }
+        // The local context a method validation binds to: this instrument,
+        // the active processing core build and the effective camera source.
+        profiles::MethodContext methodContext() const;
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
@@ -317,6 +326,7 @@ namespace backend
 
         profiles::RegistryHttpTransport profileRegistryTransport_;
         std::unique_ptr<profiles::ProfileRegistryWorker> profileRegistry_;
+        profiles::InstrumentIdentity instrumentIdentity_;
 
         // Shell-injected LUT fetch config (ADR 0002).
         HttpGetFn lutHttpGet_;

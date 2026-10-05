@@ -1,8 +1,10 @@
 #include "backend/profiles/ProfileRegistryWorker.h"
+#include "backend/processing/ProcessingCoreSha256.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <ctime>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -16,9 +18,68 @@ constexpr std::size_t kPublishEveryPages = 25;
 constexpr std::size_t kMaxRevisionIdBytes = 128;
 constexpr const char* kLastSessionFile = "last_session.json";
 
+constexpr const char* kMethodConfigFile = "config.json";
+constexpr const char* kMethodCameraFile = "egrabberConfig.js";
+constexpr const char* kMethodCanonicalFile = "method.canonical.json";
+
 void wipe(std::string& secret) {
     std::fill(secret.begin(), secret.end(), '\0');
     secret.clear();
+}
+
+// Revision IDs come from the server; only a plain token may name a directory.
+bool safePathToken(const std::string& id) {
+    if (id.empty() || id.size() > kMaxRevisionIdBytes || id.front() == '.') return false;
+    return std::all_of(id.begin(), id.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '-' || c == '_' || c == '.';
+    });
+}
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    std::stringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+// The exact files a revision materializes to.
+std::map<std::string, std::string> methodFiles(const Revision& revision) {
+    const auto envelope = Json::parse(revision.canonicalContent);
+    return {{kMethodConfigFile, envelope.at("config").dump(4) + "\n"},
+            {kMethodCameraFile, envelope.at("camera_script").get<std::string>()},
+            {kMethodCanonicalFile, revision.canonicalContent}};
+}
+
+bool filesMatch(const std::filesystem::path& dir, const std::map<std::string, std::string>& files) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) return false;
+    for (const auto& [name, bytes] : files)
+        if (readFile(dir / name) != bytes) return false;
+    return true;
+}
+
+void makeWritable(const std::filesystem::path& dir) {
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec)) return;
+    for (auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+        std::filesystem::permissions(it->path(), std::filesystem::perms::owner_write,
+                                     std::filesystem::perm_options::add, ec);
+}
+
+std::string utcNowIso8601() {
+    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &now);
+#else
+    gmtime_r(&now, &tm);
+#endif
+    char out[32];
+    std::strftime(out, sizeof(out), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return out;
 }
 } // namespace
 
@@ -32,6 +93,10 @@ const char* toString(RegistryJobKind kind) {
         return "refresh";
     case RegistryJobKind::Download:
         return "download";
+    case RegistryJobKind::Materialize:
+        return "materialize";
+    case RegistryJobKind::RecordValidation:
+        return "record_validation";
     }
     return "unknown";
 }
@@ -168,6 +233,25 @@ std::uint64_t ProfileRegistryWorker::requestDownload(std::string revisionId) {
     return enqueue(std::move(command));
 }
 
+std::uint64_t ProfileRegistryWorker::requestMaterialize(std::string revisionId) {
+    if (!safePathToken(revisionId) || config_.methodsDir.empty()) return 0;
+    Command command;
+    command.kind = RegistryJobKind::Materialize;
+    command.argument = std::move(revisionId);
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestRecordValidation(LocalValidationRequest request) {
+    if (request.revisionId.empty() || request.revisionId.size() > kMaxRevisionIdBytes ||
+        request.context.instrumentId.empty() || request.evidenceFile.empty())
+        return 0;
+    Command command;
+    command.kind = RegistryJobKind::RecordValidation;
+    command.argument = request.revisionId;
+    command.validation = std::move(request);
+    return enqueue(std::move(command));
+}
+
 void ProfileRegistryWorker::cancelAll() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -187,6 +271,11 @@ RegistryWorkerSnapshot ProfileRegistryWorker::snapshot() const {
     out.queuedJobs = queue_.size();
     out.busy = runningJob_ != 0 || loading_;
     return out;
+}
+
+std::uint64_t ProfileRegistryWorker::generation() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return published_.generation;
 }
 
 RegistryJobStatus ProfileRegistryWorker::job(std::uint64_t id) const {
@@ -287,6 +376,11 @@ RegistryJobStatus ProfileRegistryWorker::execute(Command& command) {
         return doRefresh();
     case RegistryJobKind::Download:
         return doDownload(command.argument);
+    case RegistryJobKind::Materialize:
+        return doMaterialize(command.argument);
+    case RegistryJobKind::RecordValidation:
+        if (command.validation) return doRecordValidation(*command.validation);
+        break;
     }
     return {command.id, command.kind, RegistryJobState::Failed, "Unknown registry command"};
 }
@@ -407,6 +501,7 @@ bool ProfileRegistryWorker::openUser(const std::string& subject, const std::stri
     cacheError_.clear();
     subjectId_ = subject;
     email_ = email;
+    scanMaterialized();
     if (persistLastSession) {
         // No tokens: just enough to reopen this user's cache offline.
         const auto path = config_.cacheDir / kLastSessionFile;
@@ -428,6 +523,23 @@ void ProfileRegistryWorker::closeUser() {
     email_.clear();
     projects_.clear();
     lastSuccessfulRefresh_.reset();
+    materialized_.clear();
+}
+
+void ProfileRegistryWorker::scanMaterialized() {
+    materialized_.clear();
+    if (config_.methodsDir.empty() || !active_) return;
+    try {
+        for (const auto& r : active_->cache->listAll()) {
+            if (!safePathToken(r.revisionId)) continue;
+            const auto dir = config_.methodsDir / r.revisionId;
+            std::error_code ec;
+            if (std::filesystem::is_directory(dir, ec) && filesMatch(dir, methodFiles(r)))
+                materialized_[r.revisionId] = dir.string();
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("ProfileRegistry: materialized method scan failed: {}", e.what());
+    }
 }
 
 void ProfileRegistryWorker::loadLastSession() {
@@ -549,22 +661,139 @@ RegistryJobStatus ProfileRegistryWorker::doDownload(const std::string& revisionI
     return {0, RegistryJobKind::Download, RegistryJobState::Succeeded, "Downloaded"};
 }
 
+RegistryJobStatus ProfileRegistryWorker::doMaterialize(const std::string& revisionId) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::Materialize, RegistryJobState::Failed,
+                                 message};
+    };
+    if (!active_) return fail("No cached methods are open; sign in first");
+    Revision revision;
+    try {
+        revision = active_->cache->read(revisionId); // verified on read
+    } catch (const RegistryError& e) {
+        return fail(std::string("Revision not available in the cache: ") + e.what());
+    }
+    std::map<std::string, std::string> files;
+    try {
+        files = methodFiles(revision);
+    } catch (const std::exception& e) {
+        return fail(std::string("Revision content unreadable: ") + e.what());
+    }
+    const auto dir = config_.methodsDir / revisionId;
+    if (filesMatch(dir, files)) {
+        materialized_[revisionId] = dir.string();
+        return {0, RegistryJobKind::Materialize, RegistryJobState::Succeeded,
+                "Already materialized at " + dir.string()};
+    }
+    // Stage the whole directory, then swap it in: a crash leaves either the
+    // old verified files or none, never a half-written method.
+    const auto staging = config_.methodsDir / (".staging-" + revisionId);
+    std::error_code ec;
+    makeWritable(staging);
+    std::filesystem::remove_all(staging, ec);
+    std::filesystem::create_directories(staging, ec);
+    if (ec) return fail("Cannot create " + staging.string() + ": " + ec.message());
+    for (const auto& [name, bytes] : files) {
+        std::ofstream out(staging / name, std::ios::binary | std::ios::trunc);
+        out << bytes;
+        out.close();
+        if (!out) return fail("Cannot write " + (staging / name).string());
+        std::filesystem::permissions(staging / name,
+                                     std::filesystem::perms::owner_read |
+                                         std::filesystem::perms::group_read |
+                                         std::filesystem::perms::others_read,
+                                     ec);
+    }
+    makeWritable(dir);
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::rename(staging, dir, ec);
+    if (ec) return fail("Cannot install " + dir.string() + ": " + ec.message());
+    materialized_[revisionId] = dir.string();
+    return {0, RegistryJobKind::Materialize, RegistryJobState::Succeeded,
+            "Materialized to " + dir.string()};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doRecordValidation(const LocalValidationRequest& request) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::RecordValidation, RegistryJobState::Failed,
+                                 message};
+    };
+    // "Who" must be an authenticated registry user, not a remembered name.
+    if (!session_.valid() || !active_)
+        return fail("Sign in to record a local validation; the validator is the signed-in user");
+    Revision revision;
+    try {
+        revision = active_->cache->read(request.revisionId);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Revision not available in the cache: ") + e.what());
+    }
+    if (revision.state != CentralState::Published && revision.state != CentralState::Superseded)
+        return fail(std::string("Only published or superseded revisions can be validated (this "
+                                "one is ") +
+                    toString(revision.state) + ")");
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(request.evidenceFile, ec);
+    if (ec) return fail("Evidence file not readable: " + request.evidenceFile);
+    std::string hashError;
+    const auto evidenceSha = processing::fileSha256(request.evidenceFile, &hashError,
+                                                    [this] { return cancelRequested(); });
+    if (evidenceSha.empty()) {
+        if (hashError == "cancelled")
+            return {0, RegistryJobKind::RecordValidation, RegistryJobState::Cancelled,
+                    "Cancelled"};
+        return fail("Evidence file could not be hashed: " + request.evidenceFile);
+    }
+    LocalValidation validation;
+    validation.revisionId = revision.revisionId;
+    validation.instrumentId = request.context.instrumentId;
+    validation.contentHash = revision.contentHash;
+    validation.contextHash = methodContextHash(request.context);
+    validation.validatorId = subjectId_;
+    validation.evidence =
+        Json({{"schema", 1},
+              {"run_file", request.evidenceFile},
+              {"run_file_sha256", evidenceSha},
+              {"run_file_bytes", bytes},
+              {"instrument_name", request.instrumentName},
+              {"validator_email", email_},
+              {"confirmed_at_utc", utcNowIso8601()},
+              {"context", Json::parse(methodContextJson(request.context))}})
+            .dump(-1, ' ', false, Json::error_handler_t::replace);
+    validation.passed = request.passed;
+    try {
+        active_->cache->recordValidation(validation);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Validation not recorded: ") + e.what());
+    }
+    SPDLOG_INFO("ProfileRegistry: local validation of {} recorded ({}) by {}", revision.revisionId,
+                request.passed ? "passed" : "failed", subjectId_);
+    return {0, RegistryJobKind::RecordValidation, RegistryJobState::Succeeded,
+            request.passed ? "Local validation recorded" : "Failed validation recorded"};
+}
+
 void ProfileRegistryWorker::publish() {
     // Read the cache on the worker thread, outside the lock: snapshot() callers
     // (UI thread) never wait on SQLite or hashing.
     std::vector<CachedRevisionSummary> revisions;
+    std::vector<LocalValidationRecord> validations;
     std::vector<std::string> corrupt;
     std::string cacheError = cacheError_;
     if (active_) {
         try {
-            for (const auto& r : active_->cache->listAll(&corrupt))
+            for (const auto& r : active_->cache->listAll(&corrupt)) {
+                const auto materialized = materialized_.find(r.revisionId);
                 revisions.push_back({r.revisionId, r.methodId, r.projectId, r.displayName,
                                      r.authorId, r.contentHash, r.revisionNumber, r.metadataVersion,
-                                     r.state});
+                                     r.state, revisionConfigSha256(r.canonicalContent),
+                                     materialized == materialized_.end() ? std::string{}
+                                                                         : materialized->second});
+            }
+            validations = active_->cache->listValidations();
         } catch (const std::exception& e) {
             // publish() runs outside run()'s job try-block: nothing may escape
             // the worker thread.
             revisions.clear();
+            validations.clear();
             cacheError = std::string("Profile cache unreadable: ") + e.what();
         }
     }
@@ -578,6 +807,7 @@ void ProfileRegistryWorker::publish() {
     published_.health = health_;
     published_.projects = projects_;
     published_.revisions = std::move(revisions);
+    published_.validations = std::move(validations);
     published_.corruptRevisionIds = std::move(corrupt);
     published_.cacheError = std::move(cacheError);
     published_.lastSuccessfulRefresh = lastSuccessfulRefresh_;

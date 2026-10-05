@@ -399,6 +399,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseAuth.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryWorker.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/InstrumentIdentity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
@@ -409,6 +410,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h

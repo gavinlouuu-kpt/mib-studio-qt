@@ -113,6 +113,41 @@ std::string canonicalMethod(const std::string& configJson, const std::string& ca
     return result;
 }
 
+std::string canonicalConfigSha256(const std::string& configJson) noexcept {
+    try {
+        auto config = parse(configJson);
+        if (!config.is_object()) return {};
+        normalize(config);
+        return contentHash(config.dump());
+    } catch (...) {
+        return {};
+    }
+}
+
+std::string revisionConfigSha256(const std::string& canonicalContent) noexcept {
+    try {
+        const auto envelope = parse(canonicalContent);
+        const auto& config = envelope.at("config");
+        if (!config.is_object()) return {};
+        return contentHash(config.dump()); // already canonical inside the envelope
+    } catch (...) {
+        return {};
+    }
+}
+
+std::string methodContextJson(const MethodContext& context) {
+    return Json({{"instrument_id", context.instrumentId},
+                 {"processing_core_version", context.processingCoreVersion},
+                 {"processing_core_sha256", context.processingCoreSha256},
+                 {"camera_source", context.cameraSource}})
+        .dump(-1, ' ', false, Json::error_handler_t::replace);
+}
+
+std::string methodContextHash(const MethodContext& context) {
+    if (context.instrumentId.empty()) return {};
+    return contentHash("mib-method-context-v1\n" + methodContextJson(context));
+}
+
 void verifyRevision(const Revision& revision) {
     if (revision.methodId.empty() || revision.revisionId.empty() || revision.projectId.empty() ||
         revision.revisionNumber == 0 || revision.metadataVersion == 0)

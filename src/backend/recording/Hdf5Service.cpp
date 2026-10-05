@@ -4071,7 +4071,8 @@ namespace backend::services {
             if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
             H5Aclose(attr);
         };
-        writeU64("run_snapshot_schema_version", 1);
+        // Mirrors RunConfigurationSnapshot::kSchemaVersion (v2: "method" block, #398 M2).
+        writeU64("run_snapshot_schema_version", 2);
         writeStr("run_snapshot_json", runSnapshotJson);
         writeStr("readiness_json", readinessJson);
         H5Sclose(scalar);

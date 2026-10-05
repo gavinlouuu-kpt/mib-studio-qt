@@ -85,6 +85,24 @@ unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
 
+## 2026-10-04 — Central method provenance + `method.revision` gate (#398 M2a, backend)
+
+The applied config.json is now recognised as a cached central revision by its
+canonical config hash, gated at Start and frozen into `/run_provenance`
+(`run_snapshot_schema_version` 2, `method` block: exact revision, content
+hash, central state, instrument UUID + name, context hash, local validation +
+evidence test-run SHA-256). Policy as decided on #398: unvalidated → Warn
+(Start allowed), validated on this instrument/context → Pass, revoked → Fail.
+New: `InstrumentIdentity` (UUID file + `MIB_INSTRUMENT_NAME`), worker
+`Materialize` (read-only files under `<dataDir>/methods/`) and
+`RecordValidation` (signed-in validator, cancellable evidence hashing) jobs —
+appended to `registry_job_kinds` (4, 5) inside ABI 25 —, the pure
+`MethodProvenance` resolver, and `processing::fileSha256` with cancellation.
+No Apply / "Mark validated" UI yet (M2b). Guards: `profiles.instrument_identity`,
+`profiles.registry_method`, `backend.method_provenance`, `e2e.method_gate`; four
+behaviour mutations of the gate/memo/invalidation were each caught.
+See [[../architecture/ExperimentCoordinator]], [[../services/ProfileRegistryService]].
+
 ## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 25)
 
 `BackendFacade` gained registry commands and a value snapshot; the bridge

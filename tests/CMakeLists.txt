@@ -1354,6 +1354,24 @@ mib_backend_test_link(registry_facade_test PRIVATE Threads::Threads)
 add_test(NAME profiles.registry_facade COMMAND $<TARGET_FILE:mib_backend_tests> registry_facade_test)
 set_tests_properties(profiles.registry_facade PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 60)
 
+mib_add_backend_test_executable(instrument_identity_test profiles/instrument_identity_test.cpp)
+add_test(NAME profiles.instrument_identity COMMAND $<TARGET_FILE:mib_backend_tests> instrument_identity_test)
+set_tests_properties(profiles.instrument_identity PROPERTIES LABELS "backend;profiles;fault-injection" TIMEOUT 30)
+
+mib_add_backend_test_executable(registry_method_test profiles/registry_method_test.cpp)
+mib_backend_test_link(registry_method_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_method COMMAND $<TARGET_FILE:mib_backend_tests> registry_method_test)
+set_tests_properties(profiles.registry_method PROPERTIES LABELS "backend;profiles;roundtrip;fault-injection" TIMEOUT 60)
+
+mib_add_backend_test_executable(method_provenance_test backend/method_provenance_test.cpp)
+add_test(NAME backend.method_provenance COMMAND $<TARGET_FILE:mib_backend_tests> method_provenance_test)
+set_tests_properties(backend.method_provenance PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 30)
+
+mib_add_backend_test_executable(method_gate_e2e_test profiles/method_gate_e2e_test.cpp)
+mib_backend_test_link(method_gate_e2e_test PRIVATE Threads::Threads)
+add_test(NAME e2e.method_gate COMMAND $<TARGET_FILE:mib_backend_tests> method_gate_e2e_test)
+set_tests_properties(e2e.method_gate PROPERTIES LABELS "e2e;profiles;hdf5;roundtrip" TIMEOUT 120)
+
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # The vendored PZ7035 ABI header, for tests that fake bridge registers
