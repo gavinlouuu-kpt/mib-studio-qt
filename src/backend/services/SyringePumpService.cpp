@@ -608,9 +608,11 @@ void SyringePumpService::pollStatus(PumpId id) {
 // ---------------------------------------------------------------------------
 uint16_t SyringePumpService::peristalticRotation(int pumpIdx, Direction dir) const {
     (void)pumpIdx;
-    // Infuse turns the head clockwise; which way that pushes liquid depends on
-    // how the tubing is loaded, so swap the tubing ends if Infuse withdraws.
-    return dir == Direction::Infuse ? tushui::kClockwise : tushui::kCounterClockwise;
+    // Infuse turns the head counter-clockwise (register 101 = 1): confirmed on
+    // the PZ7035 bench 2026-10-05 for both pumps (slave 3 Sample, slave 4
+    // Sheath), flowing into the chip. Which way a head pushes liquid depends
+    // on how the tubing is loaded; reload the tubing if Infuse withdraws.
+    return dir == Direction::Infuse ? tushui::kCounterClockwise : tushui::kClockwise;
 }
 
 bool SyringePumpService::peristalticConnect(int pumpIdx) {

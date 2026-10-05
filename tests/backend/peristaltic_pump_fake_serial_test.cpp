@@ -104,8 +104,8 @@ int main()
         MIB_EXPECT(cfg.model == PumpModel::TushuiPeristaltic, "slot remembers the model");
         MIB_EXPECT(near(cfg.flowRate, 5000.0) && cfg.flowRateUnit == 100,
                    "200 rpm at 25 µL/rev reads back as 5000 µL/min");
-        MIB_EXPECT(cfg.direction == SyringePumpService::Direction::Withdraw,
-                   "CCW maps to Withdraw");
+        MIB_EXPECT(cfg.direction == SyringePumpService::Direction::Infuse,
+                   "CCW maps to Infuse (PZ7035 bench)");
         MIB_EXPECT(near(st.speedRpm, 200.0), "speed setpoint adopted");
         MIB_EXPECT(near(st.minFlowRate, 0.25) && near(st.maxFlowRate, 12500.0),
                    "flow limits follow the calibration");
@@ -124,7 +124,7 @@ int main()
     MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 10.0, 100), "back to 10 µL/min");
     MIB_EXPECT(svc.setDirection(PumpId::Sample, SyringePumpService::Direction::Infuse),
                "direction accepted");
-    MIB_EXPECT(wire.read(101) == tushui::kClockwise, "Infuse turns clockwise");
+    MIB_EXPECT(wire.read(101) == tushui::kCounterClockwise, "Infuse turns counter-clockwise (PZ7035 bench)");
     MIB_EXPECT(!svc.setSyringeVolume(PumpId::Sample, 10, 100), "syringe volume does not apply");
 
     // Start: continuous turns, then run.
@@ -138,7 +138,7 @@ int main()
     watchdog.mark("polled while running");
     {
         const auto st = svc.getStatus(PumpId::Sample);
-        MIB_EXPECT(st.runStatus == SyringePumpService::RunStatus::Forward, "running clockwise = Forward");
+        MIB_EXPECT(st.runStatus == SyringePumpService::RunStatus::Forward, "running counter-clockwise = Forward");
         MIB_EXPECT(near(st.currentFlowRate, 10.0), "live flow 10 µL/min");
         MIB_EXPECT(st.accumulatedVolume > 0.0 && st.accumulatedVolume < 0.1,
                    "volume integrates between polls (µL)");
@@ -149,8 +149,8 @@ int main()
     // Purge: fixed purge speed, stop restores the flow setpoint and direction.
     MIB_REQUIRE(svc.purge(PumpId::Sample, SyringePumpService::Direction::Withdraw), "purge accepted");
     MIB_EXPECT(wire.read(100) == tushui::rpmToRegister(tushui::kPurgeRpm), "purge runs at purge speed");
-    MIB_EXPECT(wire.read(101) == tushui::kCounterClockwise && wire.read(104) == 1,
-               "purge withdraw runs counter-clockwise");
+    MIB_EXPECT(wire.read(101) == tushui::kClockwise && wire.read(104) == 1,
+               "purge withdraw runs clockwise");
     svc.pollStatus(PumpId::Sample);
     MIB_EXPECT(svc.getStatus(PumpId::Sample).runStatus == SyringePumpService::RunStatus::Backward,
                "purge withdraw reads as Backward");
@@ -158,7 +158,7 @@ int main()
     MIB_EXPECT(svc.stop(PumpId::Sample), "stop during purge accepted");
     MIB_EXPECT(wire.read(104) == 0, "purge stopped");
     MIB_EXPECT(wire.read(100) == 40, "flow speed restored after purge");
-    MIB_EXPECT(wire.read(101) == tushui::kClockwise, "direction restored after purge");
+    MIB_EXPECT(wire.read(101) == tushui::kCounterClockwise, "direction restored after purge");
 
     // Disconnect stops a running pump.
     MIB_REQUIRE(svc.start(PumpId::Sample), "restart");
