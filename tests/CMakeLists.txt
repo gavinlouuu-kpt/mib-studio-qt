@@ -1057,7 +1057,10 @@ if(Python3_Interpreter_FOUND)
 
     # ADR 0007 / rollout T1.2: the built absdiff-laplacian core reproduces the
     # Contract-2 real-frame gold through engine ABI v2 (ctypes, no host code).
-    if(TARGET mib_processing_core_absdiff_laplacian)
+    # Not in sanitizer builds: an uninstrumented python cannot dlopen a
+    # sanitizer-instrumented core (TSan: "cannot allocate memory in static TLS
+    # block"). The native-core CI jobs run it on the unsanitized artifacts.
+    if(TARGET mib_processing_core_absdiff_laplacian AND NOT MIB_SANITIZER)
         add_test(
             NAME processing.native_core_contract2_gold
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/run_native_core_conformance.py
