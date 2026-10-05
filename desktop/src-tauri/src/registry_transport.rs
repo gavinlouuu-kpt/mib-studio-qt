@@ -1,5 +1,5 @@
 //! HTTPS POST for the backend's central profile registry worker (#398,
-//! bridge ABI 24; the ADR 0002 seam: the C++ backend links no HTTP client and
+//! bridge ABI 25; the ADR 0002 seam: the C++ backend links no HTTP client and
 //! the shell supplies one).
 //!
 //! Contract (`ffi::BridgeHttpRequest`): HTTPS only, platform TLS verification

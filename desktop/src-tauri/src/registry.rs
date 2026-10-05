@@ -145,7 +145,7 @@ pub struct RegistryValidationRequest {
     error: String,
 }
 
-/// Registry worker snapshot (schema v24). No token or password, ever.
+/// Registry worker snapshot (schema v25). No token or password, ever.
 #[derive(Serialize, Clone, Default)]
 pub struct RegistrySnapshot {
     valid: bool,
