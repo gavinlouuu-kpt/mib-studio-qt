@@ -2,6 +2,7 @@
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ProcessingConfigJson.h"
 #include "backend/processing/ImageFilterPipeline.h"
+#include "backend/processing/OpenCvThreads.h"
 #include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingTypes.h"
 
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -114,6 +116,13 @@ mib_processing_status MIB_PROCESSING_CALL createContext(mib_processing_context* 
         return MIB_PROCESSING_STATUS_INVALID_ARGUMENT;
     }
     try {
+        // Released cores link OpenCV statically, so the host's
+        // cv::setNumThreads never reaches this copy: apply MIB_OPENCV_THREADS
+        // here too (default inline) so the core's per-frame calls cannot keep
+        // a spinning Concurrency Runtime pool busy.
+        static std::once_flag openCvThreadsOnce;
+        std::call_once(openCvThreadsOnce,
+                       [] { backend::processing::applyOpenCvThreadsFromEnvironment(); });
         *output = new PluginContext();
         return MIB_PROCESSING_STATUS_OK;
     } catch (const std::exception& ex) {
