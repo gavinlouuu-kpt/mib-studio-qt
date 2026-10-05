@@ -19,6 +19,7 @@ import {
   type BridgeEvent,
   type CameraGeometry,
   type PlatformInfo,
+  type InstrumentStatus,
   type CameraDiscovery,
   type CameraSelection,
   type ExperimentStatus,
@@ -35,6 +36,7 @@ import {
 import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
+import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
 import { deriveQualityGates, GATE_STATUS_LABEL, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
 import {
@@ -240,6 +242,10 @@ export default function App() {
   // pipeline's controls (realtime switch, backgrounds, calibration, processed preview) do not apply.
   const [platform, setPlatform] = useState<PlatformInfo | null>(null);
   const hostProcessing = platform ? platform.host_processing : true;
+  // #501: surfaces follow what the instrument has; the PZ7035 reports its PL core and health.
+  const caps = capabilitiesOf(platform);
+  const pz7035 = isPz7035(caps);
+  const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
   const [cameraGeometry, setCameraGeometry] = useState<CameraGeometry | null>(null);
   const [cameraWindow, setCameraWindow] = useState<Rect | null>(null);
   const cameraGeometryRef = useRef<CameraGeometry | null>(null);
@@ -836,6 +842,17 @@ export default function App() {
     void bridge.fetchPlatformInfo().then(setPlatform).catch(() => setPlatform(null));
   }, [ready]);
 
+  // PZ7035 identity and health, once a second (link rates need two samples).
+  useEffect(() => {
+    if (!ready || !caps.pl_identity) { setInstrument(null); return; }
+    let live = true;
+    const poll = () => void bridge.fetchInstrumentStatus().then((s) => { if (live) setInstrument(s); })
+      .catch((e) => { if (live) setInstrument({ available: false, error: String(e) }); });
+    poll();
+    const id = window.setInterval(poll, 1000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [ready, caps.pl_identity]);
+
   const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
     try {
       const geometry = await bridge.fetchCameraGeometry();
@@ -1016,6 +1033,8 @@ export default function App() {
     storageWritable: false,
     storageFreeOk: false,
     storagePath: "",
+    capabilities: caps,
+    instrument,
   };
   const preflight = derivePreflight(preflightInput);
 
@@ -1036,6 +1055,7 @@ export default function App() {
     frameW: lastMeta?.width ?? 0,
     frameH: lastMeta?.height ?? 0,
     pixelToMicron: stats?.pixel_to_micron ?? NaN,
+    pz7035,
   };
   const quality = deriveQualityGates(qualityInput);
 
@@ -1195,11 +1215,11 @@ export default function App() {
       <div className="body">
         {/* ---- Telemetry sidebar ---- */}
         <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`} aria-label="Telemetry sidebar">
-          <div className="side-section">
+          {caps.host_background && <div className="side-section">
             <div className="bg-preview" title="Processing background state (set/clear in Experiment ▸ Preview)">
               {backgroundSet ? "Background set" : "No background set"}
             </div>
-          </div>
+          </div>}
           <div className="side-section">
             <h4>Display</h4>
             <SideRow k="FPS:" v={displayFps.toFixed(1)} />
@@ -1218,7 +1238,18 @@ export default function App() {
             <SideRow k="Display rate:" v={`${displayFps.toFixed(1)} fps`} />
             <SideRow k="Data rate:" v={`${dataRate.toFixed(1)} MB/s`} />
           </div>
-          <div className="side-section">
+          {pz7035 && <div className="side-section" title="PZ7035 PL core and health (#501)">
+            <h4>PL core</h4>
+            <SideRow k="Build:" v={instrument?.core ? instrument.core.build_id.slice(0, 8) || "—" : "—"}
+              cls={instrument?.core?.build_match === "match" ? "ok" : "dim"} />
+            <SideRow k="Weights:" v={instrument?.core ? instrument.core.profile_id.slice(0, 8) || "—" : "—"}
+              cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
+            <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
+              cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
+            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${instrument.latency.max_us.toFixed(1)} µs` : "—"}
+              cls={instrument?.latency && instrument.latency.frames > 0 ? "" : "dim"} />
+          </div>}
+          {caps.autofocus && <div className="side-section">
             <h4>Autofocus</h4>
             <SideRow
               k="Ring width:"
@@ -1230,7 +1261,7 @@ export default function App() {
               v={afStatus?.connected ? `connected (${afStatus.enabled ? "auto" : "manual"})` : "disconnected"}
               cls={afStatus?.connected ? "ok" : "dim"}
             />
-          </div>
+          </div>}
           <div className="side-section">
             <h4>Experiment</h4>
             <SideRow
@@ -1247,7 +1278,7 @@ export default function App() {
               v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}
             />
           </div>
-          <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
+          {caps.autofocus && <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
             <h4>Nanopositioner Autofocus</h4>
             <SideRow
               k="Endpoint:"
@@ -1268,7 +1299,7 @@ export default function App() {
               }
               cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
             />
-          </div>
+          </div>}
         </aside>
         <button
           className="sidebar-toggle"
@@ -1355,11 +1386,11 @@ export default function App() {
 
           <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => setTab("connect")} />
           <ExperimentRecovery ready={ready} status={expStatus} onStatus={setExpStatus} />
-          <ReanalysisStatus model={reanalysis}/>
+          {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
           <ExportStatus model={reviewExport} />
           <div className="tab-body">
             <div hidden={tab !== "connect"}>
-              <HardwareControls ready={ready} experimentActive={expActive} append={append}
+              <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
             </div>
             {/* ---- Connect ---- */}
@@ -1370,12 +1401,12 @@ export default function App() {
                   <button className={connectTab === "cameras" ? "active" : ""} onClick={() => setConnectTab("cameras")}>
                     Cameras
                   </button>
-                  <button className={connectTab === "mindvision" ? "active" : ""} onClick={() => setConnectTab("mindvision")}>
+                  {!pz7035 && <button className={connectTab === "mindvision" ? "active" : ""} onClick={() => setConnectTab("mindvision")}>
                     MindVision
-                  </button>
-                  <button className={connectTab === "framegrabbers" ? "active" : ""} onClick={() => setConnectTab("framegrabbers")}>
+                  </button>}
+                  {caps.egrabber_script && <button className={connectTab === "framegrabbers" ? "active" : ""} onClick={() => setConnectTab("framegrabbers")}>
                     Framegrabbers
-                  </button>
+                  </button>}
                 </div>
                 <div className="subtab-body">
                   <div className="devices-list" role="listbox" aria-label="Discovered devices">
@@ -1603,7 +1634,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <CameraScriptControls model={cameraScript} />
+                {caps.egrabber_script && <CameraScriptControls model={cameraScript} />}
                 <p className="mono">
                   {lastMeta
                     ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`
@@ -1697,7 +1728,7 @@ export default function App() {
                       </button>
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
-                    <PreviewBufferControls model={previewBuffer} />
+                    {caps.frame_buffer && <PreviewBufferControls model={previewBuffer} />}
                     {hostProcessing ? (
                       <>
                         <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
@@ -1711,9 +1742,9 @@ export default function App() {
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>
                         App config (config.json)
                       </button>
-                      <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
+                      {caps.egrabber_script && <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
                         Camera script
-                      </button>
+                      </button>}
                     </div>
                     <div className="subtab-body">
                       {configTab === "app" && (
@@ -1732,7 +1763,7 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
-                          <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />
+                          {caps.core_updates && <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />}
                           <ProfilesPanel model={profiles} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
@@ -1787,7 +1818,7 @@ export default function App() {
                           </div>
                         </>
                       )}
-                      {configTab === "script" && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
+                      {configTab === "script" && caps.egrabber_script && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
                     </div>
                   </>
                 )}
@@ -2042,7 +2073,7 @@ export default function App() {
                 </div>
                 <div className="subtab-body">
                   <ReviewExportOptions model={reviewExport}/>
-                  <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>
+                  {caps.reanalysis && <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
                   <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
                     <div className="frames">

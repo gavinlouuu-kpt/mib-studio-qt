@@ -1,4 +1,4 @@
-// Central Methods panel (bridge schema v24, issue #398). It only enqueues backend registry commands and
+// Central Methods panel (bridge schema v25, issue #398). It only enqueues backend registry commands and
 // renders the worker snapshot (polled while open); the UI never waits on the
 // network. Read-only toward the instrument: nothing here selects or applies a
 // method.

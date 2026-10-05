@@ -120,7 +120,7 @@ static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Cancelled) == 10);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Overflow) == 11);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::ShuttingDown) == 12);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::TooManyJobs) == 13);
-// ABI 24 (#398): central profile registry groups.
+// ABI 25 (#398): central profile registry groups.
 namespace bp = backend::profiles;
 using RegistrySession = bp::RegistryWorkerSnapshot::Session;
 using RegistryConnectivity = bp::RegistryHealth::Connectivity;
@@ -1454,7 +1454,7 @@ bool BackendBridge::cancel_device_discovery(std::uint64_t job_id) {
     return impl_->facade.cancelDeviceDiscovery(job_id);
 }
 
-// ---- Central profile registry (schema v24, #398) ----
+// ---- Central profile registry (schema v25, #398) ----
 namespace {
 // In-flight registry requests: handle -> the backend's cancel predicate. The
 // Rust transport polls registry_request_cancelled(handle) while it waits.
@@ -1784,6 +1784,14 @@ rust::String BackendBridge::fetch_platform_info() {
     }
 }
 
+rust::String BackendBridge::fetch_instrument_status() {
+    try {
+        return rust::String(impl_->facade.fetchInstrumentStatusJson());
+    } catch (...) {
+        return rust::String(R"({"available":false,"error":"fetch_instrument_status failed"})");
+    }
+}
+
 rust::String BackendBridge::fetch_camera_geometry() {
     try {
         return rust::String(impl_->facade.fetchCameraGeometryJson());
@@ -2050,17 +2058,18 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // device-discovery job trio (start_device_discovery / start_camera_discovery,
 // fetch_device_discovery, cancel_device_discovery) and the discovery contract
 // groups (#419, ADR 0005); v20-v23 the instrument line (see the contract
-// test); v24 added the central profile registry
+// test); v25 added the central profile registry
 // (registry_sign_in/sign_out/refresh/download/cancel_all,
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
 // contract groups — #398; registry_job_kinds Materialize/RecordValidation were
-// appended; built as a provisional 15, renumbered once to 24 because 23 went
-// to the instrument line; 15 and 19-23 are never reused). All additive over
+// appended; built as a provisional 15, renumbered once to 25: 23 = the
+// instrument line, 24 = #501 P0; 15 and 19-24 are never reused). All additive
+// over
 // v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 24; }
+std::uint32_t bridge_abi_version() { return 25; }
 
 } // namespace mib_bridge
 

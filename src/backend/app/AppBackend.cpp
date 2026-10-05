@@ -59,6 +59,7 @@
 #include <spdlog/spdlog.h>
 #include <opencv2/core.hpp>
 #include "backend/processing/OpenCvThreads.h"
+#include "backend/pz/PzPlatformMonitor.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
@@ -741,6 +742,19 @@ namespace backend
             {
                 SPDLOG_ERROR("AppBackend: {}", providerError);
             }
+            // PL identity and health for preflight (#501): read-only, beside
+            // the board provider. Elsewhere the monitor reports why it is idle.
+            std::unique_ptr<pz::IPzPlatformRegisters> platformRegisters;
+            std::string platformError = "the execution provider is not the PZ7035 board (MIB_EXECUTION_PROVIDER=pz)";
+            if (executionProvider_ && executionProvider_->name() == "pz-devmem")
+            {
+#if defined(__linux__)
+                platformError.clear();
+                platformRegisters = pz::openDevMemPlatformRegisters(&platformError);
+                if (!platformRegisters) SPDLOG_ERROR("AppBackend: PZ7035 platform registers: {}", platformError);
+#endif
+            }
+            pzPlatformMonitor_ = std::make_unique<pz::PzPlatformMonitor>(std::move(platformRegisters), platformError);
         }
 
         // Wire autofocus service to receive ring ratios from processing service
@@ -1149,6 +1163,7 @@ namespace backend
     services::CaptureService &AppBackend::capture() { return *captureService_; }
     services::ProcessingService &AppBackend::processing() { return *processingService_; }
     processing::IExecutionProvider *AppBackend::executionProvider() { return executionProvider_.get(); }
+    pz::PzPlatformMonitor *AppBackend::pzPlatformMonitor() { return pzPlatformMonitor_.get(); }
     services::PlaybackService &AppBackend::playback() { return *playbackService_; }
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }

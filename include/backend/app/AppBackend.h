@@ -16,6 +16,7 @@
 #include "backend/recording/RecordingAccounting.h"
 
 namespace backend::processing { class IExecutionProvider; }
+namespace backend::pz { class PzPlatformMonitor; }
 
 namespace backend::services
 {
@@ -104,6 +105,8 @@ namespace backend
         // Source of per-frame results when the science runs on the PL
         // (MIB_EXECUTION_PROVIDER, YOFO S1); null when none is configured.
         processing::IExecutionProvider *executionProvider();
+        // Read-only PZ7035 identity and health (#501); null off the instrument.
+        pz::PzPlatformMonitor *pzPlatformMonitor();
         services::PlaybackService &playback();
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
@@ -303,6 +306,7 @@ namespace backend
         // Declared after processingService_: destroyed (and its thread stopped)
         // before the service it feeds.
         std::unique_ptr<processing::IExecutionProvider> executionProvider_;
+        std::unique_ptr<pz::PzPlatformMonitor> pzPlatformMonitor_;
         std::unique_ptr<services::PlaybackService> playbackService_;
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;

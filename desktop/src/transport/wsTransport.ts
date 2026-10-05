@@ -1,4 +1,5 @@
 import type {Transport} from "./Transport";
+import {tokenFromLocation} from "./auth";
 
 // A browser talking to yofo-studio-server (crates/mib-bridge-server):
 //   -> {"request_id", "cmd", "args"}
@@ -24,11 +25,12 @@ export function wsUrlFromLocation(location: Location = window.location): string 
   const params = new URLSearchParams(location.search);
   const explicit = params.get("server");
   const base = explicit ?? `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`;
-  const token = params.get("token");
+  const token = params.get("token") ?? tokenFromLocation(location);
   return token ? `${base}${base.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : base;
 }
 
-export function createWsTransport(url: string, options: WsTransportOptions = {}): Transport & {close(): void} {
+// `url` may be a function: it is read when the socket opens, so a token typed after load counts.
+export function createWsTransport(url: string | (() => string), options: WsTransportOptions = {}): Transport & {close(): void} {
   const createSocket = options.createSocket ?? ((u: string) => new WebSocket(u));
   const reconnectMs = options.reconnectMs ?? 1000;
   const pending = new Map<number, Pending>();
@@ -51,7 +53,7 @@ export function createWsTransport(url: string, options: WsTransportOptions = {})
     const wait = Math.max(0, lastFailure + reconnectMs - Date.now());
     opening = new Promise<WebSocket>((resolve, reject) => {
       setTimeout(() => {
-        const ws = createSocket(url);
+        const ws = createSocket(typeof url === "function" ? url() : url);
         ws.binaryType = "arraybuffer";
         ws.onopen = () => { socket = ws; opening = undefined; resolve(ws); };
         ws.onerror = () => { /* onclose follows */ };

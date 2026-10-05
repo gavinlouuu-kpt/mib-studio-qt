@@ -64,6 +64,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzPlatformMonitor.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzExecutionProviders.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/ExecutionProviderFactory.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp
@@ -78,6 +79,34 @@ add_library(mib_processing STATIC
 )
 # Where the science runs (SciencePlacement.cpp is in this library): ON for the PZ7035 PS.
 target_compile_definitions(mib_processing PUBLIC MIB_PL_SCIENCE=$<BOOL:${MIB_PL_SCIENCE}>)
+
+# The U-Net weights the PZ7035 PL must run (#501 PL identity check): the
+# first 32 hex of the pinned unet-c4-multiline-v1 .npz sha256 in
+# env/assets.json, the PROFILE_ID the bridge reports for that core.
+file(READ "${PROJECT_SOURCE_DIR}/env/assets.json" _mib_assets_json)
+string(JSON _mib_asset_count LENGTH "${_mib_assets_json}" assets)
+set(MIB_PINNED_UNET_PROFILE_ID "")
+math(EXPR _mib_asset_last "${_mib_asset_count} - 1")
+foreach(_i RANGE ${_mib_asset_last})
+    string(JSON _mib_asset_id GET "${_mib_assets_json}" assets ${_i} id)
+    if(_mib_asset_id STREQUAL "unet-c4-multiline-v1")
+        string(JSON _mib_file_count LENGTH "${_mib_assets_json}" assets ${_i} files)
+        math(EXPR _mib_file_last "${_mib_file_count} - 1")
+        foreach(_f RANGE ${_mib_file_last})
+            string(JSON _mib_file_path ERROR_VARIABLE _mib_no_path GET "${_mib_assets_json}" assets ${_i} files ${_f} path)
+            if(_mib_file_path STREQUAL "c4_multiline_params.npz")
+                string(JSON _mib_npz_sha GET "${_mib_assets_json}" assets ${_i} files ${_f} sha256)
+                string(SUBSTRING "${_mib_npz_sha}" 0 32 MIB_PINNED_UNET_PROFILE_ID)
+            endif()
+        endforeach()
+    endif()
+endforeach()
+if(NOT MIB_PINNED_UNET_PROFILE_ID)
+    message(FATAL_ERROR "env/assets.json: no unet-c4-multiline-v1 c4_multiline_params.npz sha256")
+endif()
+set_property(DIRECTORY ${PROJECT_SOURCE_DIR} APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/env/assets.json")
+set_property(SOURCE ${PROJECT_SOURCE_DIR}/src/backend/pz/PzPlatformMonitor.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS MIB_PINNED_UNET_PROFILE_ID="${MIB_PINNED_UNET_PROFILE_ID}")
 
 # No Q_OBJECT usage in this target, and it must not require the Qt moc
 # toolchain to build standalone (e.g. for a Qt-less Python wheel build --

@@ -110,10 +110,11 @@ freeze exact revision identity/content into historical runs.
   now stops it first. ABI 15 was free on `develop`; the review-scatter plan also
   names "14 → 15", so whichever lands second takes the next number.
 - 2026-10-05 (renumber): the registry surface was built as a provisional ABI 15 and
-  rode develop's number through the restack. #495 took 23 for the instrument line,
-  so after merging develop (23) the stack takes **24** in one commit (contract,
-  `shim.cpp`, contract test, generated `bridgeContract.ts`, registry comments); 15
-  and 19-23 are never reused. The Tauri commands moved to `mib-app-commands` on
+  rode develop's number through the restack. #495 took 23 for the instrument line
+  and #502 took 24 (#501 P0), so the stack is **25** (contract, `shim.cpp`, contract
+  test, generated `bridgeContract.ts`, registry comments): a bump to 24 was first
+  committed (17b08e71), then set to 25 when develop reached 24 (merge commit
+  resolving the ABI lines). 15 and 19-24 are never reused. The Tauri commands moved to `mib-app-commands` on
   develop; the registry commands stay in the desktop crate (`registry` module)
   because they need the shell's transport and a sign-in carries a password that must
   not cross the YOFO Studio WebSocket.

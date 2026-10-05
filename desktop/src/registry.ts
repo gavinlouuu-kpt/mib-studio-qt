@@ -1,4 +1,4 @@
-// Central profile registry view model (bridge schema v24, issue #398).
+// Central profile registry view model (bridge schema v25, issue #398).
 //
 // Pure projection of the backend registry snapshot onto what the Central
 // Methods panel renders, so the panel presents the backend truth: each
