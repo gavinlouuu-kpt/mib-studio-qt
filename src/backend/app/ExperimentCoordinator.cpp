@@ -1002,6 +1002,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                 SPDLOG_WARN("ExperimentCoordinator: provisional KDE core record could not be stored");
             }
         }
+        // Replay clip outcome (issue #463) in the run's provenance: skipped,
+        // capped, short of disk, or where it is. A clip still being written
+        // is recorded with final=false; its manifest.json is authoritative.
+        // Best effort, never affects the run outcome.
+        if (auto* clips = backend_.replayClips()) {
+            if (!hdf5.writeReplayClipJson(clips->provenanceJson(run.startGeneration))) {
+                SPDLOG_WARN("ExperimentCoordinator: replay clip outcome could not be stored");
+            }
+        }
         const auto tClose = clock::now();
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));

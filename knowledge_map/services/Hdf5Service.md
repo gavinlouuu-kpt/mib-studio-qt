@@ -171,6 +171,11 @@ on the `/run_provenance` group. [[../architecture/ExperimentCoordinator]]
 writes them immediately after `initializeDatasets()` and before the run may
 enter Running; a failure rolls the Start back and removes the file.
 
+`writeReplayClipJson(json)` / `readReplayClipJson(json)` store the
+start-of-run replay clip outcome as `/run_provenance @replay_clip_json`
+(written by the coordinator at finalization; readers get false for older
+files). See [[ReplayClipRecorder]].
+
 ## Acquisition provenance (issue #368)
 
 `writeAcquisitionProvenance(descriptor, telemetry)` /

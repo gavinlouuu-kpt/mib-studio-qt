@@ -429,16 +429,12 @@ namespace backend
         captureService_ = std::make_unique<services::CaptureService>();
         processingService_ = std::make_unique<services::ProcessingService>();
         {
-            // Start-of-run replay clip (issue #463). MIB_REPLAY_CLIP=0 disables
-            // capture (admin opt-out); the default is on.
-            recording::ReplayClipOptions clipOptions;
-            if (const char *clipEnv = std::getenv("MIB_REPLAY_CLIP"))
-            {
-                const std::string value(clipEnv);
-                if (value == "0" || value == "false" || value == "off") clipOptions.enabled = false;
-            }
+            // Start-of-run replay clip (issue #463). Clips go next to each
+            // run's HDF5 file; <dataDir>/replay-clips is only the fallback for
+            // a run without an output path. Defaults are overridable through
+            // MIB_REPLAY_CLIP* (MIB_REPLAY_CLIP=0 disables capture).
             replayClips_ = std::make_unique<recording::ReplayClipRecorder>(
-                std::filesystem::path(dataDir) / "replay-clips", clipOptions);
+                std::filesystem::path(dataDir) / "replay-clips", recording::replayClipOptionsFromEnvironment());
         }
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
         // Funnel experiment flush-write failures to the coordinator (which

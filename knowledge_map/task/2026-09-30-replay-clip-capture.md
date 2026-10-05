@@ -24,6 +24,12 @@ against `develop` rescoped v1 to this clip. Plan:
   hashes; the clip saves content and records `config_verified`.
 - **Skip, never wait.** A Start while the previous clip is still writing
   skips the new clip; Start must never block on a clip.
+- **Retention (2026-10-05, developer-56 via merge coordination).** A clip
+  belongs to its recording: `<stem>.replay-clip/` next to the run's HDF5,
+  deleted only with the run, no expiry, never deleted to make room. Cap or
+  reserve exceeded → the clip stops there, a warning is logged and the
+  outcome goes into `/run_provenance @replay_clip_json`, written by the
+  coordinator (the recorder never opens the experiment file).
 
 ## Verification
 

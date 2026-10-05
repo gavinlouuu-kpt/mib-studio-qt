@@ -1,23 +1,31 @@
 # Recent Work
 
-## 2026-09-30 — Start-of-run replay clip (#463, slice 1)
+## 2026-10-05 — Start-of-run replay clip (#463, slice 1)
 
 Every experiment now silently keeps its first **1000 frames or 1 s**
-(whichever comes first, 512 MB cap) under `<dataDir>/replay-clips/`, with
-the frozen run snapshot, canonical processing config, raw `config.json` and
-background, each verified against the hashes in the run snapshot
-([[../services/ReplayClipRecorder]]). The clip is armed by
+(whichever comes first) with the frozen run snapshot, canonical processing
+config, raw `config.json` and background, each verified against the hashes
+in the run snapshot ([[../services/ReplayClipRecorder]]). A clip belongs to
+its recording: it is written next to the run's HDF5 as
+`<stem>.replay-clip/`, deleted only with the run, never expired or deleted
+to make room. The 512 MB clip cap and the 512 MB free-disk reserve stop the
+clip where it is (frames written so far kept), log a warning and mark the
+outcome in the run's provenance (`/run_provenance @replay_clip_json`,
+written by the coordinator at finalization). Defaults (also 64 MB/s write
+throttle) are overridable via `MIB_REPLAY_CLIP*`; `MIB_REPLAY_CLIP=0`
+disables capture. The clip is armed by
 [[../architecture/ExperimentCoordinator]] inside the Start transaction, so Qt
-and React/Tauri both get it with no shell work; a worker copies frames by
-write index and writes lossless PNGs rate-limited, and a clip can never
-fail, delay or touch the experiment (no HDF5 access, free-space preflight,
-errors only in the clip manifest). The `frames/` folder replays directly
-through the mock camera. Guard: `e2e.replay_clip` (mock camera over
-ID-stamped frames: exact count, pixel-exact order, hashes, replay, duration
-limit, early stop, no space, disabled, rapid start/stop, shutdown mid-clip),
-verified to fail when frames are dropped or the saved config differs.
+and React/Tauri both get it with no shell work; it can never fail or delay
+the Start, and the recorder never opens the experiment file. The `frames/`
+folder replays directly through the mock camera. Guard: `e2e.replay_clip`
+(mock camera over ID-stamped frames: exact count, pixel-exact order, hashes,
+replay, duration limit, early stop, no space, disabled, rapid start/stop,
+byte cap, reserve hit mid-write, reused output path, provenance, shutdown
+mid-clip, env overrides), verified to fail when frames are dropped, the
+saved config differs, the provenance write or the reserve check is removed.
 Next: live per-frame results for the clip frames and paced replay (plan
 `docs/exec-plans/active/2026-09-30-replay-clip-capture.md`).
+
 ## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
 
 `UnetC4` runs the integer C4 U-Net on the host from the model release's

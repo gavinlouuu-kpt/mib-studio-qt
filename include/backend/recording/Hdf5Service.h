@@ -197,6 +197,11 @@ public:
     bool readKdeLiveJson(std::string& json) const;
     bool writeKdeAnalysisJson(const std::string& json);
     bool readKdeAnalysisJson(std::string& json) const;
+    // Start-of-run replay clip outcome (issue #463), written by the
+    // coordinator at finalization: /run_provenance @replay_clip_json
+    // (ReplayClipRecorder::provenanceJson). Same refusal rules as above.
+    bool writeReplayClipJson(const std::string& json);
+    bool readReplayClipJson(std::string& json) const;
 
     // Acquisition time/telemetry provenance (issue #368, `timestamp_schema_version`
     // = 1): the session's TimestampDescriptor (what `timestampNs` really holds)

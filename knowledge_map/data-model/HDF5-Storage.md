@@ -74,6 +74,15 @@
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for
   older files. See [[../architecture/ExperimentCoordinator]].
+- **Replay clip outcome (issue #463, `schema_version` = 1)** —
+  `/run_provenance @replay_clip_json`, written by the coordinator at
+  finalization: the start-of-run clip's `state`
+  (`complete`/`incomplete`/`skipped`/`failed`, or `capturing`/`writing` with
+  `final:false`), `end_reason` (`byte_limit` / `disk_reserve` mark a cap or
+  free-disk stop), `message`, `clip_dir` (sibling directory relative to the
+  HDF5 file; null when skipped), frame counts, `contiguous`,
+  `config_verified`. Absent in files from before the clip existed. See
+  [[../services/ReplayClipRecorder]].
 - **KDE core contour records (`kde_core_schema_version` = 1)** — JSON
   documents produced/parsed by the Qt-free frontend codec
   `include/backend/processing/KdeCoreRecord.h`, stored verbatim as UTF-8 string

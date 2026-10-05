@@ -40,7 +40,7 @@ moves to its own issue, sequenced with #395.
 | Trigger | Coordinator enters `Running` |
 | First frame | First write index committed after the transition (recorded) |
 | Stop at | 1000 frames, **or** 1 s of host time since the first frame (`hostTimestampUs`), **or** the byte safety cap, whichever comes first |
-| Byte safety cap | Proposed 512 MB (open decision) |
+| Clip cap | 512 MB (agreed 2026-10-05; `MIB_REPLAY_CLIP_MAX_MB`) |
 | Early stop | Experiment stops before the window closes → clip ends there, state `incomplete`, `end_reason: run_ended` |
 
 The clip is contiguous by write index. A frame the reader could not copy
@@ -62,7 +62,7 @@ ExperimentCoordinator ──(Running, snapshot)──▶ ReplayClipRecorder::arm
                                                   │
                                          writer thread (low priority, rate-limited)
                                                   ▼
-                                   data/replay-clips/<clip-id>/
+                                   <run dir>/<stem>.replay-clip/
 ```
 
 - **Owner:** new `ReplayClipRecorder` owned by `AppBackend`, armed by
@@ -77,7 +77,8 @@ ExperimentCoordinator ──(Running, snapshot)──▶ ReplayClipRecorder::arm
 - **Writer:** encodes lossless PNG and writes after (or behind) the reader on
   a low-priority, rate-limited thread so it does not compete with the HDF5
   writer's I/O in the first seconds of the run. Memory is released once
-  written. Local disk only.
+  written. The clip goes to the run's own volume (next to its HDF5), so the
+  throttle also protects a network output path.
 - **Config/background:** saved from the same state the coordinator froze in
   `RunConfigurationSnapshot`. The snapshot stores hashes, not content, so the
   recorder saves the content and verifies it against
@@ -87,11 +88,14 @@ ExperimentCoordinator ──(Running, snapshot)──▶ ReplayClipRecorder::arm
   discarded (LatestFrame policy), valid/invalid object counts and object
   metrics. A rerun processes every frame, so comparison is restricted to
   frames the live pipeline processed.
-- **Free-space floor:** before arming and while writing; below the floor the
-  clip is skipped or abandoned and marked, so it can never starve HDF5.
-- **HDF5:** untouched. The clip references the run (output path, start
-  generation, start wall clock) instead of writing into the experiment file
-  (#451 writer ownership).
+- **Free-space floor:** before capturing and before every frame write;
+  below the reserve the clip is skipped (preflight) or stops where it is
+  (frames written so far kept), is logged and marked, so it can never starve
+  HDF5. Older clips are never deleted to make room.
+- **HDF5:** the recorder never opens it. The coordinator, which owns the
+  writer (#451), stores the clip outcome at finalization as
+  `/run_provenance @replay_clip_json`; a clip still in flight then is
+  recorded with `final: false` and its manifest is authoritative.
 - **Failure isolation:** any clip error (allocation, disk full, encoder,
   shutdown mid-write) is recorded in the manifest and logged; the experiment
   never fails, stalls or reports an error because of a clip.
@@ -99,7 +103,8 @@ ExperimentCoordinator ──(Running, snapshot)──▶ ReplayClipRecorder::arm
 ## Clip layout
 
 ```
-data/replay-clips/<utc-start>-g<startGeneration>/
+<run dir>/<stem>.replay-clip/   (next to <stem>.h5; -1, -2 … if it exists;
+                                fallback <dataDir>/replay-clips/<utc>-g<gen>/)
   manifest.json          schema version, run link (output path, generations, wall
                          clock), core/contract identity, capture rule, counts
                          (window / copied / gaps / written / write failures / bytes),
@@ -144,9 +149,10 @@ nothing.
 - [ ] Forced ring overrun yields explicit gap records and `contiguous: false`;
       copied + gaps = frames in window (code path exists, no forced-overrun
       test yet).
-- [ ] Fault injection: insufficient free space and shutdown during capture
-      are covered; disk full mid-write, unwritable directory, encoder failure
-      and allocation failure still need injection seams.
+- [ ] Fault injection: insufficient free space (preflight), free space
+      falling below the reserve mid-write (probe seam), byte cap and shutdown
+      during capture are covered; unwritable directory, encoder failure and
+      allocation failure still need injection seams.
 - [ ] Start→Running latency and steady-state throughput with clips on vs off
       stay within an agreed ratio at the highest supported fps and largest
       frame size (latency budget).
@@ -171,14 +177,19 @@ nothing.
 - 2026-09-30: proposed defaults adopted in code pending confirmation: 512 MB
   byte cap, 512 MB free-space reserve, 64 MB/s write throttle, 5 s shutdown
   drain, `MIB_REPLAY_CLIP=0` opt-out.
+- 2026-10-05 (developer-56, via merge coordination): defaults accepted as
+  proposed; every default stays overridable (`MIB_REPLAY_CLIP*`, documented
+  in the service note).
+- 2026-10-05: retention — a clip belongs to its recording: stored next to
+  the run's files, deleted only when the run is deleted, no age-based
+  expiry. When the cap or the disk reserve would be exceeded the clip stops
+  for that run, is logged, and is marked in the run's provenance; older
+  clips are never deleted. A different policy later is a config change.
 
 ## Open decisions
 
-- **Byte safety cap** — proposed 512 MB.
-- **Retention** — always-on adds ~50–300 MB per run. Proposed: total cap with
-  oldest-first deletion of clips only (never HDF5), configurable.
 - **Disclosure** — proposed: no UI, a manual page stating clips are kept, and
-  an admin setting to disable capture.
+  an admin setting to disable capture (the env opt-out exists).
 - **Mock-camera runs** — capture them too (needed for tests) and mark the
   source in the manifest; confirm this is wanted outside tests.
 

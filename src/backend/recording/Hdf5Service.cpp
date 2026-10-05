@@ -4113,6 +4113,23 @@ namespace backend::services {
         return readGroupJsonAttribute(impl_->fileId_, "/monitoring", "kde_live_json", json);
     }
 
+    bool Hdf5Service::writeReplayClipJson(const std::string& json)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeReplayClipJson: no writable HDF5 file open; replay clip outcome not stored");
+            return false;
+        }
+        const bool ok = writeGroupJsonAttribute(impl_->fileId_, "/run_provenance", "replay_clip_json", json);
+        if (!ok) SPDLOG_WARN("writeReplayClipJson: attribute write failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readReplayClipJson(std::string& json) const
+    {
+        if (!isFileOpen()) { json.clear(); return false; }
+        return readGroupJsonAttribute(impl_->fileId_, "/run_provenance", "replay_clip_json", json);
+    }
+
     bool Hdf5Service::writeKdeAnalysisJson(const std::string& json)
     {
         if (!isFileOpen() || !impl_->writable_) {

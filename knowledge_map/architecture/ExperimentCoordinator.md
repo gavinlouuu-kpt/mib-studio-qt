@@ -99,7 +99,9 @@ append only, never renumber.
 
 1. Publish `Stopping` (or `Failed` for a fatal save error), then
    `ReplayClipRecorder::notifyRunEnded()` closes the run's clip window if it
-   is still open.
+   is still open. Just before `closeFile()` the clip outcome
+   (`provenanceJson`) is stored as `/run_provenance @replay_clip_json` (best
+   effort; never changes the run outcome).
 2. `flushBufferedFrames(hdf5)` + `finishFlush()`: drain the async write
    queue; the writer thread has stopped afterwards.
 3. `endExperiment()`; `resetRealtimeMetrics()`.

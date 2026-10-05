@@ -10,6 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -119,6 +120,96 @@ const char* toString(ReplayClipState s)
     return "unknown";
 }
 
+namespace {
+
+// Strict non-negative integer parse; nullopt for anything else.
+std::optional<uint64_t> parseUnsigned(const char* text)
+{
+    if (text == nullptr || *text == '\0') return std::nullopt;
+    uint64_t value = 0;
+    for (const char* c = text; *c != '\0'; ++c) {
+        if (*c < '0' || *c > '9') return std::nullopt;
+        const uint64_t digit = static_cast<uint64_t>(*c - '0');
+        if (value > (UINT64_MAX - digit) / 10) return std::nullopt;
+        value = value * 10 + digit;
+    }
+    return value;
+}
+
+void applyUnsignedEnv(const char* name, uint64_t scale, uint64_t& target)
+{
+    const char* text = std::getenv(name);
+    if (text == nullptr) return;
+    const auto value = parseUnsigned(text);
+    if (!value || (scale > 1 && *value > UINT64_MAX / scale)) {
+        SPDLOG_WARN("ReplayClipRecorder: ignoring {}='{}' (expected a non-negative integer)", name, text);
+        return;
+    }
+    target = *value * scale;
+}
+
+} // namespace
+
+ReplayClipOptions replayClipOptionsFromEnvironment(ReplayClipOptions base)
+{
+    if (const char* text = std::getenv("MIB_REPLAY_CLIP")) {
+        const std::string value(text);
+        if (value == "0" || value == "false" || value == "off") base.enabled = false;
+        else if (value == "1" || value == "true" || value == "on") base.enabled = true;
+        else SPDLOG_WARN("ReplayClipRecorder: ignoring MIB_REPLAY_CLIP='{}' (expected 0/1)", value);
+    }
+    applyUnsignedEnv("MIB_REPLAY_CLIP_MAX_FRAMES", 1, base.maxFrames);
+    applyUnsignedEnv("MIB_REPLAY_CLIP_MAX_MS", 1000, base.maxDurationUs);
+    applyUnsignedEnv("MIB_REPLAY_CLIP_MAX_MB", 1ULL << 20, base.maxBytes);
+    applyUnsignedEnv("MIB_REPLAY_CLIP_RESERVE_MB", 1ULL << 20, base.freeSpaceReserveBytes);
+    applyUnsignedEnv("MIB_REPLAY_CLIP_WRITE_MBPS", 1ULL << 20, base.maxWriteBytesPerSec);
+    return base;
+}
+
+std::filesystem::path ReplayClipRecorder::clipDirForRun(const std::string& outputPath)
+{
+    const fs::path out(outputPath);
+    return out.parent_path() / (out.stem().string() + ".replay-clip");
+}
+
+void ReplayClipRecorder::setFreeSpaceProbeForTests(FreeSpaceProbe probe)
+{
+    std::scoped_lock lock(mutex_);
+    freeSpaceProbe_ = std::move(probe);
+}
+
+std::string ReplayClipRecorder::provenanceJson(uint64_t startGeneration) const
+{
+    std::scoped_lock lock(mutex_);
+    json j;
+    j["schema_version"] = kSchemaVersion;
+    j["start_generation"] = startGeneration;
+    if (status_.startGeneration == startGeneration && status_.state != ReplayClipState::Idle) {
+        const bool final = status_.state != ReplayClipState::Capturing && status_.state != ReplayClipState::Writing;
+        j["state"] = toString(status_.state);
+        j["final"] = final;
+        j["end_reason"] = status_.endReason;
+        j["message"] = status_.message;
+        // Relative to the run's HDF5 file: the clip sits next to it.
+        j["clip_dir"] = status_.clipDir.empty() ? json() : json(fs::path(status_.clipDir).filename().string());
+        j["frames_copied"] = status_.framesCopied;
+        j["frames_written"] = status_.framesWritten;
+        j["gaps"] = status_.gaps;
+        j["contiguous"] = status_.contiguous;
+        j["config_verified"] = status_.configVerified;
+    } else if (lastSkipGeneration_ == startGeneration) {
+        j["state"] = toString(ReplayClipState::Skipped);
+        j["final"] = true;
+        j["message"] = lastSkipReason_;
+        j["clip_dir"] = json();
+    } else {
+        j["state"] = "not_armed";
+        j["final"] = true;
+        j["clip_dir"] = json();
+    }
+    return j.dump();
+}
+
 ReplayClipRecorder::ReplayClipRecorder(std::filesystem::path rootDir, ReplayClipOptions options)
     : rootDir_(std::move(rootDir)), options_(options)
 {
@@ -172,9 +263,11 @@ bool ReplayClipRecorder::arm(ReplayClipArm arm)
     };
     if (shutdown_) return false;
     if (busy_) {
-        // Never touch the in-flight clip's status; the log is the record.
-        SPDLOG_WARN("ReplayClipRecorder: clip for run {} skipped — clip for run {} is still being written",
-                    generation, activeGeneration_);
+        // Never touch the in-flight clip's status; remember the skip so the
+        // run's provenance can say why it has no clip.
+        lastSkipGeneration_ = generation;
+        lastSkipReason_ = "busy: clip for run " + std::to_string(activeGeneration_) + " was still being written";
+        SPDLOG_WARN("ReplayClipRecorder: clip for run {} skipped — {}", generation, lastSkipReason_);
         return false;
     }
     if (!options_.enabled) return skip("disabled");
@@ -249,9 +342,10 @@ void ReplayClipRecorder::run(ReplayClipArm arm)
         frames.clear();
         st.state = state;
         if (!message.empty()) st.message = message;
-        if (state == ReplayClipState::Skipped || state == ReplayClipState::Failed) {
-            SPDLOG_WARN("ReplayClipRecorder: clip for run {} {} — {}", st.startGeneration, toString(state),
-                        st.message);
+        if (state == ReplayClipState::Skipped || state == ReplayClipState::Failed ||
+            st.endReason == "byte_limit" || st.endReason == "disk_reserve") {
+            SPDLOG_WARN("ReplayClipRecorder: clip for run {} {} ({} frames written, end {}) — {}",
+                        st.startGeneration, toString(state), st.framesWritten, st.endReason, st.message);
         } else {
             SPDLOG_INFO("ReplayClipRecorder: clip for run {} {} ({} frames, {} gaps, end {}) -> {}",
                         st.startGeneration, toString(state), st.framesWritten, st.gaps, st.endReason,
@@ -268,21 +362,44 @@ void ReplayClipRecorder::run(ReplayClipArm arm)
         return closeWindow_;
     };
 
-    // ---- Free-space preflight: a clip must never starve experiment output.
+    // ---- Location: next to the run's files, so the clip lives and dies
+    // with its recording. A run without an output path uses rootDir_.
+    const FreeSpaceProbe probe = [this] {
+        std::scoped_lock lock(mutex_);
+        return freeSpaceProbe_;
+    }();
+    auto freeBytes = [&](const fs::path& path) -> std::optional<uint64_t> {
+        if (probe) return probe(path);
+        std::error_code spaceEc;
+        const auto space = fs::space(path, spaceEc);
+        if (spaceEc) return std::nullopt;
+        return static_cast<uint64_t>(space.available);
+    };
+    const fs::path baseDir = runSnap.outputPath.empty()
+                                 ? rootDir_ / (utcStamp(runSnap.startWallClockNs) + "-g" +
+                                               std::to_string(runSnap.startGeneration))
+                                 : clipDirForRun(runSnap.outputPath);
+    const fs::path volume = baseDir.parent_path();
     std::error_code ec;
-    fs::create_directories(rootDir_, ec);
+    fs::create_directories(volume, ec);
     if (ec) {
-        finish(ReplayClipState::Failed, "cannot create " + rootDir_.string() + ": " + ec.message());
+        finish(ReplayClipState::Failed, "cannot create " + volume.string() + ": " + ec.message());
         return;
     }
+
+    // ---- Free-space preflight: a clip must never starve experiment output,
+    // and older clips are never deleted to make room.
     {
         uint64_t estimate = opt.maxBytes;
         if (runSnap.frameGeometryKnown && runSnap.frameWidth > 0 && runSnap.frameHeight > 0) {
             estimate = std::min<uint64_t>(opt.maxBytes, opt.maxFrames * runSnap.frameWidth * runSnap.frameHeight);
         }
-        const auto space = fs::space(rootDir_, ec);
-        if (!ec && space.available < estimate + opt.freeSpaceReserveBytes) {
-            finish(ReplayClipState::Skipped, "insufficient free space at " + rootDir_.string());
+        const auto available = freeBytes(volume);
+        if (available && *available < estimate + opt.freeSpaceReserveBytes) {
+            st.endReason = "disk_reserve";
+            finish(ReplayClipState::Skipped, "insufficient free space at " + volume.string() + " (" +
+                                                 std::to_string(*available >> 20) + " MB free, clip + reserve need " +
+                                                 std::to_string((estimate + opt.freeSpaceReserveBytes) >> 20) + " MB)");
             return;
         }
     }
@@ -378,9 +495,9 @@ void ReplayClipRecorder::run(ReplayClipArm arm)
     st.state = ReplayClipState::Writing;
     setStatus(st);
 
-    std::string dirName = utcStamp(runSnap.startWallClockNs) + "-g" + std::to_string(runSnap.startGeneration);
-    fs::path dir = rootDir_ / dirName;
-    for (int n = 1; fs::exists(dir, ec); ++n) dir = rootDir_ / (dirName + "-" + std::to_string(n));
+    // Never overwrite an older clip (e.g. a reused output path).
+    fs::path dir = baseDir;
+    for (int n = 1; fs::exists(dir, ec); ++n) dir = fs::path(baseDir.string() + "-" + std::to_string(n));
     fs::create_directories(dir / "frames", ec);
     if (ec) {
         finish(ReplayClipState::Failed, "cannot create " + dir.string() + ": " + ec.message());
@@ -465,7 +582,13 @@ void ReplayClipRecorder::run(ReplayClipArm arm)
     const auto writeStart = std::chrono::steady_clock::now();
     uint64_t bytesWritten = 0;
     bool abandoned = false;
+    bool reserveHit = false;
     for (auto& cf : frames) {
+        // Stop (keeping what is written) rather than eat into the reserve.
+        if (const auto available = freeBytes(dir); available && *available < opt.freeSpaceReserveBytes) {
+            reserveHit = true;
+            break;
+        }
         {
             std::unique_lock lock(mutex_);
             if (abortWrite_) {
@@ -519,7 +642,7 @@ void ReplayClipRecorder::run(ReplayClipArm arm)
         index.emplace_back(cf.offset, json{{"offset", cf.offset},
                                            {"write_index", first + cf.offset},
                                            {"host_timestamp_us", cf.frame.hostTimestampUs},
-                                           {"status", "abandoned"}});
+                                           {"status", reserveHit ? "disk_reserve" : "abandoned"}});
     }
 
     std::sort(index.begin(), index.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -531,10 +654,17 @@ void ReplayClipRecorder::run(ReplayClipArm arm)
     if (st.framesWritten == 0) {
         state = ReplayClipState::Failed;
         st.message = "no frame could be written";
-    } else if (abandoned || st.writeFailures > 0 || !inputsOk || !st.contiguous ||
-               st.endReason == "run_ended" || st.endReason == "shutdown") {
+    } else if (abandoned || reserveHit || st.writeFailures > 0 || !inputsOk || !st.contiguous ||
+               st.endReason == "run_ended" || st.endReason == "shutdown" || st.endReason == "byte_limit") {
         state = ReplayClipState::Incomplete;
-        if (abandoned) {
+        if (reserveHit) {
+            st.endReason = "disk_reserve";
+            st.message = "free space fell below the reserve; " + std::to_string(abandonedCount) +
+                         " copied frames not written";
+        } else if (st.endReason == "byte_limit") {
+            st.message = "clip cap of " + std::to_string(opt.maxBytes >> 20) + " MB reached after " +
+                         std::to_string(st.framesCopied) + " frames";
+        } else if (abandoned) {
             st.endReason = "shutdown";
             st.message = std::to_string(abandonedCount) + " copied frames abandoned at shutdown";
         } else if (!inputsOk) {

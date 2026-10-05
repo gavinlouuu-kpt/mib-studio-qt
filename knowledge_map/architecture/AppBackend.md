@@ -60,8 +60,10 @@ replayClips_  // #463: declared before experimentCoordinator_ so it outlives it
 ```
 
 `replayClips()` returns the [[../services/ReplayClipRecorder]] (null before
-`initialize()`), created in `initialize()` with root
-`<dataDir>/replay-clips`; `MIB_REPLAY_CLIP=0` disables capture.
+`initialize()`), created in `initialize()` with options from
+`replayClipOptionsFromEnvironment()` (`MIB_REPLAY_CLIP*`; `=0` disables).
+Clips are written next to each run's HDF5 file; `<dataDir>/replay-clips` is
+only the fallback for a run without an output path.
 
 ## `initialize(dataDir)` — what it wires
 
