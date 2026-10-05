@@ -1,29 +1,38 @@
 # Central profile registry foundation (#398)
 
-This migration and C++ provider/cache implement the first foundation slice of
-[issue #398](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/398).
-They are **not yet connected to desktop authentication, method selection,
-Apply/Verify, or run provenance**. Existing local profiles are unchanged and are
-never uploaded. Do not enable this as an instrument execution path yet.
+These migrations and the C++ provider/cache/worker implement the foundation and
+the backend half of M1 of
+[issue #398](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/398): desktop
+sign-in, explicit refresh/download and an offline-capable per-user cache. They are
+**not yet connected to a method picker, Apply/Verify, or run provenance**. Existing
+local profiles are unchanged and are never uploaded. Do not enable this as an
+instrument execution path yet.
 
 ## Setup
 
-1. Create a development Supabase project. Apply
-   `migrations/202609100001_profile_registry.sql` with the Supabase CLI or SQL editor.
-2. Configure Supabase Auth and create test user identities. Bootstrap organization,
-   project, membership and method rows through a trusted administrator connection.
-   Membership management and method creation UI/RPC are not implemented in this slice.
-3. The future backend worker supplies the HTTPS origin, an `sb_publishable_...` key,
-   an in-memory user access-token callback and `RegistryHttpTransport` to
-   `SupabaseProfileRegistry`. Service-role/secret keys are not accepted as API keys.
-   The token callback must return a **user** access token, never a service token.
-4. The injected HTTP adapter must use POST, verify TLS, refuse redirects, enforce
-   the request timeout and response byte cap during transfer, and omit credentials
-   from logs. No native production HTTP/Auth adapter is supplied by this milestone.
-5. Construct `ProfileCache` under the application data directory with registry origin
-   and authenticated subject. Use separate cache paths per origin/user. This prevents
-   accidental account reuse; it is not encryption or protection against the OS user
-   who owns the cache file. OS credentials and access tokens never belong in it.
+1. Create a development Supabase project. Apply every file in `migrations/` in
+   filename order with the Supabase CLI or SQL editor.
+2. Configure Supabase Auth (email + password) and create test user identities.
+   Bootstrap organization, project, membership and method rows through a trusted
+   administrator connection. Membership management and method creation UI/RPC are
+   not implemented yet.
+3. Point the desktop app at the project: `MIB_PROFILE_REGISTRY_URL=https://<ref>.supabase.co`
+   and `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY=sb_publishable_...` in the environment
+   (never in a tracked file). Without both, the registry worker stays inert.
+   Service-role/secret keys are refused as API keys.
+4. The shell supplies the HTTPS POST (`AppBackend::setProfileRegistryTransport`,
+   ADR 0002). The Qt transport (`src/frontend/system/RegistryHttpTransport.cpp`)
+   uses POST, platform TLS verification, no redirects, the request timeout, the
+   response byte cap during transfer, prompt abort on cancel, and logs no headers
+   or bodies. A Tauri shell must meet the same contract.
+5. `ProfileRegistryWorker` signs in with Supabase Auth (password grant), keeps
+   access/refresh tokens **in memory only**, rotates the refresh token before
+   expiry or on a 401, and opens one SQLite cache per origin + user under
+   `<dataDir>/profile_registry/`. `last_session.json` (origin, user ID, email; no
+   token) lets the last user's cached revisions be listed offline after a restart;
+   explicit sign-out removes it. Per-user files prevent accidental account reuse;
+   they are not encryption or protection against the OS user who owns them.
+   Persisting a refresh token in the OS keychain is a later, shell-owned step.
 
 Use the [Supabase RLS guide](https://supabase.com/docs/guides/database/postgres/row-level-security)
 when reviewing grants and policies. Both table grants and RLS are required. Desktop
@@ -32,8 +41,11 @@ inside fixed-search-path functions against `auth.uid()` and project roles.
 
 ## Protocol
 
+`registry_list_projects` (the caller's memberships and roles),
 `registry_fetch_revision`, `registry_list_revisions`, `registry_submit` and
-`registry_transition` correspond to the provider interface. One full revision per
+`registry_transition` correspond to the provider interface. A worker refresh lists
+the user's projects, then scans each from its first page, bounded by a page count
+and a time budget (exceeding either ends the job as Partial; the cache stays valid). One full revision per
 page bounds responses for methods of up to 1 MiB. The cursor is a UUID keyset cursor,
 **not a synchronization watermark**: every explicit refresh restarts the scan to
 observe changed revocation/supersession metadata. A concurrent insertion before the

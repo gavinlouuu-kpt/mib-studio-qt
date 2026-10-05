@@ -15,7 +15,31 @@
 #include <cmath>
 
 namespace frontend::processingcorecatalog {
+
+const QVector<CoreLine>& coreLines() {
+    static const QVector<CoreLine> lines{
+        {QStringLiteral("subtract-ring"), QStringLiteral("processing-core"), 1, 1,
+         QStringLiteral("mib_processing_get_api")},
+        {QStringLiteral("absdiff-laplacian"), QStringLiteral("processing-core-absdiff-laplacian"),
+         2, 2, QStringLiteral("mib_processing_get_api_v2")},
+    };
+    return lines;
+}
+
+const CoreLine* findCoreLine(const QString& name) {
+    for (const auto& line : coreLines()) {
+        if (line.name == name) return &line;
+    }
+    return nullptr;
+}
+
 namespace {
+
+// The line a document declares; documents that predate lines are subtract-ring.
+QString declaredLine(const QJsonObject& object) {
+    const QString line = object.value(QStringLiteral("line")).toString().trimmed();
+    return line.isEmpty() ? QStringLiteral("subtract-ring") : line;
+}
 
 bool safeVersion(const QString& value) {
     static const QRegularExpression expression(
@@ -48,6 +72,21 @@ bool nativeFilenameMatchesOs(const QString& filename, const QString& os) {
     return false;
 }
 
+// ADR 0007: an engine-ABI-v1 entry is a subtract-ring (Contract 1) core with
+// mib_processing_get_api; an engine-ABI-v2 entry is an absdiff-laplacian
+// (Contract 2) core with mib_processing_get_api_v2.
+bool entrypointMatchesLine(const NativePluginEntry& plugin) {
+    for (const auto& line : coreLines()) {
+        if (plugin.engineAbiVersion != line.engineAbiVersion) continue;
+        const bool algorithmOk = plugin.algorithm.isEmpty()
+                                     ? line.name == QStringLiteral("subtract-ring")
+                                     : plugin.algorithm == line.name;
+        return algorithmOk && plugin.contractVersion == line.contractVersion &&
+               plugin.entrypoint == line.entrypoint;
+    }
+    return false;
+}
+
 bool parseNativePlugin(const QJsonObject& object,
                        int defaultContractVersion,
                        NativePluginEntry& plugin) {
@@ -64,6 +103,7 @@ bool parseNativePlugin(const QJsonObject& object,
     plugin.runtimeFingerprint =
         object.value(QStringLiteral("runtime_fingerprint")).toString().trimmed();
     plugin.entrypoint = object.value(QStringLiteral("entrypoint")).toString().trimmed();
+    plugin.algorithm = object.value(QStringLiteral("algorithm")).toString().trimmed();
     plugin.appMinVersion = object.value(QStringLiteral("app_min_version")).toString().trimmed();
     plugin.appMaxVersion = object.value(QStringLiteral("app_max_version")).toString().trimmed();
     const auto signing = object.value(QStringLiteral("signing")).toObject();
@@ -110,8 +150,7 @@ bool parseNativePlugin(const QJsonObject& object,
            nativeFilenameMatchesOs(plugin.filename, plugin.os) && !plugin.arch.isEmpty() &&
            httpsUrl(plugin.url) &&
            sha256(plugin.sha256) && plugin.sizeBytes >= 0 && plugin.engineAbiVersion > 0 &&
-           plugin.contractVersion > 0 &&
-           plugin.entrypoint == QStringLiteral("mib_processing_get_api") &&
+           plugin.contractVersion > 0 && entrypointMatchesLine(plugin) &&
            !plugin.runtimeFingerprint.isEmpty() && !plugin.signingScheme.isEmpty() &&
            plugin.signingRequired && validRange && validDetachedSignature;
 }
@@ -158,11 +197,12 @@ bool samePlugin(const NativePluginEntry& left, const NativePluginEntry& right) {
            left.signingSignatureBase64 == right.signingSignatureBase64 &&
            left.signingRequired == right.signingRequired && left.sizeBytes == right.sizeBytes &&
            left.engineAbiVersion == right.engineAbiVersion &&
-           left.contractVersion == right.contractVersion;
+           left.contractVersion == right.contractVersion && left.algorithm == right.algorithm;
 }
 
 bool samePublishedVersion(const VersionEntry& index, const VersionEntry& manifest) {
-    if (index.channel != manifest.channel || index.version != manifest.version ||
+    if (index.channel != manifest.channel || index.line != manifest.line ||
+        index.version != manifest.version ||
         index.publishedAt != manifest.publishedAt || index.releaseTag != manifest.releaseTag ||
         index.releaseUrl != manifest.releaseUrl || index.contractVersion != manifest.contractVersion ||
         index.nativePlugins.size() != manifest.nativePlugins.size()) {
@@ -192,6 +232,12 @@ ParseResult parseIndex(const QByteArray& bytes) {
         return result;
     }
     result.channel = root.value(QStringLiteral("channel")).toString().trimmed();
+    result.line = declaredLine(root);
+    const CoreLine* line = findCoreLine(result.line);
+    if (!line) {
+        result.error = QStringLiteral("processing-core index names an unknown core line");
+        return result;
+    }
     result.indexActiveVersion = root.value(QStringLiteral("active_version")).toString().trimmed();
     if (result.channel.isEmpty() || result.indexActiveVersion.isEmpty()) {
         result.error = QStringLiteral("processing-core index is missing channel/active_version");
@@ -212,13 +258,18 @@ ParseResult parseIndex(const QByteArray& bytes) {
         const auto object = value.toObject();
         VersionEntry entry;
         entry.channel = result.channel;
+        entry.line = result.line;
+        if (object.contains(QStringLiteral("line")) && declaredLine(object) != result.line) {
+            result.error = QStringLiteral("processing-core index entry belongs to another core line");
+            return result;
+        }
         entry.version = object.value(QStringLiteral("version")).toString().trimmed();
         entry.publishedAt = object.value(QStringLiteral("published_at")).toString().trimmed();
         entry.releaseTag = object.value(QStringLiteral("release_tag")).toString().trimmed();
         entry.releaseUrl = object.value(QStringLiteral("release_url")).toString().trimmed();
         entry.manifestUrl = object.value(QStringLiteral("manifest_url")).toString().trimmed();
         entry.contractVersion = object.value(QStringLiteral("contract_version")).toInt();
-        if (!safeVersion(entry.version) || entry.contractVersion <= 0) {
+        if (!safeVersion(entry.version) || entry.contractVersion != line->contractVersion) {
             result.error = QStringLiteral("processing-core index contains an unsafe/invalid version");
             return result;
         }
@@ -253,6 +304,10 @@ ActivePointerResult validateCanonicalActive(const ParseResult& index,
     }
     if (latest.version.channel != index.channel) {
         result.error = QStringLiteral("processing-core latest pointer returned a different channel");
+        return result;
+    }
+    if (latest.version.line != index.line) {
+        result.error = QStringLiteral("processing-core latest pointer belongs to another core line");
         return result;
     }
     const auto entry = std::find_if(index.versions.cbegin(), index.versions.cend(),
@@ -293,14 +348,31 @@ ManifestResult parseVersionManifest(const QByteArray& bytes) {
     }
     VersionEntry entry;
     entry.channel = root.value(QStringLiteral("channel")).toString().trimmed();
+    entry.line = declaredLine(root);
     entry.version = root.value(QStringLiteral("version")).toString().trimmed();
     entry.contractVersion = root.value(QStringLiteral("contract_version")).toInt();
     entry.publishedAt = root.value(QStringLiteral("published_at")).toString().trimmed();
-    const auto wheel = root.value(QStringLiteral("wheel")).toObject();
-    entry.releaseTag = wheel.value(QStringLiteral("release_tag")).toString().trimmed();
-    entry.releaseUrl = wheel.value(QStringLiteral("release_url")).toString().trimmed();
-    if (entry.channel.isEmpty() || !safeVersion(entry.version) || entry.contractVersion <= 0 ||
-        wheel.value(QStringLiteral("version")).toString().trimmed() != entry.version) {
+    const CoreLine* line = findCoreLine(entry.line);
+    if (!line) {
+        result.error = QStringLiteral("processing-core manifest names an unknown core line");
+        return result;
+    }
+    bool identityOk = !entry.channel.isEmpty() && safeVersion(entry.version) &&
+                      entry.contractVersion == line->contractVersion;
+    if (line->name == QStringLiteral("subtract-ring")) {
+        // The subtract-ring line ships the wheel; its release identity lives there.
+        const auto wheel = root.value(QStringLiteral("wheel")).toObject();
+        entry.releaseTag = wheel.value(QStringLiteral("release_tag")).toString().trimmed();
+        entry.releaseUrl = wheel.value(QStringLiteral("release_url")).toString().trimmed();
+        identityOk = identityOk &&
+                     wheel.value(QStringLiteral("version")).toString().trimmed() == entry.version;
+    } else {
+        // Wheel-less lines carry their release identity at the top level.
+        entry.releaseTag = root.value(QStringLiteral("release_tag")).toString().trimmed();
+        entry.releaseUrl = root.value(QStringLiteral("release_url")).toString().trimmed();
+        identityOk = identityOk && !entry.releaseTag.isEmpty() && httpsUrl(entry.releaseUrl);
+    }
+    if (!identityOk) {
         result.error = QStringLiteral("processing-core manifest identity is inconsistent");
         return result;
     }

@@ -186,6 +186,19 @@ std::vector<Revision> ProfileCache::list(const std::string& project) const {
         result.push_back(row(q));
     return result;
 }
+std::vector<Revision> ProfileCache::listAll(std::vector<std::string>* corrupt) const {
+    Statement q(impl_->db,
+                "SELECT * FROM registry_revisions ORDER BY project_id,method_id,number DESC");
+    std::vector<Revision> result;
+    while (q.step() == SQLITE_ROW) {
+        try {
+            result.push_back(row(q));
+        } catch (const RegistryError&) {
+            if (corrupt) corrupt->push_back(q.text(0));
+        }
+    }
+    return result;
+}
 void ProfileCache::updateState(const std::string& id, CentralState state, uint64_t version) {
     const auto old = read(id);
     if (version < old.metadataVersion)

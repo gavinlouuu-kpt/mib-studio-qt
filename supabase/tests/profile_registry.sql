@@ -39,6 +39,11 @@ DO $$ BEGIN
     IF (SELECT count(*) FROM public.registry_projects)<>1 THEN RAISE EXCEPTION 'project isolation failed'; END IF;
     IF (SELECT count(*) FROM public.registry_methods)<>1 THEN RAISE EXCEPTION 'method isolation failed'; END IF;
 END $$;
+DO $$ DECLARE projects jsonb := public.registry_list_projects()->'projects'; BEGIN
+    IF jsonb_array_length(projects)<>1 OR projects->0->>'project_id'<>'20000000-0000-0000-0000-000000000001'
+       OR projects->0->'roles'<>'["author","reviewer"]'::jsonb THEN
+        RAISE EXCEPTION 'list_projects must return only own memberships with roles: %', projects; END IF;
+END $$;
 SELECT pg_temp.expect_error('UPDATE public.registry_memberships SET roles=ARRAY[''admin'']','42501');
 SELECT pg_temp.expect_error('INSERT INTO public.registry_methods(project_id,display_name) VALUES(''20000000-0000-0000-0000-000000000001'',''bypass'')','42501');
 SELECT pg_temp.expect_error('DELETE FROM public.registry_methods','42501');
@@ -89,10 +94,15 @@ DO $$ BEGIN
     IF (SELECT count(*) FROM public.registry_audit_events)<>0 THEN RAISE EXCEPTION 'cross-project audit leak'; END IF;
 END $$;
 SELECT pg_temp.expect_error('SELECT public.registry_fetch_revision(''40000000-0000-0000-0000-000000000001'')','PT404');
+DO $$ BEGIN
+    IF public.registry_list_projects()->'projects'->0->>'project_id'<>'20000000-0000-0000-0000-000000000002' THEN
+        RAISE EXCEPTION 'list_projects cross-project leak'; END IF;
+END $$;
 SELECT pg_temp.expect_error('SELECT public.registry_transition(''40000000-0000-0000-0000-000000000001'',''archived'',4,''cross tenant'')','42501');
 RESET ROLE;
 SET LOCAL ROLE anon;
 SELECT pg_temp.expect_error('SELECT * FROM public.registry_revisions','42501');
+SELECT pg_temp.expect_error('SELECT public.registry_list_projects()','42501');
 SELECT pg_temp.expect_error('SELECT public.registry_fetch_revision(''40000000-0000-0000-0000-000000000001'')','42501');
 RESET ROLE;
 ROLLBACK;

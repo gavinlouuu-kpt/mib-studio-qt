@@ -285,11 +285,36 @@ elseif(UNIX AND NOT APPLE)
         CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"engine_abi_version\": 1,\n  \"contract_version\": 1,\n  \"entrypoint\": \"mib_processing_get_api\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
 endif()
 
+# absdiff-laplacian (Contract 2) line (ADR 0007): engine ABI v2, entry point
+# mib_processing_get_api_v2. CI builds, audits, tests and uploads it next to
+# the subtract-ring core; signing and publishing are per-line release work.
+# The descriptors above must stay first: release tests read the subtract-ring
+# sidecar's contract_version/engine_abi_version from the first match.
+if(WIN32)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"windows\",\n  \"arch\": \"x86_64\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"authenticode\"}\n}\n")
+elseif(UNIX AND NOT APPLE)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-linux_${_mib_processing_native_arch}")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
+endif()
+
 add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileCache.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseAuth.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryWorker.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
