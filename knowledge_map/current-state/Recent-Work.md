@@ -413,6 +413,17 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Cores never ship in desktop installers; native Contract-2 gold**
+  (2026-10-05, salvaged from the superseded #476) — the Inno Setup `*.dll`
+  line excludes `mib_processing_core*.dll`, and `[InstallDelete]` removes
+  cores that older installers packed (`tests/release/test_installer_excludes_cores.py`,
+  CTest `scripts.installer_excludes_cores`). `desktop/scripts/windows-runtime.cmake`
+  fails packaging if a core enters the Tauri DLL closure.
+  `scripts/run_native_core_conformance.py` runs a built absdiff-laplacian core
+  via ctypes over the 50 V fixture against
+  `scripts/conformance/focus-50v-real-contract2.json` (407/407 objects, 0
+  failures). It runs as CTest `processing.native_core_contract2_gold` and in
+  both native-core CI jobs against the release artifact.
 - **Processing Core dialog shows both core lines** (2026-10-05, Contract 2
   rollout T1.1c) — a core-line selector (subtract-ring / absdiff-laplacian)
   picks the registry directory; `ProcessingCoreCatalog` parses each line's
