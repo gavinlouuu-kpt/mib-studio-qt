@@ -30,9 +30,17 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   toggle + px→µm, review load/scrub); controls whose backend surface is not
   bridged yet render disabled with a tooltip naming the blocking issue
   (BE-2…BE-9, #272–#279) — backend/hardware state is never simulated.
-- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` holds `AppState`
-  (`Mutex<UniquePtr<BackendBridge>>` + a cached last-frame buffer) and the
-  `#[tauri::command]` layer; `main.rs` calls `run()`.
+- `crates/mib-app-commands/` — the transport-neutral command layer (YOFO
+  Studio S5): `AppState` (`Mutex<UniquePtr<BackendBridge>>`), the DTOs, every
+  backend command as a plain function over `&AppState`, the event JSON and
+  frame-packet encoders, and `dispatch::dispatch(state, host, name, args)` for
+  non-Tauri transports (camelCase argument keys, exactly what `invoke` sends;
+  `Reply::Json` or `Reply::Binary`). `dispatch::tests` asserts every Tauri
+  command except the desktop-only ones is dispatchable.
+- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` exposes the shared
+  commands as typed one-line `#[tauri::command]` shims and keeps the
+  desktop-only pieces (app paths, preferences, updater, installers);
+  `main.rs` calls `run()`.
 - `desktop/scripts/xvfb-smoke.sh` — headless GUI smoke launcher.
 - `desktop/src/workflow.ts` — pure guided-workflow stage derivation (UX-1),
   with `desktop/src/workflow.test.ts` vitest coverage.
@@ -120,9 +128,104 @@ manifests fail-closed (SHA-256 pinning, unit tested). Native open-URL /
 reveal-in-dir actions go through `tauri-plugin-opener`, capability-scoped to
 `https://**` and directory reveals only.
 
+## Remote server (YOFO Studio)
+
+`crates/mib-bridge-server` (`yofo-studio-server`) runs the same command layer
+in a headless process for a browser UI, e.g. on the PZ7035 PS (ADR 0008, impl
+spec S5). Protocol on `/ws`, token on the upgrade (`?token=` or
+`Authorization: Bearer`, from `/etc/yofo-studio/token`; `--no-token` only on
+loopback):
+
+- request `{"request_id", "cmd", "args"}` with the `invoke` name and camelCase
+  arguments; reply `{"request_id", "ok"}` / `{"request_id", "error"}`;
+- binary replies: 8-byte little-endian request id, then the unchanged bytes
+  (MIBF frame packets); frames stay client-pulled;
+- events: the server alone drains the backend queue every 20 ms and pushes
+  `{"event": EventEnvelope}` to every client; `poll_events_exact` from a client
+  fails with `SERVER_OWNS_EVENTS` (two pollers would steal each other's
+  events). Live frames emit no FrameReady (they are pulled);
+- `init` is idempotent; commands of one connection run in order, each on a
+  blocking thread;
+- client loss: pings every 2 s, a connection silent for 5 s is dropped; when
+  the last client has been gone for 5 s the server stops and saves (active
+  experiment -> `experiment_stop`, raw recording -> `stop_recording`; capture
+  keeps running). The desktop close guard refuses to close instead; a remote
+  operator who lost the link cannot see the run. SIGTERM does the same, then
+  shuts the backend down. `/healthz` reports clients and passes.
+
+The desktop-only platform commands (`app_paths`, `get_preferences`,
+`set_preferences`, `shell_log`) are answered from the server's data
+directory (`config/preferences.json`, `logs/remote-shell.log`), shared by all
+clients.
+
+**Frontend transport.** Every call site imports `invoke` from
+`desktop/src/transport` instead of `@tauri-apps/api/core`: inside Tauri it is
+Tauri IPC, in a browser `wsTransport` (socket at `/ws` of the page origin, or
+`?server=`; token from `?token=`; `VITE_MIB_TRANSPORT=tauri|ws` forces one;
+unit tests use the mocked Tauri API). `wsTransport` returns binary replies as
+`ArrayBuffer` like Tauri, answers `poll_events_exact` from the pushed
+envelopes (so the event loop is unchanged), reconnects on the next call and
+rejects calls in flight with `TRANSPORT_LOST`. `transport/dialogs` replaces the
+dialog/opener plugins: native in Tauri, prompts for instrument paths and
+`window.open` in a browser. In a browser the close guard only warns on
+`beforeunload` (the server owns stop-and-save) and the installer updater is
+hidden. Verified in headless Chromium: the full UI, live mock frames at 30 fps
+over the socket.
+
+**One controller.** The first client controls the instrument; others are
+viewers whose instrument-changing commands (`CONTROL_COMMANDS` in the server)
+fail with `VIEWER_ONLY`. `take_control` claims control; it passes to the
+oldest remaining client when the controller disconnects. Every client gets
+`{"session": {"client_id", "controller_id"}}` on connect and on each change.
+Test: `one_client_controls_the_instrument`.
+
+**Packaging.** `scripts/yofo/stage_image.sh` builds the ARMv7 backend, the
+server and the UI and stages them for pz7035-imx426's `yofo-studio` recipe
+(meta-yofo), which installs `/usr/bin/yofo-studio-server`,
+`/usr/share/yofo-studio/dist` and `yofo-studio.service` (port 8427, token
+generated on first boot in `/etc/yofo-studio/token`, data in
+`/var/lib/yofo-studio`). The backend is not built by BitBake because it needs
+the SDK of the same image.
+
+**Science on the PL.** After `init` the UI reads `fetch_platform_info`; with
+`host_processing` false the realtime switch, backgrounds, calibration and the
+processed preview are hidden and the sidebar says processing runs on the PL
+(ABI 21, [[Rust-Bridge]]).
+
+On the PZ7035 PS (2026-10-01): the ARMv7 server with `MIB_CAMERA_MODE=aravis`,
+`MIB_ARAVIS_FPS=1000`, `MIB_ARAVIS_EXPOSURE_US=900` served the UI to a browser
+on the bench PC, which showed live lit 512x96 IMX426 previews at the UI's
+30 fps pull rate. Server footprint: ~2 % CPU and 12-15 MiB RSS idle; with
+capture running ~90 % CPU (the backend takes every preview the producer
+delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
+(desktop-sized buffers; a target profile is open in impl spec S6).
+
+`desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
+capture over the socket, wrong token refused, client loss and quick reconnect).
+
+## Camera & Alignment (Qt Overview parity)
+
+With a camera that has an overview (MindVision, Aravis/PZ7035), entering the
+Camera & Alignment tab calls `set_camera_overview(true)` and entering
+Experiment `set_camera_overview(false)`, as Qt's tab change does; other tabs
+leave the camera alone and nothing changes during a run. The tab then shows
+the whole sensor with the experiment window as a yellow box (drag to move;
+release saves, as Qt saves on move) and X/Y/W/H fields with "Save camera ROI";
+`cameraAlignment.ts` snaps to the camera's steps and states "Sensor N Hz (max,
+limit) -> >= M images/s here (limit, bands)". For other cameras the fields keep
+setting the processing ROI. Verified on the PZ7035 through the browser:
+816x624 lit overview, window dragged to (232, 356) and saved, Experiment
+showed that 512x96 window. The browser shows the full field at ~26 fps (all
+the producer delivers at the 830 Hz preset) and the preview at the 30 fps
+display rate. Before `bytes_to_vec` (see [[Rust-Bridge]]) the full field was
+held at ~10 fps by per-byte frame copies in the bridge.
+`vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
+`src-tauri/target`'s cxx symlink loop hung `vitest run`.
+
 ## Command layer
 
-Thin wrappers over the bridge (all take the managed `AppState`):
+Thin wrappers over the bridge (all take the managed `AppState`; bodies in
+`crates/mib-app-commands`, Tauri shims in `desktop/src-tauri/src/lib.rs`):
 
 - **Live capture:** existing lifecycle commands remain serialized through
   `AppState.bridge`. `fetch_frame_packet` returns one owned binary response.
@@ -227,7 +330,7 @@ completion / gate-status values; `bridge.ts` exposes
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
 
-## Central profile registry (ABI 15, issue #398)
+## Central profile registry (ABI 24, issue #398)
 
 **Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
 sign in/out, refresh (also on open when signed in), cancel, and the cached
@@ -242,7 +345,11 @@ CR/LF header refusal, helper thread so a cancel returns at once, never panics
 across the FFI), installed with `set_registry_transport` when `AppState` is
 built — before the UI's `init`. Enabled by the same
 `MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY` environment as the backend
-worker.
+worker. The registry commands live in the desktop crate's `registry` module
+(`src-tauri/src/registry.rs`), not in `mib-app-commands`: they need the shell's
+transport, and a sign-in carries a password that must not cross the YOFO Studio
+WebSocket. `dispatch::tests::every_command_is_dispatchable` exempts `registry::`
+commands for that reason.
 
 #398 M2b: rows are selectable and show local validation on this instrument
 (`local_validation`, contract `registry_local_validation`) and the instrument
@@ -464,6 +571,16 @@ and refreshes the entire webview, requiring the same native experiment/output to
 remain active. Shell statistics polling is independent of a possibly stale UI draft
 of the realtime-enabled toggle. Raw MIBF v2 acquisition/store epochs require bridge
 ABI 18; processed preview recipe identity remains separately scoped.
+
+## Pump model per slot (2026-10-04)
+
+The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
+field (µL per revolution, default 25), pre-fills the instrument endpoint
+`/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe
+volume controls and shows head rpm and the estimated delivered volume.
+Connect goes through `pump_connect_model` (ABI 22, [[Rust-Bridge]]), which the
+WebSocket server allows for the controlling client.
 
 ## Remembered discovery and named pump endpoints (2026-09-23)
 

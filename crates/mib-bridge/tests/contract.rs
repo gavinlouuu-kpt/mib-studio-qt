@@ -61,11 +61,39 @@ fn abi_version_is_stable() {
     // stop outcomes, run completion states, readiness gate statuses, typed
     // ExperimentStatus companions and fetch_experiment_readiness.
     // v14 the asynchronous device-discovery jobs (#419, ADR 0005).
-    // v15 the central profile registry commands/snapshot and the
-    // shell-injected registry HTTPS transport (#398); its number collided
-    // with a parallel branch, so it rides develop's number until the single
-    // post-yofo bump (see the #398 exec plan).
-    assert_eq!(ffi::bridge_abi_version(), 19);
+    // v20 Camera & Alignment: set_camera_overview, save_camera_roi,
+    // fetch_camera_geometry (YOFO Studio; MindVision and Aravis cameras).
+    // v21 fetch_platform_info: science on the PL (YOFO Studio ADR 0008).
+    // v22 pump_connect_model: dLSP syringe or Tushui peristaltic per slot.
+    // v23 develop (19) and the instrument line (20-22) as one contract; no
+    // new commands (ADR 0011 single renumber, so no release build carries an
+    // interim number).
+    // v24 the central profile registry (#398): registry_* commands, snapshot
+    // and contract groups, and the shell-injected HTTPS transport. Built as a
+    // provisional 15 and renumbered once; 15 and 19-23 are never reused.
+    assert_eq!(ffi::bridge_abi_version(), 24);
+}
+
+// ABI 20: a camera without a full-sensor overview (the mock) reports it and
+// refuses the overview and a window save cleanly; leaving overview is a no-op.
+#[test]
+#[serial]
+fn camera_alignment_commands_without_overview_camera() {
+    let dir = make_frame_dir();
+    let data = std::env::temp_dir().join(format!("mib_bridge_align_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    assert!(bridge.pin_mut().configure_mock_camera(&dir.to_string_lossy(), 5, true).ok);
+    let geometry: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_camera_geometry()).unwrap();
+    assert_eq!(geometry["supported"], serde_json::json!(false), "{geometry}");
+    let refused = bridge.pin_mut().set_camera_overview(true);
+    assert!(!refused.ok);
+    assert!(refused.message.contains("no full-sensor overview"), "{}", refused.message);
+    assert!(bridge.pin_mut().set_camera_overview(false).ok, "leaving overview is always possible");
+    assert!(!bridge.pin_mut().save_camera_roi(0, 0, 64, 64).ok);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&data);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
@@ -162,6 +190,10 @@ fn pump_commands_fail_safely_without_hardware() {
     assert!(!bridge.pin_mut().pump_connect(0, 3, 115200, 300).ok);
     assert!(!bridge.pin_mut().pump_set_flow_rate(0, -5.0, 100).ok);
     assert!(!bridge.pin_mut().pump_set_syringe_volume(0, 0, 1).ok);
+    assert_eq!(sample.model, 0, "slots default to the dLSP syringe model");
+    assert!(!bridge.pin_mut().pump_connect_model(0, 2, "/dev/ttyPS1", 115200, 3, 25.0).ok);
+    assert!(!bridge.pin_mut().pump_connect_model(0, 1, "/dev/ttyPS1", 115200, 3, 0.0).ok);
+    assert!(!bridge.pin_mut().pump_connect_model(0, 1, "/dev/ttyPS1", 115200, 300, 25.0).ok);
 
     // No hardware on this platform: a real connect fails without hanging, and
     // control commands on a disconnected pump fail cleanly.
@@ -644,7 +676,7 @@ fn rust_enums_match_contract_json() {
                                     ("Timeout", 5), ("MalformedResponse", 6), ("Unsupported", 7), ("MissingSdk", 8),
                                     ("ProviderException", 9), ("Cancelled", 10), ("Overflow", 11), ("ShuttingDown", 12),
                                     ("TooManyJobs", 13)]),
-        // ABI 15 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
+        // ABI 24 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
         ("registry_session_states", &[("SignedOut", 0), ("SignedIn", 1), ("CachedOffline", 2)]),
         ("registry_connectivity", &[("Unknown", 0), ("Online", 1), ("Offline", 2), ("AuthenticationRequired", 3),
                                     ("PermissionDenied", 4), ("Failed", 5)]),
@@ -1133,7 +1165,7 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_file(&rec_path);
 }
 
-// ---- Central profile registry (schema v15, #398) ----
+// ---- Central profile registry (schema v24, #398) ----
 // The shell-injected transport is a plain `fn` pointer, so the test
 // transports report through statics.
 static REGISTRY_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

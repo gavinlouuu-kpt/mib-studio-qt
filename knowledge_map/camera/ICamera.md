@@ -89,6 +89,7 @@ separate value on a separate clock and is never mixed with the device stamp.
 | [[MindVisionCamera]] | deviceTicks | 1e9 (ns) | 10 000 (`uiTimeStamp`, 0.1 ms, 32-bit) | deviceCapture |
 | [[EGrabberCamera]] | hostMonotonicUs (Windows; `unknown`/unsupported elsewhere) | 1e6 | — | transportReceipt |
 | [[MockCamera]] | hostSteadyNs | 1e9 | — | synthetic |
+| [[AravisCamera]] | deviceTicks | 0 (opaque) | transport-specific | deviceCapture (unsupported until mapped) |
 | default / undeclared | unknown | 0 | — | unsupported |
 
 ## Gotchas

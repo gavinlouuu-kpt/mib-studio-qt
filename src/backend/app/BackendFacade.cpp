@@ -1,4 +1,5 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/app/ProfileCatalog.h"
 #include "backend/app/ProcessingCoreManagement.h"
@@ -647,6 +648,44 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Configured));
             return {true, BackendCommandType::Camera, "Camera reset requested"};
         }
+        case CameraCommandAction::SetCameraOverview:
+        {
+            const bool wasRunning = backend_.capture().isRunning();
+            std::string error;
+            if (!backend_.setCameraOverview(command.cameraOverview, &error))
+            {
+                const std::string message = error.empty() ? "Camera mode change failed" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            const std::string mode = command.cameraOverview ? "full sensor overview" : "experiment window";
+            if (wasRunning && !backend_.capture().isRunning())
+            {
+                emitEvent(makeCameraStatus(CameraState::Starting));
+                if (!backend_.capture().start())
+                {
+                    emitEvent(makeCameraStatus(CameraState::Error));
+                    const std::string message = "Camera switched to the " + mode + " but did not restart";
+                    emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                    return {false, BackendCommandType::Camera, message};
+                }
+                emitEvent(makeCameraStatus(CameraState::Running));
+            }
+            return {true, BackendCommandType::Camera, "Camera shows the " + mode};
+        }
+        case CameraCommandAction::SaveCameraRoi:
+        {
+            std::string error;
+            if (!backend_.saveCameraRoi(command.roiX, command.roiY, command.roiWidth, command.roiHeight, &error))
+            {
+                const std::string message = error.empty() ? "Camera ROI was not saved" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            return {true, BackendCommandType::Camera,
+                    "Camera ROI saved: " + std::to_string(command.roiWidth) + "x" + std::to_string(command.roiHeight) +
+                        " at (" + std::to_string(command.roiX) + ", " + std::to_string(command.roiY) + ")"};
+        }
         case CameraCommandAction::StartCapture:
             emitEvent(makeCameraStatus(CameraState::Starting));
             if (!backend_.capture().start())
@@ -835,6 +874,8 @@ namespace backend::bridge
                     merged);
             if (command.roi) roi = *command.roi;
             if (command.realtimeEnabled) enabled = *command.realtimeEnabled;
+            if (enabled && !app::hostProcessingAvailable())
+                throw std::runtime_error("realtime processing runs on the PL on this instrument; the host pipeline is not available");
             if (command.realtimeDropFrames) drop = *command.realtimeDropFrames;
             if (command.realtimeProcessingMode) mode = *command.realtimeProcessingMode;
             if (command.realtimeBatchSettings) batch = *command.realtimeBatchSettings;
@@ -1665,6 +1706,11 @@ namespace backend::bridge
                 return fail("Invalid pump serial endpoint");
             if (command.modbusAddress < 1 || command.modbusAddress > 247)
                 return fail("Invalid Modbus address (1-247)");
+            if (command.model != static_cast<int>(Pump::PumpModel::DlspSyringe) &&
+                command.model != static_cast<int>(Pump::PumpModel::TushuiPeristaltic))
+                return fail("Invalid pump model");
+            if (!(command.microlitersPerRev > 0.0 && command.microlitersPerRev <= 100000.0))
+                return fail("Invalid peristaltic calibration (µL per revolution)");
             using Bus = services::serialbus::SerialBusManager;
             const auto otherId =
                 pumpId == Pump::PumpId::Sample ? Pump::PumpId::Sheath : Pump::PumpId::Sample;
@@ -1684,12 +1730,14 @@ namespace backend::bridge
                     : autofocus.getEndpointId();
             if (autofocus.isConnected() && Bus::samePort(autofocusPort, port))
                 return fail("Serial endpoint already in use by autofocus");
+            const auto model = static_cast<Pump::PumpModel>(command.model);
             const bool connected =
-                command.portName.empty()
+                command.portName.empty() && model == Pump::PumpModel::DlspSyringe
                     ? pumps.connect(pumpId, command.comPort, command.baudRate,
                                     static_cast<std::uint8_t>(command.modbusAddress))
                     : pumps.connect(pumpId, port, command.baudRate,
-                                    static_cast<std::uint8_t>(command.modbusAddress));
+                                    static_cast<std::uint8_t>(command.modbusAddress), model,
+                                    command.microlitersPerRev);
             if (!connected) return fail("Pump connect failed (no Modbus response)");
             return {true, BackendCommandType::Pump, "Pump connected"};
         }
@@ -1824,6 +1872,9 @@ namespace backend::bridge
         out.configuredFlowRate = config.flowRate;
         out.flowRateUnit = config.flowRateUnit;
         out.direction = static_cast<int>(config.direction);
+        out.model = static_cast<int>(config.model);
+        out.microlitersPerRev = config.microlitersPerRev;
+        out.speedRpm = status.speedRpm;
         return true;
     }
 
@@ -2178,7 +2229,7 @@ namespace backend::bridge
         return out.valid;
     }
 
-    // ---- Central profile registry (issue #398, ABI 15) ----
+    // ---- Central profile registry (issue #398, ABI 24) ----
     namespace
     {
         BackendRegistryJob toRegistryJob(const profiles::RegistryJobStatus &job)
@@ -2504,6 +2555,36 @@ app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const 
 }
 
 namespace backend::bridge {
+std::string BackendFacade::fetchPlatformInfoJson() const {
+    return nlohmann::json{
+        {"science", app::sciencePlacement()},
+        {"host_processing", app::hostProcessingAvailable()},
+        {"aravis", MIB_HAS_ARAVIS != 0},
+    }.dump();
+}
+
+std::string BackendFacade::fetchCameraGeometryJson() const {
+    if (!initialized_) return nlohmann::json{{"supported", false}}.dump();
+    const auto g = backend_.cameraGeometry();
+    nlohmann::json session = nlohmann::json::parse(g.sessionJson, nullptr, false);
+    if (session.is_discarded()) session = nlohmann::json::object();
+    return nlohmann::json{
+        {"supported", g.supported},
+        {"overview", g.overview},
+        {"camera", g.camera},
+        {"sensor_width", g.sensorWidth},
+        {"sensor_height", g.sensorHeight},
+        {"roi", {{"x", g.roiX}, {"y", g.roiY}, {"width", g.roiWidth}, {"height", g.roiHeight}}},
+        {"width_increment", g.widthIncrement},
+        {"height_increment", g.heightIncrement},
+        {"offset_x_increment", g.offsetXIncrement},
+        {"offset_y_increment", g.offsetYIncrement},
+        {"min_width", g.minWidth},
+        {"min_height", g.minHeight},
+        {"session", session},
+    }.dump();
+}
+
 std::string BackendFacade::fetchPreviewBufferJson() const {
     uint64_t first = 0, last = 0; size_t count = 0;
     const bool available = initialized_ && backend_.playback().queryRange(first, last, count);
@@ -2839,7 +2920,11 @@ BackendCommandResult BackendFacade::backgroundCalibrationCommandJson(const std::
         request.timeoutMs = static_cast<std::uint64_t>(timeout);
         BackendCommandResult result{false, type, "Experiment must be idle for background calibration"};
         backend_.experiment().withIdleConfiguration([&] {
-            result.ok = backend_.processing().startBackgroundCalibration(request, &result.message);
+            // PL science: no host frame is classified; median of preview frames.
+            result.ok = app::hostProcessingAvailable()
+                            ? backend_.processing().startBackgroundCalibration(request, &result.message)
+                            : backend_.processing().startPreviewBackgroundCalibration(backend_.getFrameStore(),
+                                                                                      request, &result.message);
             if (result.ok) result.message = "Background calibration started; previous background remains active until success";
         });
         return result;

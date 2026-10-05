@@ -2,7 +2,7 @@ import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
-import { invoke } from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
@@ -61,6 +61,12 @@ export interface PumpStatus {
   configured_flow_rate: number;
   flow_rate_unit: number;
   direction: number;
+  /** Contract PUMP_MODELS value (v22). */
+  model?: number;
+  /** Peristaltic flow calibration, µL per head revolution (v22). */
+  microliters_per_rev?: number;
+  /** Peristaltic head speed setpoint, rpm (v22). */
+  speed_rpm?: number;
 }
 
 /** Per-dataset capabilities of the loaded review file (schema v9, BE-6). */
@@ -164,7 +170,7 @@ export interface CameraDiscovery {
   framegrabbers: DiscoveredFramegrabber[];
 }
 
-/** Central profile registry (bridge schema v15, #398). Integers are contract
+/** Central profile registry (bridge schema v24, #398). Integers are contract
  *  values: `session` REGISTRY_SESSION_STATES, `connectivity`
  *  REGISTRY_CONNECTIVITY, job `kind`/`state` REGISTRY_JOB_KINDS /
  *  REGISTRY_JOB_STATES, `central_state` REGISTRY_CENTRAL_STATES. u64 values
@@ -383,6 +389,44 @@ export interface TriggerStatus {
   periodic_interval_ms: number;
 }
 
+/** Where the science runs (ABI 21). `host_processing` false = the PL processes every frame
+ *  and the host pipeline's controls do not apply. */
+export interface PlatformInfo {
+  science: "host" | "pl";
+  host_processing: boolean;
+  aravis: boolean;
+}
+
+/** Camera & Alignment geometry (ABI 20, `fetch_camera_geometry`). Sensor coordinates. */
+export interface CameraGeometry {
+  supported: boolean;
+  overview: boolean;
+  camera: string;
+  sensor_width: number;
+  sensor_height: number;
+  roi: {x: number; y: number; width: number; height: number};
+  width_increment: number;
+  height_increment: number;
+  offset_x_increment: number;
+  offset_y_increment: number;
+  min_width: number;
+  min_height: number;
+  /** Last camera read-back (Aravis): applied window, sensor rate and the delivered rate. */
+  session: {
+    overview?: boolean;
+    region?: {x: number; y: number; width: number; height: number};
+    frame_rate_hz?: number;
+    frame_rate_max_hz?: number;
+    frame_rate_clamped?: boolean;
+    frame_rate_limit?: string;
+    exposure_us?: number;
+    band_count?: number;
+    delivered_frame_rate_hz?: number;
+    delivered_limit?: string;
+    preview_rate_hz?: number;
+  };
+}
+
 async function invokeCommand(command: string, args?: Record<string, unknown>): Promise<CmdResult> {
   return decodeCommandResult(await invoke<unknown>(command,args));
 }
@@ -480,6 +524,9 @@ export const bridge = {
   fetchAutofocusConfig: () => invoke<AutofocusConfig>("fetch_autofocus_config"),
   // Syringe pumps (schema v10, BE-7): pump 0 = Sample, 1 = Sheath.
   pumpConnectEndpoint: (pump: number, portName: string, baudRate: number, modbusAddress: number) => invokeCommand("pump_connect_endpoint", {pump, portName, baudRate, modbusAddress}),
+  // v22: either pump model in either slot; microlitersPerRev calibrates peristaltic flow.
+  pumpConnectModel: (pump: number, model: number, portName: string, baudRate: number, modbusAddress: number, microlitersPerRev: number) =>
+    invokeCommand("pump_connect_model", { pump, model, portName, baudRate, modbusAddress, microlitersPerRev }),
   pumpConnect: (pump: number, comPort: number, baudRate: number, modbusAddress: number) =>
     invokeCommand("pump_connect", { pump, comPort, baudRate, modbusAddress }),
   pumpDisconnect: (pump: number) => invokeCommand("pump_disconnect", { pump }),
@@ -526,6 +573,12 @@ export const bridge = {
     sourceMutation("apply_processing_config_json", { json }),
   setProcessingRoi: (x: number, y: number, w: number, h: number) =>
     sourceMutation("set_processing_roi", { x, y, w, h }),
+  // Camera & Alignment (ABI 20): the overview changes the frame geometry, so it is a source
+  // mutation; saving the window only persists it for the next experiment-mode start.
+  setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
+  saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
+  fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
+  fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),
@@ -551,7 +604,7 @@ export const bridge = {
       },
       opts,
     ),
-  // Central profile registry (bridge schema v15, #398). Commands return a job
+  // Central profile registry (bridge schema v24, #398). Commands return a job
   // ID as a decimal string; "0" means refused (not configured / not ready).
   registrySignIn: (email: string, password: string) =>
     invoke<string>("registry_sign_in", { email, password }),
