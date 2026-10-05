@@ -26,6 +26,9 @@
 - `StreamDecoder` checks one ring's sequence (a duplicate is rejected; a gap
   is counted and the record still delivered), its epoch (STALE_EPOCH; a FRAME
   with FIRST_OF_EPOCH advances it) and the descriptor generation.
+- A RESULT may carry zero payload words. Encoder and decoder both skip the
+  payload copy then (copying into an empty vector's null `data()` is undefined
+  behaviour; caught by UBSan). `processing.pz_records` round-trips one.
 
 ## Ring and frames
 

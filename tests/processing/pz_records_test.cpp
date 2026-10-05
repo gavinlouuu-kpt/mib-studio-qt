@@ -322,10 +322,26 @@ void testProfileDecodesVectors(const std::string& vectorsPath) {
 
 } // namespace
 
+void testEmptyPayloadResult() {
+    // A RESULT with no payload words round-trips without copying from an
+    // empty vector (UBSan: null pointer passed to memcpy).
+    pz::ResultRecord r = cellResult(7, 0, 12);
+    r.payload.clear();
+    r.payloadValidity = 0;
+    const auto bytes = pz::encodeResultRecord(r, 3);
+    const auto d = pz::decodeRecord(bytes.data(), bytes.size());
+    MIB_REQUIRE(d.ok() && d.record.has_value(), "empty-payload RESULT decodes");
+    const auto* rr = std::get_if<pz::ResultRecord>(&d.record->body);
+    MIB_REQUIRE(rr != nullptr, "empty-payload record is a RESULT");
+    MIB_EXPECT(rr->payload.empty() && rr->frameId == 7, "empty payload preserved");
+    MIB_EXPECT(pz::encodeResultRecord(*rr, 3) == bytes, "empty-payload RESULT re-encodes");
+}
+
 int main(int argc, char** argv) {
     MIB_REQUIRE(argc > 2, "usage: pz_records_test <third_party/pz7035-abi> <unet-cells-v2-pl-vectors.json>");
     testBundleFixtures(argv[1]);
     testRingAndAssembly();
+    testEmptyPayloadResult();
     testProfileDecodesVectors(argv[2]);
     return mib::test::exitCode();
 }
