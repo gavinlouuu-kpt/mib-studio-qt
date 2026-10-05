@@ -6,8 +6,10 @@
 
 **Source:** `include/backend/pz/PzRecords.h`, `src/backend/pz/PzRecords.cpp`
 (in `mib_processing`, Qt-free)
-**ABI bundle:** `third_party/pz7035-abi/` (pz7035-imx426 `abi/`, pinned by
-`PROVENANCE.json`; `scripts/vendor_pz7035_abi.py --from <repo>` refreshes it,
+**ABI bundle:** `third_party/pz7035-abi/` (pz7035-imx426 `abi/` at tag
+`abi-v1.2.0`, commit c726d338, pinned by `PROVENANCE.json`, which records the
+tag and commit; `scripts/vendor_pz7035_abi.py --from <checkout> --tag <tag>`
+refreshes it and refuses a tag that does not resolve to the checkout,
 `--check` verifies it; `.gitattributes` marks it `-text` so a Windows checkout
 keeps the exact bytes the sha256 check expects)
 **Tests:** `processing.pz_records`, `processing.pz_unet_cells_host`,
