@@ -144,6 +144,7 @@ pub mod ffi {
         /// Contract `run_completion_states` value (Unknown until terminal).
         pub completion: u32,
         pub completion_reason: String,
+        pub fault_revision: u64,
         pub fault_code: String,
         pub fault_message: String,
     }
@@ -295,6 +296,8 @@ pub mod ffi {
         pub enabled: bool,
         pub current_voltage: f64,
         pub com_port: i32,
+        pub backend_name: String,
+        pub endpoint_id: String,
         pub average_ring_ratio: f64,
         pub median_ring_ratio: f64,
         pub last_ring_ratio_update_us: u64,
@@ -336,6 +339,7 @@ pub mod ffi {
         pub com_port: i32,
         pub baud_rate: i32,
         pub modbus_address: i32,
+        pub port_name: String,
         pub configured_flow_rate: f64,
         pub flow_rate_unit: i32,
         pub direction: u32,
@@ -394,6 +398,24 @@ pub mod ffi {
     /// `background_set`, and the monotonic `config_version` for
     /// external-change detection. `valid` is false when uninitialized.
     #[derive(Debug, Clone, Default)]
+    pub struct BridgeCheckedConfigDocument {
+        pub ok: bool,
+        pub path: String,
+        pub revision: String,
+        pub document_json: String,
+        pub error: String,
+    }
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeConfigTransactionResult {
+        pub saved: bool,
+        pub applied: bool,
+        pub verified: bool,
+        pub conflict: bool,
+        pub revision: String,
+        pub error: String,
+    }
+
+    #[derive(Debug, Clone, Default)]
     pub struct BridgeConfigDocument {
         pub valid: bool,
         pub json: String,
@@ -435,6 +457,7 @@ pub mod ffi {
         pub area_ratio: f64,
         pub ring_ratio: f64,
         pub youngs_modulus: f64,
+        pub pixel_to_micron: f64,
     }
 
     /// Bounded monitoring snapshot (schema v6, BE-5). Evictions are
@@ -470,6 +493,8 @@ pub mod ffi {
     /// bytes. `valid` is false when no frame is available.
     #[derive(Debug, Clone, Default)]
     pub struct BridgeFrame {
+        pub capture_session: u64,
+        pub store_generation: u64,
         pub valid: bool,
         pub frame_index: u64,
         pub timestamp_ns: u64,
@@ -502,9 +527,11 @@ pub mod ffi {
 
         /// Schema version of the command/event contract (ADR 0003). Additive
         /// changes bump this.
+        fn profile_fetch_url(url: &str) -> String;
         fn bridge_abi_version() -> u32;
 
         fn initialize(self: Pin<&mut BackendBridge>, data_dir: &str) -> bool;
+        fn initialize_with_resources(self: Pin<&mut BackendBridge>, data_dir: &str, resource_root: &str) -> bool;
         fn shutdown(self: Pin<&mut BackendBridge>);
         fn is_initialized(&self) -> bool;
 
@@ -558,6 +585,8 @@ pub mod ffi {
         /// provenance write (only after data is flushed), close. Never blocks
         /// on the flush.
         fn experiment_stop(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn fetch_capture_lifecycle(self: Pin<&mut BackendBridge>) -> String;
+        fn experiment_acknowledge_fault(self: Pin<&mut BackendBridge>, expected_run: u64, fault_revision: u64, code: &str, message: &str, confirmed: bool) -> BridgeCommandResult;
 
         /// Like `experiment_stop`, but the terminal status is marked cancelled.
         /// The HDF5 file is still finalized so it remains readable.
@@ -576,6 +605,7 @@ pub mod ffi {
         /// Autofocus / nanopositioner commands (schema v11, BE-8). On
         /// platforms without the Coremor SDK, connect fails with a structured
         /// message and every other command stays safe.
+        fn autofocus_connect_endpoint(self: Pin<&mut BackendBridge>, backend: &str, endpoint: &str, com_port: i32, baud_rate: i32, device_address: i32) -> BridgeCommandResult;
         fn autofocus_connect(
             self: Pin<&mut BackendBridge>,
             com_port: i32,
@@ -598,6 +628,7 @@ pub mod ffi {
         /// Syringe pump commands (schema v10, BE-7). `pump` is a contract
         /// `pump_ids` value (0 Sample, 1 Sheath). Serial-port conflicts with
         /// the other pump or the autofocus controller are structured errors.
+        fn pump_connect_endpoint(self: Pin<&mut BackendBridge>, pump: u32, port_name: &str, baud_rate: i32, modbus_address: i32) -> BridgeCommandResult;
         fn pump_connect(
             self: Pin<&mut BackendBridge>,
             pump: u32,
@@ -667,11 +698,35 @@ pub mod ffi {
         /// (schema v9, BE-6). Returns the job's operation_id; progress and the
         /// terminal state arrive as OperationStatus events. Partial outputs
         /// are removed on cancel/failure; the source file is opened read-only.
+        fn set_processed_preview_enabled(self: Pin<&mut BackendBridge>, enabled: bool);
+        fn fetch_processed_preview(self: Pin<&mut BackendBridge>) -> Vec<u8>;
+        fn background_calibration_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
+        fn background_calibration_status(self: Pin<&mut BackendBridge>) -> String;
+        fn startup_discovery_set_preference(self: Pin<&mut BackendBridge>, json: &str) -> String;
+        fn startup_discovery_run(self: Pin<&mut BackendBridge>, action: &str) -> String;
+        fn startup_discovery_status(self: Pin<&mut BackendBridge>) -> String;
+        fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
+        fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
+
+        fn render_review_overlay(self: Pin<&mut BackendBridge>, json: &str) -> Vec<u8>;
+        fn fetch_review_reanalysis_preview(self: Pin<&mut BackendBridge>, json: &str) -> BridgeFrame;
+        fn fetch_review_charts_json(self: Pin<&mut BackendBridge>) -> String;
+        fn fetch_monitoring_chart_reference(self: Pin<&mut BackendBridge>) -> String;
+        fn review_reanalysis_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
+        fn review_reanalysis_status_json(self: Pin<&mut BackendBridge>) -> String;
+        fn review_export_json(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
+        fn review_export_status_json(self: Pin<&mut BackendBridge>) -> String;
+
         fn review_export_csv(self: Pin<&mut BackendBridge>, output_path: &str)
             -> BridgeCommandResult;
 
         /// Pull the full processing configuration document (schema v8, BE-3).
         fn fetch_processing_config_json(self: Pin<&mut BackendBridge>) -> BridgeConfigDocument;
+        fn processing_core_command(self: Pin<&mut BackendBridge>, cache_root: &str, request: &str) -> String;
+        fn profile_command(self: Pin<&mut BackendBridge>, base: &str, request: &str) -> String;
+        fn fetch_config_document(self: Pin<&mut BackendBridge>, path: &str) -> BridgeCheckedConfigDocument;
+        fn apply_config_document(self: Pin<&mut BackendBridge>, path: &str, baseline: &str, patch: &str) -> BridgeConfigTransactionResult;
+
 
         /// Merge-apply a processing configuration document (schema v8, BE-3):
         /// only keys present in the JSON change; malformed values fail the
@@ -754,6 +809,7 @@ pub mod ffi {
             -> BridgeCommandResult;
 
         /// Issue a GenICam DeviceReset to the selected hardware camera.
+        fn soft_trigger_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn reset_hardware_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 
         /// Enable/disable monitoring accumulation (schema v6, BE-5). Disabled
@@ -793,6 +849,9 @@ pub mod ffi {
         fn queue_overflow_total(&self) -> u64;
 
         /// Pull the latest frame's metadata + pixel bytes (one copy).
+        fn close_review(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn fetch_preview_buffer(self: Pin<&mut BackendBridge>) -> String;
+        fn save_preview_buffer(self: Pin<&mut BackendBridge>, request: &str) -> String;
         fn fetch_latest_frame(self: Pin<&mut BackendBridge>) -> BridgeFrame;
 
         /// Pull a specific frame by absolute index (metadata + one byte copy).

@@ -24,7 +24,8 @@
   through `readImageByIndex` / `readSeriesImagesByIndex` (one frame
   resident at a time); handles experiment files (`/valid_frames`,
   `/invalid_frames`, series) and recording files (`/recorded_frames`,
-  `frame_` prefix, no metrics/charts).
+  `frame_` prefix, no metrics/charts in All mode; explicit MetricsCsv requests
+  export frame metadata through the same CSV writer).
 - Output is **transactional**: writes into
   `.<final-name>.partial-<job-id>` (file for `MetricsCsv`, directory for
   `Images`/`All`) next to the destination and publishes it with a rename
@@ -38,7 +39,8 @@
   `<base>` or `<base>_<max suffix + 1>` — cost does not grow with the number
   of previous exports. An explicit destination is honoured; an existing
   *file* destination (already confirmed by a save dialog) is replaced
-  atomically at commit, an existing folder is refused.
+  atomically at commit, an existing folder is refused. A destination equivalent
+  to the source recording (including symlinks/hardlinks) is always rejected.
 - Charts are not rendered here: the caller passes `supplementalImages`
   (name → BGR `cv::Mat`) captured on its own thread; the job writes them for
   `All` exports.
@@ -59,3 +61,77 @@ re-dispatches to its UI thread.
   test asserts the global count returns to baseline after every job.
 - The bridge work in #276 should consume this API rather than re-implement
   export logic in the UI layer.
+
+## Tauri facade binding (2026-09-23)
+
+`BackendFacade::submitReviewExportJson` starts one owned export worker over
+this service. Busy submissions are rejected; completed workers are reaped
+before replacement. `fetchReviewExportStatusJson` retains the latest job's
+progress/terminal snapshot so event loss or view navigation does not hide
+its outcome. Operation IDs/counters are decimal strings at the JSON seam.
+`requestOperationCancel` shares the service's atomic cancellation token;
+shutdown joins the worker before teardown and publishes terminal operation
+status only after service cleanup. Terminal results include published final
+path, retained partial path, errors, warnings and image/metrics counts.
+
+Tauri commands `review_export_json` / `review_export_status_json` back the
+TypeScript `bridge.reviewExport` / `reviewExportStatus` helpers. The legacy
+`review_export_csv` command now uses the same engine with an explicit CSV
+destination. No second exporter remains in the facade. Chart image payloads
+and series subrange selection are not yet exposed in this bridge request;
+All uses the service's default full-series selection without UI charts.
+
+`backend.export_bridge_facade` guards repeated cancellation/reopen/export,
+busy rejection, source hash immutability, output-parent faults, and retained
+terminal recovery under a watchdog. Rust review contract tests verify CSV
+round-trip and retained status. Run the backend stress/TSan lane before cutover.
+
+
+Valid-only and invalid-only experiment recordings need not contain both metadata
+datasets: export checks presence and skips the absent side without swallowing
+read errors. An explicit output equivalent to the source (including existing
+hard/symbolic links) is refused. React owns status polling across navigation,
+keeps cancel available in a persistent status panel, and distinguishes accepted
+cancellation from authoritative cancelled/completed/failed results and retained
+partial output. Native facade tests exercise repeated cancel/reopen/export cycles.
+
+### Facade batch chain
+
+`submitReviewExportJson` accepts optional `source_paths` (1–256 nonempty paths).
+One owned worker runs the existing service serially, with one cancellation ID
+and independently opened readers. `explicit_destination` is rejected for batch
+requests; generated names are resolved per job. Status retains each attempted
+source's terminal state and final/partial path. A failed source does not suppress
+later files; any failure prevents aggregate success. Cancellation retains already
+published outputs and stops the remaining chain. The active Review source is
+unchanged. Regression coverage includes a failed middle source, duplicate source
+names and source immutability, in addition to repeated cancel/reopen cycles.
+
+### Shared full-data Review charts
+
+`ReviewChartData` extracts Qt's area calibration (`area * pixelToMicron²`),
+valid-object filtering, 0.5-wide edge-clamped ring-ratio histogram and isoelastic
+reference curves into a Qt-free helper. Both Qt Review and Tauri snapshots use
+it. The repository's existing isoelastic table is embedded at build time, so
+installed chart behavior does not depend on a developer working directory.
+`fetchReviewChartsJson` uses all valid metrics from an independent source reader;
+its 128×128 density cells conserve every finite point (not a sampled page), and
+histogram bins retain exact full-file counts. Counters are decimal strings.
+
+Tauri `all` and `charts` jobs render 1200×1200 TIFFs using that same helper inside
+the transactional export worker. Chart-only jobs export no source-frame images;
+failed chart writes never publish a successful output. Calibration/ring limits
+are explicit snapshots of current backend settings, matching Qt, not claimed to
+be recovered recording calibration. Fixed isoelastic reference conditions are
+labelled rather than automatically assumed to match the experiment.
+
+Tauri Review export options pass existing frame classes and inclusive series ranges to the shared service; fractional, negative and reversed ranges fail at the facade boundary.
+
+Explicit source lists may contain one source with an explicit CSV destination; lists with multiple sources must use generated destinations. This lets a dialog-pending single-file export retain its source independently of the current Review selection.
+
+### MSVC-safe shared review curve embedding
+
+The unchanged isoelastic reference is generated into separate bounded 4096-byte arrays, then assembled at runtime before the shared chart parser runs. It is not one large (or adjacent-concatenated) string literal, avoiding MSVC C2026. The CMake generator reads HEX so Windows/CRLF line endings and every source byte remain unchanged. `python tools/test_review_isoelastic_embedding.py` compiles the generated header and verifies the entire scientific resource byte-for-byte, plus a multi-chunk fixture with CRLF, quoting, backslashes and all 256 byte values. Native export/review tests still verify the parsed references are available without runtime working-directory assets.
+
+Both Linux and Windows desktop lanes compile the embedding byte-roundtrip fixture
+before the full application build, including MSVC on the Windows runner.
