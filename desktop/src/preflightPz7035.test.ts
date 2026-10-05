@@ -20,7 +20,7 @@ const PZ7035: PlatformCapabilities = {
   egrabber_script: false,
   pl_identity: true,
   led_strobe: true,
-  pump: { model: "tushui_peristaltic", port: "/dev/ttyPS1", modbus_address: 3, microliters_per_rev: 25 },
+  pump: { model: "tushui_peristaltic", port: "/dev/ttyPS1", sample_address: 3, sheath_address: 4, microliters_per_rev: 25 },
 };
 
 // results6 with the release weights, LED off at idle, quiet link.

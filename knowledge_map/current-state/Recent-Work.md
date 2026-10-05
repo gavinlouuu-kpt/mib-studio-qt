@@ -15,7 +15,8 @@ The rest of P0a:
 - **Capabilities:** the backend reports them, and the UI hides the MIB-only
   surfaces (nanopositioner, EGrabber, MindVision, host background, frame
   buffer, core updates, reanalysis, pulse generator).
-- **Pumps** default to the peristaltic pump on `/dev/ttyPS1`, address 3.
+- **Pumps** default to the two peristaltic pumps on `/dev/ttyPS1` (Sample 3,
+  Sheath 4).
 - **Token:** the browser asks `GET /auth` and prompts for the token instead of
   failing silently.
 - **Reads only:** `PzPlatformMonitor` never writes a register. Align/Run mode

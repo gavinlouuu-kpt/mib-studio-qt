@@ -36,8 +36,8 @@ int main()
                    caps["egrabber_script"] == false,
                "no MIB-only surfaces on the PZ7035");
     MIB_EXPECT(caps["pump"]["model"] == "tushui_peristaltic" && caps["pump"]["port"] == "/dev/ttyPS1" &&
-                   caps["pump"]["modbus_address"] == 3,
-               "the peristaltic pump on ttyPS1, slave 3");
+                   caps["pump"]["sample_address"] == 3 && caps["pump"]["sheath_address"] == 4,
+               "the peristaltic pumps on ttyPS1, slaves 3 and 4");
     // No board provider here (MIB_EXECUTION_PROVIDER unset): status says why.
     const auto status = nlohmann::json::parse(facade.fetchInstrumentStatusJson());
     MIB_EXPECT(status["available"] == false &&

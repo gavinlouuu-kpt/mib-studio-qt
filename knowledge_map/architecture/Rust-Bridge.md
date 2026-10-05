@@ -373,7 +373,8 @@ renumbers to 24 when it lands.
 
 - `fetch_platform_info` gains `capabilities`: instrument (desktop or
   pz7035), the MIB-only surfaces, `pl_identity`, `led_strobe`, align and run
-  mode, and the pump model, port, address and µL/rev.
+  mode, and the pump model, port, per-slot address (Sample 3, Sheath 4) and
+  µL/rev.
 - `fetch_instrument_status` returns the read-only `PzPlatformMonitor` sample:
   - the PL core against the expected core and the pinned weights;
   - LED preset and guard;

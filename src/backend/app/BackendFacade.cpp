@@ -2443,11 +2443,14 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
         {"align_mode", false},
         {"run_mode", false},
     };
-    // The PZ7035's peristaltic pump: RS485 on /dev/ttyPS1, Modbus slave 3.
+    // The PZ7035's two peristaltic pumps share RS485 on /dev/ttyPS1 as Modbus
+    // slaves 3 and 4 (bench 2026-10-05). Which one feeds the sample is not
+    // confirmed yet, so these are the slots' defaults, not a binding.
     capabilities["pump"] = host ? nlohmann::json(nullptr)
                                 : nlohmann::json{{"model", "tushui_peristaltic"},
                                                  {"port", "/dev/ttyPS1"},
-                                                 {"modbus_address", 3},
+                                                 {"sample_address", 3},
+                                                 {"sheath_address", 4},
                                                  {"microliters_per_rev", services::tushui::kDefaultMicrolitersPerRev}};
     return nlohmann::json{
         {"science", app::sciencePlacement()},

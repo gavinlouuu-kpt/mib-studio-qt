@@ -35,7 +35,8 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
   // #501: on the PZ7035 the pump is the instrument's peristaltic pump and there is no
   // nanopositioner or host pulse generator.
   const instrumentPump = capabilities.pump;
-  const pumpConnection = (): Connection => instrumentPump ? {port: instrumentPump.port, baud: '115200', address: String(instrumentPump.modbus_address)} : initialConnection();
+  const slotAddress = (slot: number) => instrumentPump ? (slot === 0 ? instrumentPump.sample_address : instrumentPump.sheath_address) : 1;
+  const pumpConnection = (slot: number): Connection => instrumentPump ? {port: instrumentPump.port, baud: '115200', address: String(slotAddress(slot))} : initialConnection();
   const pumpModel = instrumentPump ? PUMP_MODELS.TushuiPeristaltic : PUMP_MODELS.DlspSyringe;
   const pumpCalibration = instrumentPump ? String(instrumentPump.microliters_per_rev) : DEFAULT_MICROLITERS_PER_REV;
   const [pumps, setPumps] = useState<Array<PumpStatus | null>>([null, null]);
@@ -43,7 +44,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
   const [focusEndpoint, setFocusEndpoint] = useState('');
   const [focus, setFocus] = useState<AutofocusStatus | null>(null);
   const [config, setConfig] = useState<AutofocusConfig | null>(null);
-  const [connections, setConnections] = useState([pumpConnection(), pumpConnection(), initialConnection()]);
+  const [connections, setConnections] = useState([pumpConnection(0), pumpConnection(1), initialConnection()]);
   const [rates, setRates] = useState(['', '']);
   const [units, setUnits] = useState([100, 100]);
   const [directions, setDirections] = useState([0, 0]);
@@ -56,8 +57,8 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
     if (!instrumentPump) return;
     setModels(old => old.map(() => PUMP_MODELS.TushuiPeristaltic));
     setCalibrations(old => old.map(() => String(instrumentPump.microliters_per_rev)));
-    setConnections(old => old.map((c, i) => i < 2 ? {port: instrumentPump.port, baud: '115200', address: String(instrumentPump.modbus_address)} : c));
-  }, [instrumentPump?.port, instrumentPump?.modbus_address, instrumentPump?.microliters_per_rev]); // eslint-disable-line react-hooks/exhaustive-deps
+    setConnections(old => old.map((c, i) => i < 2 ? pumpConnection(i) : c));
+  }, [instrumentPump?.port, instrumentPump?.sample_address, instrumentPump?.sheath_address, instrumentPump?.microliters_per_rev]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [statusError, setStatusError] = useState('');
@@ -113,7 +114,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
     <p>Manual run and purge{autofocus ? ', enable and jog' : ''} require Service / Commissioning mode and arming. Stop{autofocus ? ' and disable' : ''} remain{autofocus ? '' : 's'} available during experiments.</p>
     {autofocus
       ? <p>Pumps accept system serial endpoints; devices may share a bus at distinct Modbus addresses. Nanopositioners support CoreMOR and OEABT identities.</p>
-      : instrumentPump && <p>This instrument's peristaltic pump answers on {instrumentPump.port}, Modbus address {instrumentPump.modbus_address}.</p>}
+      : instrumentPump && <p>This instrument's peristaltic pumps share {instrumentPump.port}: Sample at Modbus address {instrumentPump.sample_address}, Sheath at {instrumentPump.sheath_address} (defaults; which pump feeds the sample is not confirmed).</p>}
     {gate('configure') && <p role="status">{gate('configure')}</p>}
     {error && <p role="alert">{error}</p>}{statusError && <p role="alert">Status unavailable: {statusError}</p>}
     {pumps.map((status, id) => {
