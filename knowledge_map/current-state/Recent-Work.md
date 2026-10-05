@@ -1,5 +1,17 @@
 # Recent Work
 
+## 2026-10-04 — ADR 0011: YOFO Studio for the PZ7035
+
+Owner decisions on the instrument's organisation (`docs/decisions/0011-yofo-studio-pz7035-instrument.md`):
+- science in the PL;
+- `develop` is the only trunk (the instrument is a build configuration);
+- Contract 3 is defined by the pz7035-imx426 `unet_cells_v2` specification;
+- bitstream plus weights form a core;
+- Qt is retired after #450 parity;
+- the instrument image is assembled from CI artifacts.
+
+It supersedes the draft YOFO ADR, and the E0 ADR lands as 0012.
+
 ## 2026-10-02 — Central registry worker: sign-in, refresh, offline cache (#398 M1)
 
 `AppBackend` now owns a `profiles::ProfileRegistryWorker` (one thread): Supabase
