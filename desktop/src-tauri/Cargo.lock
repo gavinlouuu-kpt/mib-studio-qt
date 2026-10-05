@@ -2064,6 +2064,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mib-app-commands"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "hex",
+ "mib-bridge",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "mib-bridge"
 version = "0.1.0"
 dependencies = [
@@ -2078,6 +2091,7 @@ version = "0.1.0"
 dependencies = [
  "cxx",
  "hex",
+ "mib-app-commands",
  "mib-bridge",
  "semver",
  "serde",

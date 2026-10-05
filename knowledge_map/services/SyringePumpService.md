@@ -1,9 +1,11 @@
 # SyringePumpService
 
-> Dual-pump control (Sample + Sheath) via Modbus RTU over serial.
+> Dual-pump control (Sample + Sheath) via Modbus RTU over serial. Each slot
+> holds either a Longer dLSP501 syringe pump or a Tushui peristaltic pump.
 
 **Source:** `src/backend/services/SyringePumpService.cpp`,
-`include/backend/services/SyringePumpService.h`
+`include/backend/services/SyringePumpService.h`,
+`include/backend/services/TushuiPumpProtocol.h` (peristaltic register map)
 **Related:** [[SerialBus]] (transport), [[../frontend/SyringePumpTab]],
 [[../frontend/Dialogs]] (SyringePumpSettingsDialog)
 
@@ -33,7 +35,30 @@
 
 - `RunStatus`: Stop (0), Forward (1), Backward (2), Pause (3)
 - `Direction`: Infuse (0), Withdraw (1)
+- `PumpModel`: DlspSyringe (0), TushuiPeristaltic (1) — contract `pump_models`
 - `flowRateUnit` uses integer codes (e.g. `100` = µL/min)
+
+## Pump models (2026-10-04)
+
+`connect(id, portName, baud, address, model, microlitersPerRev)` picks the
+device for a slot; the other overloads connect a dLSP. The control surface is
+the same for both; the peristaltic paths (`peristaltic*` helpers) map it onto
+the Tushui simplified register set 100-107 (protocol V2.21, see
+`docs/integration/tushui-peristaltic-pump.md`):
+
+| Operation | Peristaltic behaviour |
+|---|---|
+| connect | Reads 100-107 only (no write); adopts speed/direction; flow limits = 0.01-500 rpm x µL/rev |
+| setFlowRate | µL/min or mL/min -> rpm = flow / µL/rev -> reg 100 (rpm x100); rates outside 0.01-500 rpm **fail** (no clamp) |
+| setDirection | Infuse = counter-clockwise (reg 101 = 1), Withdraw = clockwise; confirmed on the PZ7035 bench 2026-10-05 for both pumps (slave 3 Sample, slave 4 Sheath) |
+| start | turns (102-103) = 0 so the run is continuous, then reg 104 = 1 |
+| purge | 100 rpm in the purge direction; `stop`/`stopPurge` restore the flow speed and direction |
+| pollStatus | Run state + direction -> `RunStatus`; live flow = rpm x µL/rev; `accumulatedVolume` integrated in µL between polls (the pump has no counter) |
+| setSyringeVolume | fails (not applicable) |
+| disconnect | always writes stop |
+
+Default calibration 25 µL/rev (0.4 rpm = 10 µL/min, operator figure until a
+measured calibration). Test: `backend.peristaltic_pump_fake_serial`.
 
 ## Modbus helpers
 
@@ -70,3 +95,7 @@ is invoked from the Qt timer in [[../frontend/SyringePumpTab]].
   to avoid double-assigning a COM port to both pumps.
 - Dialog-provided `baudRate` and `modbusAddress` must match the hardware.
 - See `docs/dLSP_pump.pdf` for pump protocol reference (shipped in repo).
+- Peristaltic: which way Infuse pushes liquid depends on how the tubing is
+  loaded in the head; swap the tubing ends rather than the mapping.
+- The PZ7035 instrument pump answers at slave address 3 on `/dev/ttyPS1`
+  (vendor default is 1).

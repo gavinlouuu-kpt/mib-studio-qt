@@ -54,6 +54,9 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
+    # Science placement is a leaf (no dependencies); it lives with ProcessingService, which
+    # consults it, so processing-only binaries link.
+    ${PROJECT_SOURCE_DIR}/src/backend/app/SciencePlacement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
@@ -61,6 +64,9 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzExecutionProviders.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/ExecutionProviderFactory.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
@@ -70,6 +76,8 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/Tools.cpp
 )
+# Where the science runs (SciencePlacement.cpp is in this library): ON for the PZ7035 PS.
+target_compile_definitions(mib_processing PUBLIC MIB_PL_SCIENCE=$<BOOL:${MIB_PL_SCIENCE}>)
 
 # No Q_OBJECT usage in this target, and it must not require the Qt moc
 # toolchain to build standalone (e.g. for a Qt-less Python wheel build --
@@ -266,6 +274,8 @@ elseif(UNIX AND NOT APPLE)
         set(_mib_processing_native_arch "x86_64")
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
         set(_mib_processing_native_arch "aarch64")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(armv7.*|arm)$")
+        set(_mib_processing_native_arch "armv7")
     else()
         set(_mib_processing_native_arch "${CMAKE_SYSTEM_PROCESSOR}")
     endif()
@@ -367,6 +377,12 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
+if(MIB_HAS_ARAVIS)
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/camera/aravis/AravisCamera.cpp
+    )
+endif()
+
 target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
 
 
@@ -385,6 +401,19 @@ else()
     target_sources(mib_backend PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/YoloService.stub.cpp
     )
+endif()
+
+if(MIB_HAS_ARAVIS)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ARAVIS=1)
+    target_link_libraries(mib_backend PUBLIC PkgConfig::MIB_ARAVIS)
+    # On-target smoke/soak of the YOFO Studio preview path (impl spec S6).
+    add_executable(yofo_preview_soak ${PROJECT_SOURCE_DIR}/tools/yofo_preview_soak/main.cpp)
+    target_link_libraries(yofo_preview_soak PRIVATE mib_backend)
+    set_target_properties(yofo_preview_soak PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ARAVIS=0)
 endif()
 
 # Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the
