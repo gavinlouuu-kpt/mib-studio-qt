@@ -208,8 +208,7 @@ created in `setupStatusSurfaces()`:
 - **File:** Open Data Folder (`Documents/MIB_Studio_Qt`), Open Logs Folder
   (`%LOCALAPPDATA%/MIB_Studio_Qt/logs`), Exit.
 - **Settings:** Processing / Monitoring / Pixel-to-Micron / Syringe Pump
-  settings, **Processing Core…** ([[ProcessingCoreDialog]]), **Central
-  Methods…** ([[CentralMethodsDialog]], #398), Boot Service
+  settings, **Processing Core…** ([[ProcessingCoreDialog]]), Boot Service
   Toggles (added in code), and **Profiles…** (navigates to Experiment ▸
   Preview, which hosts the config/profiles editor).
 - **Help:** About, **Software Updates…** (opens [[System-Utilities]]'s

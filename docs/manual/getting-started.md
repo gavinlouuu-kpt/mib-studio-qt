@@ -62,26 +62,7 @@ the full text; right-click to copy) rather than widening the window.
 - **Settings** — *Processing*, *Monitoring*, *Pixel-to-Micron*, *Syringe
   Pump* settings dialogs; *Boot Service Toggles…* (disable selected
   services on next launch, e.g. auto-update); *Profiles…* (jumps to the
-  config/profiles editor on Experiment ▸ Preview); *Central Methods…*
-  (sign in to your lab's central method registry, refresh, and see the
-  centrally published method revisions cached on this PC with their central
-  state, e.g. Published, Superseded or REVOKED, and whether each is validated
-  on this instrument. Select a revision and press **Apply…** to load it: the
-  dialog lists the config.json settings that will change (instrument
-  settings such as COM ports or the save directory come with the method),
-  backs up your current config.json next to it as `config.json.bak-<time>`,
-  and loads the method exactly. The camera script is not applied
-  automatically; its file path is shown. To validate a method on this
-  instrument, record a short test run with it applied, then select it and
-  press **Mark validated…** and pick that run's `.h5` file (or **Record
-  failed run…** if it did not work). Only a run recorded with that exact
-  revision on this instrument is accepted. Experiment readiness warns until
-  the applied central method is validated here and blocks a revoked one; each
-  run file records the exact method revision. Available when your
-  administrator has configured the registry; cached methods stay listed and
-  can be applied when the registry is offline, but validating needs a
-  sign-in. Set `MIB_INSTRUMENT_NAME` (e.g. `MIB-01`) to label this PC in run
-  files.)
+  config/profiles editor on Experiment ▸ Preview).
 - **Help** — *About*, *Software Updates…*, *Documentation* (opens the
   project page), *Report a Problem* (opens the issue tracker).
 

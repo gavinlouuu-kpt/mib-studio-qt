@@ -91,6 +91,30 @@ class ContractVersionConsistencyTest(unittest.TestCase):
             "native sidecar engine_abi_version must mirror ProcessingCoreAbi.h",
         )
 
+    def test_absdiff_laplacian_sidecars_declare_contract_2(self) -> None:
+        """ADR 0007: every absdiff-laplacian sidecar declares Contract 2 over
+        engine ABI v2 and the v2 entry point, mirroring ProcessingCoreAbi.h."""
+        abi_header = (
+            REPO_ROOT / "include" / "backend" / "processing" / "ProcessingCoreAbi.h"
+        ).read_text(encoding="utf-8")
+        contract2 = re.search(r"#define\s+MIB_PROCESSING_CONTRACT_VERSION_2\s+(\d+)u?", abi_header)
+        abi2 = re.search(r"#define\s+MIB_PROCESSING_ENGINE_ABI_VERSION_2\s+(\d+)u?", abi_header)
+        self.assertIsNotNone(contract2, "MIB_PROCESSING_CONTRACT_VERSION_2 not found")
+        self.assertIsNotNone(abi2, "MIB_PROCESSING_ENGINE_ABI_VERSION_2 not found")
+
+        backend_cmake = (REPO_ROOT / "src" / "backend" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        sidecars = [
+            line for line in backend_cmake.splitlines()
+            if '\\"algorithm\\": \\"absdiff-laplacian\\"' in line
+        ]
+        self.assertEqual(len(sidecars), 2, "expected Windows and Linux absdiff-laplacian sidecars")
+        for sidecar in sidecars:
+            self.assertIn(f'\\"contract_version\\": {contract2.group(1)},', sidecar)
+            self.assertIn(f'\\"engine_abi_version\\": {abi2.group(1)},', sidecar)
+            self.assertIn('\\"entrypoint\\": \\"mib_processing_get_api_v2\\"', sidecar)
+
     def test_wheel_version_literals_agree(self) -> None:
         """pyproject is authoritative; the import-time wrapper literal mirrors it."""
         pyproject = (REPO_ROOT / "bindings" / "python" / "pyproject.toml").read_text(encoding="utf-8")

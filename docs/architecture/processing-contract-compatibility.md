@@ -73,12 +73,50 @@ from a profile's root `processing_contract_version` by `AppConfigWatcher` or
 from a Python config dict. A core runs it only when it serves that contract
 (see above). Only `backend::processing::contract` interprets it:
 
-| Helper | 1 | 2 |
-|---|---|---|
-| `contractUsesAbsoluteDifference` | saturating `cv::subtract` | `cv::absdiff` (kernel mask, empty-frame checks, realtime/batch loops) |
-| `contractHasRingWidth` | ring ratio computed + gated | ring ratio `NaN`, gate ignored, no `Ring` invalid reason |
-| `contractObjectsAreInnerContours` | object = inner contour (hole in the bright halo); `require_single_inner_contour` gates | object = top-level contour (absdiff blob, no halo); inner-contour rule ignored, no `NoContour` reason |
-| `isSupportedProcessingContract` | ✅ | ✅ (anything else fails closed: no mask, `ValueError` in Python) |
+| Helper | 1 | 2 | 3 (defined, not yet served) |
+|---|---|---|---|
+| `contractUsesAbsoluteDifference` | saturating `cv::subtract` | `cv::absdiff` (kernel mask, empty-frame checks, realtime/batch loops) | — (masks come from the U-Net) |
+| `contractHasRingWidth` | ring ratio computed + gated | ring ratio `NaN`, gate ignored, no `Ring` invalid reason | as 2 |
+| `contractObjectsAreInnerContours` | object = inner contour (hole in the bright halo); `require_single_inner_contour` gates | object = top-level contour (absdiff blob, no halo); inner-contour rule ignored, no `NoContour` reason | as 2 |
+| `contractObjectsAreUnetCells` | — | — | U-Net cell rules, below |
+| `isSupportedProcessingContract` | ✅ | ✅ (anything else fails closed: no mask, `ValueError` in Python) | ❌ until a core serves it |
+
+The helpers match each contract by equality, so a new contract inherits no
+behaviour from an older one.
+
+### Contract 3 — `unet-cells` (defined 2026-10-04)
+
+The science of the PZ7035 PL cell stage (pz7035-imx426 profile
+`unet_cells_v2`), so host and PL report the same cells from the same U-Net
+mask. `science::filterUnetCellObjects`:
+
+- an object is a top-level 8-connected mask component (components inside a
+  hole are ignored). With at least `min_cell_area_px` pixels it is a cell;
+  smaller ones are blemishes, counted per frame (`FilterResult::blemishCount`);
+- cells are ordered by bounding box (x, then y) and numbered from 1;
+- cut-off: a component pixel on the ROI edge (1 px rule, always checked);
+  brightness, Laplacian and centroid are still reported;
+- a contour that encloses no area is degenerate: reason `NoContour`, centroid
+  at the bounding-box centre;
+- otherwise the Contract 2 outer-contour metrics and gates, with no ring width.
+  Brightness is the mean and population variance over the filled contour
+  (`brightnessMean`, `brightnessVariance`), and the Laplacian aperture is
+  `laplacian_kernel_size` (1 or 3);
+- the reasons follow the PL's single-reason order: Border, NoContour, Channel,
+  Area, Deform, AreaRatio, Laplacian.
+
+The gold reference is `scripts/conformance/unet-cells-v2-pl-vectors.json`, a
+subset of the PL conformance vectors (`scripts/build_unet_cells_vector_subset.py`).
+`processing.contract3_cells_conformance` checks every payload word within the
+profile tolerances. The full PL set (45 frames, 181 cells) also passes.
+
+`scripts/compare_metrics.py` compares Contract 3 documents: no quartiles,
+plus `brightness_mean`, `brightness_variance`, `contour_area`, `pixel_count`
+and `blemish_count`. A null brightness matches only null.
+
+No shipped core, wheel or loader serves Contract 3 yet. The science JSON adds
+a `unet_cells` block (`min_cell_area_px`, `laplacian_kernel_size`) only for
+Contract 3, so Contract 1/2 documents are unchanged.
 
 The Python wheel (0.3.0+) executes both contracts; `CONTRACT_VERSION` stays
 `1` (the default when a config omits the key) and

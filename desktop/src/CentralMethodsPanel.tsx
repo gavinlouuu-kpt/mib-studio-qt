@@ -1,5 +1,4 @@
-// Central Methods panel (bridge schema v15, issue #398): the React twin of the
-// Qt CentralMethodsDialog. It only enqueues backend registry commands and
+// Central Methods panel (bridge schema v15, issue #398). It only enqueues backend registry commands and
 // renders the worker snapshot (polled while open); the UI never waits on the
 // network. #398 M2b: select a row to materialize it or record a local
 // validation backed by a test-run file (the backend checks the file was

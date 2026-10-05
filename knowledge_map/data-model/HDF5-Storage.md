@@ -152,6 +152,26 @@
   `laplacian_variance` and omits `ring_ratio`; Contract 1 keeps ring. e2e review
   test: `scripts.contract2_export_review`.
 
+## Contract-3 cell members
+
+- Appended after `laplacianVariance`, so prior offsets are unchanged:
+  `brightness_mean`, `brightness_variance`, `contourArea`, `pixelCount`,
+  `blemishCount`, `degenerateContour`.
+- Contract 3 writes the quartiles `brightness_q1..q4` as `NaN`; Contracts 1-2
+  write the new members as `NaN` / 0.
+- An older file without them reads them as not present (`NaN` brightness,
+  zero counts). `recording.experiment_roundtrip` rewrites a metadata dataset
+  without them to check this.
+- `scripts/export_hdf5.py` for Contract 3: the JSON carries `brightness_mean`,
+  `brightness_variance` (`null` when not computed), `contour_area`,
+  `pixel_count`, `blemish_count` and `degenerate_contour` instead of the
+  quartiles (schema `$defs/unet_cell_frame`). The CSV swaps the quartile
+  columns for `Bright Mean,Bright Var,Pixels,Blemishes`. Test:
+  `scripts.contract3_export_review`.
+- The C++ CSV/table views (`HdfExportService`, `ReviewExport`,
+  `HdfMetricsModel`) still show the quartile columns, which read `nan` for a
+  Contract-3 file.
+
 ## Gotchas
 
 - `writeConfigJson` **must** be called after `writeExperimentInfo` — see

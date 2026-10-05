@@ -567,7 +567,7 @@ void CaptureService::run(uint64_t generation) {
                                        frame.linePitch,
                                        frame.pixelFormat,
                                        frame.timestamp,
-                                       frame.hostTimestampUs);
+                                       frame.hostTimestampUs, generation);
             }
             {
                 const uint64_t published = Tools::getTimestamp();

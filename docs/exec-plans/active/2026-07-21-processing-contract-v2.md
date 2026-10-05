@@ -113,8 +113,9 @@ Branches are stacked in this order (`claude/pc2-v2-1-schema` → … ).
 - [x] Contract-1 setpoint controller (`AutofocusMath.h`) untouched.
 - [x] Test `backend.autofocus_focus_score` (converge both sides, plateau/noise
       stable, clamp, sample validity + dedup) + vault.
-- [ ] `AutofocusService` `onFocusSample` feed + contract-gated controller
-      selection + focus-score UI rename (rides V2-6's config/contract plumbing).
+- [x] `AutofocusService` `onFocusSample` feed + contract-gated controller
+      selection (2026-10-04, with Contract 3; `backend.autofocus_focus_feed`).
+- [ ] Focus-score UI rename.
 
 ### V2-5 — engine ABI v2 for filters and full per-object results
 - [x] Additive ABI v2 in `ProcessingCoreAbi.h` (v1 layout unchanged, pinned by
