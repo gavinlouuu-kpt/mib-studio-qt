@@ -94,6 +94,10 @@ public:
                                               std::int32_t baud_rate, std::int32_t modbus_address);
     BridgeCommandResult pump_connect(std::uint32_t pump, std::int32_t com_port,
                                      std::int32_t baud_rate, std::int32_t modbus_address);
+    BridgeCommandResult pump_connect_model(std::uint32_t pump, std::uint32_t model,
+                                           rust::Str port_name, std::int32_t baud_rate,
+                                           std::int32_t modbus_address,
+                                           double microliters_per_rev);
     BridgeCommandResult pump_disconnect(std::uint32_t pump);
     BridgeCommandResult pump_set_flow_rate(std::uint32_t pump, double rate, std::int32_t unit);
     BridgeCommandResult pump_set_direction(std::uint32_t pump, std::uint32_t direction);
@@ -149,7 +153,7 @@ public:
     bool cancel_device_discovery(std::uint64_t job_id);
     BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id);
     BridgeCameraSelection fetch_camera_selection();
-    // Central profile registry (schema v15, #398).
+    // Central profile registry (schema v24, #398).
     bool set_registry_transport(
         rust::Fn<BridgeHttpResponse(const BridgeHttpRequest&)> transport);
     std::uint64_t registry_sign_in(rust::Str email, rust::Str password);
@@ -179,6 +183,10 @@ public:
     BridgeCommandResult apply_camera_script(rust::Str script_path);
     BridgeCommandResult reset_hardware_camera();
     BridgeCommandResult soft_trigger_camera();
+    BridgeCommandResult set_camera_overview(bool overview);
+    BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
+    rust::String fetch_camera_geometry();
+    rust::String fetch_platform_info();
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();
     BridgeMonitoringSnapshot fetch_monitoring_snapshot(std::uint64_t max_rows);

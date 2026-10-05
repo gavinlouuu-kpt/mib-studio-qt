@@ -56,9 +56,9 @@ freeze exact revision identity/content into historical runs.
   unmerged: ADR 0011 makes Qt fixes-only, so the registry UI is React/Tauri only.
   The shared fake Supabase it introduced (`tests/support/fake_supabase.h`) stays.
 - [x] M1 (bridge + React): `BackendFacade` registry commands/snapshot, bridge ABI
-  15 (`registry_*` contract groups, `set_registry_transport` with polled cancel
-  handles), Tauri `ureq` HTTPS transport, React Central Methods panel over a pure
-  pure view model.
+  24 (`registry_*` contract groups, `set_registry_transport` with polled cancel
+  handles), Tauri `ureq` HTTPS transport (desktop-only `registry` module), React
+  Central Methods panel over a pure view model.
 - [x] M2a (backend): instrument identity (UUID + name); worker Materialize and
   RecordValidation jobs; the applied config.json matched to a cached revision by
   canonical config hash; `method.revision` gate (unvalidated → Warn, validated
@@ -85,7 +85,7 @@ freeze exact revision identity/content into historical runs.
   reasons; history; update-available helper. `profiles.registry_authoring`.
 - [x] M3b: authoring/review UI in React (Drafts view, review actions by role
   with reasons, details/history, "rN available"; rules in `registry.ts`), bridge
-  authoring functions inside the unreleased registry ABI. The Qt version was
+  authoring functions inside the registry ABI (24). The Qt version was
   dropped (ADR 0011).
 - [ ] M3: template drafts (a new method from a bundled template), a per-key
   draft editor beyond "current config.json", and release-note display in a
@@ -126,7 +126,6 @@ freeze exact revision identity/content into historical runs.
   facade shutdown (caught by the new `profiles.registry_facade` test); the facade
   now stops it first. ABI 15 was free on `develop`; the review-scatter plan also
   names "14 → 15", so whichever lands second takes the next number.
-
 - 2026-10-04 (M2a backend): decisions — (1) operator choices on #398: an
   unvalidated central revision warns and Start is allowed; validation is an
   explicit operator confirmation (who = signed-in registry user, when, instrument
@@ -174,9 +173,15 @@ freeze exact revision identity/content into historical runs.
   dialog, Qt Apply and Qt authoring UI were removed from #477/#479/#482; the
   fake Supabase test support stays. Until the stack lands, ABI conflicts resolve
   to the highest number (the registry rides 19). The stack lands after
-  `feat/yofo-remote-server` and `feat/yofo-pl-results`; then one bump to 23 (never
-  reusing 15 or 19-22; 24 with a note if 23 is taken) relabels the registry
-  surface, whose "v15" comments are stale until then.
+  `feat/yofo-remote-server` and `feat/yofo-pl-results` (merged together as #495).
+- 2026-10-05 (renumber): the registry surface was built as a provisional ABI 15 and
+  rode develop's number through the restack. #495 took 23 for the instrument line,
+  so after merging develop (23) the stack takes **24** in one commit (contract,
+  `shim.cpp`, contract test, generated `bridgeContract.ts`, registry comments); 15
+  and 19-23 are never reused. The Tauri commands moved to `mib-app-commands` on
+  develop; the registry commands stay in the desktop crate (`registry` module)
+  because they need the shell's transport and a sign-in carries a password that must
+  not cross the YOFO Studio WebSocket.
 
 ## Validation
 

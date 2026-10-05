@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from "react";
-import {open,save} from "@tauri-apps/plugin-dialog";
+import {open,save} from "./transport/dialogs";
 import {bridge,mono8ToImageData,type FramePacket,type ReviewMetadata} from "./bridge";
 import type {ReviewExportStatus} from "./reviewExport";
 

@@ -71,7 +71,7 @@ The registry worker uses the same rule with a POST transport,
 `AppBackend::setProfileRegistryTransport()` before `initialize()`. The Qt
 shell supplies `makeQtRegistryHttpTransport()` (QtNetwork); the Tauri shell
 supplies `registry_transport::post` (`ureq` + rustls) through the bridge's
-`set_registry_transport` (ABI 15). The request carries a `cancelled`
+`set_registry_transport` (ABI 24). The request carries a `cancelled`
 predicate (across the FFI: a `cancel_handle` polled with
 `registry_request_cancelled`) so a cancel or backend shutdown aborts an
 in-flight request instead of waiting out its timeout. Still no HTTP client in
