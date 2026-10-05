@@ -32,11 +32,11 @@ pub fn encode(frame: BridgeFrame, pull_kind: u32) -> Result<Vec<u8>, String> {
     out.extend_from_slice(&u32::from(frame.valid).to_le_bytes());
     out.extend_from_slice(&pull_kind.to_le_bytes());
     // The legacy timestamp value is preserved losslessly, but its clock and
-    // validity are UNKNOWN. Source/session/config IDs are not in BridgeFrame.
-    // Reserved identity slots MUST stay zero until an accepted backend contract.
+    // validity are UNKNOWN. Capture generation/store epoch are stamped with pixels;
+    // processing configuration is inapplicable to raw frames and stays reserved.
     let fields = if frame.valid {
         [frame.frame_index, frame.timestamp_ns, frame.width, frame.height,
-         frame.pixel_format, frame.stride_bytes, frame.data.len() as u64, 0, 0, 0]
+         frame.pixel_format, frame.stride_bytes, frame.data.len() as u64, frame.capture_session, 0, frame.store_generation]
     } else { [0; 10] };
     for n in fields { out.extend_from_slice(&n.to_le_bytes()); }
     out.extend_from_slice(&frame.data);
@@ -51,13 +51,13 @@ mod tests {
         let frame = mib_bridge::ffi::contract_fixture_frame();
         let packet = encode(frame, 1).unwrap();
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../crates/mib-bridge/contract/fixtures/frame-v1.json")).unwrap();
+            "../../../crates/mib-bridge/contract/fixtures/frame-v2.json")).unwrap();
         assert_eq!(hex::encode(packet), fixture["hex"].as_str().unwrap());
     }
     fn frame(index: u64, value: u8) -> BridgeFrame {
         BridgeFrame { valid: true, frame_index: index, timestamp_ns: u64::MAX,
             width: 2, height: 2, pixel_format: 0x01080001, stride_bytes: 2,
-            data: vec![value; 4] }
+            data: vec![value; 4], ..Default::default() }
     }
     #[test]
     fn interleaved_packets_own_their_metadata_and_pixels() {
@@ -70,6 +70,16 @@ mod tests {
             assert_eq!(u64::from_le_bytes(a[16..24].try_into().unwrap()), (1u64 << 53) + i);
             assert_eq!(a.len() + b.len(), 200);
         }
+    }
+    #[test]
+    fn acquisition_epochs_remain_exact_and_owned() {
+        let mut f = frame(1, 8);
+        f.capture_session = (1u64 << 53) + 1;
+        f.store_generation = u64::MAX;
+        let p = encode(f, 1).unwrap();
+        assert_eq!(u64::from_le_bytes(p[72..80].try_into().unwrap()), (1u64 << 53) + 1);
+        assert_eq!(u64::from_le_bytes(p[88..96].try_into().unwrap()), u64::MAX);
+        assert_eq!(&p[80..88], &[0; 8]);
     }
     #[test]
     fn rejects_bad_geometry_and_non_mono8_before_packet_allocation() {
@@ -85,7 +95,7 @@ mod tests {
     #[test]
     fn pins_wire_header_and_exact_integer_encoding() {
         let p = encode(frame(u64::MAX, 11), 1).unwrap();
-        assert_eq!(&p[..16], &[77,73,66,70,1,0,96,0,1,0,0,0,1,0,0,0]);
+        assert_eq!(&p[..16], &[77,73,66,70,2,0,96,0,1,0,0,0,1,0,0,0]);
         assert_eq!(&p[16..32], &[255; 16]);
         assert_eq!(&p[72..96], &[0; 24]);
     }
