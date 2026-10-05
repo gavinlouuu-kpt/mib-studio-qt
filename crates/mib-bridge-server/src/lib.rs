@@ -223,6 +223,7 @@ impl Server {
         let mut router = Router::new()
             .route("/ws", get(upgrade))
             .route("/healthz", get(health))
+            .route("/auth", get(auth))
             .with_state(self.clone());
         if let Some(dist) = &self.config().dist_dir {
             router = router.fallback_service(tower_http::services::ServeDir::new(dist));
@@ -374,6 +375,17 @@ async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
         .await
         .unwrap_or(false);
     Json(json!({ "clients": server.clients(), "initialized": initialized, "stop_and_saves": server.stop_and_saves() }))
+}
+
+/// Token check without a WebSocket (#501): a browser cannot read the 401 of a refused upgrade,
+/// so the UI asks here first and prompts for the token instead of failing silently.
+async fn auth(State(server): State<Arc<Server>>, Query(query): Query<AuthQuery>, headers: HeaderMap) -> Response {
+    let required = server.config().token.is_some();
+    if server.authorized(&query, &headers) {
+        Json(json!({ "authorized": true, "token_required": required })).into_response()
+    } else {
+        (StatusCode::UNAUTHORIZED, Json(json!({ "authorized": false, "token_required": required }))).into_response()
+    }
 }
 
 async fn upgrade(

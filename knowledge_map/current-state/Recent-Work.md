@@ -1,11 +1,58 @@
 # Recent Work
 
+## 2026-10-05 — PZ7035 instrument UI P0a: capabilities, PL-core preflight, token prompt (#501)
+
+On the PZ7035, preflight checks the instrument's own equipment, and a healthy
+instrument at idle shows 0 warnings:
+
+- **PL core:** build vs `/etc/yofo/expected-core.json`, weights vs the pinned
+  `.npz`.
+- **Sensor link:** the error and resync rates.
+- **LED strobe:** a guard trip fails.
+
+The rest of P0a:
+
+- **Capabilities:** the backend reports them, and the UI hides the MIB-only
+  surfaces (nanopositioner, EGrabber, MindVision, host background, frame
+  buffer, core updates, reanalysis, pulse generator).
+- **Pumps** default to the two peristaltic pumps on `/dev/ttyPS1` (Sample 3,
+  Sheath 4).
+- **Token:** the browser asks `GET /auth` and prompts for the token instead of
+  failing silently.
+- **Reads only:** `PzPlatformMonitor` never writes a register. Align/Run mode
+  switching with LED presets is P0b.
+
+See [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]] and
+[[../data-model/PZ7035-Records]].
+
 ## 2026-10-05 — Bridge ABI 23: one contract for develop and the instrument line
 
 ADR 0011's single renumber: develop (19) and the instrument line (20-22)
 merged into one contract that takes 23, so no release build from `develop`
 carries an interim number. No new commands. The #398 stack takes 24. See
 [[../architecture/Rust-Bridge]].
+
+## 2026-10-05 — FC04 in the shared Modbus layer; Z stage spec (#464, slice 1)
+
+`ModbusRtu.h` now frames, predicts the length of, and correlates FC04 (read
+input registers), which the Zolix ZC300 stage controller needs for its
+identity and status registers. FC03 and FC04 share one code path, and
+existing devices are unaffected.
+- Known-answer vectors from the vendor manual are in
+  `backend.modbus_rtu`.
+- `backend.serial_bus_pty` round-trips FC04 and its exception path through a
+  real session.
+
+Spec:
+- [ADR 0013](../../docs/decisions/0013-motion-stage-device-class.md) (proposed)
+- the [execution plan](../../docs/exec-plans/active/2026-09-30-zc300-z-stage.md)
+- the [integration evidence](../../docs/integration/zc300-z-stage.md)
+
+Start-up is read-only. The stage moves only when an operator presses Home,
+and its position is unknown until it has been homed once per controller
+power-up (decided 2026-10-05; ADR 0013 §5–6).
+
+See [[../services/SerialBus]].
 
 ## 2026-10-05 — pz7035 ABI bundle vendored from the `abi-v1.2.0` tag (ADR 0011)
 
@@ -18,10 +65,10 @@ unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
 
-## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 24)
+## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 25)
 
 `BackendFacade` gained registry commands and a value snapshot; the bridge
-exposes them (ABI 24, five new `registry_*` contract groups pinned in C++,
+exposes them (ABI 25, five new `registry_*` contract groups pinned in C++,
 Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
 installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
 a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**

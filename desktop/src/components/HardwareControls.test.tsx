@@ -93,3 +93,20 @@ describe('hardware operator interactions', () => {
     expect(labelled('Pump model')[0].disabled).toBe(true);
   });
 });
+describe('PZ7035 pumps (#501)', () => {
+  it('defaults both slots to the peristaltic pumps on ttyPS1 (Sample 3, Sheath 4) and hides the nanopositioner', async () => {
+    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, connected: false});
+    const capabilities = {
+      instrument: 'pz7035' as const, autofocus: false, trigger: false, host_background: false, frame_buffer: false,
+      reanalysis: false, core_updates: false, egrabber_script: false, pl_identity: true, led_strobe: true,
+      align_mode: false, run_mode: false,
+      pump: {model: 'tushui_peristaltic', port: '/dev/ttyPS1', sample_address: 3, sheath_address: 4, microliters_per_rev: 25},
+    };
+    await render({capabilities});
+    expect(labelled('System serial port').map(input => input.value)).toEqual(['/dev/ttyPS1', '/dev/ttyPS1']);
+    expect(labelled('Device address').map(input => input.value)).toEqual(['3', '4']);
+    expect(labelled('Pump model').map(select => select.value)).toEqual(['1', '1']);
+    expect(host.textContent).not.toContain('nanopositioner');
+    expect(host.textContent).not.toContain('Pulse');
+  });
+});
