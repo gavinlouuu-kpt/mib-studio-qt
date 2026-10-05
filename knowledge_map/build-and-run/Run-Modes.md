@@ -1,8 +1,8 @@
 # Run Modes
 
-> Two executables, three camera sources, a handful of env vars.
+> Two executables, four camera sources, a handful of env vars.
 
-**Related:** [[../camera/MockCamera]], [[../camera/MindVisionCamera]],
+**Related:** [[../camera/MockCamera]], [[../camera/MindVisionCamera]], [[../camera/AravisCamera]],
 [[../frontend/ConnectTab]], [[../frontend/Screenshot-Tour]]
 
 ## Executables
@@ -32,6 +32,9 @@ Read at startup (see `main.cpp` and [[../architecture/AppBackend]]):
 |---|---|---|
 | `MIB_CAMERA_MODE=mock` | unset | Force mock (bypasses ConnectTab) |
 | `MIB_CAMERA_MODE=mindvision` | unset | Force MindVision selection (uses `MIB_MINDVISION_CAMERA_INDEX` / `MIB_MINDVISION_CONFIG` if present) |
+| `MIB_CAMERA_MODE=aravis` | unset | Select optional Aravis; fails visibly if built with `MIB_ENABLE_ARAVIS=OFF` |
+| `MIB_ARAVIS_DEVICE_ID=<id>` | auto | Explicit Aravis device identifier (for Fake, `Fake_1`) |
+| `MIB_ARAVIS_FAKE=true\|false` | false | Explicitly enable Aravis's Fake interface for development/tests |
 | `MIB_MOCK_CAMERA_DIR=<path>` | — | Folder with PNG/TIFF/JPEG frames |
 | `MIB_MOCK_CAMERA_INTERVAL_MS=<ms>` | 33 | Frame cadence |
 | `MIB_MOCK_CAMERA_LOOP=true\|false` | true | Loop or stop at end |
@@ -46,7 +49,7 @@ Sample frames ship at `data/mock_frames/frame_00000.tiff`.
 The GUI Settings action **Boot Service Toggles...** stores a persisted
 `QSettings` value (`Startup/DisabledServices`) that `main.cpp` maps into
 `MIB_DISABLED_SERVICES` before backend startup (unless the env var is already set externally).
-- The startup camera mode picker now recognizes `mock`, `mindvision`, and the
+- The startup camera mode picker now recognizes `mock`, `mindvision`, `aravis`, and the
   hardware/eGrabber default path.
 
 ## MLflow (test metrics only)

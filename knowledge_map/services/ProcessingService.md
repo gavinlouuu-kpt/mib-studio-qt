@@ -748,6 +748,21 @@ snapshot object; contours may include other objects and are not all labelled tar
 
 Processed preview capture-session identity is copied from the immutable input frame through inline and async batch host metadata, independently of processing-session/store epochs. It is never sampled from a newer live capture session; the UI labels both generations. Portable core ABI and recorded HDF5 layout are unchanged.
 
+## PL science ingest (YOFO S1)
+
+With the science on the PL (`MIB_PL_SCIENCE`), per-frame results come from
+an execution provider instead of the realtime loops.
+`ingestProviderFrame(const ProviderFrame&)` books the run accounting and feeds
+the identification funnel (PL reasons, 8 codes) and the monitoring rows,
+which carry no images. It never fires the target-group callback. See
+[[../data-model/PZ7035-Records]].
+
+Background calibration with the science on the PL:
+`startPreviewBackgroundCalibration` (the per-pixel median of preview frames,
+on its own thread, joined at destruction). The channel band
+(`getChannelBand`, `getEffectiveProcessingConfig`, as on develop) is
+recomputed whenever a background is published.
+
 ## Host U-Net (`UnetC4`, plan W3.D)
 
 `include/backend/processing/UnetC4.h` is the bit-exact integer C4 U-Net that

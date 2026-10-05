@@ -1182,3 +1182,10 @@ button.btn:disabled,
   max-height: 180px;
   overflow: auto;
 }
+
+/* Camera & Alignment: mode and rate line under the toolbar */
+.camera-alignment-status {
+  padding: 4px 8px;
+  font-size: 0.9em;
+  color: var(--muted, #555);
+}

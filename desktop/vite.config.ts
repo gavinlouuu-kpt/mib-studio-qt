@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -15,6 +16,12 @@ export default defineConfig({
       // with ELOOP (kills the dev server moments after startup).
       ignored: ["**/src-tauri/**"],
     },
+  },
+  test: {
+    // Only the frontend sources: test discovery would otherwise crawl src-tauri/target, whose
+    // cxx-build `crate` symlink loop makes `vitest run` spin forever once the Rust shell has
+    // been built in this checkout.
+    dir: "src",
   },
   build: {
     outDir: "dist",

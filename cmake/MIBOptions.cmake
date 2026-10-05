@@ -23,6 +23,14 @@ option(MIB_ENABLE_MINDVISION
     "Enable MindVision camera SDK integration (requires the platform SDK)"
     ${MIB_ENABLE_MINDVISION_DEFAULT})
 
+option(MIB_ENABLE_ARAVIS
+    "Enable the optional Qt-free Aravis camera consumer (requires aravis-0.10)"
+    OFF)
+
+option(MIB_PL_SCIENCE
+    "Per-frame science runs on the instrument's PL (YOFO Studio ADR 0008): the host processing pipeline is refused"
+    OFF)
+
 option(MIB_BUILD_BACKEND_ONLY
     "Build only backend targets (no frontend executables)"
     OFF)
