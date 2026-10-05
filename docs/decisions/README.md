@@ -38,6 +38,7 @@ What becomes easier/harder; what future agents must respect.
 | [0008](0008-dot-grid-localization.md) | Dot-grid wafer localization as a Qt-free decoder plus a polling service | accepted |
 | [0009](0009-dot-grid-design-registry.md) | Dot-grid design registry: the seed is the design identity | accepted |
 | [0010](0010-dot-grid-codec-cores.md) | Dot-grid encoder and decoder as versioned, swappable codec cores | accepted |
+| [0011](0011-yofo-studio-pz7035-instrument.md) | YOFO Studio for the PZ7035: science in the PL, one trunk, contracts shared with the PL | accepted |
 
 Decisions made before this index existed live implicitly in
 [`../architecture/`](../architecture/) and the vault

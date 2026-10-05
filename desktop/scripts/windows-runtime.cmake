@@ -40,6 +40,14 @@ file(GET_RUNTIME_DEPENDENCIES
 if(unresolved OR conflicts_FILENAMES)
   message(FATAL_ERROR "Incomplete DLL closure: unresolved=${unresolved}; conflicts=${conflicts_FILENAMES}")
 endif()
+# ADR 0007: processing-core plugins reach rigs only as signed registry
+# downloads, never inside the desktop package.
+foreach(dependency IN LISTS resolved runtime_plugins)
+  get_filename_component(dependency_name "${dependency}" NAME)
+  if(dependency_name MATCHES "^mib_processing_core")
+    message(FATAL_ERROR "Processing-core plugin must not be packaged: ${dependency}")
+  endif()
+endforeach()
 file(MAKE_DIRECTORY "${DEST}")
 file(COPY "${EXE}" ${resolved} ${runtime_plugins} DESTINATION "${DEST}")
 foreach(crt_dir IN LISTS crt_dirs)
