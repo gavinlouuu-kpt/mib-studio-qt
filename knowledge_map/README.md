@@ -22,6 +22,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
+- Wafer localization (dot-grid fiducials): [[services/DotGridService]]
 - Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
   [[services/TriggerService]], [[services/SyringePumpService]],
@@ -51,6 +52,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 ### Data model
 - [[data-model/FrameStore]]
 - [[data-model/HDF5-Storage]]
+- [[data-model/PZ7035-Records]]
 
 ### Diagnostics
 - [[diagnostics/_MOC|Diagnostics MOC]]
@@ -90,3 +92,5 @@ verifies wikilink integrity (enforced in CI).
 - `docs/` — user-facing how-tos (`docs/howto/*.md`) and integration notes
 - `docs/golden-principles.md` — mechanical rules for this repo
 - `knowledge_map/task/` — dated task records (historical design/debug notes)
+
+- [[services/ProfileRegistryService]] — central registry/cache foundation (#398); desktop integration pending.

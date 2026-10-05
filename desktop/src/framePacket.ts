@@ -7,7 +7,8 @@ export interface FrameMeta {
   timestamp_ns: string;
   timestamp_validity: "unavailable";
   source_id: null;
-  session_id: null;
+  session_id: string | null;
+  store_generation: string | null;
   config_revision: null;
   pull_kind: number;
   width: number;
@@ -41,8 +42,8 @@ export function decodeFramePacket(buffer: ArrayBuffer, expectedKind: number): Fr
   if (flags > 1 || kind !== expectedKind || kind < 1 || kind > 4)
     throw new Error("FRAME_PACKET_INVALID_FLAGS_OR_SOURCE");
   const n = (offset: number) => d.getBigUint64(offset, true);
-  // v1 deliberately has no authoritative identity/time validity bits.
-  if (n(72) !== 0n || n(80) !== 0n || n(88) !== 0n)
+  // Raw acquisition identities are independent of processed recipe identities.
+  if (n(80) !== 0n || (kind > 2 && (n(72) !== 0n || n(88) !== 0n)))
     throw new Error("FRAME_PACKET_UNSUPPORTED_IDENTITY");
   const width = n(32), height = n(40), format = n(48), stride = n(56), len = n(64);
   if (len !== BigInt(buffer.byteLength - c.header_bytes))
@@ -53,12 +54,13 @@ export function decodeFramePacket(buffer: ArrayBuffer, expectedKind: number): Fr
         || stride < width || stride * height !== len
         || (format !== 0n && format !== 0x01080001n))
       throw new Error("FRAME_PACKET_INVALID_GEOMETRY_OR_FORMAT");
-  } else if ([n(16), n(24), width, height, format, stride, len].some(v => v !== 0n)) {
+  } else if ([n(16), n(24), width, height, format, stride, len, n(72), n(88)].some(v => v !== 0n)) {
     throw new Error("FRAME_PACKET_INVALID_EMPTY_FRAME");
   }
   return Object.freeze({
     valid: flags === 1, frame_index: n(16).toString(), timestamp_ns: n(24).toString(),
-    timestamp_validity: "unavailable", source_id: null, session_id: null,
+    timestamp_validity: "unavailable", source_id: null, session_id: n(72) === 0n ? null : n(72).toString(),
+    store_generation: n(88) === 0n ? null : n(88).toString(),
     config_revision: null, pull_kind: kind, width: Number(width), height: Number(height),
     pixel_format: Number(format), stride_bytes: Number(stride), byte_len: Number(len),
     // This view owns its response buffer. Never place it in global React state.

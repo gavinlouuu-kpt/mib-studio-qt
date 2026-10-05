@@ -1,5 +1,218 @@
 # Recent Work
 
+## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
+
+`UnetC4` runs the integer C4 U-Net on the host from the model release's
+`.npz`, so desktop reprocessing gets the PL's masks.
+- 240/240 release fixtures are bit-exact.
+- The masks equal those the PL produced on the board for 85/85 live IMX426
+  frames.
+- About 35 ms per frame.
+- Weights and fixtures are the private Hub asset `unet-c4-multiline-v1`
+  (`gavinlouuu/yofo-unet-c4`). `processing.unet_c4` runs on the provisioned
+  files, and the `network-tests` workflow provisions them with `HF_TOKEN`.
+  See [[../services/ProcessingService]].
+
+## 2026-10-04 — PZ7035 result record decoder (#447 E3, W3.B1)
+
+Decoder for the records the PZ7035 PL writes to the PS result ring, with the
+pz7035-imx426 ABI bundle vendored and pinned (`third_party/pz7035-abi`,
+`scripts/vendor_pz7035_abi.py`). It provides:
+- record decode with the bundle's error rules, and sequence/epoch/generation
+  stream checks;
+- a ring reader with wrap and overrun handling, and FRAME/RESULT assembly;
+- the `unet_cells_v2` profile decoder into Contract 3 results.
+
+`processing.pz_records` checks it:
+- all 26 bundle fixtures decode with the expected outcome;
+- FRAME and RESULT re-encode byte-identically;
+- 60 frames pass through a wrapping ring;
+- the PL vectors' RESULT payloads decode to the host science's cells.
+
+See [[../data-model/PZ7035-Records]].
+
+## 2026-10-04 — Contract 3 science (`unet-cells`) equal to the PZ7035 PL
+
+The host science for U-Net cells, the same rules as the PZ7035 PL cell stage:
+`science::filterUnetCellObjects`, dispatched for `processing_contract_version`
+3. It brings `min_cell_area_px` (cells versus blemishes), a 1 px cut-off,
+brightness mean and variance, `laplacian_kernel_size`, and `NoContour` for
+degenerate contours. The contract predicates now match by equality, so Contract
+3 inherits nothing by accident. `EModulusLut::loadGrid` loads a ready grid such
+as the PL profile table.
+
+Gold: `scripts/conformance/unet-cells-v2-pl-vectors.json`, 10 frames chosen to
+cover every reason and flag of the PL vectors. `processing.contract3_cells_conformance`
+equals the PL on all of them, and on the full set of 45 frames and 181 cells
+(`MIB_UNET_CELLS_VECTORS=`). Not yet served by a core, wheel or loader: that
+comes next, with the HDF5 fields and autofocus from the per-cell Laplacian. See
+[[../services/ProcessingService]].
+
+Recordings: the per-object HDF5 compound gains the Contract-3 cell members
+(appended; older files read them as not present), and the gold schema gains
+`$defs/unet_cell_frame`, chosen when `contract_version` is 3. `export_hdf5.py`
+exports Contract 3 with brightness mean and variance instead of the quartiles.
+Tests: `recording.experiment_roundtrip` and `scripts.contract3_export_review`.
+See [[../data-model/HDF5-Storage]].
+
+Autofocus (V2-4 service wiring, for Contracts 2 and 3): ProcessingService
+sends per-object Laplacian samples instead of ring ratios when the contract
+has no ring width, and [[../services/AutofocusService]] runs the focus-score
+peak-seeker on them. Two fixes on the way, regression first
+(`backend.autofocus_focus_feed`):
+- the NaN ring ratio of Contract 2 objects no longer enters the ring
+  statistics;
+- ring mode enforces `minSamplesPerStep` on every step, not only the first.
+
+## 2026-10-04 — ADR 0011: YOFO Studio for the PZ7035
+
+Owner decisions on the instrument's organisation (`docs/decisions/0011-yofo-studio-pz7035-instrument.md`):
+- science in the PL;
+- `develop` is the only trunk (the instrument is a build configuration);
+- Contract 3 is defined by the pz7035-imx426 `unet_cells_v2` specification;
+- bitstream plus weights form a core;
+- Qt is retired after #450 parity;
+- the instrument image is assembled from CI artifacts.
+
+It supersedes the draft YOFO ADR, and the E0 ADR lands as 0012.
+
+## 2026-10-02 — Central registry worker: sign-in, refresh, offline cache (#398 M1)
+
+`AppBackend` now owns a `profiles::ProfileRegistryWorker` (one thread): Supabase
+password sign-in with in-memory tokens and refresh-token rotation, explicit
+refresh across every member project (new `registry_list_projects` RPC) bounded
+by pages and time, revision download, and a per-user SQLite cache that reopens
+offline for the last user after a restart (`last_session.json`, no tokens).
+Enabled by `MIB_PROFILE_REGISTRY_URL` + `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY`;
+the Qt shell injects a QtNetwork HTTPS POST (ADR 0002 seam). It is stopped
+first at shutdown and aborts its in-flight request. No picker UI or bridge yet.
+Guards: `profiles.registry_worker`, `profiles.registry_backend`,
+`frontend.registry_http_transport`, PGlite suite. See
+[[../services/ProfileRegistryService]].
+
+## 2026-10-02 — OpenCV thread pool off: 5000 fps experiments no longer lose frames
+
+On the rig PC, experiments at 5000 fps processed only about 2900 frames/s
+after #452, so every run ended `incompleteLoss`. Bisected to #452; the cause
+was the Windows OpenCV Concurrency Runtime pool (one spinning worker per
+logical CPU) kept busy by a per-frame `parallel_for` on the experiment path,
+starving the processing thread (34 busy threads, about 30 cores).
+`AppBackend::initialize` now calls `cv::setNumThreads(0)` before processing
+starts, and every processing-core plugin applies the same setting to its own,
+statically linked OpenCV on its first `create_context` (shared parser
+`OpenCvThreads.h`); `MIB_OPENCV_THREADS=N|opencv` overrides both. Result on the rig: 5000
+frames/s during runs at 1.3 cores, runs complete, idle processing up from
+about 3000 to 4980 frames/s. Guard: `backend.opencv_threads`. See
+[[../architecture/AppBackend]] and
+`docs/evidence/2026-10-02-opencv-pool-5000fps/`.
+
+## 2026-10-01 — Windows (MSVC) build of `develop` restored
+
+Every `develop` push since 2026-09-26 failed the Build Windows workflow, so
+no beta was cut after `v1.1.2-beta.973463e`. Two MSVC-only breaks that the
+Linux PR lanes cannot see: a local named `far` in
+`include/backend/processing/MonitoringDensity.h` (`<windows.h>` defines `far`
+and `near` as empty macros; reached through `AppBackend.cpp`), and
+`tests/processing/processing_core_v2_plugin_test.cpp` including POSIX
+`<dlfcn.h>` (now a Win32 `LoadLibrary` shim). The same fixes were first made
+on `feat/trigger-frame-alignment` (73a0f232). Root cause of the escape: the
+Windows build runs only on `develop` pushes, not on PRs.
+
+## 2026-10-02 — Central profile registry foundation (#398, PR #402)
+
+Provider-neutral registry contract, canonical method envelope over the existing
+config/script payload, Supabase RPC provider, immutable origin/user-scoped SQLite
+cache with exact instrument/context validation, and PostgreSQL schema/RLS/lifecycle
+functions. Not yet wired into AppBackend, either shell or Start. Brought up to date
+with `develop` and built/tested under the full backend preset for the first time.
+Fixed on the way (regression-first): one noncanonical revision in a project used to
+stop sync for every later revision (pages hold one revision, and decoding threw);
+it is now reported in `RevisionPage::rejected`, counted in registry health, never
+cached, and the cursor advances. Guards: `profiles.registry` (CTest) and the PGlite
+suite (`npm test --prefix supabase`, `profile-registry-ci.yml`). See
+[[../services/ProfileRegistryService]] and
+`docs/exec-plans/active/2026-09-10-central-profile-registry.md`.
+
+## 2026-10-02 — Dot-grid review fixes (PR #472)
+
+Ten review findings fixed: the Overview Wafer Grid toggle survives
+`config.json` reloads (`enabled` applies only when the file value changes);
+exact 64-bit seeds from `config.json`; no exception leaves the
+[[../services/DotGridService]] thread and the bit grid is capped; a config
+change re-decodes the current frame; `DesignDecoder` keeps cross-core
+ambiguity and stage-ranked failures; the registry fingerprint covers names
+and chip outlines; `Codebook::loadJson` validates the m-sequence and phases;
+`VERSION` is a CMake configure dependency; the Overview copies a pose only
+when `poseSequence()` moves; the blob gate tolerates a 2× scale-hint error
+(0.2–5× area, C++ and Python). New test `frontend.dot_grid_config`;
+registry, decoder, codebook, service and Python tests extended.
+
+## 2026-10-02 — Dot-grid codec cores: contract + core version, gold references (phase 1)
+
+The dot-grid encoder/decoder now follow the processing-core model (ADR
+0010): a frozen **codec contract** (contract 1 = `mseq63-delta2`) separate
+from the **core version** (`scripts/dot_grid/dotgrid/VERSION`, compiled in as
+`MIB_DOTGRID_CORE_VERSION`). Registry designs require `codec_contract` and
+record their `encoder` core; `ICodec` / `bundledCodec()` / `CodecSet` /
+`DesignDecoder` route each design to the core of its contract and fail
+closed (unsupported designs are logged, never decoded); results and
+[[../services/DotGridService]] poses name the core. Frozen gold reference
+`scripts/dot_grid/gold/codec-contract1.json` (exact encode + 12 decode cases)
+is met by the C++ core (`processing.dot_grid_codec_gold`) and the Python
+reference (`dotgrid_cli.py gold`), and is guarded by `gold-reference-change`.
+Plugin ABI, signed loader, wheel encoder and catalog are planned in
+`docs/exec-plans/active/2026-10-02-dot-grid-codec-cores.md`.
+
+## 2026-10-02 — Wafer Grid moved to the Overview tab; no decoding next to experiments
+
+Dot-grid localization now lives on [[../frontend/OverviewTab]] only: the
+**Wafer Grid** toggle and overlay moved off the Experiment Preview page
+(`PlaybackPanel` is back to its pre-dot-grid state), and the Overview pauses
+[[../services/DotGridService]] (`setPaused`) whenever it is not on screen, so
+the service decodes nothing while the Experiment tab is current, even with
+Wafer Grid on. Resuming wakes the service (`wakeRequested_`) to decode the
+newest frame at once. Tests: new `frontend.dot_grid_overview`; pause/resume
+section in `backend.dot_grid_service`.
+
+## 2026-10-01 — Dot-grid design registry: the app knows which chip design it sees
+
+Every chip design with a dot grid is now registered once in
+`resources/defaults/dot_grid/registry.json` (bundled into the app) with a
+unique, never-reused seed; the seed is the design identity (ADR 0009).
+Developers run `scripts/dot_grid/dotgrid_cli.py register DESIGN.dxf --id …`
+(registry entry + GDS/DXF/CSV mask layer, after a synthetic cross-design
+check) and open a PR; `mask` regenerates a registered layer, `list` / `check`
+inspect the registry. `backend::dotgrid::Registry` (Qt-free) loads it; the
+decoder tries every design (detection once per dot geometry) and
+[[../services/DotGridService]] poses carry `designId` / `designName`; the
+Preview overlay shows them with the chip. `dot_grid.registry_path` merges a
+local registry for designs not yet shipped. New test
+`processing.dot_grid_registry`; service and Python tests extended. Task
+record: [[../task/2026-10-01-dot-grid-design-registry]].
+
+## 2026-09-30 — Review scatter: zoom/pan and click a point to view the cell
+
+The Review tab's Charts scatter is now a `ZoomableChartView` and a single
+click on a point shows that cell in a frame pane docked beside the plot
+(never over it), highlights the point and selects its Valid Frames row;
+prev/next walk the valid set, "Open in window…" opens the modal viewer.
+`ZoomableChartView` tells a click from a drag by `startDragDistance()`
+(issue #466); the Review tab builds point ↔ frame maps (frames failing
+validation have no point), names the dataset explicitly (the Charts tab
+reads as "invalid" to `isShowingValid_`), and keeps the user's zoom and
+selection out of exported chart images. The hit rule is Qt-free and shared
+with the React shell through `tests/fixtures/review_scatter_hits.json`.
+Found on the way: filling the scatter with `append()` was O(n²) on Qt 6.4
+(20 000 cells never finished opening); `replace()` opens it in ~1.6 s —
+TD-16 gets the lead. An end-to-end on the real app and real cells
+(`integration.review_scatter_e2e`, screenshots per state) then exposed a
+pre-existing export bug: chart TIFFs had red and blue swapped (RGB32 read
+as RGBA); fixed. Guards: `frontend.zoomable_chart_view`,
+`frontend.hdf_review_scatter`, `integration.review_scatter_e2e`. Plan:
+[`2026-09-30-review-scatter-click-to-view`](../../docs/exec-plans/active/2026-09-30-review-scatter-click-to-view.md)
+(PR 1 + PR 2 of #465); task note
+[[../task/2026-09-30-review-scatter-click-to-view]].
+
 ## 2026-09-26 — Monitoring density (KDE) moved into the backend
 
 The live scatter KDE and core contour now run in the Qt-free backend
@@ -202,6 +415,26 @@ ignored, both credentials must be rotated by their owners, and golden
 principle 11 now states the rule. No other tracked file contained either
 value. See [[../../docs/exec-plans/completed/2026-09-21-self-provisioning-environment]].
 
+## 2026-09-17 — Dot-grid wafer localization (fiducial pattern + decoder + overlay)
+
+The camera can now tell where on the Wafer_soRT wafer, and on which chip, it
+is looking: an Anoto-style displaced-dot lattice (30 µm pitch, 12 µm dots,
+5 µm shift, seed 7) is generated into the channel-layer mask by
+`scripts/dot_grid/` (DXF → GDS + `codebook.json`), and the Qt-free
+`backend::dotgrid` codebook/decoder in `mib_processing` decodes any ~6 × 6 dot
+patch to absolute mask coordinates, rotation, measured µm/px, mirror flag
+(glass-side viewing) and chip id. [[../services/DotGridService]] samples the
+latest FrameStore frame every 250 ms on its own thread and publishes a
+`Pose`; `PlaybackPanel` shows it behind a **Wafer Grid** toggle;
+`config.json` gained `dot_grid`, `MIB_DISABLED_SERVICES` gained `dot_grid`.
+Tests: `processing.dot_grid_codebook` (C++/Python golden parity),
+`processing.dot_grid_decoder`, `backend.dot_grid_service`,
+`scripts.dot_grid_reference`. ADR 0008; design in
+`docs/architecture/dot-grid-localization.md`; how-to in
+`docs/howto/dot-grid-mask-generation.md`; exec plan
+`docs/exec-plans/active/2026-09-17-dot-grid-localization.md`.
+Task record: [[../task/2026-09-17-dot-grid-localization]].
+
 ## 2026-09-16 — Device discovery service with providers (#419)
 
 Device discovery moved into a backend job service
@@ -284,6 +517,74 @@ matches a verbatim historical copy. Tests: `backend.illuminated_live`,
 
 ## Features shipped
 
+- **Cores never ship in desktop installers; native Contract-2 gold**
+  (2026-10-05, salvaged from the superseded #476) — the Inno Setup `*.dll`
+  line excludes `mib_processing_core*.dll`, and `[InstallDelete]` removes
+  cores that older installers packed (`tests/release/test_installer_excludes_cores.py`,
+  CTest `scripts.installer_excludes_cores`). `desktop/scripts/windows-runtime.cmake`
+  fails packaging if a core enters the Tauri DLL closure.
+  `scripts/run_native_core_conformance.py` runs a built absdiff-laplacian core
+  via ctypes over the 50 V fixture against
+  `scripts/conformance/focus-50v-real-contract2.json` (407/407 objects, 0
+  failures). It runs as CTest `processing.native_core_contract2_gold` and in
+  both native-core CI jobs against the release artifact.
+- **Processing Core dialog shows both core lines** (2026-10-05, Contract 2
+  rollout T1.1c) — a core-line selector (subtract-ring / absdiff-laplacian)
+  picks the registry directory; `ProcessingCoreCatalog` parses each line's
+  documents (`line`, wheel-less Contract-2 manifests with a top-level release
+  tag, ABI/entry-point pairing per line, `algorithm`) and refuses cross-line
+  catalogs, pointers and entries. The host accepts either line's ABI/contract
+  pair, and only cores matching the profile's contract can be activated.
+  Tests: `frontend.processing_core_catalog` (Contract-2 cases),
+  `frontend.processing_core_dialog` (line selector). Built and run locally
+  against system Qt 6 (`linux-system-release`).
+- **Per-line core releases** (2026-10-04, Contract 2 rollout T1.1b step 2) —
+  the wheel workflow now also triggers on `mib-processing-absdiff-laplacian-v<ver>`.
+  `validate-source-version` maps the tag to a core line (`line`,
+  `artifact_suffix` outputs) and refuses tags that match no line. The
+  Windows/Linux signing jobs sign that line's core with the existing
+  Production keys. The existing `release` job runs only for subtract-ring
+  tags; the new `release-absdiff-laplacian` job publishes the signed
+  Contract-2 cores (no wheel) as their own immutable GitHub Release and
+  registry line (`publish-processing-core.py --line absdiff-laplacian`).
+  `scripts/bump_mib_processing_version.py --create-tag --line absdiff-laplacian`
+  creates the tag. `processing-core-promote.yml` still promotes the
+  subtract-ring line only.
+- **Registry publisher per core line** (2026-10-04, Contract 2 rollout
+  T1.1b) — `publish-processing-core.py --line {subtract-ring,absdiff-laplacian}`
+  (default `subtract-ring`). The default line's documents are byte-identical
+  to before; golden bytes generated by the old publisher are in
+  `tests/release/fixtures/processing_core_subtract_ring/`. `absdiff-laplacian`
+  publishes native cores only (no wheel, no PEP 503 page) under
+  `{channel}/processing-core-absdiff-laplacian/`, with tag
+  `mib-processing-absdiff-laplacian-v<version>`, `"line"` in its manifest and
+  index, and `"algorithm"` on each native entry. Each line discovers only its own
+  `mib_processing_core-[<line>-]<version>-<os>_<arch>` assets and refuses a
+  descriptor, tag, catalog or immutable manifest of another line. Not yet
+  consumed by the desktop yet: the Processing Core dialog reads only
+  `processing-core/`. The release workflow publishes the line on
+  `mib-processing-absdiff-laplacian-v*` tags (see "Per-line core releases"). See
+  `docs/portable-processing-sync.md` ("Core lines").
+- **absdiff-laplacian core built and audited in CI** (2026-09-27, Contract 2
+  rollout T1.1b step 1) — `mib_processing_core_absdiff_laplacian` now builds
+  as `mib_processing_core-absdiff-laplacian-<version>-<os>_<arch>` with its
+  own descriptor (`algorithm`, contract 2, engine ABI 2,
+  `mib_processing_get_api_v2`). The Linux and Windows native-core jobs build
+  it, run `processing.core_contract2_equivalence` (and the v2 plugin test on
+  Linux), audit its exports (exactly `get_api_v2`) and imports, and upload it
+  as a separate unsigned artifact the subtract-ring signing/release jobs never
+  download. `tests/release/test_contract_version_consistency.py` checks both
+  Contract-2 sidecars against the ABI header. Signing and publishing per line
+  are step 2.
+- **Contract-2 core builds its mask once per frame** (2026-09-27) — the ABI v2
+  adapter passes the core's own `process_mask` output as
+  `precomputed_mask`, so `process_objects` runs object science only.
+  Measured on real 1184x240 frames, the rebuilt mask had cost ~10-13% of a
+  Contract-2 frame. `processing.core_v2_plugin` checks identical objects with
+  and without the precomputed mask, that an empty or moved mask changes the
+  objects (so the core really uses it), and rejects a wrong-size mask. The
+  pointer sits in the first two reserved words, so the ABI v2 config layout is
+  unchanged for older hosts and cores (locked by `processing.core_abi_v2_c`).
 - **Contract-2 native core owns its science** (2026-09-27, Contract 2 rollout
   T1.1a) — the loader negotiates engine ABI v2 for Contract-2 cores; the
   absdiff-laplacian core receives the full profile config as JSON and runs
@@ -2477,3 +2778,106 @@ passed. See [[../task/2026-09-14-one-click-illuminated-live]].
   ROI saved to MindVision JSON, bounded preview memory, and transactional mode
   switching. Rig acceptance measured 816x624 at about 400 fps and restored
   512x96 at (64,48) at about 998 fps, with generator OFF readback after each stop.
+
+
+## 2026-09-23 — Tauri catch-up started
+
+Fast-forwarded the migration branch onto develop and inventoried remaining
+cutover gaps. Wired existing EGrabber script selection/apply/reset controls with
+DOM regressions. Parallel config-persistence, shared-export and hardware-control
+work is tracked in `docs/exec-plans/active/2026-09-23-tauri-catch-up.md`.
+- 2026-09-23: Added the bounded Qt-free checked processing-document seam for
+  Tauri integration, with lifecycle exclusion and explicit persistence outcomes
+  ([[task/2026-09-23-tauri-config-transactions]]). Full Qt watcher migration remains open.
+
+
+### Tauri catch-up integration outcomes
+
+Integrated pump/autofocus controls, checked processing-only config save/apply,
+and shared HDF5 export/progress/cancel on current develop. Bumped bridge ABI to
+15. Native integration caught/fixed a runner-registration gap and valid-only
+export failure; config review prevented applying unrelated disk fields to runtime
+provenance. See the catch-up execution plan for verified vs pending gates.
+
+- 2026-09-23: Tauri software replacement follow-up: preview pause/scrub and
+  guarded non-overwriting buffer export, independent status reconciliation,
+  bounded monitoring polling. Fixed concurrent latest-frame identity and raw
+  review incorrectly reading the live ring instead of the HDF dataset. Review
+  load now holds the idle lifecycle gate and rejects active raw recording.
+
+- 2026-09-23: Tauri hardware parity adds explicit OEABT/CoreMOR endpoint connection,
+  connected identity status, read-only endpoint pickers and guarded acquisition
+  pulse-generator control through the existing backend service. Native malformed-input
+  checks and operator interaction tests cover no-write-on-mount, ownership and stop paths.
+
+- 2026-09-23: Tauri local profile library and portable checked activation added. Qt-layout
+  JSON/script profiles support save-new/copy/rename/recoverable archive with aggregate
+  revisions and filesystem fault/stress coverage. Non-processing calibration/buffering/
+  realtime/autofocus/ROI settings are validated before activation; remote/startup parity
+  remains explicit in [[architecture/Desktop-Shell]].
+
+- 2026-09-23: Managed Tauri profile catalogs now offer passive checks, field/script diffs,
+  SHA256-verified installs/updates with complete backups, app/core compatibility gates,
+  and revision-pinned startup restoration. Runtime origin and saved startup choice are
+  separately retrievable; remote install never implicitly activates a profile.
+- 2026-09-23: Atomic Tauri processed-preview packets now retain source pixels with
+  mask/ROI/contours/primary-target data, stamp processing and FrameStore epochs, and
+  fingerprint frozen processing parameters/ROI/background. Source retention is opt-in;
+  old packets remain immutable across config changes and store resize. Native inline
+  and async tests cover identity/pixel coherence; malformed webview packets are rejected.
+
+- 2026-09-23: Tauri processing-core registry, signed local-artifact activation, persisted
+  restore and bundled recovery reuse the shared cache/loader/signature verifiers. Qt now
+  shares the compiled trust-policy wrapper. Read-only app release checks are available;
+  Tauri package publication and installer/rollback remain explicit release gates.
+
+- 2026-09-23: Live configuration now validates the entire JSON/typed candidate before
+  mutating processing state, honors realtime enabled/drop flags, and rejects stale
+  config_version snapshots. Background refresh preserves edited JSON and quick-control
+  drafts; positive finite calibration is required. Profile display_fps now paces live
+  preview requests. Auto-background status reflects runtime config and routes to editing.
+## 2026-09-23 — Tauri remembered hardware selection and named pump endpoints
+
+Closed remembered startup vendor/endpoint/baud/address roundtrip and non-Windows pump transport UI/bridge gaps using existing services. See [[Desktop-Shell]] and [[Rust-Bridge]]. Malformed settings preserve prior preferences; startup jobs cannot be retargeted in flight. No real hardware was actuated.
+- 2026-09-23: Tauri preview buffer now supports exact-u64 inclusive index/source-timestamp
+  ranges, shared active-kernel empty filtering, bounded stopped/idle resizing (explicit
+  confirmation when frames are cleared), and background from a retained paused Mono8
+  frame. Ring generation preconditions reject stale selections; saves reserve new folders.
+  Linux RAM availability now uses MemAvailable for the shared resize budget check.
+
+- 2026-09-23: Webview reload now reconciles capture/raw recording, experiment and open
+  review metadata before publishing readiness. Retained native sessions read profile/core
+  identities without replaying startup selections, even when idle. Review UI recovers its
+  source, dataset, first-frame preview and metrics; export/reanalysis submissions remain
+  blocked until authoritative operation status has been recovered.
+
+- 2026-09-23: Monitoring table now labels raw area as px², matching the native row
+  contract. Added bounded valid-object Young's modulus histogram from stored per-object
+  kPa results; unavailable/zero values are excluded, not shown as physical measurements.
+  Ring histogram now includes positive finite valid-object ratios. Calibrated live area
+  and isoelastic overlays remain gated on processing-time per-row calibration provenance:
+  neither shell may safely rescale retained old rows using the current factor.
+
+## 2026-09-23 — Windows Tauri candidate closure
+
+Added a nonpublishing SDK-free Windows x64 build/test/portable-package lane, separate from Qt releases. Native dependency closure fails unresolved/conflicting DLLs; staging includes MSVC runtime and scientific resources. Hosted Windows validation remains required; no Windows or real-hardware run is claimed from Linux. See [[Desktop-Shell]].
+- 2026-09-23: Reload reconciliation rejects active writer handles as review sources.
+  Native review metadata now requires an actual loaded review path before inspecting
+  shared HDF datasets; shell additionally excludes active raw/experiment writers.
+
+- 2026-09-23: Closed live monitoring calibration gap: shared host object-analysis stamps
+  each result with the exact kernel input factor, retained by inline/batch monitoring.
+  Qt and Tauri now plot mixed historical epochs correctly without current-factor rescaling.
+  Added optional shared bundled isoelastic references with explicit physical conditions;
+  unknown calibration rows remain excluded. Processing-core C ABI/HDF schema unchanged.
+## 2026-09-23 — Explicit Tauri experiment/camera recovery
+
+Closed Qt's fault acknowledgment parity gap with compare-and-acknowledge backend guarding and explicit operator review. Retained failed output/error/accounting remains visible after acknowledgment; camera errors have persistent authoritative status and explicit retry/configuration actions. Fake/mock-only regression tests cover refusal, stale confirmation, retained file outcome and reconnect gating. See [[Desktop-Shell]].
+
+- 2026-09-23: Added user-operated Tauri app installer workflow using the existing
+  HTTPS manifest/SHA256 contract. Canonical platform-specific Tauri feeds must identify
+  artifact_family=tauri, exact OS/architecture, newer SemVer, size and digest. Downloads
+  open in the browser; local packages are streamed into private verified staging and
+  manifests/digests rechecked before explicit native installer launch. Active native work,
+  pending UI operations and dirty drafts block installation. No installer was launched,
+  release published, or signing keys changed during implementation/tests.

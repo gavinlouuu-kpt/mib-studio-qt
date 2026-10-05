@@ -145,6 +145,14 @@ namespace backend::services
             double youngsModulus;
             uint8_t isTargetGroup;
             double laplacianVariance; // Contract-2 focus metric; appended to keep prior offsets
+            // Contract 3 (unet-cells); appended to keep prior offsets. NaN / 0
+            // under Contracts 1-2 and when read from an older file.
+            double brightness_mean;
+            double brightness_variance;
+            double contourArea;
+            int32_t pixelCount;
+            int32_t blemishCount;
+            uint8_t degenerateContour;
         };
 
         hid_t createProcessedFrameMetadataType(bool includeBaseFields = true,
@@ -172,6 +180,12 @@ namespace backend::services
                 H5Tinsert(compTypeId, "brightness_q4", HOFFSET(ProcessedFrameMetadataRecord, brightness_q4), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "youngsModulus", HOFFSET(ProcessedFrameMetadataRecord, youngsModulus), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "isTargetGroup", HOFFSET(ProcessedFrameMetadataRecord, isTargetGroup), H5T_NATIVE_UINT8);
+                H5Tinsert(compTypeId, "brightness_mean", HOFFSET(ProcessedFrameMetadataRecord, brightness_mean), H5T_NATIVE_DOUBLE);
+                H5Tinsert(compTypeId, "brightness_variance", HOFFSET(ProcessedFrameMetadataRecord, brightness_variance), H5T_NATIVE_DOUBLE);
+                H5Tinsert(compTypeId, "contourArea", HOFFSET(ProcessedFrameMetadataRecord, contourArea), H5T_NATIVE_DOUBLE);
+                H5Tinsert(compTypeId, "pixelCount", HOFFSET(ProcessedFrameMetadataRecord, pixelCount), H5T_NATIVE_INT32);
+                H5Tinsert(compTypeId, "blemishCount", HOFFSET(ProcessedFrameMetadataRecord, blemishCount), H5T_NATIVE_INT32);
+                H5Tinsert(compTypeId, "degenerateContour", HOFFSET(ProcessedFrameMetadataRecord, degenerateContour), H5T_NATIVE_UINT8);
             }
             if (includeObjectFields)
             {
@@ -227,6 +241,12 @@ namespace backend::services
             md.brightness_q4 = frame.validation.brightness.q4;
             md.youngsModulus = frame.validation.youngsModulus;
             md.isTargetGroup = frame.validation.isTargetGroup ? 1 : 0;
+            md.brightness_mean = frame.validation.brightnessMean;
+            md.brightness_variance = frame.validation.brightnessVariance;
+            md.contourArea = frame.validation.contourArea;
+            md.pixelCount = frame.validation.pixelCount;
+            md.blemishCount = frame.validation.blemishCount;
+            md.degenerateContour = frame.validation.degenerateContour ? 1 : 0;
             return md;
         }
     } // namespace
@@ -1915,6 +1935,14 @@ namespace backend::services
             // Default to NaN so a Contract-1 file (no laplacianVariance member)
             // reads as "not computed" rather than 0; a Contract-2 file overwrites it.
             md.laplacianVariance = std::numeric_limits<double>::quiet_NaN();
+            // Contract 3 members: absent before Contract 3 (and NaN / 0 when
+            // written under Contracts 1-2).
+            md.brightness_mean = std::numeric_limits<double>::quiet_NaN();
+            md.brightness_variance = std::numeric_limits<double>::quiet_NaN();
+            md.contourArea = 0.0;
+            md.pixelCount = 0;
+            md.blemishCount = 0;
+            md.degenerateContour = 0;
         }
 
         hid_t baseMemTypeId = createProcessedFrameMetadataType(true, false, false);
@@ -2001,6 +2029,12 @@ namespace backend::services
             frame.validation.brightness.q4 = md.brightness_q4;
             frame.validation.youngsModulus = md.youngsModulus;
             frame.validation.isTargetGroup = (md.isTargetGroup != 0);
+            frame.validation.brightnessMean = md.brightness_mean;
+            frame.validation.brightnessVariance = md.brightness_variance;
+            frame.validation.contourArea = md.contourArea;
+            frame.validation.pixelCount = md.pixelCount;
+            frame.validation.blemishCount = md.blemishCount;
+            frame.validation.degenerateContour = (md.degenerateContour != 0);
             frames.push_back(frame);
         }
 
@@ -2700,6 +2734,19 @@ namespace backend::services {
         }
         SPDLOG_DEBUG("readImagesRange: loaded {} images from {}", outImages.size(), datasetPath);
         return true;
+    }
+
+    std::optional<bool> Hdf5Service::metadataDatasetPresent(bool valid) const
+    {
+        if (!isFileOpen()) return std::nullopt;
+        const char* group = valid ? "/valid_frames" : "/invalid_frames";
+        const htri_t groupExists = H5Lexists(impl_->fileId_, group, H5P_DEFAULT);
+        if (groupExists < 0) return std::nullopt;
+        if (groupExists == 0) return false;
+        const std::string path = std::string(group) + "/metadata";
+        const htri_t exists = H5Lexists(impl_->fileId_, path.c_str(), H5P_DEFAULT);
+        if (exists < 0) return std::nullopt;
+        return exists > 0;
     }
 
     bool Hdf5Service::readValidMetadata(std::vector<ProcessedFrame>& frames)

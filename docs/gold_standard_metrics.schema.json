@@ -14,8 +14,8 @@
     },
     "contract_version": {
       "type": "integer",
-      "enum": [1, 2],
-      "description": "Optional explicit portable-processing contract version (1 = subtract-ring, 2 = absdiff-laplacian; ADR 0006/0007). Required by conformance references; omitted by older metrics-only exports."
+      "enum": [1, 2, 3],
+      "description": "Optional explicit portable-processing contract version (1 = subtract-ring, 2 = absdiff-laplacian, 3 = unet-cells; ADR 0006/0007). Required by conformance references; omitted by older metrics-only exports."
     },
     "wheel_version": {
       "type": "string",
@@ -41,9 +41,12 @@
     },
     "frames": {
       "type": "array",
-      "items": { "$ref": "#/$defs/frame" }
+      "description": "Per-object records: $defs/frame, or $defs/unet_cell_frame when contract_version is 3."
     }
   },
+  "if": { "required": ["contract_version"], "properties": { "contract_version": { "const": 3 } } },
+  "then": { "properties": { "frames": { "items": { "$ref": "#/$defs/unet_cell_frame" } } } },
+  "else": { "properties": { "frames": { "items": { "$ref": "#/$defs/frame" } } } },
   "$defs": {
     "frame": {
       "type": "object",
@@ -184,6 +187,178 @@
           "description": "Optional ordered SHA-256 digests of the trigger image and following multi-image-series frames."
         }
       }
+    },
+    "unet_cell_frame": {
+      "type": "object",
+      "required": [
+        "frame_type",
+        "index",
+        "timestamp_ns",
+        "object_id",
+        "object_count",
+        "deformability",
+        "area",
+        "area_ratio",
+        "is_valid",
+        "touches_border",
+        "has_single_inner_contour",
+        "in_range",
+        "inner_contour_count",
+        "brightness_mean",
+        "brightness_variance",
+        "pixel_count",
+        "blemish_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "frame_type": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "invalid"
+          ],
+          "description": "Whether the source frame/ROI passed validation."
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Frame index from acquisition (monotonic)."
+        },
+        "timestamp_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Timestamp in nanoseconds."
+        },
+        "object_id": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "One-based object candidate within the source frame/ROI, ordered left-to-right then top-to-bottom; -1 when no object candidate was selected."
+        },
+        "object_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of object candidates emitted for the source frame/ROI."
+        },
+        "track_id": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Optional stable batch track identifier; -1 for untracked or invalid records."
+        },
+        "track_first_frame": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional first source-frame index observed for this retained track."
+        },
+        "track_last_frame": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional last source-frame index observed for this retained track."
+        },
+        "track_observation_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional number of source-frame detections merged into this track."
+        },
+        "deformability": {
+          "type": "number",
+          "description": "1.0 minus circularity; dimensionless."
+        },
+        "area": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Hull area in pixels."
+        },
+        "area_um2": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Area in um^2 = area * pixel_to_micron^2. Optional; derivable from area and pixel_to_micron."
+        },
+        "youngs_modulus": {
+          "type": "number",
+          "description": "Young's modulus (kPa) from EModulusLut bilinear lookup on (area_um, deformability). Optional: omitted when the query point falls outside LUT coverage (lookup returns NaN) or when the producer has no LUT loaded (e.g. a legacy CSV conversion)."
+        },
+        "area_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Hull area / contour area; dimensionless."
+        },
+        "laplacian_variance": {
+          "type": "number",
+          "description": "Per-object focus metric: variance of the Laplacian over the detected object (Contracts 2 and 3). NaN is serialized as null."
+        },
+        "is_valid": {
+          "type": "boolean",
+          "description": "True if frame passed all validation checks."
+        },
+        "is_target_group": {
+          "type": "boolean",
+          "description": "Optional target-group classification used by the trigger path."
+        },
+        "touches_border": {
+          "type": "boolean",
+          "description": "True if the contour touches the image border."
+        },
+        "has_single_inner_contour": {
+          "type": "boolean",
+          "description": "True only when there is exactly one inner contour. Informational; acceptance uses at least one nested contour."
+        },
+        "in_range": {
+          "type": "boolean",
+          "description": "True if area is within the configured min/max range."
+        },
+        "inner_contour_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of inner (nested) contours."
+        },
+        "brightness_mean": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Contract 3: mean raw brightness over the filled outer contour. NaN is serialized as null."
+        },
+        "brightness_variance": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Contract 3: population variance of the raw brightness over the filled outer contour. NaN is serialized as null."
+        },
+        "contour_area": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Contract 3: area enclosed by the outer contour, in pixels (0 for a degenerate contour)."
+        },
+        "pixel_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Contract 3: mask pixels of the cell's component."
+        },
+        "blemish_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Contract 3: per frame, top-level components below min_cell_area_px."
+        },
+        "degenerate_contour": {
+          "type": "boolean",
+          "description": "Contract 3: the outer contour encloses no area (reason NoContour)."
+        },
+        "mask_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Optional SHA-256 of the typed, shaped uint8 mask payload for byte-parity conformance."
+        },
+        "series_images_sha256": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "description": "Optional ordered SHA-256 digests of the trigger image and following multi-image-series frames."
+        }
+      },
+      "description": "Contract 3 (unet-cells) per-object record: brightness mean and variance replace the quartiles; no ring width (ProcessingScience::filterUnetCellObjects)."
     }
   }
 }

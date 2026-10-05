@@ -40,6 +40,7 @@ public:
         double flowRate{0.0};
         uint16_t flowRateUnit{100};      // 100 = µL/min
         Direction direction{Direction::Infuse};
+        std::string portName; // actual system endpoint; numeric COM remains compatibility metadata
     };
 
     struct PumpStatus {

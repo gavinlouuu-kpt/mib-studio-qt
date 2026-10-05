@@ -1,0 +1,4 @@
+# Vendored pz7035 ABI bundle: checked by sha256 (scripts/vendor_pz7035_abi.py
+# --check), so it must stay byte-identical to the pz7035-imx426 release.
+# Never convert line endings (a Windows checkout would otherwise get CRLF).
+third_party/pz7035-abi/** -text

@@ -288,13 +288,34 @@ AutofocusService::Config AutofocusService::getConfig() const {
     return config_;
 }
 
+void AutofocusService::selectMetric(FocusMetric metric) {
+    focusMetric_.store(static_cast<int>(metric), std::memory_order_relaxed);
+}
+
+void AutofocusService::onFocusSample(const autofocus::FocusSample& sample) {
+    // Realtime thread: O(1), as onRingRatio.
+    if (!autofocus::focusSampleValid(sample)) {
+        return;
+    }
+    selectMetric(FocusMetric::LaplacianVariance);
+    {
+        std::scoped_lock lk(pendingSamplesMutex_);
+        pendingFocusSamples_.push_back(sample);
+    }
+    focusSequence_.fetch_add(1, std::memory_order_relaxed);
+    lastFocusUpdateUs_.store(backend::Tools::getTimestamp(), std::memory_order_relaxed);
+    pendingSamplesCV_.notify_one();
+}
+
 void AutofocusService::onRingRatio(double ringRatio, int64_t timestampNs) {
     // Called on the ProcessingService realtime thread on every valid frame
     // — keep this function O(1) and allocation-light. Heavy work (deque
-    // trim, sort, stats refresh) happens on statsThread_.
-    if (ringRatio <= 0.0) {
+    // trim, sort, stats refresh) happens on statsThread_. `!(x > 0)` also
+    // rejects NaN (the ring ratio of every Contract 2/3 object).
+    if (!(ringRatio > 0.0)) {
         return;
     }
+    selectMetric(FocusMetric::RingRatio);
 
     {
         std::scoped_lock lk(pendingSamplesMutex_);
@@ -374,6 +395,8 @@ void AutofocusService::statsLoop() {
     // itself (O(1) pointer swap).
     std::vector<PendingSample> drained;
     drained.reserve(1024);
+    std::vector<autofocus::FocusSample> drainedFocus;
+    drainedFocus.reserve(1024);
 
     // Bound the wake rate so the sort cost amortises across samples. At
     // 5 kfps this batches ~50 samples per drain; at UI rates it drains
@@ -384,11 +407,27 @@ void AutofocusService::statsLoop() {
     while (statsRunning_.load()) {
         {
             std::unique_lock<std::mutex> lk(pendingSamplesMutex_);
-            pendingSamplesCV_.wait(
-                lk, [this] { return !statsRunning_.load() || !pendingSamples_.empty(); });
-            if (!statsRunning_.load() && pendingSamples_.empty()) break;
+            pendingSamplesCV_.wait(lk, [this] {
+                return !statsRunning_.load() || !pendingSamples_.empty() ||
+                       !pendingFocusSamples_.empty();
+            });
+            if (!statsRunning_.load() && pendingSamples_.empty() && pendingFocusSamples_.empty()) break;
             drained.swap(pendingSamples_);
+            drainedFocus.swap(pendingFocusSamples_);
         }
+
+        if (!drainedFocus.empty()) {
+            std::scoped_lock ringLock(ringRatioMutex_);
+            for (const auto& s : drainedFocus) {
+                focusBuffer_.push_back(s);
+                if (focusBuffer_.size() > MAX_BUFFER_SIZE) {
+                    focusBuffer_.pop_front();
+                }
+            }
+            medianFocusScore_.store(autofocus::medianFocusScore(
+                std::vector<autofocus::FocusSample>(focusBuffer_.begin(), focusBuffer_.end())));
+        }
+        drainedFocus.clear();
 
         if (!drained.empty()) {
             std::scoped_lock ringLock(ringRatioMutex_);
@@ -458,6 +497,16 @@ void AutofocusService::controlLoop() {
             }
         }
 
+        // Reset the focus-score controller when control starts or the metric
+        // changes, so it never continues a climb from another session.
+        const bool enabledNow = enabled_.load() && connected_.load();
+        const int metricNow = focusMetric_.load(std::memory_order_relaxed);
+        if (enabledNow && (!controllerWasEnabled_ || metricNow != controllerMetric_)) {
+            focusController_.reset();
+            controllerMetric_ = metricNow;
+        }
+        controllerWasEnabled_ = enabledNow;
+
         // Run automatic control if enabled
         if (enabled_.load() && connected_.load()) {
             Config cfg;
@@ -473,6 +522,12 @@ void AutofocusService::controlLoop() {
                 currentVoltage_.store(currentVolt);
             } else {
                 SPDLOG_WARN("AutofocusService: Voltage read failed: {}", readError);
+            }
+
+            if (metricNow == static_cast<int>(FocusMetric::LaplacianVariance)) {
+                stepFocusScore(cfg);
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
             }
 
             // Get median ring ratio
@@ -509,7 +564,10 @@ void AutofocusService::controlLoop() {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
-                    lastAppliedSequence_ = currentSequence;
+                    // The sequence restarts at 0 below, so the next step
+                    // counts samples from 0 (minSamplesPerStep holds for every
+                    // step, not only the first).
+                    lastAppliedSequence_ = 0;
 
                     // Clear buffer after a step to ensure next statistics are based on post-step
                     // samples. Also drop anything queued in pendingSamples_ that hasn't yet been
@@ -540,6 +598,54 @@ void AutofocusService::controlLoop() {
     }
 
     SPDLOG_INFO("AutofocusService: Control loop stopped");
+}
+
+void AutofocusService::clearFocusSamplesLocked() {
+    pendingFocusSamples_.clear();
+    focusBuffer_.clear();
+    focusSequence_.store(0);
+    lastFocusUpdateUs_.store(0, std::memory_order_relaxed);
+    medianFocusScore_.store(std::numeric_limits<double>::quiet_NaN());
+    lastAppliedFocusSequence_ = 0;
+}
+
+void AutofocusService::stepFocusScore(const Config& cfg) {
+    const double score = medianFocusScore_.load();
+    const uint64_t sequence = focusSequence_.load(std::memory_order_relaxed);
+    const uint64_t lastUpdateUs = lastFocusUpdateUs_.load(std::memory_order_relaxed);
+    const uint64_t nowUs = backend::Tools::getTimestamp();
+    const bool fresh = lastUpdateUs > 0 &&
+                       nowUs - lastUpdateUs <= static_cast<uint64_t>(cfg.ringRatioStaleMs) * 1000ULL;
+    const bool enough =
+        sequence - lastAppliedFocusSequence_ >= static_cast<uint64_t>(std::max(1, cfg.minSamplesPerStep));
+    if (!std::isfinite(score) || !fresh || !enough) {
+        return;
+    }
+
+    autofocus::FocusScoreController::Params params;
+    params.coarseStep = cfg.voltageStep;
+    params.fineStep = cfg.fineVoltageStep;
+    params.minVoltage = cfg.minVoltage;
+    params.maxVoltage = cfg.maxVoltage;
+    params.holdTolerance = cfg.focusScoreHoldTolerance;
+    focusController_.setParams(params);
+    const double current = currentVoltage_.load();
+    const double next = focusController_.step(current, score);
+
+    if (std::abs(next - current) > 0.01) {
+        std::string error;
+        if (!writeDeviceVoltage(next, error)) {
+            SPDLOG_ERROR("AutofocusService: Focus-score voltage step failed: {}", error);
+            notifyStatus("Autofocus voltage step failed: " + error);
+            return;
+        }
+        SPDLOG_DEBUG("AutofocusService: Adjusted voltage to {}V (focus score {:.3f})", next, score);
+        notifyStatus("Voltage: " + std::to_string(next) + "V (focus score: " + std::to_string(score) + ")");
+    }
+    // Every evaluation (step or hold) starts a fresh median, so the controller
+    // compares independent measurements taken at each voltage.
+    std::scoped_lock lock(pendingSamplesMutex_, ringRatioMutex_);
+    clearFocusSamplesLocked();
 }
 
 } // namespace backend::services

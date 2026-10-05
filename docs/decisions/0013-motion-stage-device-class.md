@@ -1,4 +1,4 @@
-# 0008. Motorized stages are a separate device class behind `IMotionStage`
+# 0013. Motorized stages are a separate device class behind `IMotionStage`
 
 Date: 2026-09-30
 Status: proposed
@@ -160,9 +160,16 @@ focus" corpus is labelled only by nominal voltage.
   Whatever is mounted above it, such as an objective or sample holder, must
   clear the whole travel range. Rigs where it cannot must disable start-up
   referencing.
-- On the PZ7035, the #441 target rule "boot must never start motion" needs an
-  explicit amendment for application-start referencing, or referencing must
-  wait for the first operator session there.
-- On the PZ7035 the same driver runs unchanged. Getting the adapter
+- On the PZ7035 instrument ([ADR 0011](0011-yofo-studio-pz7035-instrument.md)),
+  the stage is driven by the headless backend on the PS and operated from
+  the remote React UI. That matches the facade/Tauri-only surface here, and
+  the same driver runs unchanged.
+- The E0 target ADR (landing as 0012 per ADR 0011) has the rule "boot must
+  never start motion". It needs an explicit amendment for application-start
+  referencing, or referencing on the instrument must wait for the first
+  operator session.
+- On the instrument, autofocus is fed by PL result records (ADR 0011 §4). The
+  follow-up focus-actuator ADR must take its focus metric from there, not
+  from host-side frames. Getting the adapter
   recognised (`CONFIG_USB_SERIAL_FTDI_SIO`, USB host mode, the USB PHY reset
   on pin J16) is board-repo work tracked in pz7035-imx426.

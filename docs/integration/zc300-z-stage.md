@@ -4,7 +4,7 @@ MIB Studio will drive the Zolix (北京卓立汉光) ZC300 stepper controller as
 user-space Modbus RTU device over the shared [SerialBus](../../knowledge_map/services/SerialBus.md)
 layer. The ZC300-1A's FTDI FT232R USB bridge is bound by Linux's `ftdi_sio`
 kernel driver; no vendor driver is installed or required. Design and rollout:
-[ADR 0008](../decisions/0008-motion-stage-device-class.md) and the
+[ADR 0013](../decisions/0013-motion-stage-device-class.md) and the
 [execution plan](../exec-plans/active/2026-09-30-zc300-z-stage.md).
 
 ## Interoperability evidence

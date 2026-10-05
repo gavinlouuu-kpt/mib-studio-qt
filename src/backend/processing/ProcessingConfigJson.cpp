@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingConfigJson.h"
+#include "backend/processing/ProcessingContract.h"
 
 #include <nlohmann/json.hpp>
 
@@ -158,6 +159,15 @@ namespace backend::processing::config_json
             {"channel_band_y", c.channel_band_y},
             {"channel_band_h", c.channel_band_h},
         };
+        // Contract 3 keys only for Contract 3, so Contract 1/2 documents stay
+        // byte-identical.
+        if (contract::contractObjectsAreUnetCells(c.processing_contract_version))
+        {
+            json["unet_cells"] = {
+                {"min_cell_area_px", c.min_cell_area_px},
+                {"laplacian_kernel_size", c.laplacian_kernel_size},
+            };
+        }
         return json;
     }
 
@@ -174,6 +184,11 @@ namespace backend::processing::config_json
             ok &= assignIfPresent(*abi, "laplacian_variance_max", c.laplacian_variance_max, errorOut);
             ok &= assignIfPresent(*abi, "channel_band_y", c.channel_band_y, errorOut);
             ok &= assignIfPresent(*abi, "channel_band_h", c.channel_band_h, errorOut);
+        }
+        if (const auto cells = json.find("unet_cells"); cells != json.end())
+        {
+            ok &= assignIfPresent(*cells, "min_cell_area_px", c.min_cell_area_px, errorOut);
+            ok &= assignIfPresent(*cells, "laplacian_kernel_size", c.laplacian_kernel_size, errorOut);
         }
         return ok;
     }
