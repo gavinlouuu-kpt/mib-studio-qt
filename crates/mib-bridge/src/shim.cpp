@@ -1585,6 +1585,14 @@ rust::String BackendBridge::fetch_platform_info() {
     }
 }
 
+rust::String BackendBridge::fetch_instrument_status() {
+    try {
+        return rust::String(impl_->facade.fetchInstrumentStatusJson());
+    } catch (...) {
+        return rust::String(R"({"available":false,"error":"fetch_instrument_status failed"})");
+    }
+}
+
 rust::String BackendBridge::fetch_camera_geometry() {
     try {
         return rust::String(impl_->facade.fetchCameraGeometryJson());

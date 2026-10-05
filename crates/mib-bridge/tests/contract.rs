@@ -93,6 +93,33 @@ fn camera_alignment_commands_without_overview_camera() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+// #501: the desktop build reports MIB surfaces and no PZ7035; instrument
+// status is unavailable off the PZ7035 and never fails the call.
+#[test]
+#[serial]
+fn platform_capabilities_and_instrument_status_on_the_desktop() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_platform_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let early: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_instrument_status()).unwrap();
+    assert_eq!(early["available"], serde_json::json!(false), "{early}");
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
+    let caps = &info["capabilities"];
+    assert_eq!(caps["instrument"], serde_json::json!("desktop"), "{info}");
+    for host_only in ["autofocus", "trigger", "host_background", "frame_buffer", "reanalysis", "core_updates", "egrabber_script"] {
+        assert_eq!(caps[host_only], serde_json::json!(true), "{host_only}: {info}");
+    }
+    for pz_only in ["pl_identity", "led_strobe", "align_mode", "run_mode"] {
+        assert_eq!(caps[pz_only], serde_json::json!(false), "{pz_only}: {info}");
+    }
+    assert!(caps["pump"].is_null(), "{info}");
+    let status: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_instrument_status()).unwrap();
+    assert_eq!(status["available"], serde_json::json!(false), "{status}");
+    assert!(status["error"].as_str().is_some_and(|e| !e.is_empty()), "{status}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 // BE-8: the autofocus command surface fails safely without hardware, the
 // config round-trips without QSettings types, and the status exposes the
 // focus-metric freshness explicitly. (The Coremor transport is a platform

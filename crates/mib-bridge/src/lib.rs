@@ -848,6 +848,9 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
+        /// PZ7035 identity and health for preflight (#501): `{"available": bool, "error"?,
+        /// "core": {...}, "led": {...}, "link": {...}, "latency": {...}}`. Read-only.
+        fn fetch_instrument_status(self: Pin<&mut BackendBridge>) -> String;
         fn reset_hardware_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 
         /// Enable/disable monitoring accumulation (schema v6, BE-5). Disabled

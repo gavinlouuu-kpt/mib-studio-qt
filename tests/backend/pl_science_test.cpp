@@ -27,6 +27,22 @@ int main()
     MIB_REQUIRE(facade.initialize(temp.path().string()), "facade initializes");
     const auto info = nlohmann::json::parse(facade.fetchPlatformInfoJson());
     MIB_EXPECT(info["science"] == "pl" && info["host_processing"] == false, "platform info reports the PL");
+    // #501: the PZ7035 surfaces, and none of the MIB-only ones.
+    const auto& caps = info["capabilities"];
+    MIB_EXPECT(caps["instrument"] == "pz7035" && caps["pl_identity"] == true && caps["led_strobe"] == true,
+               "capabilities name the PZ7035");
+    MIB_EXPECT(caps["autofocus"] == false && caps["trigger"] == false && caps["host_background"] == false &&
+                   caps["frame_buffer"] == false && caps["reanalysis"] == false && caps["core_updates"] == false &&
+                   caps["egrabber_script"] == false,
+               "no MIB-only surfaces on the PZ7035");
+    MIB_EXPECT(caps["pump"]["model"] == "tushui_peristaltic" && caps["pump"]["port"] == "/dev/ttyPS1" &&
+                   caps["pump"]["modbus_address"] == 3,
+               "the peristaltic pump on ttyPS1, slave 3");
+    // No board provider here (MIB_EXECUTION_PROVIDER unset): status says why.
+    const auto status = nlohmann::json::parse(facade.fetchInstrumentStatusJson());
+    MIB_EXPECT(status["available"] == false &&
+                   status["error"].get<std::string>().find("MIB_EXECUTION_PROVIDER=pz") != std::string::npos,
+               "instrument status without the board provider explains itself");
 
     backend::bridge::ProcessingSettingsCommand on;
     on.realtimeEnabled = true;

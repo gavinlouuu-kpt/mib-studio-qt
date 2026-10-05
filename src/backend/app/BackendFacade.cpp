@@ -31,6 +31,8 @@
 #include "backend/services/PulseGeneratorService.h"
 
 #include <algorithm>
+#include "backend/pz/PzPlatformMonitor.h"
+#include "backend/services/TushuiPumpProtocol.h"
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -2423,10 +2425,94 @@ app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const 
 
 namespace backend::bridge {
 std::string BackendFacade::fetchPlatformInfoJson() const {
+    const bool host = app::hostProcessingAvailable();
+    // The PZ7035 has no nanopositioner, host trigger, host background, live frame
+    // buffer, host reanalysis, core updater or EGrabber script (ADR 0011 §8, #501).
+    nlohmann::json capabilities{
+        {"instrument", host ? "desktop" : "pz7035"},
+        {"autofocus", host},
+        {"trigger", host},
+        {"host_background", host},
+        {"frame_buffer", host},
+        {"reanalysis", host},
+        {"core_updates", host},
+        {"egrabber_script", host},
+        {"pl_identity", !host},
+        {"led_strobe", !host},
+        // Backend-owned camera modes arrive with P0b.
+        {"align_mode", false},
+        {"run_mode", false},
+    };
+    // The PZ7035's peristaltic pump: RS485 on /dev/ttyPS1, Modbus slave 3.
+    capabilities["pump"] = host ? nlohmann::json(nullptr)
+                                : nlohmann::json{{"model", "tushui_peristaltic"},
+                                                 {"port", "/dev/ttyPS1"},
+                                                 {"modbus_address", 3},
+                                                 {"microliters_per_rev", services::tushui::kDefaultMicrolitersPerRev}};
     return nlohmann::json{
         {"science", app::sciencePlacement()},
-        {"host_processing", app::hostProcessingAvailable()},
+        {"host_processing", host},
         {"aravis", MIB_HAS_ARAVIS != 0},
+        {"capabilities", std::move(capabilities)},
+    }.dump();
+}
+
+std::string BackendFacade::fetchInstrumentStatusJson() {
+    auto* monitor = initialized_ ? backend_.pzPlatformMonitor() : nullptr;
+    if (!monitor) {
+        return nlohmann::json{{"available", false},
+                              {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"}}
+            .dump();
+    }
+    const auto nowUs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    const auto s = monitor->sample(nowUs);
+    if (!s.available) {
+        return nlohmann::json{{"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}}
+            .dump();
+    }
+    nlohmann::json expected = nullptr;
+    if (s.expectedPresent) {
+        expected = {{"build_id", s.expected.buildId},
+                    {"profile_id", s.expected.profileId},
+                    {"commit", s.expected.commit},
+                    {"image", s.expected.image},
+                    {"abi_major", s.expected.abiMajor},
+                    {"abi_minor", s.expected.abiMinor}};
+    }
+    return nlohmann::json{
+        {"available", true},
+        {"core",
+         {{"build_id", s.buildId},
+          {"profile_id", s.profileId},
+          {"abi_version", s.abiVersion},
+          {"science_profile", s.scienceProfile},
+          {"profile_version", s.profileVersion},
+          {"expected", std::move(expected)},
+          {"pinned_profile_id", s.pinnedProfileId},
+          {"build_match", pz::idMatchName(s.buildMatch)},
+          {"profile_match", pz::idMatchName(s.profileMatch)}}},
+        {"led",
+         {{"on", s.ledOn},
+          {"preset", s.ledPreset},
+          {"delay_us", s.ledDelayUs},
+          {"width_us", s.ledWidthUs},
+          {"guard_fault", s.guardFault},
+          {"guard_trips", s.guardTrips}}},
+        {"link",
+         {{"rates_valid", s.ratesValid},
+          {"ingress_errors_per_s", s.ingressErrorsPerS},
+          {"resyncs_per_s", s.resyncsPerS},
+          {"bad_frames_per_s", s.badFramesPerS},
+          {"dropped_per_s", s.droppedPerS},
+          {"ingress_errors_warn_per_s", pz::kIngressErrorWarnPerS},
+          {"resyncs_warn_per_s", pz::kResyncWarnPerS}}},
+        {"latency",
+         {{"last_us", s.latencyLastUs},
+          {"max_us", s.latencyMaxUs},
+          {"over_budget", s.latencyOverBudget},
+          {"frames", s.latencyFrames}}},
     }.dump();
 }
 
