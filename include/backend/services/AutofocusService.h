@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/nanopositioner/INanopositionerBackend.h"
+#include "backend/services/AutofocusFocusScore.h"
 
 #include <atomic>
 #include <chrono>
@@ -8,6 +9,7 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -69,13 +71,34 @@ public:
         int minSamplesPerStep{100};
         double safeShutdownVoltage{0.0};
         bool focusDirection{true}; // true = increase voltage increases ring ratio
+        // Focus-score mode (Contracts 2/3): a median change at or below this
+        // counts as no change (the peak-seeker refines, then holds). The steps,
+        // limits, staleness and samples per step are shared with ring mode.
+        double focusScoreHoldTolerance{1e-6};
     };
+
+    // Which signal drives the control loop. Chosen by the feed that delivers
+    // samples: onRingRatio (Contract 1) selects RingRatio, onFocusSample
+    // (Contracts 2 and 3) selects LaplacianVariance. A switch resets the
+    // controller and the other metric's samples.
+    enum class FocusMetric { RingRatio, LaplacianVariance };
+    FocusMetric getFocusMetric() const {
+        return static_cast<FocusMetric>(focusMetric_.load(std::memory_order_relaxed));
+    }
 
     void setConfig(const Config& config);
     Config getConfig() const;
 
-    // Ring ratio feed (called by ProcessingService)
+    // Ring ratio feed (called by ProcessingService under Contract 1). Only
+    // finite values > 0 are samples.
     void onRingRatio(double ringRatio, int64_t timestampNs);
+    // Focus-score feed (Contracts 2 and 3): one valid object's Laplacian
+    // variance. Only finite values are samples; the control value is the
+    // median over de-duplicated (frame, object) samples since the last step.
+    void onFocusSample(const autofocus::FocusSample& sample);
+    // NaN until samples arrive (and after each control step).
+    double getMedianFocusScore() const { return medianFocusScore_.load(std::memory_order_relaxed); }
+    uint64_t getLastFocusUpdateUs() const { return lastFocusUpdateUs_.load(std::memory_order_relaxed); }
 
     // Expose running average of ring ratio for UI/status
     double getAverageRingRatio() const { return averageRingRatio_.load(std::memory_order_relaxed); }
@@ -92,6 +115,11 @@ public:
 
 private:
     void controlLoop();
+    // One focus-score control evaluation (control thread). Returns after a
+    // write failure so the loop can back off.
+    void stepFocusScore(const Config& cfg);
+    void clearFocusSamplesLocked();
+    void selectMetric(FocusMetric metric);
     void statsLoop();
     void updateStatistics();
     double calculateMedian(const std::vector<double>& sorted) const;
@@ -131,6 +159,7 @@ private:
     mutable std::mutex pendingSamplesMutex_;
     std::condition_variable pendingSamplesCV_;
     std::vector<PendingSample> pendingSamples_;
+    std::vector<autofocus::FocusSample> pendingFocusSamples_; // guarded by pendingSamplesMutex_
     std::thread statsThread_;
     std::atomic<bool> statsRunning_{false};
 
@@ -144,6 +173,18 @@ private:
     std::atomic<int64_t> lastRingRatioTimestampNs_{0};
     std::atomic<uint64_t> lastRingRatioUpdateUs_{
         0}; // monotonic us when a ring ratio sample was last accepted
+
+    // Focus-score samples (owned by statsLoop, guarded by ringRatioMutex_).
+    std::deque<autofocus::FocusSample> focusBuffer_;
+    std::atomic<uint64_t> focusSequence_{0};
+    std::atomic<uint64_t> lastFocusUpdateUs_{0};
+    std::atomic<double> medianFocusScore_{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<int> focusMetric_{static_cast<int>(FocusMetric::RingRatio)};
+    // Control thread only.
+    autofocus::FocusScoreController focusController_;
+    int controllerMetric_{-1}; // metric the controllers were last reset for
+    bool controllerWasEnabled_{false};
+    uint64_t lastAppliedFocusSequence_{0};
 
     // Statistics
     std::atomic<double> medianRingRatio_{0.0};

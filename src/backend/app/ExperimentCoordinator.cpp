@@ -250,6 +250,7 @@ void ExperimentCoordinator::reportUnresolvedFault(const std::string& code, const
 {
     std::lock_guard<std::mutex> lk(mutex_);
     faultActive_ = true;
+    ++faultRevision_;
     faultCode_ = code;
     faultMessage_ = message;
 }
@@ -264,6 +265,30 @@ void ExperimentCoordinator::clearUnresolvedFault()
         state_ = ExperimentRunState::Idle;
         publishLocked(lk, "fault cleared");
     }
+}
+
+bool ExperimentCoordinator::acknowledgeFault(uint64_t expectedRun, uint64_t expectedFaultRevision,
+                                             const std::string& expectedCode,
+                                             const std::string& expectedMessage,
+                                             std::string& error) {
+    std::unique_lock<std::mutex> lk(mutex_);
+    if ((state_ != ExperimentRunState::Idle && state_ != ExperimentRunState::Failed) ||
+        status_.flushing || activeRun_) {
+        error = "Wait for experiment finalization before acknowledging a fault";
+        return false;
+    }
+    if (!faultActive_ || faultRevision_ != expectedFaultRevision ||
+        status_.startGeneration != expectedRun || faultCode_ != expectedCode ||
+        faultMessage_ != expectedMessage) {
+        error = "Fault changed; review the latest status before acknowledging";
+        return false;
+    }
+    faultActive_ = false;
+    faultCode_.clear();
+    faultMessage_.clear();
+    state_ = ExperimentRunState::Idle;
+    publishLocked(lk, "Operator acknowledged fault; saved-run outcome is unchanged");
+    return true;
 }
 
 bool ExperimentCoordinator::hasUnresolvedFault() const
@@ -505,6 +530,15 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "capture a background (Set Background / calibration)"));
     }
 
+    if (backend_.processing().backgroundCalibrationStatus().state ==
+        services::ProcessingService::BackgroundCalibrationState::Running) {
+        r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Fail,
+                               "background calibration is still running",
+                               "wait for completion or cancel calibration before starting"));
+    } else {
+        r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Pass));
+    }
+
     // --- trigger / strobe --------------------------------------------------
     if (!c.triggerRequired) {
         r.gates.push_back(gate("trigger.output", GateStatus::NotRequired, "target-group sorting disabled"));
@@ -720,6 +754,10 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // 6-7. Acquire processing ownership and enter Active.
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
     proc.startExperiment();
+    // The shared lifecycle must own a live consumer. Qt previously started it
+    // from a visible tab; a headless/Tauri Start otherwise finalized zero work.
+    proc.setRealtimeEnabled(true);
+    proc.startRealtime(backend_.getFrameStore());
     activeRun_ = run;
     lastRun_ = run;
     liveKdeCoreJson_.clear();
@@ -765,6 +803,7 @@ ExperimentStatus ExperimentCoordinator::snapshotLocked() const
     s.persistenceAdmitted = acc.persistenceAdmitted;
     s.persistenceCommitted = acc.persistenceCommitted;
     s.persistenceFailed = acc.persistenceFailed;
+    s.faultRevision = faultRevision_;
     s.faultCode = faultActive_ ? faultCode_ : std::string{};
     s.faultMessage = faultActive_ ? faultMessage_ : std::string{};
     return s;
@@ -993,6 +1032,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         status_.completion = recording::RunCompletionState::Failed;
         status_.completionReason = failMessage;
         faultActive_ = true;
+        ++faultRevision_;
         faultCode_ = "experiment.saveFailed";
         faultMessage_ = failMessage;
     } else {
@@ -1000,10 +1040,12 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         status_.completionReason = accounting.completionReason;
         if (!flushOk) {
             faultActive_ = true;
+            ++faultRevision_;
             faultCode_ = "experiment.flushFailed";
             faultMessage_ = "a save error occurred while flushing experiment data to disk";
         } else if (!metadataOk) {
             faultActive_ = true;
+            ++faultRevision_;
             faultCode_ = "experiment.provenanceFailed";
             faultMessage_ = "mandatory metadata/processing-core provenance could not be saved for the last run";
         }
@@ -1034,3 +1076,12 @@ void ExperimentCoordinator::shutdown()
 }
 
 } // namespace backend::app
+
+namespace backend::app {
+bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ != ExperimentRunState::Idle) return false;
+    transaction();
+    return true;
+}
+}

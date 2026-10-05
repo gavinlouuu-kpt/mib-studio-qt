@@ -9,15 +9,14 @@ Central method registry for #398: provider-neutral revisions, Supabase RPC and
 Auth clients, immutable per-user local cache, explicit sync operations, and the
 backend-owned `ProfileRegistryWorker` that runs them on one thread. Owned by
 [[../architecture/AppBackend]] (`profileRegistry()`); the Qt shell injects the
-HTTPS transport; the Qt [[../frontend/CentralMethodsDialog]] and the React
-Central Methods panel (through `BackendFacade` registry calls, bridge ABI 15,
+HTTPS transport; the React Central Methods panel (through `BackendFacade` registry calls, bridge ABI 15,
 see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
 revisions. M2a (backend): the worker materializes a cached revision's files and
 records operator-confirmed local validations; [[../architecture/ExperimentCoordinator]]
 matches the applied config.json to a cached revision, gates Start on it
-(`method.revision`) and freezes it into `/run_provenance`. M2b: Apply (Qt;
-`planMethodApply` + `AppConfigWatcher::applyMethodDocument`) and "Mark
-validated" (both shells; `AppBackend::requestMethodValidation` accepts only a
+(`method.revision`) and freezes it into `/run_provenance`. M2b: the Apply plan
+(`planMethodApply`; the React applier is a follow-up) and "Mark
+validated" (`AppBackend::requestMethodValidation` accepts only a
 test run whose `/run_provenance` names the revision on this instrument under
 the current context — `checkValidationEvidence`). See
 `include/backend/app/MethodApply.h`.
@@ -116,7 +115,7 @@ cancel, bounds, concurrent snapshot traffic + shutdown), `profiles.registry_back
 (AppBackend wiring; a hung registry leaves mock capture running; shutdown aborts
 it), `profiles.registry_facade` (facade mapping + contract integers + shutdown abort),
 the bridge `registry_*` cargo tests, `desktop/src/registry.test.ts`,
-`frontend.central_methods` (dialog over the real worker), `profiles.registry_method`
+`profiles.registry_method`
 (canonical config hash, materialize, record validation, restart, cancel while hashing),
 `profiles.instrument_identity`, `backend.method_provenance`, `e2e.method_gate`,
 `profiles.registry_authoring` (M3 lifecycle, conflict, branch, viewer refusal, old

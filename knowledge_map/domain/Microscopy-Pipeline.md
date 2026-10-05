@@ -64,7 +64,8 @@ piezo nanopositioner to keep the cell in focus across the channel.
   Contract-1 config (built by `scripts/build_real_conformance_fixture.py`).
   `--processing-contract 2` runs the same fixture under Contract 2 against
   `scripts/conformance/focus-50v-real-contract2.json`. All three run in the
-  wheel CI; `compare_metrics.py` is contract-aware (ring required only for
+  wheel CI, and `scripts/run_native_core_conformance.py` checks the built
+  absdiff-laplacian native core against the same Contract-2 gold; `compare_metrics.py` is contract-aware (ring required only for
   Contract 1). References and fixtures change only in a PR labelled
   `gold-reference-change` (`.github/workflows/gold-reference-guard.yml`;
   owners in `.github/CODEOWNERS`).

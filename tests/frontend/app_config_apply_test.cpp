@@ -12,10 +12,7 @@
 //    the watcher catches up the apply succeeds;
 //  - malformed JSON on disk, a directory path, a missing document, an empty
 //    patch and an inverted range all fail closed with nothing written;
-//  - a genuine external edit still reloads and is broadcast;
-//  - applyMethodDocument (#398 M2b) writes the method byte-for-byte after a
-//    backup, applies it, records the exact bytes as applied, announces one
-//    change, and refuses non-objects or an unprocessed external edit.
+//  - a genuine external edit still reloads and is broadcast.
 
 #include "backend/app/AppBackend.h"
 #include "backend/processing/ProcessingService.h"
@@ -253,41 +250,6 @@ int main(int argc, char* argv[])
         watcher.onApplyProcessingDraft(req);
         MIB_EXPECT(got.requestId == 30 && got.ok() && processing.getProcessingConfig().ring_ratio_min == 12.5, "slot wrapper delivers the result");
         settleMs(400);
-    }
-
-    // ---- 5. central method document (#398 M2b) ----------------------------------
-    wd.mark("method document");
-    {
-        settleMs(200);
-        QByteArray method(kConfig);
-        method.replace("\"area_threshold_max\": 290", "\"area_threshold_max\": 333");
-        MIB_REQUIRE(method.contains("333"), "method fixture");
-
-        MIB_EXPECT(!watcher.applyMethodDocument(QByteArrayLiteral("[1,2]")).isEmpty(), "non-object refused");
-
-        const QByteArray external = fileBytes(cfgPath) + "\n";
-        writeFile(cfgPath, external); // not processed by the watcher yet
-        QString backup;
-        const QString conflict = watcher.applyMethodDocument(method, &backup);
-        MIB_EXPECT(!conflict.isEmpty() && fileBytes(cfgPath) == external && backup.isEmpty(),
-                   "unprocessed external edit: refused, nothing written");
-        settleMs(400); // watcher reloads the external edit
-
-        const QByteArray before = fileBytes(cfgPath);
-        const int changedBefore = fileChangedCount;
-        const QString error = watcher.applyMethodDocument(method, &backup);
-        MIB_REQUIRE(error.isEmpty(), error.toStdString());
-        MIB_EXPECT(fileBytes(cfgPath) == method, "config.json is the method byte-for-byte");
-        MIB_EXPECT(!backup.isEmpty() && fileBytes(backup) == before, "previous config.json backed up");
-        MIB_EXPECT(backend.getLastConfigJson() == method.toStdString(), "exact bytes recorded as applied");
-        MIB_EXPECT(processing.getProcessingConfig().area_threshold_max == 333, "method applied to the runtime");
-        settleMs(400);
-        MIB_EXPECT(fileChangedCount == changedBefore + 1, "one configFileChanged, no echo reload");
-
-        QString second;
-        MIB_REQUIRE(watcher.applyMethodDocument(method, &second).isEmpty(), "re-apply");
-        MIB_EXPECT(!second.isEmpty() && second != backup, "each apply keeps its own backup");
-        settleMs(200);
     }
 
     backend.shutdown();

@@ -1,14 +1,13 @@
 // Central profile registry view model (bridge schema v15, issue #398).
 //
 // Pure projection of the backend registry snapshot onto what the Central
-// Methods panel renders. It mirrors the Qt CentralMethodsDialog wording and
-// enablement rules so both shells present the same backend truth: each
+// Methods panel renders, so the panel presents the backend truth: each
 // central state is shown as itself (never collapsed into "ready"), central
 // state is never presented as local validation. #398 M2b adds per-revision
 // local validation on this instrument and the selected-row actions
-// (materialize, mark validated / failed). Apply stays a Qt-shell action: the
-// React shell has no config.json applier yet, so it is shown disabled with
-// the reason rather than simulated.
+// (materialize, mark validated / failed). The React shell has no config.json
+// applier yet, so Apply is shown disabled with the reason rather than
+// simulated.
 import type { RegistryJob, RegistryRevision, RegistrySnapshot } from "./bridge";
 import {
   REGISTRY_CENTRAL_STATES,
@@ -64,8 +63,8 @@ export interface RegistryView {
 }
 
 export const APPLY_UNAVAILABLE =
-  "Apply is available in the Qt app. The React shell has no config.json applier yet (#398 follow-up), " +
-  "so applying here would not load the method.";
+  "The React shell has no config.json applier yet (#398 follow-up), so applying here would not " +
+  "load the method.";
 
 export const CENTRAL_STATE_NOTE =
   "Central state is the registry's approval and publication record only. It is not local " +

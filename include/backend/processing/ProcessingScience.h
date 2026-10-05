@@ -61,6 +61,14 @@ double calculateLaplacianVariance(const cv::Mat& originalImage,
                                   const std::vector<cv::Point>& objectContour,
                                   int laplacianKernelSize = 3);
 
+// Contract 3 brightness: mean and population variance of the raw Gray8 image
+// over the filled contour (the cell including any hole). False when the image
+// or contour is unusable; the outputs are then NaN.
+bool calculateBrightnessMoments(const cv::Mat& originalImage,
+                                const std::vector<cv::Point>& contour,
+                                double& mean,
+                                double& variance);
+
 cv::Mat makeObjectMask(const cv::Size& size,
                        const std::vector<std::vector<cv::Point>>& contours,
                        int contourIdx,
@@ -104,6 +112,27 @@ cv::Rect2d resultBbox(const services::FilterResult& result);
 // eModulusLut may be null (Young's modulus stays 0 and emodulus target
 // gating treats the lookup as unavailable, matching an unloaded LUT).
 std::vector<services::FilterResult> filterProcessedObjects(
+    const cv::Mat& processedImage,
+    const cv::Rect& roi,
+    const services::ProcessingConfig& config,
+    const cv::Mat& originalImage,
+    double pixelToMicronFactor,
+    const backend::EModulusLut* eModulusLut);
+
+// Contract 3 (U-Net cells) object analysis over a U-Net foreground mask, the
+// rules of the PZ7035 PL cell stage (profile unet_cells_v2):
+//   - an object is a top-level 8-connected foreground component (components
+//     inside a hole are ignored); it is a cell when it has at least
+//     min_cell_area_px pixels, otherwise a blemish (counted in blemishCount);
+//   - cells are ordered by bounding box (x, then y) and numbered from 1;
+//   - cut-off: a component pixel on the ROI edge (1 px rule, always checked);
+//     brightness, Laplacian and centroid are still reported;
+//   - a contour enclosing no area is degenerate (reason NoContour, centroid at
+//     the bounding-box centre);
+//   - otherwise the outer-contour metrics and gates of Contract 2, without ring
+//     width. Brightness is the mean and variance over the filled contour.
+// Called by filterProcessedObjects for processing_contract_version 3.
+std::vector<services::FilterResult> filterUnetCellObjects(
     const cv::Mat& processedImage,
     const cv::Rect& roi,
     const services::ProcessingConfig& config,

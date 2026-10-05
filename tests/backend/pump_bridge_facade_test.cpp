@@ -40,6 +40,10 @@ namespace
         explicit FakeSerialPort(uint8_t slaveAddr) : slaveAddr_(slaveAddr) {}
 
         bool open(int, int) override { open_ = true; return true; }
+        bool openNamed(const std::string&, const backend::services::SerialSettings&) override {
+            open_ = true;
+            return true;
+        }
         void close() override { open_ = false; }
         bool isOpen() const override { return open_; }
         int write(const std::vector<uint8_t> &req) override
@@ -65,8 +69,7 @@ namespace
         void respondTo(const std::vector<uint8_t> &req)
         {
             rx_.clear();
-            if (req.size() < 6 || req[0] != slaveAddr_)
-            {
+            if (req.size() < 6 || (slaveAddr_ != 0 && req[0] != slaveAddr_)) {
                 return;
             }
             const uint8_t func = req[1];
@@ -75,7 +78,7 @@ namespace
             {
                 const auto startReg = static_cast<uint16_t>((req[2] << 8) | req[3]);
                 const auto count = static_cast<uint16_t>((req[4] << 8) | req[5]);
-                resp = {slaveAddr_, func, static_cast<uint8_t>(count * 2)};
+                resp = {req[0], func, static_cast<uint8_t>(count * 2)};
                 std::vector<uint8_t> data;
                 if (startReg == REG_MIN_FLOW_RATE)
                 {
@@ -98,7 +101,7 @@ namespace
             }
             else if (func == 0x10)
             {
-                resp = {slaveAddr_, func, req[2], req[3], req[4], req[5]};
+                resp = {req[0], func, req[2], req[3], req[4], req[5]};
                 m::appendCrc(resp);
             }
             else
@@ -142,7 +145,7 @@ int main()
         MIB_REQUIRE(facade.initialize(dataDir.string()), "facade initializes");
 
         backendApp.serialBus().setSerialPortFactory(
-            [] { return std::make_unique<FakeSerialPort>(1); });
+            [] { return std::make_unique<FakeSerialPort>(0); });
 
         auto dispatchPump = [&facade](bridge::PumpCommand cmd) {
             return facade.dispatch(cmd);
@@ -233,6 +236,32 @@ int main()
             MIB_EXPECT(!after.connected, "disconnected");
         }
 
+        {
+            bridge::PumpCommand cmd;
+            cmd.pumpId = 1;
+            cmd.action = bridge::PumpCommandAction::Disconnect;
+            MIB_REQUIRE(dispatchPump(cmd).ok, "disconnect sheath");
+            cmd.pumpId = 0;
+            cmd.action = bridge::PumpCommandAction::Connect;
+            cmd.portName = "/dev/fake-pump-bus";
+            cmd.baudRate = 115200;
+            cmd.modbusAddress = 1;
+            MIB_REQUIRE(dispatchPump(cmd).ok, "named Linux endpoint connects");
+            bridge::BackendPumpStatus status;
+            MIB_REQUIRE(facade.fetchPumpStatus(0, status), "named endpoint status");
+            MIB_EXPECT(status.portName == cmd.portName, "actual port identity roundtrips");
+            cmd.pumpId = 1;
+            MIB_EXPECT(!dispatchPump(cmd).ok, "duplicate shared-bus slave rejected");
+            cmd.modbusAddress = 2;
+            MIB_REQUIRE(dispatchPump(cmd).ok, "distinct shared-bus slave accepted");
+            auto config = backendApp.syringePump().getConfig(SyringePumpService::PumpId::Sample);
+            config.portName.clear();
+            backendApp.syringePump().setConfig(SyringePumpService::PumpId::Sample, config);
+            MIB_EXPECT(
+                backendApp.syringePump().getConfig(SyringePumpService::PumpId::Sample).portName ==
+                    cmd.portName,
+                "legacy config preserves connected identity");
+        }
         facade.shutdown();
     }
 
