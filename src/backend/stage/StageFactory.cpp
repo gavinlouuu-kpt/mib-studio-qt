@@ -23,6 +23,7 @@ const char* toString(StageError error)
     case StageError::LostAck: return "motion command reply lost";
     case StageError::Protocol: return "protocol error";
     case StageError::Transport: return "transport error";
+    case StageError::ReferenceFailed: return "referencing failed";
     }
     return "unknown";
 }

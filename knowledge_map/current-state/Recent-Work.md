@@ -1,5 +1,24 @@
 # Recent Work
 
+## 2026-10-05 — StageService: read-only start-up, Home at mid-travel (#464, slice 3)
+
+[[../services/StageService]] owns the Z stage, and `AppBackend::stage()`
+exposes it.
+- **Start-up is read-only.** `startup()` connects and checks the profile and
+  the power-up token, with zero writes and zero motion.
+- **Before Home**, only Home and Stop are accepted.
+- **Home** probes both limits, checks the span (6000 ± 300 µm), zeroes at
+  mid-travel with a one-sided approach, and sets ±(span/2 − 100) µm soft
+  limits.
+- **The reference survives application restarts** while the controller stays
+  powered: a token on register 30054 plus `<dataDir>/stage_reference.json`.
+- **Failures** stop the axis. Failures that can desync the counter drop the
+  reference.
+- One worker thread; a stop epoch makes a racing Stop cancel the operation.
+
+Tested against the fake controller only (bench hold); the TSan stress test
+races moves against Stop. The Rust bridge links the stage archives.
+
 ## 2026-10-05 — ZC300 Z stage driver and `zc300ctl` (#464, slice 2)
 
 `IMotionStage` and the ZC300 driver landed. They are not wired into
