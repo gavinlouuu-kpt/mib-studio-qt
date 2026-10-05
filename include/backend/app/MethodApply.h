@@ -7,9 +7,8 @@
 // revision's config (tampered files are never applied). It lists the
 // config.json keys that would change so the operator confirms knowingly
 // (instrument keys such as autofocus_com_port or save_directory travel with
-// the method). Writing config.json stays with the shell's config applier
-// (Qt: AppConfigWatcher), which also records the applied text the coordinator
-// matches.
+// the method). Writing config.json stays with the caller's config applier,
+// which also records the applied text the coordinator matches.
 //
 // checkValidationEvidence: "Mark validated" only accepts a test run whose
 // frozen /run_provenance names this exact revision (id + content hash), was

@@ -2,7 +2,6 @@
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -850,48 +849,6 @@ namespace frontend
 			QTimer::singleShot(0, this, [this, path]() { emit configFileChanged(path); });
 		}
 		return r;
-	}
-
-	QString AppConfigWatcher::applyMethodDocument(const QByteArray& text, QString* backupPath)
-	{
-		if (watchedPath_.isEmpty())
-			return tr("No active configuration document; nothing was changed.");
-		const QJsonDocument parsed = QJsonDocument::fromJson(text);
-		if (!parsed.isObject())
-			return tr("The method's config.json is not a JSON object; nothing was changed.");
-		const QString path = watchedPath_;
-		QByteArray onDisk;
-		{
-			QFile current(path);
-			if (current.open(QIODevice::ReadOnly))
-				onDisk = ConfigDocumentStore::fingerprintOf(current.readAll());
-		}
-		if (!documentFingerprint_.isEmpty() && !onDisk.isEmpty() && documentFingerprint_ != onDisk)
-			return tr("The configuration file changed on disk and has not been reloaded yet; nothing was written.");
-
-		QString backup;
-		if (QFile::exists(path))
-		{
-			const QString stamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmss"));
-			backup = path + QStringLiteral(".bak-") + stamp;
-			for (int n = 2; QFile::exists(backup); ++n)
-				backup = path + QStringLiteral(".bak-") + stamp + QStringLiteral("-") + QString::number(n);
-			if (!QFile::copy(path, backup))
-				return tr("Could not back up %1 to %2; nothing was written.").arg(path, backup);
-		}
-		const ConfigWriteResult wr = ConfigDocumentStore::writeText(
-			path, QString::fromUtf8(text),
-			onDisk.isEmpty() ? std::optional<QByteArray>{} : std::optional<QByteArray>{onDisk});
-		if (!wr.ok)
-			return wr.error.isEmpty() ? tr("Could not write %1.").arg(path) : wr.error;
-		if (backupPath) *backupPath = backup;
-		SPDLOG_INFO("AppConfigWatcher: applied a central method document to {} (backup {})",
-					path.toStdString(), backup.toStdString());
-		// Same path as any reload: applies every section and records the exact
-		// bytes as the last applied config (the coordinator matches them).
-		loadAndApplyFromPath(path);
-		QTimer::singleShot(0, this, [this, path]() { emit configFileChanged(path); });
-		return {};
 	}
 
 	void AppConfigWatcher::onApplyProcessingDraft(const frontend::ApplyProcessingDraftRequest& request)
