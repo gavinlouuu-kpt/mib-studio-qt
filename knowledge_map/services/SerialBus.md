@@ -5,8 +5,9 @@
 > strict request/response correlation. RS485 is multi-drop: an adapter is
 > **not** a device.
 
-**Source:** `src/backend/services/SerialBus.cpp`,
-`include/backend/services/SerialBus.h`; pure correlation helpers in
+**Source:** `src/backend/services/SerialBus.cpp` (compiled into the
+`oeabt_serial` archive with the platform [[ISerialPort]], so drivers and CLIs
+link it without `mib_backend`), `include/backend/services/SerialBus.h`; pure correlation helpers in
 `include/backend/services/ModbusRtu.h` (`expectedFrameLength`,
 `classifyResponse`)
 
@@ -76,8 +77,8 @@ deadline) are drained or discarded — never attributed to the addressed device.
 
 [[PulseGeneratorService]] (system port names as `std::string`) and
 [[SyringePumpService]] (COM-number overload synthesizes `COMn`; string
-overload takes a system port name) both route all serial I/O through here. The
-planned ZC300 stage driver (ADR 0013, #464) will too —
+overload takes a system port name) both route all serial I/O through here, as
+does the [[ZC300Stage]] driver (ADR 0013, #464) —
 neither opens a port directly, so
 a pump and a pulse generator on one adapter share the session instead of
 fighting over a second open.
