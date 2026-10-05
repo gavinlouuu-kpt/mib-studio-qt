@@ -50,7 +50,7 @@ the Tushui simplified register set 100-107 (protocol V2.21, see
 |---|---|
 | connect | Reads 100-107 only (no write); adopts speed/direction; flow limits = 0.01-500 rpm x µL/rev |
 | setFlowRate | µL/min or mL/min -> rpm = flow / µL/rev -> reg 100 (rpm x100); rates outside 0.01-500 rpm **fail** (no clamp) |
-| setDirection | Infuse = clockwise (reg 101 = 0), Withdraw = counter-clockwise |
+| setDirection | Infuse = counter-clockwise (reg 101 = 1), Withdraw = clockwise; confirmed on the PZ7035 bench 2026-10-05 for both pumps (slave 3 Sample, slave 4 Sheath) |
 | start | turns (102-103) = 0 so the run is continuous, then reg 104 = 1 |
 | purge | 100 rpm in the purge direction; `stop`/`stopPurge` restore the flow speed and direction |
 | pollStatus | Run state + direction -> `RunStatus`; live flow = rpm x µL/rev; `accumulatedVolume` integrated in µL between polls (the pump has no counter) |

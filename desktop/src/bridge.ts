@@ -345,7 +345,7 @@ export interface PlatformCapabilities {
   led_strobe: boolean;
   align_mode: boolean;
   run_mode: boolean;
-  /** The instrument's pumps: one RS485 port, a Modbus address per slot (defaults, editable). */
+  /** The instrument's pumps: one RS485 port, a Modbus address per slot. */
   pump: null | { model: string; port: string; sample_address: number; sheath_address: number; microliters_per_rev: number };
 }
 

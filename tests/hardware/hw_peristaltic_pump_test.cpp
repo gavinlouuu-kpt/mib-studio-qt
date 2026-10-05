@@ -39,7 +39,7 @@ int main()
     const auto before = svc.getConfig(id);
     const auto st0 = svc.getStatus(id);
     std::printf("as found: %.2f rpm (%.2f uL/min), %s, runStatus=%d\n", st0.speedRpm,
-                before.flowRate, before.direction == SyringePumpService::Direction::Infuse ? "infuse/CW" : "withdraw/CCW",
+                before.flowRate, before.direction == SyringePumpService::Direction::Infuse ? "infuse/CCW" : "withdraw/CW",
                 static_cast<int>(st0.runStatus));
     MIB_EXPECT(st0.runStatus == SyringePumpService::RunStatus::Stop, "pump is stopped before the test");
 

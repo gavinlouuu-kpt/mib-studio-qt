@@ -550,8 +550,9 @@ a server without them is the MIB desktop). On the PZ7035:
   Hardware), framegrabbers and the EGrabber camera script, MindVision, the live
   frame buffer, core updates, HDF reanalysis and the pulse generator.
 - **Pumps:** default to the instrument's two peristaltic pumps on
-  `/dev/ttyPS1`: Sample at Modbus address 3, Sheath at 4, 25 µL/rev. These
-  are editable defaults; which pump feeds the sample is not confirmed yet.
+  `/dev/ttyPS1`: Sample at Modbus address 3, Sheath at 4, 25 µL/rev
+  (confirmed on the bench 2026-10-05). Infuse turns the heads
+  counter-clockwise.
 - **Sidebar:** gains "PL core": build, weights, LED and latency max.
 - **Preflight** (`preflight.ts`) replaces the host core pin with:
   - **PL core** (build vs `expected-core.json`, weights vs the pin);
