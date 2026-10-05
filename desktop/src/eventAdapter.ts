@@ -103,7 +103,7 @@ export interface ExperimentStatus {
   // ABI 13: the shared coordinator's full status.
   start_generation:string; readiness_generation:string; capture_generation:string;
   persistence_admitted:string; persistence_committed:string; persistence_failed:string;
-  terminal:boolean; finalization_ok:boolean; completion:number; completion_reason:string; fault_code:string; fault_message:string;
+  terminal:boolean; finalization_ok:boolean; completion:number; completion_reason:string; fault_revision:string; fault_code:string; fault_message:string;
 }
 export function decodeExperimentStatus(value:unknown):ExperimentStatus {
   const o=object(value); version(o);
@@ -114,7 +114,7 @@ export function decodeExperimentStatus(value:unknown):ExperimentStatus {
     dropped_valid:wireU64(o.dropped_valid),dropped_invalid:wireU64(o.dropped_invalid),flushing:bool(o.flushing),cancelled:bool(o.cancelled),output_path:text(o.output_path),message:text(o.message),
     start_generation:wireU64(o.start_generation),readiness_generation:wireU64(o.readiness_generation),capture_generation:wireU64(o.capture_generation),
     persistence_admitted:wireU64(o.persistence_admitted),persistence_committed:wireU64(o.persistence_committed),persistence_failed:wireU64(o.persistence_failed),
-    terminal:bool(o.terminal),finalization_ok:bool(o.finalization_ok),completion:o.completion,completion_reason:text(o.completion_reason),fault_code:text(o.fault_code),fault_message:text(o.fault_message)};
+    terminal:bool(o.terminal),finalization_ok:bool(o.finalization_ok),completion:o.completion,completion_reason:text(o.completion_reason),fault_revision:wireU64(o.fault_revision),fault_code:text(o.fault_code),fault_message:text(o.fault_message)};
 }
 
 export interface ReadinessGate { id:string; status:number; reason:string; remediation:string }

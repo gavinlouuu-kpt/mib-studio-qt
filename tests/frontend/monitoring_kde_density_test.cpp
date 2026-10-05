@@ -76,9 +76,14 @@ bool waitFor(const std::function<bool()>& pred, int timeoutMs) {
     return pred();
 }
 
+// The pixel-to-micron factor the analysis stamps on every result; the tab
+// plots each frame with its own factor and skips frames without one.
+double gAnalysisFactor = 0.0;
+
 backend::services::ProcessedFrame frame(uint64_t index, double areaPx, double deform,
                                         bool target = false) {
     backend::services::ProcessedFrame f;
+    f.validation.analysisPixelToMicronFactor = gAnalysisFactor;
     f.index = index;
     f.validation.isValid = true;
     f.validation.isTargetGroup = target;
@@ -128,6 +133,8 @@ int main(int argc, char* argv[]) {
     MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init");
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((td.path() / "data").string()), "backend init");
+    gAnalysisFactor = backend.processing().getPixelToMicronFactor();
+    MIB_REQUIRE(gAnalysisFactor > 0, "pixel-to-micron factor");
 
     std::mt19937 rng(20260923);
     std::normal_distribution<double> clusterArea(300.0, 12.0), clusterDeform(0.05, 0.008);
