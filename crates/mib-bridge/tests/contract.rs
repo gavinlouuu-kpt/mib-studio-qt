@@ -68,7 +68,10 @@ fn abi_version_is_stable() {
     // v23 develop (19) and the instrument line (20-22) as one contract; no
     // new commands (ADR 0011 single renumber, so no release build carries an
     // interim number).
-    assert_eq!(ffi::bridge_abi_version(), 23);
+    // v24 is reserved for the #398 profile-registry stack.
+    // v25 #501 instrument UI P0: fetch_platform_info capabilities and
+    // fetch_instrument_status (PZ7035 PL core, LED, link, latency).
+    assert_eq!(ffi::bridge_abi_version(), 25);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
