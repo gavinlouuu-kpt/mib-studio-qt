@@ -29,6 +29,9 @@ namespace {
 constexpr uint64_t kLivePageBase = 0x40100000u;   // P[i]; the strobe window S[i] is at +0x200
 constexpr uint64_t kBridgePageBase = 0x40101000u; // PZ_MIB_REG_*
 constexpr unsigned kStrobeWindowWord = 0x200 / 4;
+constexpr uint64_t kDevcfgPage = 0xF8007000u; // Zynq-7000 DEVCFG (PS)
+constexpr unsigned kDevcfgIntStsWord = 0x00C / 4;
+constexpr uint32_t kPcfgDone = 1u << 2;
 
 constexpr unsigned kLiveDropped = 6, kLiveBadFrames = 7, kLiveIngressErrors = 12, kLiveResyncs = 14;
 constexpr unsigned kStrobeControl = 0, kStrobeDelay = 1, kStrobeWidth = 2, kStrobeStatus = 12, kStrobeGuard = 13;
@@ -64,27 +67,32 @@ public:
     ~DevMemPlatformRegisters() override {
         if (livePage_) munmap(const_cast<uint32_t*>(livePage_), 0x1000);
         if (bridgePage_) munmap(const_cast<uint32_t*>(bridgePage_), 0x1000);
+        if (devcfgPage_) munmap(const_cast<uint32_t*>(devcfgPage_), 0x1000);
         if (fd_ >= 0) close(fd_);
     }
     bool open(std::string* error) {
         fd_ = ::open("/dev/mem", O_RDONLY | O_SYNC);
         if (fd_ < 0) return fail(error, std::string("/dev/mem: ") + std::strerror(errno));
-        void* live = mmap(nullptr, 0x1000, PROT_READ, MAP_SHARED, fd_, static_cast<off_t>(kLivePageBase));
-        if (live == MAP_FAILED) return fail(error, "mmap live registers");
-        livePage_ = static_cast<volatile uint32_t*>(live);
-        void* bridge = mmap(nullptr, 0x1000, PROT_READ, MAP_SHARED, fd_, static_cast<off_t>(kBridgePageBase));
-        if (bridge == MAP_FAILED) return fail(error, "mmap bridge registers");
-        bridgePage_ = static_cast<volatile uint32_t*>(bridge);
-        if (this->bridge(PZ_MIB_REG_IDENTITY) != PZ_MIB_IDENTITY_MAGIC) {
-            return fail(error, "no PZ-MIB platform bridge loaded (identity)");
-        }
-        return true;
+        livePage_ = map(kLivePageBase);
+        bridgePage_ = map(kBridgePageBase);
+        devcfgPage_ = map(kDevcfgPage);
+        if (!livePage_ || !bridgePage_ || !devcfgPage_) return fail(error, "mmap PZ7035 register pages");
+        return true; // no PL register is read here: the PL may be blank
+    }
+    bool plConfigured(std::string* why) override {
+        if ((devcfgPage_[kDevcfgIntStsWord] & kPcfgDone) != 0) return true;
+        if (why) *why = "PL not configured (DEVCFG PCFG_DONE = 0): load the PL image";
+        return false;
     }
     uint32_t live(unsigned index) override { return livePage_[index]; }
     uint32_t strobe(unsigned index) override { return livePage_[kStrobeWindowWord + index]; }
     uint32_t bridge(uint32_t offset) override { return bridgePage_[offset / 4]; }
 
 private:
+    volatile uint32_t* map(uint64_t base) {
+        void* p = mmap(nullptr, 0x1000, PROT_READ, MAP_SHARED, fd_, static_cast<off_t>(base));
+        return p == MAP_FAILED ? nullptr : static_cast<volatile uint32_t*>(p);
+    }
     static bool fail(std::string* error, std::string msg) {
         if (error) *error = std::move(msg);
         return false;
@@ -92,12 +100,36 @@ private:
     int fd_{-1};
     volatile uint32_t* livePage_{nullptr};
     volatile uint32_t* bridgePage_{nullptr};
+    volatile uint32_t* devcfgPage_{nullptr};
 };
 #endif
 
 } // namespace
 
 #if defined(__linux__)
+bool pzPlConfigured(std::string* error, uint32_t* intSts) {
+    const int fd = ::open("/dev/mem", O_RDONLY | O_SYNC);
+    if (fd < 0) {
+        if (error) *error = std::string("/dev/mem: ") + std::strerror(errno);
+        return false;
+    }
+    void* p = mmap(nullptr, 0x1000, PROT_READ, MAP_SHARED, fd, static_cast<off_t>(kDevcfgPage));
+    if (p == MAP_FAILED) {
+        close(fd);
+        if (error) *error = "mmap DEVCFG";
+        return false;
+    }
+    const uint32_t sts = static_cast<volatile uint32_t*>(p)[kDevcfgIntStsWord];
+    munmap(p, 0x1000);
+    close(fd);
+    if (intSts) *intSts = sts;
+    if ((sts & kPcfgDone) == 0) {
+        if (error) *error = "PL not configured (DEVCFG PCFG_DONE = 0): load the PL image";
+        return false;
+    }
+    return true;
+}
+
 std::unique_ptr<IPzPlatformRegisters> openDevMemPlatformRegisters(std::string* error) {
     auto regs = std::make_unique<DevMemPlatformRegisters>();
     if (!regs->open(error)) return nullptr;
@@ -164,6 +196,12 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
         return s;
     }
     auto& r = *registers_;
+    std::string why;
+    if (!r.plConfigured(&why)) {
+        s.error = why; // nothing in the PL window is read while it is blank
+        havePrevious_ = false;
+        return s;
+    }
     if (r.bridge(PZ_MIB_REG_IDENTITY) != PZ_MIB_IDENTITY_MAGIC) {
         s.error = "no PZ-MIB platform bridge loaded (identity)";
         havePrevious_ = false;

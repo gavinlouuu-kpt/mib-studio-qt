@@ -18,9 +18,15 @@ namespace {
 struct FakeRegisters final : pz::IPzPlatformRegisters {
     std::map<unsigned, uint32_t> livePage, strobeWindow;
     std::map<uint32_t, uint32_t> bridgePage;
-    uint32_t live(unsigned i) override { return livePage[i]; }
-    uint32_t strobe(unsigned i) override { return strobeWindow[i]; }
-    uint32_t bridge(uint32_t off) override { return bridgePage[off]; }
+    bool configured = true;
+    int plReads = 0; // reads of the PL window (a blank PL would stall the bus)
+    uint32_t live(unsigned i) override { ++plReads; return livePage[i]; }
+    uint32_t strobe(unsigned i) override { ++plReads; return strobeWindow[i]; }
+    uint32_t bridge(uint32_t off) override { ++plReads; return bridgePage[off]; }
+    bool plConfigured(std::string* why) override {
+        if (!configured && why) *why = "PL not configured (DEVCFG PCFG_DONE = 0): load the PL image";
+        return configured;
+    }
 };
 
 // results6 (pz7035-imx426 76aea76) with the release weights.
@@ -147,6 +153,22 @@ int main() {
     MIB_EXPECT(monitor.sample(15'000'000).ledPreset == "align", "LED Align preset 0/125");
     r->strobeWindow[0] = 0;
     MIB_EXPECT(monitor.sample(16'000'000).ledPreset == "off", "LED off");
+
+    // PL blank (power-up, JTAG reload): unavailable, and nothing in the PL
+    // window is read; rates restart once it is back.
+    r->configured = false;
+    r->plReads = 0;
+    {
+        const auto s = monitor.sample(16'500'000);
+        MIB_EXPECT(!s.available && s.error.find("PCFG_DONE") != std::string::npos, "blank PL: unavailable, says why");
+        MIB_EXPECT(r->plReads == 0, "blank PL: no PL register is read");
+    }
+    r->configured = true;
+    {
+        const auto first = monitor.sample(16'700'000);
+        MIB_EXPECT(first.available && !first.ratesValid, "configured again: available, rates restart");
+        MIB_EXPECT(monitor.sample(16'800'000).ratesValid, "rates resume on the second sample");
+    }
 
     // No bridge (PL not loaded): unavailable.
     r->bridgePage[PZ_MIB_REG_IDENTITY] = 0;

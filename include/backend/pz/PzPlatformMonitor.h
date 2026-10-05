@@ -37,11 +37,24 @@ public:
     virtual uint32_t strobe(unsigned index) = 0;
     // Bridge register at byte offset `offset` from 0x40101000.
     virtual uint32_t bridge(uint32_t offset) = 0;
+    // Whether the PL is configured. Reads of the PL window while it is blank
+    // (power-up, a JTAG reload) stall the AXI bus, so callers check this
+    // before every read. Fakes are always configured unless they say not.
+    virtual bool plConfigured(std::string* why) {
+        (void)why;
+        return true;
+    }
 };
 
 #if defined(__linux__)
-// Maps the live page and the bridge page read-only through /dev/mem (O_SYNC).
-// Null with `error` set when /dev/mem or the bridge identity is unavailable.
+// DEVCFG INT_STS (0xF800700C) bit 2, PCFG_DONE: the PL is configured. Read
+// only; never written (write-1-to-clear). Reads 0x00020004 under Linux after
+// a JTAG load. False with `error` when /dev/mem fails or the PL is blank.
+bool pzPlConfigured(std::string* error, uint32_t* intSts = nullptr);
+
+// Maps the live, bridge and DEVCFG pages read-only through /dev/mem (O_SYNC).
+// Mapping touches no PL register, so it succeeds with the PL blank; reads
+// check PCFG_DONE first. Null with `error` when /dev/mem is unavailable.
 std::unique_ptr<IPzPlatformRegisters> openDevMemPlatformRegisters(std::string* error);
 #endif
 
