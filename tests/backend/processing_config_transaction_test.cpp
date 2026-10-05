@@ -34,6 +34,26 @@ int main() {
                "malformed full document returns rejection rather than throwing");
     MIB_EXPECT(backend.processing().getProcessingConfig().area_threshold_min == before,
                "late validation error leaves all processing settings unchanged");
+    // PZ7035 profile settings (U-Net cells, Laplacian gate) apply through the
+    // same path and are validated like the other ranges.
+    live.configJson = R"({"image_processing":{"min_cell_area_px":300,"laplacian_kernel_size":1,)"
+                      R"("laplacian_variance_min":10.5,"laplacian_variance_max":500,)"
+                      R"("filters":{"enable_laplacian_variance_check":true}}})";
+    MIB_EXPECT(facade.dispatch(live).ok, "cell and Laplacian settings apply");
+    {
+        const auto c = backend.processing().getProcessingConfig();
+        MIB_EXPECT(c.min_cell_area_px == 300 && c.laplacian_kernel_size == 1 && c.enable_laplacian_variance_check &&
+                       c.laplacian_variance_min == 10.5 && c.laplacian_variance_max == 500,
+                   "cell and Laplacian settings reach the processing config");
+    }
+    for (const char* bad : {R"({"image_processing":{"laplacian_kernel_size":2}})",
+                            R"({"image_processing":{"min_cell_area_px":70000}})",
+                            R"({"image_processing":{"laplacian_variance_min":600}})"}) {
+        live.configJson = bad;
+        MIB_EXPECT(!facade.dispatch(live).ok, std::string("rejected: ") + bad);
+    }
+    MIB_EXPECT(backend.processing().getProcessingConfig().laplacian_kernel_size == 1,
+               "a rejected setting leaves the config unchanged");
     backend.setLastConfigJson(R"({"camera":{"identity":"actual-camera"},"roi":{"x":17}})");
     const auto path = (temp / "config.json").string();
     std::ofstream(path)

@@ -13,6 +13,13 @@
 **Related:** [[../camera/ICamera]], [[../data-model/FrameStore]],
 [[ProcessingService]], [[TriggerService]]
 
+When releasing a camera, the worker keeps `cameraMutex_` while invoking the
+camera's bounded `stop()`. This matches the public stop path and prevents a
+worker/public-stop lock inversion while a grab is in flight. Aravis uses a
+bounded SDK pop and reasserts cancellation after taking its resource locks;
+`backend.aravis_capture_lifecycle` and `camera.aravis_stress` exercise this
+stop/grab/restart boundary.
+
 ## Responsibility
 
 - One thread per service: `run(generation)` blocks on the camera's blocking

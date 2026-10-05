@@ -163,6 +163,12 @@ int main()
             cmd.comPort = 3;
             cmd.modbusAddress = 300;
             MIB_EXPECT(!dispatchPump(cmd).ok, "invalid Modbus address rejected");
+            cmd.modbusAddress = 1;
+            cmd.model = 2;
+            MIB_EXPECT(!dispatchPump(cmd).ok, "unknown pump model rejected");
+            cmd.model = 1;
+            cmd.microlitersPerRev = 0.0;
+            MIB_EXPECT(!dispatchPump(cmd).ok, "non-positive peristaltic calibration rejected");
         }
 
         // Both pump identities connect independently through the facade.
@@ -187,6 +193,7 @@ int main()
         MIB_EXPECT(sample.minFlowRate == 1.5, "min flow rate parsed");
         MIB_EXPECT(sample.maxFlowRate == 9999.0, "max flow rate parsed");
         MIB_EXPECT(sample.comPort == 3, "sample COM port in snapshot");
+        MIB_EXPECT(sample.model == 0, "default connect is the dLSP syringe model");
         bridge::BackendPumpStatus sheath;
         MIB_REQUIRE(facade.fetchPumpStatus(1, sheath), "sheath status fetch");
         MIB_EXPECT(sheath.connected && sheath.comPort == 4, "sheath snapshot independent");

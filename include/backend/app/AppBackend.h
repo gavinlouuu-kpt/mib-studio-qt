@@ -14,6 +14,8 @@
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
 
+namespace backend::processing { class IExecutionProvider; }
+
 namespace backend::services
 {
     class SqliteService;
@@ -98,6 +100,9 @@ namespace backend
         services::Hdf5Service &hdf5();
         services::CaptureService &capture();
         services::ProcessingService &processing();
+        // Source of per-frame results when the science runs on the PL
+        // (MIB_EXECUTION_PROVIDER, YOFO S1); null when none is configured.
+        processing::IExecutionProvider *executionProvider();
         services::PlaybackService &playback();
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
@@ -157,6 +162,28 @@ namespace backend
         bool saveMindVisionRoi(int x, int y, int width, int height,
                                std::string* errorOut = nullptr);
 
+        // Camera & Alignment (Overview) for any camera that has one, as the Qt Overview tab
+        // does for MindVision: the whole sensor is shown and the experiment window (ROI 1,
+        // sensor coordinates) is placed on it. MindVision uses its profile; an Aravis camera
+        // (YOFO Studio, PZ7035 producer) uses <data>/config/aravis-camera.json and the
+        // Overview preset there. Same rules as setMindVisionOverview: stops capture and
+        // realtime processing, swaps the frame store, rejected during an experiment or
+        // recording; the caller restarts capture.
+        struct CameraGeometry {
+            bool supported{false};   // the selected camera has an Overview mode
+            bool overview{false};
+            std::string camera;      // "mindvision" | "aravis" | ""
+            int sensorWidth{0}, sensorHeight{0};   // 0 = not known yet (no start so far)
+            int roiX{0}, roiY{0}, roiWidth{0}, roiHeight{0};
+            int widthIncrement{1}, heightIncrement{1}, offsetXIncrement{1}, offsetYIncrement{1};
+            int minWidth{1}, minHeight{1};
+            std::string sessionJson{"{}"}; // last camera read-back (Aravis: rate model)
+        };
+        CameraGeometry cameraGeometry() const;
+        bool setCameraOverview(bool overview, std::string* errorOut = nullptr);
+        bool isCameraOverview() const;
+        bool saveCameraRoi(int x, int y, int width, int height, std::string* errorOut = nullptr);
+
         // Fire one software acquisition trigger on the live capture camera
         // (camera must be running in soft-trigger mode). NOT the sort pulse.
         bool softTriggerCamera(std::string *errorOut = nullptr);
@@ -179,6 +206,7 @@ namespace backend
                 Mock,
                 Hardware,
                 MindVision,
+                Aravis,
             };
             Mode mode{Mode::None};
             int interfaceIndex{-1};
@@ -263,6 +291,9 @@ namespace backend
         std::unique_ptr<services::Hdf5Service> hdf5Service_;
         std::unique_ptr<services::CaptureService> captureService_;
         std::unique_ptr<services::ProcessingService> processingService_;
+        // Declared after processingService_: destroyed (and its thread stopped)
+        // before the service it feeds.
+        std::unique_ptr<processing::IExecutionProvider> executionProvider_;
         std::unique_ptr<services::PlaybackService> playbackService_;
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;
@@ -301,6 +332,39 @@ namespace backend
         mutable std::mutex mindVisionSensorMutex_;
         MindVisionSensor mindVisionSensor_{};
         bool mockCameraConfigured_{false};
+        bool aravisCameraConfigured_{false};
+        bool aravisFake_{false};
+        std::string aravisDeviceId_;
+        bool aravisGigE_{false};
+        // Aravis camera profile (<data>/config/aravis-camera.json): experiment window and the
+        // rate/exposure of each mode. 0 = leave the device's value.
+        struct AravisProfile {
+            bool hasRoi{false};
+            int x{0}, y{0}, width{0}, height{0};
+            double experimentFps{0.0}, experimentExposureUs{0.0};
+            double overviewFps{830.0}, overviewExposureUs{900.0}; // lit full field (PZ7035)
+            // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
+            // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
+            double previewRateHz{60.0};
+        };
+        AravisProfile aravisProfile_;
+        std::atomic<bool> aravisOverview_{false};
+        size_t aravisExperimentCapacity_{0};
+        bool aravisRealtimeBeforeOverview_{false};
+        struct AravisSessionGeometry {
+            int sensorWidth{0}, sensorHeight{0};
+            int widthIncrement{1}, heightIncrement{1}, offsetXIncrement{1}, offsetYIncrement{1};
+            std::string json{"{}"};
+        };
+        mutable std::mutex aravisSessionMutex_;
+        AravisSessionGeometry aravisSession_;
+        std::string dataDir_;
+        std::string aravisProfilePath() const;
+        void loadAravisProfile();
+        bool saveAravisProfile(const AravisProfile& profile, std::string* errorOut);
+        void installAravisFactory();
+        bool setAravisOverview(bool overview, std::string* errorOut);
+        bool saveAravisRoi(int x, int y, int width, int height, std::string* errorOut);
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.
         std::string lastCameraScriptPath_;

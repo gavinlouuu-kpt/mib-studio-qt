@@ -24,7 +24,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_JSON = REPO_ROOT / "crates/mib-bridge/contract/bridge-contract.json"
 OUTPUT_TS = REPO_ROOT / "desktop/src/bridgeContract.ts"
-OUTPUT_RS = REPO_ROOT / "desktop/src-tauri/src/frame_packet_contract.rs"
+OUTPUT_RS = REPO_ROOT / "crates/mib-app-commands/src/frame_packet_contract.rs"
 
 ENUM_GROUPS = [
     ("event_kinds", "EVENT_KINDS"),
@@ -46,6 +46,7 @@ ENUM_GROUPS = [
     ("pump_ids", "PUMP_IDS"),
     ("pump_run_states", "PUMP_RUN_STATES"),
     ("pump_directions", "PUMP_DIRECTIONS"),
+    ("pump_models", "PUMP_MODELS"),
     ("experiment_states", "EXPERIMENT_STATES"),
     ("experiment_command_actions", "EXPERIMENT_COMMAND_ACTIONS"),
     ("experiment_start_outcomes", "EXPERIMENT_START_OUTCOMES"),

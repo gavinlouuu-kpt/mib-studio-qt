@@ -34,6 +34,11 @@ public:
         std::chrono::milliseconds stopDelay{0};
         // Delay injected inside start() before it reports success/failure.
         std::chrono::milliseconds startDelay{0};
+        // Simulate a device-side acquisition-stop failure while still
+        // allowing host-side teardown to complete. This exercises the
+        // CaptureService shutdown-failure propagation contract.
+        std::string stopFailureCode;
+        std::string stopFailureMessage;
         std::string failureCode;
         std::string failureMessage;
     };
@@ -91,8 +96,22 @@ public:
         obs_->stopCalls.fetch_add(1);
         {
             std::lock_guard<std::mutex> lk(mutex_);
-            if (!running_) return;
+            if (!running_) {
+                if (!script_.stopFailureCode.empty()) {
+                    failure_.code = script_.stopFailureCode;
+                    failure_.message = script_.stopFailureMessage.empty()
+                                           ? "fake acquisition stop failed"
+                                           : script_.stopFailureMessage;
+                }
+                return;
+            }
             running_ = false;
+            if (!script_.stopFailureCode.empty()) {
+                failure_.code = script_.stopFailureCode;
+                failure_.message = script_.stopFailureMessage.empty()
+                                       ? "fake acquisition stop failed"
+                                       : script_.stopFailureMessage;
+            }
         }
         cv_.notify_all();
         if (script_.stopDelay.count() > 0) std::this_thread::sleep_for(script_.stopDelay);

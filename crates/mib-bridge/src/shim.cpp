@@ -77,6 +77,8 @@ static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::RunStatus::Pause) == 3);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::Direction::Infuse) == 0);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::Direction::Withdraw) == 1);
+static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpModel::DlspSyringe) == 0);
+static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpModel::TushuiPeristaltic) == 1);
 
 static_assert(static_cast<std::uint32_t>(bb::ReviewImageDataset::ValidImage) == 0);
 static_assert(static_cast<std::uint32_t>(bb::ReviewImageDataset::InvalidImage) == 1);
@@ -202,6 +204,13 @@ static_assert(static_cast<std::uint32_t>(bb::BackendOperationState::TimedOut) ==
 
 std::string toStd(rust::Str s) { return std::string(s.data(), s.size()); }
 
+// One FFI call per buffer: rust::Vec::push_back crosses the bridge per byte.
+template <typename Bytes>
+rust::Vec<std::uint8_t> bytesToVec(const Bytes& bytes) {
+    return bytes_to_vec(rust::Slice<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
+}
+
 BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     BridgeFrame out{};
     out.valid = true;
@@ -213,10 +222,7 @@ BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     out.height = frame.height;
     out.pixel_format = frame.pixelFormat;
     out.stride_bytes = static_cast<std::uint64_t>(frame.strideBytes);
-    out.data.reserve(frame.data.size());
-    for (std::uint8_t byte : frame.data) {
-        out.data.push_back(byte);
-    }
+    out.data = bytesToVec(frame.data);
     return out;
 }
 
@@ -950,6 +956,23 @@ BridgeCommandResult BackendBridge::pump_connect_endpoint(std::uint32_t pump, rus
     }
 }
 
+BridgeCommandResult BackendBridge::pump_connect_model(std::uint32_t pump, std::uint32_t model,
+                                                      rust::Str port_name, std::int32_t baud_rate,
+                                                      std::int32_t modbus_address,
+                                                      double microliters_per_rev) {
+    try {
+        auto cmd = makePumpCommand(backend::bridge::PumpCommandAction::Connect, pump);
+        cmd.model = static_cast<int>(std::min<std::uint32_t>(model, 0x7fffffff));
+        cmd.portName = toStd(port_name);
+        cmd.baudRate = baud_rate;
+        cmd.modbusAddress = modbus_address;
+        cmd.microlitersPerRev = microliters_per_rev;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& error) {
+        return errorResult(std::string("pump_connect_model: ") + error.what());
+    }
+}
+
 BridgeCommandResult BackendBridge::pump_connect(std::uint32_t pump, std::int32_t com_port,
                                                 std::int32_t baud_rate,
                                                 std::int32_t modbus_address) {
@@ -1097,6 +1120,9 @@ BridgePumpStatus BackendBridge::fetch_pump_status(std::uint32_t pump) {
     out.configured_flow_rate = status.configuredFlowRate;
     out.flow_rate_unit = status.flowRateUnit;
     out.direction = static_cast<std::uint32_t>(status.direction);
+    out.model = static_cast<std::uint32_t>(status.model);
+    out.microliters_per_rev = status.microlitersPerRev;
+    out.speed_rpm = status.speedRpm;
     return out;
 }
 
@@ -1189,11 +1215,7 @@ void BackendBridge::set_processed_preview_enabled(bool enabled) {
 }
 rust::Vec<std::uint8_t> BackendBridge::fetch_processed_preview() {
     const auto bytes = impl_->facade.fetchProcessedPreviewPacket();
-    rust::Vec<std::uint8_t> out;
-    out.reserve(bytes.size());
-    for (const auto byte : bytes)
-        out.push_back(byte);
-    return out;
+    return bytesToVec(bytes);
 }
 
 BridgeCommandResult BackendBridge::background_calibration_command(rust::Str json) { return toBridgeResult(impl_->facade.backgroundCalibrationCommandJson(toStd(json))); }
@@ -1214,9 +1236,8 @@ rust::String BackendBridge::pulse_generator_status() {
     return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
 }
 rust::Vec<uint8_t> BackendBridge::render_review_overlay(rust::Str json) {
-    rust::Vec<uint8_t> output;
-    try {for(const auto byte:impl_->facade.renderReviewOverlayJson(toStd(json)))output.push_back(byte);}catch(const std::exception&) {}
-    return output;
+    try {return bytesToVec(impl_->facade.renderReviewOverlayJson(toStd(json)));}catch(const std::exception&) {}
+    return {};
 }
 
 BridgeFrame BackendBridge::fetch_review_reanalysis_preview(rust::Str json) {
@@ -1729,6 +1750,46 @@ BridgeCommandResult BackendBridge::soft_trigger_camera() {
     catch (...) { return errorResult("Software camera trigger failed"); }
 }
 
+BridgeCommandResult BackendBridge::set_camera_overview(bool overview) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::SetCameraOverview;
+        cmd.cameraOverview = overview;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(std::string("set_camera_overview: ") + e.what()); }
+    catch (...) { return errorResult("set_camera_overview: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width,
+                                                   std::int32_t height) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::SaveCameraRoi;
+        cmd.roiX = x;
+        cmd.roiY = y;
+        cmd.roiWidth = width;
+        cmd.roiHeight = height;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(std::string("save_camera_roi: ") + e.what()); }
+    catch (...) { return errorResult("save_camera_roi: unknown error"); }
+}
+
+rust::String BackendBridge::fetch_platform_info() {
+    try {
+        return rust::String(impl_->facade.fetchPlatformInfoJson());
+    } catch (...) {
+        return rust::String("{}");
+    }
+}
+
+rust::String BackendBridge::fetch_camera_geometry() {
+    try {
+        return rust::String(impl_->facade.fetchCameraGeometryJson());
+    } catch (...) {
+        return rust::String("{\"supported\":false}");
+    }
+}
+
 BridgeCommandResult BackendBridge::reset_hardware_camera() {
     try {
         backend::bridge::CameraCommand cmd;
@@ -1994,7 +2055,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 19; }
+std::uint32_t bridge_abi_version() { return 23; }
 
 } // namespace mib_bridge
 

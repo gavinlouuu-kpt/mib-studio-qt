@@ -27,6 +27,39 @@ capture and serial hardware are released. Accessors: `deviceDiscovery()`,
 `startupDiscovery()`. Both members are declared after the services they
 reference so they are destroyed first.
 
+## Aravis source selection (2026-09-27)
+
+`MIB_CAMERA_MODE=aravis` configures the optional [[../camera/AravisCamera]]
+factory. `MIB_ARAVIS_DEVICE_ID` selects a device, `MIB_ARAVIS_FAKE` is an
+explicit Fake-interface opt-in and `MIB_ARAVIS_GIGE` re-enables GigE Vision
+discovery (off by default). `MIB_ARAVIS_FPS`, `MIB_ARAVIS_EXPOSURE_US` and
+`MIB_ARAVIS_REGION=X,Y,W,H` seed the Aravis camera profile when it does not
+exist yet.
+
+**Science placement (ADR 0008).** `include/backend/app/SciencePlacement.h`:
+on the PZ7035 the PL processes every frame and the PS must never run the
+desktop pipeline. `hostProcessingAvailable()` gates every path that would
+start it (see [[Rust-Bridge]] ABI 21). The Aravis profile's `preview_rate_hz`
+(default 60; `MIB_ARAVIS_PREVIEW_HZ` seeds it) sets the producer's
+`PzPreviewRate`: previews the PS asks for per second, the PL still sees every
+frame. Measured on the PS at 512x96 / 1 kHz: uncapped ~500 previews/s at 70 %
+of a core, 60/s at 8 %, 30/s at 4 %.
+
+**Camera & Alignment.** `setCameraOverview` / `saveCameraRoi` /
+`cameraGeometry` generalise the MindVision Overview to Aravis cameras. The
+Aravis profile `<data>/config/aravis-camera.json` (or `MIB_ARAVIS_PROFILE`)
+holds the experiment window and the rate/exposure of each mode (Overview
+default 830 Hz / 900 us, the lit PZ7035 full field). Overview: the camera
+factory switches to the whole sensor (`AravisCameraOptions::fullSensor`),
+realtime processing is switched off (and restored on leaving), the frame store
+becomes 8 frames; Experiment restores the store and acquires the saved window.
+Rejected during an experiment or recording; the readiness gate `camera.mode`
+fails while in Overview. Window saves are bounds- and step-checked against the
+camera's read-back (sensor size and Width/OffsetX increments, published by the
+adapter's `onSession` callback). Test: `backend.aravis_camera_overview`. If Aravis is disabled at build time, the
+request records an unavailable effective source and a null factory so capture
+reports the configuration error; it does not silently substitute MockCamera.
+
 ## Explicit hardware shutdown (2026-09-15)
 
 `shutdown()` now disconnects autofocus, both syringe pumps, and the pulse

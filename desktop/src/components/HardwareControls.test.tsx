@@ -8,11 +8,17 @@ import type { AutofocusConfig, PumpStatus } from '../bridge';
 vi.mock('../bridge', () => ({bridge: {
   fetchPumpStatus: vi.fn(), fetchAutofocusStatus: vi.fn(), fetchAutofocusConfig: vi.fn(),
   pumpStart: vi.fn(), pumpStop: vi.fn(), pumpPurge: vi.fn(), pumpSetFlowRate: vi.fn(), autofocusSetEnabled: vi.fn(),
+  pumpConnectModel: vi.fn(),
 }}));
 const pump: PumpStatus = {valid: true, connected: true, run_status: 0, current_flow_rate: 1, accumulated_volume: 0, min_flow_rate: 0, max_flow_rate: 10, stalled: false, com_port: 1, baud_rate: 115200, modbus_address: 1, configured_flow_rate: 1, flow_rate_unit: 100, direction: 0};
 const config: AutofocusConfig = {valid: true, focus_setpoint: 1, focus_range: .1, voltage_step: 1, fine_voltage_step: .1, min_voltage: 0, max_voltage: 100, initial_voltage: 50, manual_voltage_step: 1, ring_ratio_stale_ms: 500, min_samples_per_step: 1, safe_shutdown_voltage: 0, require_new_sample_per_step: true, focus_direction: true};
 let host: HTMLDivElement, root: Root;
 const append = vi.fn(), onDisarm = vi.fn();
+const labelled = (text: string) => Array.from(host.querySelectorAll('label')).filter(node => node.textContent?.startsWith(text)).map(node => node.querySelector('select, input') as HTMLSelectElement & HTMLInputElement);
+function choose(select: HTMLSelectElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, value);
+  select.dispatchEvent(new Event('change', {bubbles: true}));
+}
 const button = (name: string) => Array.from(host.querySelectorAll('button')).find(node => node.textContent === name)!;
 async function render(overrides = {}) {
   await act(async () => root.render(<HardwareControls ready experimentActive={false} append={append} mode="service" armed onDisarm={onDisarm} {...overrides} />));
@@ -67,5 +73,23 @@ describe('hardware operator interactions', () => {
     await act(async () => button('Apply rate').click());
     expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('Flow rate');
+  });
+  it('connects a slot to the peristaltic pump with its calibration and default endpoint', async () => {
+    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, connected: false});
+    vi.mocked(bridge.pumpConnectModel).mockResolvedValue({ok: true, command: 10, message: 'Pump connected', operation_id: '0'});
+    await render();
+    await act(async () => choose(labelled('Pump model')[0], '1'));
+    expect(labelled('System serial port')[0].value).toBe('/dev/ttyPS1');
+    expect(labelled('Device address')[0].value).toBe('3');
+    expect(labelled('Calibration (µL per revolution)')[0].value).toBe('25');
+    await act(async () => button('Connect').click());
+    expect(bridge.pumpConnectModel).toHaveBeenCalledWith(0, 1, '/dev/ttyPS1', 115200, 3, 25);
+  });
+  it('shows head speed and hides syringe volume for a connected peristaltic pump', async () => {
+    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, model: 1, speed_rpm: 0.4, microliters_per_rev: 25, configured_flow_rate: 10});
+    await render();
+    expect(host.textContent).toContain('Head 0.40 rpm at 25 µL/rev');
+    expect(button('Apply volume')).toBeUndefined();
+    expect(labelled('Pump model')[0].disabled).toBe(true);
   });
 });
