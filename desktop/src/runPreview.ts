@@ -62,8 +62,8 @@ export function decodeRunPreview(buf: ArrayBuffer): RunPreview {
 }
 
 /** RGBA of the gray frame with the U-Net mask tinted, ready for a canvas. */
-export function runPreviewRgba(p: RunPreview, showMask = true): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(p.width * p.height * 4);
+export function runPreviewRgba(p: RunPreview, showMask = true): Uint8ClampedArray<ArrayBuffer> {
+  const out = new Uint8ClampedArray(new ArrayBuffer(p.width * p.height * 4));
   for (let i = 0; i < p.width * p.height; i++) {
     const g = p.gray[i];
     const masked = showMask && (p.mask[i >> 3] >> (i & 7)) & 1;
