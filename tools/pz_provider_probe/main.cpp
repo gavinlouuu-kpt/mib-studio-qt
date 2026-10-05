@@ -71,6 +71,11 @@ int main(int argc, char** argv) {
         }
     });
     std::string error;
+    // The core (ADR 0011): must match `pzres id` on the same image.
+    const auto core = provider.identity();
+    std::printf("core: %s abi 0x%08x science %u v%u build %s weights %s\n", core.valid ? "ok" : "unavailable",
+                core.abiVersion, core.scienceProfile, core.profileVersion,
+                core.buildId.empty() ? "-" : core.buildId.c_str(), core.profileId.empty() ? "-" : core.profileId.c_str());
     bool configure = false;
     for (int i = 1; i < argc; ++i) configure = configure || std::strcmp(argv[i], "--configure") == 0;
     if (configure) {

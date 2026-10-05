@@ -229,6 +229,9 @@ int main(int argc, char** argv) {
                        snapshot.find("\"science_placement\":\"pl\"") != std::string::npos &&
                        snapshot.find("\"execution_provider\":\"replay\"") != std::string::npos,
                    "the run snapshot records the PL and the provider");
+        MIB_EXPECT(snapshot.find("\"pl_core\":{\"valid\":false") != std::string::npos &&
+                       snapshot.find("\"weights_sha256_prefix\":\"\"") != std::string::npos,
+                   "the run snapshot carries the PL core (none for a replay)");
         reader.closeFile();
     }
 

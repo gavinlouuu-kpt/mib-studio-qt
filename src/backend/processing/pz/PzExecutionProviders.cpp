@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <cstdio>
 #include <limits>
 
 #if defined(__linux__)
@@ -211,6 +212,13 @@ bool ReplayExecutionProvider::waitFinished(std::chrono::milliseconds timeout) {
     return true;
 }
 
+std::string formatCoreId(const uint32_t words[4]) {
+    if ((words[0] | words[1] | words[2] | words[3]) == 0) return {};
+    char hex[33];
+    std::snprintf(hex, sizeof(hex), "%08x%08x%08x%08x", words[3], words[2], words[1], words[0]);
+    return hex;
+}
+
 // ---- /dev/mem (PZ7035 PS) --------------------------------------------------
 
 #if defined(__linux__)
@@ -376,6 +384,28 @@ ProviderStatus PzDevMemExecutionProvider::status() const {
     ProviderStatus s = pipeline_.status();
     s.running = running_.load();
     return s;
+}
+
+ProviderIdentity PzDevMemExecutionProvider::identity() {
+    ProviderIdentity id;
+    std::string error;
+    if (!running_.load() && !ensureMapped(&error)) {
+        SPDLOG_WARN("PzDevMemExecutionProvider: identity unavailable: {}", error);
+        return id;
+    }
+    const auto& m = *map_;
+    const uint32_t build[4] = {m.reg(PZ_MIB_REG_BUILD_ID0), m.reg(PZ_MIB_REG_BUILD_ID1),
+                               m.reg(PZ_MIB_REG_BUILD_ID2), m.reg(PZ_MIB_REG_BUILD_ID3)};
+    const uint32_t profile[4] = {m.reg(PZ_MIB_REG_PROFILE_ID0), m.reg(PZ_MIB_REG_PROFILE_ID1),
+                                 m.reg(PZ_MIB_REG_PROFILE_ID2), m.reg(PZ_MIB_REG_PROFILE_ID3)};
+    const uint32_t science = m.reg(PZ_MIB_REG_SCIENCE_PROFILE);
+    id.valid = true;
+    id.abiVersion = m.reg(PZ_MIB_REG_ABI_VERSION);
+    id.scienceProfile = static_cast<uint16_t>(science & 0xFFFFu);
+    id.profileVersion = static_cast<uint16_t>(science >> 16);
+    id.buildId = formatCoreId(build);
+    id.profileId = formatCoreId(profile);
+    return id;
 }
 
 #endif

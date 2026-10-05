@@ -213,6 +213,10 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
       << ",\"science_placement\":" << q(s.sciencePlacement)
       << ",\"execution_provider\":" << q(s.executionProvider)
+      << ",\"pl_core\":{\"valid\":" << (s.plCoreValid ? "true" : "false")
+      << ",\"abi_version\":" << s.plAbiVersion << ",\"science_profile\":" << s.plScienceProfile
+      << ",\"profile_version\":" << s.plProfileVersion << ",\"build_id\":" << q(s.plBuildId)
+      << ",\"weights_sha256_prefix\":" << q(s.plWeightsId) << "}"
       << ",\"application\":{\"version\":" << q(s.applicationVersion) << ",\"build_id\":" << q(s.buildId)
       << ",\"os\":" << q(s.operatingSystem) << "}"
       << "}";
@@ -342,7 +346,16 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
     const auto roi = proc.getRealtimeRoi();
     s.roiX = roi.x; s.roiY = roi.y; s.roiW = roi.w; s.roiH = roi.h;
     s.sciencePlacement = app::sciencePlacement();
-    if (auto* provider = backend_.executionProvider()) s.executionProvider = provider->name();
+    if (auto* provider = backend_.executionProvider()) {
+        s.executionProvider = provider->name();
+        const auto core = provider->identity();
+        s.plCoreValid = core.valid;
+        s.plAbiVersion = core.abiVersion;
+        s.plScienceProfile = core.scienceProfile;
+        s.plProfileVersion = core.profileVersion;
+        s.plBuildId = core.buildId;
+        s.plWeightsId = core.profileId;
+    }
     if (auto store = backend_.getFrameStore()) {
         playback::Frame f;
         if (store->getLatest(f)) {

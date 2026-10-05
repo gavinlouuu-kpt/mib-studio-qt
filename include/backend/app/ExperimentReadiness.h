@@ -99,6 +99,13 @@ struct RunConfigurationSnapshot {
     // provider that brought its results to the PS (YOFO S3 provenance).
     std::string sciencePlacement;
     std::string executionProvider;
+    // The PL core (ADR 0011): build and weights ids from the device registers.
+    bool plCoreValid{false};
+    uint32_t plAbiVersion{0};
+    uint16_t plScienceProfile{0};
+    uint16_t plProfileVersion{0};
+    std::string plBuildId;
+    std::string plWeightsId;
 
     std::string applicationVersion;
     std::string buildId;

@@ -26,6 +26,7 @@
 namespace bpz = backend::pz;
 using backend::processing::ProviderFrame;
 using backend::processing::pz::ReplayExecutionProvider;
+using backend::processing::pz::formatCoreId;
 
 namespace {
 
@@ -204,12 +205,26 @@ void testBoardCapture(const char* path) {
                "board capture decodes cleanly");
 }
 
+// Identity registers -> the hex prefix `pzres id` prints (ID3 first), as in
+// pz7035-imx426 tests/test_results_top_sim.py.
+void testCoreIdFormat() {
+    const uint32_t build[4] = {0x44556677u, 0x00112233u, 0x89abcdefu, 0x01234567u};
+    MIB_EXPECT(formatCoreId(build) == "0123456789abcdef0011223344556677", "build id, ID3 first");
+    const uint32_t weights[4] = {0x8899aabbu, 0x44556677u, 0x00112233u, 0xeea09a3fu};
+    MIB_EXPECT(formatCoreId(weights) == "eea09a3f00112233445566778899aabb", "weights id");
+    const uint32_t none[4] = {0, 0, 0, 0};
+    MIB_EXPECT(formatCoreId(none).empty(), "no weights: empty id");
+    ReplayExecutionProvider replay({}, 0.0);
+    MIB_EXPECT(!replay.identity().valid, "a replay has no device identity");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     (void)spdlog::default_logger();
     mib::test::Watchdog watchdog(60);
     MIB_REQUIRE(argc > 1, "usage: pz_execution_provider_test <unet-cells-v2-pl-vectors.json>");
+    testCoreIdFormat();
     testReplayDeliversThePlCells(argv[1]);
     watchdog.mark("replay");
     testCorruptedResultIsCounted(argv[1]);

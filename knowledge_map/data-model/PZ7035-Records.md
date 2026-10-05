@@ -74,6 +74,11 @@ frame identity, flags, the `UnetCell`s, and their `FilterResult` view
     once more after STOP.
   - **Only one reader at a time:** the TAIL register is shared, so stop
     `pzres` first.
+  - `identity()` reads the core: `BUILD_ID0-3` hold the first 128 bits of the
+    PL build's git commit, and `PROFILE_ID0-3` the first 128 bits of the
+    weights `.npz` sha256 (0 when none). Both are formatted ID3 first, as
+    `pzres id` prints them (`formatCoreId`). They go into the run snapshot's
+    `pl_core`, and `pz_provider_probe` prints them.
 
 Test `processing.pz_execution_provider` covers vector replay, a corrupted
 RESULT (counted; its frame incomplete; the gap reported) and a paced

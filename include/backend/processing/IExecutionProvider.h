@@ -59,6 +59,18 @@ struct ProviderStatus {
     uint32_t epoch{0};
 };
 
+// The core the device runs (ADR 0011: a core = PL build + model weights),
+// read from the bridge's identity registers. Ids are the 32-hex prefixes the
+// device reports: ID3 ID2 ID1 ID0 as %08x each, as `pzres id` prints them.
+struct ProviderIdentity {
+    bool valid{false};
+    uint32_t abiVersion{0};
+    uint16_t scienceProfile{0};
+    uint16_t profileVersion{0};
+    std::string buildId;   // first 128 bits of the PL build's git commit
+    std::string profileId; // first 128 bits of the model weights' sha256; empty when none
+};
+
 class IExecutionProvider {
 public:
     using Sink = std::function<void(ProviderFrame&&)>;
@@ -71,6 +83,8 @@ public:
     virtual bool start(uint64_t runId, std::string* error) = 0;
     virtual void stop() = 0;
     virtual ProviderStatus status() const = 0;
+    // Side-effect free; a provider without a device reports !valid.
+    virtual ProviderIdentity identity() { return {}; }
 };
 
 // FilterResult view of one unet_cells_v2 cell, including the Laplacian and

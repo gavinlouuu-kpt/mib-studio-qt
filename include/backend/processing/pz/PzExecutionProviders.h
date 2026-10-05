@@ -21,6 +21,10 @@
 
 namespace backend::processing::pz {
 
+// The 32-hex id of four identity registers (words[0] = ID0 ... words[3] =
+// ID3), most significant word first; empty when all four are zero.
+std::string formatCoreId(const uint32_t words[4]);
+
 class PzRecordPipeline {
 public:
     explicit PzRecordPipeline(uint32_t timestampHz = 59400000u);
@@ -97,6 +101,8 @@ public:
     bool start(uint64_t runId, std::string* error) override;
     void stop() override;
     ProviderStatus status() const override;
+    // BUILD_ID, PROFILE_ID, ABI_VERSION and SCIENCE_PROFILE from the bridge.
+    ProviderIdentity identity() override;
 
 private:
     class Mapping;

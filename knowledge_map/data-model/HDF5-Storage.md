@@ -135,7 +135,11 @@
   `blemishCount`, `degenerateContour`) are appended. The names and order are
   develop's, so files from both lines share one layout. Older files read the
   members as not present.
-- The run snapshot records `science_placement` and `execution_provider`.
+- The run snapshot records `science_placement` and `execution_provider`,
+  plus `pl_core` (ADR 0011: a core is a PL build plus its weights). `pl_core`
+  holds `valid`, `abi_version`, `science_profile`, `profile_version`,
+  `build_id` (git commit prefix) and `weights_sha256_prefix`, read from the
+  bridge identity registers at Start. A replay has `valid: false`.
 - Images can later come from the PL frame store (store drain, not yet built).
 - Tests: `recording.experiment_roundtrip` (imageless round trip, mixing
   refused) and `backend.pl_science_provider` (810/810 rows persisted from a
