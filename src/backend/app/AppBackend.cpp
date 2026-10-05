@@ -54,6 +54,8 @@
 #include <string>
 #include <utility>
 #include <spdlog/spdlog.h>
+#include <opencv2/core.hpp>
+#include "backend/processing/OpenCvThreads.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
@@ -70,6 +72,28 @@ namespace backend
 {
     namespace
     {
+    // OpenCV's MSVC build parallelises through the Concurrency Runtime: one worker
+    // per logical CPU whose idle workers spin. A per-frame parallel call in the
+    // realtime loop kept ~31 of 32 workers busy on the rig PC and starved the
+    // processing thread (5000 fps experiments fell to ~2900 processed/s).
+    // Processing already spreads frames over its own threads, so OpenCV's inner
+    // parallel_for is off by default (OpenCvThreads.h; processing-core plugins
+    // apply the same setting to their own, statically linked OpenCV).
+    void configureOpenCvThreads()
+    {
+        const auto setting = processing::applyOpenCvThreadsFromEnvironment();
+        if (setting.invalid)
+        {
+            SPDLOG_WARN("AppBackend: ignoring invalid MIB_OPENCV_THREADS='{}'", setting.raw);
+        }
+        if (setting.keepOpenCvDefault)
+        {
+            SPDLOG_INFO("AppBackend: OpenCV threads left at OpenCV default ({})", cv::getNumThreads());
+            return;
+        }
+        SPDLOG_INFO("AppBackend: OpenCV threads set to {} (getNumThreads={})", setting.threads, cv::getNumThreads());
+    }
+
     // Builds the capture-owned MindVision camera for `path`. When the saved
     // profile enables illuminated Live View, the same validated parse the
     // camera uses at start (parseConfig: connection, range and timing rules)
@@ -443,20 +467,26 @@ namespace backend
             return autofocusService_ && autofocusService_->isConnected();
         };
         hooks.selectCamera = [this](const discovery::DiscoveredDevice &device) {
-            if (!device.camera) return false;
-            const auto &cam = *device.camera;
-            if (cam.cameraType == services::CameraType::MindVision)
-            {
-                setMindVisionCameraSelection(cam.cameraIndex, cam.label);
-            }
-            else
-            {
-                setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
-            }
-            return true;
+            if (!device.camera || !experimentCoordinator_) return false;
+            bool selected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || isCameraConfigured()) return;
+                const auto &cam = *device.camera;
+                if (cam.cameraType == services::CameraType::MindVision)
+                    setMindVisionCameraSelection(cam.cameraIndex, cam.label);
+                else setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
+                selected = true;
+            });
+            return selected;
         };
         hooks.connectNanopositioner = [this](const nanopositioner::Endpoint &endpoint) {
-            return autofocusService_ && autofocusService_->connect(endpoint);
+            if (!experimentCoordinator_) return false;
+            bool connected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || !autofocusService_ || autofocusService_->isConnected()) return;
+                connected = autofocusService_->connect(endpoint);
+            });
+            return connected;
         };
         startupDiscovery_ =
             std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
@@ -592,7 +622,7 @@ namespace backend
         // Initialize YOLO service - resolve model path relative to data directory
         // dataDir is typically {exeDir}/data, so we go up one level to get exeDir
         std::filesystem::path dataPath(dataDir);
-        std::filesystem::path exeDir = dataPath.parent_path();
+        std::filesystem::path exeDir = resourceRoot_.empty() ? dataPath.parent_path() : std::filesystem::path(resourceRoot_);
         std::filesystem::path modelPath = exeDir / "resources" / "models" / "yolo11n-seg.onnx";
         if (bootYolo)
         {
@@ -661,6 +691,7 @@ namespace backend
                         lutInfo.remoteUpdated,
                         lutInfo.usedBundledFallback,
                         lutInfo.manifestUrl);
+            configureOpenCvThreads();
             processingService_->start();
         }
         else
@@ -677,10 +708,22 @@ namespace backend
                 if (autofocusService_) {
                     autofocusService_->onRingRatio(ringRatio, timestampNs);
                 } });
+            // Contracts 2 and 3: per-object Laplacian variance drives the
+            // focus-score peak-seeker instead of the ring-width setpoint.
+            processingService_->setFocusSampleCallback(
+                [this](double laplacianVariance, int64_t timestampNs, uint64_t frameIndex,
+                       int objectId, int trackId)
+                {
+                    if (autofocusService_) {
+                        autofocusService_->onFocusSample(backend::services::autofocus::FocusSample{
+                            laplacianVariance, timestampNs, frameIndex, objectId, trackId});
+                    }
+                });
         }
         else
         {
             processingService_->setRingRatioCallback({});
+            processingService_->setFocusSampleCallback({});
             if (!bootAutofocus)
             {
                 SPDLOG_WARN("AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES");

@@ -1,3 +1,4 @@
+#include "backend/recording/ReviewChartData.h"
 #include "backend/recording/HdfExportService.h"
 
 #include "backend/recording/Hdf5Service.h"
@@ -199,6 +200,7 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         // Destination + same-parent partial location.
         const std::string base = sourceBaseName(request.sourcePath);
         const bool folderJob = request.format != HdfExportFormat::MetricsCsv;
+        const bool imageJob = request.format == HdfExportFormat::Images || request.format == HdfExportFormat::All;
         if (!request.explicitDestination.empty()) {
             finalPath = request.explicitDestination;
         } else if (folderJob) {
@@ -206,6 +208,9 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         } else {
             finalPath = nextAvailableName(request.outputRoot, base + "_metrics.csv", base + "_metrics_", ".csv");
         }
+        if (fs::equivalent(request.sourcePath, finalPath, ec))
+            throw Failed{"export destination must not replace the source recording"};
+        ec.clear();
         // An explicit *file* destination (chosen through a save dialog that
         // already confirmed overwrite) is replaced atomically at commit; an
         // existing folder is never merged into.
@@ -227,20 +232,35 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         if (result.recordingMode) {
             if (!reader.readRecordingMetadata(valid)) throw Failed{"failed to read recording metadata"};
         } else {
-            if (request.frames != HdfExportFrames::Invalid && !reader.readValidMetadata(valid))
-                throw Failed{"failed to read valid-frame metadata"};
-            if (request.frames != HdfExportFrames::Valid && !reader.readInvalidMetadata(invalid))
-                throw Failed{"failed to read invalid-frame metadata"};
+            if (request.frames != HdfExportFrames::Invalid) {
+                const auto present = reader.metadataDatasetPresent(true);
+                if (!present || (*present && !reader.readValidMetadata(valid)))
+                    throw Failed{"failed to read valid-frame metadata"};
+            }
+            if (request.frames != HdfExportFrames::Valid) {
+                const auto present = reader.metadataDatasetPresent(false);
+                if (!present || (*present && !reader.readInvalidMetadata(invalid)))
+                    throw Failed{"failed to read invalid-frame metadata"};
+            }
         }
         if (request.frames == HdfExportFrames::Invalid) valid.clear();
         if (request.frames == HdfExportFrames::Valid) invalid.clear();
         checkCancel();
         if (valid.empty() && invalid.empty()) throw Failed{"no exportable frame data found"};
 
+        auto charts=request.supplementalImages;
+        if(request.format==HdfExportFormat::Charts && result.recordingMode)throw Failed{"Raw recordings have no chart metrics"};
+        if(request.generateReviewCharts && !result.recordingMode && (request.format==HdfExportFormat::All || request.format==HdfExportFormat::Charts)) {
+            checkCancel();
+            charts=renderReviewCharts(makeReviewChartData(valid,request.conversionFactor,request.chartRingMin,request.chartRingMax),request.chartIsoelasticOverlays);
+        }
+
+        if(request.format==HdfExportFormat::Charts && charts.empty())throw Failed{"No chart images provided or generated"};
+
         // Series geometry (experiment files only).
         size_t seriesRecords = 0, seriesCount = 0;
         int seriesH = 0, seriesW = 0;
-        const bool hasSeries = !result.recordingMode && folderJob && request.series.exportSeries &&
+        const bool hasSeries = !result.recordingMode && imageJob && request.series.exportSeries &&
                                reader.getSeriesImageInfo(seriesRecords, seriesCount, seriesH, seriesW) && seriesCount > 0;
         size_t seriesStart = 0, seriesEnd = 0;
         if (hasSeries) {
@@ -251,10 +271,11 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         }
         const int seriesDigits = std::max<int>(2, static_cast<int>(std::to_string(std::max<size_t>(seriesCount, 1)).size()));
 
-        const bool writeMetrics = !result.recordingMode && request.format != HdfExportFormat::Images;
-        totalUnits = (writeMetrics ? 1 : 0) + (folderJob ? valid.size() + invalid.size() : 0) +
+        const bool writeMetrics = request.format == HdfExportFormat::MetricsCsv ||
+                                  (!result.recordingMode && request.format == HdfExportFormat::All);
+        totalUnits = (writeMetrics ? 1 : 0) + (imageJob ? valid.size() + invalid.size() : 0) +
                      (hasSeries ? std::min(seriesRecords, valid.size()) * (seriesEnd - seriesStart + 1) : 0) +
-                     (folderJob && request.format == HdfExportFormat::All ? request.supplementalImages.size() : 0);
+                     (folderJob && (request.format == HdfExportFormat::All || request.format == HdfExportFormat::Charts) ? charts.size() : 0);
 
         // Metrics.
         if (writeMetrics) {
@@ -270,6 +291,7 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         }
 
         if (folderJob) {
+            if (imageJob) {
             const std::string validImages = result.recordingMode ? "/recorded_frames/images" : "/valid_frames/images";
             const std::string validPrefix = result.recordingMode ? "frame_" : "valid_frame_";
             progress(HdfExportPhase::ValidImages);
@@ -319,9 +341,10 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
                 ++completedUnits;
                 if ((i + 1) % 25 == 0 || i + 1 == invalid.size()) progress(HdfExportPhase::InvalidImages, path.string());
             }
-            if (request.format == HdfExportFormat::All && !result.recordingMode) {
+            }
+            if ((request.format == HdfExportFormat::All || request.format == HdfExportFormat::Charts) && !result.recordingMode) {
                 progress(HdfExportPhase::Charts);
-                for (const auto& [name, image] : request.supplementalImages) {
+                for (const auto& [name, image] : charts) {
                     checkCancel();
                     if (image.empty()) { result.warnings.push_back("chart " + name + " is empty"); continue; }
                     const fs::path path = partial / name;

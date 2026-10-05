@@ -17,7 +17,9 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct UpdateManifest {
     pub version: String,
+    #[serde(alias = "installer_url")]
     pub url: String,
+    #[serde(alias = "installer_sha256")]
     pub sha256: String,
     #[serde(default)]
     pub channel: Option<String>,
@@ -86,6 +88,16 @@ mod tests {
     }
 
     #[test]
+    fn qt_published_manifest_aliases_keep_digest_required() {
+        let hash = "a".repeat(64);
+        let text = format!(r#"{{"version":"1.2.3","installer_url":"https://updates.yofo.bio/qt.exe","installer_sha256":"{hash}"}}"#);
+        let parsed = parse_manifest(&text).unwrap();
+        assert_eq!(parsed.url, "https://updates.yofo.bio/qt.exe");
+        assert_eq!(parsed.sha256, hash);
+        assert!(parse_manifest(r#"{"version":"1.2.3","installer_url":"https://updates.yofo.bio/qt.exe"}"#).is_err());
+    }
+
+    #[test]
     fn valid_manifest_and_matching_artifact_verify() {
         let artifact = b"installer-bytes";
         let sha = hex::encode(Sha256::digest(artifact));
@@ -141,4 +153,19 @@ mod tests {
             Err(VerifyError::MalformedManifest(_))
         ));
     }
+}
+
+/// Read-only release inspection. Existing Qt installers are never launched by
+/// the Tauri shell; Tauri artifact publication is a separate release gate.
+#[tauri::command]
+pub async fn inspect_app_update(url: String) -> Result<serde_json::Value, String> {
+    if !url.starts_with("https://") { return Err("App update metadata requires HTTPS".into()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let fetched: serde_json::Value = serde_json::from_str(&mib_bridge::ffi::profile_fetch_url(&url)).map_err(|e| e.to_string())?;
+        if fetched["ok"] != true { return Err(fetched["error"].as_str().unwrap_or("Update fetch failed").to_string()); }
+        let body = fetched["body"].as_str().ok_or("Update response missing body")?;
+        let manifest = parse_manifest(body).map_err(|e| e.to_string())?;
+        let raw: serde_json::Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({"version":manifest.version,"url":manifest.url,"sha256":manifest.sha256,"artifact_family":raw.get("artifact_family")}))
+    }).await.map_err(|e| e.to_string())?
 }

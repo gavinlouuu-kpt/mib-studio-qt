@@ -6,8 +6,26 @@
 
 namespace frontend::processingcorecatalog {
 
+// ADR 0007 core lines. Each line has its own registry directory, contract,
+// engine ABI and entry point; a catalog or core of one line is never
+// accepted as another.
+struct CoreLine {
+    QString name;          // "subtract-ring" | "absdiff-laplacian"
+    QString registryDir;   // "<channel>/<registryDir>/{index,latest}.json"
+    int contractVersion{0};
+    int engineAbiVersion{0};
+    QString entrypoint;
+};
+
+const QVector<CoreLine>& coreLines();
+// nullptr for an unknown line name.
+const CoreLine* findCoreLine(const QString& name);
+
 struct NativePluginEntry {
     QString filename;
+    // Core line algorithm ("absdiff-laplacian"); empty on subtract-ring
+    // entries, which predate core lines.
+    QString algorithm;
     QString os;
     QString arch;
     QString url;
@@ -32,6 +50,7 @@ struct NativePluginEntry {
 
 struct VersionEntry {
     QString channel;
+    QString line{QStringLiteral("subtract-ring")};
     QString version;
     QString publishedAt;
     QString releaseTag;
@@ -45,6 +64,7 @@ struct ParseResult {
     bool ok{false};
     QString error;
     QString channel;
+    QString line{QStringLiteral("subtract-ring")};
     QString indexActiveVersion;
     QString activeVersion;
     QVector<VersionEntry> versions;

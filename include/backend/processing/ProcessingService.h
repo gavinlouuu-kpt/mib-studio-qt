@@ -62,6 +62,14 @@ public:
     };
 
     struct RealtimeSnapshot {
+        cv::Mat originalImage; // frozen source pixels; opt-in preview retention
+        std::shared_ptr<const backend::playback::Frame>
+            sourceFrame; // owns ROI fast-path pixels without another copy
+        uint64_t sourceTimestamp{0}, hostTimestampUs{0};
+        uint64_t processingSession{0}, storeGeneration{0}, captureSession{0};
+        std::string recipeSha256;
+        cv::Rect2d primaryBounds;
+        Roi roi;
         uint64_t index{0};
         std::vector<std::vector<cv::Point>> contours;
         cv::Mat mask;
@@ -169,6 +177,7 @@ public:
     // Monotonic counter bumped by setProcessingConfig / setRealtimeRoi.
     uint64_t getConfigVersion() const;
     bool getLatestSnapshot(RealtimeSnapshot& out);
+    void setProcessedPreviewEnabled(bool enabled);
 
     // Experiment lifecycle
     void startExperiment();
@@ -449,6 +458,7 @@ public:
         backend::processing::ProcessingCoreIdentity* processingCore = nullptr);
 
     struct BatchPipelineConfig {
+        std::string previewRecipeSha256;
         size_t batchSize{64};
         size_t maxQueuedFrames{4096};
         size_t workerCount{1};
@@ -484,13 +494,18 @@ public:
     bool startBatchPipeline(BatchPipelineConfig config, BatchResultCallback callback);
     void stopBatchPipeline();
     bool enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs = 0,
-                           uint64_t hostTimestampUs = 0);
+                           uint64_t hostTimestampUs = 0, uint64_t storeGeneration = 0, uint64_t captureSession = 0);
     bool enqueueBatchFrame(const backend::playback::Frame& frame, uint64_t index);
     BatchPipelineStats getBatchPipelineStats() const;
 
-    // Ring ratio callback for autofocus (called when validated frames are processed)
+    // Autofocus feeds, chosen by the active contract: Contract 1 publishes the
+    // ring ratio of each valid object (finite and > 0); Contracts 2 and 3
+    // publish each valid object's finite Laplacian variance instead.
     using RingRatioCallback = std::function<void(double ringRatio, int64_t timestampNs)>;
     void setRingRatioCallback(RingRatioCallback callback);
+    using FocusSampleCallback = std::function<void(double laplacianVariance, int64_t timestampNs,
+                                                   uint64_t frameIndex, int objectId, int trackId)>;
+    void setFocusSampleCallback(FocusSampleCallback callback);
 
     // Target group trigger callback (one deterministic event per source frame)
     using TargetGroupCallback = std::function<void(const TargetGroupEvent& event)>;
@@ -528,6 +543,7 @@ private:
     };
 
     struct QueuedBatchFrame {
+        uint64_t storeGeneration{0}, captureSession{0};
         cv::Mat gray;
         uint64_t index{0};
         uint64_t timestampNs{0};
@@ -707,6 +723,8 @@ private:
     cv::Mat bgCalAccumulator_; // CV_64FC1 running sum of accepted frames
     std::chrono::steady_clock::time_point bgCalDeadline_{};
     std::atomic<bool> bgCalActive_{false};
+    std::atomic<bool> processedPreviewEnabled_{false};
+    std::atomic<uint64_t> processingSession_{0};
     std::atomic<uint64_t> backgroundGeneration_{0};
     void bgCalObserve(backend::recording::FrameOutcome outcome, const backend::playback::Frame* frame);
     void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
@@ -805,6 +823,10 @@ private:
     // Ring ratio callback for autofocus
     mutable std::mutex ringRatioCallbackMutex_;
     RingRatioCallback ringRatioCallback_;
+    FocusSampleCallback focusSampleCallback_; // guarded by ringRatioCallbackMutex_
+    // processing_contract_version of processingConfig_, read lock-free by the
+    // realtime callback publisher to choose the autofocus feed.
+    std::atomic<int> activeContract_{1};
 
     mutable std::mutex targetGroupCallbackMutex_;
     TargetGroupCallback targetGroupCallback_;
