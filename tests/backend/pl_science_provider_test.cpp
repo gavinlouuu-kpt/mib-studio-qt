@@ -34,6 +34,17 @@
 #include <thread>
 #include <vector>
 
+namespace {
+// POSIX setenv is not available with MSVC.
+void setEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+}  // namespace
+
 namespace fs = std::filesystem;
 namespace bpz = backend::pz;
 using backend::app::ExperimentStartOutcome;
@@ -117,11 +128,11 @@ int main(int argc, char** argv) {
     const Written written = writeRecords(argv[1], records, 30);
     const uint64_t frameCount = written.frames;
 
-    setenv("MIB_PL_SCIENCE", "1", 1);
-    setenv("MIB_CAMERA_MODE", "mock", 1);
-    setenv("MIB_MOCK_CAMERA_DIR", frames.string().c_str(), 1);
-    setenv("MIB_DISABLED_SERVICES", "sqlite,yolo,autofocus,trigger,playback", 1);
-    setenv("MIB_EXECUTION_PROVIDER", ("replay:" + records.string() + "@2000").c_str(), 1);
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,yolo,autofocus,trigger,playback");
+    setEnv("MIB_EXECUTION_PROVIDER", ("replay:" + records.string() + "@2000").c_str());
     MIB_REQUIRE(!backend::app::hostProcessingAvailable(), "science on the PL");
 
     {
@@ -238,7 +249,7 @@ int main(int argc, char** argv) {
     // A provider that cannot start rolls the Start back.
     {
         const fs::path missing = td.path() / "missing.bin";
-        setenv("MIB_EXECUTION_PROVIDER", ("replay:" + missing.string()).c_str(), 1);
+        setEnv("MIB_EXECUTION_PROVIDER", ("replay:" + missing.string()).c_str());
         backend::AppBackend backend;
         MIB_REQUIRE(backend.initialize((td.path() / "data2").string()), "backend init");
         MIB_EXPECT(backend.executionProvider() == nullptr, "an unreadable replay file gives no provider");
