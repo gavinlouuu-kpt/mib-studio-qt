@@ -16,7 +16,22 @@ Spec:
 - the [execution plan](../../docs/exec-plans/active/2026-09-30-zc300-z-stage.md)
 - the [integration evidence](../../docs/integration/zc300-z-stage.md)
 
+Start-up is read-only. The stage moves only when an operator presses Home,
+and its position is unknown until it has been homed once per controller
+power-up (decided 2026-10-05; ADR 0013 §5–6).
+
 See [[../services/SerialBus]].
+
+## 2026-10-05 — pz7035 ABI bundle vendored from the `abi-v1.2.0` tag (ADR 0011)
+
+`third_party/pz7035-abi` now comes from the tagged bundle on pz7035-imx426
+main (`abi-v1.2.0`, c726d338) instead of a feature-branch commit. Only the
+identity register docs changed: `BUILD_ID3..0` hold the first 128 bits of the
+PL build's git commit and `PROFILE_ID3..0` those of the weights `.npz` sha256,
+most significant word in ID3. Register map, header and fixtures are
+unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
+and refuses a tag that does not resolve to the checkout's commit. See
+[[../data-model/PZ7035-Records]].
 
 ## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
 
