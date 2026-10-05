@@ -815,7 +815,12 @@ namespace backend::bridge
         std::string fetchCameraGeometryJson() const;
         // Where the science runs and what this build has (ABI 21): {science: host|pl,
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
+        // `capabilities` (#501) says which surfaces exist on this instrument.
         std::string fetchPlatformInfoJson() const;
+        // PZ7035 identity and health for preflight (#501): the PL core against the
+        // expected core and the pinned weights, LED strobe and guard, sensor-link
+        // rates, latency. {available: false, error} off the instrument.
+        std::string fetchInstrumentStatusJson();
         std::string savePreviewBufferJson(const std::string& request);
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;

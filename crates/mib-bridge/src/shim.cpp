@@ -1585,6 +1585,14 @@ rust::String BackendBridge::fetch_platform_info() {
     }
 }
 
+rust::String BackendBridge::fetch_instrument_status() {
+    try {
+        return rust::String(impl_->facade.fetchInstrumentStatusJson());
+    } catch (...) {
+        return rust::String(R"({"available":false,"error":"fetch_instrument_status failed"})");
+    }
+}
+
 rust::String BackendBridge::fetch_camera_geometry() {
     try {
         return rust::String(impl_->facade.fetchCameraGeometryJson());
@@ -1854,7 +1862,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 23; }
+std::uint32_t bridge_abi_version() { return 24; }
 
 } // namespace mib_bridge
 

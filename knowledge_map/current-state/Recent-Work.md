@@ -1,5 +1,30 @@
 # Recent Work
 
+## 2026-10-05 — PZ7035 instrument UI P0a: capabilities, PL-core preflight, token prompt (#501)
+
+On the PZ7035, preflight checks the instrument's own equipment, and a healthy
+instrument at idle shows 0 warnings:
+
+- **PL core:** build vs `/etc/yofo/expected-core.json`, weights vs the pinned
+  `.npz`.
+- **Sensor link:** the error and resync rates.
+- **LED strobe:** a guard trip fails.
+
+The rest of P0a:
+
+- **Capabilities:** the backend reports them, and the UI hides the MIB-only
+  surfaces (nanopositioner, EGrabber, MindVision, host background, frame
+  buffer, core updates, reanalysis, pulse generator).
+- **Pumps** default to the two peristaltic pumps on `/dev/ttyPS1` (Sample 3,
+  Sheath 4).
+- **Token:** the browser asks `GET /auth` and prompts for the token instead of
+  failing silently.
+- **Reads only:** `PzPlatformMonitor` never writes a register. Align/Run mode
+  switching with LED presets is P0b.
+
+See [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]] and
+[[../data-model/PZ7035-Records]].
+
 ## 2026-10-05 — Bridge ABI 23: one contract for develop and the instrument line
 
 ADR 0011's single renumber: develop (19) and the instrument line (20-22)

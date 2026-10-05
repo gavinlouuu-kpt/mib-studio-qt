@@ -150,6 +150,7 @@ pub const COMMANDS: &[&str] = &[
     "save_camera_roi",
     "fetch_camera_geometry",
     "fetch_platform_info",
+    "fetch_instrument_status",
 ];
 
 /// Run one command. Unknown names fail with `UNKNOWN_COMMAND`; blocking commands (profile and
@@ -766,6 +767,7 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
         }
         "fetch_camera_geometry" => crate::fetch_camera_geometry(state).and_then(json),
         "fetch_platform_info" => crate::fetch_platform_info(state).and_then(json),
+        "fetch_instrument_status" => crate::fetch_instrument_status(state).and_then(json),
         _ => Err(format!("UNKNOWN_COMMAND: {name}")),
     }
 }

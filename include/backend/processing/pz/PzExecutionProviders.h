@@ -112,6 +112,7 @@ private:
     Layout layout_;
     Sink sink_;
     PzRecordPipeline pipeline_;
+    std::mutex mapMutex_; // guards creating map_ (never reset once made)
     std::unique_ptr<Mapping> map_;
     std::thread thread_;
     std::atomic<bool> stopRequested_{false};

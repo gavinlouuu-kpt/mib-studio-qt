@@ -433,6 +433,10 @@ add_test(NAME processing.contract3_cells_conformance COMMAND $<TARGET_FILE:mib_b
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
 
+mib_add_backend_test_executable(pz_platform_monitor_test processing/pz_platform_monitor_test.cpp)
+add_test(NAME processing.pz_platform_monitor COMMAND $<TARGET_FILE:mib_backend_tests> pz_platform_monitor_test)
+set_tests_properties(processing.pz_platform_monitor PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
 add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test
          ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
@@ -1337,3 +1341,6 @@ set_tests_properties(profiles.registry_backend PROPERTIES LABELS "backend;profil
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+# The vendored PZ7035 ABI header, for tests that fake bridge registers
+# (processing.pz_platform_monitor).
+target_include_directories(mib_backend_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
