@@ -59,6 +59,25 @@ brightness, focus metric, counts and centroid. Coordinates are in ROI 1.
   passed through encode, decode and the profile decoder, equal the host
   Contract 3 science on the same frames.
 
+## Platform monitor (#501)
+
+`include/backend/pz/PzPlatformMonitor.h` reads the PZ7035 read-only, from
+pz7035-imx426 `docs/YOFO_HOST_INTERFACE.md` (PR #10, 5b30761):
+
+- **Identity:** `BUILD_ID`/`PROFILE_ID`, ID3 first. The build is checked
+  against `/etc/yofo/expected-core.json` (missing = "unknown"). The weights
+  are checked against the pinned `unet-c4-multiline-v1` `.npz` sha256, whose
+  first 32 hex CMake compiles in from `env/assets.json`.
+- **LED strobe window:** `S[0..2]` (presets run 7/60 µs, align 0/125 µs), and
+  `S[12]` bit 4 / `S[13]` for the guard.
+- **Live-page counters:** `P[12]` ingress errors, `P[14]` resyncs, `P[7]` bad
+  frames, `P[6]` dropped. Rates come from deltas; a decrease is a reset.
+- **Latency:** `S[47..51]`, 175 MHz clocks.
+
+It never writes: sensor timing, the command word and the LED belong to the
+single mode owner (P0b). `AppBackend` creates it beside the `pz-devmem`
+provider. Test `processing.pz_platform_monitor` uses fake registers.
+
 ## Execution providers (YOFO S1)
 
 `include/backend/processing/IExecutionProvider.h` is the seam: one

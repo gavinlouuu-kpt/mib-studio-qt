@@ -369,6 +369,22 @@ merged contract is all of them, so it takes a number no earlier build has
 carried. It adds no commands of its own. The #398 profile-registry stack
 renumbers to 24 when it lands.
 
+## PZ7035 status and capabilities (#501 P0a, ABI pending)
+
+- `fetch_platform_info` gains `capabilities`: instrument (desktop or
+  pz7035), the MIB-only surfaces, `pl_identity`, `led_strobe`, align and run
+  mode, and the pump model, port, address and µL/rev.
+- `fetch_instrument_status` returns the read-only `PzPlatformMonitor` sample:
+  - the PL core against the expected core and the pinned weights;
+  - LED preset and guard;
+  - link rates;
+  - latency.
+
+  `available: false` with the reason off the PZ7035. Test: `contract.rs`
+  `platform_capabilities_and_instrument_status_on_the_desktop`.
+- `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
+  prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
+
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
 `bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`

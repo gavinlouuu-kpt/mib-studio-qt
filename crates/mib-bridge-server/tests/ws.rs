@@ -76,6 +76,33 @@ fn mock_frames() -> String {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/mock_frames").to_string_lossy().into_owned()
 }
 
+/// GET `path` over plain HTTP/1.1; returns the status code and body.
+async fn http_get(addr: std::net::SocketAddr, path: &str) -> (u16, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    let status = response.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+    (status, body)
+}
+
+// #501: the UI asks /auth before opening the socket, so a missing token becomes a prompt.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn auth_probe_reports_the_token_without_a_socket() {
+    let (_server, addr, data) = start("auth").await;
+    let (status, body) = http_get(addr, "/auth").await;
+    assert_eq!(status, 401, "{body}");
+    assert!(body.contains("\"token_required\":true"), "{body}");
+    assert_eq!(http_get(addr, "/auth?token=wrong").await.0, 401);
+    let (status, body) = http_get(addr, &format!("/auth?token={TOKEN}")).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"authorized\":true"), "{body}");
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn mock_capture_over_websocket() {
