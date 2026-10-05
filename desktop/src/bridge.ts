@@ -170,6 +170,60 @@ export interface CameraDiscovery {
   framegrabbers: DiscoveredFramegrabber[];
 }
 
+/** Central profile registry (bridge schema v25, #398). Integers are contract
+ *  values: `session` REGISTRY_SESSION_STATES, `connectivity`
+ *  REGISTRY_CONNECTIVITY, job `kind`/`state` REGISTRY_JOB_KINDS /
+ *  REGISTRY_JOB_STATES, `central_state` REGISTRY_CENTRAL_STATES. u64 values
+ *  arrive as decimal strings. No token or password is ever part of these. */
+export interface RegistryJob {
+  job_id: string;
+  kind: number;
+  state: number;
+  message: string;
+}
+
+export interface RegistryProject {
+  project_id: string;
+  display_name: string;
+  roles: string[];
+}
+
+export interface RegistryRevision {
+  revision_id: string;
+  method_id: string;
+  project_id: string;
+  display_name: string;
+  author_id: string;
+  content_hash: string;
+  revision_number: string;
+  metadata_version: string;
+  central_state: number;
+}
+
+export interface RegistrySnapshot {
+  valid: boolean;
+  configured: boolean;
+  generation: string;
+  origin: string;
+  session: number;
+  subject_id: string;
+  email: string;
+  connectivity: number;
+  health_message: string;
+  successful_requests: string;
+  failed_requests: string;
+  rejected_revisions: string;
+  projects: RegistryProject[];
+  revisions: RegistryRevision[];
+  corrupt_revision_ids: string[];
+  cache_error: string;
+  has_last_successful_refresh: boolean;
+  last_successful_refresh_unix_ms: number;
+  last_job: RegistryJob;
+  queued_jobs: string;
+  busy: boolean;
+}
+
 /** Device-discovery request (schema v14, #419). Kinds are
  *  DISCOVERY_DEVICE_KINDS; a pulse-generator scan needs an explicit serial
  *  scope (the backend refuses broad sweeps). */
@@ -588,6 +642,17 @@ export const bridge = {
       },
       opts,
     ),
+  // Central profile registry (bridge schema v25, #398). Commands return a job
+  // ID as a decimal string; "0" means refused (not configured / not ready).
+  registrySignIn: (email: string, password: string) =>
+    invoke<string>("registry_sign_in", { email, password }),
+  registrySignOut: () => invoke<string>("registry_sign_out"),
+  registryRefresh: () => invoke<string>("registry_refresh"),
+  registryDownload: (revisionId: string) => invoke<string>("registry_download", { revisionId }),
+  registryCancelAll: () => invoke<boolean>("registry_cancel_all"),
+  fetchRegistrySnapshot: () => invoke<RegistrySnapshot>("fetch_registry_snapshot"),
+  fetchRegistryJob: (jobId: string) =>
+    invoke<RegistryJob>("fetch_registry_job", { jobId: decimalU64(jobId) }),
   // Camera selection (bridge schema v7, BE-2).
   fetchCameraSelection: () => invoke<CameraSelection>("fetch_camera_selection"),
   selectHardwareCamera: (interfaceIndex: number, deviceIndex: number, label: string) =>

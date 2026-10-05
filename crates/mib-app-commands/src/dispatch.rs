@@ -786,7 +786,9 @@ mod tests {
     }
 
     /// Every command the Tauri shell registers is reachable by name, except the desktop-only
-    /// ones (app paths, preferences, updater, installers, the shell log).
+    /// ones (app paths, preferences, updater, installers, the shell log) and the central
+    /// profile registry (`registry::`, #398): it needs the shell's HTTPS transport and its
+    /// sign-in carries a password, which must not cross the WebSocket.
     #[test]
     fn every_command_is_dispatchable() {
         let tauri = include_str!("../../../desktop/src-tauri/src/lib.rs");
@@ -795,8 +797,9 @@ mod tests {
         let desktop_only = ["app_paths", "get_preferences", "set_preferences", "shell_log", "inspect_app_update",
             "check_tauri_app_update", "verify_tauri_app_installer", "launch_tauri_app_installer",
             "clear_tauri_installer_cache"];
-        for name in tauri[start + 18..end].split(',').map(|n| n.trim().rsplit("::").next().unwrap().trim()) {
-            if name.is_empty() || desktop_only.contains(&name) {
+        for path in tauri[start + 18..end].split(',').map(str::trim) {
+            let name = path.rsplit("::").next().unwrap().trim();
+            if name.is_empty() || desktop_only.contains(&name) || path.starts_with("registry::") {
                 continue;
             }
             assert!(COMMANDS.contains(&name), "{name} is a Tauri command but not dispatchable");

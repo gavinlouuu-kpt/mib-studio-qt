@@ -52,8 +52,13 @@ freeze exact revision identity/content into historical runs.
   member projects (`registry_list_projects`), offline reopen of the last user's cache.
 - [ ] M1: refresh-token persistence in the OS keychain (shell-owned seam) so a
   restart does not require a password; today a restart is CachedOffline until sign-in.
-- [ ] M1: shared backend snapshots/commands through BackendFacade and Rust bridge;
-  Qt and React method discovery/details showing separate central/cache states.
+- [~] M1 (Qt): a Settings → Central Methods… dialog was built (#475) and dropped
+  unmerged: ADR 0011 makes Qt fixes-only, so the registry UI is React/Tauri only.
+  The shared fake Supabase it introduced (`tests/support/fake_supabase.h`) stays.
+- [x] M1 (bridge + React): `BackendFacade` registry commands/snapshot, bridge ABI
+  24 (`registry_*` contract groups, `set_registry_transport` with polled cancel
+  handles), Tauri `ureq` HTTPS transport (desktop-only `registry` module), React
+  Central Methods panel over a pure view model.
 - [ ] M2: authoritative selected/applied/verified method aggregate; compatibility
   validator tied to real core/camera/calibration context; explicit update selection.
 - [ ] M2: Start readiness binds revision/hash and local execution permission;
@@ -90,6 +95,21 @@ freeze exact revision identity/content into historical runs.
   Tests: `profiles.registry_worker`, `profiles.registry_backend` (hung registry
   vs running mock capture; shutdown abort), `frontend.registry_http_transport`;
   all three behaviour mutations of the worker were caught; TSan clean (3 repeats).
+
+- 2026-10-04 (M1 bridge + React): found and fixed on the way — `BackendFacade::
+  shutdown()` did not stop the registry worker, so a hung registry request outlived
+  facade shutdown (caught by the new `profiles.registry_facade` test); the facade
+  now stops it first. ABI 15 was free on `develop`; the review-scatter plan also
+  names "14 → 15", so whichever lands second takes the next number.
+- 2026-10-05 (renumber): the registry surface was built as a provisional ABI 15 and
+  rode develop's number through the restack. #495 took 23 for the instrument line
+  and #502 took 24 (#501 P0), so the stack is **25** (contract, `shim.cpp`, contract
+  test, generated `bridgeContract.ts`, registry comments): a bump to 24 was first
+  committed (17b08e71), then set to 25 when develop reached 24 (merge commit
+  resolving the ABI lines). 15 and 19-24 are never reused. The Tauri commands moved to `mib-app-commands` on
+  develop; the registry commands stay in the desktop crate (`registry` module)
+  because they need the shell's transport and a sign-in carries a password that must
+  not cross the YOFO Studio WebSocket.
 
 ## Validation
 
