@@ -804,6 +804,21 @@ set_target_properties(processing_core_catalog_test PROPERTIES
 add_test(NAME frontend.processing_core_catalog COMMAND $<TARGET_FILE:processing_core_catalog_test>)
 set_tests_properties(frontend.processing_core_catalog PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
 
+add_executable(registry_http_transport_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/registry_http_transport_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/RegistryHttpTransport.cpp
+)
+target_include_directories(registry_http_transport_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(registry_http_transport_test PRIVATE Qt6::Core Qt6::Network Threads::Threads)
+set_target_properties(registry_http_transport_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+)
+add_test(NAME frontend.registry_http_transport COMMAND $<TARGET_FILE:registry_http_transport_test>)
+set_tests_properties(frontend.registry_http_transport PROPERTIES LABELS "frontend;profiles" TIMEOUT 60)
+
 add_executable(application_settings_test
     ${PROJECT_SOURCE_DIR}/tests/frontend/application_settings_test.cpp
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/ApplicationSettings.cpp
@@ -1141,6 +1156,16 @@ set_tests_properties(backend.processed_preview_packet PROPERTIES LABELS "backend
 mib_add_backend_test_executable(profile_registry_test profiles/profile_registry_test.cpp)
 add_test(NAME profiles.registry COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_test)
 set_tests_properties(profiles.registry PROPERTIES LABELS "backend;profiles;roundtrip;fault-injection" TIMEOUT 30)
+
+mib_add_backend_test_executable(profile_registry_worker_test profiles/profile_registry_worker_test.cpp)
+mib_backend_test_link(profile_registry_worker_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_worker COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_worker_test)
+set_tests_properties(profiles.registry_worker PROPERTIES LABELS "backend;profiles;concurrency;fault-injection" TIMEOUT 60)
+
+mib_add_backend_test_executable(profile_registry_backend_test profiles/profile_registry_backend_test.cpp)
+mib_backend_test_link(profile_registry_backend_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_backend COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_backend_test)
+set_tests_properties(profiles.registry_backend PROPERTIES LABELS "backend;profiles;concurrency" TIMEOUT 60)
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)

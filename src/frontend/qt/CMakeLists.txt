@@ -126,6 +126,8 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/include/frontend/system/AppConfigWatcher.h
     ${PROJECT_SOURCE_DIR}/src/frontend/system/LutHttpFetcher.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/system/LutHttpFetcher.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/RegistryHttpTransport.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/system/RegistryHttpTransport.h
     ${PROJECT_SOURCE_DIR}/src/frontend/system/QtLogBridge.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/system/QtLogBridge.h
     ${PROJECT_SOURCE_DIR}/src/frontend/system/AutoUpdater.cpp

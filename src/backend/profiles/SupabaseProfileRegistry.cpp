@@ -37,21 +37,25 @@ Json parse(const std::string& body) {
     }
 }
 } // namespace
+void validateSupabaseEndpoint(const std::string& origin, const std::string& key) {
+    // Origin-only HTTPS endpoint; URL credentials, path/query and redirects are forbidden.
+    if (origin.compare(0, 8, "https://") != 0 || origin.size() <= 8 ||
+        origin.find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:", 8) !=
+            std::string::npos ||
+        key.compare(0, 15, "sb_publishable_") != 0 ||
+        key.find_first_of("\r\n") != std::string::npos)
+        throw RegistryError(RegistryErrorCode::Invalid,
+                            "HTTPS registry origin and publishable key required");
+}
 SupabaseProfileRegistry::SupabaseProfileRegistry(std::string origin, std::string key,
                                                  std::function<std::string()> token,
                                                  RegistryHttpTransport transport)
     : origin_(std::move(origin)), publishableKey_(std::move(key)),
       userAccessToken_(std::move(token)), transport_(std::move(transport)) {
-    // Origin-only HTTPS endpoint; URL credentials, path/query and redirects are forbidden.
-    if (origin_.compare(0, 8, "https://") != 0 || origin_.size() <= 8 ||
-        origin_.find_first_not_of(
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:", 8) !=
-            std::string::npos ||
-        publishableKey_.compare(0, 15, "sb_publishable_") != 0 ||
-        publishableKey_.find_first_of("\r\n") != std::string::npos || !userAccessToken_ ||
-        !transport_)
-        throw RegistryError(RegistryErrorCode::Invalid,
-                            "HTTPS registry origin, publishable key and user transport required");
+    validateSupabaseEndpoint(origin_, publishableKey_);
+    if (!userAccessToken_ || !transport_)
+        throw RegistryError(RegistryErrorCode::Invalid, "User token source and transport required");
 }
 std::string SupabaseProfileRegistry::rpc(const std::string& name, const std::string& body) {
     const auto token = userAccessToken_();
@@ -62,6 +66,7 @@ std::string SupabaseProfileRegistry::rpc(const std::string& name, const std::str
                                 {{"apikey", publishableKey_},
                                  {"Authorization", "Bearer " + token},
                                  {"Content-Type", "application/json"}}};
+    request.cancelled = cancelled_;
     const auto response = transport_(request);
     if (response.status == 0 || response.status == 408 || response.status == 429 ||
         response.status >= 500)
@@ -80,6 +85,19 @@ std::string SupabaseProfileRegistry::rpc(const std::string& name, const std::str
     if (response.body.size() > request.maxResponseBytes)
         throw RegistryError(RegistryErrorCode::Invalid, "Registry response exceeds limit");
     return response.body;
+}
+std::vector<RegistryProject> SupabaseProfileRegistry::listProjects() {
+    auto j = parse(rpc("registry_list_projects", "{}"));
+    try {
+        std::vector<RegistryProject> projects;
+        for (const auto& item : j.at("projects"))
+            projects.push_back({item.at("project_id").get<std::string>(),
+                                item.at("display_name").get<std::string>(),
+                                item.at("roles").get<std::vector<std::string>>()});
+        return projects;
+    } catch (const Json::exception&) {
+        throw RegistryError(RegistryErrorCode::Invalid, "Malformed registry project list");
+    }
 }
 RevisionPage SupabaseProfileRegistry::listRevisions(const std::string& project,
                                                     const std::string& cursor) {

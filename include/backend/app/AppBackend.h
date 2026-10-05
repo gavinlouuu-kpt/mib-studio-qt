@@ -11,6 +11,7 @@
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
+#include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
 
 namespace backend::services
@@ -47,6 +48,7 @@ namespace camera::mock
 }
 
 namespace backend::app { class ExperimentCoordinator; }
+namespace backend::profiles { class ProfileRegistryWorker; }
 namespace backend::discovery
 {
     class DeviceDiscoveryService;
@@ -77,6 +79,16 @@ namespace backend
         // still takes precedence.)
         void setLutAppDataDir(std::string dir) { lutAppDataDir_ = std::move(dir); }
 
+        // Central profile registry (#398): the shell injects the HTTPS POST the
+        // registry worker uses (ADR 0002: the backend links no HTTP client).
+        // The registry is enabled by MIB_PROFILE_REGISTRY_URL +
+        // MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY; without them (or without a
+        // transport) the worker is inert. Call before initialize().
+        void setProfileRegistryTransport(profiles::RegistryHttpTransport transport)
+        {
+            profileRegistryTransport_ = std::move(transport);
+        }
+
         // Stop every service-owned thread in dependency order (capture →
         // trigger → recording → realtime/processing). Idempotent; called by
         // the destructor so teardown never depends on GUI close handling.
@@ -102,6 +114,10 @@ namespace backend
         // Constructed here but started by the shell (Qt adapter) so headless
         // consumers keep today's no-auto-connect behaviour.
         discovery::StartupDiscoveryCoordinator &startupDiscovery();
+        // Central profile registry worker (#398): sign-in, refresh, download and
+        // the per-user revision cache on its own thread. Shells enqueue commands
+        // and poll snapshots; it never touches capture, recording or Start.
+        profiles::ProfileRegistryWorker &profileRegistry();
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
@@ -263,6 +279,9 @@ namespace backend
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
         std::unique_ptr<discovery::StartupDiscoveryCoordinator> startupDiscovery_;
         std::shared_ptr<playback::FrameStore> frameStore_;
+
+        profiles::RegistryHttpTransport profileRegistryTransport_;
+        std::unique_ptr<profiles::ProfileRegistryWorker> profileRegistry_;
 
         // Shell-injected LUT fetch config (ADR 0002).
         HttpGetFn lutHttpGet_;
