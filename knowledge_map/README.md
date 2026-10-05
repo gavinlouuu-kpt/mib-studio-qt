@@ -37,7 +37,6 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[frontend/_MOC|Frontend MOC]]
 - [[frontend/MainWindow]], [[frontend/Controllers]]
 - Native core selection: [[frontend/ProcessingCoreDialog]]
-- Central method registry (sign-in, cached revisions): [[frontend/CentralMethodsDialog]]
 - Tabs: [[frontend/ConnectTab]], [[frontend/PreviewPage]],
   [[frontend/ConfigTabs]], [[frontend/ExperimentMonitoringTab]],
   [[frontend/HdfReviewTab]], [[frontend/NanopositionerTab]],
@@ -53,6 +52,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 ### Data model
 - [[data-model/FrameStore]]
 - [[data-model/HDF5-Storage]]
+- [[data-model/PZ7035-Records]]
 
 ### Diagnostics
 - [[diagnostics/_MOC|Diagnostics MOC]]

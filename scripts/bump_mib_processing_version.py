@@ -21,6 +21,11 @@ from pathlib import Path
 PYPROJECT = Path("bindings/python/pyproject.toml")
 PACKAGE_INIT = Path("bindings/python/python/mib_processing/__init__.py")
 TAG_PREFIX = "mib-processing-v"
+# ADR 0007: one release tag per core line (see .github/workflows/python-wheel.yml).
+LINE_TAG_PREFIXES = {
+    "subtract-ring": TAG_PREFIX,
+    "absdiff-laplacian": "mib-processing-absdiff-laplacian-v",
+}
 _SAFE_VERSION = re.compile(r"^[0-9][A-Za-z0-9._+!-]*$")
 _PYPROJECT_VERSION = re.compile(r'(?m)^(version\s*=\s*)"([^"]+)"\s*$')
 _PACKAGE_VERSION = re.compile(r'(?m)^(__version__\s*=\s*)"([^"]+)"\s*$')
@@ -109,9 +114,12 @@ def _git(repo_root: Path, *args: str, capture: bool = False) -> subprocess.Compl
     )
 
 
-def create_committed_tag(repo_root: Path, version: str, message: str | None = None) -> str:
+def create_committed_tag(repo_root: Path, version: str, message: str | None = None,
+                         line: str = "subtract-ring") -> str:
     """Create the release tag only when HEAD already contains the bumped literals."""
-    tag = f"{TAG_PREFIX}{validate_version(version)}"
+    if line not in LINE_TAG_PREFIXES:
+        raise ValueError(f"Unknown core line {line!r}; expected one of {sorted(LINE_TAG_PREFIXES)}")
+    tag = f"{LINE_TAG_PREFIXES[line]}{validate_version(version)}"
     dirty = _git(
         repo_root, "status", "--porcelain", "--", str(PYPROJECT), str(PACKAGE_INIT), capture=True,
     ).stdout.strip()
@@ -133,7 +141,9 @@ def create_committed_tag(repo_root: Path, version: str, message: str | None = No
     )
     if existing.returncode == 0:
         raise RuntimeError(f"Tag already exists: {tag}")
-    _git(repo_root, "tag", "-a", tag, "-m", message or f"mib-processing {version}")
+    default_message = (f"mib-processing {version}" if line == "subtract-ring"
+                       else f"mib-processing {line} {version}")
+    _git(repo_root, "tag", "-a", tag, "-m", message or default_message)
     return tag
 
 
@@ -147,7 +157,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Validate and show changes without writing")
     parser.add_argument(
         "--create-tag", action="store_true",
-        help="Create annotated mib-processing-v<version>; requires the version files committed at HEAD",
+        help="Create the line's annotated release tag (mib-processing-v<version> for "
+             "subtract-ring); requires the version files committed at HEAD",
+    )
+    parser.add_argument(
+        "--line", choices=sorted(LINE_TAG_PREFIXES), default="subtract-ring",
+        help="Core line to tag (ADR 0007). absdiff-laplacian creates "
+             "mib-processing-absdiff-laplacian-v<version>.",
     )
     parser.add_argument("--tag-message", default=None)
     return parser
@@ -180,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Version literals already match; no files changed.")
 
         if args.create_tag:
-            tag = create_committed_tag(repo_root, args.version, args.tag_message)
+            tag = create_committed_tag(repo_root, args.version, args.tag_message, args.line)
             print(f"Created annotated tag: {tag}")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:

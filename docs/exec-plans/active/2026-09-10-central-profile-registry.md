@@ -52,13 +52,13 @@ freeze exact revision identity/content into historical runs.
   member projects (`registry_list_projects`), offline reopen of the last user's cache.
 - [ ] M1: refresh-token persistence in the OS keychain (shell-owned seam) so a
   restart does not require a password; today a restart is CachedOffline until sign-in.
-- [x] M1 (Qt): Settings → Central Methods… dialog over the worker: sign-in/out,
-  refresh, cancel, cached revisions with their separate central states, offline
-  listing; refresh on open; no select/apply.
+- [~] M1 (Qt): a Settings → Central Methods… dialog was built (#475) and dropped
+  unmerged: ADR 0011 makes Qt fixes-only, so the registry UI is React/Tauri only.
+  The shared fake Supabase it introduced (`tests/support/fake_supabase.h`) stays.
 - [x] M1 (bridge + React): `BackendFacade` registry commands/snapshot, bridge ABI
   15 (`registry_*` contract groups, `set_registry_transport` with polled cancel
   handles), Tauri `ureq` HTTPS transport, React Central Methods panel over a pure
-  view model shared in wording with the Qt dialog.
+  pure view model.
 - [x] M2a (backend): instrument identity (UUID + name); worker Materialize and
   RecordValidation jobs; the applied config.json matched to a cached revision by
   canonical config hash; `method.revision` gate (unvalidated → Warn, validated
@@ -66,7 +66,7 @@ freeze exact revision identity/content into historical runs.
   generation; exact revision, content hash, validation and evidence hash frozen
   into `/run_provenance` (schema v2) with no network lookup.
 - [ ] M2b: Apply (materialized config → config.json with confirmation) and
-  "Mark validated" (pick the test-run file) in Qt and React; bridge commands for
+  "Mark validated" (pick the test-run file) in React; bridge commands for
   materialize / record validation; method row in the readiness panels.
 - [ ] M2: compatibility validator against declared hardware compatibility and
   calibration context; camera script compared as well as config.json; explicit

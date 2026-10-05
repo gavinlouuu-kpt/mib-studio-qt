@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <opencv2/core.hpp>
@@ -82,6 +83,11 @@ struct ProcessingConfig {
     // ignored), per-object Laplacian variance as the focus metric.
     // `bg_subtract_threshold` holds the v2 canonical `difference_threshold`.
     int processing_contract_version{1};
+    // Contract 3 (U-Net cells) only. A top-level mask component is a cell when
+    // it has at least this many pixels; smaller ones are blemishes (counted per
+    // frame, never objects). Aperture of the per-cell Laplacian (1 or 3).
+    int min_cell_area_px{250};
+    int laplacian_kernel_size{3};
     // Multi-image recording: capture a series of N consecutive frames per valid detection
     // Metrics are computed only from the first (trigger) frame
     bool multi_image_enabled{false};
@@ -119,6 +125,17 @@ struct FilterResult {
     double laplacianVariance{std::numeric_limits<double>::quiet_NaN()};
     double youngsModulus{0.0}; // Young's modulus (kPa) from LUT lookup
     BrightnessQuantiles brightness;
+    // Contract 3 (U-Net cells) per-object values; NaN / 0 under Contracts 1-2.
+    // Brightness mean and population variance of the raw gray over the filled
+    // outer contour (replaces the quartiles).
+    double brightnessMean{std::numeric_limits<double>::quiet_NaN()};
+    double brightnessVariance{std::numeric_limits<double>::quiet_NaN()};
+    double contourArea{0.0}; // area enclosed by the outer contour (cv::contourArea)
+    int pixelCount{0};       // mask pixels of the cell's component
+    int blemishCount{0};     // per frame: components below min_cell_area_px
+    // The outer contour encloses no area (a point or a line): no metrics, reason
+    // NoContour unless the cell is cut off.
+    bool degenerateContour{false};
     bool isTargetGroup{false}; // True if valid AND matches target group criteria
     // Contours found during processing (for snapshot/display), in the same
     // coordinate space as the processedImage mask. Shared (not deep-copied) so
@@ -126,6 +143,9 @@ struct FilterResult {
     // experiment copies, all reference one allocation instead of duplicating
     // every contour point N times. Null when no contours were extracted.
     std::shared_ptr<const std::vector<std::vector<cv::Point>>> allContours;
+    // Host-only analysis provenance; not ProcessingCoreAbi or persisted HDF schema.
+    // Exact calibration passed to analyzeObjects for this result; 0 = unknown.
+    double analysisPixelToMicronFactor{0.0};
 };
 
 // One analysed frame (or one object of a frame — several ProcessedFrames can
@@ -133,6 +153,10 @@ struct FilterResult {
 // publication (frozen-Mats invariant): every consumer shares them by
 // refcount and never clones merely for lifetime (issue #370).
 struct ProcessedFrame {
+    // Host-only preview provenance, not ProcessingCoreAbi or persisted HDF schema.
+    uint64_t previewStoreGeneration{0}, previewCaptureSession{0};
+    std::string previewRecipeSha256;
+    cv::Rect previewRoi;
     uint64_t index{0};
     uint64_t timestampNs{0};
     // Host monotonic acquisition stamp carried from playback::Frame (0 if unknown).

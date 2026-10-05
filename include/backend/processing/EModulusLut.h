@@ -24,6 +24,13 @@ public:
     /// Returns NaN if the query point is outside the LUT coverage area.
     double lookup(double area_um, double deformability) const;
 
+    // Load a ready grid (row-major [deformability][area], NaN = no value), e.g.
+    // the PZ7035 profile table. Axis i covers min + k * step, k = 0..bins-1.
+    // Returns false (and stays unloaded) on a size mismatch, fewer than two bins
+    // per axis, or a non-positive step.
+    bool loadGrid(double areaMin, double areaStep, size_t areaBins, double deformMin,
+                  double deformStep, size_t deformBins, std::vector<double> grid);
+
 private:
     struct LutPoint {
         double area_um;

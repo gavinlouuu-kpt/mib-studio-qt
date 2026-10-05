@@ -245,7 +245,9 @@ def read_processing_contract_version(h5_file: h5py.File) -> int:
     """Return the file's processing contract (1 when undeclared/unreadable).
 
     Contract-aware export keys off this value: a Contract-2 recording exports
-    ``laplacian_variance`` and omits ``ring_ratio``; Contract 1 keeps ring.
+    ``laplacian_variance`` and omits ``ring_ratio``; Contract 1 keeps ring; a
+    Contract-3 (unet-cells) recording exports brightness mean and variance and
+    the cell counts instead of the quartiles.
     """
     try:
         if "processing_contract_version" in h5_file.attrs:
@@ -286,7 +288,8 @@ def export_metrics_to_csv(
     metadata_invalid: Optional[np.ndarray],
     output_path: Path,
     pixel_to_micron: float,
-    frame_type: str
+    frame_type: str,
+    contract_version: int = 1,
 ) -> Tuple[int, int]:
     """
     Export metrics to CSV file matching the C++ export format.
@@ -297,17 +300,34 @@ def export_metrics_to_csv(
         output_path: Path to output CSV file
         pixel_to_micron: Pixel to micron conversion factor
         frame_type: "valid", "invalid", or "both"
-        
+        contract_version: the file's processing contract; Contract 3 writes
+            brightness mean/variance and pixel/blemish counts in place of the
+            quartile columns
+
     Returns:
         Tuple of (valid_count, invalid_count) frames exported
     """
+    cells = int(contract_version) == 3
+
+    def brightness_columns(row) -> str:
+        if cells:
+            return (f"{float(metadata_value(row, 'brightness_mean', float('nan'))):.2f},"
+                    f"{float(metadata_value(row, 'brightness_variance', float('nan'))):.2f},"
+                    f"{int(metadata_value(row, 'pixelCount', 0))},"
+                    f"{int(metadata_value(row, 'blemishCount', 0))}\n")
+        return (f"{row['brightness_q1']:.2f},{row['brightness_q2']:.2f},"
+                f"{row['brightness_q3']:.2f},{row['brightness_q4']:.2f}\n")
+
     area_conversion_factor = pixel_to_micron * pixel_to_micron
     
     with open(output_path, 'w', encoding='utf-8') as f:
         # Write CSV header (matching C++ format exactly)
         f.write("Frame Type,Index,Timestamp,Object Id,Object Count,Deformability,Area,Area (um²),Area Ratio,Ring Ratio,")
         f.write("Valid,Touches Border,Single Inner,In Range,Inner Count,")
-        f.write("Bright Q1,Bright Q2,Bright Q3,Bright Q4\n")
+        if cells:
+            f.write("Bright Mean,Bright Var,Pixels,Blemishes\n")
+        else:
+            f.write("Bright Q1,Bright Q2,Bright Q3,Bright Q4\n")
         
         valid_count = 0
         invalid_count = 0
@@ -331,10 +351,7 @@ def export_metrics_to_csv(
                 f.write("Yes," if row['hasSingleInnerContour'] else "No,")
                 f.write("Yes," if row['inRange'] else "No,")
                 f.write(f"{row['innerContourCount']},")
-                f.write(f"{row['brightness_q1']:.2f},")
-                f.write(f"{row['brightness_q2']:.2f},")
-                f.write(f"{row['brightness_q3']:.2f},")
-                f.write(f"{row['brightness_q4']:.2f}\n")
+                f.write(brightness_columns(row))
                 valid_count += 1
         
         # Export invalid frames
@@ -356,10 +373,7 @@ def export_metrics_to_csv(
                 f.write("Yes," if row['hasSingleInnerContour'] else "No,")
                 f.write("Yes," if row['inRange'] else "No,")
                 f.write(f"{row['innerContourCount']},")
-                f.write(f"{row['brightness_q1']:.2f},")
-                f.write(f"{row['brightness_q2']:.2f},")
-                f.write(f"{row['brightness_q3']:.2f},")
-                f.write(f"{row['brightness_q4']:.2f}\n")
+                f.write(brightness_columns(row))
                 invalid_count += 1
 
     return valid_count, invalid_count
@@ -371,7 +385,10 @@ def _frame_to_gold_standard_dict(row: "np.void", frame_type: str, pixel_to_micro
 
     Contract-aware: a Contract-1 export carries ``ring_ratio``; a Contract-2
     export (contract_version >= 2) omits ring width and carries the per-object
-    ``laplacian_variance`` focus metric instead.
+    ``laplacian_variance`` focus metric instead. A Contract-3 (unet-cells)
+    export replaces the brightness quartiles with ``brightness_mean`` /
+    ``brightness_variance`` (null when not computed) and adds the cell fields
+    (schema $defs/unet_cell_frame).
     """
     area = float(row['area'])
     document: Dict[str, Any] = {
@@ -389,11 +406,23 @@ def _frame_to_gold_standard_dict(row: "np.void", frame_type: str, pixel_to_micro
         "has_single_inner_contour": bool(row['hasSingleInnerContour']),
         "in_range": bool(row['inRange']),
         "inner_contour_count": int(row['innerContourCount']),
-        "brightness_q1": float(row['brightness_q1']),
-        "brightness_q2": float(row['brightness_q2']),
-        "brightness_q3": float(row['brightness_q3']),
-        "brightness_q4": float(row['brightness_q4']),
     }
+    if int(contract_version) == 3:
+        def finite_or_none(value: float) -> Optional[float]:
+            return value if value == value else None  # NaN -> null
+
+        document["brightness_mean"] = finite_or_none(float(metadata_value(row, 'brightness_mean', float('nan'))))
+        document["brightness_variance"] = finite_or_none(
+            float(metadata_value(row, 'brightness_variance', float('nan'))))
+        document["contour_area"] = float(metadata_value(row, 'contourArea', 0.0))
+        document["pixel_count"] = int(metadata_value(row, 'pixelCount', 0))
+        document["blemish_count"] = int(metadata_value(row, 'blemishCount', 0))
+        document["degenerate_contour"] = bool(metadata_value(row, 'degenerateContour', 0))
+    else:
+        document["brightness_q1"] = float(row['brightness_q1'])
+        document["brightness_q2"] = float(row['brightness_q2'])
+        document["brightness_q3"] = float(row['brightness_q3'])
+        document["brightness_q4"] = float(row['brightness_q4'])
     # Contract-1 focus metric: ring width. Omitted for Contract-2 documents.
     if contract_version < 2 and metadata_has(row, "ringRatio"):
         document["ring_ratio"] = float(row['ringRatio'])

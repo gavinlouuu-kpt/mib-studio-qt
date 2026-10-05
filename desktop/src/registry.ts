@@ -1,8 +1,7 @@
 // Central profile registry view model (bridge schema v15, issue #398).
 //
 // Pure projection of the backend registry snapshot onto what the Central
-// Methods panel renders. It mirrors the Qt CentralMethodsDialog wording and
-// enablement rules so both shells present the same backend truth: each
+// Methods panel renders, so the panel presents the backend truth: each
 // central state is shown as itself (never collapsed into "ready"), central
 // state is never presented as local validation, and nothing here selects or
 // applies a method.

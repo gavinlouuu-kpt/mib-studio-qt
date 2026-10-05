@@ -9,8 +9,7 @@ Central method registry for #398: provider-neutral revisions, Supabase RPC and
 Auth clients, immutable per-user local cache, explicit sync operations, and the
 backend-owned `ProfileRegistryWorker` that runs them on one thread. Owned by
 [[../architecture/AppBackend]] (`profileRegistry()`); the Qt shell injects the
-HTTPS transport; the Qt [[../frontend/CentralMethodsDialog]] and the React
-Central Methods panel (through `BackendFacade` registry calls, bridge ABI 15,
+HTTPS transport; the React Central Methods panel (through `BackendFacade` registry calls, bridge ABI 15,
 see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
 revisions. M2a (backend): the worker materializes a cached revision's files and
 records operator-confirmed local validations; [[../architecture/ExperimentCoordinator]]
@@ -92,7 +91,7 @@ cancel, bounds, concurrent snapshot traffic + shutdown), `profiles.registry_back
 (AppBackend wiring; a hung registry leaves mock capture running; shutdown aborts
 it), `profiles.registry_facade` (facade mapping + contract integers + shutdown abort),
 the bridge `registry_*` cargo tests, `desktop/src/registry.test.ts`,
-`frontend.central_methods` (dialog over the real worker), `profiles.registry_method`
+`profiles.registry_method`
 (canonical config hash, materialize, record validation, restart, cancel while hashing),
 `profiles.instrument_identity`, `backend.method_provenance`, `e2e.method_gate`, `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
 worker thread), and the PGlite SQL suite.

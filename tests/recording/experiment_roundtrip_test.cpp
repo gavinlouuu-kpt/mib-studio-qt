@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 using backend::services::Hdf5Service;
@@ -40,6 +41,13 @@ ProcessedFrame makeFrame(uint64_t idx, unsigned char value, bool valid,
     f.validation.deformability = deform;
     // Contract-2 per-object focus metric; must round-trip through HDF5.
     f.validation.laplacianVariance = 12.5 + static_cast<double>(idx);
+    // Contract-3 (unet-cells) members; must round-trip too.
+    f.validation.brightnessMean = 100.25 + static_cast<double>(idx);
+    f.validation.brightnessVariance = 30.5 + static_cast<double>(idx);
+    f.validation.contourArea = 512.5 + static_cast<double>(idx);
+    f.validation.pixelCount = 600 + static_cast<int>(idx);
+    f.validation.blemishCount = 3 + static_cast<int>(idx);
+    f.validation.degenerateContour = idx == 1;
     return f;
 }
 
@@ -139,6 +147,14 @@ int main()
             MIB_EXPECT(near(meta[0].validation.laplacianVariance, 12.5) &&
                            near(meta[1].validation.laplacianVariance, 13.5),
                        "laplacian variance round-trips through HDF5");
+            MIB_EXPECT(near(meta[0].validation.brightnessMean, 100.25) &&
+                           near(meta[1].validation.brightnessVariance, 31.5) &&
+                           near(meta[1].validation.contourArea, 513.5) &&
+                           meta[0].validation.pixelCount == 600 &&
+                           meta[1].validation.blemishCount == 4 &&
+                           !meta[0].validation.degenerateContour &&
+                           meta[1].validation.degenerateContour,
+                       "Contract-3 cell members round-trip through HDF5");
         }
 
         std::vector<ProcessedFrame> full;
@@ -186,6 +202,78 @@ int main()
         MIB_REQUIRE(reader.readProcessingCoreIdentity(core),
                     "fixed-string provenance is read safely");
         MIB_EXPECT(core.version == "2.3.4-fixed", "fixed string is decoded without overread");
+        reader.closeFile();
+    }
+
+    // A recording made before Contract 3 has no cell members in its metadata
+    // compound. Rewrite /valid_frames/metadata without them: the reader must
+    // keep the "not present" defaults (NaN brightness, zero counts).
+    {
+        const char* cellMembers[] = {"brightness_mean", "brightness_variance", "contourArea",
+                                     "pixelCount", "blemishCount", "degenerateContour"};
+        hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open raw HDF handle for the pre-Contract-3 fixture");
+        hid_t dset = H5Dopen2(file, "/valid_frames/metadata", H5P_DEFAULT);
+        MIB_REQUIRE(dset >= 0, "open valid metadata");
+        hid_t fileType = H5Dget_type(dset);
+        hid_t space = H5Dget_space(dset);
+        const hssize_t rows = H5Sget_simple_extent_npoints(space);
+        // Pack every other member into an older compound, in file order.
+        size_t size = 0;
+        const int members = H5Tget_nmembers(fileType);
+        std::vector<std::pair<std::string, hid_t>> keep;
+        for (int i = 0; i < members; ++i) {
+            char* name = H5Tget_member_name(fileType, static_cast<unsigned>(i));
+            bool cell = false;
+            for (const char* c : cellMembers) cell = cell || std::string(name) == c;
+            if (!cell) {
+                hid_t mt = H5Tget_native_type(H5Tget_member_type(fileType, static_cast<unsigned>(i)),
+                                              H5T_DIR_ASCEND);
+                keep.emplace_back(name, mt);
+                size += H5Tget_size(mt);
+            }
+            H5free_memory(name);
+        }
+        MIB_REQUIRE(static_cast<int>(keep.size()) == members - 6, "the file has all six cell members");
+        hid_t oldType = H5Tcreate(H5T_COMPOUND, size);
+        size_t offset = 0;
+        for (const auto& [name, mt] : keep) {
+            H5Tinsert(oldType, name.c_str(), offset, mt);
+            offset += H5Tget_size(mt);
+        }
+        std::vector<unsigned char> buf(size * static_cast<size_t>(rows));
+        MIB_REQUIRE(H5Dread(dset, oldType, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data()) >= 0,
+                    "read metadata in the older layout");
+        H5Dclose(dset);
+        MIB_REQUIRE(H5Ldelete(file, "/valid_frames/metadata", H5P_DEFAULT) >= 0, "drop metadata");
+        const hsize_t dims[1] = {static_cast<hsize_t>(rows)};
+        hid_t oldSpace = H5Screate_simple(1, dims, nullptr); // the live one is extendible
+        hid_t oldSet = H5Dcreate2(file, "/valid_frames/metadata", oldType, oldSpace, H5P_DEFAULT,
+                                  H5P_DEFAULT, H5P_DEFAULT);
+        H5Sclose(oldSpace);
+        MIB_REQUIRE(oldSet >= 0 && H5Dwrite(oldSet, oldType, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                                            buf.data()) >= 0,
+                    "write metadata without the cell members");
+        H5Dclose(oldSet);
+        for (auto& [name, mt] : keep) H5Tclose(mt);
+        H5Tclose(oldType);
+        H5Sclose(space);
+        H5Tclose(fileType);
+        H5Fclose(file);
+
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(path), "reload the pre-Contract-3 fixture");
+        std::vector<ProcessedFrame> meta;
+        MIB_REQUIRE(reader.readValidMetadata(meta), "read pre-Contract-3 metadata");
+        MIB_EXPECT(meta.size() == 2 && near(meta[1].validation.laplacianVariance, 13.5) &&
+                       near(meta[0].validation.area, 100.0),
+                   "older metadata keeps its own members");
+        MIB_EXPECT(meta.size() == 2 && std::isnan(meta[0].validation.brightnessMean) &&
+                       std::isnan(meta[1].validation.brightnessVariance) &&
+                       meta[0].validation.contourArea == 0.0 && meta[1].validation.pixelCount == 0 &&
+                       meta[1].validation.blemishCount == 0 &&
+                       !meta[1].validation.degenerateContour,
+                   "a file without cell members reads them as not present");
         reader.closeFile();
     }
 
