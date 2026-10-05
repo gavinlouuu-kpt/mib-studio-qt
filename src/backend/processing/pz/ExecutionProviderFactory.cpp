@@ -9,7 +9,7 @@
 namespace backend::processing::pz {
 
 std::unique_ptr<IExecutionProvider> makeExecutionProvider(const std::string& spec, std::string* error) {
-    if (spec.empty() || spec == "host") return nullptr;
+    if (spec.empty() || spec == "host" || spec == "none") return nullptr;
     if (spec == "pz") {
 #if defined(__linux__)
         return std::make_unique<PzDevMemExecutionProvider>(PzDevMemExecutionProvider::Layout{});
@@ -33,13 +33,18 @@ std::unique_ptr<IExecutionProvider> makeExecutionProvider(const std::string& spe
         std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         return std::make_unique<ReplayExecutionProvider>(std::move(bytes), fps);
     }
-    if (error) *error = "unknown MIB_EXECUTION_PROVIDER '" + spec + "' (pz | replay:<file>[@fps] | host)";
+    if (error) *error = "unknown MIB_EXECUTION_PROVIDER '" + spec + "' (pz | replay:<file>[@fps] | none)";
     return nullptr;
 }
 
+std::string executionProviderSpec(const char* env, bool plScienceBuild) {
+    if (env) return env;
+    return plScienceBuild ? "pz" : "";
+}
+
 std::unique_ptr<IExecutionProvider> makeExecutionProviderFromEnv(std::string* error) {
-    const char* spec = std::getenv("MIB_EXECUTION_PROVIDER");
-    return makeExecutionProvider(spec ? spec : "", error);
+    return makeExecutionProvider(executionProviderSpec(std::getenv("MIB_EXECUTION_PROVIDER"), MIB_PL_SCIENCE != 0),
+                                 error);
 }
 
 } // namespace backend::processing::pz

@@ -152,7 +152,7 @@ public:
     bool cancel_device_discovery(std::uint64_t job_id);
     BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id);
     BridgeCameraSelection fetch_camera_selection();
-    // Central profile registry (schema v24, #398).
+    // Central profile registry (schema v25, #398).
     bool set_registry_transport(
         rust::Fn<BridgeHttpResponse(const BridgeHttpRequest&)> transport);
     std::uint64_t registry_sign_in(rust::Str email, rust::Str password);
@@ -178,6 +178,7 @@ public:
     BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
     rust::String fetch_camera_geometry();
     rust::String fetch_platform_info();
+    rust::String fetch_instrument_status();
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();
     BridgeMonitoringSnapshot fetch_monitoring_snapshot(std::uint64_t max_rows);

@@ -330,7 +330,7 @@ completion / gate-status values; `bridge.ts` exposes
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
 
-## Central profile registry (ABI 24, issue #398)
+## Central profile registry (ABI 25, issue #398)
 
 **Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
 sign in/out, refresh (also on open when signed in), cancel, and the cached
@@ -571,6 +571,33 @@ and refreshes the entire webview, requiring the same native experiment/output to
 remain active. Shell statistics polling is independent of a possibly stale UI draft
 of the realtime-enabled toggle. Raw MIBF v2 acquisition/store epochs require bridge
 ABI 18; processed preview recipe identity remains separately scoped.
+
+## PZ7035 instrument surfaces (#501 P0a, 2026-10-05)
+
+The UI follows `fetch_platform_info` `capabilities` (`platformCapabilities.ts`;
+a server without them is the MIB desktop). On the PZ7035:
+
+- **Hidden:** host background, autofocus/nanopositioner (sidebar and
+  Hardware), framegrabbers and the EGrabber camera script, MindVision, the live
+  frame buffer, core updates, HDF reanalysis and the pulse generator.
+- **Pumps:** default to the instrument's two peristaltic pumps on
+  `/dev/ttyPS1`: Sample at Modbus address 3, Sheath at 4, 25 µL/rev
+  (confirmed on the bench 2026-10-05). Infuse turns the heads
+  counter-clockwise.
+- **Sidebar:** gains "PL core": build, weights, LED and latency max.
+- **Preflight** (`preflight.ts`) replaces the host core pin with:
+  - **PL core** (build vs `expected-core.json`, weights vs the pin);
+  - **Sensor link**: warn above 10 ingress errors/s or 1 resync/s;
+  - **LED strobe**: a guard trip fails.
+
+  Autofocus and trigger read "not on this instrument". The quality gates
+  keep only calibration until the image focus metric (P0b). A healthy
+  instrument at idle shows 0 warnings (`preflightPz7035.test.ts`).
+- **Token prompt** (`components/AuthGate.tsx`, `transport/auth.ts`): in a
+  browser the app mounts only after `GET /auth` accepts the token, taken
+  from `?token=` or typed once into sessionStorage. Otherwise it shows a
+  prompt or "unreachable". The socket URL is read when it opens, so a typed
+  token counts.
 
 ## Pump model per slot (2026-10-04)
 

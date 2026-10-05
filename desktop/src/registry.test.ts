@@ -1,4 +1,4 @@
-// Central profile registry view model (bridge schema v24, #398): the
+// Central profile registry view model (bridge schema v25, #398): the
 // backend truth — connectivity separate from the account, each
 // central state as itself, revoked marked, button enablement, and warnings.
 import { describe, expect, it } from "vitest";

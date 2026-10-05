@@ -44,6 +44,10 @@ export interface QualityInput {
   frameH: number;
   // Calibration (px→µm).
   pixelToMicron: number;
+  /** #501: the PZ7035, whose PL owns focus input, ROI 2 (fixed 512x96) and
+   *  the result path. Only calibration applies there until the image focus
+   *  metric lands (P0b); the host gates are left out rather than warned. */
+  pz7035?: boolean;
 }
 
 export interface QualityReport {
@@ -142,12 +146,9 @@ function calibrationGate(i: QualityInput): QualityGate {
 
 /** Derive the Camera & Alignment quality gates from bridged signals. */
 export function deriveQualityGates(input: QualityInput): QualityReport {
-  const gates: QualityGate[] = [
-    focusGate(input),
-    backgroundGate(input),
-    roiGate(input),
-    calibrationGate(input),
-  ];
+  const gates: QualityGate[] = input.pz7035
+    ? [calibrationGate(input)]
+    : [focusGate(input), backgroundGate(input), roiGate(input), calibrationGate(input)];
 
   let pass = 0;
   let warn = 0;

@@ -15,7 +15,9 @@
 //  - scan is read-only (no write function codes on the wire) and classifies
 //    generators vs generic devices vs corrupt responders;
 //  - wrong-address, bad-CRC, short/truncated, and Modbus-exception responses
-//    produce the correct failure state.
+//    produce the correct failure state;
+//  - FC04 (read input registers, #464) frames and correlates through a real
+//    session, including its exception path.
 //
 // POSIX-only: on Windows this test compiles to a trivial pass (the CI stub
 // lane is Linux; Windows bench verification is manual).
@@ -57,7 +59,8 @@ namespace {
 // Simulated RS485 bus on the pty master side.
 //
 // Devices:
-//   addr 1, 2 : pulse generators (12 holding registers each)
+//   addr 1, 2 : pulse generators (12 holding registers each, plus 8 read-only
+//               input registers 0x4000 + device * 0x100 + index for FC04)
 //   addr 3    : generic Modbus device — answers every request with exception
 //               0x02 (illegal data address); must never be written to
 //   addr 5    : generic device that happens to serve 12 holding registers at
@@ -100,6 +103,12 @@ public:
         return regs_[device][channel * 3 + 2];
     }
 
+    static constexpr int kInputRegs = 8;
+    static uint16_t inputRegister(int device, int index)
+    {
+        return static_cast<uint16_t>(0x4000 + device * 0x100 + index);
+    }
+
     int writesTo(uint8_t addr) const { return writeCount_[addr].load(); }
     int totalWrites() const
     {
@@ -131,6 +140,7 @@ private:
         if (buf.size() < 2) return -1;
         switch (static_cast<uint8_t>(buf[1])) {
         case modbus::kFuncReadHolding:
+        case modbus::kFuncReadInput:
         case modbus::kFuncWriteSingle:
             return 8;
         case modbus::kFuncWriteMultiple:
@@ -228,6 +238,29 @@ private:
             for (int r = start; r < start + count; ++r) {
                 resp.push_back(static_cast<uint8_t>(regs_[device][r] >> 8));
                 resp.push_back(static_cast<uint8_t>(regs_[device][r] & 0xFF));
+            }
+            modbus::appendCrc(resp);
+            send(resp);
+            return;
+        }
+        case modbus::kFuncReadInput: {
+            const uint16_t start = static_cast<uint16_t>(
+                (static_cast<uint8_t>(req[2]) << 8) | static_cast<uint8_t>(req[3]));
+            const uint16_t count = static_cast<uint16_t>(
+                (static_cast<uint8_t>(req[4]) << 8) | static_cast<uint8_t>(req[5]));
+            std::vector<uint8_t> resp;
+            resp.push_back(static_cast<uint8_t>(addr));
+            if (start + count > kInputRegs) {
+                resp.push_back(static_cast<uint8_t>(func | 0x80));
+                resp.push_back(static_cast<uint8_t>(0x02));
+            } else {
+                resp.push_back(static_cast<uint8_t>(func));
+                resp.push_back(static_cast<uint8_t>(count * 2));
+                for (int r = start; r < start + count; ++r) {
+                    const uint16_t v = inputRegister(device, r);
+                    resp.push_back(static_cast<uint8_t>(v >> 8));
+                    resp.push_back(static_cast<uint8_t>(v & 0xFF));
+                }
             }
             modbus::appendCrc(resp);
             send(resp);
@@ -360,6 +393,27 @@ int main()
         // transaction must still succeed (stale bytes drained, not attributed).
         MIB_EXPECT(probe(1, 500).error == serialbus::BusError::None,
                    "transaction after garbage on the wire still succeeds");
+
+        // FC04 read-input-registers through the real session (#464).
+        const auto input = bus->transact(modbus::buildReadInputRequest(2, 3, 4), 500);
+        MIB_EXPECT(input.error == serialbus::BusError::None, "FC04 read transacts");
+        modbus::Frame data;
+        MIB_REQUIRE(modbus::extractReadData(input.response, 4, data), "FC04 payload extracts");
+        bool valuesMatch = true;
+        for (int i = 0; i < 4; ++i) {
+            const uint16_t v = static_cast<uint16_t>((data[i * 2] << 8) | data[i * 2 + 1]);
+            valuesMatch = valuesMatch && v == BusSimulator::inputRegister(1, 3 + i);
+        }
+        MIB_EXPECT(valuesMatch, "FC04 returns addr 2's input registers 3..6");
+        const auto outOfMap = bus->transact(modbus::buildReadInputRequest(1, 6, 4), 500);
+        MIB_EXPECT(outOfMap.error == serialbus::BusError::ModbusException &&
+                       outOfMap.exceptionCode == 0x02,
+                   "FC04 out-of-map read surfaces exception 0x02");
+        MIB_EXPECT(bus->transact(modbus::buildReadInputRequest(3, 0, 1), 400).error ==
+                       serialbus::BusError::ModbusException,
+                   "FC04 exception frame (0x84) from a generic device is ModbusException");
+        MIB_EXPECT(probe(1, 500).error == serialbus::BusError::None,
+                   "FC03 still transacts after FC04 traffic");
     }
 
     // --- two generators + one generic device on one bus --------------------

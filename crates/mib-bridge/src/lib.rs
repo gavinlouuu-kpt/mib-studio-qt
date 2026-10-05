@@ -267,7 +267,7 @@ pub mod ffi {
         pub origin: String,
     }
 
-    /// One HTTP header of a registry request (schema v24, #398).
+    /// One HTTP header of a registry request (schema v25, #398).
     #[derive(Debug, Clone, Default)]
     pub struct BridgeHttpHeader {
         pub name: String,
@@ -275,7 +275,7 @@ pub mod ffi {
     }
 
     /// HTTPS POST the backend registry worker asks the shell to perform
-    /// (schema v24, #398; ADR 0002 seam). The transport must refuse non-HTTPS
+    /// (schema v25, #398; ADR 0002 seam). The transport must refuse non-HTTPS
     /// URLs and redirects, verify TLS, honour `timeout_ms`, stop reading past
     /// `max_response_bytes`, never log headers or bodies, and abort promptly
     /// (status 0) once `registry_request_cancelled(cancel_handle)` is true.
@@ -297,7 +297,7 @@ pub mod ffi {
         pub body: Vec<u8>,
     }
 
-    /// A registry project the signed-in user belongs to (schema v24).
+    /// A registry project the signed-in user belongs to (schema v25).
     #[derive(Debug, Clone, Default)]
     pub struct BridgeRegistryProject {
         pub project_id: String,
@@ -305,7 +305,7 @@ pub mod ffi {
         pub roles: Vec<String>,
     }
 
-    /// A cached central revision (schema v24); `central_state` is a contract
+    /// A cached central revision (schema v25); `central_state` is a contract
     /// `registry_central_states` value.
     #[derive(Debug, Clone, Default)]
     pub struct BridgeRegistryRevision {
@@ -336,7 +336,7 @@ pub mod ffi {
         pub error: String,
     }
 
-    /// Registry job status (schema v24); `kind`/`state` are contract
+    /// Registry job status (schema v25); `kind`/`state` are contract
     /// `registry_job_kinds` / `registry_job_states` values. `job_id` 0 means
     /// unknown, evicted or refused.
     #[derive(Debug, Clone, Default)]
@@ -347,7 +347,7 @@ pub mod ffi {
         pub message: String,
     }
 
-    /// Value snapshot of the backend registry worker (schema v24, #398).
+    /// Value snapshot of the backend registry worker (schema v25, #398).
     /// `session` = `registry_session_states`, `connectivity` =
     /// `registry_connectivity`. Never carries a token or password.
     #[derive(Debug, Clone, Default)]
@@ -919,7 +919,7 @@ pub mod ffi {
             -> BridgeDiscoverySnapshot;
 
         /// Install the shell's HTTPS POST for the central profile registry
-        /// (schema v24, #398). Call before `initialize`; returns false (and
+        /// (schema v25, #398). Call before `initialize`; returns false (and
         /// installs nothing) afterwards. Without a transport the registry
         /// stays inert even when configured.
         fn set_registry_transport(
@@ -932,7 +932,7 @@ pub mod ffi {
         /// finished handles report true.
         fn registry_request_cancelled(cancel_handle: u64) -> bool;
 
-        /// Central profile registry commands (schema v24, #398): each enqueues
+        /// Central profile registry commands (schema v25, #398): each enqueues
         /// a worker job and returns its ID (0 = refused: not initialized,
         /// registry not configured, or invalid argument). Never blocks on
         /// the network.
@@ -998,6 +998,9 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
+        /// PZ7035 identity and health for preflight (#501): `{"available": bool, "error"?,
+        /// "core": {...}, "led": {...}, "link": {...}, "latency": {...}}`. Read-only.
+        fn fetch_instrument_status(self: Pin<&mut BackendBridge>) -> String;
         fn reset_hardware_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 
         /// Enable/disable monitoring accumulation (schema v6, BE-5). Disabled
