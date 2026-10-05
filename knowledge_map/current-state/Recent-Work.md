@@ -1,5 +1,12 @@
 # Recent Work
 
+## 2026-10-05 — Bridge ABI 23: one contract for develop and the instrument line
+
+ADR 0011's single renumber: develop (19) and the instrument line (20-22)
+merged into one contract that takes 23, so no release build from `develop`
+carries an interim number. No new commands. The #398 stack takes 24. See
+[[../architecture/Rust-Bridge]].
+
 ## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
 
 `UnetC4` runs the integer C4 U-Net on the host from the model release's

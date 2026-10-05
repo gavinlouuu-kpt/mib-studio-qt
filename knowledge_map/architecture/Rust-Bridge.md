@@ -361,6 +361,14 @@ the peristaltic semantics are in [[../services/SyringePumpService]]. The old
 `pump_connect_endpoint` / `pump_connect` stay and connect a dLSP. Test:
 `contract.rs` `pump_commands_fail_safely_without_hardware`.
 
+## ABI 23: one contract for develop and the instrument (2026-10-05)
+
+ADR 0011's single renumber. `develop` was at 19 and the instrument line at
+20 (Camera & Alignment), 21 (`fetch_platform_info`) and 22 (pump models). The
+merged contract is all of them, so it takes a number no earlier build has
+carried. It adds no commands of its own. The #398 profile-registry stack
+renumbers to 24 when it lands.
+
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
 `bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`

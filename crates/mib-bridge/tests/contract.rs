@@ -65,7 +65,10 @@ fn abi_version_is_stable() {
     // fetch_camera_geometry (YOFO Studio; MindVision and Aravis cameras).
     // v21 fetch_platform_info: science on the PL (YOFO Studio ADR 0008).
     // v22 pump_connect_model: dLSP syringe or Tushui peristaltic per slot.
-    assert_eq!(ffi::bridge_abi_version(), 22);
+    // v23 develop (19) and the instrument line (20-22) as one contract; no
+    // new commands (ADR 0011 single renumber, so no release build carries an
+    // interim number).
+    assert_eq!(ffi::bridge_abi_version(), 23);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
