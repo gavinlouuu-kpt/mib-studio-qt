@@ -876,6 +876,11 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_bytes(serialize_json(value))
 
 
+def write_text_lf(path: Path, text: str) -> None:
+    """Write text with LF line endings on every platform, like write_json."""
+    path.write_bytes(text.encode("utf-8"))
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1217,7 +1222,7 @@ def promote_existing_version(args: argparse.Namespace) -> int:
         latest_path.write_bytes(immutable_bytes)
         write_json(index_path, promoted_index)
         if line.ships_wheel:
-            pep503_path.write_text(render_pep503_index(promoted_index), encoding="utf-8")
+            write_text_lf(pep503_path, render_pep503_index(promoted_index))
             _copy_preview(args.pep503_out, pep503_path)
         _copy_preview(args.manifest_out, latest_path)
         _copy_preview(args.version_manifest_out, latest_path)
@@ -1450,7 +1455,7 @@ def main(argv: list[str] | None = None) -> int:
 
         write_json(index_path, index)
         if line.ships_wheel:
-            pep503_path.write_text(render_pep503_index(index), encoding="utf-8")
+            write_text_lf(pep503_path, render_pep503_index(index))
             _copy_preview(args.pep503_out, pep503_path)
         _copy_preview(args.manifest_out, latest_path)
         _copy_preview(args.version_manifest_out, version_path)

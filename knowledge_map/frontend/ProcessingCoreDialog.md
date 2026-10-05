@@ -154,3 +154,13 @@ explicit confirmation that external installers are closed and authoritative idle
 backend checks. It invalidates the update ticket, removes only top-level regular
 packages named by a 64-hex token plus exe/msi/deb/rpm extension, preserves symlinks,
 subdirectories and unrelated names, and reports locked/removal failures for retry.
+
+## Gotchas
+
+- Tests that persist dialog choices (`ProcessingCore/Line`) must give
+  `QSettings` an organization name and a temp INI path. On Windows a bare
+  `QSettings()` uses the registry, drops the write without an organization
+  name, and `QStandardPaths::setTestModeEnabled` does not isolate it.
+- The registry publisher writes every published document as bytes (JSON and
+  the PEP 503 page), so a Windows run cannot introduce CRLF and break the
+  byte-identical comparison with the Linux CI output.
