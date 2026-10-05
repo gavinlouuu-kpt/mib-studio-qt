@@ -708,10 +708,22 @@ namespace backend
                 if (autofocusService_) {
                     autofocusService_->onRingRatio(ringRatio, timestampNs);
                 } });
+            // Contracts 2 and 3: per-object Laplacian variance drives the
+            // focus-score peak-seeker instead of the ring-width setpoint.
+            processingService_->setFocusSampleCallback(
+                [this](double laplacianVariance, int64_t timestampNs, uint64_t frameIndex,
+                       int objectId, int trackId)
+                {
+                    if (autofocusService_) {
+                        autofocusService_->onFocusSample(backend::services::autofocus::FocusSample{
+                            laplacianVariance, timestampNs, frameIndex, objectId, trackId});
+                    }
+                });
         }
         else
         {
             processingService_->setRingRatioCallback({});
+            processingService_->setFocusSampleCallback({});
             if (!bootAutofocus)
             {
                 SPDLOG_WARN("AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES");

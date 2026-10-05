@@ -1,5 +1,38 @@
 # Recent Work
 
+## 2026-10-04 — Contract 3 science (`unet-cells`) equal to the PZ7035 PL
+
+The host science for U-Net cells, the same rules as the PZ7035 PL cell stage:
+`science::filterUnetCellObjects`, dispatched for `processing_contract_version`
+3. It brings `min_cell_area_px` (cells versus blemishes), a 1 px cut-off,
+brightness mean and variance, `laplacian_kernel_size`, and `NoContour` for
+degenerate contours. The contract predicates now match by equality, so Contract
+3 inherits nothing by accident. `EModulusLut::loadGrid` loads a ready grid such
+as the PL profile table.
+
+Gold: `scripts/conformance/unet-cells-v2-pl-vectors.json`, 10 frames chosen to
+cover every reason and flag of the PL vectors. `processing.contract3_cells_conformance`
+equals the PL on all of them, and on the full set of 45 frames and 181 cells
+(`MIB_UNET_CELLS_VECTORS=`). Not yet served by a core, wheel or loader: that
+comes next, with the HDF5 fields and autofocus from the per-cell Laplacian. See
+[[../services/ProcessingService]].
+
+Recordings: the per-object HDF5 compound gains the Contract-3 cell members
+(appended; older files read them as not present), and the gold schema gains
+`$defs/unet_cell_frame`, chosen when `contract_version` is 3. `export_hdf5.py`
+exports Contract 3 with brightness mean and variance instead of the quartiles.
+Tests: `recording.experiment_roundtrip` and `scripts.contract3_export_review`.
+See [[../data-model/HDF5-Storage]].
+
+Autofocus (V2-4 service wiring, for Contracts 2 and 3): ProcessingService
+sends per-object Laplacian samples instead of ring ratios when the contract
+has no ring width, and [[../services/AutofocusService]] runs the focus-score
+peak-seeker on them. Two fixes on the way, regression first
+(`backend.autofocus_focus_feed`):
+- the NaN ring ratio of Contract 2 objects no longer enters the ring
+  statistics;
+- ring mode enforces `minSamplesPerStep` on every step, not only the first.
+
 ## 2026-10-04 — ADR 0011: YOFO Studio for the PZ7035
 
 Owner decisions on the instrument's organisation (`docs/decisions/0011-yofo-studio-pz7035-instrument.md`):

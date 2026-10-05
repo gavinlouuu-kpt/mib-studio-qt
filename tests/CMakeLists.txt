@@ -181,6 +181,11 @@ mib_add_backend_test_executable(autofocus_focus_score_test backend/autofocus_foc
 add_test(NAME backend.autofocus_focus_score COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_score_test)
 set_tests_properties(backend.autofocus_focus_score PROPERTIES LABELS "backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(autofocus_focus_feed_test backend/autofocus_focus_feed_test.cpp)
+mib_backend_test_link(autofocus_focus_feed_test PRIVATE Threads::Threads)
+add_test(NAME backend.autofocus_focus_feed COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_feed_test)
+set_tests_properties(backend.autofocus_focus_feed PROPERTIES LABELS "backend;stress" TIMEOUT 60)
+
 mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_test.cpp)
 mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
 add_test(NAME backend.hdf_write_queue COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_test)
@@ -362,6 +367,11 @@ set_tests_properties(processing.contract_v2_migration PROPERTIES LABELS "process
 mib_add_backend_test_executable(processing_contract2_conformance_test processing/processing_contract2_conformance_test.cpp)
 add_test(NAME processing.contract2_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract2_conformance_test)
 set_tests_properties(processing.contract2_conformance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_contract3_cells_conformance_test processing/processing_contract3_cells_conformance_test.cpp)
+add_test(NAME processing.contract3_cells_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract3_cells_conformance_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
 
 mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
 add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
@@ -1015,6 +1025,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_gold_standard_schema_contract.py
     )
     set_tests_properties(scripts.gold_standard_schema_contract PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.contract3_export_review
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_contract3_export_review.py
+    )
+    set_tests_properties(scripts.contract3_export_review PROPERTIES
         LABELS "scripts;hdf5"
         TIMEOUT 30
     )

@@ -50,6 +50,8 @@ Uniform JSON format for processing pipeline metrics so **mib-studio-qt** pipelin
 | `brightness_q2` | number | 50th percentile (median) brightness. |
 | `brightness_q3` | number | 75th percentile brightness. |
 | `brightness_q4` | number | 100th percentile (max) brightness. |
+| `brightness_mean`, `brightness_variance` | number \| null | **Contract 3** (`unet-cells`): mean and population variance of the raw brightness over the filled outer contour; replace the quartiles, which a Contract-3 document must not carry. `NaN` serialized as `null`. |
+| `contour_area`, `pixel_count`, `blemish_count`, `degenerate_contour` | number / integer / integer / boolean | **Contract 3**: outer-contour area, the cell's mask pixels, per-frame blemishes (components below `min_cell_area_px`), and a contour that encloses no area. The schema selects `$defs/unet_cell_frame` when `contract_version` is 3. |
 | `mask_sha256` | string | SHA-256 over mask dtype + shape + bytes for exact conformance (optional). |
 | `series_images_sha256` | string[] | Ordered SHA-256 values for trigger + following multi-image-series frames (optional). |
 

@@ -498,9 +498,14 @@ public:
     bool enqueueBatchFrame(const backend::playback::Frame& frame, uint64_t index);
     BatchPipelineStats getBatchPipelineStats() const;
 
-    // Ring ratio callback for autofocus (called when validated frames are processed)
+    // Autofocus feeds, chosen by the active contract: Contract 1 publishes the
+    // ring ratio of each valid object (finite and > 0); Contracts 2 and 3
+    // publish each valid object's finite Laplacian variance instead.
     using RingRatioCallback = std::function<void(double ringRatio, int64_t timestampNs)>;
     void setRingRatioCallback(RingRatioCallback callback);
+    using FocusSampleCallback = std::function<void(double laplacianVariance, int64_t timestampNs,
+                                                   uint64_t frameIndex, int objectId, int trackId)>;
+    void setFocusSampleCallback(FocusSampleCallback callback);
 
     // Target group trigger callback (one deterministic event per source frame)
     using TargetGroupCallback = std::function<void(const TargetGroupEvent& event)>;
@@ -818,6 +823,10 @@ private:
     // Ring ratio callback for autofocus
     mutable std::mutex ringRatioCallbackMutex_;
     RingRatioCallback ringRatioCallback_;
+    FocusSampleCallback focusSampleCallback_; // guarded by ringRatioCallbackMutex_
+    // processing_contract_version of processingConfig_, read lock-free by the
+    // realtime callback publisher to choose the autofocus feed.
+    std::atomic<int> activeContract_{1};
 
     mutable std::mutex targetGroupCallbackMutex_;
     TargetGroupCallback targetGroupCallback_;
