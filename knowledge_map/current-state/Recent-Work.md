@@ -32,6 +32,28 @@ merged into one contract that takes 23, so no release build from `develop`
 carries an interim number. No new commands. The #398 stack takes 24. See
 [[../architecture/Rust-Bridge]].
 
+## 2026-10-05 — FC04 in the shared Modbus layer; Z stage spec (#464, slice 1)
+
+`ModbusRtu.h` now frames, predicts the length of, and correlates FC04 (read
+input registers), which the Zolix ZC300 stage controller needs for its
+identity and status registers. FC03 and FC04 share one code path, and
+existing devices are unaffected.
+- Known-answer vectors from the vendor manual are in
+  `backend.modbus_rtu`.
+- `backend.serial_bus_pty` round-trips FC04 and its exception path through a
+  real session.
+
+Spec:
+- [ADR 0013](../../docs/decisions/0013-motion-stage-device-class.md) (proposed)
+- the [execution plan](../../docs/exec-plans/active/2026-09-30-zc300-z-stage.md)
+- the [integration evidence](../../docs/integration/zc300-z-stage.md)
+
+Start-up is read-only. The stage moves only when an operator presses Home,
+and its position is unknown until it has been homed once per controller
+power-up (decided 2026-10-05; ADR 0013 §5–6).
+
+See [[../services/SerialBus]].
+
 ## 2026-10-05 — pz7035 ABI bundle vendored from the `abi-v1.2.0` tag (ADR 0011)
 
 `third_party/pz7035-abi` now comes from the tagged bundle on pz7035-imx426
