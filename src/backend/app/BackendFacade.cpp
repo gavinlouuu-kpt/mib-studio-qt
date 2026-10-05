@@ -6,6 +6,7 @@
 #include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 
 #include "backend/app/ExperimentCoordinator.h"
 
@@ -234,6 +235,12 @@ namespace backend::bridge
         {
             return;
         }
+
+        // Central profile registry (issue #398): shares nothing with the
+        // instrument; stop it first so an in-flight registry request is
+        // aborted rather than waited out. AppBackend::shutdown() repeats this
+        // idempotently.
+        backend_.profileRegistry().shutdown();
 
         // Finish/abort an active experiment first (finalizes the HDF5 file so
         // shutdown never corrupts it — BE-4), then drain/cancel the remaining
@@ -2230,6 +2237,108 @@ namespace backend::bridge
         }
         out = toSnapshot(backend_.deviceDiscovery().discoverySnapshot(jobId));
         return out.valid;
+    }
+
+    // ---- Central profile registry (issue #398, ABI 25) ----
+    namespace
+    {
+        BackendRegistryJob toRegistryJob(const profiles::RegistryJobStatus &job)
+        {
+            BackendRegistryJob out;
+            out.jobId = job.id;
+            out.kind = static_cast<int>(job.kind);
+            out.state = static_cast<int>(job.state);
+            out.message = job.message;
+            return out;
+        }
+    } // namespace
+
+    std::uint64_t BackendFacade::registrySignIn(const std::string &email, std::string password)
+    {
+        if (!initialized_)
+        {
+            std::fill(password.begin(), password.end(), '\0');
+            return 0;
+        }
+        return backend_.profileRegistry().requestSignIn(email, std::move(password));
+    }
+
+    std::uint64_t BackendFacade::registrySignOut()
+    {
+        return initialized_ ? backend_.profileRegistry().requestSignOut() : 0;
+    }
+
+    std::uint64_t BackendFacade::registryRefresh()
+    {
+        return initialized_ ? backend_.profileRegistry().requestRefresh() : 0;
+    }
+
+    std::uint64_t BackendFacade::registryDownload(const std::string &revisionId)
+    {
+        return initialized_ ? backend_.profileRegistry().requestDownload(revisionId) : 0;
+    }
+
+    bool BackendFacade::registryCancelAll()
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        backend_.profileRegistry().cancelAll();
+        return true;
+    }
+
+    bool BackendFacade::fetchRegistrySnapshot(BackendRegistrySnapshot &out) const
+    {
+        out = BackendRegistrySnapshot{};
+        if (!initialized_)
+        {
+            return false;
+        }
+        const auto s = backend_.profileRegistry().snapshot();
+        out.valid = true;
+        out.configured = s.configured;
+        out.generation = s.generation;
+        out.origin = s.origin;
+        out.session = static_cast<int>(s.session);
+        out.subjectId = s.subjectId;
+        out.email = s.email;
+        out.connectivity = static_cast<int>(s.health.connectivity);
+        out.healthMessage = s.health.message;
+        out.successfulRequests = s.health.successfulRequests;
+        out.failedRequests = s.health.failedRequests;
+        out.rejectedRevisions = s.health.rejectedRevisions;
+        for (const auto &p : s.projects)
+            out.projects.push_back({p.projectId, p.displayName, p.roles});
+        for (const auto &r : s.revisions)
+            out.revisions.push_back({r.revisionId, r.methodId, r.projectId, r.displayName, r.authorId,
+                                     r.contentHash, r.revisionNumber, r.metadataVersion,
+                                     static_cast<int>(r.state)});
+        out.corruptRevisionIds = s.corruptRevisionIds;
+        out.cacheError = s.cacheError;
+        if (s.lastSuccessfulRefresh)
+        {
+            out.hasLastSuccessfulRefresh = true;
+            out.lastSuccessfulRefreshUnixMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    s.lastSuccessfulRefresh->time_since_epoch())
+                    .count();
+        }
+        out.lastJob = toRegistryJob(s.lastJob);
+        out.queuedJobs = s.queuedJobs;
+        out.busy = s.busy;
+        return true;
+    }
+
+    bool BackendFacade::fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const
+    {
+        out = BackendRegistryJob{};
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = toRegistryJob(backend_.profileRegistry().job(jobId));
+        return out.jobId != 0;
     }
 
     bool BackendFacade::fetchCameraDiscovery(BackendCameraDiscovery &out) const

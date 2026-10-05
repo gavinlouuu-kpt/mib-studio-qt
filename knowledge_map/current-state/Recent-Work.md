@@ -20,6 +20,26 @@ needed in either direction.
 Bridge ABI 26. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
 
+## 2026-10-05 — ZC300 Z stage driver and `zc300ctl` (#464, slice 2)
+
+`IMotionStage` and the ZC300 driver landed. They are not wired into
+`AppBackend` yet; that is slice 3, `StageService`.
+- `stage_zc300_protocol` is the pure register map, frames and µm encoding.
+- `stage_zc300` is the driver over the shared bus.
+- `zc300ctl` is the diagnostic CLI; motion is gated behind `--allow-motion`.
+
+Behaviour:
+- Connect is observe-only. A controller that does not match the TBZF6-60
+  profile stays read-only.
+- Motion is in whole micrometres; off-grid targets are rejected.
+- Motion opcodes are never re-sent; a lost reply is reconciled from status.
+
+Tests run against a fake controller with the bench quirks
+(`tests/support/fake_zc300.h`).
+
+`SerialBus.cpp` now compiles into `oeabt_serial`, so the Rust bridge archive
+list is unchanged. See [[../services/ZC300Stage]].
+
 ## 2026-10-05 — PZ7035 instrument UI P0a: capabilities, PL-core preflight, token prompt (#501)
 
 On the PZ7035, preflight checks the instrument's own equipment, and a healthy
@@ -49,8 +69,30 @@ See [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]] and
 
 ADR 0011's single renumber: develop (19) and the instrument line (20-22)
 merged into one contract that takes 23, so no release build from `develop`
-carries an interim number. No new commands. The #398 stack takes 24. See
+carries an interim number. No new commands. The #398 stack takes 25 (24 went to #501 P0). See
 [[../architecture/Rust-Bridge]].
+
+## 2026-10-05 — FC04 in the shared Modbus layer; Z stage spec (#464, slice 1)
+
+`ModbusRtu.h` now frames, predicts the length of, and correlates FC04 (read
+input registers), which the Zolix ZC300 stage controller needs for its
+identity and status registers. FC03 and FC04 share one code path, and
+existing devices are unaffected.
+- Known-answer vectors from the vendor manual are in
+  `backend.modbus_rtu`.
+- `backend.serial_bus_pty` round-trips FC04 and its exception path through a
+  real session.
+
+Spec:
+- [ADR 0013](../../docs/decisions/0013-motion-stage-device-class.md) (proposed)
+- the [execution plan](../../docs/exec-plans/active/2026-09-30-zc300-z-stage.md)
+- the [integration evidence](../../docs/integration/zc300-z-stage.md)
+
+Start-up is read-only. The stage moves only when an operator presses Home,
+and its position is unknown until it has been homed once per controller
+power-up (decided 2026-10-05; ADR 0013 §5–6).
+
+See [[../services/SerialBus]].
 
 ## 2026-10-05 — pz7035 ABI bundle vendored from the `abi-v1.2.0` tag (ADR 0011)
 
@@ -62,6 +104,20 @@ most significant word in ID3. Register map, header and fixtures are
 unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
+
+## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 25)
+
+`BackendFacade` gained registry commands and a value snapshot; the bridge
+exposes them (ABI 25, five new `registry_*` contract groups pinned in C++,
+Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
+installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
+a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**
+in the React app renders the worker snapshot through a pure view model. A Qt
+dialog was prototyped (#475) and dropped: Qt is fixes-only (ADR 0011).
+Fixed on the way: facade shutdown left the registry worker running. Guards:
+`profiles.registry_facade`, bridge `registry_*` tests, Tauri
+`registry_transport` tests, `registry.test.ts`. See
+[[../architecture/Desktop-Shell]] and [[../services/ProfileRegistryService]].
 
 ## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
 

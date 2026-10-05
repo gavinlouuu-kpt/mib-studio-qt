@@ -63,3 +63,16 @@ blocks listed above.
 - Future agents: do not reintroduce an HTTP client into the backend; feed the
   `HttpGetFn` seam from the shell. The manifest/LUT on-disk format and the
   `.meta.json` schema are unchanged (data compatibility preserved).
+
+## Addendum (2026-10-04): central profile registry (#398)
+
+The registry worker uses the same rule with a POST transport,
+`backend::profiles::RegistryHttpTransport`, injected through
+`AppBackend::setProfileRegistryTransport()` before `initialize()`. The Qt
+shell supplies `makeQtRegistryHttpTransport()` (QtNetwork); the Tauri shell
+supplies `registry_transport::post` (`ureq` + rustls) through the bridge's
+`set_registry_transport` (ABI 25). The request carries a `cancelled`
+predicate (across the FFI: a `cancel_handle` polled with
+`registry_request_cancelled`) so a cancel or backend shutdown aborts an
+in-flight request instead of waiting out its timeout. Still no HTTP client in
+`mib_backend`.

@@ -222,6 +222,16 @@ mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
 add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
 set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
 
+mib_add_backend_test_executable(zc300_protocol_test backend/zc300_protocol_test.cpp)
+mib_backend_test_link(zc300_protocol_test PRIVATE stage_zc300_protocol)
+add_test(NAME backend.zc300_protocol COMMAND $<TARGET_FILE:mib_backend_tests> zc300_protocol_test)
+set_tests_properties(backend.zc300_protocol PROPERTIES LABELS "backend;stage" TIMEOUT 30)
+
+mib_add_backend_test_executable(zc300_stage_test backend/zc300_stage_test.cpp)
+mib_backend_test_link(zc300_stage_test PRIVATE stage_zc300)
+add_test(NAME backend.zc300_stage COMMAND $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
+set_tests_properties(backend.zc300_stage PROPERTIES LABELS "backend;stage;safety" TIMEOUT 90)
+
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
 set_tests_properties(backend.oeabt_protocol PROPERTIES LABELS "backend;nanopositioner" TIMEOUT 30)
@@ -1342,6 +1352,11 @@ mib_add_backend_test_executable(profile_registry_backend_test profiles/profile_r
 mib_backend_test_link(profile_registry_backend_test PRIVATE Threads::Threads)
 add_test(NAME profiles.registry_backend COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_backend_test)
 set_tests_properties(profiles.registry_backend PROPERTIES LABELS "backend;profiles;concurrency" TIMEOUT 60)
+
+mib_add_backend_test_executable(registry_facade_test profiles/registry_facade_test.cpp)
+mib_backend_test_link(registry_facade_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_facade COMMAND $<TARGET_FILE:mib_backend_tests> registry_facade_test)
+set_tests_properties(profiles.registry_facade PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 60)
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
