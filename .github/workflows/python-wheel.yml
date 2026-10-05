@@ -22,6 +22,7 @@ on:
       - 'scripts/run_processing_conformance.py'
       - 'scripts/gold_standard_dataset.json'
       - 'scripts/conformance/**'
+      - 'scripts/run_native_core_conformance.py'
       - 'scripts/build_real_conformance_fixture.py'
       - 'scripts/z_adjustment_50v_reference.json'
       - 'scripts/test_compare_metrics.py'
@@ -61,6 +62,7 @@ on:
       - 'scripts/run_processing_conformance.py'
       - 'scripts/gold_standard_dataset.json'
       - 'scripts/conformance/**'
+      - 'scripts/run_native_core_conformance.py'
       - 'scripts/build_real_conformance_fixture.py'
       - 'scripts/z_adjustment_50v_reference.json'
       - 'scripts/test_compare_metrics.py'
@@ -568,6 +570,18 @@ jobs:
           Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $c2Dist $dll.Name)
           Copy-Item -LiteralPath $descriptor.FullName -Destination (Join-Path $c2Dist $descriptor.Name)
 
+      - name: Contract-2 gold against the built absdiff-laplacian core
+        shell: pwsh
+        run: |
+          python -m pip install numpy
+          $dll = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'mib-processing-native-c2-dist') -Filter '*.dll' | Select-Object -First 1
+          if (-not $dll) { throw 'Staged Contract-2 core DLL not found' }
+          $command = 'call build\conanrun.bat && python scripts/run_native_core_conformance.py --core "' + $dll.FullName + '" --frames-npz scripts/conformance/focus-50v-real.npz --reference scripts/conformance/focus-50v-real-contract2.json'
+          & cmd.exe /d /s /c $command
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native Contract-2 gold failed with exit code $LASTEXITCODE"
+          }
+
       - name: Upload unsigned Contract-2 core artifact
         uses: actions/upload-artifact@v6
         with:
@@ -798,6 +812,16 @@ jobs:
           rm -rf "$staging"
           mkdir -p "$staging"
           cp "$shared_library" "$descriptor" "$staging/"
+
+      - name: Contract-2 gold against the built absdiff-laplacian core
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends python3-numpy
+          python3 scripts/run_native_core_conformance.py \
+            --core "$(ls "$RUNNER_TEMP"/mib-processing-native-c2-dist/*.so)" \
+            --frames-npz scripts/conformance/focus-50v-real.npz \
+            --reference scripts/conformance/focus-50v-real-contract2.json
 
       - name: Upload unsigned Contract-2 core artifact
         uses: actions/upload-artifact@v6
