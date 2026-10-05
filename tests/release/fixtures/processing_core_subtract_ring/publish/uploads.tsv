@@ -1,0 +1,5 @@
+stable/processing-core/versions/0.1.0.json	application/json	public, max-age=31536000, immutable
+stable/processing-core/index.json	application/json	public, max-age=60, must-revalidate
+stable/processing-core/simple/mib-processing/index.html	text/html; charset=utf-8	public, max-age=60, must-revalidate
+stable/processing-core/simple/mib-processing/	text/html; charset=utf-8	public, max-age=60, must-revalidate
+stable/processing-core/latest.json	application/json	public, max-age=60, must-revalidate

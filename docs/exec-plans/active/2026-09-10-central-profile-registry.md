@@ -45,8 +45,13 @@ freeze exact revision identity/content into historical runs.
 
 - [ ] M0 completion: administrator method/membership APIs and audited permission
   changes; organization/operator ownership; canonical cross-language vectors.
-- [ ] M1: native HTTP adapter, Supabase user login/refresh/logout, secure token
-  custody, AppBackend-owned worker lifecycle and bounded/cancellable refresh jobs.
+- [x] M1 (backend, PR stacked on #402): shell-injected HTTPS transport (Qt
+  `makeQtRegistryHttpTransport`, ADR 0002 seam instead of a backend HTTP client),
+  Supabase password sign-in / refresh rotation / sign-out, in-memory tokens,
+  AppBackend-owned `ProfileRegistryWorker` with bounded/cancellable refresh across
+  member projects (`registry_list_projects`), offline reopen of the last user's cache.
+- [ ] M1: refresh-token persistence in the OS keychain (shell-owned seam) so a
+  restart does not require a password; today a restart is CachedOffline until sign-in.
 - [ ] M1: shared backend snapshots/commands through BackendFacade and Rust bridge;
   Qt and React method discovery/details showing separate central/cache states.
 - [ ] M2: authoritative selected/applied/verified method aggregate; compatibility
@@ -73,6 +78,18 @@ freeze exact revision identity/content into historical runs.
   later revision/revocation stayed invisible. Now reported as `RevisionPage::rejected`
   and counted in `RegistryHealth::rejectedRevisions`. `profile-registry-ci.yml` now
   runs only the PGlite SQL suite (the C++ test runs in backend-ci; no inline apt list).
+
+- 2026-10-02 (M1 backend): decisions — (1) ADR 0002 forbids a backend HTTP
+  client, so "native HTTP adapter" is the shell-injected `RegistryHttpTransport`
+  with a `cancelled` predicate; (2) tokens stay in worker memory, nothing
+  token-bearing is written; `last_session.json` keeps only origin/subject/email so
+  offline continuity survives a restart; (3) explicit sign-out closes the user's
+  cache and forgets the last session (shared instruments); (4) a refresh restarts
+  every member project's scan and is bounded by pages + time (Partial, never
+  silently truncated); (5) cancelled requests never count as outages.
+  Tests: `profiles.registry_worker`, `profiles.registry_backend` (hung registry
+  vs running mock capture; shutdown abort), `frontend.registry_http_transport`;
+  all three behaviour mutations of the worker were caught; TSan clean (3 repeats).
 
 ## Validation
 

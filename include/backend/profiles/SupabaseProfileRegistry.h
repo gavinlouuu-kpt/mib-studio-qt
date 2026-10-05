@@ -10,6 +10,10 @@ struct RegistryHttpRequest {
     std::map<std::string, std::string> headers;
     unsigned timeoutMs{8000};
     size_t maxResponseBytes{2 * 1024 * 1024};
+    // Optional: polled by the transport while a request is in flight; true
+    // means abort now and return status 0 (lets shutdown/cancel skip the
+    // remaining timeout).
+    std::function<bool()> cancelled;
 };
 struct RegistryHttpResponse {
     unsigned status{0}; // zero indicates transport failure
@@ -25,6 +29,9 @@ public:
     SupabaseProfileRegistry(std::string origin, std::string publishableKey,
                             std::function<std::string()> userAccessToken,
                             RegistryHttpTransport transport);
+    // Applied to every request from here on (worker cancellation seam).
+    void setCancellation(std::function<bool()> cancelled) { cancelled_ = std::move(cancelled); }
+    std::vector<RegistryProject> listProjects() override;
     RevisionPage listRevisions(const std::string& projectId,
                                const std::string& cursor = {}) override;
     Revision fetchRevision(const std::string& revisionId) override;
@@ -38,5 +45,10 @@ private:
     std::string publishableKey_;
     std::function<std::string()> userAccessToken_;
     RegistryHttpTransport transport_;
+    std::function<bool()> cancelled_;
 };
+
+// Shared by the RPC provider and SupabaseAuth: origin-only HTTPS URL, a
+// publishable (never service-role) key, no header injection.
+void validateSupabaseEndpoint(const std::string& origin, const std::string& publishableKey);
 } // namespace backend::profiles

@@ -72,7 +72,11 @@
   the canonical core/contract version, hash-qualified Python wheels, optional
   signed native plugins, profile catalog, and emodulus LUT as one reproducible
   set. The generated PEP 503 page supports baked `mib-processing==<version>`
-  dependencies. See `docs/portable-processing-sync.md`.
+  dependencies. There is one registry per **core line** (ADR 0007):
+  `subtract-ring` (Contract 1, with the wheel) at `processing-core/`, and
+  `absdiff-laplacian` (Contract 2, native cores only) at
+  `processing-core-absdiff-laplacian/` (`--line`). See
+  `docs/portable-processing-sync.md`.
 - **Processing core active version** — the full manifest named by both
   `latest.json` and `index.json.active_version`. Publishing or rolling back a
   channel changes these mutable pointers; it never rewrites immutable version

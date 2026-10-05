@@ -69,12 +69,20 @@ struct RevisionPage {
     std::string nextCursor;
 };
 
+// A project the authenticated user is a member of, with their roles there.
+struct RegistryProject {
+    std::string projectId;
+    std::string displayName;
+    std::vector<std::string> roles;
+};
+
 // Called only by a registry worker/control path, never acquisition, recording,
 // readiness or Start. Implementations must bound requests and expose failures.
 // Instances are confined to their owning thread unless otherwise documented.
 class ProfileRegistry {
 public:
     virtual ~ProfileRegistry() = default;
+    virtual std::vector<RegistryProject> listProjects() = 0;
     virtual RevisionPage listRevisions(const std::string& projectId,
                                        const std::string& cursor = {}) = 0;
     virtual Revision fetchRevision(const std::string& revisionId) = 0;

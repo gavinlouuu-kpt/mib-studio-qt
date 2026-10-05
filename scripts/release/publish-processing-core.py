@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Publish the versioned processing-core registry to Cloudflare R2.
 
-The registry has three views over the same release:
+Each processing **core line** (ADR 0007: one shipped core, one contract) has
+its own registry with three views over the same release:
 
 * ``latest.json`` is the short-cache active pointer and remains a complete
   manifest for schema-v1 consumers.
 * ``versions/<version>.json`` is an immutable, addressable release manifest.
-* ``index.json`` is a short-cache catalog used by version selectors.  The
-  catalog also feeds a PEP 503 package page for reproducible pip pins.
+* ``index.json`` is a short-cache catalog used by version selectors.  For the
+  ``subtract-ring`` line the catalog also feeds a PEP 503 package page for
+  reproducible pip pins.
+
+``--line subtract-ring`` (Contract 1, the default) publishes the legacy
+``<channel>/processing-core/`` registry with the research wheel.
+``--line absdiff-laplacian`` (Contract 2) publishes native cores only, under
+``<channel>/processing-core-absdiff-laplacian/``.
 
 See docs/portable-processing-sync.md for the public contract.
 """
@@ -29,7 +36,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import sys as _sys
 from pathlib import Path as _Path
@@ -74,6 +81,93 @@ _NATIVE_ARCH_ALIASES = {
     "x64": "x86_64",
     "arm64": "aarch64",
 }
+
+
+class CoreLine(NamedTuple):
+    """One shipped processing-core line (ADR 0007 point 7).
+
+    A line fixes its contract, engine ABI and entry point, and owns its
+    release tags, artifact names and registry prefix. A NamedTuple, not a
+    dataclass: CI loads this file through importlib without registering it in
+    sys.modules, which dataclasses (with postponed annotations) require.
+    """
+
+    name: str
+    contract_version: int
+    engine_abi_version: int
+    entrypoint: str
+    registry_dir: str
+    tag_prefix: str
+    artifact_prefix: str
+    # The research wheel (ADR 0007 point 4) ships only with subtract-ring.
+    ships_wheel: bool
+    # subtract-ring documents predate core lines and stay byte-identical, so
+    # only newer lines label their documents with "line"/"algorithm".
+    labels_documents: bool
+
+
+SUBTRACT_RING = CoreLine(
+    name="subtract-ring",
+    contract_version=DEFAULT_CONTRACT_VERSION,
+    engine_abi_version=1,
+    entrypoint="mib_processing_get_api",
+    registry_dir="processing-core",
+    tag_prefix=_TAG_PREFIX,
+    artifact_prefix="mib_processing_core-",
+    ships_wheel=True,
+    labels_documents=False,
+)
+ABSDIFF_LAPLACIAN = CoreLine(
+    name="absdiff-laplacian",
+    contract_version=2,
+    engine_abi_version=2,
+    entrypoint="mib_processing_get_api_v2",
+    registry_dir="processing-core-absdiff-laplacian",
+    tag_prefix="mib-processing-absdiff-laplacian-v",
+    artifact_prefix="mib_processing_core-absdiff-laplacian-",
+    ships_wheel=False,
+    labels_documents=True,
+)
+CORE_LINES = {line.name: line for line in (SUBTRACT_RING, ABSDIFF_LAPLACIAN)}
+DEFAULT_LINE = SUBTRACT_RING.name
+
+
+def resolve_line(line: str | CoreLine) -> CoreLine:
+    if isinstance(line, CoreLine):
+        return line
+    try:
+        return CORE_LINES[line]
+    except (KeyError, TypeError):
+        raise ValueError(
+            f"Unknown processing-core line {line!r}; expected one of {', '.join(CORE_LINES)}"
+        ) from None
+
+
+def manifest_line(document: dict[str, Any]) -> CoreLine:
+    """Line of a manifest or index. Unlabelled documents are legacy subtract-ring."""
+    return resolve_line(document.get("line", SUBTRACT_RING.name))
+
+
+def registry_base_key(channel: str, line: str | CoreLine = DEFAULT_LINE) -> str:
+    return f"{validate_channel(channel)}/{resolve_line(line).registry_dir}"
+
+
+def line_for_release_tag(release_tag: str) -> CoreLine | None:
+    for line in CORE_LINES.values():
+        if release_tag.startswith(line.tag_prefix):
+            return line
+    return None
+
+
+def native_name_belongs_to_line(name: str, line: str | CoreLine) -> bool:
+    """True when an asset name is ``<artifact_prefix><version>-...`` for this line.
+
+    Versions start with a digit and line names with a letter, so
+    ``mib_processing_core-0.1.0-...`` (subtract-ring) can never match
+    ``mib_processing_core-absdiff-laplacian-0.1.0-...`` and vice versa.
+    """
+    prefix = resolve_line(line).artifact_prefix
+    return name.startswith(prefix) and name[len(prefix):len(prefix) + 1].isdigit()
 
 
 def utc_now() -> str:
@@ -126,10 +220,16 @@ def validate_channel(channel: str) -> str:
     return channel
 
 
-def version_from_release_tag(release_tag: str) -> str:
-    if not release_tag.startswith(_TAG_PREFIX):
-        raise ValueError(f"Release tag must have the form {_TAG_PREFIX}<version>: {release_tag!r}")
-    version = validate_version(release_tag[len(_TAG_PREFIX):])
+def version_from_release_tag(release_tag: str, line: str | CoreLine = DEFAULT_LINE) -> str:
+    line = resolve_line(line)
+    if not release_tag.startswith(line.tag_prefix):
+        other = line_for_release_tag(release_tag)
+        if other is not None:
+            raise ValueError(
+                f"Release tag {release_tag!r} belongs to the {other.name} line, not {line.name}"
+            )
+        raise ValueError(f"Release tag must have the form {line.tag_prefix}<version>: {release_tag!r}")
+    version = validate_version(release_tag[len(line.tag_prefix):])
     if not version:
         raise ValueError(f"Release tag must include a version: {release_tag!r}")
     return version
@@ -204,10 +304,18 @@ def _load_native_descriptor(path: Path) -> dict[str, Any]:
     return value
 
 
-def discover_native_descriptors(asset_dir: Path) -> list[Path]:
-    """Find release sidecars without mistaking unrelated JSON assets for one."""
+def discover_native_descriptors(asset_dir: Path, line: str | CoreLine = DEFAULT_LINE) -> list[Path]:
+    """Find one line's release sidecars without mistaking other JSON assets for one.
+
+    Only ``<artifact_prefix><version>-<os>_<arch>.json`` names of this line are
+    considered, so a directory holding several lines' assets yields each line
+    only its own descriptors.
+    """
+    line = resolve_line(line)
     descriptors: list[Path] = []
     for path in sorted(asset_dir.glob("*.json")):
+        if not native_name_belongs_to_line(path.name, line):
+            continue
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -224,13 +332,24 @@ def build_native_plugin_entries(
     repo: str,
     release_tag: str,
     expected_version: str,
-    expected_contract_version: int,
+    expected_contract_version: int | None = None,
+    line: str | CoreLine = DEFAULT_LINE,
 ) -> list[dict[str, Any]]:
     """Build trusted metadata from native-plugin sidecars and local release bytes.
 
     URLs, digests, and sizes always come from the publisher.  A sidecar cannot
     redirect a client or claim a digest for bytes that were not inspected.
+    Every descriptor must belong to ``line``: its artifact name, contract,
+    engine ABI, entry point and (when declared) algorithm must be the line's.
     """
+    line = resolve_line(line)
+    if expected_contract_version is None:
+        expected_contract_version = line.contract_version
+    if expected_contract_version != line.contract_version:
+        raise ValueError(
+            f"The {line.name} line implements contract {line.contract_version}, "
+            f"not {expected_contract_version}"
+        )
     entries: list[dict[str, Any]] = []
     seen_names: set[str] = set()
     seen_platforms: set[tuple[str, str]] = set()
@@ -255,6 +374,13 @@ def build_native_plugin_entries(
             raise ValueError(
                 f"Native plugin for {native_os} must end in {expected}: {filename!r}"
             )
+        suffix = next(value for value in allowed_suffixes if filename.lower().endswith(value))
+        expected_stem = f"{line.artifact_prefix}{expected_version}-{native_os}_{native_arch}"
+        if filename[:-len(suffix)] != expected_stem:
+            raise ValueError(
+                f"Native plugin {filename!r} is not named for the {line.name} line; "
+                f"expected {expected_stem}{suffix}"
+            )
         artifact = asset_dir / filename
         if not artifact.is_file():
             raise ValueError(f"Native plugin asset named by {descriptor_path.name} does not exist: {artifact}")
@@ -273,11 +399,34 @@ def build_native_plugin_entries(
             raise ValueError(
                 f"Native plugin {filename} declares version {descriptor_version}, expected {expected_version}"
             )
+        if line.labels_documents and descriptor.get("contract_version") is None:
+            raise ValueError(f"Native plugin {filename} must declare contract_version for the {line.name} line")
         descriptor_contract = int(descriptor.get("contract_version", expected_contract_version))
         if descriptor_contract != expected_contract_version:
             raise ValueError(
                 f"Native plugin {filename} declares contract {descriptor_contract}, "
                 f"expected {expected_contract_version}"
+            )
+        engine_abi_version = int(descriptor["engine_abi_version"])
+        if engine_abi_version != line.engine_abi_version:
+            raise ValueError(
+                f"Native plugin {filename} declares engine ABI {engine_abi_version}, "
+                f"but the {line.name} line requires {line.engine_abi_version}"
+            )
+        entrypoint = str(descriptor["entrypoint"])
+        if entrypoint != line.entrypoint:
+            raise ValueError(
+                f"Native plugin {filename} declares entrypoint {entrypoint!r}, "
+                f"but the {line.name} line requires {line.entrypoint!r}"
+            )
+        # Legacy subtract-ring descriptors predate the algorithm field, so it is
+        # optional there; newer lines must declare it.
+        algorithm = descriptor.get("algorithm")
+        if algorithm is None and line.labels_documents:
+            raise ValueError(f"Native plugin {filename} must declare algorithm {line.name!r}")
+        if algorithm is not None and algorithm != line.name:
+            raise ValueError(
+                f"Native plugin {filename} declares algorithm {algorithm!r}, expected {line.name!r}"
             )
 
         signing = descriptor.get("signing", {})
@@ -323,18 +472,22 @@ def build_native_plugin_entries(
             signing["public_key_spki_base64"] = spki_b64
             signing["public_key_spki_sha256"] = derived_spki_sha256
             signing["signature_base64"] = signature_b64
-        entries.append({
+        entry: dict[str, Any] = {
             "filename": filename,
             "os": native_os,
             "arch": native_arch,
             "artifact_kind": str(descriptor.get("artifact_kind", "shared_library")),
             "version": expected_version,
             "contract_version": expected_contract_version,
-            "engine_abi_version": int(descriptor["engine_abi_version"]),
+        }
+        if line.labels_documents:
+            entry["algorithm"] = line.name
+        entry.update({
+            "engine_abi_version": engine_abi_version,
             "runtime_fingerprint": str(descriptor["runtime_fingerprint"]),
             "app_min_version": descriptor.get("app_min_version"),
             "app_max_version": descriptor.get("app_max_version"),
-            "entrypoint": str(descriptor["entrypoint"]),
+            "entrypoint": entrypoint,
             "url": f"https://github.com/{repo}/releases/download/{release_tag}/{filename}",
             "sha256": sha256_file(artifact),
             "size_bytes": artifact.stat().st_size,
@@ -343,6 +496,7 @@ def build_native_plugin_entries(
             ),
             "signing": signing,
         })
+        entries.append(entry)
     return entries
 
 
@@ -376,22 +530,54 @@ def download_github_release(repo: str, release_tag: str, destination: Path, gh_b
 def build_manifest(
     *,
     channel: str,
-    contract_version: int,
-    wheel_version: str,
     release_tag: str,
     repo: str,
-    wheel_paths: list[Path],
     public_base_url: str,
+    contract_version: int | None = None,
+    wheel_version: str | None = None,
+    wheel_paths: list[Path] | None = None,
     native_plugins: list[dict[str, Any]] | None = None,
     published_at: str | None = None,
+    line: str | CoreLine = DEFAULT_LINE,
+    version: str | None = None,
 ) -> dict[str, Any]:
+    """Build one line's complete manifest.
+
+    ``version`` is the core version; ``wheel_version`` is its legacy alias
+    (the subtract-ring core version is the wheel version).
+    """
+    line = resolve_line(line)
+    if version is not None and wheel_version is not None and version != wheel_version:
+        raise ValueError(f"Core version {version} does not match wheel version {wheel_version}")
+    core_version = version if version is not None else wheel_version
+    if core_version is None:
+        raise ValueError("A processing-core version is required")
     validate_channel(channel)
-    validate_version(wheel_version)
+    validate_version(core_version)
+    if contract_version is None:
+        contract_version = line.contract_version
     if not isinstance(contract_version, int) or isinstance(contract_version, bool) or contract_version < 1:
         raise ValueError(f"Contract version must be a positive integer: {contract_version!r}")
+    if contract_version != line.contract_version:
+        raise ValueError(
+            f"The {line.name} line implements contract {line.contract_version}, not {contract_version}"
+        )
+    if not line.ships_wheel:
+        return _build_native_only_manifest(
+            line=line,
+            channel=channel,
+            version=core_version,
+            release_tag=release_tag,
+            repo=repo,
+            wheel_paths=wheel_paths or [],
+            public_base_url=public_base_url,
+            native_plugins=native_plugins,
+            published_at=published_at,
+        )
+    wheel_version = core_version
     if not wheel_paths:
         raise ValueError("At least one mib-processing wheel is required")
-    tagged_version = version_from_release_tag(release_tag)
+    tagged_version = version_from_release_tag(release_tag, line)
     if tagged_version != wheel_version:
         raise ValueError(
             f"Release tag {release_tag!r} names version {tagged_version}, but wheel version is {wheel_version}"
@@ -419,6 +605,53 @@ def build_manifest(
     }
 
 
+def _build_native_only_manifest(
+    *,
+    line: CoreLine,
+    channel: str,
+    version: str,
+    release_tag: str,
+    repo: str,
+    wheel_paths: list[Path],
+    public_base_url: str,
+    native_plugins: list[dict[str, Any]] | None,
+    published_at: str | None,
+) -> dict[str, Any]:
+    """Manifest for a line without a wheel: release identity is top-level."""
+    if wheel_paths:
+        raise ValueError(
+            f"The {line.name} line publishes no wheel; the wheel is a research build (ADR 0007)"
+        )
+    plugins = list(native_plugins or [])
+    if not plugins:
+        raise ValueError(f"At least one {line.name} native processing core is required")
+    for plugin in plugins:
+        if plugin.get("contract_version") != line.contract_version or plugin.get("algorithm") != line.name:
+            raise ValueError(
+                f"Native plugin {plugin.get('filename')!r} does not belong to the {line.name} line"
+            )
+    tagged_version = version_from_release_tag(release_tag, line)
+    if tagged_version != version:
+        raise ValueError(
+            f"Release tag {release_tag!r} names version {tagged_version}, but core version is {version}"
+        )
+    return {
+        "processing_core_manifest_schema_version": MANIFEST_SCHEMA_VERSION,
+        "channel": channel,
+        "line": line.name,
+        "version": version,
+        "published_at": validate_published_at(published_at or utc_now()),
+        "contract_version": line.contract_version,
+        "release_tag": release_tag,
+        "release_url": f"https://github.com/{repo}/releases/tag/{release_tag}",
+        "native_plugins": plugins,
+        "profile_catalog_url": join_public_object_url(public_base_url, f"profiles/{channel}/catalog.json"),
+        "emodulus_lut_manifest_url": join_public_object_url(
+            public_base_url, f"{channel}/emodulus-lut/latest.json"
+        ),
+    }
+
+
 def _version_sort_key(version: str) -> tuple[Any, ...]:
     """Comparable newest-first key for the SemVer/PEP 440 forms we publish."""
     match = re.fullmatch(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)", version)
@@ -437,7 +670,29 @@ def _version_sort_key(version: str) -> tuple[Any, ...]:
 
 
 def index_entry_from_manifest(manifest: dict[str, Any], public_base_url: str) -> dict[str, Any]:
+    line = manifest_line(manifest)
     version = str(manifest["version"])
+    manifest_url = join_public_object_url(
+        public_base_url,
+        f"{registry_base_key(str(manifest['channel']), line)}/versions/{version_object_component(version)}.json",
+    )
+    if not line.ships_wheel:
+        if "wheel" in manifest:
+            raise ValueError(f"A {line.name} manifest must not carry wheel data")
+        if manifest.get("contract_version") != line.contract_version:
+            raise ValueError(
+                f"A {line.name} manifest must declare contract {line.contract_version}"
+            )
+        return {
+            "version": version,
+            "line": line.name,
+            "contract_version": manifest["contract_version"],
+            "published_at": manifest["published_at"],
+            "release_tag": manifest["release_tag"],
+            "release_url": manifest["release_url"],
+            "manifest_url": manifest_url,
+            "native_plugins": list(manifest.get("native_plugins", [])),
+        }
     wheel = manifest["wheel"]
     return {
         "version": version,
@@ -445,10 +700,7 @@ def index_entry_from_manifest(manifest: dict[str, Any], public_base_url: str) ->
         "published_at": manifest["published_at"],
         "release_tag": wheel["release_tag"],
         "release_url": wheel["release_url"],
-        "manifest_url": join_public_object_url(
-            public_base_url,
-            f"{manifest['channel']}/processing-core/versions/{version_object_component(version)}.json",
-        ),
+        "manifest_url": manifest_url,
         "wheels": list(wheel.get("wheels", [])),
         "native_plugins": list(manifest.get("native_plugins", [])),
     }
@@ -459,7 +711,12 @@ def merge_index(
     manifest: dict[str, Any],
     public_base_url: str,
 ) -> dict[str, Any]:
-    """Insert/replace one version and make it the active channel pointer."""
+    """Insert/replace one version and make it the active channel pointer.
+
+    The manifest's line selects the catalog shape; an existing catalog or entry
+    of another line is refused rather than mixed in.
+    """
+    line = manifest_line(manifest)
     channel = str(manifest["channel"])
     if existing:
         existing_channel = existing.get("channel")
@@ -468,6 +725,9 @@ def merge_index(
         schema = existing.get("processing_core_index_schema_version", INDEX_SCHEMA_VERSION)
         if schema != INDEX_SCHEMA_VERSION:
             raise ValueError(f"Unsupported processing-core index schema: {schema!r}")
+        existing_line = existing.get("line", None if line.labels_documents else SUBTRACT_RING.name)
+        if existing_line != line.name:
+            raise ValueError(f"Existing index line is {existing_line!r}, expected {line.name!r}")
     existing_versions = existing.get("versions") or []
     if not isinstance(existing_versions, list):
         raise ValueError("Existing processing-core index.versions is not a list")
@@ -480,6 +740,21 @@ def merge_index(
             raise ValueError(f"Existing processing-core index contains duplicate version {value['version']!r}")
         if not isinstance(value.get("wheels", []), list) or not isinstance(value.get("native_plugins", []), list):
             raise ValueError(f"Existing processing-core index has invalid artifacts for {value['version']!r}")
+        if not line.ships_wheel and "wheels" in value:
+            raise ValueError(
+                f"Existing {line.name} index entry {value['version']!r} carries wheel data"
+            )
+        if value.get("line", SUBTRACT_RING.name if not line.labels_documents else None) != line.name:
+            raise ValueError(
+                f"Existing processing-core index entry {value['version']!r} belongs to "
+                f"line {value.get('line')!r}, expected {line.name!r}"
+            )
+        if value.get("contract_version", line.contract_version) != line.contract_version:
+            raise ValueError(
+                f"Existing processing-core index entry {value['version']!r} declares contract "
+                f"{value.get('contract_version')!r}, but the {line.name} line is contract "
+                f"{line.contract_version}"
+            )
         seen_existing.add(value["version"])
     entry = index_entry_from_manifest(manifest, public_base_url)
     versions = [
@@ -487,16 +762,25 @@ def merge_index(
     ]
     versions.append(entry)
     versions.sort(key=lambda value: _version_sort_key(str(value.get("version", ""))), reverse=True)
-    return {
+    index: dict[str, Any] = {
         "processing_core_index_schema_version": INDEX_SCHEMA_VERSION,
         "channel": channel,
+    }
+    if line.labels_documents:
+        index["line"] = line.name
+    index.update({
         "active_version": manifest["version"],
         "updated_at": manifest["published_at"],
         "versions": versions,
-    }
+    })
+    return index
 
 
 def render_pep503_index(index: dict[str, Any]) -> str:
+    """Render the pip package page. Only lines that ship the wheel have one."""
+    line = manifest_line(index)
+    if not line.ships_wheel:
+        raise ValueError(f"The {line.name} line publishes no wheel and has no PEP 503 page")
     links: list[tuple[str, str, str]] = []
     for version in index.get("versions", []):
         for wheel in version.get("wheels", []):
@@ -593,20 +877,49 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--line",
+        choices=tuple(CORE_LINES),
+        default=DEFAULT_LINE,
+        help=(
+            "Processing-core line to publish (ADR 0007). subtract-ring is Contract 1 with "
+            "the wheel under <channel>/processing-core/; absdiff-laplacian is Contract 2, "
+            "native cores only, under <channel>/processing-core-absdiff-laplacian/."
+        ),
+    )
     parser.add_argument("--channel", default="stable")
-    parser.add_argument("--contract-version", type=int, default=DEFAULT_CONTRACT_VERSION)
+    parser.add_argument(
+        "--contract-version",
+        type=int,
+        default=None,
+        help="Optional cross-check; must equal the line's contract (subtract-ring 1, absdiff-laplacian 2).",
+    )
     parser.add_argument(
         "--wheel-version",
+        "--version",
+        dest="wheel_version",
         default=None,
-        help="Wheel version. Defaults to bindings/python/pyproject.toml; must match --from-release.",
+        help=(
+            "Core version (for subtract-ring also the wheel version). Defaults to "
+            "bindings/python/pyproject.toml; must match --from-release."
+        ),
     )
     parser.add_argument(
         "--pyproject",
         default=str(Path(__file__).resolve().parents[2] / "bindings" / "python" / "pyproject.toml"),
-        help="Path to the authoritative wheel pyproject.toml.",
+        help="Path to the authoritative pyproject.toml that versions every core line.",
     )
-    parser.add_argument("--release-tag", default=None, help="Defaults to mib-processing-v<wheel-version>")
+    parser.add_argument(
+        "--release-tag",
+        default=None,
+        help=(
+            "Defaults to mib-processing-v<version> (subtract-ring) or "
+            "mib-processing-absdiff-laplacian-v<version> (absdiff-laplacian)"
+        ),
+    )
     parser.add_argument(
         "--from-release",
         metavar="TAG",
@@ -632,7 +945,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", default=DEFAULT_REPO, help="owner/repo for GitHub Release URLs")
     parser.add_argument(
         "--wheel", action="append", default=[], dest="wheels",
-        help="Local wheel release asset; repeat for multiple tags.",
+        help="Local wheel release asset; repeat for multiple tags (subtract-ring only).",
     )
     parser.add_argument(
         "--native-plugin-descriptor", action="append", default=[], dest="native_descriptors",
@@ -646,7 +959,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-out", default=None, help="Write latest.json preview to this path")
     parser.add_argument("--version-manifest-out", default=None)
     parser.add_argument("--index-out", default=None)
-    parser.add_argument("--pep503-out", default=None)
+    parser.add_argument("--pep503-out", default=None, help="PEP 503 page preview (subtract-ring only)")
     parser.add_argument("--dry-run", action="store_true", help="Generate all registry documents but do not upload")
     parser.add_argument(
         "--upload-method", choices=("auto", "s3", "wrangler"), default="auto",
@@ -724,6 +1037,7 @@ def _copy_preview(path_value: str | None, source: Path) -> None:
 
 def _validate_promotion_manifest(
     manifest: dict[str, Any], *, version: str, channel: str, key: str,
+    line: str | CoreLine = DEFAULT_LINE,
 ) -> None:
     """Validate only the stable identity needed to copy an immutable manifest.
 
@@ -731,6 +1045,7 @@ def _validate_promotion_manifest(
     documents must remain promotable after this publisher's formatting or
     optional fields evolve.
     """
+    line = resolve_line(line)
     schema = manifest.get("processing_core_manifest_schema_version")
     if schema not in (1, MANIFEST_SCHEMA_VERSION):
         raise RuntimeError(
@@ -739,6 +1054,25 @@ def _validate_promotion_manifest(
     for field in ("contract_version", "profile_catalog_url", "emodulus_lut_manifest_url"):
         if manifest.get(field) in (None, ""):
             raise RuntimeError(f"Existing immutable manifest is missing {field}: {key}")
+    try:
+        document_line = manifest_line(manifest)
+    except ValueError as exc:
+        raise RuntimeError(f"Existing immutable manifest names an unknown line: {key}") from exc
+    if document_line != line:
+        raise RuntimeError(
+            f"Existing immutable manifest belongs to line {document_line.name!r}, "
+            f"expected {line.name!r}: {key}"
+        )
+    if manifest.get("contract_version") != line.contract_version:
+        raise RuntimeError(
+            f"Existing immutable manifest declares contract {manifest.get('contract_version')!r}, "
+            f"but the {line.name} line is contract {line.contract_version}: {key}"
+        )
+    if not line.ships_wheel:
+        _validate_native_only_promotion_manifest(
+            manifest, version=version, channel=channel, key=key, line=line,
+        )
+        return
 
     wheel = manifest.get("wheel")
     if not isinstance(wheel, dict):
@@ -760,7 +1094,7 @@ def _validate_promotion_manifest(
             f"Existing immutable manifest does not identify version {version!r}: {key}"
         )
     try:
-        tagged_version = version_from_release_tag(str(wheel["release_tag"]))
+        tagged_version = version_from_release_tag(str(wheel["release_tag"]), line)
     except ValueError as exc:
         raise RuntimeError(f"Existing immutable manifest has an invalid release tag: {key}") from exc
     if tagged_version != version:
@@ -771,9 +1105,38 @@ def _validate_promotion_manifest(
         raise RuntimeError(f"Existing schema-v2 manifest has invalid native_plugins: {key}")
 
 
+def _validate_native_only_promotion_manifest(
+    manifest: dict[str, Any], *, version: str, channel: str, key: str, line: CoreLine,
+) -> None:
+    if manifest.get("processing_core_manifest_schema_version") != MANIFEST_SCHEMA_VERSION:
+        raise RuntimeError(f"Existing {line.name} manifest must use schema v{MANIFEST_SCHEMA_VERSION}: {key}")
+    if "wheel" in manifest:
+        raise RuntimeError(f"Existing {line.name} manifest must not carry wheel data: {key}")
+    if manifest.get("channel") != channel:
+        raise RuntimeError(
+            f"Existing immutable manifest channel is {manifest.get('channel')!r}, expected {channel!r}: {key}"
+        )
+    if manifest.get("version") != version:
+        raise RuntimeError(
+            f"Existing immutable manifest does not identify version {version!r}: {key}"
+        )
+    try:
+        tagged_version = version_from_release_tag(str(manifest.get("release_tag") or ""), line)
+    except ValueError as exc:
+        raise RuntimeError(f"Existing immutable manifest has an invalid release tag: {key}") from exc
+    if tagged_version != version:
+        raise RuntimeError(
+            f"Existing immutable manifest release tag does not match {version!r}: {key}"
+        )
+    plugins = manifest.get("native_plugins")
+    if not isinstance(plugins, list) or not plugins:
+        raise RuntimeError(f"Existing {line.name} manifest has no native processing cores: {key}")
+
+
 def promote_existing_version(args: argparse.Namespace) -> int:
     """Promote an existing immutable document without reconstructing its bytes."""
     try:
+        line = resolve_line(args.line)
         channel = validate_channel(args.channel)
         version = validate_version(args.promote_version)
     except ValueError as exc:
@@ -793,7 +1156,11 @@ def promote_existing_version(args: argparse.Namespace) -> int:
         )
         return 1
 
-    base_key = f"{channel}/processing-core"
+    if args.pep503_out and not line.ships_wheel:
+        print(f"ERROR: --pep503-out: the {line.name} line has no PEP 503 page", file=sys.stderr)
+        return 1
+
+    base_key = registry_base_key(channel, line)
     version_key = f"{base_key}/versions/{version_object_component(version)}.json"
     index_key = f"{base_key}/index.json"
     latest_key = f"{base_key}/latest.json"
@@ -812,7 +1179,7 @@ def promote_existing_version(args: argparse.Namespace) -> int:
     try:
         manifest = parse_existing_json(immutable_bytes, version_key)
         _validate_promotion_manifest(
-            manifest, version=version, channel=channel, key=version_key,
+            manifest, version=version, channel=channel, key=version_key, line=line,
         )
         index = parse_existing_json(index_bytes, index_key)
         if index.get("channel") != channel:
@@ -822,6 +1189,11 @@ def promote_existing_version(args: argparse.Namespace) -> int:
         if index.get("processing_core_index_schema_version") != INDEX_SCHEMA_VERSION:
             raise RuntimeError(
                 "Existing catalog has an unsupported processing-core index schema"
+            )
+        index_line = index.get("line", None if line.labels_documents else SUBTRACT_RING.name)
+        if index_line != line.name:
+            raise RuntimeError(
+                f"Existing catalog line is {index_line!r}, expected {line.name!r}"
             )
         versions = index.get("versions")
         if not isinstance(versions, list) or not any(
@@ -844,12 +1216,15 @@ def promote_existing_version(args: argparse.Namespace) -> int:
         pep503_path = output_dir / "index.html"
         latest_path.write_bytes(immutable_bytes)
         write_json(index_path, promoted_index)
-        pep503_path.write_text(render_pep503_index(promoted_index), encoding="utf-8")
+        if line.ships_wheel:
+            pep503_path.write_text(render_pep503_index(promoted_index), encoding="utf-8")
+            _copy_preview(args.pep503_out, pep503_path)
         _copy_preview(args.manifest_out, latest_path)
         _copy_preview(args.version_manifest_out, latest_path)
         _copy_preview(args.index_out, index_path)
-        _copy_preview(args.pep503_out, pep503_path)
 
+        if line.labels_documents:
+            print(f"Core line: {line.name} (contract {line.contract_version})")
         print(f"Promoting existing processing core {version!r} on channel {channel!r}")
         print(f"Immutable source: {join_public_object_url(args.public_base_url, version_key)}")
         print(f"Active pointer: {join_public_object_url(args.public_base_url, latest_key)}")
@@ -864,14 +1239,15 @@ def promote_existing_version(args: argparse.Namespace) -> int:
                 args=args, key=index_key, file_path=index_path,
                 content_type="application/json", cache_control=MUTABLE_CACHE_CONTROL,
             )
-            upload_object(
-                args=args, key=pep503_key, file_path=pep503_path,
-                content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
-            )
-            upload_object(
-                args=args, key=pep503_route_key, file_path=pep503_path,
-                content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
-            )
+            if line.ships_wheel:
+                upload_object(
+                    args=args, key=pep503_key, file_path=pep503_path,
+                    content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
+                )
+                upload_object(
+                    args=args, key=pep503_route_key, file_path=pep503_path,
+                    content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
+                )
             upload_object(
                 args=args, key=latest_key, file_path=latest_path,
                 content_type="application/json", cache_control=MUTABLE_CACHE_CONTROL,
@@ -886,6 +1262,9 @@ def promote_existing_version(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     print("=== Publishing Processing Core Registry ===")
+    line = resolve_line(args.line)
+    if line.labels_documents:
+        print(f"Core line: {line.name} (contract {line.contract_version})")
 
     try:
         require_consistent_mutating_transport(args)
@@ -893,9 +1272,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
+    if args.contract_version is not None and args.contract_version != line.contract_version:
+        print(
+            f"ERROR: --contract-version {args.contract_version} does not match the {line.name} "
+            f"line, which implements contract {line.contract_version}",
+            file=sys.stderr,
+        )
+        return 1
+    contract_version = line.contract_version
+
     if args.promote_version is not None:
         return promote_existing_version(args)
 
+    if not line.ships_wheel and (args.wheels or args.pep503_out):
+        print(
+            f"ERROR: the {line.name} line publishes no wheel and no PEP 503 page "
+            "(--wheel/--pep503-out are subtract-ring only)",
+            file=sys.stderr,
+        )
+        return 1
     if args.release_assets_dir and not args.from_release:
         print("ERROR: --release-assets-dir requires --from-release", file=sys.stderr)
         return 1
@@ -925,7 +1320,7 @@ def main(argv: list[str] | None = None) -> int:
         pyproject_version = read_wheel_version(Path(args.pyproject))
         if args.from_release:
             release_tag = args.from_release
-            tagged_version = version_from_release_tag(release_tag)
+            tagged_version = version_from_release_tag(release_tag, line)
             wheel_version = args.wheel_version or tagged_version
             if wheel_version != tagged_version:
                 raise ValueError(
@@ -945,16 +1340,30 @@ def main(argv: list[str] | None = None) -> int:
                 release_temp = tempfile.TemporaryDirectory(prefix="mib_processing_release_")
                 asset_dir = Path(release_temp.name)
                 download_github_release(args.repo, release_tag, asset_dir, args.gh_bin)
-            wheel_paths = sorted(asset_dir.glob("*.whl"))
-            descriptor_paths = discover_native_descriptors(asset_dir)
+            if line.ships_wheel:
+                wheel_paths = sorted(asset_dir.glob("*.whl"))
+            else:
+                wheel_paths = []
+                ignored_wheels = sorted(asset_dir.glob("*.whl"))
+                if ignored_wheels:
+                    print(
+                        f"Note: ignoring {len(ignored_wheels)} wheel asset(s); the {line.name} "
+                        "line publishes native cores only"
+                    )
+            descriptor_paths = discover_native_descriptors(asset_dir, line)
             release_published_at = release_metadata.get("publishedAt")
             if release_metadata and not args.published_at and not release_published_at:
                 raise ValueError(
                     f"GitHub Release {release_tag} did not provide a stable publishedAt timestamp"
                 )
             published_at = args.published_at or release_published_at or utc_now()
-            if not wheel_paths:
+            if line.ships_wheel and not wheel_paths:
                 raise ValueError(f"GitHub Release {release_tag} contains no .whl assets")
+            if not line.ships_wheel and not descriptor_paths:
+                raise ValueError(
+                    f"GitHub Release {release_tag} contains no {line.artifact_prefix}<version>-* "
+                    "native core descriptors"
+                )
         else:
             wheel_version = args.wheel_version or pyproject_version
             if wheel_version != pyproject_version:
@@ -962,8 +1371,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"--wheel-version {wheel_version} does not match authoritative "
                     f"pyproject version {pyproject_version}"
                 )
-            release_tag = args.release_tag or f"{_TAG_PREFIX}{wheel_version}"
-            version_from_release_tag(release_tag)
+            release_tag = args.release_tag or f"{line.tag_prefix}{wheel_version}"
+            version_from_release_tag(release_tag, line)
             wheel_paths = [Path(value) for value in args.wheels]
             descriptor_paths = [Path(value) for value in args.native_descriptors]
             asset_dir = descriptor_paths[0].parent if descriptor_paths else Path.cwd()
@@ -977,18 +1386,20 @@ def main(argv: list[str] | None = None) -> int:
             repo=args.repo,
             release_tag=release_tag,
             expected_version=wheel_version,
-            expected_contract_version=args.contract_version,
+            expected_contract_version=contract_version,
+            line=line,
         )
         manifest = build_manifest(
             channel=args.channel,
-            contract_version=args.contract_version,
-            wheel_version=wheel_version,
+            contract_version=contract_version,
+            version=wheel_version,
             release_tag=release_tag,
             repo=args.repo,
             wheel_paths=wheel_paths,
             public_base_url=args.public_base_url,
             native_plugins=native_plugins,
             published_at=published_at,
+            line=line,
         )
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         if release_temp is not None:
@@ -997,7 +1408,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     version_component = version_object_component(wheel_version)
-    base_key = f"{args.channel}/processing-core"
+    base_key = registry_base_key(args.channel, line)
     latest_key = f"{base_key}/latest.json"
     version_key = f"{base_key}/versions/{version_component}.json"
     index_key = f"{base_key}/index.json"
@@ -1038,57 +1449,71 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
 
         write_json(index_path, index)
-        pep503_path.write_text(render_pep503_index(index), encoding="utf-8")
+        if line.ships_wheel:
+            pep503_path.write_text(render_pep503_index(index), encoding="utf-8")
+            _copy_preview(args.pep503_out, pep503_path)
         _copy_preview(args.manifest_out, latest_path)
         _copy_preview(args.version_manifest_out, version_path)
         _copy_preview(args.index_out, index_path)
-        _copy_preview(args.pep503_out, pep503_path)
 
         print(f"Channel: {args.channel}")
-        print(f"Contract version: {args.contract_version}")
+        print(f"Contract version: {contract_version}")
         print(f"Core version: {wheel_version}")
-        print(f"Release assets: {len(wheel_paths)} wheel(s), {len(native_plugins)} native plugin(s)")
+        if line.ships_wheel:
+            print(f"Release assets: {len(wheel_paths)} wheel(s), {len(native_plugins)} native plugin(s)")
+        else:
+            print(f"Release assets: {len(native_plugins)} native plugin(s)")
         print(f"Latest: {join_public_object_url(args.public_base_url, latest_key)}")
         print(f"Immutable: {join_public_object_url(args.public_base_url, version_key)}")
         print(f"Catalog: {join_public_object_url(args.public_base_url, index_key)}")
-        print(f"PEP 503: {join_public_object_url(args.public_base_url, pep503_key)}")
+        if line.ships_wheel:
+            print(f"PEP 503: {join_public_object_url(args.public_base_url, pep503_key)}")
 
         if args.dry_run:
             print("\nDRY RUN: skipped R2 uploads")
             print(f"Would upload immutable manifest first: s3://{args.bucket}/{version_key}")
-            print(f"Would upload catalog and package index: s3://{args.bucket}/{index_key}")
-            print(f"Would upload pip project route: s3://{args.bucket}/{pep503_route_key}")
+            if line.ships_wheel:
+                print(f"Would upload catalog and package index: s3://{args.bucket}/{index_key}")
+                print(f"Would upload pip project route: s3://{args.bucket}/{pep503_route_key}")
+            else:
+                print(f"Would upload catalog: s3://{args.bucket}/{index_key}")
             print(f"Would promote active pointer last: s3://{args.bucket}/{latest_key}")
             if release_temp is not None:
                 release_temp.cleanup()
             return 0
 
         try:
+            step = 1
             if upload_version:
-                print(f"\n1. Uploading immutable {version_key}...")
+                print(f"\n{step}. Uploading immutable {version_key}...")
                 upload_object(
                     args=args, key=version_key, file_path=version_path,
                     content_type="application/json", cache_control=IMMUTABLE_CACHE_CONTROL,
                 )
             else:
-                print(f"\n1. Immutable {version_key} is identical; skipping upload")
+                print(f"\n{step}. Immutable {version_key} is identical; skipping upload")
 
-            print(f"2. Updating {index_key}...")
+            step += 1
+            print(f"{step}. Updating {index_key}...")
             upload_object(
                 args=args, key=index_key, file_path=index_path,
                 content_type="application/json", cache_control=MUTABLE_CACHE_CONTROL,
             )
-            print(f"3. Updating {pep503_key}...")
-            upload_object(
-                args=args, key=pep503_key, file_path=pep503_path,
-                content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
-            )
-            print(f"4. Updating pip route {pep503_route_key}...")
-            upload_object(
-                args=args, key=pep503_route_key, file_path=pep503_path,
-                content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
-            )
-            print(f"5. Promoting {latest_key} last...")
+            if line.ships_wheel:
+                step += 1
+                print(f"{step}. Updating {pep503_key}...")
+                upload_object(
+                    args=args, key=pep503_key, file_path=pep503_path,
+                    content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
+                )
+                step += 1
+                print(f"{step}. Updating pip route {pep503_route_key}...")
+                upload_object(
+                    args=args, key=pep503_route_key, file_path=pep503_path,
+                    content_type="text/html; charset=utf-8", cache_control=MUTABLE_CACHE_CONTROL,
+                )
+            step += 1
+            print(f"{step}. Promoting {latest_key} last...")
             upload_object(
                 args=args, key=latest_key, file_path=latest_path,
                 content_type="application/json", cache_control=MUTABLE_CACHE_CONTROL,
