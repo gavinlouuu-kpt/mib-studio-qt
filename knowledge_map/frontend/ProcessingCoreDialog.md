@@ -13,8 +13,15 @@
 
 ## User flow
 
-Open **Settings → Processing Core…**, choose the stable or beta channel, then
-select **Prepare & Activate**. The list marks the channel-active version from
+Open **Settings → Processing Core…**, choose the stable or beta channel and
+the **core line** (ADR 0007: *Subtract + Ring width (Contract 1)* or *Absdiff +
+Laplacian (Contract 2)*, persisted as `ProcessingCore/Line`), then select
+**Prepare & Activate**. Each line reads its own registry directory
+(`processing-core/` or `processing-core-absdiff-laplacian/`, from
+`processingcorecatalog::coreLines()`); an index or `latest.json` of another
+line is refused. Only cores whose contract equals the current profile's
+`processing_contract_version` can be selected; others are listed as "needs a
+Contract N profile", and activation re-checks it. The list marks the channel-active version from
 the independently fetched `latest.json` pointer, the
 currently selected version, and entries incompatible with the current OS,
 architecture, or app-version range. The status bar always shows the active
@@ -37,9 +44,9 @@ records the newly leased identity without silently switching.
 
 ## Resolution and trust chain
 
-1. Fetch `{base}/{channel}/processing-core/index.json` over HTTPS with a
+1. Fetch `{base}/{channel}/<line registry dir>/index.json` over HTTPS with a
    20-second timeout and parse the schema-v1 history index defensively.
-2. Fetch and validate `{base}/{channel}/processing-core/latest.json`
+2. Fetch and validate `{base}/{channel}/<line registry dir>/latest.json`
    independently. Its manifest version is the sole channel-active pointer;
    `index.active_version` is advisory and a disagreement produces a partial-
    publication warning rather than leading the selector.

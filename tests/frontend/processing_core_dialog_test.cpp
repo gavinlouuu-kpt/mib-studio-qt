@@ -6,7 +6,10 @@
 #include "support/tempdir.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QLabel>
+#include <QSettings>
+#include <QStandardPaths>
 
 #include <cstdio>
 
@@ -41,6 +44,10 @@ int main(int argc, char* argv[]) {
 #endif
     stage("creating QApplication");
     QApplication app(argc, argv);
+    // The core-line selector persists to QSettings; keep it out of the
+    // developer's real settings.
+    QStandardPaths::setTestModeEnabled(true);
+    QSettings().remove(QStringLiteral("ProcessingCore/Line"));
     stage("QApplication ready");
     mib::test::TempDir dataRoot("processing_core_dialog");
     backend::AppBackend backend;
@@ -73,5 +80,30 @@ int main(int argc, char* argv[]) {
                "dialog renders the local active-core identity before registry success");
     MIB_EXPECT(renderedRegistryFailure,
                "registry failure remains visible alongside the local active core");
+
+    // ADR 0007: the dialog offers both core lines and names the active one.
+    bool renderedLine = false;
+    for (const auto* label : labels) {
+        renderedLine = renderedLine || label->text().contains(QStringLiteral("subtract-ring"));
+    }
+    MIB_EXPECT(renderedLine, "active-core label names the bundled core's line");
+    QComboBox* lineBox = nullptr;
+    for (auto* box : dialog.findChildren<QComboBox*>()) {
+        if (box->findData(QStringLiteral("absdiff-laplacian")) >= 0) lineBox = box;
+    }
+    MIB_REQUIRE(lineBox != nullptr, "dialog has a core-line selector");
+    MIB_EXPECT(lineBox->count() == 2 &&
+                   lineBox->currentData().toString() == QStringLiteral("subtract-ring"),
+               "both core lines offered; subtract-ring by default");
+    lineBox->setCurrentIndex(lineBox->findData(QStringLiteral("absdiff-laplacian")));
+    MIB_EXPECT(QSettings().value(QStringLiteral("ProcessingCore/Line")).toString() ==
+                   QStringLiteral("absdiff-laplacian"),
+               "selected core line is persisted");
+    bool reloadedWithFailure = false;
+    for (const auto* label : dialog.findChildren<QLabel*>(QString(), Qt::FindDirectChildrenOnly)) {
+        reloadedWithFailure = reloadedWithFailure || label->text().contains(QStringLiteral("must use HTTPS"));
+    }
+    MIB_EXPECT(reloadedWithFailure, "switching line reloads that line's registry");
+    QSettings().remove(QStringLiteral("ProcessingCore/Line"));
     return mib::test::exitCode();
 }
