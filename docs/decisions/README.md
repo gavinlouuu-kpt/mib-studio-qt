@@ -39,6 +39,7 @@ What becomes easier/harder; what future agents must respect.
 | [0009](0009-dot-grid-design-registry.md) | Dot-grid design registry: the seed is the design identity | accepted |
 | [0010](0010-dot-grid-codec-cores.md) | Dot-grid encoder and decoder as versioned, swappable codec cores | accepted |
 | [0011](0011-yofo-studio-pz7035-instrument.md) | YOFO Studio for the PZ7035: science in the PL, one trunk, contracts shared with the PL | accepted |
+| [0013](0013-motion-stage-device-class.md) | Motorized stages are a separate device class behind `IMotionStage` | proposed |
 
 Decisions made before this index existed live implicitly in
 [`../architecture/`](../architecture/) and the vault

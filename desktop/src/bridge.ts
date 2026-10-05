@@ -170,7 +170,7 @@ export interface CameraDiscovery {
   framegrabbers: DiscoveredFramegrabber[];
 }
 
-/** Central profile registry (bridge schema v24, #398). Integers are contract
+/** Central profile registry (bridge schema v25, #398). Integers are contract
  *  values: `session` REGISTRY_SESSION_STATES, `connectivity`
  *  REGISTRY_CONNECTIVITY, job `kind`/`state` REGISTRY_JOB_KINDS /
  *  REGISTRY_JOB_STATES, `central_state` REGISTRY_CENTRAL_STATES. u64 values
@@ -448,6 +448,57 @@ export interface PlatformInfo {
   science: "host" | "pl";
   host_processing: boolean;
   aravis: boolean;
+  /** Which surfaces exist on this instrument (#501). Absent from older servers. */
+  capabilities?: PlatformCapabilities;
+}
+
+/** #501: the backend says what the instrument has; the UI hides the rest. */
+export interface PlatformCapabilities {
+  instrument: "desktop" | "pz7035";
+  autofocus: boolean;
+  trigger: boolean;
+  host_background: boolean;
+  frame_buffer: boolean;
+  reanalysis: boolean;
+  core_updates: boolean;
+  egrabber_script: boolean;
+  pl_identity: boolean;
+  led_strobe: boolean;
+  align_mode: boolean;
+  run_mode: boolean;
+  /** The instrument's pumps: one RS485 port, a Modbus address per slot. */
+  pump: null | { model: string; port: string; sample_address: number; sheath_address: number; microliters_per_rev: number };
+}
+
+export type IdMatch = "match" | "mismatch" | "unknown";
+
+/** PZ7035 identity and health (#501, `fetch_instrument_status`). Read-only. */
+export interface InstrumentStatus {
+  available: boolean;
+  error?: string;
+  pinned_profile_id?: string;
+  core?: {
+    build_id: string;
+    profile_id: string;
+    abi_version: number;
+    science_profile: number;
+    profile_version: number;
+    expected: null | { build_id: string; profile_id: string; commit: string; image: string; abi_major: number; abi_minor: number };
+    pinned_profile_id: string;
+    build_match: IdMatch;
+    profile_match: IdMatch;
+  };
+  led?: { on: boolean; preset: "run" | "align" | "custom" | "off"; delay_us: number; width_us: number; guard_fault: boolean; guard_trips: number };
+  link?: {
+    rates_valid: boolean;
+    ingress_errors_per_s: number;
+    resyncs_per_s: number;
+    bad_frames_per_s: number;
+    dropped_per_s: number;
+    ingress_errors_warn_per_s: number;
+    resyncs_warn_per_s: number;
+  };
+  latency?: { last_us: number; max_us: number; over_budget: number; frames: number };
 }
 
 /** Camera & Alignment geometry (ABI 20, `fetch_camera_geometry`). Sensor coordinates. */
@@ -632,6 +683,7 @@ export const bridge = {
   saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
   fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
+  fetchInstrumentStatus: () => invoke<InstrumentStatus>("fetch_instrument_status"),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),
@@ -657,7 +709,7 @@ export const bridge = {
       },
       opts,
     ),
-  // Central profile registry (bridge schema v24, #398). Commands return a job
+  // Central profile registry (bridge schema v25, #398). Commands return a job
   // ID as a decimal string; "0" means refused (not configured / not ready).
   registrySignIn: (email: string, password: string) =>
     invoke<string>("registry_sign_in", { email, password }),

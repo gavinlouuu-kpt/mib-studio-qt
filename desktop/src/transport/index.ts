@@ -11,10 +11,10 @@ export type {Transport} from "./Transport";
 function select(): Transport {
   const forced = import.meta.env.VITE_MIB_TRANSPORT as string | undefined;
   if (forced === "tauri") return tauriTransport;
-  if (forced === "ws") return createWsTransport(wsUrlFromLocation());
+  if (forced === "ws") return createWsTransport(() => wsUrlFromLocation());
   const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   if (inTauri || import.meta.env.MODE === "test") return tauriTransport;
-  return createWsTransport(wsUrlFromLocation());
+  return createWsTransport(() => wsUrlFromLocation());
 }
 
 export const transport: Transport = select();

@@ -89,7 +89,7 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `discovery_identity_strengths`, `discovery_identification_statuses`,
   `discovery_error_kinds`. Windows `cargo test` against the `windows-ninja`
   tree uses `tools/gen_bridge_link_manifest_ninja.py`.
-- **Central profile registry (v24, #398):** `registry_sign_in(email,
+- **Central profile registry (v25, #398):** `registry_sign_in(email,
   password)`, `registry_sign_out()`, `registry_refresh()`,
   `registry_download(revision_id)` → job ID (0 = refused),
   `registry_cancel_all()`, `fetch_registry_snapshot()` →
@@ -106,7 +106,7 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `BridgeRegistryValidationRequest { job_id, error }` (the evidence check runs
   before queueing), per-revision `materialized_dir` / `local_validation` /
   `validated_by` / `validated_at_utc`, and snapshot `instrument_id` /
-  `instrument_name` — all part of ABI 24. M3b adds
+  `instrument_name` — all part of ABI 25. M3b adds
   `BridgeRegistryDraft` / `Method` / `HistoryEntry` / `Conflict` in the
   snapshot (`drafts`, `methods`, `history_revision_id` + `history`,
   `submit_conflict`), per-revision `parent_revision_id` / `release_notes` /
@@ -402,7 +402,25 @@ ADR 0011's single renumber. `develop` was at 19 and the instrument line at
 20 (Camera & Alignment), 21 (`fetch_platform_info`) and 22 (pump models). The
 merged contract is all of them, so it takes a number no earlier build has
 carried. It adds no commands of its own. The #398 profile-registry stack
-renumbers to 24 when it lands.
+takes 25 (24 went to #501 P0).
+
+## ABI 24: PZ7035 status and capabilities (#501 P0a, 2026-10-05)
+
+- `fetch_platform_info` gains `capabilities`: instrument (desktop or
+  pz7035), the MIB-only surfaces, `pl_identity`, `led_strobe`, align and run
+  mode, and the pump model, port, per-slot address (Sample 3, Sheath 4) and
+  µL/rev.
+- `fetch_instrument_status` returns the read-only `PzPlatformMonitor` sample:
+  - the PL core against the expected core and the pinned weights;
+  - LED preset and guard;
+  - link rates;
+  - latency.
+
+  `available: false` with the reason off the PZ7035. Test: `contract.rs`
+  `platform_capabilities_and_instrument_status_on_the_desktop`.
+- `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
+  prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
+- 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
 
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function

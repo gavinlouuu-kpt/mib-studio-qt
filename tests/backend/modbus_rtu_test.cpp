@@ -1,9 +1,10 @@
 // modbus_rtu_test
 //
-// Protocol-correctness guard for the syringe pump's Modbus RTU framing
-// (extracted to backend::services::modbus). A wrong CRC, byte order, or frame
-// layout silently breaks every pump command, so this pins them down with
-// known-answer vectors and round-trips.
+// Protocol-correctness guard for the shared Modbus RTU framing
+// (backend::services::modbus) used by the syringe pump, pulse generator and
+// ZC300 stage. A wrong CRC, byte order, or frame layout silently breaks every
+// device command, so this pins them down with known-answer vectors and
+// round-trips.
 //
 // Frames are Qt-free std::vector<uint8_t> (epic #246 backend decoupling), so
 // this test links no Qt.
@@ -142,6 +143,49 @@ int main()
         // Runt frames never index out of bounds.
         MIB_EXPECT(!m::responseCrcValid(Frame(1, 0)), "1-byte frame rejected");
         MIB_EXPECT(!m::extractReadData(Frame{}, 2, out), "empty frame rejected");
+    }
+
+    // 7) FC04 read-input-registers (#464). Known-answer frames are the ZC300
+    //    vendor manual's examples (ZC300-ModbusRTU V1.15, CRCs checked).
+    {
+        const Frame model = m::buildReadInputRequest(0x01, 0x7530, 0x0007); // 30001..7
+        MIB_EXPECT(model == Frame({0x01, 0x04, 0x75, 0x30, 0x00, 0x07, 0xAB, 0xCB}),
+                   "FC04 model read matches the vendor frame 01 04 75 30 00 07 AB CB");
+        const Frame io = m::buildReadInputRequest(0x01, 0x753A, 0x0001); // 30011
+        MIB_EXPECT(io == Frame({0x01, 0x04, 0x75, 0x3A, 0x00, 0x01, 0x0B, 0xCB}),
+                   "FC04 IO-status read matches the vendor frame");
+        MIB_EXPECT(m::buildReadRequest(0x01, 0x7570, 0x0001) ==
+                       Frame({0x01, 0x03, 0x75, 0x70, 0x00, 0x01, 0x9F, 0xDD}),
+                   "FC03 is unchanged by the shared builder (vendor frame)");
+
+        // Length prediction frames FC04 from its byte-count field.
+        MIB_EXPECT(m::expectedFrameLength(Frame{0x01, 0x04}) == -1,
+                   "FC04 needs the byte-count byte before its length is known");
+        MIB_EXPECT(m::expectedFrameLength(Frame{0x01, 0x04, 0x0E}) == 19,
+                   "FC04 length = 5 + byteCount");
+        MIB_EXPECT(m::expectedFrameLength(Frame{0x01, 0x84}) == 5,
+                   "FC04 exception frame is 5 bytes");
+
+        // Vendor model reply: "ZC300-3S257RIC" (7 registers).
+        const Frame reply{0x01, 0x04, 0x0E, 0x5A, 0x43, 0x33, 0x30, 0x30, 0x2D, 0x33,
+                          0x53, 0x32, 0x35, 0x37, 0x52, 0x49, 0x43, 0x07, 0x42};
+        MIB_EXPECT(m::classifyResponse(model, reply) == m::ResponseVerdict::Ok,
+                   "FC04 reply to an FC04 request correlates");
+        Frame out;
+        MIB_REQUIRE(m::extractReadData(reply, 7, out), "FC04 payload extracts");
+        MIB_EXPECT(std::string(out.begin(), out.end()) == "ZC300-3S257RIC",
+                   "FC04 payload is the model string");
+
+        // Wrong count, wrong function, and the vendor FC04 exception example.
+        MIB_EXPECT(m::classifyResponse(io, reply) == m::ResponseVerdict::Malformed,
+                   "FC04 reply with the wrong register count is Malformed");
+        const Frame holdingShaped = makeReadResponse(0x01, 0x03, Frame(14, 0x00));
+        MIB_EXPECT(m::classifyResponse(model, holdingShaped) ==
+                       m::ResponseVerdict::WrongFunction,
+                   "an FC03 answer to an FC04 request is WrongFunction");
+        const Frame exception{0x01, 0x84, 0x02, 0xC2, 0xC1}; // illegal data address
+        MIB_EXPECT(m::classifyResponse(model, exception) == m::ResponseVerdict::Exception,
+                   "FC04 exception (0x84) correlates as Exception");
     }
 
     if (mib::test::exitCode() == 0) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { bridge, type AutofocusConfig, type AutofocusStatus, type PumpStatus, type CmdResult } from '../bridge';
+import { bridge, type AutofocusConfig, type AutofocusStatus, type PumpStatus, type CmdResult, type PlatformCapabilities } from '../bridge';
+import { DESKTOP_CAPABILITIES } from '../platformCapabilities';
 import { DEFAULT_MODE, type OperatingMode } from '../commissioning';
 import { HardwareCommandOwner, hardwareGate, numericInput, validateFocusConfig } from './hardwareControlModel';
 import { PUMP_MODELS } from '../bridgeContract';
@@ -8,7 +9,7 @@ import {StartupDiscoveryControls} from './StartupDiscoveryControls';
 import {EndpointDiscovery} from './EndpointDiscovery';
 import {PulseGeneratorControls} from './PulseGeneratorControls';
 
-type Props = { ready: boolean; experimentActive: boolean; append: (message: string) => void; mode?: OperatingMode; armed?: boolean; onDisarm: () => void; onSelectionChanged?: () => void };
+type Props = { ready: boolean; experimentActive: boolean; append: (message: string) => void; mode?: OperatingMode; armed?: boolean; onDisarm: () => void; onSelectionChanged?: () => void; capabilities?: PlatformCapabilities };
 type Connection = { port: string; baud: string; address: string };
 const initialConnection = (): Connection => ({port: '', baud: '115200', address: '1'});
 // 0.4 rpm delivers 10 µL/min on the instrument tubing until a measured calibration replaces it.
@@ -30,20 +31,34 @@ function connectionArgs(value: Connection, addressMax: number, addressMin = 1): 
   return [numericInput(value.port, 'COM port', 1, 65535, true), numericInput(value.baud, 'Baud rate', 1, 4000000, true), numericInput(value.address, 'Address', addressMin, addressMax, true)];
 }
 
-export function HardwareControls({ready, experimentActive, append, mode = DEFAULT_MODE, armed = false, onDisarm, onSelectionChanged}: Props) {
+export function HardwareControls({ready, experimentActive, append, mode = DEFAULT_MODE, armed = false, onDisarm, onSelectionChanged, capabilities = DESKTOP_CAPABILITIES}: Props) {
+  // #501: on the PZ7035 the pump is the instrument's peristaltic pump and there is no
+  // nanopositioner or host pulse generator.
+  const instrumentPump = capabilities.pump;
+  const slotAddress = (slot: number) => instrumentPump ? (slot === 0 ? instrumentPump.sample_address : instrumentPump.sheath_address) : 1;
+  const pumpConnection = (slot: number): Connection => instrumentPump ? {port: instrumentPump.port, baud: '115200', address: String(slotAddress(slot))} : initialConnection();
+  const pumpModel = instrumentPump ? PUMP_MODELS.TushuiPeristaltic : PUMP_MODELS.DlspSyringe;
+  const pumpCalibration = instrumentPump ? String(instrumentPump.microliters_per_rev) : DEFAULT_MICROLITERS_PER_REV;
   const [pumps, setPumps] = useState<Array<PumpStatus | null>>([null, null]);
   const [focusBackend, setFocusBackend] = useState('coremor');
   const [focusEndpoint, setFocusEndpoint] = useState('');
   const [focus, setFocus] = useState<AutofocusStatus | null>(null);
   const [config, setConfig] = useState<AutofocusConfig | null>(null);
-  const [connections, setConnections] = useState([initialConnection(), initialConnection(), initialConnection()]);
+  const [connections, setConnections] = useState([pumpConnection(0), pumpConnection(1), initialConnection()]);
   const [rates, setRates] = useState(['', '']);
   const [units, setUnits] = useState([100, 100]);
   const [directions, setDirections] = useState([0, 0]);
   const [volumes, setVolumes] = useState(['', '']);
   const [volumeUnits, setVolumeUnits] = useState([100, 100]);
-  const [models, setModels] = useState<number[]>([PUMP_MODELS.DlspSyringe, PUMP_MODELS.DlspSyringe]);
-  const [calibrations, setCalibrations] = useState([DEFAULT_MICROLITERS_PER_REV, DEFAULT_MICROLITERS_PER_REV]);
+  const [models, setModels] = useState<number[]>([pumpModel, pumpModel]);
+  const [calibrations, setCalibrations] = useState([pumpCalibration, pumpCalibration]);
+  // The capability report arrives after mount: adopt the instrument's pump once.
+  useEffect(() => {
+    if (!instrumentPump) return;
+    setModels(old => old.map(() => PUMP_MODELS.TushuiPeristaltic));
+    setCalibrations(old => old.map(() => String(instrumentPump.microliters_per_rev)));
+    setConnections(old => old.map((c, i) => i < 2 ? pumpConnection(i) : c));
+  }, [instrumentPump?.port, instrumentPump?.sample_address, instrumentPump?.sheath_address, instrumentPump?.microliters_per_rev]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [statusError, setStatusError] = useState('');
@@ -57,12 +72,12 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
     try {
       const [sample, sheath, autofocus] = await Promise.all([bridge.fetchPumpStatus(0), bridge.fetchPumpStatus(1), bridge.fetchAutofocusStatus()]);
       if (current !== generation.current) return;
-      if (!sample.valid || !sheath.valid || !autofocus.valid) throw new Error('Hardware status is unavailable.');
+      if (!sample.valid || !sheath.valid || (capabilities.autofocus && !autofocus.valid)) throw new Error('Hardware status is unavailable.');
       setPumps([sample, sheath]); setFocus(autofocus); setStatusError('');
     } catch (failure) {
       if (current === generation.current) { setPumps([null, null]); setFocus(null); setStatusError(String(failure)); }
     } finally { polling.current = false; }
-  }, [ready]);
+  }, [ready, capabilities.autofocus]);
   useEffect(() => {
     const current = ++generation.current;
     setPumps([null, null]); setFocus(null); setConfig(null);
@@ -92,11 +107,14 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
   }
   const update = <T,>(setter: (value: T[]) => void, values: T[], index: number, value: T) => setter(values.map((old, i) => i === index ? value : old));
   const unitSelect = (value: number, onChange: (value: number) => void, rate: boolean) => <select value={value} disabled={configureDisabled} onChange={e => onChange(Number(e.target.value))}><option value={100}>{rate ? 'µL/min' : 'µL'}</option><option value={103}>{rate ? 'mL/min' : 'mL'}</option></select>;
-  return <section className="hardware-controls" aria-label="Pump and autofocus controls">
-    <h2>Pumps and autofocus</h2>
-    <StartupDiscoveryControls ready={ready} experimentActive={experimentActive} append={append} onSelectionChanged={onSelectionChanged} />
-    <p>Manual run, purge, enable and jog require Service / Commissioning mode and arming. Stop and disable remain available during experiments.</p>
-    <p>Pumps accept system serial endpoints; devices may share a bus at distinct Modbus addresses. Nanopositioners support CoreMOR and OEABT identities.</p>
+  const autofocus = capabilities.autofocus;
+  return <section className="hardware-controls" aria-label={autofocus ? 'Pump and autofocus controls' : 'Pump controls'}>
+    <h2>{autofocus ? 'Pumps and autofocus' : 'Pumps'}</h2>
+    {autofocus && <StartupDiscoveryControls ready={ready} experimentActive={experimentActive} append={append} onSelectionChanged={onSelectionChanged} />}
+    <p>Manual run and purge{autofocus ? ', enable and jog' : ''} require Service / Commissioning mode and arming. Stop{autofocus ? ' and disable' : ''} remain{autofocus ? '' : 's'} available during experiments.</p>
+    {autofocus
+      ? <p>Pumps accept system serial endpoints; devices may share a bus at distinct Modbus addresses. Nanopositioners support CoreMOR and OEABT identities.</p>
+      : instrumentPump && <p>This instrument's peristaltic pumps share {instrumentPump.port}: Sample at Modbus address {instrumentPump.sample_address}, Sheath at {instrumentPump.sheath_address}.</p>}
     {gate('configure') && <p role="status">{gate('configure')}</p>}
     {error && <p role="alert">{error}</p>}{statusError && <p role="alert">Status unavailable: {statusError}</p>}
     {pumps.map((status, id) => {
@@ -154,7 +172,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
         </div>
       </fieldset>;
     })}
-    <fieldset><legend>Autofocus / nanopositioner</legend>
+    {autofocus && <fieldset><legend>Autofocus / nanopositioner</legend>
       <p>{focus ? `${focus.connected ? 'Connected' : 'Disconnected'} · ${focus.enabled ? 'Enabled' : 'Disabled'} · ${focus.current_voltage} V · ${focus.backend_name ?? ""} ${focus.endpoint_id ?? ""}` : 'Status unknown'}</p>
       {focus && <p>Ring ratio: {focus.average_ring_ratio} average / {focus.median_ring_ratio} median · {focus.last_ring_ratio_update_us === 0 ? 'No focus sample received' : `Sample age ${(focus.ring_ratio_age_us / 1000).toFixed(0)} ms${config && focus.ring_ratio_age_us > config.ring_ratio_stale_ms * 1000 ? ' (stale)' : ''}`}</p>}
       <EndpointDiscovery disabled={configureDisabled || !!focus?.connected} request={() => ({kinds: [2], origin: 'tauri-nanopositioner-picker'})} onSelect={device => {
@@ -177,7 +195,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
         {focusFields.map(([key, label]) => <label key={key}>{label}<input type="number" step="any" disabled={configureDisabled || !focus || focus.enabled} value={Number.isNaN(Number(config[key])) ? '' : Number(config[key])} onChange={e => setConfig({...config, [key]: e.target.value.trim() === '' ? NaN : Number(e.target.value)})} /></label>)}
         {(['require_new_sample_per_step', 'focus_direction'] as const).map(key => <label key={key}><input type="checkbox" disabled={configureDisabled || !focus || focus.enabled} checked={config[key]} onChange={e => setConfig({...config, [key]: e.target.checked})} />{key === 'focus_direction' ? 'Positive focus direction' : 'Require new sample per step'}</label>)}
       </div><button disabled={configureDisabled || !focus || focus.enabled} onClick={() => void run('Apply autofocus configuration', 'configure', !!focus?.connected, () => { validateFocusConfig(config); return bridge.autofocusSetConfig(config); })}>Apply autofocus configuration</button><p>Applies to the running backend; persistence across restarts is not provided by this command.</p></details>}
-    </fieldset>
-    <PulseGeneratorControls ready={ready} experimentActive={experimentActive} mode={mode} armed={armed} onDisarm={onDisarm} append={append} />
+    </fieldset>}
+    {capabilities.trigger && <PulseGeneratorControls ready={ready} experimentActive={experimentActive} mode={mode} armed={armed} onDisarm={onDisarm} append={append} />}
   </section>;
 }

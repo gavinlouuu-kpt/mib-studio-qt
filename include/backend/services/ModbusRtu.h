@@ -17,6 +17,7 @@ using Frame = std::vector<uint8_t>;
 
 // Standard Modbus function codes.
 inline constexpr uint8_t kFuncReadHolding = 0x03;
+inline constexpr uint8_t kFuncReadInput = 0x04;
 inline constexpr uint8_t kFuncWriteSingle = 0x06;
 inline constexpr uint8_t kFuncWriteMultiple = 0x10;
 
@@ -66,12 +67,12 @@ inline float registersToFloat(const uint8_t* data)
     return value;
 }
 
-// FC03 read-holding-registers request: [addr|0x03|startReg(BE)|count(BE)|crc(LE)]
-inline Frame buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count)
+// FC03/FC04 read request: [addr|func|startReg(BE)|count(BE)|crc(LE)]
+inline Frame buildReadRequestFor(uint8_t addr, uint8_t func, uint16_t startReg, uint16_t count)
 {
     Frame frame{
         addr,
-        kFuncReadHolding,
+        func,
         static_cast<uint8_t>((startReg >> 8) & 0xFF),
         static_cast<uint8_t>(startReg & 0xFF),
         static_cast<uint8_t>((count >> 8) & 0xFF),
@@ -79,6 +80,19 @@ inline Frame buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count)
     };
     appendCrc(frame);
     return frame;
+}
+
+// FC03 read-holding-registers request.
+inline Frame buildReadRequest(uint8_t addr, uint16_t startReg, uint16_t count)
+{
+    return buildReadRequestFor(addr, kFuncReadHolding, startReg, count);
+}
+
+// FC04 read-input-registers request (read-only device state, e.g. the ZC300
+// motion controller's identity/status block). Same layout as FC03.
+inline Frame buildReadInputRequest(uint8_t addr, uint16_t startReg, uint16_t count)
+{
+    return buildReadRequestFor(addr, kFuncReadInput, startReg, count);
 }
 
 // FC06 write-single-register request: [addr|0x06|reg(BE)|value(BE)|crc(LE)]
@@ -137,7 +151,7 @@ inline bool isExceptionFrame(const Frame& resp)
     return resp.size() >= 2 && (resp[1] & 0x80) != 0;
 }
 
-// Validates a read-holding response and extracts the `count` registers' bytes.
+// Validates an FC03/FC04 read response and extracts the `count` registers' bytes.
 // Returns false (out cleared) unless the frame is exactly
 // addr+func+byteCount+data+crc long AND the device's byteCount field equals
 // count*2 — so callers never index past a short/truncated/garbled frame.
@@ -153,7 +167,7 @@ inline bool extractReadData(const Frame& resp, uint16_t count, Frame& out)
 }
 
 // Expected total length of a response frame once its header bytes are in,
-// derived from the function code (and, for FC03, the byte-count field):
+// derived from the function code (and, for FC03/FC04, the byte-count field):
 //  -1  -> need more bytes before the length is known
 //  -2  -> unknown function code, cannot frame the stream
 inline int expectedFrameLength(const Frame& partial)
@@ -163,6 +177,7 @@ inline int expectedFrameLength(const Frame& partial)
     if (func & 0x80) return 5; // exception: addr + func|0x80 + code + crc
     switch (func) {
     case kFuncReadHolding:
+    case kFuncReadInput:
         if (partial.size() < 3) return -1;
         return 5 + partial[2]; // addr+func+byteCount+data+crc
     case kFuncWriteSingle:
@@ -200,7 +215,8 @@ inline ResponseVerdict classifyResponse(const Frame& request, const Frame& respo
     }
     if (respFunc != reqFunc) return ResponseVerdict::WrongFunction;
     switch (reqFunc) {
-    case kFuncReadHolding: {
+    case kFuncReadHolding:
+    case kFuncReadInput: {
         if (request.size() < 6) return ResponseVerdict::Malformed;
         const uint16_t count = static_cast<uint16_t>((request[4] << 8) | request[5]);
         Frame ignored;

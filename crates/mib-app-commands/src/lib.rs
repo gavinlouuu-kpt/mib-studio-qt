@@ -1278,6 +1278,12 @@ pub fn fetch_platform_info(state: &AppState) -> Result<serde_json::Value, String
     serde_json::from_str(&guard.pin_mut().fetch_platform_info()).map_err(|e| e.to_string())
 }
 
+/// PZ7035 identity and health for preflight (#501); `available: false` elsewhere.
+pub fn fetch_instrument_status(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_instrument_status()).map_err(|e| e.to_string())
+}
+
 /// Mode, sensor size, saved window, window steps and the camera's last read-back.
 pub fn fetch_camera_geometry(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
