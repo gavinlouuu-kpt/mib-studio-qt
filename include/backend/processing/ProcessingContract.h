@@ -24,6 +24,13 @@ namespace backend::processing::contract {
 // 2 for Contract v2; they are matched by equality, never ordering.
 inline constexpr int kProcessingContractVersionV1 = 1;
 inline constexpr int kProcessingContractVersionV2 = 2;
+// Contract 3 (core line `unet-cells`): U-Net foreground masks, one object per
+// top-level 8-connected component, size gate on its pixel count (smaller
+// components are blemishes), outer contour, 1 px cut-off rule, brightness mean
+// and variance, per-cell Laplacian variance. The same rules as the PZ7035 PL
+// cell stage (profile unet_cells_v2). Not yet served by any shipped core, so it
+// is not a supported runtime contract.
+inline constexpr int kProcessingContractVersionV3 = 3;
 inline constexpr int kConfigSchemaVersionV1 = 1;
 inline constexpr int kConfigSchemaVersionV2 = 2;
 
@@ -38,23 +45,31 @@ inline constexpr char kLegacyBgSubtractThresholdKey[] = "bg_subtract_threshold";
 inline constexpr bool isSupportedProcessingContract(int contract) noexcept {
     return contract == kProcessingContractVersionV1 || contract == kProcessingContractVersionV2;
 }
+// The predicates below match contracts by equality, so a new contract inherits
+// nothing by accident.
+//
 // Contract 2 compares against the background with cv::absdiff; Contract 1 keeps
 // saturating cv::subtract. Every difference site must route through this.
+// Contract 3 masks come from the U-Net, not from a background difference.
 inline constexpr bool contractUsesAbsoluteDifference(int contract) noexcept {
-    return contract >= kProcessingContractVersionV2;
+    return contract == kProcessingContractVersionV2;
 }
-// Ring width is a Contract-1 metric only: under Contract 2 it is NaN and its
-// gate is ignored.
+// Ring width is a Contract-1 metric only: under Contracts 2 and 3 it is NaN and
+// its gate is ignored.
 inline constexpr bool contractHasRingWidth(int contract) noexcept {
-    return contract < kProcessingContractVersionV2;
+    return contract == kProcessingContractVersionV1;
 }
 // Contract 1 segments the bright defocus halo, so the object is the inner
 // contour (the hole in the ring) and `require_single_inner_contour` gates on
 // it. Contract 2 (absdiff) segments the whole cell as one blob with no halo,
 // so the object is always the top-level contour; the inner-contour rule does
-// not apply and is ignored.
+// not apply and is ignored. Contract 3 objects are top-level components too.
 inline constexpr bool contractObjectsAreInnerContours(int contract) noexcept {
-    return contract < kProcessingContractVersionV2;
+    return contract == kProcessingContractVersionV1;
+}
+// Contract 3 object rules (see kProcessingContractVersionV3).
+inline constexpr bool contractObjectsAreUnetCells(int contract) noexcept {
+    return contract == kProcessingContractVersionV3;
 }
 
 enum class SchemaCompatibility {

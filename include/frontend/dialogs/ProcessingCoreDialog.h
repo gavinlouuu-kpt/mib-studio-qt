@@ -30,6 +30,11 @@ private slots:
 
 private:
     int selectedVersionIndex() const;
+    // ADR 0007 core line whose registry the dialog shows.
+    const processingcorecatalog::CoreLine& selectedLine() const;
+    // Contract the current profile requires; only cores of that contract are
+    // offered (a core of another contract would refuse the profile).
+    int profileContractVersion() const;
     void loadCanonicalActive(const QString& channel);
     void updateActiveCoreLabel();
     void populate();
@@ -42,6 +47,7 @@ private:
     backend::AppBackend& backend_;
     QNetworkAccessManager* network_{nullptr};
     QComboBox* channelBox_{nullptr};
+    QComboBox* lineBox_{nullptr};
     QListWidget* versions_{nullptr};
     QLabel* activeLabel_{nullptr};
     QLabel* statusLabel_{nullptr};

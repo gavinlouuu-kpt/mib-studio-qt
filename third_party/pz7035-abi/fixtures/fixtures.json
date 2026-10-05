@@ -1,0 +1,329 @@
+{
+ "abi_major": 1,
+ "abi_minor": 2,
+ "fixtures": [
+  {
+   "name": "frame_valid",
+   "file": "frame_valid.bin",
+   "bytes": 64,
+   "sha256": "c5197e5d55ec7fbade1eccbf25d82434f88facb7c1736d1b67b68d9003109f03",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "FRAME",
+    "sequence": 1,
+    "frame_id": 1152921504606847018,
+    "epoch": 3,
+    "result_count": 2
+   }
+  },
+  {
+   "name": "result_with_payload",
+   "file": "result_with_payload.bin",
+   "bytes": 72,
+   "sha256": "b516f7568941e2b60161fd93d5356e2153a94f7ec44ffddd28c947ae9e7e1a8f",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "RESULT",
+    "sequence": 2,
+    "result_index": 0,
+    "payload": [
+     286331153,
+     572662306,
+     858993459,
+     1145324612,
+     1431655765
+    ],
+    "target": true,
+    "length": 72
+   }
+  },
+  {
+   "name": "result_envelope_only",
+   "file": "result_envelope_only.bin",
+   "bytes": 48,
+   "sha256": "34533a7931d0cd164ce02bf2e376c21c0472e2c97b99ea6e3f03af078d689def",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "RESULT",
+    "sequence": 3,
+    "result_index": 1,
+    "payload": [],
+    "target": false
+   }
+  },
+  {
+   "name": "event_issued",
+   "file": "event_issued.bin",
+   "bytes": 56,
+   "sha256": "9c460e62cf41bd17064189e1ad4e2c6f4921642e4b4ca9acc78743644865b43c",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "EVENT",
+    "sequence": 4,
+    "decision": "ISSUED",
+    "latency_ticks": 5940
+   }
+  },
+  {
+   "name": "event_missed_no_output_timestamp",
+   "file": "event_missed_no_output_timestamp.bin",
+   "bytes": 56,
+   "sha256": "63c9f9a237868c158b5e8b457c2ec137a63e70acf85386275f26730adb37453c",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "EVENT",
+    "sequence": 5,
+    "decision": "MISSED",
+    "output_timestamp": null
+   }
+  },
+  {
+   "name": "counters_snapshot",
+   "file": "counters_snapshot.bin",
+   "bytes": 96,
+   "sha256": "11e84367310b632f7f9eeaaeefce4b7351b886184bc3dd73a916798e37f37f50",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "COUNTERS",
+    "sequence": 6,
+    "snapshot_seq": 9,
+    "FRAMES_OBSERVED": 1000,
+    "COMMITS_ACKED": 1015
+   }
+  },
+  {
+   "name": "preview_mono8",
+   "file": "preview_mono8.bin",
+   "bytes": 56,
+   "sha256": "aef18563d8f3e8008f15d8e4abbdf02941df2f7cbcf3d9e0a23a3d5924eaa578",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "PREVIEW",
+    "sequence": 7,
+    "buffer_index": 1,
+    "byte_length": 49152
+   }
+  },
+  {
+   "name": "image_mono8",
+   "file": "image_mono8.bin",
+   "bytes": 56,
+   "sha256": "01e571b5c697f4d287bb9491f7200d8ba89151833c40ebf671d33273a6426ec4",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "IMAGE",
+    "sequence": 13,
+    "byte_offset": 1024,
+    "byte_length": 49152
+   }
+  },
+  {
+   "name": "descriptor_ready",
+   "file": "descriptor_ready.bin",
+   "bytes": 32,
+   "sha256": "ee28155e2a528ffee9e3cb9ebf04c0e8fd8dc2e3276d6253d08b72700deb3c29",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "type": "DESCRIPTOR",
+    "sequence": 8,
+    "buffer_index": 3,
+    "state": "READY",
+    "generation": 2
+   }
+  },
+  {
+   "name": "bad_magic",
+   "file": "bad_magic.bin",
+   "bytes": 64,
+   "sha256": "2467ddd0ee318f3c96bd91a6e08d176fa669d18a35125f489de1c63dab8c1a05",
+   "error": "BAD_MAGIC",
+   "error_code": 1,
+   "expect": {}
+  },
+  {
+   "name": "bad_crc",
+   "file": "bad_crc.bin",
+   "bytes": 64,
+   "sha256": "8a839f281a4286de486b2224bfd8d006f6bde317e1ac1a6fb57f95fdabc60648",
+   "error": "BAD_CRC",
+   "error_code": 3,
+   "expect": {}
+  },
+  {
+   "name": "truncated_short_of_length",
+   "file": "truncated_short_of_length.bin",
+   "bytes": 40,
+   "sha256": "840030480c04174fc86e2d6a77233c6b9d822027f22fa109101de70e8e58492f",
+   "error": "TRUNCATED",
+   "error_code": 6,
+   "expect": {}
+  },
+  {
+   "name": "length_below_minimum",
+   "file": "length_below_minimum.bin",
+   "bytes": 64,
+   "sha256": "89e57367b4c253cde22dcc1146787f04fd484a849aa46d960fa11d78f2349285",
+   "error": "BAD_LENGTH",
+   "error_code": 2,
+   "expect": {}
+  },
+  {
+   "name": "length_not_aligned",
+   "file": "length_not_aligned.bin",
+   "bytes": 64,
+   "sha256": "5fe015c272ecd9302f9bf3bbe2a973ac87e57334656cbbda85d7e9dad3a554cc",
+   "error": "BAD_LENGTH",
+   "error_code": 2,
+   "expect": {}
+  },
+  {
+   "name": "oversized_length",
+   "file": "oversized_length.bin",
+   "bytes": 64,
+   "sha256": "3e4647ecfb065214175a087e470cbbcb2030782a5b7805b6bf198e2f357897e2",
+   "error": "OVERSIZED",
+   "error_code": 7,
+   "expect": {}
+  },
+  {
+   "name": "unknown_type",
+   "file": "unknown_type.bin",
+   "bytes": 64,
+   "sha256": "61f13366d0afb01b69cf3abea611ea9bb087ecfdcc4b0abeab96d5a88db7e3c2",
+   "error": "UNKNOWN_TYPE",
+   "error_code": 4,
+   "expect": {}
+  },
+  {
+   "name": "future_version",
+   "file": "future_version.bin",
+   "bytes": 64,
+   "sha256": "53b211a63102be7051fc4af1da295f650cd11efde5d90db23eb221b9f91dc44a",
+   "error": "BAD_VERSION",
+   "error_code": 5,
+   "expect": {}
+  },
+  {
+   "name": "result_payload_exceeds_length",
+   "file": "result_payload_exceeds_length.bin",
+   "bytes": 72,
+   "sha256": "544c34b121d949d4906c2d58e10e0bd75451745a50478eb69b95c8ad11acf58c",
+   "error": "BAD_LENGTH",
+   "error_code": 2,
+   "expect": {}
+  },
+  {
+   "name": "result_payload_over_limit",
+   "file": "result_payload_over_limit.bin",
+   "bytes": 1016,
+   "sha256": "2625989ee0de6fc7a39d9050b7f104a39f02613d0fe46db67580a791488409dd",
+   "error": "OVERSIZED",
+   "error_code": 7,
+   "expect": {}
+  },
+  {
+   "name": "frame_result_count_over_limit",
+   "file": "frame_result_count_over_limit.bin",
+   "bytes": 64,
+   "sha256": "5b44e2462814807fdbc734732451b8923938a5a96b1b606b7381b4841b107b53",
+   "error": "RESULT_LIMIT",
+   "error_code": 12,
+   "expect": {}
+  },
+  {
+   "name": "descriptor_bad_state",
+   "file": "descriptor_bad_state.bin",
+   "bytes": 32,
+   "sha256": "e5ed3ce10ac3b0e420c9c044da0c282d93805c35f37c26477090ca71accc5aa7",
+   "error": "BAD_STATE",
+   "error_code": 13,
+   "expect": {}
+  },
+  {
+   "name": "stream_duplicate_sequence",
+   "file": "stream_duplicate_sequence.bin",
+   "bytes": 64,
+   "sha256": "6245c85bd30094ddcfeed22cb965260d52fc4ec45de998e6a0f8cf4601695a75",
+   "error": "DUPLICATE_SEQUENCE",
+   "error_code": 8,
+   "expect": {
+    "context": {
+     "last_sequence": 1,
+     "epoch": 3,
+     "generation": 2
+    }
+   }
+  },
+  {
+   "name": "stream_sequence_gap",
+   "file": "stream_sequence_gap.bin",
+   "bytes": 64,
+   "sha256": "dcdf37b33abe5ad94cd560a2353c1d69c5d7267da9b0290ae8115678abcfadca",
+   "error": "SEQUENCE_GAP",
+   "error_code": 9,
+   "expect": {
+    "context": {
+     "last_sequence": 8,
+     "epoch": 3,
+     "generation": 2
+    }
+   }
+  },
+  {
+   "name": "stream_stale_epoch",
+   "file": "stream_stale_epoch.bin",
+   "bytes": 64,
+   "sha256": "8c9eea8fbf2bf9baeeb38b6a8d57da5cc4201cba06dcf49f471c996de6fde820",
+   "error": "STALE_EPOCH",
+   "error_code": 10,
+   "expect": {
+    "context": {
+     "last_sequence": 8,
+     "epoch": 3,
+     "generation": 2
+    }
+   }
+  },
+  {
+   "name": "stream_stale_generation",
+   "file": "stream_stale_generation.bin",
+   "bytes": 32,
+   "sha256": "f93748f3402870b6e1c5546702d119009c8bfd8b38d49b7006a83a8ba6e12085",
+   "error": "STALE_GENERATION",
+   "error_code": 11,
+   "expect": {
+    "context": {
+     "last_sequence": 8,
+     "epoch": 3,
+     "generation": 2
+    }
+   }
+  },
+  {
+   "name": "stream_additive_trailing_bytes_ok",
+   "file": "stream_additive_trailing_bytes_ok.bin",
+   "bytes": 72,
+   "sha256": "ec4851491a73633d928cc295b580ea075a6ffba2aa9208a822e2975cbaf009cc",
+   "error": "OK",
+   "error_code": 0,
+   "expect": {
+    "context": {
+     "last_sequence": 8,
+     "epoch": 3,
+     "generation": 2
+    },
+    "type": "FRAME",
+    "length": 72
+   }
+  }
+ ]
+}

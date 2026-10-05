@@ -1,5 +1,4 @@
-// Central Methods panel (bridge schema v15, issue #398): the React twin of the
-// Qt CentralMethodsDialog. It only enqueues backend registry commands and
+// Central Methods panel (bridge schema v15, issue #398). It only enqueues backend registry commands and
 // renders the worker snapshot (polled while open); the UI never waits on the
 // network. #398 M2b: select a row to materialize it or record a local
 // validation backed by a test-run file (the backend checks the file was
@@ -8,7 +7,7 @@
 // revision exactly through the backend applier. #398 M3b: review actions by
 // role with a required reason, revision details/history, and a Drafts view
 // (new method from the current config, release notes, submit, and the
-// explicit conflict choices) — the same rules as the Qt dialog (registry.ts).
+// explicit conflict choices); the rules live in registry.ts.
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { bridge, type MethodApplyPlan, type RegistryCommand, type RegistrySnapshot } from "./bridge";

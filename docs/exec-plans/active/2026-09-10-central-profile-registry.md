@@ -52,29 +52,34 @@ freeze exact revision identity/content into historical runs.
   member projects (`registry_list_projects`), offline reopen of the last user's cache.
 - [ ] M1: refresh-token persistence in the OS keychain (shell-owned seam) so a
   restart does not require a password; today a restart is CachedOffline until sign-in.
-- [x] M1 (Qt): Settings → Central Methods… dialog over the worker: sign-in/out,
-  refresh, cancel, cached revisions with their separate central states, offline
-  listing; refresh on open; no select/apply.
+- [~] M1 (Qt): a Settings → Central Methods… dialog was built (#475) and dropped
+  unmerged: ADR 0011 makes Qt fixes-only, so the registry UI is React/Tauri only.
+  The shared fake Supabase it introduced (`tests/support/fake_supabase.h`) stays.
 - [x] M1 (bridge + React): `BackendFacade` registry commands/snapshot, bridge ABI
   15 (`registry_*` contract groups, `set_registry_transport` with polled cancel
   handles), Tauri `ureq` HTTPS transport, React Central Methods panel over a pure
-  view model shared in wording with the Qt dialog.
+  pure view model.
 - [x] M2a (backend): instrument identity (UUID + name); worker Materialize and
   RecordValidation jobs; the applied config.json matched to a cached revision by
   canonical config hash; `method.revision` gate (unvalidated → Warn, validated
   here → Pass, revoked/not published → Fail) bound into the readiness
   generation; exact revision, content hash, validation and evidence hash frozen
   into `/run_provenance` (schema v2) with no network lookup.
-- [x] M2b: Apply in Qt (materialize, changed-key confirmation, backup, exact
-  bytes through `AppConfigWatcher`) and "Mark validated" in Qt and React
-  (evidence must be a run of that revision on this instrument/context); bridge
+- [x] M2b: "Mark validated" in React (evidence must be a run of that revision
+  on this instrument/context) and Materialize; bridge
   `registry_materialize` / `registry_record_validation` /
   `registry_local_validation`. The readiness panels list `method.revision` like
-  any gate.
+  any gate. A Qt Apply (exact bytes through `AppConfigWatcher`, with a backup)
+  was built and dropped with the Qt UI (ADR 0011).
 - [x] M2c: Apply in the React shell through the backend config.json applier
   (`app::applyConfigDocument`: the watcher's section semantics, staged and
   fail-closed, exact text recorded; dot_grid / display_fps reported as Qt-only;
   refused while a run is in flight).
+- [ ] M2c: reconcile `app::applyConfigDocument` with develop's local-profile
+  apply (`app/ProfileStore.cpp`, arrived with #450): it also refuses while
+  capture/realtime/autofocus run, bounds every value, validates the ROI against a
+  captured frame and applies `realtime_processing.enabled` / `drop_frames`;
+  share one validated applier, keeping exact-text recording for central methods.
 - [ ] M2c: persist the applied method across Tauri restarts (today it lives in
   the backend for the session; the Qt shell persists through config.json).
 - [ ] M2: compatibility validator against declared hardware compatibility and
@@ -87,9 +92,10 @@ freeze exact revision identity/content into historical runs.
   with a pre-submit base-vs-head check that stops with a compared conflict and an
   explicit branch option; independent review / publish / archive / revoke with
   reasons; history; update-available helper. `profiles.registry_authoring`.
-- [x] M3b: authoring/review UI in Qt (Drafts tab, review actions by role with
-  reasons, details/history, "rN available") and React (same rules in
-  `registry.ts`), bridge authoring functions inside unreleased ABI 15.
+- [x] M3b: authoring/review UI in React (Drafts view, review actions by role
+  with reasons, details/history, "rN available"; rules in `registry.ts`), bridge
+  authoring functions inside the unreleased registry ABI. The Qt version was
+  dropped (ADR 0011).
 - [ ] M3: template drafts (a new method from a bundled template), a per-key
   draft editor beyond "current config.json", and release-note display in a
   method picker / context bar (#312).
@@ -171,6 +177,15 @@ freeze exact revision identity/content into historical runs.
   function names stay). ADR 0011 also limits Qt to fixes until #450 reaches parity,
   which bears on the Qt-only parts of #479 (Apply) and #482 (authoring UI); owner's
   call.
+- 2026-10-05 (restack): merge coordination decided to drop the Qt parts. #475 (Qt
+  dialog) closes unmerged; #477 is based directly on `develop` (bridge ABI 19 after
+  #450) by merging `develop` in (published branches are never rebased), and the Qt
+  dialog, Qt Apply and Qt authoring UI were removed from #477/#479/#482; the
+  fake Supabase test support stays. Until the stack lands, ABI conflicts resolve
+  to the highest number (the registry rides 19). The stack lands after
+  `feat/yofo-remote-server` and `feat/yofo-pl-results`; then one bump to 23 (never
+  reusing 15 or 19-22; 24 with a note if 23 is taken) relabels the registry
+  surface, whose "v15" comments are stale until then.
 
 ## Validation
 

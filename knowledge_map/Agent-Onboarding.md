@@ -33,7 +33,6 @@ Jump to the notes that match your task:
 | Post-experiment review | [[frontend/HdfReviewTab]] |
 | Live charts during a run | [[frontend/ExperimentMonitoringTab]] |
 | Processing-core versions / native hot-swap | [[frontend/ProcessingCoreDialog]] + [[services/ProcessingService]] |
-| Central method registry (#398) | [[frontend/CentralMethodsDialog]] + [[services/ProfileRegistryService]] |
 | Autofocus / nanopositioner | [[services/AutofocusService]] + [[frontend/NanopositionerTab]] |
 | Where on the wafer / which chip the camera sees (dot-grid fiducials) | [[services/DotGridService]] + [[frontend/OverviewTab]] (Wafer Grid toggle + overlay, Overview only) + [[task/2026-09-17-dot-grid-localization]] |
 | Device discovery (camera / nanopositioner / pulse-generator scans, startup auto-select) | [[services/DeviceDiscoveryService]] + [[frontend/System-Utilities]] (`DeviceInitManager`) + [[task/2026-09-15-device-discovery-service]] |

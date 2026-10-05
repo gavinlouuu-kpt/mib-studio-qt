@@ -57,6 +57,13 @@
   versioning / migration / compatibility boundary is
   `backend::processing::contract` (issue V2-1); later slices add the shared
   absdiff path, the object metric, ABI v2, and persistence migration.
+- **Processing Contract 3 (`unet-cells`)** — the U-Net cell science shared with
+  the PZ7035 PL cell stage: objects are top-level mask components, a size gate
+  in pixels (`min_cell_area_px`) splits cells from **blemishes** (small
+  components, counted per frame, never objects), a 1 px cut-off rule, and
+  brightness as mean and variance instead of quartiles. Defined in
+  `science::filterUnetCellObjects`; not yet served by a shipped core. See
+  `docs/architecture/processing-contract-compatibility.md`.
 - **`difference_threshold`** — the canonical Contract-v2 config key for the
   background-difference binarization threshold. Replaces the v1
   `bg_subtract_threshold`, which is accepted only through the v1→v2 migration /
@@ -72,7 +79,11 @@
   the canonical core/contract version, hash-qualified Python wheels, optional
   signed native plugins, profile catalog, and emodulus LUT as one reproducible
   set. The generated PEP 503 page supports baked `mib-processing==<version>`
-  dependencies. See `docs/portable-processing-sync.md`.
+  dependencies. There is one registry per **core line** (ADR 0007):
+  `subtract-ring` (Contract 1, with the wheel) at `processing-core/`, and
+  `absdiff-laplacian` (Contract 2, native cores only) at
+  `processing-core-absdiff-laplacian/` (`--line`). See
+  `docs/portable-processing-sync.md`.
 - **Processing core active version** — the full manifest named by both
   `latest.json` and `index.json.active_version`. Publishing or rolling back a
   channel changes these mutable pointers; it never rewrites immutable version

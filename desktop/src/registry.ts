@@ -1,8 +1,7 @@
 // Central profile registry view model (bridge schema v15, issue #398).
 //
 // Pure projection of the backend registry snapshot onto what the Central
-// Methods panel renders. It mirrors the Qt CentralMethodsDialog wording and
-// enablement rules so both shells present the same backend truth: each
+// Methods panel renders, so the panel presents the backend truth: each
 // central state is shown as itself (never collapsed into "ready"), central
 // state is never presented as local validation. #398 M2b adds per-revision
 // local validation on this instrument and the selected-row actions
@@ -167,7 +166,7 @@ export function actionsFor(view: RegistryView, s: RegistrySnapshot | null, revis
   };
 }
 
-/** Confirmation text for an Apply preview (#398 M2c), mirroring the Qt dialog. */
+/** Confirmation text for an Apply preview (#398 M2c). */
 export function applyConfirmText(plan: MethodApplyPlan): string {
   if (!plan.ok) return `Cannot apply: ${plan.error}`;
   const shown = plan.changed_keys.slice(0, 25).map((k) => `  • ${k}`);
@@ -270,7 +269,7 @@ export function changed(prev: RegistrySnapshot | null, next: RegistrySnapshot): 
   return local(prev) !== local(next);
 }
 
-// ---- #398 M3b authoring: the same role and conflict rules as the Qt dialog ----
+// ---- #398 M3b authoring: role and conflict rules ----
 
 /** UI enablement only; the server enforces roles. */
 export function hasRole(s: RegistrySnapshot, projectId: string, role: string): boolean {

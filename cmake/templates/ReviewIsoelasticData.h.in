@@ -1,0 +1,9 @@
+#pragma once
+#include <string>
+
+@MIB_REVIEW_ISOELASTIC_DECLARATIONS@
+inline std::string reviewIsoelasticData() {
+    std::string data;
+    data.reserve(@MIB_REVIEW_ISOELASTIC_SIZE@);
+@MIB_REVIEW_ISOELASTIC_APPENDS@    return data;
+}
