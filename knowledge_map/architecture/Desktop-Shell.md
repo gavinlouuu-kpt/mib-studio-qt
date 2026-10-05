@@ -568,6 +568,27 @@ a server without them is the MIB desktop). On the PZ7035:
   prompt or "unreachable". The socket URL is read when it opens, so a typed
   token counts.
 
+## PZ7035 Align and Run (#501 P1, 2026-10-05)
+
+With `capabilities.align_mode` and `run_mode` set, tab changes drive the
+backend's camera modes instead of `set_camera_overview`:
+
+- **Opening a tab switches the mode.** Camera & Alignment means Align: the
+  full sensor, the live camera, LED 0/125 µs. Experiment means Run at the
+  window placed there: 512×96, x on 8 and y on 4 (`snapRunWindow`), LED
+  7/60 µs, the U-Net on.
+- **Placing the window.** Dragging only moves it. The switch to Run applies
+  and saves it.
+- **Run preview.** In Run the live camera is stopped. The Experiment preview
+  polls `fetch_run_preview` every 100 ms (`runPreview.ts`) and draws the PL
+  gray frame with the U-Net mask tinted (toggle) and the listed cells' boxes
+  (valid green, invalid red). A status line shows the frame, listed cells,
+  cells, blemishes and the latency max.
+- **Service mode.** It also sets the backend latch (`set_service_mode`). In
+  it, `InstrumentLedControls` adjusts delay/width (±0.5 µs width steps,
+  clamped to the limits) or restores the preset. The next mode switch
+  restores the preset anyway.
+
 ## Pump model per slot (2026-10-04)
 
 The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:

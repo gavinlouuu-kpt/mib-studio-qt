@@ -85,6 +85,52 @@ It never writes: sensor timing, the command word and the LED belong to the
 single mode owner (P0b). `AppBackend` creates it beside the `pz-devmem`
 provider. Test `processing.pz_platform_monitor` uses fake registers.
 
+## Camera modes and the register writer (#501 P1)
+
+`include/backend/pz/PzInstrumentControl.h` is the one writer of the live
+registers the UI drives. Every access first checks PCFG_DONE and the cell
+image (`S[41]` = `'CEL2'`), and one mutex serialises them all:
+
+- **LED** (`S[0..5]`): written off first (`S[0]=0`), delay and width in
+  `S[10]`-kHz cycles, `S[4]=S[5]=0`, then `S[0]=1` (XVS sync).
+- **Cell path:** `S[46]` together with `P[8]` bit 4. That bit is a level;
+  the other `P[8]` bits are kept.
+- **Latency clear:** a write to `S[47]`.
+- **One-frame cell capture:** arm with `S[36]` and wait for `S[42]` bit 0.
+  `S[43]` is the frame id, `S[44]` = listed / flags / dropped, `S[45]` =
+  cells / blemishes. The window at `0x400E0000` holds gray in words
+  0-12287 and the mask in 12288-13823, then 18 words per cell at
+  `13824+32i` (`{y,x}`, `{h,w}`, `{count,rank,valid}` in words 15-17).
+
+`AppBackend::setInstrumentMode` runs the agreed sequence. The GenTL producer
+applies ROI, timing, `S[9]` and the receiver reset at AcquisitionStart, and
+every capture start reopens it and rewrites rate and exposure, so its mode is
+always re-applied.
+
+| Mode | Producer request | Result | After AcquisitionStart |
+|---|---|---|---|
+| Align | full field, 500 fps, 1899.7 µs | HMAX 116 / VMAX 1280 / SHS 64 | LED 0/125 µs; the camera keeps streaming |
+| Run | 512×96 at (x%8, y%4), 5000 fps, 150.0 µs | 58 / 256 / 64 | producer stopped; cell path on; latency cleared; LED 7/60 µs |
+
+Both modes start the same way: LED off, then cell path off.
+
+**Producer rule (PL owner, 2026-10-05).** The producer's command pulses
+write `P[8]` = mask, then 0. Every AcquisitionStart therefore clears the
+U-Net enable, so the producer never runs while the cell path is on. In Run:
+
+- `start_capture` and the overview switch are refused;
+- the Aravis camera factory vetoes any other start;
+- readiness replaces the live-camera gates (session, delivery mode,
+  geometry, overview, transport loss) with `instrument.mode`, which passes
+  only in Run.
+
+With the cell path on, the grabber window holds the cell capture, so Run
+previews come from `captureCell`, not from the producer.
+
+Test: `backend.instrument_modes`. It covers the write order, no access while
+the PL is blank, the cell path never on while the camera streams, the
+snapped window, the gates, and the Service-mode LED.
+
 ## Execution providers (YOFO S1)
 
 `include/backend/processing/IExecutionProvider.h` is the seam: one

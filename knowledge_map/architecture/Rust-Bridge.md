@@ -387,6 +387,32 @@ renumbers to 24 when it lands.
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
 - 24 is reserved for the #398 profile-registry stack.
 
+## ABI 26: PZ7035 camera modes (#501 P1, 2026-10-05)
+
+- `set_instrument_mode(mode: align|run, x, y)` runs
+  `AppBackend::setInstrumentMode` ([[AppBackend]]).
+- `set_service_mode(on)` sets the backend latch for Service /
+  Commissioning mode.
+- `set_instrument_led(delayUs, widthUs)` sets raw LED values. The backend
+  refuses them:
+  - outside Service mode;
+  - during an experiment;
+  - outside the per-mode limits, which `fetch_platform_info` reports as
+    `capabilities.led_limits`.
+- `fetch_run_preview` returns a binary `MIBC` packet in Run (layout in
+  `bridge-contract.json` and `PzInstrumentControl.h`), else the error
+  `RUN_PREVIEW_UNAVAILABLE`.
+
+The three set commands are CONTROL commands on `yofo-studio-server`. All of
+them are refused while the PL is unconfigured (PCFG_DONE) or is not the
+U-Net cell image. `capabilities.align_mode` and `run_mode` are true when the
+register writer exists. `fetch_instrument_status` adds `mode{name, run_x,
+run_y, service}`. Test: `contract.rs`
+`instrument_mode_commands_off_the_instrument`.
+
+Final numbering from merge coordination: P0 (#502) takes 24, #398 takes 25,
+this takes 26.
+
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
 `bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`
