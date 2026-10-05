@@ -57,6 +57,8 @@
 #include <string>
 #include <utility>
 #include <spdlog/spdlog.h>
+#include <opencv2/core.hpp>
+#include "backend/processing/OpenCvThreads.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
@@ -79,6 +81,28 @@ namespace backend
 {
     namespace
     {
+    // OpenCV's MSVC build parallelises through the Concurrency Runtime: one worker
+    // per logical CPU whose idle workers spin. A per-frame parallel call in the
+    // realtime loop kept ~31 of 32 workers busy on the rig PC and starved the
+    // processing thread (5000 fps experiments fell to ~2900 processed/s).
+    // Processing already spreads frames over its own threads, so OpenCV's inner
+    // parallel_for is off by default (OpenCvThreads.h; processing-core plugins
+    // apply the same setting to their own, statically linked OpenCV).
+    void configureOpenCvThreads()
+    {
+        const auto setting = processing::applyOpenCvThreadsFromEnvironment();
+        if (setting.invalid)
+        {
+            SPDLOG_WARN("AppBackend: ignoring invalid MIB_OPENCV_THREADS='{}'", setting.raw);
+        }
+        if (setting.keepOpenCvDefault)
+        {
+            SPDLOG_INFO("AppBackend: OpenCV threads left at OpenCV default ({})", cv::getNumThreads());
+            return;
+        }
+        SPDLOG_INFO("AppBackend: OpenCV threads set to {} (getNumThreads={})", setting.threads, cv::getNumThreads());
+    }
+
     // Builds the capture-owned MindVision camera for `path`. When the saved
     // profile enables illuminated Live View, the same validated parse the
     // camera uses at start (parseConfig: connection, range and timing rules)
@@ -680,6 +704,7 @@ namespace backend
                         lutInfo.remoteUpdated,
                         lutInfo.usedBundledFallback,
                         lutInfo.manifestUrl);
+            configureOpenCvThreads();
             processingService_->start();
         }
         else

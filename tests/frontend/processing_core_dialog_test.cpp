@@ -45,8 +45,16 @@ int main(int argc, char* argv[]) {
     stage("creating QApplication");
     QApplication app(argc, argv);
     // The core-line selector persists to QSettings; keep it out of the
-    // developer's real settings.
+    // developer's real settings. Test mode does not cover the Windows
+    // registry, and QSettings() without an organization name drops writes
+    // there, so use a named INI file in a temp directory on every platform.
     QStandardPaths::setTestModeEnabled(true);
+    mib::test::TempDir settingsRoot("processing_core_dialog_settings");
+    QCoreApplication::setOrganizationName(QStringLiteral("mib-tests"));
+    QCoreApplication::setApplicationName(QStringLiteral("processing_core_dialog"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       QString::fromStdString(settingsRoot.path().string()));
     QSettings().remove(QStringLiteral("ProcessingCore/Line"));
     stage("QApplication ready");
     mib::test::TempDir dataRoot("processing_core_dialog");

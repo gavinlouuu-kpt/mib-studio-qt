@@ -191,7 +191,15 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // let the wake settle
         service.setPaused(true);
         MIB_EXPECT(service.isPaused() && service.isEnabled(), "paused while enabled");
-        const uint64_t pausedAttempts = service.decodeAttempts();
+        // A decode that passed the enabled check before the pause still counts
+        // (slow under sanitizers): wait until the counter is stable first.
+        uint64_t pausedAttempts = service.decodeAttempts();
+        for (int stable = 0, i = 0; stable < 3 && i < 100; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            const uint64_t now = service.decodeAttempts();
+            stable = now == pausedAttempts ? stable + 1 : 0;
+            pausedAttempts = now;
+        }
         push(*store, frameAt(cb, 47000.0, 33000.0, 21.0, 9), 12500);
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
         MIB_EXPECT(service.decodeAttempts() == pausedAttempts, "no decode while paused");
