@@ -68,9 +68,9 @@ fn abi_version_is_stable() {
     // v23 develop (19) and the instrument line (20-22) as one contract; no
     // new commands (ADR 0011 single renumber, so no release build carries an
     // interim number).
-    // v24 is reserved for the #398 profile-registry stack.
-    // v25 #501 instrument UI P0: fetch_platform_info capabilities and
+    // v24 #501 instrument UI P0: fetch_platform_info capabilities and
     // fetch_instrument_status (PZ7035 PL core, LED, link, latency).
+    // v25 is the #398 profile-registry stack.
     // v26 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
     // fetch_run_preview (PZ7035 Align/Run camera modes).
     assert_eq!(ffi::bridge_abi_version(), 26);

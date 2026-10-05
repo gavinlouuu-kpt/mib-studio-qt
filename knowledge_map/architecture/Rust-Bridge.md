@@ -369,7 +369,7 @@ merged contract is all of them, so it takes a number no earlier build has
 carried. It adds no commands of its own. The #398 profile-registry stack
 renumbers to 24 when it lands.
 
-## ABI 25: PZ7035 status and capabilities (#501 P0a, 2026-10-05)
+## ABI 24: PZ7035 status and capabilities (#501 P0a, 2026-10-05)
 
 - `fetch_platform_info` gains `capabilities`: instrument (desktop or
   pz7035), the MIB-only surfaces, `pl_identity`, `led_strobe`, align and run
@@ -385,7 +385,7 @@ renumbers to 24 when it lands.
   `platform_capabilities_and_instrument_status_on_the_desktop`.
 - `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
-- 24 is reserved for the #398 profile-registry stack.
+- 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
 
 ## ABI 26: PZ7035 camera modes (#501 P1, 2026-10-05)
 
