@@ -146,6 +146,8 @@ const CONTROL_COMMANDS: &[&str] = &[
     "trigger_periodic_stop", "cancel_operation", "review_reanalysis_json", "review_export_json",
     "review_export_csv", "apply_config_document", "profile_command", "processing_core_command",
     "save_preview_buffer", "set_processed_preview_enabled",
+    // PZ7035 (#501 P1): camera modes and the LED drive hardware; service mode unlocks raw LED.
+    "set_instrument_mode", "set_service_mode", "set_instrument_led",
 ];
 
 impl Server {

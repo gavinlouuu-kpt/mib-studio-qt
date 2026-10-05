@@ -2477,6 +2477,50 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
     }.dump();
 }
 
+BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, int x, int y) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    pz::InstrumentMode m = pz::InstrumentMode::Unknown;
+    if (mode == "align") m = pz::InstrumentMode::Align;
+    else if (mode == "run") m = pz::InstrumentMode::Run;
+    else return {false, BackendCommandType::Camera, "camera mode must be align or run"};
+    std::string error;
+    if (!backend_.setInstrumentMode(m, x, y, &error)) {
+        emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, error});
+        return {false, BackendCommandType::Camera, error};
+    }
+    // Align streams the producer's previews; Run stops it (previews come from the PL).
+    emitEvent(makeCameraStatus(m == pz::InstrumentMode::Align ? CameraState::Running : CameraState::Stopped));
+    const auto [rx, ry] = backend_.instrumentRunOffset();
+    return {true, BackendCommandType::Camera,
+            m == pz::InstrumentMode::Align ? std::string("Align: full sensor, LED 0/125 µs")
+                                           : "Run: 512x96 at (" + std::to_string(rx) + ", " + std::to_string(ry) +
+                                                 "), 5 kHz, U-Net on, LED 7/60 µs"};
+}
+
+BackendCommandResult BackendFacade::setServiceMode(bool on) {
+    backend_.setServiceMode(on);
+    return {true, BackendCommandType::Camera, on ? "Service mode" : "Operator mode"};
+}
+
+BackendCommandResult BackendFacade::setInstrumentLed(double delayUs, double widthUs) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error;
+    if (!backend_.setInstrumentLed(delayUs, widthUs, &error)) return {false, BackendCommandType::Camera, error};
+    char text[64];
+    std::snprintf(text, sizeof(text), "LED %.1f/%.1f µs", delayUs, widthUs);
+    return {true, BackendCommandType::Camera, text};
+}
+
+std::vector<std::uint8_t> BackendFacade::fetchRunPreviewPacket(std::string* error) {
+    std::vector<std::uint8_t> out;
+    if (!initialized_) {
+        if (error) *error = "backend is not initialized";
+        return out;
+    }
+    if (!backend_.fetchRunPreview(out, error)) out.clear();
+    return out;
+}
+
 std::string BackendFacade::fetchInstrumentStatusJson() {
     // Camera mode the backend applied last (#501 P1); "unknown" until the operator picks one.
     const auto [runX, runY] = backend_.instrumentRunOffset();

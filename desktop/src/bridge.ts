@@ -1,3 +1,4 @@
+import { decodeRunPreview } from "./runPreview";
 import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
@@ -345,6 +346,8 @@ export interface PlatformCapabilities {
   led_strobe: boolean;
   align_mode: boolean;
   run_mode: boolean;
+  /** Raw LED limits per mode (µs) for Service mode (ABI 26); present with the camera modes. */
+  led_limits?: { run: LedLimits; align: LedLimits };
   /** The instrument's pumps: one RS485 port, a Modbus address per slot. */
   pump: null | { model: string; port: string; sample_address: number; sheath_address: number; microliters_per_rev: number };
 }
@@ -352,8 +355,14 @@ export interface PlatformCapabilities {
 export type IdMatch = "match" | "mismatch" | "unknown";
 
 /** PZ7035 identity and health (#501, `fetch_instrument_status`). Read-only. */
+export interface LedLimits { delay_min_us: number; delay_max_us: number; width_min_us: number; width_max_us: number }
+
+/** Camera mode the backend applied last (ABI 26, #501 P1). */
+export interface InstrumentModeState { name: "align" | "run" | "unknown"; run_x: number; run_y: number; service: boolean }
+
 export interface InstrumentStatus {
   available: boolean;
+  mode?: InstrumentModeState;
   error?: string;
   pinned_profile_id?: string;
   core?: {
@@ -563,6 +572,12 @@ export const bridge = {
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
   fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
   fetchInstrumentStatus: () => invoke<InstrumentStatus>("fetch_instrument_status"),
+  // PZ7035 camera modes (ABI 26, #501 P1). A mode switch restarts or stops the camera, so it
+  // is a source mutation like the overview switch.
+  setInstrumentMode: (mode: "align" | "run", x = 0, y = 0) => sourceMutation("set_instrument_mode", {mode, x, y}),
+  setServiceMode: (on: boolean) => invokeCommand("set_service_mode", {on}),
+  setInstrumentLed: (delayUs: number, widthUs: number) => invokeCommand("set_instrument_led", {delayUs, widthUs}),
+  fetchRunPreview: async () => decodeRunPreview(await invoke<ArrayBuffer>("fetch_run_preview")),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),

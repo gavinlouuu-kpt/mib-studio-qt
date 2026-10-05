@@ -1272,6 +1272,34 @@ pub fn save_camera_roi(state: &AppState, x: i32, y: i32, w: i32, h: i32) -> Resu
     Ok(guard.pin_mut().save_camera_roi(x, y, w, h).into())
 }
 
+/// PZ7035 camera mode (ABI 26, #501 P1): "align" or "run" at the window offset (x, y).
+pub fn set_instrument_mode(state: &AppState, mode: &str, x: i32, y: i32) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().set_instrument_mode(mode, x, y).into())
+}
+
+/// Service / Commissioning mode latch in the backend (raw LED values need it).
+pub fn set_service_mode(state: &AppState, on: bool) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().set_service_mode(on).into())
+}
+
+/// Raw LED delay/width in µs: Service mode only, within the mode's limits.
+pub fn set_instrument_led(state: &AppState, delay_us: f64, width_us: f64) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().set_instrument_led(delay_us, width_us).into())
+}
+
+/// Run mode: one PL cell capture (gray, U-Net mask, cells) as an MIBC packet.
+pub fn fetch_run_preview(state: &AppState) -> Result<Vec<u8>, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let bytes = guard.pin_mut().fetch_run_preview();
+    if bytes.is_empty() {
+        return Err("RUN_PREVIEW_UNAVAILABLE".into());
+    }
+    Ok(bytes)
+}
+
 /// Where the science runs and what this build has (ABI 21).
 pub fn fetch_platform_info(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

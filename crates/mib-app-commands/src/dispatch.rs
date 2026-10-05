@@ -150,6 +150,10 @@ pub const COMMANDS: &[&str] = &[
     "save_camera_roi",
     "fetch_camera_geometry",
     "fetch_platform_info",
+    "set_instrument_mode",
+    "set_service_mode",
+    "set_instrument_led",
+    "fetch_run_preview",
     "fetch_instrument_status",
 ];
 
@@ -746,6 +750,37 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::camera_document::camera_document(a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
         }
+        "set_instrument_mode" => {
+            #[derive(Deserialize)]
+            struct A {
+                mode: String,
+                #[serde(default)]
+                x: i32,
+                #[serde(default)]
+                y: i32,
+            }
+            let a: A = args(value)?;
+            crate::set_instrument_mode(state, &a.mode, a.x, a.y).and_then(json)
+        }
+        "set_service_mode" => {
+            #[derive(Deserialize)]
+            struct A {
+                on: bool,
+            }
+            let a: A = args(value)?;
+            crate::set_service_mode(state, a.on).and_then(json)
+        }
+        "set_instrument_led" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                delay_us: f64,
+                width_us: f64,
+            }
+            let a: A = args(value)?;
+            crate::set_instrument_led(state, a.delay_us, a.width_us).and_then(json)
+        }
+        "fetch_run_preview" => crate::fetch_run_preview(state).map(Reply::Binary),
         "set_camera_overview" => {
             #[derive(Deserialize)]
             struct A {

@@ -160,6 +160,10 @@ public:
     BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
     rust::String fetch_camera_geometry();
     rust::String fetch_platform_info();
+    BridgeCommandResult set_instrument_mode(rust::Str mode, std::int32_t x, std::int32_t y);
+    BridgeCommandResult set_service_mode(bool on);
+    BridgeCommandResult set_instrument_led(double delay_us, double width_us);
+    rust::Vec<std::uint8_t> fetch_run_preview();
     rust::String fetch_instrument_status();
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();

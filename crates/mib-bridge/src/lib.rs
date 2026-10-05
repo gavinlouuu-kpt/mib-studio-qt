@@ -848,6 +848,14 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
+        /// PZ7035 camera mode (ABI 26, #501 P1): "align" | "run" with the Run window offset.
+        fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
+        /// Service / Commissioning mode latch; raw LED values are refused outside it.
+        fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;
+        /// Raw LED delay/width in µs (Service mode, per-mode limits).
+        fn set_instrument_led(self: Pin<&mut BackendBridge>, delay_us: f64, width_us: f64) -> BridgeCommandResult;
+        /// Run mode: one PL cell capture as an MIBC packet; empty when unavailable.
+        fn fetch_run_preview(self: Pin<&mut BackendBridge>) -> Vec<u8>;
         /// PZ7035 identity and health for preflight (#501): `{"available": bool, "error"?,
         /// "core": {...}, "led": {...}, "link": {...}, "latency": {...}}`. Read-only.
         fn fetch_instrument_status(self: Pin<&mut BackendBridge>) -> String;
