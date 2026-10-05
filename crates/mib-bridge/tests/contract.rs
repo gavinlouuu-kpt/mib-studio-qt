@@ -68,10 +68,14 @@ fn abi_version_is_stable() {
     // v23 develop (19) and the instrument line (20-22) as one contract; no
     // new commands (ADR 0011 single renumber, so no release build carries an
     // interim number).
-    // v24 the central profile registry (#398): registry_* commands, snapshot
+    // v24 #501 instrument UI P0: fetch_platform_info capabilities and
+    // fetch_instrument_status (PZ7035 PL core, LED, link, latency).
+    // 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
+    // v25 the central profile registry (#398): registry_* commands, snapshot
     // and contract groups, and the shell-injected HTTPS transport. Built as a
-    // provisional 15 and renumbered once; 15 and 19-23 are never reused.
-    assert_eq!(ffi::bridge_abi_version(), 24);
+    // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
+    // never reused.
+    assert_eq!(ffi::bridge_abi_version(), 25);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
@@ -93,6 +97,33 @@ fn camera_alignment_commands_without_overview_camera() {
     assert!(!bridge.pin_mut().save_camera_roi(0, 0, 64, 64).ok);
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+// #501: the desktop build reports MIB surfaces and no PZ7035; instrument
+// status is unavailable off the PZ7035 and never fails the call.
+#[test]
+#[serial]
+fn platform_capabilities_and_instrument_status_on_the_desktop() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_platform_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let early: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_instrument_status()).unwrap();
+    assert_eq!(early["available"], serde_json::json!(false), "{early}");
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
+    let caps = &info["capabilities"];
+    assert_eq!(caps["instrument"], serde_json::json!("desktop"), "{info}");
+    for host_only in ["autofocus", "trigger", "host_background", "frame_buffer", "reanalysis", "core_updates", "egrabber_script"] {
+        assert_eq!(caps[host_only], serde_json::json!(true), "{host_only}: {info}");
+    }
+    for pz_only in ["pl_identity", "led_strobe", "align_mode", "run_mode"] {
+        assert_eq!(caps[pz_only], serde_json::json!(false), "{pz_only}: {info}");
+    }
+    assert!(caps["pump"].is_null(), "{info}");
+    let status: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_instrument_status()).unwrap();
+    assert_eq!(status["available"], serde_json::json!(false), "{status}");
+    assert!(status["error"].as_str().is_some_and(|e| !e.is_empty()), "{status}");
+    bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
 
@@ -676,7 +707,7 @@ fn rust_enums_match_contract_json() {
                                     ("Timeout", 5), ("MalformedResponse", 6), ("Unsupported", 7), ("MissingSdk", 8),
                                     ("ProviderException", 9), ("Cancelled", 10), ("Overflow", 11), ("ShuttingDown", 12),
                                     ("TooManyJobs", 13)]),
-        // ABI 24 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
+        // ABI 25 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
         ("registry_session_states", &[("SignedOut", 0), ("SignedIn", 1), ("CachedOffline", 2)]),
         ("registry_connectivity", &[("Unknown", 0), ("Online", 1), ("Offline", 2), ("AuthenticationRequired", 3),
                                     ("PermissionDenied", 4), ("Failed", 5)]),
@@ -1165,7 +1196,7 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_file(&rec_path);
 }
 
-// ---- Central profile registry (schema v24, #398) ----
+// ---- Central profile registry (schema v25, #398) ----
 // The shell-injected transport is a plain `fn` pointer, so the test
 // transports report through statics.
 static REGISTRY_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

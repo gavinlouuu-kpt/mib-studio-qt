@@ -1,6 +1,7 @@
 #include "backend/processing/pz/PzExecutionProviders.h"
 
 #include "pz_mib_abi.h" // vendored bundle (register offsets, control bits)
+#include "backend/pz/PzPlatformMonitor.h" // pzPlConfigured
 
 #include <spdlog/spdlog.h>
 
@@ -273,7 +274,11 @@ PzDevMemExecutionProvider::PzDevMemExecutionProvider(Layout layout) : layout_(la
 PzDevMemExecutionProvider::~PzDevMemExecutionProvider() { stop(); }
 
 bool PzDevMemExecutionProvider::ensureMapped(std::string* error) {
+    // identity() runs on the UI's status poll while configure()/start() run on
+    // the experiment thread: one mapping, created once.
+    std::lock_guard<std::mutex> lock(mapMutex_);
     if (map_) return true;
+    if (!backend::pz::pzPlConfigured(error)) return false; // Mapping::open reads IDENTITY
     auto map = std::make_unique<Mapping>();
     if (!map->open(layout_, error)) return false;
     map_ = std::move(map);
@@ -285,7 +290,8 @@ bool PzDevMemExecutionProvider::configure(const CompiledProfile& profile, std::s
         if (error) *error = "configure while running";
         return false;
     }
-    if (!ensureMapped(error)) return false;
+    // A blank PL stalls the AXI bus on any read: check before touching it.
+    if (!backend::pz::pzPlConfigured(error) || !ensureMapped(error)) return false;
     auto& m = *map_;
     m.setReg(PZ_MIB_REG_CONFIG_SHADOW + 4 * PZ_MIB_CONFIG_GEOMETRY, (96u << 16) | 512u);
     m.setReg(PZ_MIB_REG_CONFIG_SHADOW + 4 * PZ_MIB_CONFIG_PIXEL_FORMAT, PZ_MIB_PIXEL_FORMAT_MONO8);
@@ -327,7 +333,7 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
         if (error) *error = "provider already running";
         return false;
     }
-    if (!ensureMapped(error)) return false;
+    if (!backend::pz::pzPlConfigured(error) || !ensureMapped(error)) return false;
     auto* map = map_.get();
     const uint32_t hz = map->reg(PZ_MIB_REG_TIMESTAMP_HZ);
     pipeline_.setTimestampHz(hz ? hz : PZ_MIB_TIMESTAMP_HZ_DEFAULT);
@@ -389,8 +395,11 @@ ProviderStatus PzDevMemExecutionProvider::status() const {
 ProviderIdentity PzDevMemExecutionProvider::identity() {
     ProviderIdentity id;
     std::string error;
-    if (!running_.load() && !ensureMapped(&error)) {
-        SPDLOG_WARN("PzDevMemExecutionProvider: identity unavailable: {}", error);
+    // While stopped the PL may have been reloaded or blanked since the mapping
+    // was made: check before every read (a running provider implies a
+    // configured PL).
+    if (!running_.load() && (!backend::pz::pzPlConfigured(&error) || !ensureMapped(&error))) {
+        SPDLOG_DEBUG("PzDevMemExecutionProvider: identity unavailable: {}", error);
         return id;
     }
     const auto& m = *map_;
