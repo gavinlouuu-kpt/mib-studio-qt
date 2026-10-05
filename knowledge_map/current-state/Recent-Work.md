@@ -29,7 +29,7 @@ See [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]] and
 
 ADR 0011's single renumber: develop (19) and the instrument line (20-22)
 merged into one contract that takes 23, so no release build from `develop`
-carries an interim number. No new commands. The #398 stack takes 24. See
+carries an interim number. No new commands. The #398 stack takes 25 (24 went to #501 P0). See
 [[../architecture/Rust-Bridge]].
 
 ## 2026-10-05 — FC04 in the shared Modbus layer; Z stage spec (#464, slice 1)

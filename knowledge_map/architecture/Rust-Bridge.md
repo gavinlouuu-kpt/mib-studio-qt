@@ -385,7 +385,7 @@ ADR 0011's single renumber. `develop` was at 19 and the instrument line at
 20 (Camera & Alignment), 21 (`fetch_platform_info`) and 22 (pump models). The
 merged contract is all of them, so it takes a number no earlier build has
 carried. It adds no commands of its own. The #398 profile-registry stack
-renumbers to 24 when it lands.
+takes 25 (24 went to #501 P0).
 
 ## ABI 24: PZ7035 status and capabilities (#501 P0a, 2026-10-05)
 
