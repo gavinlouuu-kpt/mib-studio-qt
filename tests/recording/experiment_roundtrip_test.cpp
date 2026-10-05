@@ -205,6 +205,43 @@ int main()
         reader.closeFile();
     }
 
+    // PL runs (YOFO S3) record metadata only. An imageless group round-trips
+    // without image datasets; a later batch with images is refused (rows and
+    // images would misalign).
+    {
+        const std::string plPath = (td / "pl_run.h5").string();
+        Hdf5Service w;
+        MIB_REQUIRE(w.openFile(plPath) && w.initializeDatasets(), "open PL run file");
+        auto imageless = [](uint64_t idx, bool valid) {
+            ProcessedFrame f;
+            f.index = idx;
+            f.timestampNs = idx * 200000;
+            f.validation.isValid = valid;
+            f.validation.objectId = 1;
+            f.validation.area = 800.0 + static_cast<double>(idx);
+            f.validation.brightnessMean = 112.5;
+            f.validation.pixelCount = 840;
+            return f;
+        };
+        MIB_REQUIRE(w.appendFrames({imageless(1, true), imageless(2, true)}, {imageless(3, false)}),
+                    "first imageless batch");
+        MIB_REQUIRE(w.appendFrames({imageless(4, true)}, {}), "second imageless batch appends");
+        MIB_EXPECT(!w.appendFrames({makeFrame(5, 40, true, 100.0, 0.2)}, {}),
+                   "a batch with images after imageless rows is refused");
+        w.closeFile();
+
+        Hdf5Service r;
+        MIB_REQUIRE(r.loadFile(plPath), "reload PL run file");
+        std::vector<ProcessedFrame> valid, invalid, full;
+        MIB_EXPECT(r.readValidMetadata(valid) && valid.size() == 3 && valid[2].index == 4 &&
+                       valid[0].validation.brightnessMean == 112.5 && valid[0].validation.pixelCount == 840,
+                   "imageless valid rows round-trip");
+        MIB_EXPECT(r.readInvalidMetadata(invalid) && invalid.size() == 1, "imageless invalid row");
+        MIB_EXPECT(r.readValidFrames(full) && full.size() == 3 && full[0].originalImage.empty(),
+                   "readValidFrames returns metadata-only frames");
+        r.closeFile();
+    }
+
     // A recording made before Contract 3 has no cell members in its metadata
     // compound. Rewrite /valid_frames/metadata without them: the reader must
     // keep the "not present" defaults (NaN brightness, zero counts).

@@ -25,6 +25,8 @@ This folder hosts living documentation as we build functionality. Keep content c
   [integration/oeabt-nanopositioner.md](integration/oeabt-nanopositioner.md)
 - Integration: Ultra96 FPGA image pipeline — see
   [integration/ultra96-fpga-image-pipeline.md](integration/ultra96-fpga-image-pipeline.md)
+- Integration: Tushui peristaltic pump (PZ7035 instrument) — see
+  [integration/tushui-peristaltic-pump.md](integration/tushui-peristaltic-pump.md)
 - Tasks/issues live in `knowledge_map/task/`
 - Cloudflare R2 app updates and profile catalogs — see
   [howto/auto-update-r2.md](howto/auto-update-r2.md)

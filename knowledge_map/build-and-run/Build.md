@@ -88,6 +88,54 @@ sections and Conan profile it needs):
 
 ## Targets
 
+## Optional Aravis Fake validation
+
+Aravis is an optional Qt-free backend dependency and is disabled by default.
+For a local Fake-interface validation build, provision the pinned 0.9.3 source
+described by `env/aravis.toml` (USB, packet-socket, viewer and GStreamer can be
+disabled), then configure with `MIB_ENABLE_ARAVIS=ON` and set
+`PKG_CONFIG_PATH` to that prefix. Build `mib_backend_tests` and run the
+`camera.aravis_*` plus `backend.aravis_*` CTest cases. `MIB_CAMERA_MODE=aravis`
+requires `MIB_ARAVIS_FAKE=1` for the Fake device; it never silently falls back
+to the folder replay camera. Adding
+`-DMIB_PZ7035_GENTL_CTI=<pz7035-imx426>/gentl/build/libpz7035_gentl.cti`
+registers `camera.aravis_pz7035_pattern`, which runs the adapter against the
+PZ7035 producer's pattern device (no hardware). See [[../camera/AravisCamera]]
+and [[../task/2026-09-27-aravis-framework]].
+
+### ARMv7 cross-build for the PZ7035 PS (YOFO Studio)
+
+The `linux-armv7-yocto` preset cross-compiles the backend, the CTest runner and
+`yofo_preview_soak` for the Cortex-A9 with the YOFO Yocto SDK
+(pz7035-imx426 `yocto/meta-yofo`: `bitbake yofo-image -c populate_sdk`; the
+image carries the matching runtime libraries). Aravis on; Sentry and MindVision
+off; OpenCV, spdlog, SQLite, OpenSSL and HDF5 from the SDK sysroot.
+
+```bash
+. <sdk>/environment-setup-cortexa9t2hf-neon-amd-linux-gnueabi   # in a clean shell
+cmake --preset linux-armv7-yocto && cmake --build --preset linux-armv7-yocto-build -j16
+scripts/yofo/deploy_target.sh 20   # strips, copies to the PS, runs scripts/yofo/target_smoke.sh
+```
+
+The YOFO Studio server cross-compiles the same way after the CMake tree:
+`YOFO_SDK=<sdk> scripts/yofo/cargo-armv7.sh build --release --manifest-path
+crates/mib-bridge-server/Cargo.toml` (needs `rustup target add
+armv7-unknown-linux-gnueabihf`). The script maps the SDK compilers to cargo's
+target-specific variables (the generic `CC`/`CFLAGS` would hit host build
+scripts) and points the bridge at `build/linux-armv7-yocto`
+(`MIB_BRIDGE_BUILD_DIR`, `MIB_BRIDGE_SYSROOT`); `crates/mib-bridge/build.rs`
+links the Aravis libraries recorded in that tree's `CMakeCache.txt`.
+
+`cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
+HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
+dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the
+host's `h5cc` and compile against host headers, so the toolchain skips the
+config and gives FindHDF5 a failing wrapper, which makes it search the sysroot.
+`target_smoke.sh` runs the backend and Aravis lifecycle tests from the runner,
+then `yofo_preview_soak` against the live producer (preview and Overview);
+`deploy_target.sh` reads `YOFO_TARGET`, `YOFO_SSH_OPTS` and
+`YOFO_SUDO_PASSWORD_FILE`.
+
 | Target | Kind | Purpose |
 |---|---|---|
 | `mib_processing` | STATIC library | Qt-free processing core: `ProcessingService`, `EModulusLut`, `BatchMaskSources`, `Hdf5Service`, `FrameStore`, `Tools`, `CrashStateMirror`. Links only OpenCV + HDF5 + spdlog + STL. |

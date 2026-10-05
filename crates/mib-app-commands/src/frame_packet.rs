@@ -51,7 +51,7 @@ mod tests {
         let frame = mib_bridge::ffi::contract_fixture_frame();
         let packet = encode(frame, 1).unwrap();
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../crates/mib-bridge/contract/fixtures/frame-v2.json")).unwrap();
+            "../../mib-bridge/contract/fixtures/frame-v2.json")).unwrap();
         assert_eq!(hex::encode(packet), fixture["hex"].as_str().unwrap());
     }
     fn frame(index: u64, value: u8) -> BridgeFrame {

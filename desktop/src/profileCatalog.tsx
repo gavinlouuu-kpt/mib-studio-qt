@@ -1,4 +1,4 @@
-import {invoke} from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import {useEffect,useRef,useState} from "react";
 import {profileCommand, type Profile} from "./profiles";
 export interface CatalogEntry {profile_id:string;display_name?:string;description?:string;revision:string;config_url:string;config_sha256:string;camera_script_url?:string;camera_script_sha256?:string;app_min_version?:string|null;app_max_version?:string|null;processing_contract_version?:number|null}

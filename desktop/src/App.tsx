@@ -4,19 +4,21 @@ import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
-import { invoke } from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {open, save} from "./transport/dialogs";
+import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
   bridge,
   mono8ToImageData,
   type AutofocusStatus,
   type BridgeEvent,
+  type CameraGeometry,
+  type PlatformInfo,
   type CameraDiscovery,
   type CameraSelection,
   type ExperimentStatus,
@@ -50,6 +52,7 @@ import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
+import { initialWindow, rateSummary, snapWindow, type Rect } from "./cameraAlignment";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
@@ -232,6 +235,18 @@ export default function App() {
   const lastMetadataRenderMs = useRef(-Infinity);
   const tabRef = useRef<MainTab>("connect");
   tabRef.current = tab;
+  // ---- Camera & Alignment (ABI 20): the whole sensor and the experiment window on it ----
+  // Where the science runs (ABI 21). On the PZ7035 the PL processes every frame and the host
+  // pipeline's controls (realtime switch, backgrounds, calibration, processed preview) do not apply.
+  const [platform, setPlatform] = useState<PlatformInfo | null>(null);
+  const hostProcessing = platform ? platform.host_processing : true;
+  const [cameraGeometry, setCameraGeometry] = useState<CameraGeometry | null>(null);
+  const [cameraWindow, setCameraWindow] = useState<Rect | null>(null);
+  const cameraGeometryRef = useRef<CameraGeometry | null>(null);
+  cameraGeometryRef.current = cameraGeometry;
+  const cameraWindowRef = useRef<Rect | null>(null);
+  cameraWindowRef.current = cameraWindow;
+  const windowDragRef = useRef<{dx: number; dy: number} | null>(null);
 
   // Display-side measurements (frames actually drawn / bytes actually pulled
   // over the last 1s window). These are UI measurements, not backend claims.
@@ -300,6 +315,14 @@ export default function App() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
+      // Camera & Alignment: the experiment window over a full-sensor image.
+      const geometry = cameraGeometryRef.current, experimentWindow = cameraWindowRef.current;
+      if (canvas === liveCanvasRef.current && geometry?.overview && experimentWindow &&
+          meta.width === geometry.sensor_width && meta.height === geometry.sensor_height) {
+        ctx.strokeStyle = "#ffd400";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(experimentWindow.x + 1, experimentWindow.y + 1, experimentWindow.width - 2, experimentWindow.height - 2);
+      }
       const { data: _pixels, ...metadata } = meta;
       if (canvas !== reviewCanvasRef.current && performance.now() - lastMetadataRenderMs.current >= 200) {
         lastMetadataRenderMs.current = performance.now();
@@ -808,6 +831,84 @@ export default function App() {
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
 
+  useEffect(() => {
+    if (!ready) return;
+    void bridge.fetchPlatformInfo().then(setPlatform).catch(() => setPlatform(null));
+  }, [ready]);
+
+  const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
+    try {
+      const geometry = await bridge.fetchCameraGeometry();
+      setCameraGeometry(geometry);
+      if (geometry.supported && geometry.sensor_width > 0) setCameraWindow((w) => w ?? initialWindow(geometry));
+      return geometry;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
+  // saved window, other tabs leave the camera as it is; never during a run. A running capture
+  // restarts in the new mode (backend).
+  useEffect(() => {
+    if (!ready || (tab !== "overview" && tab !== "experiment")) return;
+    let cancelled = false;
+    void (async () => {
+      const geometry = await refreshCameraGeometry();
+      if (cancelled || !geometry?.supported || expActive) return;
+      const overview = tab === "overview";
+      if (geometry.overview === overview) return;
+      const result = await bridge.setCameraOverview(overview);
+      append(result.ok ? result.message : `Camera mode: ${result.message}`);
+      if (!cancelled) await refreshCameraGeometry();
+    })();
+    return () => { cancelled = true; };
+  }, [tab, ready, expActive, refreshCameraGeometry, append]);
+
+  // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
+  useEffect(() => {
+    if (!ready || tab !== "overview") return;
+    const id = window.setInterval(() => void refreshCameraGeometry(), 2000);
+    return () => window.clearInterval(id);
+  }, [ready, tab, refreshCameraGeometry]);
+
+  const saveCameraWindow = useCallback(async (rect: Rect) => {
+    const geometry = cameraGeometryRef.current;
+    if (!geometry?.supported) return;
+    const snapped = snapWindow(rect, geometry);
+    setCameraWindow(snapped);
+    const result = await bridge.saveCameraRoi(snapped.x, snapped.y, snapped.width, snapped.height);
+    append(result.ok ? result.message : `Camera ROI not saved: ${result.message}`);
+    await refreshCameraGeometry();
+  }, [append, refreshCameraGeometry]);
+
+  // Drag the window on the full-sensor image; release saves it (Qt saves on every move).
+  const canvasPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = e.currentTarget, box = canvas.getBoundingClientRect();
+    return {x: (e.clientX - box.left) * canvas.width / box.width, y: (e.clientY - box.top) * canvas.height / box.height};
+  };
+  const onWindowPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
+    if (!geometry?.overview || !rect || expActive) return;
+    const p = canvasPoint(e);
+    if (p.x < rect.x || p.y < rect.y || p.x > rect.x + rect.width || p.y > rect.y + rect.height) return;
+    windowDragRef.current = {dx: p.x - rect.x, dy: p.y - rect.y};
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onWindowPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = windowDragRef.current, geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
+    if (!drag || !geometry || !rect) return;
+    const p = canvasPoint(e);
+    const next = snapWindow({...rect, x: p.x - drag.dx, y: p.y - drag.dy}, geometry);
+    cameraWindowRef.current = next;
+    setCameraWindow(next);
+  };
+  const onWindowPointerUp = () => {
+    if (!windowDragRef.current) return;
+    windowDragRef.current = null;
+    if (cameraWindowRef.current) void saveCameraWindow(cameraWindowRef.current);
+  };
+
 
   const cameraScript = useCameraScript({
     ready, running, experimentActive: expActive, selection: camSelection, append,
@@ -1105,9 +1206,10 @@ export default function App() {
           </div>
           <div className="side-section">
             <h4>Processing</h4>
-            <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />
+            {!hostProcessing && <SideRow k="Runs on:" v="PL (every frame)" />}
+            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
             <SideRow k="px→µm:" v={stats?.valid ? String(stats.pixel_to_micron) : "—"} cls={stats?.valid ? "" : "dim"} />
           </div>
           <div className="side-section">
@@ -1405,25 +1507,72 @@ export default function App() {
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
 
-                  <label>
-                    X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
-                  </label>
-                  <label>
-                    Y: <input type="number" value={roiFields.y} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
-                  </label>
-                  <label>
-                    W: <input type="number" value={roiFields.w} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
-                  </label>
-                  <label>
-                    H: <input type="number" value={roiFields.h} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
-                  </label>
-                  <button className="btn" onClick={onApplyRoi} disabled={!ready}>
-                    Apply ROI
-                  </button>
+                  {cameraGeometry?.supported ? (
+                    <>
+                      {/* Camera window (ROI 1, sensor coordinates), placed on the full sensor. */}
+                      {(["x", "y", "width", "height"] as const).map((key) => (
+                        <label key={key}>
+                          {key === "x" ? "X" : key === "y" ? "Y" : key === "width" ? "W" : "H"}:{" "}
+                          <input
+                            type="number"
+                            aria-label={`Camera window ${key}`}
+                            value={cameraWindow ? cameraWindow[key] : 0}
+                            disabled={!cameraWindow || expActive}
+                            onChange={(e) => setCameraWindow((w) => (w ? {...w, [key]: Number(e.target.value) || 0} : w))}
+                          />
+                          {key === "width" || key === "height" ? " px" : ""}
+                        </label>
+                      ))}
+                      <button
+                        className="btn"
+                        onClick={() => cameraWindow && void saveCameraWindow(cameraWindow)}
+                        disabled={!ready || expActive || !cameraWindow || cameraGeometry.sensor_width === 0}
+                        title="Save the experiment window; Experiment uses it"
+                      >
+                        Save camera ROI
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                    <label>
+                      X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
+                    </label>
+                    <label>
+                      Y: <input type="number" value={roiFields.y} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
+                    </label>
+                    <label>
+                      W: <input type="number" value={roiFields.w} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
+                    </label>
+                    <label>
+                      H: <input type="number" value={roiFields.h} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
+                    </label>
+                    <button className="btn" onClick={onApplyRoi} disabled={!ready}>
+                      Apply ROI
+                    </button>
+                    </>
+                  )}
                 </div>
+                {cameraGeometry?.supported && (
+                  <div className="camera-alignment-status" aria-label="Camera mode">
+                    <strong>
+                      {cameraGeometry.overview
+                        ? `Full sensor ${cameraGeometry.sensor_width || "?"}×${cameraGeometry.sensor_height || "?"}`
+                        : "Experiment window"}
+                    </strong>
+                    {cameraGeometry.overview && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+                    {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
+                  </div>
+                )}
                 <div className="canvas-wrap">
                   {!lastMeta && <span className="canvas-hint">No frame yet — configure a camera and press Start Camera</span>}
-                  <canvas ref={liveCanvasRef} className={fitWindow ? "fit" : ""} />
+                  <canvas
+                    ref={liveCanvasRef}
+                    className={fitWindow ? "fit" : ""}
+                    onPointerDown={onWindowPointerDown}
+                    onPointerMove={onWindowPointerMove}
+                    onPointerUp={onWindowPointerUp}
+                    onPointerCancel={onWindowPointerUp}
+                  />
                 </div>
 
                 {/* ---- UX-4 image quality gates ---- */}
@@ -1507,7 +1656,7 @@ export default function App() {
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
                       </span>
-                      <button
+                      {hostProcessing && <button
                         onClick={async () => {
                           const res = await bridge.setBackgroundFromCurrentFrame();
                           append(res.ok ? "background captured from current frame" : `set background failed: ${res.message}`);
@@ -1517,7 +1666,7 @@ export default function App() {
                         title={running ? "Capture the current frame as the processing background" : "Camera is not running"}
                       >
                         Set Background
-                      </button>
+                      </button>}
                       <button
                         onClick={async () => {
                           await bridge.clearBackgroundImage();
@@ -1549,8 +1698,14 @@ export default function App() {
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
                     <PreviewBufferControls model={previewBuffer} />
-                    <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
-                    <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                    {hostProcessing ? (
+                      <>
+                        <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
+                        <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                      </>
+                    ) : (
+                      <p className="mono" role="status">Processing runs on the PL for every frame. Its results reach this screen once the record path is connected; previews and recording work now.</p>
+                    )}
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>
@@ -1594,7 +1749,7 @@ export default function App() {
                                 aria-label="Processing configuration JSON"
                               />
                             </div>
-                            <div className="config-group">
+                            {hostProcessing && <div className="config-group">
                               <h5>realtime_processing</h5>
                               <div className="row">
                                 <label>
@@ -1628,7 +1783,7 @@ export default function App() {
                                 </p>
                               )}
                               <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
-                            </div>
+                            </div>}
                           </div>
                         </>
                       )}

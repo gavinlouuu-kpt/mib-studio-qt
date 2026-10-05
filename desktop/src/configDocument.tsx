@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import {invoke} from "./transport";
+import {open} from "./transport/dialogs";
 import { useRef, useState } from "react";
 
 export interface ConfigDocument { ok: boolean; path: string; revision: string; document_json: string; error: string }

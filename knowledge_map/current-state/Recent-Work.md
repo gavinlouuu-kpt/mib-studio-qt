@@ -1,5 +1,12 @@
 # Recent Work
 
+## 2026-10-05 — Bridge ABI 23: one contract for develop and the instrument line
+
+ADR 0011's single renumber: develop (19) and the instrument line (20-22)
+merged into one contract that takes 23, so no release build from `develop`
+carries an interim number. No new commands. The #398 stack takes 24. See
+[[../architecture/Rust-Bridge]].
+
 ## 2026-10-05 — pz7035 ABI bundle vendored from the `abi-v1.2.0` tag (ADR 0011)
 
 `third_party/pz7035-abi` now comes from the tagged bundle on pz7035-imx426
@@ -22,17 +29,17 @@ evidence test-run SHA-256). Policy as decided on #398: unvalidated → Warn
 New: `InstrumentIdentity` (UUID file + `MIB_INSTRUMENT_NAME`), worker
 `Materialize` (read-only files under `<dataDir>/methods/`) and
 `RecordValidation` (signed-in validator, cancellable evidence hashing) jobs —
-appended to `registry_job_kinds` (4, 5) inside unreleased ABI 15 —, the pure
+appended to `registry_job_kinds` (4, 5) inside unreleased ABI 24 —, the pure
 `MethodProvenance` resolver, and `processing::fileSha256` with cancellation.
 No Apply / "Mark validated" UI yet (M2b). Guards: `profiles.instrument_identity`,
 `profiles.registry_method`, `backend.method_provenance`, `e2e.method_gate`; four
 behaviour mutations of the gate/memo/invalidation were each caught.
 See [[../architecture/ExperimentCoordinator]], [[../services/ProfileRegistryService]].
 
-## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 15)
+## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 24)
 
 `BackendFacade` gained registry commands and a value snapshot; the bridge
-exposes them (ABI 15, five new `registry_*` contract groups pinned in C++,
+exposes them (ABI 24, five new `registry_*` contract groups pinned in C++,
 Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
 installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
 a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**
@@ -70,10 +77,124 @@ pz7035-imx426 ABI bundle vendored and pinned (`third_party/pz7035-abi`,
 - all 26 bundle fixtures decode with the expected outcome;
 - FRAME and RESULT re-encode byte-identically;
 - 60 frames pass through a wrapping ring;
-- the PL vectors' RESULT payloads decode to the host science's cells.
+- the PL vectors' RESULT payloads decode to the cells they list.
 
 See [[../data-model/PZ7035-Records]].
 
+Execution providers (YOFO S1, first slice): the `IExecutionProvider` seam,
+`PzRecordPipeline`, `ReplayExecutionProvider`, and `PzDevMemExecutionProvider`
+(the PS result ring through `/dev/mem`, as `pzres`). Three board ring
+captures (800k frames) replay with 0 decode errors and 0 gaps
+(`processing.pz_execution_provider`).
+
+PL results reach the application: `ProcessingService::ingestProviderFrame`
+feeds run accounting, the identification funnel (8 reason codes) and
+monitoring rows without images; it never fires a PS trigger. `AppBackend`
+selects the provider with `MIB_EXECUTION_PROVIDER`. `ExperimentCoordinator`
+arms it at Start and stops it before the drain at Stop, and `science.pl`
+readiness passes with a provider. Tests: `processing.pz_provider_ingest`,
+`backend.pl_science_provider`.
+
+Recording PL runs (S3): one metadata row per cell, with no images. The
+per-object HDF5 compound gains the Laplacian and the U-Net cell members, in
+develop's names and order. Readers accept groups without images, and the run
+snapshot records the science placement and the provider. A replayed run
+persists 810/810 rows and completes.
+
+On the board, the C++ provider (`tools/pz_provider_probe`, 120 s at 5 kHz)
+read 600,251 frames and 600,192 cells with 0 decode errors, 0 gaps and 0
+overruns. `pzres monitor` straight after agrees.
+
+Profile compiler (S2): settings become the PL's `unet_cells_v2` page and
+E-modulus table. The host defaults reproduce the board's committed page and
+table byte for byte. Providers commit the profile with `configure()` before
+arming, and readiness gate `processing.profileCompile` blocks a Start whose
+settings do not compile.
+
+Settings plumbing for the PL profile: the size gate, Laplacian aperture and
+Laplacian gate are `config.json` `image_processing` keys (in the defaults,
+validated, applied through the config transaction). They are always read, but
+written only in `MIB_PL_SCIENCE` builds, so desktop documents and the
+Contract 1/2 science JSON stay byte-identical; develop carries the same
+values in `toScienceJson`'s `abi_v2` / `unet_cells` objects.
+
+Channel band from the off-path background (T3.7). With the science on the PL,
+background calibration takes the median of preview frames; the channel walls
+are detected in it (develop's `ChannelRoiDetect`, `auto_roi_*` keys), and the
+band reaches the PL profile page.
+
+## 2026-10-04 — Tushui peristaltic pump as a Sample/Sheath pump model (ABI 22)
+
+Each pump slot now takes a Longer dLSP syringe pump or the Tushui peristaltic
+pump fitted to the PZ7035 instrument (RS485 on PS UART1, `/dev/ttyPS1`,
+address 3). Flow rates convert to head speed with a µL/rev calibration
+(default 25: 0.4 rpm = 10 µL/min); connect only reads; out-of-range rates
+fail. `pump_connect_model` + a model select in the React Pumps panel. See
+[[../services/SyringePumpService]], [[../architecture/Rust-Bridge]],
+`docs/integration/tushui-peristaltic-pump.md`.
+
+## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
+
+`MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21
+`fetch_platform_info`; UI hides its controls); the producer's `PzPreviewRate`
+(default 60/s from the Aravis profile) and its NEON window copy take the PS
+from ~90 % to ~8 % of a core while previewing at 1 kHz; the server has one
+controlling client; `scripts/yofo/stage_image.sh` + meta-yofo's `yofo-studio`
+recipe put the server, UI and a service into the image. See
+[[../architecture/Desktop-Shell]], [[../architecture/AppBackend]],
+[[../architecture/Rust-Bridge]].
+
+## 2026-10-01 — Camera & Alignment shows the full sensor (ABI 20)
+
+The React Camera & Alignment tab now follows the Qt Overview workflow for
+MindVision and Aravis cameras: full sensor on entry, experiment window placed
+and saved on it, Experiment acquires that window. New bridge commands
+`set_camera_overview`, `save_camera_roi`, `fetch_camera_geometry`; Aravis
+cameras gained an Overview mode and a camera profile. See
+[[../architecture/Desktop-Shell]] and [[../architecture/AppBackend]].
+
+## 2026-10-01 — Shared command layer and the YOFO Studio WebSocket server
+
+The Tauri command bodies moved to `crates/mib-app-commands` (Tauri keeps typed
+shims and the desktop-only commands); `dispatch` runs any of them by name.
+`crates/mib-bridge-server` serves them over a WebSocket with server-pushed
+events, binary frame packets and stop-and-save on client loss. The React UI
+reaches either through `desktop/src/transport` (Tauri IPC or the WebSocket);
+the full UI ran in headless Chromium against the server with live mock frames.
+See [[../architecture/Desktop-Shell]].
+
+## 2026-10-01 — Backend on the PZ7035 PS (YOFO Studio S6)
+
+`linux-armv7-yocto` cross-builds the backend with the YOFO Yocto SDK;
+`scripts/yofo/deploy_target.sh` runs `target_smoke.sh` on the PS: the runner's
+lifecycle, experiment, mock, processing and Aravis tests plus
+`yofo_preview_soak` against the live producer all pass. 10-minute soaks:
+512x96 previews at 1 kHz 387.5 images/s, full-field Overview at 830 Hz 25.9
+images/s, no loss, flat RSS (7.0 / 11.4 MiB), 84 % / 64 % CPU. See
+[[../build-and-run/Build]] and [[../camera/AravisCamera]].
+
+## 2026-10-01 — Aravis adapter for YOFO Studio (PZ7035 GenTL producer)
+
+`AravisCamera` now prefers the `YOFO` vendor on auto-selection, keeps GigE
+Vision discovery off unless `MIB_ARAVIS_GIGE` is set, applies an optional
+region / frame rate / exposure with read-back (`sessionInfo()`, clamps
+reported, region never clamped), reads the PZ7035 delivered-rate model
+(`PzBandCount`, `PzDeliveredFrameRate`, limits) and supports `LatestFrame`
+preview delivery. YOFO producer timestamps are declared host steady ns.
+`camera.aravis_pz7035_pattern` (opt-in via `MIB_PZ7035_GENTL_CTI`) runs the
+adapter against the producer's pattern device. See [[../camera/AravisCamera]].
+
+## 2026-09-27 — Optional Aravis Fake consumer first slice
+
+Added the Qt-free `AravisCamera` adapter behind `MIB_ENABLE_ARAVIS` with
+explicit device/Fake selection, copied single-part Mono8 `EveryFrame` delivery,
+bounded stop/restart ownership, structured failures, opaque device timestamp
+semantics, and queue telemetry. `MIB_CAMERA_MODE=aravis` now preserves truthful
+requested/effective/simulated state; disabled builds fail visibly rather than
+falling back to MockCamera. The local Fake test passed against Aravis 0.9.3;
+the PZ7035 driver, GenTL producer, SSD path and full-rate recording remain
+follow-up work. See [[../camera/AravisCamera]] and
+[[../task/2026-09-27-aravis-framework]].
 ## 2026-10-04 — Contract 3 science (`unet-cells`) equal to the PZ7035 PL
 
 The host science for U-Net cells, the same rules as the PZ7035 PL cell stage:
