@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/processing/IProcessingKernel.h"
+#include "backend/processing/ProcessingCoreSha256.h"
 
 #include <filesystem>
 #include <functional>
@@ -32,11 +33,6 @@ struct ProcessingCoreLoadResult {
 ProcessingCoreLoadResult loadProcessingCorePlugin(
     const std::filesystem::path& absolutePluginPath,
     const ProcessingCoreLoadRequirements& requirements);
-
-// Qt-free streaming SHA-256 used before a native module is loaded.
-std::string processingCoreFileSha256(const std::filesystem::path& path,
-                                     std::string* error = nullptr);
-std::string processingCoreBytesSha256(const uint8_t* bytes, size_t count);
 
 // Windows production verifier: validates the embedded Authenticode chain and
 // requires the leaf certificate's DER SubjectPublicKeyInfo SHA-256 to match

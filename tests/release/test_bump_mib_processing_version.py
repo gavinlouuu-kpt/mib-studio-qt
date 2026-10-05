@@ -82,6 +82,12 @@ class VersionBumpTest(unittest.TestCase):
             ).stdout
             self.assertIn('version = "0.2.0"', tagged)
 
+            # ADR 0007: the absdiff-laplacian line tags the same commit under its own name.
+            c2 = bump.create_committed_tag(root, "0.2.0", line="absdiff-laplacian")
+            self.assertEqual(c2, "mib-processing-absdiff-laplacian-v0.2.0")
+            with self.assertRaisesRegex(ValueError, "Unknown core line"):
+                bump.create_committed_tag(root, "0.2.0", line="unet-cells")
+
 
 if __name__ == "__main__":
     unittest.main()

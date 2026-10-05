@@ -149,9 +149,36 @@ int main() {
         check(service.getChannelBand().h == 0, "clearing the background clears the band");
     }
 
-    // 9) (develop: the host object filter's Channel gate.) On the PZ7035
-    //    line the band goes into the PL profile page instead; the PL applies
-    //    it (processing.pz_profile_compiler, backend.pl_science_provider).
+    // 9) Object filter: centroid outside the band -> invalid with reason
+    //    Channel; inside -> valid. No band -> both valid.
+    {
+        namespace science = backend::processing::science;
+        cv::Mat mask(96, 200, CV_8UC1, cv::Scalar(0));
+        cv::rectangle(mask, cv::Rect(20, 2, 16, 10), cv::Scalar(255), cv::FILLED);  // on the wall
+        cv::rectangle(mask, cv::Rect(120, 40, 16, 16), cv::Scalar(255), cv::FILLED); // in channel
+        backend::services::ProcessingConfig config;
+        config.processing_contract_version = 2;
+        config.enable_area_range_check = false;
+        config.enable_border_check = false;
+        const cv::Rect frame(0, 0, mask.cols, mask.rows);
+
+        auto open = science::filterProcessedObjects(mask, frame, config, cv::Mat{}, 1.0, nullptr);
+        check(open.size() == 2 && open[0].isValid && open[1].isValid && open[0].inChannel &&
+                  open[1].inChannel,
+              "no band: both objects valid and in channel");
+
+        config.channel_band_y = 20;
+        config.channel_band_h = 60;
+        auto gated = science::filterProcessedObjects(mask, frame, config, cv::Mat{}, 1.0, nullptr);
+        check(gated.size() == 2, "band: both objects still reported");
+        if (gated.size() == 2) {
+            check(!gated[0].inChannel && !gated[0].isValid, "wall object rejected by centroid");
+            check(gated[1].inChannel && gated[1].isValid, "channel object kept");
+            const auto reasons = science::classifyInvalidReasons(gated[0], config);
+            check(reasons.size() == 1 && reasons[0] == science::InvalidReasonCode::Channel,
+                  "wall object reason is Channel");
+        }
+    }
 
     if (failures == 0) {
         std::cerr << "channel_roi_detect_test: ALL PASS\n";

@@ -9,9 +9,8 @@
 **ABI bundle:** `third_party/pz7035-abi/` (pz7035-imx426 `abi/`, pinned by
 `PROVENANCE.json`; `scripts/vendor_pz7035_abi.py --from <repo>` refreshes it,
 `--check` verifies it)
-**Tests:** `processing.pz_records`, `scripts.pz7035_abi_vendor`
-(`processing.pz_unet_cells_host`, the comparison with the host Contract 3
-science, lives on `develop`, which has Contract 3)
+**Tests:** `processing.pz_records`, `processing.pz_unet_cells_host`,
+`scripts.pz7035_abi_vendor`
 **Related:** [[HDF5-Storage]], [[../services/ProcessingService]]
 
 ## Wire format
@@ -50,9 +49,9 @@ brightness, focus metric, counts and centroid. Coordinates are in ROI 1.
   application line can take it as is.
 - Any other profile, or a short payload, gives `nullopt`: the payload is
   unavailable, never zero.
-- On `develop`, `processing.pz_unet_cells_host` checks that the PL vectors'
-  payloads, passed through encode, decode and the profile decoder, equal the
-  host Contract 3 science on the same frames.
+- `processing.pz_unet_cells_host` checks that the PL vectors' payloads,
+  passed through encode, decode and the profile decoder, equal the host
+  Contract 3 science on the same frames.
 
 ## Execution providers (YOFO S1)
 

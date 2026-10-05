@@ -97,6 +97,19 @@
       </widget>
      </item>
      <item>
+      <widget class="QCheckBox" name="kdeToggleCheck">
+       <property name="text">
+        <string>Density (KDE)</string>
+       </property>
+       <property name="toolTip">
+        <string>Colour scatter points by local population density (Gaussian KDE, recomputed periodically)</string>
+       </property>
+       <property name="accessibleName">
+        <string>Scatter density (KDE) colouring</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>

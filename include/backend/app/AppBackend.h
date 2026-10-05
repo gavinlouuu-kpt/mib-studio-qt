@@ -11,6 +11,7 @@
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
+#include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
 
 namespace backend::processing { class IExecutionProvider; }
@@ -25,9 +26,11 @@ namespace backend::services
     class CameraControlService;
     class AutofocusService;
     class TriggerService;
+    class DotGridService;
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
+    class MonitoringDensityService;
     namespace serialbus
     {
         class SerialBusManager;
@@ -47,6 +50,7 @@ namespace camera::mock
 }
 
 namespace backend::app { class ExperimentCoordinator; }
+namespace backend::profiles { class ProfileRegistryWorker; }
 namespace backend::discovery
 {
     class DeviceDiscoveryService;
@@ -77,6 +81,16 @@ namespace backend
         // still takes precedence.)
         void setLutAppDataDir(std::string dir) { lutAppDataDir_ = std::move(dir); }
 
+        // Central profile registry (#398): the shell injects the HTTPS POST the
+        // registry worker uses (ADR 0002: the backend links no HTTP client).
+        // The registry is enabled by MIB_PROFILE_REGISTRY_URL +
+        // MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY; without them (or without a
+        // transport) the worker is inert. Call before initialize().
+        void setProfileRegistryTransport(profiles::RegistryHttpTransport transport)
+        {
+            profileRegistryTransport_ = std::move(transport);
+        }
+
         // Stop every service-owned thread in dependency order (capture →
         // trigger → recording → realtime/processing). Idempotent; called by
         // the destructor so teardown never depends on GUI close handling.
@@ -93,6 +107,7 @@ namespace backend
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
         services::TriggerService &trigger();
+        services::DotGridService &dotGrid();
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
@@ -104,6 +119,10 @@ namespace backend
         // Constructed here but started by the shell (Qt adapter) so headless
         // consumers keep today's no-auto-connect behaviour.
         discovery::StartupDiscoveryCoordinator &startupDiscovery();
+        // Central profile registry worker (#398): sign-in, refresh, download and
+        // the per-user revision cache on its own thread. Shells enqueue commands
+        // and poll snapshots; it never touches capture, recording or Start.
+        profiles::ProfileRegistryWorker &profileRegistry();
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
@@ -210,6 +229,10 @@ namespace backend
 
         // Backend-owned experiment readiness + Start transaction (issue #369).
         app::ExperimentCoordinator& experiment();
+        // Live Monitoring scatter density (KDE) and core contour: the shells
+        // push settings and read results; the provisional record goes to the
+        // experiment coordinator from the backend worker.
+        services::MonitoringDensityService& monitoringDensity();
         // Shared RS485 bus registry (pump, pulse generator); tests inject a
         // fake serial-port factory here.
         services::serialbus::SerialBusManager& serialBus();
@@ -275,6 +298,7 @@ namespace backend
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;
         std::unique_ptr<services::TriggerService> triggerService_;
+        std::unique_ptr<services::DotGridService> dotGridService_;
         std::unique_ptr<services::YoloService> yoloService_;
         // Shared RS485/Modbus bus registry — declared before the serial
         // services so it outlives their sessions.
@@ -286,6 +310,9 @@ namespace backend
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
         std::unique_ptr<discovery::StartupDiscoveryCoordinator> startupDiscovery_;
         std::shared_ptr<playback::FrameStore> frameStore_;
+
+        profiles::RegistryHttpTransport profileRegistryTransport_;
+        std::unique_ptr<profiles::ProfileRegistryWorker> profileRegistry_;
 
         // Shell-injected LUT fetch config (ADR 0002).
         HttpGetFn lutHttpGet_;
@@ -349,6 +376,9 @@ namespace backend
         std::string effectiveCameraSource_{"unknown"};
         std::string cameraFallbackReason_;
         std::unique_ptr<app::ExperimentCoordinator> experimentCoordinator_;
+        // Declared after the coordinator and processing so it is destroyed
+        // first: its worker reads the monitoring ring and feeds the coordinator.
+        std::unique_ptr<services::MonitoringDensityService> monitoringDensity_;
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;

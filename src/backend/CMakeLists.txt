@@ -20,6 +20,17 @@ if(MIB_PROCESSING_CORE_VERSION STREQUAL "")
     set(MIB_PROCESSING_CORE_VERSION "0.1.0")
 endif()
 
+# Dot-grid codec core version (encoder + decoder build line, ADR 0010). One
+# source shared with the Python mask generator: scripts/dot_grid/dotgrid/VERSION.
+set(MIB_DOTGRID_CORE_VERSION "0.0.0")
+if(EXISTS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
+    file(STRINGS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION" _mib_dotgrid_version LIMIT_COUNT 1)
+    string(STRIP "${_mib_dotgrid_version}" MIB_DOTGRID_CORE_VERSION)
+    # A VERSION bump must re-run configure, or the compiled-in version goes stale.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
+endif()
+
 # mib_processing: the Qt-free deformability-cytometry processing core plus
 # its I/O adapters (HDF5 read/write, frame buffering). Depends only on
 # OpenCV, HDF5, spdlog, and the standard library -- no Qt, no camera SDKs,
@@ -38,6 +49,9 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/UnetC4.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     # Science placement is a leaf (no dependencies); it lives with ProcessingService, which
@@ -45,6 +59,10 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/SciencePlacement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzExecutionProviders.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/ExecutionProviderFactory.cpp
@@ -91,7 +109,28 @@ target_link_libraries(mib_processing PUBLIC
 )
 
 target_compile_definitions(mib_processing PUBLIC
+    MIB_DOTGRID_CORE_VERSION="${MIB_DOTGRID_CORE_VERSION}"
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+)
+
+# Contract of the bundled kernel (ADR 0007); 0 = research (any contract).
+if(MIB_PROCESSING_CORE_CONTRACT STREQUAL "1")
+    set(_mib_bundled_contract 1)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "2")
+    set(_mib_bundled_contract 2)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "research")
+    if(NOT MIB_BUILD_PYTHON_BINDINGS)
+        message(FATAL_ERROR
+            "MIB_PROCESSING_CORE_CONTRACT=research is only for the Python wheel "
+            "(MIB_BUILD_PYTHON_BINDINGS=ON); shipped builds run one contract (ADR 0007)")
+    endif()
+    set(_mib_bundled_contract 0)
+else()
+    message(FATAL_ERROR
+        "MIB_PROCESSING_CORE_CONTRACT must be 1, 2 or research (got '${MIB_PROCESSING_CORE_CONTRACT}')")
+endif()
+target_compile_definitions(mib_processing PUBLIC
+    MIB_PROCESSING_BUNDLED_CONTRACT=${_mib_bundled_contract}
 )
 if(WIN32)
     target_link_libraries(mib_processing PUBLIC wintrust crypt32)
@@ -165,36 +204,57 @@ if(MIB_BUILD_OEABT_TOOLS)
     )
 endif()
 
-# Native hot-swap artifact. It deliberately links only the mask kernel and
+# Native hot-swap artifacts. They deliberately link only the mask kernel and
 # OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
-# Windows DLL before the registry publisher hashes it.
-add_library(mib_processing_core MODULE
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
-)
-target_include_directories(mib_processing_core PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(mib_processing_core PRIVATE spdlog::spdlog)
-mib_link_opencv(mib_processing_core PRIVATE)
-target_compile_definitions(mib_processing_core PRIVATE
-    MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
-    MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
-)
-set_target_properties(mib_processing_core PROPERTIES
-    PREFIX ""
-    AUTOMOC OFF
-    AUTOUIC OFF
-    AUTORCC OFF
-    POSITION_INDEPENDENT_CODE ON
-    # MSVC only exports __declspec(dllexport) symbols; ELF must opt into the
-    # same discipline so the release audit sees exactly mib_processing_get_api.
-    C_VISIBILITY_PRESET hidden
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
-    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
-)
+# Windows DLL before the registry publisher hashes it. Each plugin line
+# implements exactly one contract (ADR 0007) and exports only that contract's
+# entry point: subtract-ring (Contract 1, mib_processing_get_api) and
+# absdiff-laplacian (Contract 2, mib_processing_get_api_v2).
+function(mib_add_processing_core_plugin target contract)
+    add_library(${target} MODULE
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    )
+    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(${target} PRIVATE spdlog::spdlog)
+    # Header-only: ProcessingScience.cpp includes ProcessingContract.h. Without
+    # the target, MSVC builds (Conan nlohmann_json) cannot find the header.
+    if(TARGET nlohmann_json::nlohmann_json)
+        target_link_libraries(${target} PRIVATE nlohmann_json::nlohmann_json)
+    endif()
+    mib_link_opencv(${target} PRIVATE)
+    target_compile_definitions(${target} PRIVATE
+        MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
+        MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+        MIB_PROCESSING_BUNDLED_CONTRACT=${contract}
+    )
+    set_target_properties(${target} PROPERTIES
+        PREFIX ""
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        POSITION_INDEPENDENT_CODE ON
+        # MSVC only exports __declspec(dllexport) symbols; ELF must opt into
+        # the same discipline so the release audit sees exactly the one entry
+        # point of the plugin's contract.
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+        LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+    )
+endfunction()
+
+# subtract-ring (Contract 1): the released line (artifact naming, descriptor
+# and signing below are unchanged).
+mib_add_processing_core_plugin(mib_processing_core 1)
+# absdiff-laplacian (Contract 2): built for the ABI-v2 plugin tests. Release
+# naming, descriptor and signing arrive with the Contract 2 core line (T1.1).
+mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2)
 if(WIN32)
     set(_mib_processing_native_basename
         "mib_processing_core-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
@@ -244,7 +304,36 @@ elseif(UNIX AND NOT APPLE)
         CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"engine_abi_version\": 1,\n  \"contract_version\": 1,\n  \"entrypoint\": \"mib_processing_get_api\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
 endif()
 
+# absdiff-laplacian (Contract 2) line (ADR 0007): engine ABI v2, entry point
+# mib_processing_get_api_v2. CI builds, audits, tests and uploads it next to
+# the subtract-ring core; signing and publishing are per-line release work.
+# The descriptors above must stay first: release tests read the subtract-ring
+# sidecar's contract_version/engine_abi_version from the first match.
+if(WIN32)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"windows\",\n  \"arch\": \"x86_64\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"authenticode\"}\n}\n")
+elseif(UNIX AND NOT APPLE)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-linux_${_mib_processing_native_arch}")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
+endif()
+
 add_library(mib_backend STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileCache.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseAuth.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryWorker.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
@@ -271,6 +360,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/DeviceDiscoveryService.cpp

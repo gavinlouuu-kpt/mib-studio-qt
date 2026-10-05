@@ -1,0 +1,64 @@
+# Dot-grid wafer localization
+
+Status: active
+
+ADR: [0008 — Dot-grid wafer localization](../../decisions/0008-dot-grid-localization.md)
+Design: [architecture/dot-grid-localization.md](../../architecture/dot-grid-localization.md)
+Task record: `knowledge_map/task/2026-09-17-dot-grid-localization.md`
+
+## Goal
+
+Know where the camera is on the wafer (and on which chip) from a single
+frame at 20x through the glass side, using a dot-grid fiducial pattern
+fabricated in the channel layer of the Wafer_soRT design, with the decoding
+and overlay integrated in MIB Studio.
+
+## Acceptance criteria
+
+- [x] Pattern encoding defined, parameters chosen for Wafer_soRT
+      (30 µm pitch / 12 µm dots / 5 µm shift / 50 µm channel keep-out) and
+      validated on synthetic 20x/10x/4x views including the mid-channel case.
+- [x] Python mask generator produces `codebook.json` + GDS layer from the
+      design DXF; codebook is shared with the app.
+- [x] Qt-free C++ decoder in `mib_processing`, identical codebook generation
+      (golden test), synthetic renderer.
+- [x] `DotGridService` polling FrameStore at a low rate, config under
+      `dot_grid`, `MIB_DISABLED_SERVICES=dot_grid`, wired in `AppBackend`.
+- [x] Overview overlay + **Wafer Grid** toggle; decoding paused whenever the
+      Overview is not on screen (moved off the Experiment Preview page 2026-10-02).
+- [x] Tests: `processing.dot_grid_codebook`, `processing.dot_grid_decoder`,
+      `backend.dot_grid_service`, `scripts.dot_grid_reference`.
+- [ ] Mask fabricated (chrome), test wafer moulded, real-frame decode
+      confirmed at 20x mid-channel; tune blob threshold / keep-out from data.
+- [ ] Pose persisted per frame in HDF5 (new compound dataset, see
+      `Hdf5Service` metadata pattern) when recording.
+- [ ] CAD channel overlay from the decoded pose; chip-relative coordinates.
+- [x] Design registry: several designs, one seed each; the app reports which
+      design it sees ([ADR 0009](../../decisions/0009-dot-grid-design-registry.md)).
+- [ ] In-app "add design" dialog (today: `dotgrid_cli.py register` + PR, or
+      a local `registry_path`).
+
+## Decision log
+
+- 2026-10-01: multiple designs are told apart by seed, decoding against all
+  registered codebooks (0/120 cross-seed false decodes in synthetic trials);
+  reserving code space per design was rejected — the 2-symbol windows have
+  no room left on a 100 mm wafer.
+- 2026-09-17: 50 µm pitch rejected — a 20x view centred on a channel with a
+  50 µm keep-out never contains enough dots on one side; 30 µm pitch passes
+  (28–29/30 synthetic). Lookup window shortened to 2 delta symbols (3
+  lines) for the same reason.
+- 2026-09-17: dots stay on the channel layer (no second mask); fallback is a
+  thin second SU-8 layer if bonding near pits is a problem.
+- 2026-09-17: decoder verifies every dot against the codebook (≥ 90 %
+  agreement) after decoding; lattice-index drift on large 4x grids otherwise
+  produced positions off by a pitch.
+
+## Progress
+
+- [x] 2026-10-01 — Design registry (`registry.json`, `register`/`mask`/`list`/
+      `check`, multi-design decoder, `designId` in the pose and overlay).
+- [x] 2026-09-17 — Design, Python reference + generator, C++ port, service,
+      UI, tests, docs (this PR).
+- [ ] Order mask; generate mock-frame set from the shipped codebook for the
+      bench PC.

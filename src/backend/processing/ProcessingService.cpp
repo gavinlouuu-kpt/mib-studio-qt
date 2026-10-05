@@ -2,6 +2,8 @@
 #include "backend/processing/ChannelRoiDetect.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/app/SciencePlacement.h"
+#include "backend/processing/ImageFilterPipeline.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingConfigJson.h"
@@ -452,7 +454,7 @@ ProcessingService::Roi ProcessingService::getRealtimeRoi() const {
 }
 
 void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
-    std::shared_ptr<cv::Mat> stored;
+    std::shared_ptr<const cv::Mat> stored;
     {
         std::scoped_lock lk(rtMutex_);
         if (!bg.empty() && bg.type() == CV_8UC1) {
@@ -466,21 +468,37 @@ void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
         }
         stored = rtBgGray_;
     }
-    // Detect the channel band (develop): cells whose centroid sits outside it
-    // (debris on a wall) are rejected. Off unless opted in; a cleared
-    // background or a disabled setting clears the band. Published before the
-    // background generation bump.
-    const Roi band = (stored && !stored->empty()) ? computeAutoRoiFromBackground(*stored) : Roi{};
+    // Detect the channel band so objects whose centroid sits outside it (debris
+    // stuck on a wall) are rejected, while the ROI stays as drawn and cells
+    // near the walls are not clipped by the border check. Off unless opted in;
+    // a cleared background or a disabled setting clears the band. Published
+    // before the background generation bump so the realtime loop never pairs
+    // the new background with the previous band.
+    const Roi band =
+        (stored && !stored->empty()) ? computeAutoRoiFromBackground(*stored) : Roi{};
     const bool haveBand = band.w > 0 && band.h > 0;
     {
         std::scoped_lock lk(channelBandMutex_);
         channelBand_ = haveBand ? band : Roi{};
     }
+
     // Every publication (or clear) is a new background identity (issue #369).
     backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
     configVersion_.fetch_add(
         1, std::memory_order_release); // wake cached-config refresh in realtime loop
     refreshRealtimeBatchPipelineConfig();
+
+    if (haveBand) {
+        SuggestedRoiCallback cb;
+        {
+            std::scoped_lock lk(suggestedRoiCallbackMutex_);
+            cb = suggestedRoiCallback_;
+        }
+        if (cb) {
+            cb(band, lastAutoBackgroundFrame_.load(std::memory_order_relaxed));
+        }
+        SPDLOG_INFO("Channel band from background: y={} h={}", band.y, band.h);
+    }
 }
 
 cv::Mat ProcessingService::getRealtimeBackgroundGray() const {
@@ -709,6 +727,28 @@ std::vector<ProcessedFrame> ProcessingService::getMonitoringInvalidFrames() cons
     return monitoringInvalidFrames_.toVector();
 }
 
+std::vector<ProcessingService::MonitoringPoint> ProcessingService::getMonitoringValidPoints() const {
+    std::vector<MonitoringPoint> out;
+    out.reserve(MAX_MONITORING_FRAMES);
+    std::scoped_lock lk(monitoringFramesMutex_);
+    monitoringValidFrames_.forEach([&out](const ProcessedFrame& f) {
+        if (f.validation.isValid) out.push_back({f.index, f.validation.area, f.validation.deformability});
+    });
+    return out;
+}
+
+void ProcessingService::appendMonitoringFrameForTests(const ProcessedFrame& frame) {
+    std::scoped_lock lk(monitoringFramesMutex_);
+    ProcessedFrame copy = frame;
+    if (frame.validation.isValid) {
+        monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringValidFrames_.push_back(std::move(copy));
+    } else {
+        monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringInvalidFrames_.push_back(std::move(copy));
+    }
+}
+
 void ProcessingService::clearMonitoringFrames() {
     // Clear is atomic from the consumer's perspective: buffers and appended
     // totals reset under the same lock the reader snapshot takes (BE-5).
@@ -728,8 +768,17 @@ void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
         std::scoped_lock lk(configMutex_);
         processingConfig_ = config;
     }
+    activeContract_.store(config.processing_contract_version, std::memory_order_relaxed);
     configVersion_.fetch_add(1, std::memory_order_release);
     refreshRealtimeBatchPipelineConfig();
+    if (const std::string mismatch = processingContractMismatch(); !mismatch.empty()) {
+        SPDLOG_WARN("Processing will be refused: {}", mismatch);
+    }
+}
+
+ProcessingConfig ProcessingService::getProcessingConfig() const {
+    std::scoped_lock lk(configMutex_);
+    return processingConfig_;
 }
 
 ProcessingConfig ProcessingService::getEffectiveProcessingConfig() const {
@@ -740,33 +789,6 @@ ProcessingConfig ProcessingService::getEffectiveProcessingConfig() const {
         config.channel_band_h = band.h > 0 ? band.h : 0;
     }
     return config;
-}
-
-ProcessingService::Roi
-ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const {
-    ProcessingConfig config;
-    {
-        std::scoped_lock lk(configMutex_);
-        config = processingConfig_;
-    }
-    if (!config.auto_roi_from_background || backgroundGray.empty()) {
-        return Roi{}; // disabled / no background: empty ROI == full frame
-    }
-    backend::processing::ChannelRoiParams params;
-    params.wallGradientRatio = config.auto_roi_wall_gradient_ratio;
-    params.marginRows = config.auto_roi_wall_margin;
-    const backend::processing::ChannelRoi detected = backend::processing::detectChannelRoi(backgroundGray, params);
-    return Roi{detected.x, detected.y, detected.w, detected.h};
-}
-
-ProcessingService::Roi ProcessingService::getChannelBand() const {
-    std::scoped_lock lk(channelBandMutex_);
-    return channelBand_;
-}
-
-ProcessingConfig ProcessingService::getProcessingConfig() const {
-    std::scoped_lock lk(configMutex_);
-    return processingConfig_;
 }
 
 void ProcessingService::setPixelToMicronFactor(double factor) {
@@ -865,17 +887,17 @@ bool ProcessingService::isFrameEmpty(const backend::playback::Frame& frame,
     effectiveRoi.h = std::max(1, std::min(effectiveRoi.h, gray.rows - effectiveRoi.y));
 
     cv::Rect cvRoi(effectiveRoi.x, effectiveRoi.y, effectiveRoi.w, effectiveRoi.h);
-    cv::Mat roiCurr = gray(cvRoi);
-
-    // Apply same processing as realtime loop
-    cv::Mat blurredCurr, blurredBg, diff, thresh;
-    cv::GaussianBlur(roiCurr, blurredCurr, cv::Size(3, 3), 0);
-
-    if (!background.empty() && background.size() == gray.size() && background.type() == CV_8UC1) {
-        cv::GaussianBlur(background(cvRoi), blurredBg, cv::Size(3, 3), 0);
-        cv::subtract(blurredCurr, blurredBg, diff);
-    } else {
-        diff = blurredCurr;
+    // Shared difference path (identity preprocessing, contract-gated difference,
+    // fixed 3x3 blur to match the legacy empty-frame filter).
+    const backend::processing::ImageFilterPipeline identityStages;
+    cv::Mat diff, thresh;
+    std::string diffError;
+    if (!backend::processing::buildDifferenceImage(
+            gray, background, cvRoi, identityStages, identityStages, /*gaussianBlurSize=*/3,
+            backend::processing::contract::contractUsesAbsoluteDifference(
+                config.processing_contract_version),
+            diff, &diffError)) {
+        return true; // undecidable difference counts as empty
     }
 
     cv::threshold(diff, thresh, config.bg_subtract_threshold, 255, cv::THRESH_BINARY);
@@ -909,15 +931,23 @@ bool ProcessingService::isFrameEmpty(const backend::playback::Frame& frame,
         makeGrayROI(frame, effectiveRoi.x, effectiveRoi.y, effectiveRoi.w, effectiveRoi.h);
 
     cv::Rect cvRoi(effectiveRoi.x, effectiveRoi.y, effectiveRoi.w, effectiveRoi.h);
-    cv::Mat blurredCurr, blurredBg, diff, thresh;
-    cv::GaussianBlur(roiCurr, blurredCurr, cv::Size(3, 3), 0);
 
+    // Shared difference path over the already-cropped ROI (identity
+    // preprocessing, Contract-1 saturating subtraction, fixed 3x3 blur).
+    const backend::processing::ImageFilterPipeline identityStages;
+    cv::Mat bgRoi;
     if (background && !background->empty() && background->cols == frameW &&
         background->rows == frameH && background->type() == CV_8UC1) {
-        cv::GaussianBlur((*background)(cvRoi), blurredBg, cv::Size(3, 3), 0);
-        cv::subtract(blurredCurr, blurredBg, diff);
-    } else {
-        diff = blurredCurr;
+        bgRoi = (*background)(cvRoi);
+    }
+    cv::Mat diff, thresh;
+    std::string diffError;
+    if (!backend::processing::buildDifferenceImageCropped(
+            roiCurr, bgRoi, identityStages, identityStages, /*gaussianBlurSize=*/3,
+            backend::processing::contract::contractUsesAbsoluteDifference(
+                config.processing_contract_version),
+            diff, &diffError)) {
+        return true; // undecidable difference counts as empty
     }
 
     cv::threshold(diff, thresh, config.bg_subtract_threshold, 255, cv::THRESH_BINARY);
@@ -1311,19 +1341,58 @@ bool ProcessingService::isImageEmptyWithActiveKernel(const cv::Mat& gray, const 
         }
         return false;
     }
-    if (!processingKernel_ ||
+    if (!processingKernel_ || !activeKernelServesContractLocked(config, error) ||
         !processingKernel_->isEmpty(gray, background, kernelConfig, kernelRoi, empty, error)) {
         return false;
     }
     return true;
 }
 
+bool ProcessingService::activeKernelServesContractLocked(const ProcessingConfig& config,
+                                                         std::string* error) const {
+    if (!processingKernel_) {
+        if (error) *error = "no active processing kernel";
+        return false;
+    }
+    if (processingKernel_->servesContract(config.processing_contract_version)) {
+        return true;
+    }
+    if (error) {
+        const auto& identity = processingKernel_->identity();
+        *error = "active processing core " + identity.version + " (" + identity.source +
+                 ") implements Processing Contract " + std::to_string(identity.contractVersion) +
+                 "; the profile requires Contract " +
+                 std::to_string(config.processing_contract_version) + " (ADR 0007)";
+    }
+    return false;
+}
+
+std::string ProcessingService::processingContractMismatch() const {
+    const ProcessingConfig config = getProcessingConfig();
+    std::shared_lock lock(processingKernelMutex_);
+    if (!processingKernel_) {
+        return "no active processing kernel";
+    }
+    std::string error;
+    return activeKernelServesContractLocked(config, &error) ? std::string{} : error;
+}
+
 bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray, const cv::Mat& background,
                                                     const ProcessingConfig& config, const Roi& roi,
                                                     cv::Mat& mask, std::string* error) const {
+    if (!backend::processing::contract::isSupportedProcessingContract(
+            config.processing_contract_version)) {
+        if (error) {
+            *error = "unsupported processing_contract_version " +
+                     std::to_string(config.processing_contract_version);
+        }
+        return false;
+    }
     const backend::processing::KernelConfig kernelConfig{
         config.gaussian_blur_size, config.bg_subtract_threshold, config.morph_kernel_size,
-        config.morph_iterations, config.empty_frame_pixel_threshold};
+        config.morph_iterations, config.empty_frame_pixel_threshold,
+        backend::processing::contract::contractUsesAbsoluteDifference(
+            config.processing_contract_version)};
     const backend::processing::KernelRoi kernelRoi{roi.x, roi.y, roi.w, roi.h};
     std::shared_lock lock(processingKernelMutex_);
     if (!processingCoreSelectionAvailable_.load(std::memory_order_acquire)) {
@@ -1332,6 +1401,9 @@ bool ProcessingService::processMaskWithActiveKernel(const cv::Mat& gray, const c
     }
     if (!processingKernel_) {
         if (error) *error = "no active processing kernel";
+        return false;
+    }
+    if (!activeKernelServesContractLocked(config, error)) {
         return false;
     }
     if (!requiredProcessingCoreVersion_.empty() &&
@@ -1394,7 +1466,7 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
     }
 
     // Validation + contour/metric extraction (same helper as realtime)
-    out.validation = filterProcessedImage(mask, cvRoi, config, gray);
+    out.validation = filterProcessedImage(mask, cvRoi, config, gray, backgroundGray);
     out.processedImage = std::move(mask);
     return out;
 }
@@ -1466,8 +1538,8 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
             std::max(1, std::min(normalizedRoi.h, base.originalImage.rows - normalizedRoi.y));
         const cv::Rect cvRoi(normalizedRoi.x, normalizedRoi.y, normalizedRoi.w, normalizedRoi.h);
 
-        auto objectResults =
-            filterProcessedObjects(base.processedImage, cvRoi, config, base.originalImage);
+        auto objectResults = filterProcessedObjects(base.processedImage, cvRoi, config,
+                                                    base.originalImage, {}, background);
         if (objectResults.empty()) {
             results.emplace_back(std::move(base));
         } else {
@@ -1696,6 +1768,7 @@ ProcessingService::BatchPipelineStats ProcessingService::getBatchPipelineStats()
     std::scoped_lock lk(batchMutex_);
     stats.currentQueueDepth = batchQueue_.size();
     stats.batchSize = batchConfig_.batchSize;
+    stats.queueCapacity = batchConfig_.maxQueuedFrames;
     if (stats.workerCount == 0 && stats.running) {
         stats.workerCount = batchConfig_.workerCount;
     }
@@ -1785,8 +1858,9 @@ void ProcessingService::batchWorkerLoop() {
                 const cv::Rect cvRoi(normalizedRoi.x, normalizedRoi.y, normalizedRoi.w,
                                      normalizedRoi.h);
 
-                auto objectResults = filterProcessedObjects(base.processedImage, cvRoi,
-                                                            config.processing, base.originalImage);
+                auto objectResults =
+                    filterProcessedObjects(base.processedImage, cvRoi, config.processing,
+                                           base.originalImage, {}, config.background);
                 if (objectResults.empty()) {
                     results.emplace_back(std::move(base));
                     continue;
@@ -1840,6 +1914,11 @@ void ProcessingService::setRingRatioCallback(RingRatioCallback callback) {
     ringRatioCallback_ = std::move(callback);
 }
 
+void ProcessingService::setFocusSampleCallback(FocusSampleCallback callback) {
+    std::scoped_lock lk(ringRatioCallbackMutex_);
+    focusSampleCallback_ = std::move(callback);
+}
+
 void ProcessingService::setTargetGroupCallback(TargetGroupCallback callback) {
     std::scoped_lock lk(targetGroupCallbackMutex_);
     targetGroupCallback_ = std::move(callback);
@@ -1848,6 +1927,34 @@ void ProcessingService::setTargetGroupCallback(TargetGroupCallback callback) {
 void ProcessingService::setBackgroundCaptureCallback(BackgroundCaptureCallback callback) {
     std::scoped_lock lk(backgroundCaptureCallbackMutex_);
     backgroundCaptureCallback_ = std::move(callback);
+}
+
+void ProcessingService::setSuggestedRoiCallback(SuggestedRoiCallback callback) {
+    std::scoped_lock lk(suggestedRoiCallbackMutex_);
+    suggestedRoiCallback_ = std::move(callback);
+}
+
+ProcessingService::Roi
+ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const {
+    ProcessingConfig config;
+    {
+        std::scoped_lock lk(configMutex_);
+        config = processingConfig_;
+    }
+    if (!config.auto_roi_from_background || backgroundGray.empty()) {
+        return Roi{}; // disabled / no background: empty ROI == full frame
+    }
+    backend::processing::ChannelRoiParams params;
+    params.wallGradientRatio = config.auto_roi_wall_gradient_ratio;
+    params.marginRows = config.auto_roi_wall_margin;
+    const backend::processing::ChannelRoi detected =
+        backend::processing::detectChannelRoi(backgroundGray, params);
+    return Roi{detected.x, detected.y, detected.w, detected.h};
+}
+
+ProcessingService::Roi ProcessingService::getChannelBand() const {
+    std::scoped_lock lk(channelBandMutex_);
+    return channelBand_;
 }
 
 void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dropped,
@@ -2013,7 +2120,22 @@ size_t ProcessingService::getInvalidFrameSamplingRate() const {
 std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Mat& processedImage,
                                                                     const cv::Rect& roi,
                                                                     const ProcessingConfig& config,
-                                                                    const cv::Mat& originalImage) {
+                                                                    const cv::Mat& originalImage,
+                                                                    cv::Point maskOrigin,
+                                                                    const cv::Mat& background) {
+    // The service owns the detected channel band (frame coordinates); express
+    // it in the mask's coordinates for the object filter.
+    ProcessingConfig bandConfig;
+    const ProcessingConfig* effectiveConfig = &config;
+    if (config.auto_roi_from_background) {
+        const Roi band = getChannelBand();
+        if (band.h > 0) {
+            bandConfig = config;
+            bandConfig.channel_band_y = band.y - maskOrigin.y;
+            bandConfig.channel_band_h = band.h;
+            effectiveConfig = &bandConfig;
+        }
+    }
     // Version-sensitive science is owned by the selected kernel (A7). The
     // caller already holds a CoreOperationLease, so the kernel cannot swap
     // between the mask call and this analysis call.
@@ -2026,8 +2148,9 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
     }
     std::vector<FilterResult> results;
     std::string error;
-    if (!kernel || !kernel->analyzeObjects(processedImage, roi, config, originalImage,
-                                           pixelToMicronFactor, eModulusLut, results, &error)) {
+    if (!kernel || !kernel->analyzeObjects(processedImage, roi, *effectiveConfig, originalImage,
+                                           pixelToMicronFactor, eModulusLut, results, &error,
+                                           background)) {
         SPDLOG_ERROR("filterProcessedObjects: kernel object analysis failed: {}", error);
         return {};
     }
@@ -2040,8 +2163,10 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
 FilterResult ProcessingService::filterProcessedImage(const cv::Mat& processedImage,
                                                      const cv::Rect& roi,
                                                      const ProcessingConfig& config,
-                                                     const cv::Mat& originalImage) {
-    auto results = filterProcessedObjects(processedImage, roi, config, originalImage);
+                                                     const cv::Mat& originalImage,
+                                                     const cv::Mat& background) {
+    auto results = filterProcessedObjects(processedImage, roi, config, originalImage, {},
+                                          background);
     if (results.empty()) {
         return {};
     }
@@ -2153,17 +2278,36 @@ void ProcessingService::publishRealtimeValidationCallbacks(
 
     // Hoist the callback copy out of the per-object loop: one mutex-guarded
     // std::function copy per frame, not per validation object (P7).
+    // Autofocus feed by contract: ring ratio (Contract 1) or per-object
+    // Laplacian variance (Contracts 2 and 3). `!(x > 0)` also drops NaN, which
+    // a `<= 0` test lets through.
+    const bool ringFeed = backend::processing::contract::contractHasRingWidth(
+        activeContract_.load(std::memory_order_relaxed));
     RingRatioCallback rrCb;
+    FocusSampleCallback fsCb;
     {
         std::scoped_lock cbLk(ringRatioCallbackMutex_);
-        rrCb = ringRatioCallback_;
+        if (ringFeed) {
+            rrCb = ringRatioCallback_;
+        } else {
+            fsCb = focusSampleCallback_;
+        }
     }
     if (rrCb) {
         for (const auto& validation : validations) {
-            if (!validation.isValid || validation.ringRatio <= 0.0) {
+            if (!validation.isValid || !(validation.ringRatio > 0.0)) {
                 continue;
             }
             rrCb(validation.ringRatio, static_cast<int64_t>(timestampNs));
+        }
+    }
+    if (fsCb) {
+        for (const auto& validation : validations) {
+            if (!validation.isValid || !std::isfinite(validation.laplacianVariance)) {
+                continue;
+            }
+            fsCb(validation.laplacianVariance, static_cast<int64_t>(timestampNs), timing.frameIndex,
+                 validation.objectId, validation.trackId);
         }
     }
 
@@ -2252,7 +2396,7 @@ ProcessingService::IdentificationCounters ProcessingService::getIdentificationCo
     c.invalidObjects = idInvalidObjects_.load(std::memory_order_relaxed);
     c.targetGroupObjects = idTargetGroupObjects_.load(std::memory_order_relaxed);
     c.unservedTargetGroupObjects = idUnservedTargetGroupObjects_.load(std::memory_order_relaxed);
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < std::size(idReasonCounts_); ++i) {
         c.reasonCounts[i] = idReasonCounts_[i].load(std::memory_order_relaxed);
     }
     return c;
@@ -2930,7 +3074,11 @@ void ProcessingService::realtimeInlineLoop() {
                     cv::Rect bgRoi(roi.x, roi.y, roi.w, roi.h);
                     cv::Mat bgROI = (*bgShared)(bgRoi);
                     cv::GaussianBlur(bgROI, blurredBg, cv::Size(blurK, blurK), 0);
-                    cv::subtract(blurredCurr, blurredBg, diffForProcessing);
+                    backend::processing::differenceImage(
+                        blurredCurr, blurredBg,
+                        backend::processing::contract::contractUsesAbsoluteDifference(
+                            config.processing_contract_version),
+                        diffForProcessing);
                 } else {
                     diffForProcessing = blurredCurr;
                 }
@@ -3087,7 +3235,8 @@ void ProcessingService::realtimeInlineLoop() {
                 // Always run validation for monitoring (even without experiment)
                 // mask is ROI-sized so contour coords are 0-based; use local roi for border check
                 cv::Rect localRoi(0, 0, roi.w, roi.h);
-                auto validations = filterProcessedObjects(mask, localRoi, config, grayROI);
+                auto validations = filterProcessedObjects(mask, localRoi, config, grayROI,
+                                                          cv::Point(roi.x, roi.y), kernelBackground);
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }
@@ -3396,7 +3545,11 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat diffForProcessing;
                 if (hasBackground) {
                     cv::GaussianBlur((*bgShared)(cvRoi), blurredBg, cv::Size(blurK, blurK), 0);
-                    cv::subtract(blurredCurr, blurredBg, diffForProcessing);
+                    backend::processing::differenceImage(
+                        blurredCurr, blurredBg,
+                        backend::processing::contract::contractUsesAbsoluteDifference(
+                            config.processing_contract_version),
+                        diffForProcessing);
                 } else {
                     diffForProcessing = blurredCurr;
                 }
@@ -3555,7 +3708,8 @@ void ProcessingService::realtimeInlineLoop() {
                     continue;
                 }
 
-                auto validations = filterProcessedObjects(mask, cvRoi, config, gray);
+                auto validations = filterProcessedObjects(mask, cvRoi, config, gray, {},
+                                                          hasBackground ? *bgShared : cv::Mat{});
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }
@@ -3818,7 +3972,11 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat diffForProcessing;
                 if (hasBackground) {
                     cv::GaussianBlur((*bgShared)(cvRoi), blurredBg, cv::Size(blurK, blurK), 0);
-                    cv::subtract(blurredCurr, blurredBg, diffForProcessing);
+                    backend::processing::differenceImage(
+                        blurredCurr, blurredBg,
+                        backend::processing::contract::contractUsesAbsoluteDifference(
+                            config.processing_contract_version),
+                        diffForProcessing);
                 } else {
                     diffForProcessing = blurredCurr;
                 }
@@ -4003,7 +4161,9 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiMaskForValidation = mask(cvRoi).clone();
                 cv::Rect localRoi(0, 0, cvRoi.width, cvRoi.height);
                 auto validations =
-                    filterProcessedObjects(roiMaskForValidation, localRoi, config, roiCurr);
+                    filterProcessedObjects(roiMaskForValidation, localRoi, config, roiCurr,
+                                           cvRoi.tl(),
+                                           hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
                 if (validations.empty()) {
                     validations.push_back(FilterResult{});
                 }

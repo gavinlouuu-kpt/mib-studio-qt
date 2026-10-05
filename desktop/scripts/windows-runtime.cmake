@@ -32,7 +32,10 @@ file(GET_RUNTIME_DEPENDENCIES
   RESOLVED_DEPENDENCIES_VAR resolved
   UNRESOLVED_DEPENDENCIES_VAR unresolved
   CONFLICTING_DEPENDENCIES_PREFIX conflicts
+  # HvsiFileTrust.dll (Defender Application Guard) is an OS component that
+  # System32 DLLs import; it is absent on some Windows images and never shipped.
   PRE_EXCLUDE_REGEXES "[Aa][Pp][Ii]-[Mm][Ss]-" "[Ee][Xx][Tt]-[Mm][Ss]-"
+    "^[Hh][Vv][Ss][Ii][Ff][Ii][Ll][Ee][Tt][Rr][Uu][Ss][Tt]\\.[Dd][Ll][Ll]$"
   POST_EXCLUDE_REGEXES ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss]/[Ss][Yy][Ss][Tt][Ee][Mm]32/.*")
 if(unresolved OR conflicts_FILENAMES)
   message(FATAL_ERROR "Incomplete DLL closure: unresolved=${unresolved}; conflicts=${conflicts_FILENAMES}")

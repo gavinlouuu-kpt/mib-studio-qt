@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingConfigJson.h"
+#include "backend/processing/ProcessingContract.h"
 
 #include <nlohmann/json.hpp>
 
@@ -37,7 +38,7 @@ namespace backend::processing::config_json
     {
         // Exact config.json `image_processing` layout (see
         // resources/defaults/config.json).
-        return nlohmann::json{
+        nlohmann::json json{
             {"gaussian_blur_size", c.gaussian_blur_size},
             {"bg_subtract_threshold", c.bg_subtract_threshold},
             {"morph_kernel_size", c.morph_kernel_size},
@@ -56,12 +57,6 @@ namespace backend::processing::config_json
             {"auto_roi_from_background", c.auto_roi_from_background},
             {"auto_roi_wall_gradient_ratio", c.auto_roi_wall_gradient_ratio},
             {"auto_roi_wall_margin", c.auto_roi_wall_margin},
-            // Laplacian gate (develop's keys) and the U-Net cell parameters,
-            // compiled into the PZ7035 profile page.
-            {"laplacian_variance_min", c.laplacian_variance_min},
-            {"laplacian_variance_max", c.laplacian_variance_max},
-            {"min_cell_area_px", c.min_cell_area_px},
-            {"laplacian_kernel_size", c.laplacian_kernel_size},
             {"filters",
              {
                  {"enable_border_check", c.enable_border_check},
@@ -89,6 +84,16 @@ namespace backend::processing::config_json
                  {"count", c.multi_image_count},
              }},
         };
+#if defined(MIB_PL_SCIENCE) && MIB_PL_SCIENCE
+        // PZ7035 instrument: the operator's Laplacian gate and U-Net cell
+        // parameters persist here (compiled into the PL profile page). Desktop
+        // documents stay byte-identical (they carry these in the science JSON).
+        json["laplacian_variance_min"] = c.laplacian_variance_min;
+        json["laplacian_variance_max"] = c.laplacian_variance_max;
+        json["min_cell_area_px"] = c.min_cell_area_px;
+        json["laplacian_kernel_size"] = c.laplacian_kernel_size;
+#endif
+        return json;
     }
 
     bool fromJson(const nlohmann::json &json,
@@ -123,6 +128,7 @@ namespace backend::processing::config_json
         ok &= assignIfPresent(json, "auto_roi_from_background", c.auto_roi_from_background, errorOut);
         ok &= assignIfPresent(json, "auto_roi_wall_gradient_ratio", c.auto_roi_wall_gradient_ratio, errorOut);
         ok &= assignIfPresent(json, "auto_roi_wall_margin", c.auto_roi_wall_margin, errorOut);
+        // Instrument keys (toJson writes them under MIB_PL_SCIENCE only).
         ok &= assignIfPresent(json, "laplacian_variance_min", c.laplacian_variance_min, errorOut);
         ok &= assignIfPresent(json, "laplacian_variance_max", c.laplacian_variance_max, errorOut);
         ok &= assignIfPresent(json, "min_cell_area_px", c.min_cell_area_px, errorOut);
@@ -156,6 +162,51 @@ namespace backend::processing::config_json
         {
             ok &= assignIfPresent(*multi, "enabled", c.multi_image_enabled, errorOut);
             ok &= assignIfPresent(*multi, "count", c.multi_image_count, errorOut);
+        }
+        return ok;
+    }
+
+    nlohmann::json toScienceJson(const services::ProcessingConfig &c)
+    {
+        nlohmann::json json = toJson(c);
+        json["abi_v2"] = {
+            {"processing_contract_version", c.processing_contract_version},
+            {"enable_laplacian_variance_check", c.enable_laplacian_variance_check},
+            {"laplacian_variance_min", c.laplacian_variance_min},
+            {"laplacian_variance_max", c.laplacian_variance_max},
+            {"channel_band_y", c.channel_band_y},
+            {"channel_band_h", c.channel_band_h},
+        };
+        // Contract 3 keys only for Contract 3, so Contract 1/2 documents stay
+        // byte-identical.
+        if (contract::contractObjectsAreUnetCells(c.processing_contract_version))
+        {
+            json["unet_cells"] = {
+                {"min_cell_area_px", c.min_cell_area_px},
+                {"laplacian_kernel_size", c.laplacian_kernel_size},
+            };
+        }
+        return json;
+    }
+
+    bool fromScienceJson(const nlohmann::json &json,
+                         services::ProcessingConfig &c,
+                         std::string *errorOut)
+    {
+        bool ok = fromJson(json, c, errorOut);
+        if (const auto abi = json.find("abi_v2"); abi != json.end())
+        {
+            ok &= assignIfPresent(*abi, "processing_contract_version", c.processing_contract_version, errorOut);
+            ok &= assignIfPresent(*abi, "enable_laplacian_variance_check", c.enable_laplacian_variance_check, errorOut);
+            ok &= assignIfPresent(*abi, "laplacian_variance_min", c.laplacian_variance_min, errorOut);
+            ok &= assignIfPresent(*abi, "laplacian_variance_max", c.laplacian_variance_max, errorOut);
+            ok &= assignIfPresent(*abi, "channel_band_y", c.channel_band_y, errorOut);
+            ok &= assignIfPresent(*abi, "channel_band_h", c.channel_band_h, errorOut);
+        }
+        if (const auto cells = json.find("unet_cells"); cells != json.end())
+        {
+            ok &= assignIfPresent(*cells, "min_cell_area_px", c.min_cell_area_px, errorOut);
+            ok &= assignIfPresent(*cells, "laplacian_kernel_size", c.laplacian_kernel_size, errorOut);
         }
         return ok;
     }

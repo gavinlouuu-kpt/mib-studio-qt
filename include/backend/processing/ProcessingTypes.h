@@ -38,8 +38,9 @@ struct ProcessingConfig {
     double ring_ratio_min{15.0};
     double ring_ratio_max{25.0};
     bool enable_ring_ratio_check{true};
-    // Per-object Laplacian-variance focus gate (develop Contract 2; here
-    // compiled into the PL profile page). Disabled by default.
+    // Contract v2 object focus metric: per-object Laplacian variance. The gate
+    // is disabled by default and its thresholds are placeholders until V2-7
+    // calibration; enabling it never affects Contract-1 execution.
     double laplacian_variance_min{0.0};
     double laplacian_variance_max{0.0};
     bool enable_laplacian_variance_check{false};
@@ -48,14 +49,24 @@ struct ProcessingConfig {
     bool auto_background_enabled{false};
     int auto_background_empty_frames{30};
     int auto_background_cooldown_frames{1000};
-    // Auto channel band (develop): detect the channel walls in each captured
-    // background and reject cells whose centroid lies outside the band. Off by
-    // default. On the PZ7035 the band goes into the PL profile page.
+    // Auto channel band: when enabled, detect the microfluidic channel walls in
+    // each captured background and reject objects whose centroid lies outside
+    // the channel band (debris stuck on a wall). The ROI itself is not cropped,
+    // so cells near the walls are not clipped by the border check. Off by
+    // default.
     bool auto_roi_from_background{false};
     // Row mean-gradient multiple over the channel baseline that marks a wall row.
     double auto_roi_wall_gradient_ratio{2.5};
     // Extra rows trimmed inward from each detected wall edge, for margin.
     int auto_roi_wall_margin{1};
+    // Channel band gate, in the row coordinates of the mask handed to the
+    // object filter. An object is in the channel when its centroid row lies in
+    // [channel_band_y, channel_band_y + channel_band_h). channel_band_h <= 0
+    // disables the gate. Runtime input, not persisted: ProcessingService fills
+    // it from the detected band when auto_roi_from_background is on; wheel
+    // callers may set it directly.
+    int channel_band_y{0};
+    int channel_band_h{0};
     // Target group sort trigger (second gate within valid frames)
     bool enable_target_group{false};
     int target_group_area_min{72};   // μm²
@@ -66,13 +77,15 @@ struct ProcessingConfig {
     bool enable_target_group_emodulus{false};
     double target_group_emodulus_min{0.0};
     double target_group_emodulus_max{10.0};
-    // Channel band gate, in ROI 1 rows (develop names): a cell whose centroid
-    // row is outside [channel_band_y, channel_band_y + channel_band_h) is
-    // invalid; h <= 0 disables it. Runtime input (from the off-path background).
-    int channel_band_y{0};
-    int channel_band_h{0};
-    // U-Net cells (develop Contract 3; here the PL profile page): components
-    // with fewer pixels are blemishes; Laplacian aperture 1 or 3.
+    // Processing contract executed by this config (ADR 0006). 1 = saturating
+    // subtraction + ring width (frozen, byte-for-byte reproducible). 2 =
+    // cv::absdiff background comparison, ring width abolished (NaN, gate
+    // ignored), per-object Laplacian variance as the focus metric.
+    // `bg_subtract_threshold` holds the v2 canonical `difference_threshold`.
+    int processing_contract_version{1};
+    // Contract 3 (U-Net cells) only. A top-level mask component is a cell when
+    // it has at least this many pixels; smaller ones are blemishes (counted per
+    // frame, never objects). Aperture of the per-cell Laplacian (1 or 3).
     int min_cell_area_px{250};
     int laplacian_kernel_size{3};
     // Multi-image recording: capture a series of N consecutive frames per valid detection
@@ -86,6 +99,9 @@ struct FilterResult {
     bool touchesBorder{false};
     bool hasSingleInnerContour{false};
     bool inRange{false};
+    // False when a channel band is active and the object's centroid lies
+    // outside it (e.g. debris stuck on a channel wall). True when no band.
+    bool inChannel{true};
     int innerContourCount{0};
     int objectId{-1};
     int objectCount{0};
@@ -103,21 +119,23 @@ struct FilterResult {
     double area{0.0};
     double areaRatio{0.0};
     double ringRatio{0.0};
-    // Per-object focus metric (variance of the Laplacian over the object);
-    // NaN when not computed. As on develop (Contract 2); here it comes from PL
-    // results (unet_cells_v2).
+    // Contract v2 per-object focus metric (variance of the Laplacian over the
+    // detected object). NaN when unusable or not computed. Replaces ring width
+    // as the v2 focus signal; ringRatio remains for Contract-1 compatibility.
     double laplacianVariance{std::numeric_limits<double>::quiet_NaN()};
     double youngsModulus{0.0}; // Young's modulus (kPa) from LUT lookup
     BrightnessQuantiles brightness;
-    // U-Net cell values (develop Contract 3; here from PL results); NaN / 0
-    // otherwise. Brightness mean and population variance over the filled
-    // outer contour replace the quartiles.
+    // Contract 3 (U-Net cells) per-object values; NaN / 0 under Contracts 1-2.
+    // Brightness mean and population variance of the raw gray over the filled
+    // outer contour (replaces the quartiles).
     double brightnessMean{std::numeric_limits<double>::quiet_NaN()};
     double brightnessVariance{std::numeric_limits<double>::quiet_NaN()};
-    double contourArea{0.0}; // area enclosed by the outer contour
+    double contourArea{0.0}; // area enclosed by the outer contour (cv::contourArea)
     int pixelCount{0};       // mask pixels of the cell's component
     int blemishCount{0};     // per frame: components below min_cell_area_px
-    bool degenerateContour{false}; // the outer contour encloses no area
+    // The outer contour encloses no area (a point or a line): no metrics, reason
+    // NoContour unless the cell is cut off.
+    bool degenerateContour{false};
     bool isTargetGroup{false}; // True if valid AND matches target group criteria
     // Contours found during processing (for snapshot/display), in the same
     // coordinate space as the processedImage mask. Shared (not deep-copied) so

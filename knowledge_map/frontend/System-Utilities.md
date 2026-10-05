@@ -114,6 +114,20 @@
   `processing_contract_version` is round-tripped through catalog/local
   metadata and marks the profile incompatible when it differs from the active
   core; it never selects a core.
+  - **Schema-aware loading:** `normalizeConfigForSchema` reads
+    `config_schema_version`, fails closed on a schema newer than this build
+    understands (`> config_schema_version 2`), and merges the shipped v1
+    defaults only into a schema-1 document so a schema-2 config is never
+    polluted with removed keys (e.g. ring thresholds). It no longer forces a
+    document back to schema 1.
+  - **Copy-upgrade:** `copyUpgradeConfigToV2` produces a Contract-2 document
+    from a v1 one by delegating to the Qt-free backend migrator
+    (`backend::processing::contract::migrateProfileConfigV1ToV2`, see
+    [[../services/ProcessingService]]); it never rewrites the source. See
+    `docs/architecture/processing-contract-compatibility.md`.
+- **`DeviceInitManager`** — runs [[../services/CameraControlService]]
+  `discoverCameras()` off the UI thread. Emits a signal when discovery
+  completes (including "no cameras found").
   `camera.frame_delivery_mode` is classified medium-risk in profile diffs
   (`isMediumRiskPath`), and `configSourceForPath` buckets `camera.*` paths as
   Config (not "Camera script", which only matches the `camera_script*` keys).
@@ -228,8 +242,24 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
 
 ## Widgets (`src/frontend/widgets/`)
 
-- **`ZoomableChartView`** — subclass of `QChartView` with scroll/zoom.
+- **`ZoomableChartView`** — subclass of `QChartView`: wheel zoom around the
+  cursor (Ctrl = X only, Shift = Y only, over an axis's labels = that axis
+  only), left- or middle-drag pan, double-click reset to `setDefaultRange`.
   Used by [[ExperimentMonitoringTab]] and [[HdfReviewTab]].
+  **Click vs drag (issue #466):** a press only becomes a pan once the
+  pointer travels `QApplication::startDragDistance()`; a release before that
+  emits `plotClicked(viewPos, button)` (inside `plotArea()` only) and never
+  moves the axes. `hoverMoved` fires when no press is pending.
+  `setResetOnDoubleClick(false)` hands double-click to the owner
+  (`plotDoubleClicked`); `resetZoomAction()` is a "Reset zoom" `QAction` for
+  context menus; `cancelGesture()` drops a pending press or pan; a leave with
+  no button held, or a move whose `buttons()` no longer include the pressed
+  one (release taken by a context menu or modal while the pointer stayed
+  over the view), does the same, so a lost release never leaves a "sticky"
+  pan. `markUserZoomed()` lets an owner that restored axis ranges itself
+  re-arm the user-zoomed state. Only a left double-click resets. Guard:
+  `frontend.zoomable_chart_view` (synthesized events via
+  `tests/support/qt_mouse.h`; the tree has no QtTest).
 - **`RunStatusWidget`** (issue #363) — glyph + `ElidingLabel` bound to a
   `RunStatusModel` (`bind`); text carries the state, color is only a
   secondary cue; accessible name "Run state: …"; bounded width (≤ 260 px).

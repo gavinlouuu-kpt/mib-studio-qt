@@ -8,7 +8,11 @@ Uniform JSON format for processing pipeline metrics so **mib-studio-qt** pipelin
 - **Top-level fields**:
   - `version`: Schema version (currently `1`).
   - `contract_version`: Optional explicit portable-processing contract version
-    (required in conformance references; currently `1`).
+    (required in conformance references): `1` (subtract-ring, the default) or
+    `2` (absdiff-laplacian). Each contract has its own references
+    (ADR 0007). `scripts/compare_metrics.py` reads it: Contract-1 records must
+    carry `ring_ratio`; Contract-2 records carry none and are compared on
+    `laplacian_variance` when present.
   - `wheel_version`: Optional `mib-processing` package version that produced a
     conformance candidate.
   - `fixture` / `input_frame_count`: Optional conformance-fixture identity and
@@ -33,7 +37,8 @@ Uniform JSON format for processing pipeline metrics so **mib-studio-qt** pipelin
 | `area` | number | Hull area in **pixels**. |
 | `area_um2` | number | Area in **µm²** (optional; = area × pixel_to_micron²). |
 | `area_ratio` | number | Hull area / contour area; dimensionless. |
-| `ring_ratio` | number | sqrt(outer_area − inner_area); ring metric. |
+| `ring_ratio` | number | **Legacy Contract 1** focus metric: sqrt(outer_area − inner_area). Present in Contract-1 documents; omitted by Contract-2 documents. Optional. |
+| `laplacian_variance` | number | **Contract 2** per-object focus metric: variance of the Laplacian over the detected object (`ProcessingScience::calculateLaplacianVariance`). Present in Contract-2 documents; omitted by Contract-1. `NaN` serialized as `null`. Optional. |
 | `youngs_modulus` | number | Young's modulus (kPa) from `EModulusLut` bilinear lookup on (area_um, deformability) (optional; omitted when the lookup falls outside LUT coverage or no LUT was loaded). |
 | `is_valid` | boolean | True if frame passed all validation checks. |
 | `is_target_group` | boolean | Target-group/trigger classification (optional). |
@@ -45,6 +50,8 @@ Uniform JSON format for processing pipeline metrics so **mib-studio-qt** pipelin
 | `brightness_q2` | number | 50th percentile (median) brightness. |
 | `brightness_q3` | number | 75th percentile brightness. |
 | `brightness_q4` | number | 100th percentile (max) brightness. |
+| `brightness_mean`, `brightness_variance` | number \| null | **Contract 3** (`unet-cells`): mean and population variance of the raw brightness over the filled outer contour; replace the quartiles, which a Contract-3 document must not carry. `NaN` serialized as `null`. |
+| `contour_area`, `pixel_count`, `blemish_count`, `degenerate_contour` | number / integer / integer / boolean | **Contract 3**: outer-contour area, the cell's mask pixels, per-frame blemishes (components below `min_cell_area_px`), and a contour that encloses no area. The schema selects `$defs/unet_cell_frame` when `contract_version` is 3. |
 | `mask_sha256` | string | SHA-256 over mask dtype + shape + bytes for exact conformance (optional). |
 | `series_images_sha256` | string[] | Ordered SHA-256 values for trigger + following multi-image-series frames (optional). |
 
