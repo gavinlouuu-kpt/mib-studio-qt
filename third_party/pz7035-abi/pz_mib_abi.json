@@ -236,7 +236,7 @@
         "offset": "0x00C",
         "name": "BUILD_ID0",
         "access": "RO",
-        "doc": "bytes 0-3 of the source bundle sha256"
+        "doc": "BUILD_ID3..0: the first 128 bits of the PL build's git commit, most significant word in BUILD_ID3 (the 32-hex prefix reads ID3 ID2 ID1 ID0 as %08x each); this word holds hex digits 25-32"
       },
       {
         "offset": "0x010",
@@ -269,7 +269,7 @@
         "offset": "0x02C",
         "name": "PROFILE_ID0",
         "access": "RO",
-        "doc": "bytes 0-3 of the sha256 identifying the profile's assets (for example a model); zero when none"
+        "doc": "PROFILE_ID3..0: the first 128 bits of the sha256 of the profile's assets (the model weights .npz), most significant word in PROFILE_ID3 (the 32-hex prefix reads ID3 ID2 ID1 ID0 as %08x each); zero when none; this word holds hex digits 25-32"
       },
       {
         "offset": "0x030",
