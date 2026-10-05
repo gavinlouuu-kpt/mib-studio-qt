@@ -1,7 +1,7 @@
 import {ApplicationUpdateControls} from "./applicationUpdate";
-import {invoke} from "@tauri-apps/api/core";
-import {open} from "@tauri-apps/plugin-dialog";
-import {openUrl} from "@tauri-apps/plugin-opener";
+import {invoke} from "./transport";
+import {open} from "./transport/dialogs";
+import {openUrl} from "./transport/dialogs";
 import {useEffect,useRef,useState} from "react";
 import {fetchProfileText} from "./profileCatalog";
 interface Native {filename:string;os:string;arch:string;url:string;sha256:string;size_bytes:number;[key:string]:unknown}

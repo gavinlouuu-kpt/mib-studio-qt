@@ -28,6 +28,13 @@ scripts/bootstrap.sh     # install it                                        (Wi
 cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build
 ```
 
+Aravis Fake-interface validation is optional: configure a local Aravis 0.9.3
+prefix with `-DMIB_ENABLE_ARAVIS=ON`, set `PKG_CONFIG_PATH` to its pkg-config
+directory, then run the `camera.aravis_*` and `backend.aravis_*` CTest cases.
+Use `MIB_CAMERA_MODE=aravis MIB_ARAVIS_FAKE=1`; disabled builds report Aravis as
+unavailable rather than selecting MockCamera. See
+[`knowledge_map/camera/AravisCamera.md`](knowledge_map/camera/AravisCamera.md).
+
 Windows builds use Conan + VS 2022: `.\scripts\bootstrap.ps1` runs
 `conan install` with `conan/profiles/windows-msvc194`, then
 `cmake --preset windows-default` and `cmake --build build --config Release`

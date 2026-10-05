@@ -89,7 +89,7 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `discovery_identity_strengths`, `discovery_identification_statuses`,
   `discovery_error_kinds`. Windows `cargo test` against the `windows-ninja`
   tree uses `tools/gen_bridge_link_manifest_ninja.py`.
-- **Central profile registry (v15, #398):** `registry_sign_in(email,
+- **Central profile registry (v24, #398):** `registry_sign_in(email,
   password)`, `registry_sign_out()`, `registry_refresh()`,
   `registry_download(revision_id)` → job ID (0 = refused),
   `registry_cancel_all()`, `fetch_registry_snapshot()` →
@@ -99,15 +99,15 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `registry_session_states`, `registry_connectivity`, `registry_job_kinds`
   (`Materialize` = 4 and `RecordValidation` = 5 appended for #398 M2, and
   `SaveDraft` 6, `DeleteDraft` 7, `SubmitDraft` 8, `Transition` 9,
-  `FetchHistory` 10 for M3, while ABI 15 was still unreleased; the authoring
-  kinds have no bridge command yet),
+  `FetchHistory` 10 for M3, before the registry ABI was released; the
+  authoring kinds have no bridge command yet),
   `registry_job_states`, `registry_central_states`, `registry_local_validation`
   (M2b). M2b also adds `registry_materialize(revision_id)` → job ID and
   `registry_record_validation(revision_id, evidence_file, passed)` →
   `BridgeRegistryValidationRequest { job_id, error }` (the evidence check runs
   before queueing), per-revision `materialized_dir` / `local_validation` /
   `validated_by` / `validated_at_utc`, and snapshot `instrument_id` /
-  `instrument_name` — all inside unreleased ABI 15. **Transport seam (ADR
+  `instrument_name` — all part of ABI 24. **Transport seam (ADR
   0002 addendum):** the shell installs its HTTPS POST with
   `set_registry_transport(fn(&BridgeHttpRequest) -> BridgeHttpResponse)`
   *before* `initialize` (refused afterwards). Each request carries a
@@ -353,3 +353,54 @@ provisioning native dependencies.
 
 Windows regression fixtures canonicalize temporary paths before comparison,
 matching the generator when RUNNER~1 and runneradmin name the same directory.
+
+## ABI 20: Camera & Alignment (2026-10-01)
+
+`set_camera_overview(overview)`, `save_camera_roi(x, y, w, h)` and
+`fetch_camera_geometry() -> JSON` expose the Qt Overview-tab workflow to every
+shell: the whole sensor is shown, the experiment window (ROI 1, sensor
+coordinates) is placed on it and saved, and Experiment acquires that window.
+They go through `BackendFacade` camera actions `SetCameraOverview` (restarts a
+capture that was running) and `SaveCameraRoi`, and `fetchCameraGeometryJson`.
+MindVision keeps its profile-based overview; Aravis cameras gained one (see
+[[AppBackend]]). `crates/mib-bridge/tests/contract.rs`
+`camera_alignment_commands_without_overview_camera` covers a camera without
+an overview (mock).
+
+## ABI 21: science on the PL (2026-10-01)
+
+`fetch_platform_info() -> {science: host|pl, host_processing, aravis}`.
+With `MIB_PL_SCIENCE` (the `linux-armv7-yocto` preset) or `MIB_PL_SCIENCE=1`
+in the environment, `backend::app::hostProcessingAvailable()` is false:
+`ProcessingService::setRealtimeEnabled(true)` is refused and `startRealtime`
+is a no-op, `apply_processing` with realtime on fails with the reason,
+experiment start does not start the host pipeline, and the readiness gates
+`processing.*` are replaced by `science.pl` (Warn until the record path B3
+connects the PL's results). Test: `backend.pl_science`.
+
+## ABI 22: pump models (2026-10-04)
+
+`pump_connect_model(pump, model, port_name, baud_rate, modbus_address,
+microliters_per_rev)` connects a Sample or Sheath slot to a contract
+`pump_models` device: 0 Longer dLSP syringe, 1 Tushui peristaltic.
+`BridgePumpStatus` gains `model`, `microliters_per_rev` and `speed_rpm`.
+`BackendFacade` validates the model and a calibration in (0, 100000] µL/rev;
+the peristaltic semantics are in [[../services/SyringePumpService]]. The old
+`pump_connect_endpoint` / `pump_connect` stay and connect a dLSP. Test:
+`contract.rs` `pump_commands_fail_safely_without_hardware`.
+
+## ABI 23: one contract for develop and the instrument (2026-10-05)
+
+ADR 0011's single renumber. `develop` was at 19 and the instrument line at
+20 (Camera & Alignment), 21 (`fetch_platform_info`) and 22 (pump models). The
+merged contract is all of them, so it takes a number no earlier build has
+carried. It adds no commands of its own. The #398 profile-registry stack
+renumbers to 24 when it lands.
+
+**Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
+processed previews, review overlays) through the Rust function
+`bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`
+crosses the bridge per element: a 509 KB full-field frame took ~75 ms on the
+PZ7035's Cortex-A9 that way (88 ms per pull, ~10 fps in the browser; now
+27 ms per pull, display ~26 fps = all delivered images).
+

@@ -1,5 +1,7 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ChannelRoiDetect.h"
+#include "backend/processing/IExecutionProvider.h"
+#include "backend/app/SciencePlacement.h"
 #include "backend/processing/ImageFilterPipeline.h"
 #include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingCoreLoader.h"
@@ -109,6 +111,8 @@ void ProcessingService::CoreOperationLease::release() noexcept {
 }
 
 ProcessingService::~ProcessingService() {
+    cancelBackgroundCalibration();
+    if (bgCalPreviewThread_.joinable()) bgCalPreviewThread_.join();
     // A joinable realtimeThread_ at destruction would std::terminate; do not
     // rely on the GUI teardown path having called stopRealtime() first.
     stopRealtime();
@@ -201,6 +205,7 @@ void ProcessingService::workerLoop() {
 }
 
 void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameStore> store) {
+    if (!backend::app::hostProcessingAvailable()) return; // the PL processes every frame
     std::unique_lock coreLock(processingKernelMutex_);
     if (rtRunning_.load()) return;
     if (realtimeThread_.joinable()) {
@@ -364,6 +369,10 @@ void ProcessingService::stopRealtime() {
 }
 
 void ProcessingService::setRealtimeEnabled(bool on) {
+    if (on && !backend::app::hostProcessingAvailable()) {
+        SPDLOG_WARN("ProcessingService: realtime processing refused; science runs on the PL");
+        on = false;
+    }
     rtEnabled_.store(on);
 }
 
@@ -1095,6 +1104,119 @@ bool ProcessingService::startBackgroundCalibration(const BackgroundCalibrationRe
     return true;
 }
 
+void ProcessingService::publishCalibratedBackgroundLocked(cv::Mat background) {
+    // Atomic publication: the previous background stays active until the
+    // candidate is installed here.
+    const Roi band = computeAutoRoiFromBackground(background);
+    {
+        std::scoped_lock rtLk(rtMutex_);
+        rtBgGray_ = std::make_shared<cv::Mat>(std::move(background));
+    }
+    {
+        std::scoped_lock lk(channelBandMutex_);
+        channelBand_ = band.w > 0 && band.h > 0 ? band : Roi{};
+    }
+    backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    configVersion_.fetch_add(1, std::memory_order_release);
+    refreshRealtimeBatchPipelineConfig();
+    bgCalStatus_.publishedBackgroundGeneration = backgroundGeneration_.load(std::memory_order_acquire);
+    bgCalStatus_.publishedSha256 = backgroundSha256();
+}
+
+bool ProcessingService::startPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
+                                                          const BackgroundCalibrationRequest& request,
+                                                          std::string* error) {
+    if (!store) {
+        if (error) *error = "no preview frame source";
+        return false;
+    }
+    if (request.requiredAccepted == 0 || request.requiredAccepted > 1000) {
+        if (error) *error = "invalid calibration request (1 to 1000 preview frames)";
+        return false;
+    }
+    uint64_t generation = 0;
+    {
+        std::scoped_lock lk(bgCalMutex_);
+        if (bgCalStatus_.state == BackgroundCalibrationState::Running) {
+            if (error) *error = "a background calibration is already running";
+            return false;
+        }
+        bgCalRequest_ = request;
+        bgCalStatus_ = BackgroundCalibrationStatus{};
+        bgCalStatus_.state = BackgroundCalibrationState::Running;
+        bgCalStatus_.operationGeneration = generation = ++bgCalOperationCounter_;
+        bgCalStatus_.frozenConfigVersion = configVersion_.load(std::memory_order_acquire);
+        bgCalDeadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(request.timeoutMs);
+    }
+    if (bgCalPreviewThread_.joinable()) bgCalPreviewThread_.join();
+    bgCalPreviewThread_ = std::thread(&ProcessingService::runPreviewBackgroundCalibration, this, std::move(store),
+                                      generation);
+    SPDLOG_INFO("Preview background calibration started: {} frames, timeout {} ms", request.requiredAccepted,
+                request.timeoutMs);
+    return true;
+}
+
+void ProcessingService::runPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
+                                                        uint64_t generation) {
+    std::vector<cv::Mat> frames;
+    uint64_t seen = store->totalWritten();
+    auto stillRunning = [&] {
+        std::scoped_lock lk(bgCalMutex_);
+        return bgCalStatus_.state == BackgroundCalibrationState::Running &&
+               bgCalStatus_.operationGeneration == generation;
+    };
+    while (stillRunning()) {
+        uint32_t required = 0;
+        {
+            std::scoped_lock lk(bgCalMutex_);
+            required = bgCalRequest_.requiredAccepted;
+            if (std::chrono::steady_clock::now() >= bgCalDeadline_) {
+                bgCalFinishLocked(BackgroundCalibrationState::FailedTimeout,
+                                  "timed out with " + std::to_string(frames.size()) + "/" +
+                                      std::to_string(required) + " preview frames");
+                return;
+            }
+        }
+        if (frames.size() >= required) break;
+        const uint64_t total = store->waitForFrame(seen, std::chrono::milliseconds(100));
+        if (total <= seen) continue;
+        seen = total;
+        backend::playback::Frame frame;
+        if (!store->getLatest(frame)) continue;
+        cv::Mat gray = makeGrayCopy(frame);
+        std::scoped_lock lk(bgCalMutex_);
+        ++bgCalStatus_.attempted;
+        if (gray.empty() || (!frames.empty() && gray.size() != frames.front().size())) {
+            ++bgCalStatus_.rejectedProcessingFailed;
+            continue;
+        }
+        frames.push_back(std::move(gray));
+        bgCalStatus_.accepted = static_cast<uint32_t>(frames.size());
+    }
+    if (frames.empty()) return; // cancelled
+    // Per-pixel median of the frames: cells passing through are outliers.
+    cv::Mat median(frames.front().size(), CV_8UC1);
+    std::vector<uint8_t> values(frames.size());
+    for (int y = 0; y < median.rows; ++y) {
+        for (int x = 0; x < median.cols; ++x) {
+            for (size_t k = 0; k < frames.size(); ++k) values[k] = frames[k].at<uint8_t>(y, x);
+            std::nth_element(values.begin(), values.begin() + values.size() / 2, values.end());
+            median.at<uint8_t>(y, x) = values[values.size() / 2];
+        }
+    }
+    std::scoped_lock lk(bgCalMutex_);
+    if (bgCalStatus_.state != BackgroundCalibrationState::Running || bgCalStatus_.operationGeneration != generation) {
+        return; // cancelled meanwhile
+    }
+    publishCalibratedBackgroundLocked(std::move(median));
+    const Roi band = getChannelBand();
+    bgCalFinishLocked(BackgroundCalibrationState::Succeeded,
+                      "published the median of " + std::to_string(frames.size()) + " preview frames" +
+                          (band.h > 0 ? "; channel band rows " + std::to_string(band.y) + "-" +
+                                            std::to_string(band.y + band.h - 1)
+                                      : std::string()));
+}
+
 void ProcessingService::cancelBackgroundCalibration() {
     std::scoped_lock lk(bgCalMutex_);
     if (bgCalStatus_.state != BackgroundCalibrationState::Running) return;
@@ -1166,17 +1288,7 @@ void ProcessingService::bgCalObserve(backend::recording::FrameOutcome outcome,
     if (bgCalStatus_.accepted >= bgCalRequest_.requiredAccepted) {
         cv::Mat mean;
         bgCalAccumulator_.convertTo(mean, CV_8UC1, 1.0 / static_cast<double>(bgCalStatus_.accepted));
-        // Atomic publication: the previous background stays active until the
-        // candidate is installed here.
-        {
-            std::scoped_lock rtLk(rtMutex_);
-            rtBgGray_ = std::make_shared<cv::Mat>(std::move(mean));
-        }
-        backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        configVersion_.fetch_add(1, std::memory_order_release);
-        refreshRealtimeBatchPipelineConfig();
-        bgCalStatus_.publishedBackgroundGeneration = backgroundGeneration_.load(std::memory_order_acquire);
-        bgCalStatus_.publishedSha256 = backgroundSha256();
+        publishCalibratedBackgroundLocked(std::move(mean));
         bgCalFinishLocked(BackgroundCalibrationState::Succeeded,
                           "published background from " + std::to_string(bgCalStatus_.accepted) + " empty frames");
         return;
@@ -2325,6 +2437,85 @@ void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t t
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
         monitoringInvalidFrames_.push_back(std::move(monitoringFrame));
+    }
+}
+
+void ProcessingService::appendProviderMonitoringRow(uint64_t index, uint64_t timestampNs,
+                                                    const FilterResult& validation) {
+    if (!monitoringActive_.load(std::memory_order_relaxed)) return;
+    ProcessedFrame row; // no images: the PL sends results only
+    row.index = index;
+    row.timestampNs = timestampNs;
+    row.validation = validation;
+    std::scoped_lock monitoringLk(monitoringFramesMutex_);
+    if (validation.isValid) {
+        monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringValidFrames_.push_back(std::move(row));
+    } else {
+        monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
+        monitoringInvalidFrames_.push_back(std::move(row));
+    }
+}
+
+void ProcessingService::accumulateProviderIdentification(const backend::processing::ProviderFrame& frame) {
+    idFramesProcessed_.fetch_add(1, std::memory_order_relaxed);
+    if (!frame.cells.empty()) idFramesWithObjects_.fetch_add(1, std::memory_order_relaxed);
+    uint64_t targets = 0;
+    for (const auto& cell : frame.cells) {
+        if (cell.valid()) {
+            idValidObjects_.fetch_add(1, std::memory_order_relaxed);
+            targets += cell.target ? 1 : 0;
+            continue;
+        }
+        idInvalidObjects_.fetch_add(1, std::memory_order_relaxed);
+        // PL reason code = InvalidReasonCode + 1 (code 4, Ring, is unused).
+        const int code = static_cast<int>(cell.reason);
+        if (code >= 1 && code <= backend::processing::science::kInvalidReasonCount) {
+            idReasonCounts_[static_cast<size_t>(code - 1)].fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Target-group cells the PL marked. Unserved targets need the PL's EVENT
+    // records (trigger output), which this image does not emit yet.
+    if (targets) idTargetGroupObjects_.fetch_add(targets, std::memory_order_relaxed);
+}
+
+void ProcessingService::ingestProviderFrame(const backend::processing::ProviderFrame& frame) {
+    const uint64_t idx = frame.frameId;
+    noteRealtimeAdmitted(idx);
+    if (frame.invalid()) {
+        // An ingress-error frame: the input was unusable, nothing was measured.
+        noteRealtimeOutcome(idx, backend::recording::FrameOutcome::StoreMalformed);
+        return;
+    }
+    if (frame.objects.empty()) {
+        noteRealtimeOutcome(idx, backend::recording::FrameOutcome::Empty);
+        return;
+    }
+    noteRealtimeValidation(idx, frame.objects);
+    accumulateProviderIdentification(frame);
+    const double p2m = getPixelToMicronFactor();
+    // Recording (YOFO S3): one metadata row per cell, as the inline loop
+    // records one per object; valid cells always, invalid ones sampled at
+    // invalidFrameSamplingRate. No images: the PL sends results only.
+    const bool recording =
+        !experimentSettled_.load(std::memory_order_acquire) && experimentAccounting_.wasAdmitted(idx);
+    for (FilterResult v : frame.objects) {
+        v.analysisPixelToMicronFactor = p2m; // the calibration the profile was compiled with
+        appendProviderMonitoringRow(idx, frame.timestampNs, v);
+        if (!recording) continue;
+        bool save = v.isValid;
+        if (!save) {
+            const size_t counter = invalidFrameCounter_.fetch_add(1, std::memory_order_relaxed);
+            const size_t rate = invalidFrameSamplingRate_.load(std::memory_order_relaxed);
+            save = rate > 0 && (counter % rate) == 0;
+        }
+        if (save) {
+            ProcessedFrame row;
+            row.index = idx;
+            row.timestampNs = frame.timestampNs;
+            row.validation = v;
+            appendExperimentFrame(std::move(row), v.isValid);
+        }
     }
 }
 

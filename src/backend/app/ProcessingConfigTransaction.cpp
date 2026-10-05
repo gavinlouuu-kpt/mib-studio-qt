@@ -68,6 +68,9 @@ void validate(const services::ProcessingConfig& c) {
         (c.enable_deformability_range_check &&
          c.deformability_threshold_min > c.deformability_threshold_max) ||
         (c.enable_ring_ratio_check && c.ring_ratio_min > c.ring_ratio_max) ||
+        (c.enable_laplacian_variance_check && c.laplacian_variance_min > c.laplacian_variance_max) ||
+        c.laplacian_variance_min < 0 || c.min_cell_area_px < 0 || c.min_cell_area_px > 65535 ||
+        (c.laplacian_kernel_size != 1 && c.laplacian_kernel_size != 3) ||
         (c.enable_target_group &&
          (c.target_group_area_min > c.target_group_area_max ||
           c.target_group_deformability_min > c.target_group_deformability_max)))

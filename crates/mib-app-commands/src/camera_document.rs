@@ -55,7 +55,6 @@ fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<Cam
     };
     Ok(CameraDocument{path:path.to_string_lossy().into_owned(),revision:revision(&result),text:result})
 }
-#[tauri::command]
 pub fn camera_document(action:String,path:String,kind:String,baseline:String,text:String)->Result<CameraDocument,String>{transact(&action,&path,&kind,&baseline,&text)}
 #[cfg(test)]
 mod tests {

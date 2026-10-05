@@ -1,8 +1,9 @@
 import {useEffect, useRef} from "react";
 import {getCurrentWindow} from "@tauri-apps/api/window";
-import {confirm} from "@tauri-apps/plugin-dialog";
-import {invoke} from "@tauri-apps/api/core";
+import {confirm} from "./transport/dialogs";
+import {invoke} from "./transport";
 import {bridge} from "./bridge";
+import {isRemote} from "./transport";
 import {EXPERIMENT_STATES} from "./bridgeContract";
 
 // Both File→Exit and the OS close button use authoritative backend state.
@@ -31,12 +32,19 @@ export function useCloseGuard(options: {ready:boolean; busy:boolean; dirty:boole
         if(preview.capture_running) {const result=await bridge.stopCapture();if(!result.ok)throw new Error(result.message);}
       }
       allowed.current=true;
-      try {await getCurrentWindow().close();}catch(e){allowed.current=false;throw e;}
+      try {if(isRemote)window.close();else await getCurrentWindow().close();}catch(e){allowed.current=false;throw e;}
     }catch(e){latest.current.report(`Close postponed: ${e}`);}
     finally{pending.current=false;}
   }
   const action=useRef(requestClose);action.current=requestClose;
   useEffect(()=>{
+    // In a browser the instrument keeps running when a tab closes; the server stops and saves
+    // only once no client is left (crates/mib-bridge-server). Warn before leaving mid-run.
+    if(isRemote){
+      const warn=(event:BeforeUnloadEvent)=>{if(latest.current.busy||latest.current.dirty){event.preventDefault();event.returnValue="";}};
+      window.addEventListener("beforeunload",warn);
+      return()=>window.removeEventListener("beforeunload",warn);
+    }
     let disposed=false,cleanup:(()=>void)|undefined;
     void getCurrentWindow().onCloseRequested(event=>{
       if(allowed.current)return;

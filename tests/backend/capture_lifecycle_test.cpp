@@ -278,6 +278,35 @@ int main(int argc, char** argv)
     }
 
     // ---- 7. No factory -> RejectedNoFactory (no thread spawned). -----------
+    //     A device-side acquisition-stop failure is still surfaced after the
+    //     host camera object has been torn down. This is the same structured
+    //     failure code used by the Aravis adapter when AcquisitionStop fails.
+    {
+        wd.mark("acquisition stop failure");
+        Rig rig;
+        rig.script.stopFailureCode = "aravis.acquisition_stop";
+        rig.script.stopFailureMessage = "fake Aravis AcquisitionStop rejected";
+        CaptureService svc;
+        svc.setCameraFactory(rig.factory());
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "accepted");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Running,
+                    "running before acquisition-stop failure");
+
+        svc.stop();
+        const auto snap = svc.lifecycleSnapshot();
+        MIB_EXPECT(snap.state == CaptureLifecycleState::Idle, "host teardown still reaches Idle");
+        MIB_EXPECT(snap.lastFailure == CaptureFailureKind::ShutdownFailed,
+                   "Aravis acquisition-stop failure is propagated");
+        MIB_EXPECT(snap.lastFailureMessage == "fake Aravis AcquisitionStop rejected",
+                   "shutdown failure message is preserved");
+        MIB_EXPECT(snap.lastFailureGeneration == 1, "shutdown failure is generation tagged");
+        MIB_EXPECT(rig.obs->destroyed.load(), "host camera object is cleaned up after stop failure");
+        MIB_EXPECT(rig.obs->accessAfterDestroy.load() == 0,
+                   "no camera access occurs after host cleanup");
+    }
+
+    // ---- 8. No factory -> RejectedNoFactory (no thread spawned). -----------
     {
         wd.mark("no factory");
         CaptureService svc;
@@ -287,7 +316,7 @@ int main(int argc, char** argv)
         MIB_EXPECT(svc.lifecycleSnapshot().state == CaptureLifecycleState::Idle, "stays Idle");
     }
 
-    // ---- 8. Destroy the service while running: destructor owns teardown. ---
+    // ---- 9. Destroy the service while running: destructor owns teardown. ---
     {
         wd.mark("destroy while running");
         Rig rig;
@@ -301,7 +330,7 @@ int main(int argc, char** argv)
         MIB_EXPECT(rig.obs->accessAfterDestroy.load() == 0, "no access after destroy");
     }
 
-    // ---- 9. Stress: N cycles mixing clean stops, start failures and natural
+    // ---- 10. Stress: N cycles mixing clean stops, start failures and natural
     //         exits. Each cycle asserts generation monotonicity and a
     //         consistent terminal state. ------------------------------------
     {

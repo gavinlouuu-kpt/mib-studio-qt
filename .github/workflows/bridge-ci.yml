@@ -9,6 +9,8 @@ on:
     branches: [dev/react-tauri, develop, "agent-b/**"]
     paths:
       - "crates/mib-bridge/**"
+      - "crates/mib-app-commands/**"
+      - "crates/mib-bridge-server/**"
       - "include/backend/**"
       - "src/backend/**"
       - "cmake/**"
@@ -19,6 +21,8 @@ on:
     branches: [dev/react-tauri, develop, "agent-b/**"]
     paths:
       - "crates/mib-bridge/**"
+      - "crates/mib-app-commands/**"
+      - "crates/mib-bridge-server/**"
       - "include/backend/**"
       - "src/backend/**"
       - "cmake/**"
@@ -75,6 +79,28 @@ jobs:
           # HDF5 shared libs live in a versioned subdir on Ubuntu.
           LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu/hdf5/serial
           # Offline CI: avoid the network LUT-manifest fetch at startup.
+          MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
+        run: |
+          set -o pipefail
+          cargo test --no-fail-fast
+
+      - name: Test the shared command layer (dispatch, headless)
+        shell: bash
+        working-directory: crates/mib-app-commands
+        env:
+          MIB_BRIDGE_NO_CMAKE: "1"
+          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu/hdf5/serial
+          MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
+        run: |
+          set -o pipefail
+          cargo test --no-fail-fast
+
+      - name: Test the YOFO Studio WebSocket server (headless)
+        shell: bash
+        working-directory: crates/mib-bridge-server
+        env:
+          MIB_BRIDGE_NO_CMAKE: "1"
+          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu/hdf5/serial
           MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
         run: |
           set -o pipefail

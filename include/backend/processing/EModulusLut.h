@@ -31,6 +31,17 @@ public:
     bool loadGrid(double areaMin, double areaStep, size_t areaBins, double deformMin,
                   double deformStep, size_t deformBins, std::vector<double> grid);
 
+    // The interpolation grid (for the PZ7035 profile table). Valid when loaded.
+    double gridAreaMin() const { return areaMin_; }
+    double gridAreaStep() const { return numAreaBins_ > 1 ? (areaMax_ - areaMin_) / (numAreaBins_ - 1) : 0.0; }
+    double gridDeformMin() const { return deformMin_; }
+    double gridDeformStep() const {
+        return numDeformBins_ > 1 ? (deformMax_ - deformMin_) / (numDeformBins_ - 1) : 0.0;
+    }
+    size_t gridAreaBins() const { return numAreaBins_; }
+    size_t gridDeformBins() const { return numDeformBins_; }
+    const std::vector<double>& grid() const { return grid_; }
+
 private:
     struct LutPoint {
         double area_um;

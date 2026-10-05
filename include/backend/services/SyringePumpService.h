@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -33,6 +34,14 @@ public:
         Withdraw = 1
     };
 
+    // Which device sits in a pump slot. Either model can serve as the Sample
+    // or the Sheath pump; the slot keeps one control surface (flow rate in
+    // µL/min or mL/min, direction, run/stop, purge) over both protocols.
+    enum class PumpModel : uint16_t {
+        DlspSyringe       = 0, // Longer dLSP501 syringe pump
+        TushuiPeristaltic = 1  // Tushui peristaltic pump (TushuiPumpProtocol.h)
+    };
+
     struct PumpConfig {
         int comPort{-1};
         int baudRate{115200};
@@ -41,6 +50,8 @@ public:
         uint16_t flowRateUnit{100};      // 100 = µL/min
         Direction direction{Direction::Infuse};
         std::string portName; // actual system endpoint; numeric COM remains compatibility metadata
+        PumpModel model{PumpModel::DlspSyringe};
+        double microlitersPerRev{25.0}; // peristaltic flow calibration (µL per head turn)
     };
 
     struct PumpStatus {
@@ -51,6 +62,7 @@ public:
         double minFlowRate{0.0};
         double maxFlowRate{0.0};
         bool stalled{false};
+        double speedRpm{0.0}; // peristaltic head speed setpoint read from the pump
     };
 
     // Pump serial I/O goes through the shared RS485 bus layer so a pump and
@@ -65,6 +77,10 @@ public:
     // session is released first).
     bool connect(PumpId id, int comPort, int baudRate, uint8_t modbusAddress);
     bool connect(PumpId id, const std::string& portName, int baudRate, uint8_t modbusAddress);
+    // Model-aware connect. A peristaltic connect only reads the pump (it
+    // writes nothing); microlitersPerRev converts flow rates to head speed.
+    bool connect(PumpId id, const std::string& portName, int baudRate, uint8_t modbusAddress,
+                 PumpModel model, double microlitersPerRev);
     void disconnect(PumpId id);
     bool isConnected(PumpId id) const;
 
@@ -113,10 +129,20 @@ private:
     bool writeSingleRegister(int pumpIdx, uint16_t reg, uint16_t value);
     bool writeMultipleRegisters(int pumpIdx, uint16_t startReg, const std::vector<uint8_t>& regData);
 
+    // Peristaltic (Tushui) paths; the caller holds the pump mutex.
+    bool peristalticConnect(int pumpIdx);
+    bool peristalticSetFlowRate(int pumpIdx, double rate, uint16_t unit);
+    bool peristalticRun(int pumpIdx, double rpm, Direction dir);
+    bool peristalticStop(int pumpIdx);
+    void peristalticPoll(int pumpIdx);
+    uint16_t peristalticRotation(int pumpIdx, Direction dir) const;
+
     struct PumpConnection {
         std::shared_ptr<serialbus::ModbusBusSession> bus;
         PumpConfig config;
         PumpStatus status;
+        bool purging{false};
+        std::chrono::steady_clock::time_point lastPoll{};
         mutable std::mutex mutex;
     };
 

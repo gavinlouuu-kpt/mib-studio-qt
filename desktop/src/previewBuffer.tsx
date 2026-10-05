@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import {invoke} from "./transport";
+import {open} from "./transport/dialogs";
 import { decimalU64 } from "./framePacket";
 export interface PreviewRange { available: boolean; first: string; last: string; count: string; capture_running: boolean; capacity?:string; generation?:string; timestamps_available?:boolean; timestamp_first?:string; timestamp_last?:string }
 export interface PreviewSave { ok: boolean; output_path: string; error: string }
