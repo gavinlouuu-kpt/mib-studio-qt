@@ -66,6 +66,7 @@ home-switch bits read active because the inputs float.
 | 30016..17 | R (FC04) | float | X position, in the axis unit |
 | 30022 | R (FC04) | SHORT | X unit (0 pp, 1 mm, 2 deg) |
 | 30050..53 | RW | SHORT | Opcode, param 1 (axis), param 2 (direction), param 3 |
+| 30054 | RW | SHORT | Reserved, volatile (per the manual). Planned power-up token after Home (ADR 0013 §6); behaviour unverified |
 | 30059..60 | RW | float | X position (writable: redefines the coordinate, no motion) |
 | 30066 | RW | SHORT | X enable (volatile) |
 | 30072 | RW | SHORT | X unit |

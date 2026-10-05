@@ -74,15 +74,16 @@ focus" corpus is labelled only by nominal voltage.
    - Discovery and connect are **observe-only**. Discovery reads the model
      and serial registers only; connect reads status and configuration and
      writes nothing.
-   - **Start-up referencing is the only automatic motion.**
-     - At application start-up, the startup coordinator references the stage
-       (§6) so that the system starts in a known Z frame. It runs after the
-       stage is uniquely identified and its profile matches.
-     - It can be disabled in config, and it runs as a visible operation that
-       can be cancelled; cancelling stops the stage.
-     - Everything else moves only on explicit command: discovery, reconnect,
-       config reload and recording start never move the stage, and re-homing
-       after start-up is an explicit, confirmable action.
+   - **Nothing moves at start-up.** This was decided by Gavin on
+     2026-10-05, relayed by the merge-coordination session.
+     - Application start-up only identifies the stage and reads its status.
+     - The stage moves only when an operator presses **Home** (referencing,
+       §6), or, once homed, on explicit move commands.
+     - Discovery, reconnect, config reload and recording start never move the
+       stage.
+     - Automatic start-up referencing remains available as a configuration
+       switch (`reference.on_startup`), which defaults to `false`. Turning it
+       on for a rig is a reviewed change.
      - "Start-up" means the MIB Studio startup sequence, not OS boot.
    - **Soft limits.** Every move target is checked against the referenced
      travel window before it reaches the wire. Hardware limit switches are the
@@ -93,8 +94,13 @@ focus" corpus is labelled only by nominal voltage.
    - **Stop wins.** Disconnect, service shutdown, the frontend `Stop`, and a
      move that misses its deadline all issue an immediate stop before
      releasing the port.
-   - **Unreferenced positions are labelled.** Until referencing succeeds in
-     the current session, positions are reported and recorded as unreferenced.
+   - **Unknown until homed once per power-up.** Until Home has succeeded
+     since the controller was last powered on, the position is reported and
+     recorded as *unreferenced* (unknown).
+     - No motion other than Home and Stop is accepted in that state by
+       default.
+     - A reference survives an application restart only if the controller
+       proves it was not power-cycled (§6).
 
 6. **Home is mid-travel, found by probing both limits.**
    - The procedure is:
@@ -107,8 +113,25 @@ focus" corpus is labelled only by nominal voltage.
      5. Redefine that point as 0 µm by writing the coordinate, with no
         motion.
    - The Z frame is therefore symmetric: soft limits are ±(span/2 − margin).
-   - Probing both switches on every start-up also checks the switch wiring
-     and catches a stage that stalled or shifted since the last run.
+   - Probing both switches on every Home also checks the switch wiring and
+     the travel span.
+   - **Per-power-up persistence.**
+     - When Home succeeds, the service writes a random non-zero token to a
+       volatile, unsaved controller register. It persists that token with
+       the controller serial and the reference span.
+     - On a later connect, the stage counts as referenced only if the serial
+       and the token both match. The ZC300 clears volatile registers and
+       zeroes its position counter at power-up, so a power cycle reads back
+       as unreferenced.
+     - Front-panel moves made while the application is closed are counted by
+       the controller, so they keep the frame valid. A stall or collision
+       cannot be detected (the counter is open-loop) and needs a new Home.
+     - The candidate register is reserved holding register 30054, which the
+       manual marks read/write and not saved. Hardware acceptance must show
+       that it is writable, keeps its value across a disconnect, clears at
+       power-up, and is not touched by front-panel use. If no register
+       qualifies, the reference is held for the application session only,
+       which is stricter.
    - The stage's home sensor is not used for the reference; it may be read as
      a consistency check.
    - A span outside tolerance, a limit not reached within the expected
@@ -156,20 +179,19 @@ focus" corpus is labelled only by nominal voltage.
   may command the other's device.
 - The Qt shell gets no stage UI. Stage control is exposed only through
   `BackendFacade` and the Tauri shell, in line with ADR 0001.
-- Every application start moves the stage through its full 6 mm travel.
-  Whatever is mounted above it, such as an objective or sample holder, must
-  clear the whole travel range. Rigs where it cannot must disable start-up
-  referencing.
+- Home moves the stage through its full 6 mm of travel, and it only
+  happens when an operator asks for it. Whatever is mounted above the stage,
+  such as an objective or sample holder, must clear that range before Home
+  is pressed. The Home control therefore asks for confirmation.
 - On the PZ7035 instrument ([ADR 0011](0011-yofo-studio-pz7035-instrument.md)),
   the stage is driven by the headless backend on the PS and operated from
   the remote React UI. That matches the facade/Tauri-only surface here, and
   the same driver runs unchanged.
-- The E0 target ADR (landing as 0012 per ADR 0011) has the rule "boot must
-  never start motion". It needs an explicit amendment for application-start
-  referencing, or referencing on the instrument must wait for the first
-  operator session.
+- The E0 target ADR (landing as 0012 per ADR 0011) rule "boot must never
+  start motion" is satisfied as-is: referencing is operator-initiated.
 - On the instrument, autofocus is fed by PL result records (ADR 0011 §4). The
   follow-up focus-actuator ADR must take its focus metric from there, not
-  from host-side frames. Getting the adapter
+  from host-side frames.
+- Getting the adapter
   recognised (`CONFIG_USB_SERIAL_FTDI_SIO`, USB host mode, the USB PHY reset
   on pin J16) is board-repo work tracked in pz7035-imx426.
