@@ -154,8 +154,8 @@ methods: a **Drafts** view (new method from the current config.json, release
 notes, submit, and the explicit conflict choices with the compared changes)
 and, on Methods, **New draft**, role-gated **Approve / Reject / Publish /
 Archive / Revoke** with a required reason, **History**, a details block and
-"rN available", through new facade/bridge authoring commands (inside the
-registry ABI 25) and pure `registry.ts` rules. Guards:
+"rN available", through new facade/bridge authoring commands (bridge ABI 28;
+27 is reserved for #501 P1) and pure `registry.ts` rules. Guards:
 `profiles.registry_facade`, bridge cargo tests, `registry.test.ts`. A Qt
 version was built and dropped (ADR 0011).
 

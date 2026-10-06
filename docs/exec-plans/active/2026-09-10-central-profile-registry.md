@@ -183,6 +183,10 @@ freeze exact revision identity/content into historical runs.
   develop; the registry commands stay in the desktop crate (`registry` module)
   because they need the shell's transport and a sign-in carries a password that must
   not cross the YOFO Studio WebSocket.
+- 2026-10-06 (M3b ABI): the authoring surface (#482) changes the bridge FFI, so it
+  takes its own number. Merge coordination assigned **28** (26 = the ZC300 stage
+  bridge #513, 27 = #501 P1 #510); the bump is its own commit, and the ABI lines
+  resolve to 28 when `develop` reaches 27.
 
 ## Validation
 

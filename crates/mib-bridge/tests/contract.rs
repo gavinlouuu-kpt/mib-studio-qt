@@ -79,7 +79,12 @@ fn abi_version_is_stable() {
     // fetch_stage_status, operation kinds StageMove/StageReference, discovery
     // kind MotionStage, stage_move_states. It landed before #501 P1, so it
     // took 26 under the landing-order rule; 27 reserved for #501 P1.
-    assert_eq!(ffi::bridge_abi_version(), 26);
+    // v28 central method authoring (#398 M3b): registry_new_draft_from_revision,
+    // registry_new_method_draft, registry_set_draft_notes,
+    // registry_draft_from_head, registry_submit_draft, registry_delete_draft,
+    // registry_transition, registry_fetch_history -> BridgeRegistryCommand,
+    // and the snapshot's drafts, methods, history and submit_conflict.
+    assert_eq!(ffi::bridge_abi_version(), 28);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and

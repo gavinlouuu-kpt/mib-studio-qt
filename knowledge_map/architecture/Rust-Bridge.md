@@ -106,7 +106,7 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `BridgeRegistryValidationRequest { job_id, error }` (the evidence check runs
   before queueing), per-revision `materialized_dir` / `local_validation` /
   `validated_by` / `validated_at_utc`, and snapshot `instrument_id` /
-  `instrument_name` — all part of ABI 25. M3b adds
+  `instrument_name` — all part of ABI 25. M3b (ABI 28) adds
   `BridgeRegistryDraft` / `Method` / `HistoryEntry` / `Conflict` in the
   snapshot (`drafts`, `methods`, `history_revision_id` + `history`,
   `submit_conflict`), per-revision `parent_revision_id` / `release_notes` /
@@ -426,7 +426,8 @@ takes 25 (24 went to #501 P0).
 - `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
 - 25 is reserved for the #398 profile-registry stack. 26 = the ZC300 stage
-  bridge (#464); 27 is reserved for #501 P1.
+  bridge (#464); 27 is reserved for #501 P1; 28 = central method authoring
+  (#398 M3b).
 
 ## ABI 26: Z stage commands (#464, ADR 0013)
 
