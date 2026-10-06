@@ -615,6 +615,12 @@ void StageService::flushStoreClear()
     }
 }
 
+void StageService::setMotionGate(std::function<bool()> allowed)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    motionGate_ = std::move(allowed);
+}
+
 void StageService::setTokenSourceForTest(std::function<std::uint16_t()> source)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -991,10 +997,17 @@ void StageService::pollStatus()
     }
 }
 
+bool StageService::motionPossible() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return snapshot_.activeOperation != 0 || motionUnverified_ || snapshot_.status.state == MoveState::Moving;
+}
+
 void StageService::publishStatus(const StageStatus& status)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_.status = status;
+    if (status.state != MoveState::Moving) motionUnverified_ = false; // confirmed not moving
     snapshot_.status.zeroSet = snapshot_.zeroSet;
     // An e-stop or a driver alarm can desync the open-loop counter, whether or
     // not a move was running: the operator must set zero again (ADR 0013 A2).
@@ -1029,7 +1042,18 @@ void StageService::runOperation(const Job& job)
     const StageError err = runMove(id, job.targetUm, job.absolute, detail);
     const bool wasCancelled = cancelled(id);
     if (err != StageError::None || wasCancelled) {
-        if (const auto d = driver()) d->stop(); // never leave the axis running
+        if (const auto d = driver()) {
+            // Never leave the axis running. If this Stop is not acknowledged, the axis may
+            // still be moving although the operation is over: motion stays "possible" until a
+            // status read confirms the axis is not moving (publishStatus clears it).
+            if (const StageError stopErr = d->stop(); stopErr != StageError::None) {
+                SPDLOG_ERROR("StageService: the cleanup Stop failed ({}); the axis is treated as possibly moving until "
+                             "a status read says otherwise",
+                             stage::toString(stopErr));
+                std::lock_guard<std::mutex> lock(mutex_);
+                motionUnverified_ = true;
+            }
+        }
         pollStatus();
     }
     if (err != StageError::None && hadZero && losesReference(err)) {
@@ -1144,6 +1168,17 @@ StageError StageService::moveAndWait(OperationId id, double targetUm, double spe
     // The status and token reads above took time, and a Stop may have completed in
     // between: cancellation is checked again immediately before the opcode.
     if (cancelled(id)) return StageError::None;
+    // An experiment that started since (or whose start raced the queueing) must not be
+    // run under a moving stage: checked right before the opcode, every leg (#533).
+    std::function<bool()> gate;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        gate = motionGate_;
+    }
+    if (gate && !gate()) {
+        detail = "an experiment is active; the stage move was stopped before its next command";
+        return StageError::Busy;
+    }
     if ((err = d->moveAbsolute(target, stopGeneration)) != StageError::None) {
         if (err == StageError::Stopped) return cancelled(id) ? StageError::None : err;
         return err;

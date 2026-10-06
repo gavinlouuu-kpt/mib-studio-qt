@@ -63,6 +63,13 @@ public:
     // NotActive when there is no run.
     ExperimentStopOutcome requestStop(bool cancelled);
 
+    // Z stage (#533): Start is refused while the probe says a stage operation is active, so
+    // an experiment never starts under a moving stage. The probe runs with the coordinator
+    // lock held (lock order: coordinator, then stage), so it must not call back in. Stage
+    // moves are queued under the same lock (withIdleConfiguration), which makes the check
+    // and the queueing atomic against each other.
+    void setStageBusyProbe(std::function<bool()> probe);
+
     // Latest provisional KDE core contour record (JSON, frontend codec) that
     // the Monitoring view is showing. Accepted only while a run is Active;
     // cleared at Start; written to the run's file during finalization
@@ -146,6 +153,7 @@ private:
 
     AppBackend& backend_;
     mutable std::mutex mutex_;
+    std::function<bool()> stageBusyProbe_; // under mutex_
     std::atomic<uint64_t> readinessGeneration_{0};
     InvalidationKey lastKey_;
     bool haveLastKey_{false};
