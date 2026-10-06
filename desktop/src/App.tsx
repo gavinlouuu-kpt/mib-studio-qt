@@ -1766,7 +1766,7 @@ export default function App() {
                       </p>
                     )}
                     {instrumentModes && operatingMode === "service" && (runMode || instrument?.mode?.name === "align") && (
-                      <InstrumentLedControls mode={runMode ? "run" : "align"} limits={caps.led_limits?.[runMode ? "run" : "align"]}
+                      <InstrumentLedControls mode={runMode ? "run" : "align"} alignBands={instrument?.mode?.align_source === "bands"} limits={caps.led_limits?.[runMode ? "run" : "align"]}
                         current={instrument?.led} disabled={!ready || expActive} apply={bridge.setInstrumentLed} append={append} />
                     )}
                     <div className="toolbar" style={{ marginTop: 6 }}>

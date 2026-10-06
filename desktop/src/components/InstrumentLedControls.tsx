@@ -5,11 +5,14 @@ import type { CmdResult, LedLimits } from "../bridge";
 // backend applies them on every mode switch); raw delay/width is for commissioning only, and the
 // backend refuses it outside Service mode and outside the mode's limits as well.
 
-export const LED_PRESETS = { run: { delay: 7, width: 60 }, align: { delay: 0, width: 125 } } as const;
+// Align: 100/135 µs at 400 fps (whole frames, results8 on); 0/125 µs for the banded fallback.
+export const LED_PRESETS = { run: { delay: 7, width: 60 }, align: { delay: 100, width: 135 }, alignBands: { delay: 0, width: 125 } } as const;
 const STEP_US = 0.5;
 
 type Props = {
   mode: "run" | "align";
+  /** Align on images before results8 uses the banded preview and its own preset. */
+  alignBands?: boolean;
   limits: LedLimits | undefined;
   current: { delay_us: number; width_us: number; on: boolean } | undefined;
   disabled: boolean;
@@ -17,12 +20,12 @@ type Props = {
   append: (line: string) => void;
 };
 
-export function InstrumentLedControls({ mode, limits, current, disabled, apply, append }: Props) {
-  const preset = LED_PRESETS[mode];
+export function InstrumentLedControls({ mode, alignBands = false, limits, current, disabled, apply, append }: Props) {
+  const preset = LED_PRESETS[mode === "align" && alignBands ? "alignBands" : mode];
   const [delay, setDelay] = useState(String(preset.delay));
   const [width, setWidth] = useState(String(preset.width));
   // A mode switch restores the preset on the board; follow it here.
-  useEffect(() => { setDelay(String(LED_PRESETS[mode].delay)); setWidth(String(LED_PRESETS[mode].width)); }, [mode]);
+  useEffect(() => { setDelay(String(preset.delay)); setWidth(String(preset.width)); }, [preset]);
 
   const send = async (d: number, w: number) => {
     setDelay(String(d)); setWidth(String(w));

@@ -32,11 +32,13 @@ describe("PZ7035 LED in Service mode (#501 P1)", () => {
     expect(apply).toHaveBeenLastCalledWith(7, 60);
   });
 
-  it("follows the Align preset", async () => {
+  it("follows the Align preset: whole frames 100/135, banded fallback 0/125", async () => {
     const apply = vi.fn().mockResolvedValue(ok);
-    await act(async () => root.render(<InstrumentLedControls mode="align" limits={undefined} current={{ on: true, delay_us: 0, width_us: 125 }} disabled={false} apply={apply} append={() => {}} />));
-    expect(host.textContent).toContain("preset 0 / 125 µs");
+    await act(async () => root.render(<InstrumentLedControls mode="align" limits={undefined} current={{ on: true, delay_us: 100, width_us: 135 }} disabled={false} apply={apply} append={() => {}} />));
+    expect(host.textContent).toContain("preset 100 / 135 µs");
     await act(async () => button("Apply").click());
-    expect(apply).toHaveBeenLastCalledWith(0, 125);
+    expect(apply).toHaveBeenLastCalledWith(100, 135);
+    await act(async () => root.render(<InstrumentLedControls mode="align" alignBands limits={undefined} current={undefined} disabled={false} apply={apply} append={() => {}} />));
+    expect(host.textContent).toContain("preset 0 / 125 µs");
   });
 });

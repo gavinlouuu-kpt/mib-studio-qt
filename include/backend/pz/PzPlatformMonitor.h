@@ -23,6 +23,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace backend::pz {
 
@@ -68,7 +69,12 @@ struct ExpectedCore {
     int abiMinor{0};
     int scienceProfile{0};
     int profileVersion{0};
+    // Build features (pz7035-imx426 scripts/pz_core_json.py, from git ancestry), e.g.
+    // "align_whole_frame_preview" for results8 on (a781ec5).
+    std::vector<std::string> features;
+    bool has(const std::string& feature) const;
 };
+inline constexpr const char* kFeatureAlignWholeFrame = "align_whole_frame_preview";
 std::optional<ExpectedCore> parseExpectedCore(const std::string& json, std::string* error);
 std::optional<ExpectedCore> loadExpectedCore(const std::string& path, std::string* error);
 inline constexpr const char* kExpectedCorePath = "/etc/yofo/expected-core.json";

@@ -464,6 +464,9 @@ set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "p
 mib_add_backend_test_executable(pz_platform_monitor_test processing/pz_platform_monitor_test.cpp)
 add_test(NAME processing.pz_platform_monitor COMMAND $<TARGET_FILE:mib_backend_tests> pz_platform_monitor_test)
 set_tests_properties(processing.pz_platform_monitor PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+mib_add_backend_test_executable(pz_bridge_preview_test processing/pz_bridge_preview_test.cpp)
+add_test(NAME processing.pz_bridge_preview COMMAND $<TARGET_FILE:mib_backend_tests> pz_bridge_preview_test)
+set_tests_properties(processing.pz_bridge_preview PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
 add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test

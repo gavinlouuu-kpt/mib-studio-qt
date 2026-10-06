@@ -49,13 +49,15 @@ struct LedSetting {
     double delayUs{0.0};
     double widthUs{0.0};
 };
-// Presets (docs/YOFO_HOST_INTERFACE.md "LED presets"): Run straddles the exposure start at 5 kHz,
-// Align at 500 fps full field.
+// Presets (docs/YOFO_HOST_INTERFACE.md "LED presets"), each straddling the exposure start: Run at
+// 5 kHz; Align at 400 fps full field (HMAX 232, results8 on); the banded fallback for older images
+// at 500 fps (HMAX 116).
 inline constexpr LedSetting kRunLed{7.0, 60.0};
-inline constexpr LedSetting kAlignLed{0.0, 125.0};
+inline constexpr LedSetting kAlignLed{100.0, 135.0};
+inline constexpr LedSetting kAlignBandsLed{0.0, 125.0};
 
 // Service-mode limits per mode (the bench viewer's LED_LIMITS): at 5 kHz the width stays <= 80 µs
-// (40 % duty; the PL clamps at 50 %); at 500 fps the driver needs > ~75 µs to light at all.
+// (40 % duty; the PL clamps at 50 %); in Align the driver needs > ~75 µs to light at all.
 struct LedLimits {
     double delayMinUs, delayMaxUs, widthMinUs, widthMaxUs;
 };

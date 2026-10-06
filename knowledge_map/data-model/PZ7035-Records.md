@@ -109,10 +109,31 @@ always re-applied.
 
 | Mode | Producer request | Result | After AcquisitionStart |
 |---|---|---|---|
-| Align | full field, 500 fps, 1899.7 µs | HMAX 116 / VMAX 1280 / SHS 64 | LED 0/125 µs; the camera keeps streaming |
+| Align (results8 on) | full field, PzHmax 232, 400 fps, 2299.7 µs | 232 / 800 / 64 | producer stopped; whole frames from the bridge preview slots; LED 100/135 µs |
+| Align (older images) | full field, 500 fps, 1899.7 µs | 116 / 1280 / 64 | LED 0/125 µs; the producer's banded preview keeps streaming |
 | Run | 512×96 at (x%8, y%4), 5000 fps, 150.0 µs | 58 / 256 / 64 | producer stopped; cell path on; latency cleared; LED 7/60 µs |
 
 Both modes start the same way: LED off, then cell path off.
+
+**Whole-frame Align (results8 on, 2026-10-06).**
+
+- **Timing.** HMAX 116 overflows the bridge tap, so Align forces HMAX 232 through the producer's
+  `PzHmax` feature (pz7035-imx426 `feat/gentl-pzhmax`). The producer stays the only sensor-timing
+  writer.
+- **Preview handshake.** `processing/pz/PzBridgePreview` implements pzres preview:
+  1. STOP; wait 20 ms.
+  2. 816×624 Mono8, every 40th frame, `CONFIG_COMMIT`.
+  3. Two slots at `0x3F100000`; result ring tail = head; ARM.
+  4. Per image: release the result ring, take the newest READY slot under `PREVIEW_HOLD` (a lost
+     HOLD retries next poll), and dedupe by frame id.
+- **Timeout.** After 500 ms the error names `PREVIEW_PRODUCED`/`DROPPED` and `FRAMES_LOST`.
+- **Live view.** `PzDevMemExecutionProvider::startPreview`/`fetchPreview`/`stopPreview` serve it,
+  and these are mutually exclusive with a run. `pz::PzBridgePreviewCamera` wraps them as the
+  camera behind CaptureService, so the UI's live view is unchanged. Six timeouts in a row, or a
+  bridge leaving ARMED/RUNNING, stop it with the reason.
+- **Gate.** `/etc/yofo/expected-core.json` must list `align_whole_frame_preview` (`features`) and
+  match the bridge BUILD_ID; otherwise Align falls back to the banded preview.
+- **Test.** `processing.pz_bridge_preview`.
 
 **Producer rule (PL owner, 2026-10-05).** The producer's command pulses
 write `P[8]` = mask, then 0. Every AcquisitionStart therefore clears the

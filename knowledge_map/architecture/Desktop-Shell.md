@@ -596,7 +596,9 @@ With `capabilities.align_mode` and `run_mode` set, tab changes drive the
 backend's camera modes instead of `set_camera_overview`:
 
 - **Opening a tab switches the mode.** Camera & Alignment means Align: the
-  full sensor, the live camera, LED 0/125 µs. Experiment means Run at the
+  full sensor at 400 fps, shown as whole frames from the PL bridge (results8
+  on, LED 100/135 µs) or as the producer's bands on older images (LED
+  0/125 µs). Status `mode.align_source` tells which. Experiment means Run at the
   window placed there: 512×96, x on 8 and y on 4 (`snapRunWindow`), LED
   7/60 µs, the U-Net on.
 - **Placing the window.** Dragging only moves it. The switch to Run applies

@@ -137,6 +137,12 @@ std::unique_ptr<IPzPlatformRegisters> openDevMemPlatformRegisters(std::string* e
 }
 #endif
 
+bool ExpectedCore::has(const std::string& feature) const {
+    for (const auto& f : features)
+        if (f == feature) return true;
+    return false;
+}
+
 std::optional<ExpectedCore> parseExpectedCore(const std::string& text, std::string* error) {
     const auto j = nlohmann::json::parse(text, nullptr, false);
     if (j.is_discarded() || !j.is_object()) {
@@ -154,6 +160,10 @@ std::optional<ExpectedCore> parseExpectedCore(const std::string& text, std::stri
     }
     c.scienceProfile = j.value("science_profile", 0);
     c.profileVersion = j.value("profile_version", 0);
+    if (const auto f = j.find("features"); f != j.end() && f->is_array()) {
+        for (const auto& v : *f)
+            if (v.is_string()) c.features.push_back(v.get<std::string>());
+    }
     if (c.buildId.size() != 32) {
         if (error) *error = "expected-core.json has no 32-hex build_id";
         return std::nullopt;

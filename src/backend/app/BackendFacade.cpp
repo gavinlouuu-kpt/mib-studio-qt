@@ -2637,7 +2637,8 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
     const nlohmann::json mode{{"name", pz::instrumentModeName(backend_.instrumentMode())},
                               {"run_x", runX},
                               {"run_y", runY},
-                              {"service", backend_.serviceMode()}};
+                              {"service", backend_.serviceMode()},
+                              {"align_source", backend_.alignSource()}};
     // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off.
     const auto target = app::recordingTarget(backend_.dataDir());
     const nlohmann::json storage{{"path", target.path},

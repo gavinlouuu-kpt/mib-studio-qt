@@ -98,7 +98,7 @@ const char* instrumentModeName(InstrumentMode mode) {
 }
 
 LedLimits ledLimits(InstrumentMode mode) {
-    if (mode == InstrumentMode::Align) return {0.0, 300.0, 60.0, 150.0};
+    if (mode == InstrumentMode::Align) return {0.0, 400.0, 60.0, 150.0};
     return {0.0, 100.0, 20.0, 80.0};
 }
 

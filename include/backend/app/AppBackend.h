@@ -129,6 +129,9 @@ namespace backend
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);
         bool serviceMode() const;
+        // How Align shows the sensor: "bridge" (whole frames from the results bridge) or "bands"
+        // (the producer's banded grabber, images before results8); "" outside Align.
+        std::string alignSource() const;
         // Service mode only, within the current mode's limits (pz::checkLed); refused during
         // an experiment. The next mode switch restores the preset.
         bool setInstrumentLed(double delayUs, double widthUs, std::string *errorOut);
@@ -342,6 +345,9 @@ namespace backend
         std::atomic<int> instrumentMode_{0};      // pz::InstrumentMode
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> serviceMode_{false};
+        // Align live view: "bridge" (whole frames, results8 on) or "bands" (producer grabber).
+        std::atomic<int> alignSource_{0}; // 0 none, 1 bridge, 2 bands (read by the status poll)
+        bool alignWholeFrameAvailable(std::string *why);
         std::unique_ptr<services::PlaybackService> playbackService_;
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;
@@ -394,6 +400,9 @@ namespace backend
             int x{0}, y{0}, width{0}, height{0};
             double experimentFps{0.0}, experimentExposureUs{0.0};
             double overviewFps{830.0}, overviewExposureUs{900.0}; // lit full field (PZ7035)
+            // PZ7035 line period for the overview (PzHmax): 0 = the producer's rule; 232 for the
+            // whole-frame Align on results8 on. Experiment windows always use 0.
+            int overviewHmax{0};
             // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
             // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
             double previewRateHz{60.0};

@@ -412,7 +412,11 @@ export type IdMatch = "match" | "mismatch" | "unknown";
 export interface LedLimits { delay_min_us: number; delay_max_us: number; width_min_us: number; width_max_us: number }
 
 /** Camera mode the backend applied last (ABI 26, #501 P1). */
-export interface InstrumentModeState { name: "align" | "run" | "unknown"; run_x: number; run_y: number; service: boolean }
+export interface InstrumentModeState {
+  name: "align" | "run" | "unknown"; run_x: number; run_y: number; service: boolean;
+  /** Align live view: whole frames from the PL bridge (results8 on) or the producer's bands. */
+  align_source?: "bridge" | "bands" | "";
+}
 
 /** Where recordings land (#501): `ram` on today's JTAG RAM root; `warning` is the operator text,
  *  "" once the target is persistent (SATA). */
