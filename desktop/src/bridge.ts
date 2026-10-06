@@ -287,6 +287,25 @@ export interface RegistryConflict {
   draft_vs_head: string[];
 }
 
+/** #398 M2c Apply preview (ok false: why not) and outcome. */
+export interface MethodApplyPlan {
+  ok: boolean;
+  error: string;
+  revision_id: string;
+  display_name: string;
+  revision_number: string;
+  central_state: string;
+  changed_keys: string[];
+  camera_script_path: string;
+}
+
+export interface MethodApplyResult {
+  ok: boolean;
+  error: string;
+  applied: string[];
+  not_applied: string[];
+}
+
 /** Authoring command outcome: job_id "0" = refused, `error` why. */
 export interface RegistryCommand {
   job_id: string;
@@ -809,6 +828,8 @@ export const bridge = {
   registryTransition: (revisionId: string, target: number, reason: string) =>
     invoke<RegistryCommand>("registry_transition", { revisionId, target, reason }),
   registryFetchHistory: (revisionId: string) => invoke<RegistryCommand>("registry_fetch_history", { revisionId }),
+  registryPlanApply: (revisionId: string) => invoke<MethodApplyPlan>("registry_plan_apply", { revisionId }),
+  registryApplyMethod: (revisionId: string) => invoke<MethodApplyResult>("registry_apply_method", { revisionId }),
   fetchRegistrySnapshot: () => invoke<RegistrySnapshot>("fetch_registry_snapshot"),
   fetchRegistryJob: (jobId: string) =>
     invoke<RegistryJob>("fetch_registry_job", { jobId: decimalU64(jobId) }),

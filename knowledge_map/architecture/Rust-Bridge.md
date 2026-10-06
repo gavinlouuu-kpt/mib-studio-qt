@@ -445,7 +445,7 @@ takes 25 (24 went to #501 P0).
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
 - 25 is reserved for the #398 profile-registry stack. 26 = the ZC300 stage
   bridge (#464); 27 = #501 P1 camera modes; 28 = central method authoring
-  (#398 M3b).
+  (#398 M3b); 29 = central-method Apply in the React shell (#398 M2c).
 
 ## ABI 26: Z stage commands (#464, ADR 0013)
 

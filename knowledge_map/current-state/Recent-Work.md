@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-06 — Draft notes no longer recreate a discarded draft (#398 M3b follow-up)
+
+`BackendFacade::registrySetDraftNotes` queued a full SaveDraft of the snapshot's
+copy of the draft, so a Discard queued just before it ran first and the save then
+recreated the draft. It now queues `ProfileRegistryWorker::requestSetDraftNotes`,
+which reads the draft on the worker thread and fails if it is gone or submitted.
+Same job kind (SaveDraft), no bridge change. Guard: `profiles.registry_authoring`
+(delete then notes, both queued: the draft stays gone). Found by an independent
+review of #482. See [[../services/ProfileRegistryService]].
+
 ## 2026-10-06 — ZC300 stage: no homing, "Set zero here" instead (#464, ABI 30)
 
 Gavin decided the ZC300 is not homed (ADR 0013 Amendment 1, #528). The code now
@@ -462,6 +472,24 @@ most significant word in ID3. Register map, header and fixtures are
 unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
+
+## 2026-10-05 — Apply central methods in the React/Tauri shell (#398 M2c)
+
+A Qt-free backend config.json applier (`app::applyConfigDocument`, with
+`applyCentralMethod` for registry revisions) gives the React shell an exact
+Apply: same section semantics as the Qt `AppConfigWatcher` (v2
+`difference_threshold`, Laplacian keys, contract version, buffers, realtime,
+delivery mode, pixel factor, autofocus, ROI), staged and fail-closed, exact
+text recorded as applied; `dot_grid` / `display_fps` reported as Qt-only.
+Refused while a run is in flight, and (like the local-profile apply) while
+raw recording, live capture, realtime processing or autofocus runs: the capture
+worker reads its config unsynchronised, and raw recording runs with the
+experiment idle (both found in review of #493). Bridge `registry_plan_apply` /
+`registry_apply_method` (bridge ABI 29); React previews the changed keys
+before applying. Guards: `backend.config_document_apply`, `e2e.method_gate`
+(applier path, mid-run and live-capture refusals), bridge cargo,
+`registry.test.ts`; `backend.config_document_apply` also refuses under live
+mock capture and raw recording with nothing changed.
 
 ## 2026-10-04 — Central method authoring and review UI (#398 M3b)
 

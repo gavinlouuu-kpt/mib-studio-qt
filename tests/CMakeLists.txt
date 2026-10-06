@@ -1444,6 +1444,10 @@ mib_backend_test_link(registry_authoring_test PRIVATE Threads::Threads)
 add_test(NAME profiles.registry_authoring COMMAND $<TARGET_FILE:mib_backend_tests> registry_authoring_test)
 set_tests_properties(profiles.registry_authoring PROPERTIES LABELS "backend;profiles;e2e;fault-injection" TIMEOUT 90)
 
+mib_add_backend_test_executable(config_document_apply_test backend/config_document_apply_test.cpp)
+add_test(NAME backend.config_document_apply COMMAND $<TARGET_FILE:mib_backend_tests> config_document_apply_test)
+set_tests_properties(backend.config_document_apply PROPERTIES LABELS "backend;profiles;fault-injection;roundtrip" TIMEOUT 60)
+
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # The vendored PZ7035 ABI header, for tests that fake bridge registers

@@ -71,8 +71,18 @@ freeze exact revision identity/content into historical runs.
   `registry_local_validation`. The readiness panels list `method.revision` like
   any gate. A Qt Apply (exact bytes through `AppConfigWatcher`, with a backup)
   was built and dropped with the Qt UI (ADR 0011).
-- [ ] M2: Apply in the React shell (needs a backend config.json applier; the
-  shell edits the processing-config document today).
+- [x] M2c: Apply in the React shell through the backend config.json applier
+  (`app::applyConfigDocument`: the watcher's section semantics, staged and
+  fail-closed, exact text recorded; dot_grid / display_fps reported as Qt-only;
+  refused while a run is in flight, and while raw recording, capture, realtime
+  or autofocus runs — the local-profile apply's precondition, adopted after the
+  #493 review).
+- [ ] M2c: reconcile `app::applyConfigDocument` with develop's local-profile
+  apply (`app/ProfileStore.cpp`, arrived with #450): it also bounds every value, validates the ROI against a
+  captured frame and applies `realtime_processing.enabled` / `drop_frames`;
+  share one validated applier, keeping exact-text recording for central methods.
+- [ ] M2c: persist the applied method across Tauri restarts (today it lives in
+  the backend for the session; the Qt shell persists through config.json).
 - [ ] M2: compatibility validator against declared hardware compatibility and
   calibration context; camera script compared as well as config.json; explicit
   update selection when a newer revision is published.
@@ -188,6 +198,9 @@ freeze exact revision identity/content into historical runs.
   bridge #513, 27 = #501 P1 #510); the bump is its own commit, and the ABI lines
   resolve to 28 when `develop` reaches 27. #510 landed (develop at 27) and the
   follow-up merge resolved the ABI lines to 28.
+- 2026-10-06 (M2c ABI): the React Apply (#493: `registry_plan_apply`,
+  `registry_apply_method`) changes the bridge FFI too; merge coordination assigned
+  **29**, bumped in its own commit on top of #482's 28.
 
 ## Validation
 

@@ -7,6 +7,8 @@
 #include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/app/ConfigDocumentApply.h"
+#include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 
@@ -2648,9 +2650,9 @@ namespace backend::bridge
         const auto *d = findDraft(s, draftId);
         if (!d) return {0, "Draft not found"};
         if (!d->submittedRevisionId.empty()) return {0, "A submitted draft cannot be changed"};
-        auto edited = *d;
-        edited.releaseNotes = notes;
-        return queued(backend_.profileRegistry().requestSaveDraft(std::move(edited)),
+        // Notes only, applied to the worker's current draft: a full save of
+        // this snapshot copy would recreate a draft whose delete is queued.
+        return queued(backend_.profileRegistry().requestSetDraftNotes(draftId, notes),
                       "The registry worker refused the draft");
     }
 
@@ -2691,6 +2693,43 @@ namespace backend::bridge
         return queued(backend_.profileRegistry().requestTransition(
                           revisionId, static_cast<profiles::CentralState>(state), reason),
                       "Refused: a reason is required and only review, publish, archive or revoke are allowed");
+    }
+
+    BackendMethodApplyPlan BackendFacade::registryPlanApply(const std::string &revisionId) const
+    {
+        BackendMethodApplyPlan out;
+        if (!initialized_)
+        {
+            out.error = "Backend not initialized";
+            return out;
+        }
+        const auto plan = app::planMethodApply(backend_.profileRegistry().snapshot(), revisionId,
+                                               backend_.getLastConfigJson());
+        out.ok = plan.ok;
+        out.error = plan.error;
+        out.revisionId = plan.revisionId;
+        out.displayName = plan.displayName;
+        out.revisionNumber = plan.revisionNumber;
+        out.centralState = plan.centralState;
+        out.changedKeys = plan.changedKeys;
+        out.cameraScriptPath = plan.cameraScriptPath;
+        return out;
+    }
+
+    BackendMethodApplyResult BackendFacade::registryApplyMethod(const std::string &revisionId)
+    {
+        BackendMethodApplyResult out;
+        if (!initialized_)
+        {
+            out.error = "Backend not initialized";
+            return out;
+        }
+        const auto report = app::applyCentralMethod(backend_, revisionId);
+        out.ok = report.ok;
+        out.error = report.error;
+        out.applied = report.applied;
+        out.notApplied = report.notApplied;
+        return out;
     }
 
     BackendRegistryCommand BackendFacade::registryFetchHistory(const std::string &revisionId)

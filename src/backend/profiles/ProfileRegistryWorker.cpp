@@ -289,6 +289,15 @@ std::uint64_t ProfileRegistryWorker::requestDeleteDraft(std::string draftId) {
     return enqueue(std::move(command));
 }
 
+std::uint64_t ProfileRegistryWorker::requestSetDraftNotes(std::string draftId, std::string notes) {
+    if (draftId.empty() || draftId.size() > kMaxRevisionIdBytes) return 0;
+    Command command;
+    command.kind = RegistryJobKind::SaveDraft;
+    command.argument = std::move(draftId);
+    command.notes = std::move(notes);
+    return enqueue(std::move(command));
+}
+
 std::uint64_t ProfileRegistryWorker::requestSubmitDraft(std::string draftId, bool asBranch) {
     if (draftId.empty() || draftId.size() > kMaxRevisionIdBytes) return 0;
     Command command;
@@ -453,6 +462,7 @@ RegistryJobStatus ProfileRegistryWorker::execute(Command& command) {
         if (command.validation) return doRecordValidation(*command.validation);
         break;
     case RegistryJobKind::SaveDraft:
+        if (command.notes) return doSetDraftNotes(command.argument, *command.notes);
         if (command.draft) return doSaveDraft(std::move(*command.draft), command.argument);
         break;
     case RegistryJobKind::DeleteDraft:
@@ -961,6 +971,23 @@ RegistryJobStatus ProfileRegistryWorker::doDeleteDraft(const std::string& draftI
     }
     if (submitConflict_ && submitConflict_->draftId == draftId) submitConflict_.reset();
     return {0, RegistryJobKind::DeleteDraft, RegistryJobState::Succeeded, "Draft discarded"};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doSetDraftNotes(const std::string& draftId, const std::string& notes) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::SaveDraft, RegistryJobState::Failed, message};
+    };
+    if (!active_) return fail("No cached methods are open; sign in first");
+    try {
+        // Read here, not from a snapshot: a discarded draft stays discarded.
+        auto draft = active_->cache->readDraft(draftId);
+        if (!draft.submittedRevisionId.empty()) return fail("A submitted draft cannot be changed");
+        draft.releaseNotes = notes;
+        active_->cache->saveDraft(draft);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Draft not saved: ") + e.what());
+    }
+    return {0, RegistryJobKind::SaveDraft, RegistryJobState::Succeeded, "Draft saved: " + draftId};
 }
 
 RegistryJobStatus ProfileRegistryWorker::doSubmitDraft(const std::string& draftId, bool asBranch) {

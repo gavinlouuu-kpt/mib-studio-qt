@@ -89,11 +89,13 @@ fn abi_version_is_stable() {
     // registry_draft_from_head, registry_submit_draft, registry_delete_draft,
     // registry_transition, registry_fetch_history -> BridgeRegistryCommand,
     // and the snapshot's drafts, methods, history and submit_conflict.
-    // v29 is allocated to #493.
+    // v29 central-method Apply in the React shell (#398 M2c):
+    // registry_plan_apply and registry_apply_method over the backend
+    // config.json applier.
     // v30 = ZC300 stage without homing (#464, ADR 0013 Amendment 1): stage_home and
     // operation kind StageReference removed; stage_set_zero(mid_travel) added;
-    // fetch_stage_status: referenced -> zero_set, + mid_travel_declared,
-    // soft_min_um/soft_max_um -> envelope_min_um/envelope_max_um.
+    // fetch_stage_status: referenced -> zero_set, + mid_travel_declared and
+    // session_only_zero, soft_min_um/soft_max_um -> envelope_min_um/envelope_max_um.
     assert_eq!(ffi::bridge_abi_version(), 30);
 }
 
@@ -1442,6 +1444,12 @@ fn registry_commands_through_shell_transport() {
         let submit = bridge.pin_mut().registry_submit_draft("d1", false);
         let job = wait_registry_job(&mut bridge, submit.job_id);
         assert_eq!((job.kind, job.state), (8, 4), "SubmitDraft needs a session");
+
+        // #398 M2c Apply: refusals cross the bridge as values.
+        let plan = bridge.pin_mut().registry_plan_apply("r1");
+        assert!(!plan.ok && plan.error.contains("cache"), "uncached revision: {}", plan.error);
+        let applied = bridge.pin_mut().registry_apply_method("r1");
+        assert!(!applied.ok && !applied.error.is_empty() && applied.applied.is_empty());
         bridge.pin_mut().shutdown();
     }
 

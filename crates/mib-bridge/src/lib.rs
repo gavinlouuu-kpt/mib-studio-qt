@@ -384,6 +384,28 @@ pub mod ffi {
         pub draft_vs_head: Vec<String>,
     }
 
+    /// #398 M2c: what applying a revision would change (`ok` false: why not).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeMethodApplyPlan {
+        pub ok: bool,
+        pub error: String,
+        pub revision_id: String,
+        pub display_name: String,
+        pub revision_number: u64,
+        pub central_state: String,
+        pub changed_keys: Vec<String>,
+        pub camera_script_path: String,
+    }
+
+    /// #398 M2c: outcome of applying a revision's config.json exactly.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeMethodApplyResult {
+        pub ok: bool,
+        pub error: String,
+        pub applied: Vec<String>,
+        pub not_applied: Vec<String>,
+    }
+
     /// Outcome of an authoring command: `job_id` 0 = refused, `error` why.
     #[derive(Debug, Clone, Default)]
     pub struct BridgeRegistryCommand {
@@ -1111,6 +1133,11 @@ pub mod ffi {
         fn registry_transition(self: Pin<&mut BackendBridge>, revision_id: &str, state: u32, reason: &str)
             -> BridgeRegistryCommand;
         fn registry_fetch_history(self: Pin<&mut BackendBridge>, revision_id: &str) -> BridgeRegistryCommand;
+        /// #398 M2c Apply: preview, then apply a materialized published or
+        /// superseded revision's config.json exactly (refused while a run is
+        /// in flight). Local and synchronous.
+        fn registry_plan_apply(self: Pin<&mut BackendBridge>, revision_id: &str) -> BridgeMethodApplyPlan;
+        fn registry_apply_method(self: Pin<&mut BackendBridge>, revision_id: &str) -> BridgeMethodApplyResult;
         /// Value snapshot of the registry worker; never waits on a request.
         fn fetch_registry_snapshot(self: Pin<&mut BackendBridge>) -> BridgeRegistrySnapshot;
         fn fetch_registry_job(self: Pin<&mut BackendBridge>, job_id: u64) -> BridgeRegistryJob;

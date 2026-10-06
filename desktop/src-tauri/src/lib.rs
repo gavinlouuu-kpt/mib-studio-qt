@@ -722,6 +722,8 @@ pub fn run() {
             registry::registry_delete_draft,
             registry::registry_transition,
             registry::registry_fetch_history,
+            registry::registry_plan_apply,
+            registry::registry_apply_method,
             registry::fetch_registry_snapshot,
             registry::fetch_registry_job,
             abi_version,
