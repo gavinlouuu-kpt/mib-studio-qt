@@ -1,4 +1,4 @@
-// PZ7035 Run-mode preview (#501 P1, `fetch_run_preview`, ABI 26): one PL cell capture with the
+// PZ7035 Run-mode preview (#501 P1, `fetch_run_preview`, ABI 27): one PL cell capture with the
 // gray frame as fed to the U-Net, its mask and the listed cells of that same frame. The packet
 // layout is in bridge-contract.json (`fetch_run_preview`) and PzInstrumentControl.h.
 //

@@ -998,7 +998,7 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
-        /// PZ7035 camera mode (ABI 26, #501 P1): "align" | "run" with the Run window offset.
+        /// PZ7035 camera mode (ABI 27, #501 P1): "align" | "run" with the Run window offset.
         fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
         /// Service / Commissioning mode latch; raw LED values are refused outside it.
         fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;

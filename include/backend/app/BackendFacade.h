@@ -893,7 +893,7 @@ namespace backend::bridge
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.
         std::string fetchPlatformInfoJson() const;
-        // PZ7035 camera modes (ABI 26, #501 P1): "align" | "run" (window at x, y; snapped to
+        // PZ7035 camera modes (ABI 27, #501 P1): "align" | "run" (window at x, y; snapped to
         // x % 8, y % 4). Refused during an experiment/recording and with the PL unconfigured.
         BackendCommandResult setInstrumentMode(const std::string &mode, int x, int y);
         // The shell's Service / Commissioning mode, latched in the backend: raw LED values are

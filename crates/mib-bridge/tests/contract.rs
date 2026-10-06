@@ -74,12 +74,13 @@ fn abi_version_is_stable() {
     // and contract groups, and the shell-injected HTTPS transport. Built as a
     // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
     // never reused.
-    // v26 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
+    // v26 the ZC300 stage bridge (#513).
+    // v27 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
     // fetch_run_preview (PZ7035 Align/Run camera modes).
-    assert_eq!(ffi::bridge_abi_version(), 26);
+    assert_eq!(ffi::bridge_abi_version(), 27);
 }
 
-// ABI 26 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
+// ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
 // is refused, and there is no run preview.
 #[test]
 #[serial]

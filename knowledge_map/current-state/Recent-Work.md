@@ -17,7 +17,7 @@ needed in either direction.
 - **LED.** Raw values are Service-mode only, enforced by the backend.
 - **Not tested on hardware yet.** The board run is pending.
 
-Bridge ABI 26. See [[../data-model/PZ7035-Records]],
+Bridge ABI 27. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
 
 ## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)

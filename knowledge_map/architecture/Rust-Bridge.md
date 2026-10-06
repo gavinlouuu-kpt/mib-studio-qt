@@ -420,7 +420,7 @@ takes 25 (24 went to #501 P0).
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
 - 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
 
-## ABI 26: PZ7035 camera modes (#501 P1, 2026-10-05)
+## ABI 27: PZ7035 camera modes (#501 P1, 2026-10-05)
 
 - `set_instrument_mode(mode: align|run, x, y)` runs
   `AppBackend::setInstrumentMode` ([[AppBackend]]).
@@ -446,7 +446,8 @@ warning}`: the recording target of the data directory, from
 `instrument_mode_commands_off_the_instrument`.
 
 Final numbering from merge coordination: P0 (#502) takes 24, #398 takes 25,
-this takes 26.
+the ZC300 stage bridge (#513) takes 26, and this takes 27 (it was offline
+while #513 landed first).
 
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
