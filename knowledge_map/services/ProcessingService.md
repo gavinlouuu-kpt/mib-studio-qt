@@ -215,7 +215,10 @@ Laplacian variance (see [[AutofocusService]]).
 
 Rationale and the full compatibility matrix:
 `docs/decisions/0006-processing-contract-v2.md`,
-`docs/architecture/processing-contract-compatibility.md`.
+`docs/architecture/processing-contract-compatibility.md`. The matrix has the
+Contract 3 row (served by the PZ7035 PL core, refused by every host core) and
+a "Reference per contract" table. The PL path's hardware-free tests carry the
+ctest label `pl`, and `backend-ci` runs them as the "PL replay lane" step.
 
 ## Preprocessing filters & shared difference path (v2)
 

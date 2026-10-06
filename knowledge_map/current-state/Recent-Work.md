@@ -1,5 +1,20 @@
 # Recent Work
 
+## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
+
+ADR 0011's CI and compatibility-matrix consequences:
+
+- **PL replay lane:** the 15 hardware-free PZ7035 tests carry the ctest label
+  `pl`: record decoder, provider replay and ingest, profile compiler,
+  platform monitor, the Align/Run mode writer and the bridge preview, Contract 3 vectors, host-versus-PL equality and the ABI
+  vendor check. `backend-ci` runs them as a named step ("PL replay lane") with
+  `--no-tests=error` and a lower bound of 15, so a dropped label or test
+  fails CI. `processing.unet_c4` and `processing.pz_board_run_host` report
+  SKIP there: they need the private weights or a board run.
+- **Matrix:** `docs/architecture/processing-contract-compatibility.md` gains
+  the Contract 3 row, a "Reference per contract" table (Contract 3's
+  reference is the pz7035 PL specification), the `unet-cells` line name and
+  the `pl_core` provenance. See [[../services/ProcessingService]].
 ## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
 
 A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`

@@ -105,6 +105,28 @@ jobs:
           set -o pipefail
           ctest --preset linux-backend-only-test --output-on-failure 2>&1 | tee artifacts/backend-ci/test.log
 
+      - name: PL replay lane (ADR 0011)
+        shell: bash
+        # The hardware-free PZ7035 tests carry the `pl` ctest label: record
+        # decoder and provider replay, profile compiler, platform monitor, the
+        # Contract 3 vectors and host/PL equality, and the vendored ABI check.
+        # They already ran above; this step names the lane so it shows up in
+        # the PR checks and so an emptied or shrunken selection fails. Two of
+        # them (processing.unet_c4, processing.pz_board_run_host) report SKIP
+        # here: they need the private model weights or a board run.
+        env:
+          MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
+        run: |
+          set -o pipefail
+          total=$(ctest --preset linux-backend-only-test -N -L pl | sed -n 's/^Total Tests: //p')
+          echo "PL lane: ${total} tests"
+          # Lower bound: raise it when a PL test is added.
+          if [ "${total:-0}" -lt 15 ]; then
+            echo "::error::PL replay lane shrank to ${total:-0} tests (expected >= 15): a pl label or test was dropped."
+            exit 1
+          fi
+          ctest --preset linux-backend-only-test -L pl --no-tests=error --output-on-failure 2>&1 | tee artifacts/backend-ci/pl-lane.log
+
       - name: Upload backend CI logs
         if: failure()
         uses: actions/upload-artifact@v7

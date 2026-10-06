@@ -129,16 +129,16 @@ set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;
 
 mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
 add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
-set_tests_properties(backend.pl_science PROPERTIES LABELS "backend" TIMEOUT 60)
+set_tests_properties(backend.pl_science PROPERTIES LABELS "backend;pl" TIMEOUT 60)
 mib_add_backend_test_executable(instrument_modes_test backend/instrument_modes_test.cpp)
 mib_backend_test_link(instrument_modes_test PRIVATE Threads::Threads)
 add_test(NAME backend.instrument_modes COMMAND $<TARGET_FILE:mib_backend_tests> instrument_modes_test)
-set_tests_properties(backend.instrument_modes PROPERTIES LABELS "backend;concurrency" TIMEOUT 90)
+set_tests_properties(backend.instrument_modes PROPERTIES LABELS "backend;concurrency;pl" TIMEOUT 90)
 mib_add_backend_test_executable(pl_science_provider_test backend/pl_science_provider_test.cpp)
 mib_backend_test_link(pl_science_provider_test PRIVATE Threads::Threads)
 add_test(NAME backend.pl_science_provider COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_provider_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
-set_tests_properties(backend.pl_science_provider PROPERTIES LABELS "backend;recording;concurrency" TIMEOUT 120)
+set_tests_properties(backend.pl_science_provider PROPERTIES LABELS "backend;recording;concurrency;pl" TIMEOUT 120)
 mib_add_backend_test_executable(backend_lifecycle_smoke_test backend/backend_lifecycle_smoke_test.cpp)
 mib_add_backend_test_executable(hardware_shutdown_test backend/hardware_shutdown_test.cpp)
 add_test(NAME backend.hardware_shutdown COMMAND $<TARGET_FILE:mib_backend_tests> hardware_shutdown_test)
@@ -478,20 +478,20 @@ set_tests_properties(processing.contract2_conformance PROPERTIES LABELS "process
 mib_add_backend_test_executable(processing_contract3_cells_conformance_test processing/processing_contract3_cells_conformance_test.cpp)
 add_test(NAME processing.contract3_cells_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract3_cells_conformance_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
-set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
+set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 60)
 
 mib_add_backend_test_executable(pz_platform_monitor_test processing/pz_platform_monitor_test.cpp)
 add_test(NAME processing.pz_platform_monitor COMMAND $<TARGET_FILE:mib_backend_tests> pz_platform_monitor_test)
-set_tests_properties(processing.pz_platform_monitor PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+set_tests_properties(processing.pz_platform_monitor PROPERTIES LABELS "processing;backend;pl" TIMEOUT 30)
 mib_add_backend_test_executable(pz_bridge_preview_test processing/pz_bridge_preview_test.cpp)
 add_test(NAME processing.pz_bridge_preview COMMAND $<TARGET_FILE:mib_backend_tests> pz_bridge_preview_test)
-set_tests_properties(processing.pz_bridge_preview PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+set_tests_properties(processing.pz_bridge_preview PROPERTIES LABELS "processing;backend;pl" TIMEOUT 30)
 
 mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
 add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test
          ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
-set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend" TIMEOUT 60)
+set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
 
 mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
 add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
@@ -500,38 +500,38 @@ set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing
 mib_add_backend_test_executable(pl_preview_background_test processing/pl_preview_background_test.cpp)
 mib_backend_test_link(pl_preview_background_test PRIVATE Threads::Threads)
 add_test(NAME processing.pl_preview_background COMMAND $<TARGET_FILE:mib_backend_tests> pl_preview_background_test)
-set_tests_properties(processing.pl_preview_background PROPERTIES LABELS "processing;backend;concurrency" TIMEOUT 60)
+set_tests_properties(processing.pl_preview_background PROPERTIES LABELS "processing;backend;concurrency;pl" TIMEOUT 60)
 
 mib_add_backend_test_executable(pz_profile_compiler_test processing/pz_profile_compiler_test.cpp)
 add_test(NAME processing.pz_profile_compiler COMMAND $<TARGET_FILE:mib_backend_tests> pz_profile_compiler_test
          ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
-set_tests_properties(processing.pz_profile_compiler PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+set_tests_properties(processing.pz_profile_compiler PROPERTIES LABELS "processing;backend;pl" TIMEOUT 30)
 
 mib_add_backend_test_executable(pz_execution_provider_test processing/pz_execution_provider_test.cpp)
 mib_backend_test_link(pz_execution_provider_test PRIVATE Threads::Threads)
 add_test(NAME processing.pz_execution_provider COMMAND $<TARGET_FILE:mib_backend_tests> pz_execution_provider_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
-set_tests_properties(processing.pz_execution_provider PROPERTIES LABELS "processing;backend;concurrency" TIMEOUT 90)
+set_tests_properties(processing.pz_execution_provider PROPERTIES LABELS "processing;backend;concurrency;pl" TIMEOUT 90)
 
 mib_add_backend_test_executable(pz_provider_ingest_test processing/pz_provider_ingest_test.cpp)
 mib_backend_test_link(pz_provider_ingest_test PRIVATE Threads::Threads)
 add_test(NAME processing.pz_provider_ingest COMMAND $<TARGET_FILE:mib_backend_tests> pz_provider_ingest_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
-set_tests_properties(processing.pz_provider_ingest PROPERTIES LABELS "processing;backend;recording;concurrency" TIMEOUT 90)
+set_tests_properties(processing.pz_provider_ingest PROPERTIES LABELS "processing;backend;recording;concurrency;pl" TIMEOUT 90)
 mib_add_backend_test_executable(pz_unet_cells_host_test processing/pz_unet_cells_host_test.cpp)
 add_test(NAME processing.pz_unet_cells_host COMMAND $<TARGET_FILE:mib_backend_tests> pz_unet_cells_host_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
-set_tests_properties(processing.pz_unet_cells_host PROPERTIES LABELS "processing;backend;gold" TIMEOUT 60)
+set_tests_properties(processing.pz_unet_cells_host PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 60)
 
 mib_add_backend_test_executable(unet_c4_test processing/unet_c4_test.cpp)
 add_test(NAME processing.unet_c4 COMMAND $<TARGET_FILE:mib_backend_tests> unet_c4_test)
-set_tests_properties(processing.unet_c4 PROPERTIES LABELS "processing;backend;gold" TIMEOUT 300 SKIP_RETURN_CODE 77
+set_tests_properties(processing.unet_c4 PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 300 SKIP_RETURN_CODE 77
     ENVIRONMENT "MIB_UNET_C4_PARAMS=${MIB_ASSETS_DIR}/models/unet-c4-multiline-v1/c4_multiline_params.npz;MIB_UNET_C4_FIXTURES=${MIB_ASSETS_DIR}/models/unet-c4-multiline-v1/fixtures")
 
 mib_add_backend_test_executable(pz_board_run_host_test processing/pz_board_run_host_test.cpp)
 add_test(NAME processing.pz_board_run_host COMMAND $<TARGET_FILE:mib_backend_tests> pz_board_run_host_test
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
-set_tests_properties(processing.pz_board_run_host PROPERTIES LABELS "processing;backend;gold" TIMEOUT 300 SKIP_RETURN_CODE 77)
+set_tests_properties(processing.pz_board_run_host PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 300 SKIP_RETURN_CODE 77)
 
 mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
 add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
@@ -1212,7 +1212,7 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/vendor_pz7035_abi.py --check
     )
     set_tests_properties(scripts.pz7035_abi_vendor PROPERTIES
-        LABELS "scripts"
+        LABELS "scripts;pl"
         TIMEOUT 30
     )
 
