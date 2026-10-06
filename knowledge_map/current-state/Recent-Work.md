@@ -147,6 +147,21 @@ unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
 
+## 2026-10-04 — Central method authoring backend (#398 M3a)
+
+Supabase migration `202610040001_registry_authoring.sql` lets authors create
+methods (audited, idempotent), attaches immutable release notes to revisions,
+exposes method heads and per-revision review/audit history (PGlite tests in
+`supabase/tests/registry_authoring.sql`). The backend worker gains local
+drafts (new method, or copied from a cached revision; offline-capable),
+submit with a pre-submit head check that stops with a compared conflict
+(upstream vs draft key changes) or submits explicitly as a branch, reviewed
+transitions with reasons (publishing refreshes the superseded head), and
+history. `app::newerPublishedRevision` answers "update available". Job kinds
+6-10 join the ABI 25 contract. No UI yet (M3b). Guard:
+`profiles.registry_authoring` (three guard mutations caught).
+See [[../services/ProfileRegistryService]].
+
 ## 2026-10-04 — Apply and Mark validated for central methods (#398 M2b)
 
 `planMethodApply` says what applying a cached published or superseded

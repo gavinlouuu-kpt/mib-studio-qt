@@ -15,13 +15,16 @@ namespace {
 using Json = nlohmann::json;
 constexpr const char* kFile = "instrument_identity.json";
 
-std::string newUuidV4() {
+std::string newUuidV4Impl() {
+    // IDs become server primary keys: draw every byte from the OS entropy
+    // source, mixed with a clock-seeded generator in case random_device is
+    // deterministic on some platform.
     std::random_device rd;
-    std::mt19937_64 gen((static_cast<uint64_t>(rd()) << 32) ^ rd() ^
-                        static_cast<uint64_t>(
-                            std::chrono::steady_clock::now().time_since_epoch().count()));
+    static thread_local std::mt19937_64 mix(
+        static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) ^
+        (static_cast<uint64_t>(rd()) << 32));
     std::array<unsigned char, 16> b{};
-    for (auto& byte : b) byte = static_cast<unsigned char>(gen() & 0xffu);
+    for (auto& byte : b) byte = static_cast<unsigned char>((rd() ^ mix()) & 0xffu);
     b[6] = static_cast<unsigned char>((b[6] & 0x0fu) | 0x40u); // version 4
     b[8] = static_cast<unsigned char>((b[8] & 0x3fu) | 0x80u); // RFC 4122 variant
     char out[37];
@@ -45,6 +48,8 @@ bool writeAtomically(const std::filesystem::path& path, const std::string& text)
     return !ec;
 }
 } // namespace
+
+std::string generateUuidV4() { return newUuidV4Impl(); }
 
 bool isInstrumentUuid(const std::string& id) {
     if (id.size() != 36) return false;
@@ -97,7 +102,7 @@ InstrumentIdentity loadOrCreateInstrumentIdentity(const std::filesystem::path& d
                        "(earlier local method validations no longer match)";
     }
 
-    const auto id = newUuidV4();
+    const auto id = generateUuidV4();
     const Json doc = {{"schema", 1}, {"instrument_id", id}};
     if (!writeAtomically(path, doc.dump(2) + "\n")) {
         if (warning) *warning = "instrument identity could not be written to " + path.string();
