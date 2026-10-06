@@ -42,6 +42,20 @@ operation.
 - **Tests:** `backend.stage_service` and `backend.stage_bridge_facade`
   cover it at both layers, and the mutations fail them.
 
+## 2026-10-06 — Z stage panel in the Tauri app (#464, slice 5)
+
+The Connect tab gains a Z stage panel (`StageControls`) under the pump and
+autofocus panel. It uses only the existing `stage_*` bridge commands
+(ABI 26), and is hidden on the PZ7035.
+- **Position:** unknown until Home.
+- **Home:** disabled until the limit switches are verified, then needs a
+  confirmation, Service mode and arming.
+- **Moves:** whole micrometres, pre-checked against the soft limits.
+- **Stop:** always available, and never waits for another panel command.
+- **Everything else:** locked during an experiment.
+
+See [[../architecture/Desktop-Shell]] (Z stage panel).
+
 ## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
 
 The stage is now reachable from the shell.
