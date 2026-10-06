@@ -18,6 +18,10 @@
 - [[NanopositionerTab]] — [[../services/AutofocusService]] UI
 - [[SyringePumpTab]] — [[../services/SyringePumpService]] UI
 
+## React + Tauri (shared with the standalone product)
+- [[YofoReview]] — YOFO Review: the Review tab as its own React + Tauri
+  product; `desktop/src/review/` is also MIB Studio's Tauri Review tab
+
 ## Support
 - [[Dialogs]] — settings dialogs (Mock, Processing, Monitoring, Buffer save,
   Conversion factor, Frame viewer, Syringe pump)

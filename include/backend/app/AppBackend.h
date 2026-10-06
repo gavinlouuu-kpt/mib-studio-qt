@@ -7,6 +7,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "backend/app/BackgroundFrame.h"
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
@@ -18,7 +20,7 @@
 #include "backend/recording/RecordingAccounting.h"
 
 namespace backend::processing { class IExecutionProvider; }
-namespace backend::pz { class PzPlatformMonitor; }
+namespace backend::pz { class PzPlatformMonitor; class PzInstrumentControl; class IPzControlRegisters; enum class InstrumentMode; }
 
 namespace backend::services
 {
@@ -34,6 +36,7 @@ namespace backend::services
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
+    class StageService;
     class MonitoringDensityService;
     namespace serialbus
     {
@@ -109,6 +112,34 @@ namespace backend
         processing::IExecutionProvider *executionProvider();
         // Read-only PZ7035 identity and health (#501); null off the instrument.
         pz::PzPlatformMonitor *pzPlatformMonitor();
+        // The data directory given to initialize() (recordings default under it).
+        const std::string &dataDir() const { return dataDir_; }
+
+        // ---- PZ7035 camera modes (#501 P1) ----
+        // Align = the full sensor at 500 fps, LED 0/125 µs, the producer streaming previews.
+        // Run = the 512x96 window at (x, y), 5 kHz, the U-Net cell path on, LED 7/60 µs, the
+        // producer stopped (its AcquisitionStart would clear the U-Net enable): previews come
+        // from the PL cell capture (fetchRunPreview). The producer applies timing, ROI and the
+        // receiver reset at AcquisitionStart; PzInstrumentControl writes the LED and cell path.
+        // Refused during an experiment or recording, and when the PL is not configured.
+        bool instrumentControlAvailable() const;
+        bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
+        pz::InstrumentMode instrumentMode() const;
+        // The Run window (x, y) last applied or requested; snapped to the producer's steps.
+        std::pair<int, int> instrumentRunOffset() const;
+        // Service / Commissioning mode, latched by the shell: raw LED values are refused
+        // outside it, on the backend side (not only in the UI).
+        void setServiceMode(bool on);
+        bool serviceMode() const;
+        // How Align shows the sensor: "bridge" (whole frames from the results bridge) or "bands"
+        // (the producer's banded grabber, images before results8); "" outside Align.
+        std::string alignSource() const;
+        // Service mode only, within the current mode's limits (pz::checkLed); refused during
+        // an experiment. The next mode switch restores the preset.
+        bool setInstrumentLed(double delayUs, double widthUs, std::string *errorOut);
+        // Run mode: one cell capture as a run-preview packet (pz::encodeRunPreview).
+        bool fetchRunPreview(std::vector<uint8_t> &out, std::string *errorOut);
+        void setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers);
         services::PlaybackService &playback();
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
@@ -117,6 +148,8 @@ namespace backend
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
+        // Motorized Z stage (ADR 0013): observe-only until an operator homes it.
+        services::StageService &stage();
         // Device discovery job service (issue #419, ADR 0005): every camera /
         // nanopositioner / pulse-generator scan runs through it. Frontends
         // start jobs and poll snapshots; they never enumerate hardware.
@@ -328,6 +361,14 @@ namespace backend
         // before the service it feeds.
         std::unique_ptr<processing::IExecutionProvider> executionProvider_;
         std::unique_ptr<pz::PzPlatformMonitor> pzPlatformMonitor_;
+        std::unique_ptr<pz::PzInstrumentControl> pzControl_;
+        mutable std::mutex instrumentModeMutex_; // serialises mode switches
+        std::atomic<int> instrumentMode_{0};      // pz::InstrumentMode
+        std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
+        std::atomic<bool> serviceMode_{false};
+        // Align live view: "bridge" (whole frames, results8 on) or "bands" (producer grabber).
+        std::atomic<int> alignSource_{0}; // 0 none, 1 bridge, 2 bands (read by the status poll)
+        bool alignWholeFrameAvailable(std::string *why);
         std::unique_ptr<services::PlaybackService> playbackService_;
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;
@@ -339,6 +380,8 @@ namespace backend
         std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
         std::unique_ptr<services::SyringePumpService> syringePumpService_;
         std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
+        // After serialBusManager_: destroyed first, so its port closes on a live bus.
+        std::unique_ptr<services::StageService> stageService_;
         // Declared after every service the providers/hooks reference so the
         // discovery workers and the coordinator are destroyed first.
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
@@ -378,6 +421,9 @@ namespace backend
             int x{0}, y{0}, width{0}, height{0};
             double experimentFps{0.0}, experimentExposureUs{0.0};
             double overviewFps{830.0}, overviewExposureUs{900.0}; // lit full field (PZ7035)
+            // PZ7035 line period for the overview (PzHmax): 0 = the producer's rule; 232 for the
+            // whole-frame Align on results8 on. Experiment windows always use 0.
+            int overviewHmax{0};
             // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
             // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
             double previewRateHz{60.0};

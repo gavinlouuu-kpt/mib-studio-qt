@@ -65,8 +65,10 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzPlatformMonitor.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzInstrumentControl.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzExecutionProviders.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/ExecutionProviderFactory.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzBridgePreview.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
@@ -189,6 +191,39 @@ endif()
 mib_link_opencv(mib_processing PUBLIC)
 mib_link_hdf5(mib_processing PUBLIC)
 
+# mib_review_core: the one review implementation behind every shell (plan
+# 2026-10-01-standalone-review-app, ADR 0014). Qt-free, built on
+# mib_processing only — no cameras, serial, SQLite, Sentry — so YOFO Review
+# links it without mib_backend, while mib_backend links it for the
+# BackendFacade's review surface and the Qt tab's parity.
+add_library(mib_review_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewJobs.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewSession.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewJobs.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewTypes.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/OverlayCompose.h
+)
+set_target_properties(mib_review_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(mib_review_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(mib_review_core PUBLIC mib_processing)
+
+if(MIB_BUILD_REVIEW_LINK_PROBE)
+    add_executable(mib_review_link_probe ${PROJECT_SOURCE_DIR}/tools/review_link_probe/main.cpp)
+    target_link_libraries(mib_review_link_probe PRIVATE mib_review_core)
+    set_target_properties(mib_review_link_probe PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+endif()
+
 # A wheel build needs only the portable library above. Stopping here keeps Qt,
 # camera services, desktop backends, and the native Windows module out of the
 # manylinux configuration and makes its dependency surface auditable.
@@ -210,8 +245,14 @@ set_target_properties(oeabt_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# oeabt_serial is the shared native serial library despite its name: the
+# platform ISerialPort (added below) and the Modbus RTU bus layer
+# (SerialBus.cpp) live here, so device drivers and their CLIs (zc300ctl) link
+# them without the whole backend, and the Rust bridge's archive list
+# (crates/mib-bridge/build.rs) stays unchanged.
 add_library(oeabt_serial STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
 )
 target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
@@ -221,6 +262,40 @@ endif()
 set_target_properties(oeabt_serial PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+# Motorized stages (ADR 0013): pure ZC300 protocol, then the driver over the
+# shared bus. Linked by the backend services and by zc300ctl.
+add_library(stage_zc300_protocol STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/zc300/Zc300Protocol.cpp
+)
+target_include_directories(stage_zc300_protocol PUBLIC ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(stage_zc300_protocol PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+add_library(stage_zc300 STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/StageFactory.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/LimitVerification.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/zc300/Zc300Stage.cpp
+)
+target_link_libraries(stage_zc300 PUBLIC stage_zc300_protocol oeabt_serial spdlog::spdlog)
+if(TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(stage_zc300 PUBLIC nlohmann_json::nlohmann_json) # limits-verified record
+endif()
+set_target_properties(stage_zc300 PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+if(MIB_BUILD_STAGE_TOOLS)
+    add_executable(zc300ctl ${PROJECT_SOURCE_DIR}/tools/zc300ctl/main.cpp)
+    target_link_libraries(zc300ctl PRIVATE stage_zc300)
+    set_target_properties(zc300ctl PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+endif()
 
 if(MIB_BUILD_OEABT_TOOLS)
     add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)
@@ -366,6 +441,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/InstrumentIdentity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/RecordingTarget.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzBridgePreviewCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
@@ -377,7 +454,6 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodApply.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ConfigDocumentApply.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h
     ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLutCatalog.cpp
@@ -389,9 +465,11 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/RecorderService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/PlaybackService.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/Zc300Provider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
@@ -416,7 +494,8 @@ if(MIB_HAS_ARAVIS)
     )
 endif()
 
-target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
+# ReviewExport.cpp is compiled once, in mib_review_core (ADR 0014).
+target_link_libraries(mib_backend PUBLIC mib_review_core mib_processing stage_zc300 oeabt_serial)
 
 
 

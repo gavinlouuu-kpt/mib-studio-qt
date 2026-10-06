@@ -12,6 +12,12 @@
 //! [`ffi::BackendBridge::fetch_latest_frame`] — never pushed through the event
 //! channel and never base64-encoded per frame.
 
+// The review bridge (ReviewSession, ADR 0014) is always compiled; the backend
+// bridge below is not under the `review-only` feature.
+pub mod review_bridge;
+pub use review_bridge::review_ffi;
+
+#[cfg(not(feature = "review-only"))]
 #[cxx::bridge(namespace = "mib_bridge")]
 pub mod ffi {
     /// Flattened result of a dispatched command. `command` mirrors
@@ -521,6 +527,40 @@ pub mod ffi {
         pub focus_direction: bool,
     }
 
+    /// Z stage snapshot (#464, ADR 0013). `move_state` is a contract
+    /// `stage_move_states` value; positions are micrometres in the homed
+    /// frame (zero at mid-travel) once `referenced`.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeStageStatus {
+        pub valid: bool,
+        pub enabled: bool,
+        pub connected: bool,
+        /// Controller matches the stage profile; otherwise motion is refused.
+        pub configured: bool,
+        /// Homed since the controller powered up; moves need it.
+        pub referenced: bool,
+        /// The supervised limit-switch check passed for this controller
+        /// (`zc300ctl verify-limits`); Home is refused without it.
+        pub limits_verified: bool,
+        /// A move or Home is queued or running.
+        pub busy: bool,
+        pub model: String,
+        pub serial: String,
+        pub firmware: String,
+        pub port_name: String,
+        pub move_state: u32,
+        pub position_um: f64,
+        pub limit_positive: bool,
+        pub limit_negative: bool,
+        pub home: bool,
+        pub emergency_stop: bool,
+        pub driver_alarm: bool,
+        pub span_um: f64,
+        pub soft_min_um: f64,
+        pub soft_max_um: f64,
+        pub last_error: String,
+    }
+
     /// Authoritative per-pump snapshot (schema v10, BE-7). `run_status` /
     /// `direction` are contract `pump_run_states` / `pump_directions` values.
     #[derive(Debug, Clone, Default)]
@@ -896,6 +936,27 @@ pub mod ffi {
             timeout_ms: i32,
         ) -> BridgeCommandResult;
 
+        /// Z stage (#464, ADR 0013). Safety lives in the backend: moves are
+        /// refused until the stage was homed this power-up and outside the
+        /// soft limits; only `stage_home` homes; `stage_connect` is
+        /// observe-only; `stage_stop` is always accepted (also during an
+        /// experiment); everything else needs an idle experiment. Moves and
+        /// Home return a tracked operation id (kinds StageMove /
+        /// StageReference); cancelling it stops the axis.
+        fn stage_connect(
+            self: Pin<&mut BackendBridge>,
+            port_name: &str,
+            usb_serial: &str,
+            modbus_address: i32,
+        ) -> BridgeCommandResult;
+        fn stage_disconnect(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn stage_move_to(self: Pin<&mut BackendBridge>, target_um: f64) -> BridgeCommandResult;
+        fn stage_move_by(self: Pin<&mut BackendBridge>, delta_um: f64) -> BridgeCommandResult;
+        fn stage_home(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn stage_stop(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn stage_apply_profile(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn fetch_stage_status(self: Pin<&mut BackendBridge>) -> BridgeStageStatus;
+
         /// Pull the review metadata of the loaded HDF5 file (schema v9, BE-6).
         fn fetch_review_metadata(self: Pin<&mut BackendBridge>) -> BridgeReviewMetadata;
 
@@ -1113,6 +1174,14 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
+        /// PZ7035 camera mode (ABI 27, #501 P1): "align" | "run" with the Run window offset.
+        fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
+        /// Service / Commissioning mode latch; raw LED values are refused outside it.
+        fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;
+        /// Raw LED delay/width in µs (Service mode, per-mode limits).
+        fn set_instrument_led(self: Pin<&mut BackendBridge>, delay_us: f64, width_us: f64) -> BridgeCommandResult;
+        /// Run mode: one PL cell capture as an MIBC packet; empty when unavailable.
+        fn fetch_run_preview(self: Pin<&mut BackendBridge>) -> Vec<u8>;
         /// PZ7035 identity and health for preflight (#501): `{"available": bool, "error"?,
         /// "core": {...}, "led": {...}, "link": {...}, "latency": {...}}`. Read-only.
         fn fetch_instrument_status(self: Pin<&mut BackendBridge>) -> String;
@@ -1176,17 +1245,20 @@ pub mod ffi {
 // and they do so through the shim's own mutex-guarded queue, not through shared
 // access to `BackendBridge`. Marking it `Send` (but never `Sync`) is therefore
 // sound and is what lets a `Mutex<UniquePtr<BackendBridge>>` be `Send + Sync`.
+#[cfg(not(feature = "review-only"))]
 unsafe impl Send for ffi::BackendBridge {}
 
 // Compile-time guard for the Tauri consumption pattern: a
 // `Mutex<UniquePtr<BackendBridge>>` (what a Tauri `State` holds) must be
 // `Send + Sync`. This holds iff `BackendBridge: Send` (above) — and breaks
 // loudly if someone ever adds a `Sync` requirement the type can't meet.
+#[cfg(not(feature = "review-only"))]
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<std::sync::Mutex<cxx::UniquePtr<ffi::BackendBridge>>>();
 };
 
+#[cfg(not(feature = "review-only"))]
 fn bytes_to_vec(bytes: &[u8]) -> Vec<u8> {
     bytes.to_vec()
 }

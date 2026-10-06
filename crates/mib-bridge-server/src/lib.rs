@@ -146,6 +146,12 @@ const CONTROL_COMMANDS: &[&str] = &[
     "trigger_periodic_stop", "cancel_operation", "review_reanalysis_json", "review_export_json",
     "review_export_csv", "apply_config_document", "profile_command", "processing_core_command",
     "save_preview_buffer", "set_processed_preview_enabled",
+    // PZ7035 (#501 P1): camera modes and the LED drive hardware; service mode unlocks raw LED.
+    "set_instrument_mode", "set_service_mode", "set_instrument_led",
+    // Z stage (#464). stage_stop is deliberately absent: any client may stop
+    // the axis (Stop is always accepted, ADR 0013 §5).
+    "stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_home",
+    "stage_apply_profile",
 ];
 
 impl Server {
@@ -349,6 +355,16 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
             }
         }
     }
+    // A Z stage move or Home left running by a vanished operator is stopped.
+    if let Ok(stage) = mib_app_commands::fetch_stage_status(state) {
+        let stage = serde_json::to_value(stage).unwrap_or_default();
+        if stage["busy"] == json!(true) {
+            match mib_app_commands::stage_stop(state) {
+                Ok(r) => actions.push(format!("stage_stop: {}", serde_json::to_string(&r).unwrap_or_default())),
+                Err(e) => actions.push(format!("stage_stop failed: {e}")),
+            }
+        }
+    }
     if let Ok(preview) = mib_app_commands::preview_buffer::fetch_preview_buffer(state) {
         if preview["recording"] == json!(true) {
             match mib_app_commands::stop_recording(state) {
@@ -497,4 +513,21 @@ async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
         server.broadcast_session();
     }
     server.client_gone();
+}
+
+#[cfg(test)]
+mod stage_control_tests {
+    use super::CONTROL_COMMANDS;
+
+    // Z stage (#464): everything that can move or reconfigure the stage needs
+    // control; Stop and the status read stay available to every client.
+    #[test]
+    fn stage_motion_is_control_only_but_stop_is_not() {
+        for cmd in ["stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_home",
+                    "stage_apply_profile"] {
+            assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
+        }
+        assert!(!CONTROL_COMMANDS.contains(&"stage_stop"), "any client may stop the stage");
+        assert!(!CONTROL_COMMANDS.contains(&"fetch_stage_status"), "viewers may read the status");
+    }
 }

@@ -3,6 +3,11 @@
 //! The commands live in `mib-app-commands` (transport-neutral, shared with the YOFO Studio
 //! WebSocket server); this crate exposes them as typed Tauri commands and keeps what only a
 //! desktop shell has: app paths, preferences, the updater and native installers.
+//!
+//! Built with the default feature `studio`. YOFO Review (`review-only`, ADR 0014)
+//! is a separate app built from this crate's binary (main.rs → review_app.rs);
+//! without `studio` this library is empty.
+#![cfg(feature = "studio")]
 
 use mib_app_commands as cmds;
 use cmds::AppState;
@@ -318,6 +323,48 @@ fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<cmds::PumpStat
     cmds::fetch_pump_status(&state, pump)
 }
 
+// Z stage (#464, ADR 0013): safety is enforced in the backend (no motion
+// before Home, soft limits, Stop always accepted, experiment lock).
+#[tauri::command]
+fn stage_connect(state: State<AppState>, port_name: String, usb_serial: String, modbus_address: i32) -> Result<cmds::CmdResult, String> {
+    cmds::stage_connect(&state, port_name, usb_serial, modbus_address)
+}
+
+#[tauri::command]
+fn stage_disconnect(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_disconnect(&state)
+}
+
+#[tauri::command]
+fn stage_move_to(state: State<AppState>, target_um: f64) -> Result<cmds::CmdResult, String> {
+    cmds::stage_move_to(&state, target_um)
+}
+
+#[tauri::command]
+fn stage_move_by(state: State<AppState>, delta_um: f64) -> Result<cmds::CmdResult, String> {
+    cmds::stage_move_by(&state, delta_um)
+}
+
+#[tauri::command]
+fn stage_home(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_home(&state)
+}
+
+#[tauri::command]
+fn stage_stop(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_stop(&state)
+}
+
+#[tauri::command]
+fn stage_apply_profile(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_apply_profile(&state)
+}
+
+#[tauri::command]
+fn fetch_stage_status(state: State<AppState>) -> Result<cmds::StageStatus, String> {
+    cmds::fetch_stage_status(&state)
+}
+
 #[tauri::command]
 fn pump_scan_addresses(state: State<AppState>, com_port: i32, baud_rate: i32, start_address: i32, end_address: i32, timeout_ms: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_scan_addresses(&state, com_port, baud_rate, start_address, end_address, timeout_ms)
@@ -486,6 +533,26 @@ fn set_camera_overview(state: State<AppState>, overview: bool) -> Result<cmds::C
 #[tauri::command]
 fn save_camera_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Result<cmds::CmdResult, String> {
     cmds::save_camera_roi(&state, x, y, w, h)
+}
+
+#[tauri::command]
+fn set_instrument_mode(state: State<AppState>, mode: String, x: i32, y: i32) -> Result<cmds::CmdResult, String> {
+    cmds::set_instrument_mode(&state, &mode, x, y)
+}
+
+#[tauri::command]
+fn set_service_mode(state: State<AppState>, on: bool) -> Result<cmds::CmdResult, String> {
+    cmds::set_service_mode(&state, on)
+}
+
+#[tauri::command]
+fn set_instrument_led(state: State<AppState>, delay_us: f64, width_us: f64) -> Result<cmds::CmdResult, String> {
+    cmds::set_instrument_led(&state, delay_us, width_us)
+}
+
+#[tauri::command]
+fn fetch_run_preview(state: State<AppState>) -> Result<Response, String> {
+    cmds::fetch_run_preview(&state).map(Response::new)
 }
 
 #[tauri::command]
@@ -739,6 +806,14 @@ pub fn run() {
             pump_set_syringe_volume,
             pump_poll_status,
             fetch_pump_status,
+            stage_connect,
+            stage_disconnect,
+            stage_move_to,
+            stage_move_by,
+            stage_home,
+            stage_stop,
+            stage_apply_profile,
+            fetch_stage_status,
             pump_scan_addresses,
             fetch_review_metadata,
             fetch_review_metrics_page,
@@ -774,6 +849,10 @@ pub fn run() {
             set_camera_overview,
             save_camera_roi,
             fetch_camera_geometry,
+            set_instrument_mode,
+            set_service_mode,
+            set_instrument_led,
+            fetch_run_preview,
             fetch_platform_info,
             fetch_instrument_status,
             monitoring_set_active,

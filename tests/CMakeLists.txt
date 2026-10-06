@@ -130,6 +130,10 @@ set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;
 mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
 add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
 set_tests_properties(backend.pl_science PROPERTIES LABELS "backend" TIMEOUT 60)
+mib_add_backend_test_executable(instrument_modes_test backend/instrument_modes_test.cpp)
+mib_backend_test_link(instrument_modes_test PRIVATE Threads::Threads)
+add_test(NAME backend.instrument_modes COMMAND $<TARGET_FILE:mib_backend_tests> instrument_modes_test)
+set_tests_properties(backend.instrument_modes PROPERTIES LABELS "backend;concurrency" TIMEOUT 90)
 mib_add_backend_test_executable(pl_science_provider_test backend/pl_science_provider_test.cpp)
 mib_backend_test_link(pl_science_provider_test PRIVATE Threads::Threads)
 add_test(NAME backend.pl_science_provider COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_provider_test
@@ -217,6 +221,49 @@ mib_add_backend_test_executable(discovery_facade_test backend/discovery_facade_t
 mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
 add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
 set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
+
+mib_add_backend_test_executable(zc300_protocol_test backend/zc300_protocol_test.cpp)
+mib_backend_test_link(zc300_protocol_test PRIVATE stage_zc300_protocol)
+add_test(NAME backend.zc300_protocol COMMAND $<TARGET_FILE:mib_backend_tests> zc300_protocol_test)
+set_tests_properties(backend.zc300_protocol PROPERTIES LABELS "backend;stage" TIMEOUT 30)
+
+mib_add_backend_test_executable(zc300_stage_test backend/zc300_stage_test.cpp)
+mib_backend_test_link(zc300_stage_test PRIVATE stage_zc300)
+add_test(NAME backend.zc300_stage COMMAND $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
+set_tests_properties(backend.zc300_stage PROPERTIES LABELS "backend;stage;safety" TIMEOUT 90)
+# The same test pinned to two cores: the scheduling under which a tight
+# status poller starved a move for 60 s on PR #511's TSan runner. Keeps the
+# priority-access fix (Zc300Stage::Access) under that pressure on every run.
+find_program(MIB_TASKSET_EXECUTABLE taskset)
+if(UNIX AND NOT APPLE AND MIB_TASKSET_EXECUTABLE)
+    add_test(NAME backend.zc300_stage_two_cores
+             COMMAND ${MIB_TASKSET_EXECUTABLE} -c 0,1 $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
+    set_tests_properties(backend.zc300_stage_two_cores PROPERTIES LABELS "backend;stage;safety;concurrency" TIMEOUT 120)
+endif()
+
+mib_add_backend_test_executable(stage_bridge_facade_test backend/stage_bridge_facade_test.cpp)
+mib_backend_test_link(stage_bridge_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> stage_bridge_facade_test)
+set_tests_properties(backend.stage_bridge_facade PROPERTIES LABELS "backend;stage;bridge;safety" TIMEOUT 180)
+
+mib_add_backend_test_executable(stage_limit_verification_test backend/stage_limit_verification_test.cpp)
+mib_backend_test_link(stage_limit_verification_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_limit_verification COMMAND $<TARGET_FILE:mib_backend_tests> stage_limit_verification_test)
+set_tests_properties(backend.stage_limit_verification PROPERTIES LABELS "backend;stage;safety" TIMEOUT 180)
+
+mib_add_backend_test_executable(stage_config_test backend/stage_config_test.cpp)
+add_test(NAME backend.stage_config COMMAND $<TARGET_FILE:mib_backend_tests> stage_config_test)
+set_tests_properties(backend.stage_config PROPERTIES LABELS "backend;stage" TIMEOUT 30)
+
+mib_add_backend_test_executable(stage_service_test backend/stage_service_test.cpp)
+mib_backend_test_link(stage_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_service COMMAND $<TARGET_FILE:mib_backend_tests> stage_service_test)
+set_tests_properties(backend.stage_service PROPERTIES LABELS "backend;stage;safety" TIMEOUT 120)
+
+mib_add_backend_test_executable(stage_service_stress_test backend/stage_service_stress_test.cpp)
+mib_backend_test_link(stage_service_stress_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_service_stress COMMAND $<TARGET_FILE:mib_backend_tests> stage_service_stress_test)
+set_tests_properties(backend.stage_service_stress PROPERTIES LABELS "backend;stage;concurrency;stress" TIMEOUT 180)
 
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
@@ -436,6 +483,9 @@ set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "p
 mib_add_backend_test_executable(pz_platform_monitor_test processing/pz_platform_monitor_test.cpp)
 add_test(NAME processing.pz_platform_monitor COMMAND $<TARGET_FILE:mib_backend_tests> pz_platform_monitor_test)
 set_tests_properties(processing.pz_platform_monitor PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+mib_add_backend_test_executable(pz_bridge_preview_test processing/pz_bridge_preview_test.cpp)
+add_test(NAME processing.pz_bridge_preview COMMAND $<TARGET_FILE:mib_backend_tests> pz_bridge_preview_test)
+set_tests_properties(processing.pz_bridge_preview PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
 add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test
@@ -680,6 +730,19 @@ set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording
 
 # KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
 # round-trip + fault injection for the save path and the frontend codec.
+# ReviewSession (plan 2026-10-01-standalone-review-app): the one review
+# implementation behind the Qt tab, the Tauri shell and YOFO Review.
+# Round-trip on experiment/legacy/recording fixtures + fault injection.
+mib_add_backend_test_executable(review_session_test review/review_session_test.cpp)
+add_test(NAME review.session COMMAND $<TARGET_FILE:mib_backend_tests> review_session_test)
+set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
+# regenerate masks, core contour, density (grid ≈ direct), single flight.
+mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)
+mib_backend_test_link(review_jobs_test PRIVATE Threads::Threads)
+add_test(NAME review.jobs COMMAND $<TARGET_FILE:mib_backend_tests> review_jobs_test)
+set_tests_properties(review.jobs PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 300)
+
 mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
 add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
 set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)
@@ -809,6 +872,11 @@ set_tests_properties(integration.e2e_pipeline_stress PROPERTIES LABELS "integrat
 # Issue #419: end-to-end device-discovery lifecycle over a real AppBackend
 # (startup policy, explicit pulse-generator scan on the fake Modbus bench,
 # cancel, shutdown ordering versus hardware release).
+mib_add_backend_test_executable(e2e_stage_startup_test integration/e2e_stage_startup_test.cpp)
+mib_backend_test_link(e2e_stage_startup_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_stage_startup COMMAND $<TARGET_FILE:mib_backend_tests> e2e_stage_startup_test)
+set_tests_properties(integration.e2e_stage_startup PROPERTIES LABELS "integration;e2e;stage" TIMEOUT 120)
+
 mib_add_backend_test_executable(e2e_device_discovery_lifecycle_test integration/e2e_device_discovery_lifecycle_test.cpp)
 mib_backend_test_link(e2e_device_discovery_lifecycle_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_device_discovery_lifecycle COMMAND $<TARGET_FILE:mib_backend_tests> e2e_device_discovery_lifecycle_test)
@@ -1264,6 +1332,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_publish_index_merge.py
     )
     set_tests_properties(scripts.publish_update_index PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.publish_review_update
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_publish_review_update.py
+    )
+    set_tests_properties(scripts.publish_review_update PROPERTIES
         LABELS "scripts;release"
         TIMEOUT 30
     )

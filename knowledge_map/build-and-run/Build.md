@@ -44,7 +44,10 @@ the host when set. The image is built per job/container, not published
 (decision in the plan). `.github/actions/setup-linux-env` is the one place
 Linux workflows get packages (`sections`, `extra-packages`), Conan
 (`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
-`desktop-ci`, `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
+`desktop-ci`, `review-ci` (YOFO Review, [[../frontend/YofoReview]]; builds
+`mib_review_core`, the Qt-free review library [[../services/ReviewSession]]
+that `mib_backend` and the review bridge link),
+`sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
 and `network-tests` all use it, and `grep apt-get .github/workflows` should
 match nothing. `network-tests.yml` (nightly + manual) runs
 `ctest --preset linux-network-test`; every default test preset excludes the
@@ -69,6 +72,8 @@ sections and Conan profile it needs):
 | `linux-backend-only` | Makefiles | apt sections `base,backend` | backend libs + CTest, no Qt; CI and devcontainer |
 | `linux-system-release` | Ninja | apt sections `base,backend,frontend` | full app from Ubuntu packages |
 | `linux-release` / `linux-sentry-release` | Makefiles | `conan/profiles/linux-gcc13` | Conan Qt 6.7.3 on Linux |
+| `macos-review-core` | Ninja, `build/review-core/` | `conan install . -of build/review-core -o "&:review_core=True" -pr:h/-pr:b conan/profiles/macos-appleclang-arm64` | YOFO Review: `mib_processing` + `mib_review_core` + link probe, static deps ([[../frontend/YofoReview]], `docs/howto/macos-build.md`) |
+| `windows-review-core` | Ninja, `build/review-core/` | same with `conan/profiles/windows-msvc194-ninja` (VS x64 dev shell) | YOFO Review on Windows (`docs/howto/build-installer.md`) |
 
 - Every preset builds with `MIB_USE_SENTRY=ON` (the option's default) so
   CrashReporter's sentry-native paths are compiled and tested everywhere;
@@ -351,7 +356,12 @@ windeployqt.exe --release build/Release/mib_studio_qt.exe
 ## Conan
 
 Dependencies resolved via Conan 2 (`conanfile.py`; host profiles in
-`conan/profiles/`). See [[Dependencies]]. Post-build hooks call
+`conan/profiles/`). See [[Dependencies]]. Option `review_core=True` (YOFO
+Review) resolves only spdlog, HDF5, OpenCV (four modules, no FFmpeg /
+protobuf / Eigen) and nlohmann_json, with OpenCV and HDF5 **static**; the
+default graph is unchanged (shared OpenCV / HDF5, Qt, SQLite, ONNX Runtime on
+Windows) — the shared/static choice moved from `default_options` to
+`configure()`. Post-build hooks call
 `windeployqt.exe` to copy Qt plugins and DLLs next to the exe. CMake resolves
 `windeployqt` and the `PATH` prefix from Conan CMakeDeps’ `qt_PACKAGE_FOLDER_*`
 so Release/Debug tools stay aligned with the linked Qt package (stale
@@ -379,6 +389,14 @@ different Conan package IDs after reinstalls).
 - When `MIB_HAS_COREMOR=OFF`, build wiring skips the CoreMOR import library;
   the full autofocus service and OEABT serial backend still build.
 - `MIB_BUILD_OEABT_TOOLS=ON` builds `oeabtctl` in the build root.
+- `MIB_BUILD_STAGE_TOOLS=ON` (default) builds `zc300ctl` in the build root.
+  It is the ZC300 Z-stage diagnostic: `info` and `status` are read-only,
+  `move` needs `--allow-motion`, and `configure` needs `--allow-write`. It
+  links `stage_zc300` → `stage_zc300_protocol` + `oeabt_serial` (which also
+  carries `SerialBus.cpp`), not the backend. See [[../services/ZC300Stage]].
+  `mib_backend` itself links `stage_zc300` (for [[../services/StageService]]),
+  so the Rust bridge's archive list in `crates/mib-bridge/build.rs` names
+  `stage_zc300` and `stage_zc300_protocol`.
 - When `MIB_HAS_MINDVISION=ON`, CMake requires:
   - Windows: `CameraApiLoad.h` plus `MVCAMSDK.dll` / `MVCAMSDK_X64.dll`
   - Linux/macOS: `CameraApi.h` plus `libMVSDK.so` / `libmvsdk.dylib`

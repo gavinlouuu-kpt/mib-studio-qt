@@ -1,3 +1,4 @@
+import { decodeRunPreview } from "./runPreview";
 import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
@@ -41,6 +42,38 @@ export interface AutofocusConfig {
   min_samples_per_step: number;
   safe_shutdown_voltage: number;
   focus_direction: boolean;
+}
+
+/** Z stage snapshot (#464, ADR 0013). `move_state` is a contract
+ *  STAGE_MOVE_STATES value; positions are micrometres in the homed frame
+ *  (zero at mid-travel) once `referenced`. */
+export interface StageStatus {
+  valid: boolean;
+  enabled: boolean;
+  connected: boolean;
+  /** Controller matches the stage profile; otherwise motion is refused. */
+  configured: boolean;
+  /** Homed since the controller powered up; moves need it. */
+  referenced: boolean;
+  /** Supervised limit-switch check passed for this controller; Home needs it. */
+  limits_verified: boolean;
+  /** A move or Home is queued or running. */
+  busy: boolean;
+  model: string;
+  serial: string;
+  firmware: string;
+  port_name: string;
+  move_state: number;
+  position_um: number;
+  limit_positive: boolean;
+  limit_negative: boolean;
+  home: boolean;
+  emergency_stop: boolean;
+  driver_alarm: boolean;
+  span_um: number;
+  soft_min_um: number;
+  soft_max_um: number;
+  last_error: string;
 }
 
 /** Authoritative per-pump snapshot (schema v10, BE-7). `run_status` /
@@ -485,6 +518,8 @@ export interface PlatformCapabilities {
   led_strobe: boolean;
   align_mode: boolean;
   run_mode: boolean;
+  /** Raw LED limits per mode (µs) for Service mode (ABI 27); present with the camera modes. */
+  led_limits?: { run: LedLimits; align: LedLimits };
   /** The instrument's pumps: one RS485 port, a Modbus address per slot. */
   pump: null | { model: string; port: string; sample_address: number; sheath_address: number; microliters_per_rev: number };
 }
@@ -492,8 +527,23 @@ export interface PlatformCapabilities {
 export type IdMatch = "match" | "mismatch" | "unknown";
 
 /** PZ7035 identity and health (#501, `fetch_instrument_status`). Read-only. */
+export interface LedLimits { delay_min_us: number; delay_max_us: number; width_min_us: number; width_max_us: number }
+
+/** Camera mode the backend applied last (ABI 27, #501 P1). */
+export interface InstrumentModeState {
+  name: "align" | "run" | "unknown"; run_x: number; run_y: number; service: boolean;
+  /** Align live view: whole frames from the PL bridge (results8 on) or the producer's bands. */
+  align_source?: "bridge" | "bands" | "";
+}
+
+/** Where recordings land (#501): `ram` on today's JTAG RAM root; `warning` is the operator text,
+ *  "" once the target is persistent (SATA). */
+export interface RecordingTargetState { path: string; writable: boolean; ram: boolean; free_bytes: number; filesystem: string; warning: string }
+
 export interface InstrumentStatus {
   available: boolean;
+  mode?: InstrumentModeState;
+  storage?: RecordingTargetState;
   error?: string;
   pinned_profile_id?: string;
   core?: {
@@ -666,6 +716,17 @@ export const bridge = {
     invokeCommand("pump_set_syringe_volume", { pump, volume, unit }),
   pumpPollStatus: (pump: number) => invokeCommand("pump_poll_status", { pump }),
   fetchPumpStatus: (pump: number) => invoke<PumpStatus>("fetch_pump_status", { pump }),
+  // Z stage (#464). The backend refuses moves before Home and outside the
+  // soft limits; only stageHome homes; stageStop is always accepted.
+  stageConnect: (portName = "", usbSerial = "", modbusAddress = 0) =>
+    invokeCommand("stage_connect", { portName, usbSerial, modbusAddress }),
+  stageDisconnect: () => invokeCommand("stage_disconnect"),
+  stageMoveTo: (targetUm: number) => invokeCommand("stage_move_to", { targetUm }),
+  stageMoveBy: (deltaUm: number) => invokeCommand("stage_move_by", { deltaUm }),
+  stageHome: () => invokeCommand("stage_home"),
+  stageStop: () => invokeCommand("stage_stop"),
+  stageApplyProfile: () => invokeCommand("stage_apply_profile"),
+  fetchStageStatus: () => invoke<StageStatus>("fetch_stage_status"),
   pumpScanAddresses: (
     comPort: number,
     baudRate: number,
@@ -703,6 +764,12 @@ export const bridge = {
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
   fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
   fetchInstrumentStatus: () => invoke<InstrumentStatus>("fetch_instrument_status"),
+  // PZ7035 camera modes (ABI 27, #501 P1). A mode switch restarts or stops the camera, so it
+  // is a source mutation like the overview switch.
+  setInstrumentMode: (mode: "align" | "run", x = 0, y = 0) => sourceMutation("set_instrument_mode", {mode, x, y}),
+  setServiceMode: (on: boolean) => invokeCommand("set_service_mode", {on}),
+  setInstrumentLed: (delayUs: number, widthUs: number) => invokeCommand("set_instrument_led", {delayUs, widthUs}),
+  fetchRunPreview: async () => decodeRunPreview(await invoke<ArrayBuffer>("fetch_run_preview")),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),

@@ -85,6 +85,92 @@ It never writes: sensor timing, the command word and the LED belong to the
 single mode owner (P0b). `AppBackend` creates it beside the `pz-devmem`
 provider. Test `processing.pz_platform_monitor` uses fake registers.
 
+## Camera modes and the register writer (#501 P1)
+
+`include/backend/pz/PzInstrumentControl.h` is the one writer of the live
+registers the UI drives. Every access first checks PCFG_DONE and the cell
+image (`S[41]` = `'CEL2'`), and one mutex serialises them all:
+
+- **LED** (`S[0..5]`): written off first (`S[0]=0`), delay and width in
+  `S[10]`-kHz cycles, `S[4]=S[5]=0`, then `S[0]=1` (XVS sync).
+- **Cell path:** `S[46]` together with `P[8]` bit 4. That bit is a level;
+  the other `P[8]` bits are kept.
+- **Latency clear:** a write to `S[47]`.
+- **One-frame cell capture:** arm with `S[36]` and wait for `S[42]` bit 0.
+  `S[43]` is the frame id, `S[44]` = listed / flags / dropped, `S[45]` =
+  cells / blemishes. The window at `0x400E0000` holds gray in words
+  0-12287 and the mask in 12288-13823, then 18 words per cell at
+  `13824+32i` (`{y,x}`, `{h,w}`, `{count,rank,valid}` in words 15-17).
+
+`AppBackend::setInstrumentMode` runs the agreed sequence. The GenTL producer
+applies ROI, timing, `S[9]` and the receiver reset at AcquisitionStart, and
+every capture start reopens it and rewrites rate and exposure, so its mode is
+always re-applied.
+
+| Mode | Producer request | Result | After AcquisitionStart |
+|---|---|---|---|
+| Align (results8 on) | full field, PzHmax 232, 400 fps, 2299.7 µs | 232 / 800 / 64 | producer stopped; whole frames from the bridge preview slots; LED 100/135 µs |
+| Align (older images) | full field, 500 fps, 1899.7 µs | 116 / 1280 / 64 | LED 0/125 µs; the producer's banded preview keeps streaming |
+| Run | 512×96 at (x%8, y%4), 5000 fps, 150.0 µs | 58 / 256 / 64 | producer stopped; cell path on; latency cleared; LED 7/60 µs |
+
+Both modes start the same way: LED off, then cell path off.
+
+**Whole-frame Align (results8 on, 2026-10-06).**
+
+- **Timing.** HMAX 116 overflows the bridge tap, so Align forces HMAX 232 through the producer's
+  `PzHmax` feature (pz7035-imx426 `feat/gentl-pzhmax`). The producer stays the only sensor-timing
+  writer.
+- **Preview handshake.** `processing/pz/PzBridgePreview` implements pzres preview:
+  1. STOP; wait 20 ms.
+  2. 816×624 Mono8, every 40th frame, `CONFIG_COMMIT`.
+  3. Two slots at `0x3F100000`; result ring tail = head; ARM.
+  4. Per image: release the result ring, take the newest READY slot under `PREVIEW_HOLD` (a lost
+     HOLD retries next poll), and dedupe by frame id.
+- **Timeout.** After 500 ms the error names `PREVIEW_PRODUCED`/`DROPPED` and `FRAMES_LOST`.
+- **Live view.** `PzDevMemExecutionProvider::startPreview`/`fetchPreview`/`stopPreview` serve it,
+  and these are mutually exclusive with a run. `pz::PzBridgePreviewCamera` wraps them as the
+  camera behind CaptureService, so the UI's live view is unchanged. Six timeouts in a row, or a
+  bridge leaving ARMED/RUNNING, stop it with the reason.
+- **Cold start.** On the producer's first open the sensor powers up and the first previews take
+  seconds. The camera allows 20 timeouts (10 s) before the first frame, and the switch reports
+  success only once a frame has arrived. This was seen on the board on 2026-10-06; a cold
+  restart then passed.
+- **Preset recognition.** `PzPlatformMonitor` recognises both Align LED presets (100/135 and
+  0/125) as "align".
+- **Gate.** `/etc/yofo/expected-core.json` must list `align_whole_frame_preview` (`features`) and
+  match the bridge BUILD_ID; otherwise Align falls back to the banded preview.
+- **Test.** `processing.pz_bridge_preview`.
+
+**Producer rule (PL owner, 2026-10-05).** The producer's command pulses
+write `P[8]` = mask, then 0. Every AcquisitionStart therefore clears the
+U-Net enable, so the producer never runs while the cell path is on. In Run:
+
+- `start_capture` and the overview switch are refused;
+- the Aravis camera factory vetoes any other start;
+- readiness replaces the live-camera gates (session, delivery mode,
+  geometry, overview, transport loss) with `instrument.mode`, which passes
+  only in Run.
+
+With the cell path on, the grabber window holds the cell capture, so Run
+previews come from `captureCell`, not from the producer.
+
+**Recording target.** `app/RecordingTarget.h` holds the one detection
+function. It decides whether recordings land in RAM (tmpfs or ramfs: today's
+JTAG RAM root) and are lost at power-off. With the science on the PL:
+
+- the readiness gate `storage.persistent` warns, without blocking, with
+  "Recording to RAM: lost on power-off. Copy data off before shutdown. <N>
+  GB free.";
+- the UI shows the same text in preflight and in the context bar's Storage
+  segment, and as a status note at run start.
+
+It clears by itself once the destination is on a persistent filesystem (the
+SATA disk). The decision is merge coordination's, 2026-10-06.
+
+Test: `backend.instrument_modes`. It covers the write order, no access while
+the PL is blank, the cell path never on while the camera streams, the
+snapped window, the gates, and the Service-mode LED.
+
 ## Execution providers (YOFO S1)
 
 `include/backend/processing/IExecutionProvider.h` is the seam: one
@@ -127,7 +213,8 @@ frame-id gaps and 0 incomplete frames:
 
 - **Selection** — `MIB_EXECUTION_PROVIDER` (`ExecutionProviderFactory`):
   `pz` for `/dev/mem`, `replay:<file>[@fps]`, or `none`. Unset means `pz` in
-  a `MIB_PL_SCIENCE` build (#501) and none elsewhere. With `MIB_PL_SCIENCE`,
+  a `MIB_PL_SCIENCE` build (#501) and none elsewhere. (`MIB_PL_SCIENCE` comes from `mib_processing`;
+  a file compiled outside CMake defaults to 0, the desktop.) With `MIB_PL_SCIENCE`,
   `AppBackend` creates the provider, sets its sink to
   `ProcessingService::ingestProviderFrame`, and stops it at shutdown before
   the service.

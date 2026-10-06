@@ -41,7 +41,8 @@ constexpr double kLatencyClockMHz = 175.0;
 
 // LED presets (cycles of the 100 MHz strobe clock).
 constexpr uint32_t kRunDelay = 700, kRunWidth = 6000;   // 7 / 60 µs
-constexpr uint32_t kAlignDelay = 0, kAlignWidth = 12500; // 0 / 125 µs
+constexpr uint32_t kAlignDelay = 10000, kAlignWidth = 13500;    // 100 / 135 µs (whole frames, results8 on)
+constexpr uint32_t kAlignBandsDelay = 0, kAlignBandsWidth = 12500; // 0 / 125 µs (banded fallback)
 
 std::string coreId(uint32_t id3, uint32_t id2, uint32_t id1, uint32_t id0) {
     if ((id0 | id1 | id2 | id3) == 0) return {};
@@ -137,6 +138,12 @@ std::unique_ptr<IPzPlatformRegisters> openDevMemPlatformRegisters(std::string* e
 }
 #endif
 
+bool ExpectedCore::has(const std::string& feature) const {
+    for (const auto& f : features)
+        if (f == feature) return true;
+    return false;
+}
+
 std::optional<ExpectedCore> parseExpectedCore(const std::string& text, std::string* error) {
     const auto j = nlohmann::json::parse(text, nullptr, false);
     if (j.is_discarded() || !j.is_object()) {
@@ -154,6 +161,10 @@ std::optional<ExpectedCore> parseExpectedCore(const std::string& text, std::stri
     }
     c.scienceProfile = j.value("science_profile", 0);
     c.profileVersion = j.value("profile_version", 0);
+    if (const auto f = j.find("features"); f != j.end() && f->is_array()) {
+        for (const auto& v : *f)
+            if (v.is_string()) c.features.push_back(v.get<std::string>());
+    }
     if (c.buildId.size() != 32) {
         if (error) *error = "expected-core.json has no 32-hex build_id";
         return std::nullopt;
@@ -234,7 +245,9 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     s.ledWidthUs = width / kStrobeClockMHz;
     if (!s.ledOn) s.ledPreset = "off";
     else if (delay == kRunDelay && width == kRunWidth) s.ledPreset = "run";
-    else if (delay == kAlignDelay && width == kAlignWidth) s.ledPreset = "align";
+    else if ((delay == kAlignDelay && width == kAlignWidth) ||
+             (delay == kAlignBandsDelay && width == kAlignBandsWidth))
+        s.ledPreset = "align";
     else s.ledPreset = "custom";
     const uint32_t guard = r.strobe(kStrobeGuard);
     s.guardFault = (r.strobe(kStrobeStatus) & (1u << 4)) != 0 || (guard & 0x80000000u) != 0;

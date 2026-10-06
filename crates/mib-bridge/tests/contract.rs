@@ -6,6 +6,10 @@
 //! Asserts the event contract and frame metadata. Runs with no Qt, no webkit,
 //! no display — this is the Phase 2 gate and the boundary regression guard.
 
+// The backend bridge is not compiled under `review-only` (ADR 0014); the
+// review bridge has its own test (tests/review_bridge.rs).
+#![cfg(not(feature = "review-only"))]
+
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -70,12 +74,44 @@ fn abi_version_is_stable() {
     // interim number).
     // v24 #501 instrument UI P0: fetch_platform_info capabilities and
     // fetch_instrument_status (PZ7035 PL core, LED, link, latency).
-    // 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
     // v25 the central profile registry (#398): registry_* commands, snapshot
     // and contract groups, and the shell-injected HTTPS transport. Built as a
     // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
     // never reused.
-    assert_eq!(ffi::bridge_abi_version(), 25);
+    // v26 = ZC300 stage bridge (#464, ADR 0013): stage_* commands,
+    // fetch_stage_status, operation kinds StageMove/StageReference, discovery
+    // kind MotionStage, stage_move_states. It landed before #501 P1, so it
+    // took 26 under the landing-order rule; 27 reserved for #501 P1.
+    // v27 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
+    // fetch_run_preview (PZ7035 Align/Run camera modes).
+    // v28 central method authoring (#398 M3b): registry_new_draft_from_revision,
+    // registry_new_method_draft, registry_set_draft_notes,
+    // registry_draft_from_head, registry_submit_draft, registry_delete_draft,
+    // registry_transition, registry_fetch_history -> BridgeRegistryCommand,
+    // and the snapshot's drafts, methods, history and submit_conflict.
+    assert_eq!(ffi::bridge_abi_version(), 28);
+}
+
+// ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
+// is refused, and there is no run preview.
+#[test]
+#[serial]
+fn instrument_mode_commands_off_the_instrument() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_modes_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let refused = bridge.pin_mut().set_instrument_mode("run", 152, 200);
+    assert!(!refused.ok && refused.message.contains("no PZ7035 control"), "{}", refused.message);
+    let bad = bridge.pin_mut().set_instrument_mode("sideways", 0, 0);
+    assert!(!bad.ok && bad.message.contains("align or run"), "{}", bad.message);
+    assert!(bridge.pin_mut().set_service_mode(true).ok);
+    assert!(!bridge.pin_mut().set_instrument_led(7.0, 60.0).ok);
+    assert!(bridge.pin_mut().set_service_mode(false).ok);
+    assert!(bridge.pin_mut().fetch_run_preview().is_empty());
+    let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
+    assert_eq!(info["capabilities"]["run_mode"], serde_json::json!(false), "{info}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
@@ -251,6 +287,37 @@ fn pump_commands_fail_safely_without_hardware() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(completed, "pump scan did not complete");
+
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// Z stage (#464, ADR 0013): with no controller the commands fail cleanly
+// and never hang; Stop is always accepted; the snapshot reports a stage that
+// is neither connected, homed nor limit-verified.
+#[test]
+#[serial]
+fn stage_commands_fail_safely_without_hardware() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_stage_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+
+    let status = bridge.pin_mut().fetch_stage_status();
+    assert!(status.valid && !status.connected && !status.referenced && !status.limits_verified && !status.busy);
+
+    assert!(bridge.pin_mut().stage_stop().ok, "Stop is always accepted");
+    assert!(!bridge.pin_mut().stage_move_to(0.0).ok);
+    assert!(!bridge.pin_mut().stage_move_by(10.0).ok);
+    let home = bridge.pin_mut().stage_home();
+    assert!(!home.ok && home.operation_id == 0);
+    assert!(!bridge.pin_mut().stage_apply_profile().ok);
+    assert!(!bridge.pin_mut().stage_connect("", "", 0).ok, "no endpoint configured");
+    assert!(!bridge.pin_mut().stage_connect("ttyMIB-NO-SUCH-PORT", "", 300).ok, "address out of range");
+    let started = Instant::now();
+    assert!(!bridge.pin_mut().stage_connect("ttyMIB-NO-SUCH-PORT", "", 1).ok);
+    assert!(started.elapsed() < Duration::from_secs(10), "a missing port fails fast");
+    assert!(bridge.pin_mut().stage_disconnect().ok);
+    assert!(!data_dir.join("stage_limits_verified.json").exists(), "the bridge never writes the limits record");
 
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data_dir);
@@ -699,7 +766,10 @@ fn rust_enums_match_contract_json() {
         ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
         ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
         // ABI 14 discovery groups (#419): pinned in C++ by static_asserts in shim.cpp.
-        ("discovery_device_kinds", &[("Camera", 0), ("Framegrabber", 1), ("Nanopositioner", 2), ("PulseGenerator", 3)]),
+        ("discovery_device_kinds", &[("Camera", 0), ("Framegrabber", 1), ("Nanopositioner", 2), ("PulseGenerator", 3),
+                                     ("MotionStage", 4)]),
+        // Z stage (#464): pinned in C++ by static_asserts in shim.cpp.
+        ("stage_move_states", &[("Idle", 0), ("Moving", 1), ("Homing", 2), ("Faulted", 3)]),
         ("discovery_job_states", &[("Queued", 0), ("Running", 1), ("Completed", 2), ("Cancelled", 3), ("Failed", 4)]),
         ("discovery_identity_strengths", &[("None", 0), ("SessionLocal", 1), ("Persistent", 2)]),
         ("discovery_identification_statuses", &[("Identified", 0), ("Unidentified", 1), ("Ambiguous", 2), ("Unsupported", 3)]),

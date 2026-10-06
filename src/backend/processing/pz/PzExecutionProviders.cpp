@@ -269,9 +269,82 @@ private:
     volatile uint8_t* ring_{nullptr};
 };
 
+// Bridge registers through the provider's mapping, preview slots through their own read-only map.
+class PzDevMemExecutionProvider::PreviewIo final : public IPzBridgeIo {
+public:
+    PreviewIo(Mapping& map, uint64_t base, size_t bytes) : map_(map), bytes_(bytes) {
+        fd_ = ::open("/dev/mem", O_RDONLY | O_SYNC);
+        if (fd_ >= 0) {
+            void* p = mmap(nullptr, bytes_, PROT_READ, MAP_SHARED, fd_, static_cast<off_t>(base));
+            if (p != MAP_FAILED) slots_ = static_cast<volatile uint8_t*>(p);
+        }
+    }
+    ~PreviewIo() override {
+        if (slots_) munmap(const_cast<uint8_t*>(slots_), bytes_);
+        if (fd_ >= 0) close(fd_);
+    }
+    bool ok() const { return slots_ != nullptr; }
+    uint32_t reg(uint32_t offset) override { return map_.reg(offset); }
+    void setReg(uint32_t offset, uint32_t value) override { map_.setReg(offset, value); }
+    void readPreview(size_t offset, uint8_t* dst, size_t n) override {
+        if (offset + n <= bytes_) std::memcpy(dst, const_cast<const uint8_t*>(slots_ + offset), n);
+    }
+
+private:
+    Mapping& map_;
+    size_t bytes_;
+    int fd_{-1};
+    volatile uint8_t* slots_{nullptr};
+};
+
 PzDevMemExecutionProvider::PzDevMemExecutionProvider(Layout layout) : layout_(layout) {}
 
-PzDevMemExecutionProvider::~PzDevMemExecutionProvider() { stop(); }
+PzDevMemExecutionProvider::~PzDevMemExecutionProvider() {
+    stopPreview();
+    stop();
+}
+
+bool PzDevMemExecutionProvider::startPreview(const BridgePreviewConfig& config, std::string* error) {
+    std::lock_guard<std::mutex> lock(previewMutex_);
+    if (running_.load()) {
+        if (error) *error = "a run is armed: stop it before Align previews";
+        return false;
+    }
+    if (!backend::pz::pzPlConfigured(error) || !ensureMapped(error)) return false;
+    auto io = std::make_unique<PreviewIo>(*map_, config.previewBase, static_cast<size_t>(config.slots) * config.slotBytes());
+    if (!io->ok()) {
+        if (error) *error = "mmap preview slots (boot Linux with mem=1008M)";
+        return false;
+    }
+    if (!armBridgePreview(*io, config, error)) return false;
+    preview_ = std::move(io);
+    previewConfig_ = config;
+    previewing_.store(true);
+    SPDLOG_INFO("PzDevMemExecutionProvider: Align previews {}x{} every {} frames", config.width, config.height,
+                config.decimation);
+    return true;
+}
+
+bool PzDevMemExecutionProvider::fetchPreview(uint64_t lastFrameId, std::chrono::milliseconds timeout,
+                                             BridgePreviewImage& out, std::string* error) {
+    std::lock_guard<std::mutex> lock(previewMutex_);
+    if (!preview_) {
+        if (error) *error = "bridge preview is not started";
+        return false;
+    }
+    // The PL may have been reloaded or blanked since: never read it blank.
+    if (!backend::pz::pzPlConfigured(error)) return false;
+    return waitBridgePreview(*preview_, previewConfig_, lastFrameId, timeout, out, error);
+}
+
+void PzDevMemExecutionProvider::stopPreview() {
+    std::lock_guard<std::mutex> lock(previewMutex_);
+    if (!preview_) return;
+    std::string why;
+    if (backend::pz::pzPlConfigured(&why)) stopBridgePreview(*preview_);
+    preview_.reset();
+    previewing_.store(false);
+}
 
 bool PzDevMemExecutionProvider::ensureMapped(std::string* error) {
     // identity() runs on the UI's status poll while configure()/start() run on
@@ -286,6 +359,10 @@ bool PzDevMemExecutionProvider::ensureMapped(std::string* error) {
 }
 
 bool PzDevMemExecutionProvider::configure(const CompiledProfile& profile, std::string* error) {
+    if (previewing_.load()) {
+        if (error) *error = "the bridge is serving Align previews: switch to Run first";
+        return false;
+    }
     if (running_.load()) {
         if (error) *error = "configure while running";
         return false;
@@ -329,6 +406,10 @@ bool PzDevMemExecutionProvider::configure(const CompiledProfile& profile, std::s
 }
 
 bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
+    if (previewing_.load()) {
+        if (error) *error = "the bridge is serving Align previews: switch to Run first";
+        return false;
+    }
     if (running_.load()) {
         if (error) *error = "provider already running";
         return false;

@@ -7,6 +7,36 @@ kernel driver; no vendor driver is installed or required. Design and rollout:
 [ADR 0013](../decisions/0013-motion-stage-device-class.md) and the
 [execution plan](../exec-plans/active/2026-09-30-zc300-z-stage.md).
 
+## Bench tool
+
+`zc300ctl` (built with `MIB_BUILD_STAGE_TOOLS=ON`) replaces the pyserial
+bench client:
+
+```bash
+zc300ctl list                                   # FTDI candidates + USB serial numbers
+zc300ctl info   --usb-serial A10RB8XC           # identity, config, profile match (read-only)
+zc300ctl status --usb-serial A10RB8XC           # position (unreferenced), limits, e-stop
+zc300ctl move   --usb-serial A10RB8XC --by 100 --allow-motion   # whole µm; Ctrl-C stops
+zc300ctl stop   --usb-serial A10RB8XC
+zc300ctl configure --usb-serial A10RB8XC --profile tbzf6-60 --allow-write
+```
+
+There is no Home in the CLI. Referencing is `StageService`'s job (ADR 0013 §6).
+
+**The supervised limit-switch check** is required once per controller before
+the application will Home it. Run it on the bench with someone watching the
+stage, into the application's data directory:
+
+```bash
+zc300ctl verify-limits --usb-serial A10RB8XC --data-dir <app data dir> --supervised --allow-motion
+```
+
+It asks for `yes` before each direction, then moves in steps of at most
+500 µm at 200 µm/s while showing the position. Enter or Ctrl-C stops it at
+once. It checks that the correct switch trips at each end and that the span
+is right, then returns to the start position. Only then does it write
+`stage_limits_verified.json`.
+
 ## Interoperability evidence
 
 All protocol facts below come from the vendor Modbus manual and were

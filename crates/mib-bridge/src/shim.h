@@ -36,6 +36,7 @@ struct BridgeProcessingCoreStatus;
 struct BridgeAutofocusConfig;
 struct BridgeAutofocusStatus;
 struct BridgePumpStatus;
+struct BridgeStageStatus;
 struct BridgeReviewMetadata;
 struct BridgeReviewMetricsPage;
 struct BridgeEvent;
@@ -114,6 +115,15 @@ public:
     BridgeCommandResult pump_scan_addresses(std::int32_t com_port, std::int32_t baud_rate,
                                             std::int32_t start_address, std::int32_t end_address,
                                             std::int32_t timeout_ms);
+    BridgeCommandResult stage_connect(rust::Str port_name, rust::Str usb_serial,
+                                      std::int32_t modbus_address);
+    BridgeCommandResult stage_disconnect();
+    BridgeCommandResult stage_move_to(double target_um);
+    BridgeCommandResult stage_move_by(double delta_um);
+    BridgeCommandResult stage_home();
+    BridgeCommandResult stage_stop();
+    BridgeCommandResult stage_apply_profile();
+    BridgeStageStatus fetch_stage_status();
     BridgeReviewMetadata fetch_review_metadata();
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);
@@ -191,6 +201,10 @@ public:
     BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
     rust::String fetch_camera_geometry();
     rust::String fetch_platform_info();
+    BridgeCommandResult set_instrument_mode(rust::Str mode, std::int32_t x, std::int32_t y);
+    BridgeCommandResult set_service_mode(bool on);
+    BridgeCommandResult set_instrument_led(double delay_us, double width_us);
+    rust::Vec<std::uint8_t> fetch_run_preview();
     rust::String fetch_instrument_status();
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();

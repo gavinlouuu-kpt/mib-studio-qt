@@ -45,6 +45,7 @@ namespace backend::bridge
         Pump = 10,
         Autofocus = 11,
         PulseGenerator = 12,
+        Stage = 13,
     };
 
     enum class CameraCommandAction
@@ -140,6 +141,8 @@ namespace backend::bridge
         MaskRegeneration,
         Reanalysis,
         PumpScan,
+        StageMove,      // Z stage move (#464, ABI 26)
+        StageReference, // Z stage Home: probe both limits, zero at mid-travel
     };
 
     enum class BackendOperationState
@@ -300,6 +303,36 @@ namespace backend::bridge
         services::AutofocusService::Config config{};
     };
 
+    // Z stage commands (#464, ADR 0013) over StageService. The backend
+    // enforces the safety rules, whatever the shell does:
+    //  - MoveTo/MoveBy are refused until the stage was homed this controller
+    //    power-up, and outside the soft limits (StageService);
+    //  - Home is only ever this explicit action: Connect, Disconnect,
+    //    ApplyProfile and discovery never home or move (Connect is
+    //    observe-only; there is deliberately no start-up action here);
+    //  - Stop is always accepted, also during an experiment;
+    //  - every other action needs an idle experiment.
+    enum class StageCommandAction
+    {
+        Connect,
+        Disconnect,
+        MoveTo,
+        MoveBy,
+        Home,
+        Stop,
+        ApplyProfile,
+    };
+
+    struct StageCommand
+    {
+        StageCommandAction action{StageCommandAction::Stop};
+        // Connect: optional endpoint override of the configured stage block.
+        std::string portName;
+        std::string usbSerial;
+        int modbusAddress{0}; // 0 = keep the configured address
+        double targetUm{0.0}; // MoveTo: absolute, MoveBy: relative (whole micrometres)
+    };
+
     using BackendCommand = std::variant<CameraCommand,
                                         RecordingCommand,
                                         ProcessingSettingsCommand,
@@ -311,7 +344,8 @@ namespace backend::bridge
                                         TriggerCommand,
                                         ReviewCommand,
                                         PumpCommand,
-                                        AutofocusCommand>;
+                                        AutofocusCommand,
+                                        StageCommand>;
 
     struct BackendCommandResult
     {
@@ -911,6 +945,34 @@ namespace backend::bridge
         double speedRpm{0.0}; // peristaltic head speed setpoint
     };
 
+    // Z stage snapshot (#464, ABI 26): connection, identity, reference state,
+    // live status and soft limits. Positions are micrometres in the homed
+    // frame (zero at mid-travel) once referenced.
+    struct BackendStageStatus
+    {
+        bool enabled{false};
+        bool connected{false};
+        bool configured{false}; // controller matches the stage profile
+        bool referenced{false}; // homed since the controller powered up
+        bool limitsVerified{false}; // supervised limit check passed; Home needs it
+        bool busy{false};       // a move or Home is queued or running
+        std::string model;
+        std::string serial;
+        std::string firmware;
+        std::string portName;
+        int moveState{0}; // contract stage_move_states
+        double positionUm{0.0};
+        bool limitPositive{false};
+        bool limitNegative{false};
+        bool home{false};
+        bool emergencyStop{false};
+        bool driverAlarm{false};
+        double spanUm{0.0};
+        double softMinUm{0.0};
+        double softMaxUm{0.0};
+        std::string lastError;
+    };
+
     // Autofocus / nanopositioner status snapshot (BE-8): connection, enable
     // state, live voltage, and ring-ratio focus metrics with freshness (age)
     // so stale metrics are observable and can never silently drive a move.
@@ -974,6 +1036,17 @@ namespace backend::bridge
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.
         std::string fetchPlatformInfoJson() const;
+        // PZ7035 camera modes (ABI 27, #501 P1): "align" | "run" (window at x, y; snapped to
+        // x % 8, y % 4). Refused during an experiment/recording and with the PL unconfigured.
+        BackendCommandResult setInstrumentMode(const std::string &mode, int x, int y);
+        // The shell's Service / Commissioning mode, latched in the backend: raw LED values are
+        // refused outside it.
+        BackendCommandResult setServiceMode(bool on);
+        // Raw LED delay/width (µs): Service mode only, within the current mode's limits.
+        BackendCommandResult setInstrumentLed(double delayUs, double widthUs);
+        // Run mode: one PL cell capture (gray, U-Net mask, cells) as an MIBC packet; empty with
+        // `error` otherwise.
+        std::vector<std::uint8_t> fetchRunPreviewPacket(std::string *error);
         // PZ7035 identity and health for preflight (#501): the PL core against the
         // expected core and the pinned weights, LED strobe and guard, sensor-link
         // rates, latency. {available: false, error} off the instrument.
@@ -1045,6 +1118,7 @@ namespace backend::bridge
         bool fetchCameraSelection(BackendCameraSelection &out) const;
         bool fetchPumpStatus(int pumpId, BackendPumpStatus &out) const;
         bool fetchAutofocusStatus(BackendAutofocusStatus &out) const;
+        bool fetchStageStatus(BackendStageStatus &out) const;
         bool fetchAutofocusConfig(services::AutofocusService::Config &out) const;
         // Processing configuration (BE-3): the full lossless config document
         // as JSON — image_processing (config.json schema), realtime settings,
@@ -1141,6 +1215,15 @@ namespace backend::bridge
         BackendCommandResult handleReviewCommand(const ReviewCommand &command);
         BackendCommandResult handlePumpCommand(const PumpCommand &command);
         BackendCommandResult handleAutofocusCommand(const AutofocusCommand &command);
+        BackendCommandResult handleStageCommand(const StageCommand &command);
+        // Mirrors a StageService operation as a tracked facade operation: a
+        // joined worker waits for the stage operation and turns a facade
+        // cancel into a stage cancel (which stops the axis).
+        std::uint64_t trackStageOperation(BackendOperationKind kind, std::uint64_t stageOperation,
+                                          const std::string &message);
+        // True when the connected stage already claims this port (and, for
+        // Modbus devices, this address): pump / pulse-generator conflicts.
+        bool stageClaims(const std::string &port, int modbusAddress) const;
 
         BackendCommandResult lifecycleError(BackendCommandType command, const std::string &message);
         void emitEvent(const BackendEvent &event) const;
