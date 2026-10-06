@@ -6,4 +6,4 @@
 .stage-controls .stage-indicators li[data-severity="alarm"][data-active="true"] { background: #7f1d1d; border-color: #fca5a5; }
 .stage-controls .stage-stop { background: #b91c1c; border-color: #fca5a5; color: #fff; font-weight: 700; padding: .5rem 1.4rem; }
 .stage-controls .stage-stop:disabled { opacity: .5; }
-.stage-controls .stage-home-confirm { border: 1px solid #fca5a5; border-radius: .4rem; padding: .7rem; }
+.stage-controls .stage-zero-confirm { border: 1px solid #fca5a5; border-radius: .4rem; padding: .7rem; }

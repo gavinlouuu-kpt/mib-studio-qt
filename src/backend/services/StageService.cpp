@@ -41,6 +41,27 @@ std::uint16_t randomToken()
     return static_cast<std::uint16_t>(dist(rd));
 }
 
+// Widest travel around the zero: the stage's half span less a margin.
+double capFor(const StageConfig& cfg)
+{
+    return cfg.reference.expectedSpanUm / 2.0 - cfg.reference.softLimitMarginUm;
+}
+
+struct Envelope {
+    double min{0.0};
+    double max{0.0};
+};
+
+// ADR 0013 A3: +/-default (or +/-cap once the operator declared mid-travel),
+// intersected with the window the first zero of this power-up set.
+Envelope envelopeOf(const StageReferenceRecord& r, const StageConfig& cfg)
+{
+    const double base = r.midTravelDeclared ? capFor(cfg) : cfg.envelope.defaultUm;
+    // Edges round inward to whole micrometres (targets are whole um), with a
+    // small epsilon so an exact edge such as -1000 is kept.
+    return {std::ceil(std::max(-base, r.windowMinUm) - 1e-6), std::floor(std::min(base, r.windowMaxUm) + 1e-6)};
+}
+
 // Errors that mean the open-loop counter may no longer match the stage.
 bool losesReference(StageError e)
 {
@@ -84,10 +105,18 @@ std::optional<StageReferenceRecord> FileStageReferenceStore::load()
         StageReferenceRecord r;
         r.controllerSerial = j.at("controller_serial").get<std::string>();
         r.token = j.at("token").get<std::uint16_t>();
-        r.spanUm = j.at("span_um").get<double>();
+        r.midTravelDeclared = j.at("mid_travel_declared").get<bool>();
+        r.windowMinUm = j.at("window_min_um").get<double>();
+        r.windowMaxUm = j.at("window_max_um").get<double>();
+        // A record from the Home era has none of these keys and is ignored above.
+        if (!std::isfinite(r.windowMinUm) || !std::isfinite(r.windowMaxUm) || r.windowMinUm > 0.0 ||
+            r.windowMaxUm < 0.0) {
+            SPDLOG_WARN("StageService: ignoring zero record {} with an invalid window", path_);
+            return std::nullopt;
+        }
         return r;
     } catch (const std::exception& e) {
-        SPDLOG_WARN("StageService: ignoring unreadable reference record {}: {}", path_, e.what());
+        SPDLOG_WARN("StageService: ignoring unreadable zero record {}: {}", path_, e.what());
         return std::nullopt;
     }
 }
@@ -97,7 +126,11 @@ void FileStageReferenceStore::save(const StageReferenceRecord& r)
     const std::string tmp = path_ + ".tmp";
     {
         std::ofstream out(tmp, std::ios::trunc);
-        out << nlohmann::json{{"controller_serial", r.controllerSerial}, {"token", r.token}, {"span_um", r.spanUm}}
+        out << nlohmann::json{{"controller_serial", r.controllerSerial},
+                              {"token", r.token},
+                              {"mid_travel_declared", r.midTravelDeclared},
+                              {"window_min_um", r.windowMinUm},
+                              {"window_max_um", r.windowMaxUm}}
                    .dump();
         if (!out) {
             SPDLOG_WARN("StageService: could not write reference record {}", tmp);
@@ -195,10 +228,11 @@ std::pair<StageError, std::string> StageService::runSync(Job::Type type)
     return future.get();
 }
 
-std::pair<StageError, std::string> StageService::runExclusive(Job::Type type)
+std::pair<StageError, std::string> StageService::runExclusive(Job::Type type, bool midTravel)
 {
     Job job;
     job.type = type;
+    job.midTravel = midTravel;
     job.reply = std::make_shared<std::promise<std::pair<StageError, std::string>>>();
     auto future = job.reply->get_future();
     {
@@ -257,15 +291,14 @@ StageError StageService::startup(std::string* detail)
         if (detail) *detail = "stage disabled";
         return StageError::None;
     }
-    const StageError err = connect(detail);
-    if (err != StageError::None) return err;
-    const Snapshot s = snapshot();
-    if (cfg.reference.onStartup && s.configured && !s.referenced) {
-        SPDLOG_INFO("StageService: reference.on_startup is set; homing at start-up");
-        const StartResult r = reference();
-        if (!r.accepted()) SPDLOG_WARN("StageService: start-up Home refused: {}", r.detail);
-    }
-    return StageError::None;
+    return connect(detail);
+}
+
+StageError StageService::setZero(bool midTravel, std::string* detail)
+{
+    auto [err, text] = runExclusive(Job::Type::SetZero, midTravel);
+    if (detail) *detail = text;
+    return err;
 }
 
 StageError StageService::applyProfile()
@@ -284,18 +317,44 @@ StageError StageService::validateMoveLocked(double value, bool absolute, std::st
     const auto& st = snapshot_.status;
     if (st.emergencyStop) return StageError::EmergencyStop;
     if (st.driverAlarm) return StageError::DriverAlarm;
-    if (!snapshot_.referenced) {
-        if (!config_.requireReference) return StageError::None;
-        if (absolute || std::abs(value) > config_.maxUnreferencedJogUm) {
-            detail = "the stage is not homed for this power-up; press Home first";
-            return StageError::NotReferenced;
-        }
-        return StageError::None;
+    if (!snapshot_.zeroSet) {
+        detail = "the stage zero is not set for this controller power-up; use Set zero here first";
+        return StageError::ZeroNotSet;
     }
     const double target = absolute ? value : std::round(st.positionUm) + value;
-    if (target < snapshot_.softMinUm || target > snapshot_.softMaxUm) {
-        detail = "target " + std::to_string(static_cast<long long>(target)) + " um is outside the soft limits";
+    const double lo = snapshot_.envelopeMinUm;
+    const double hi = snapshot_.envelopeMaxUm;
+    const auto envelopeText = [&] {
+        return "[" + std::to_string(static_cast<long long>(lo)) + ", " + std::to_string(static_cast<long long>(hi)) +
+               "] um";
+    };
+    if (target < lo || target > hi) {
+        detail = "target " + std::to_string(static_cast<long long>(target)) + " um is outside the travel envelope " +
+                 envelopeText();
         return StageError::OutOfSoftLimits;
+    }
+    // Limit bits only ever stop a move heading toward an active switch, and a
+    // stage sitting on one can always move away from it (ADR 0013 A4).
+    if (target > st.positionUm && st.limitPositive) {
+        detail = "the positive limit switch is active; the stage will not move toward it";
+        return StageError::LimitSwitch;
+    }
+    if (target < st.positionUm && st.limitNegative) {
+        detail = "the negative limit switch is active; the stage will not move toward it";
+        return StageError::LimitSwitch;
+    }
+    // The one-sided approach overshoots first when the move runs against the
+    // approach direction; that waypoint must stay inside the envelope too. It
+    // is refused, never clamped, so the move never leaves the envelope.
+    const double sign = config_.approach.direction == Direction::Positive ? 1.0 : -1.0;
+    if (config_.approach.overshootUm > 0.0 && (target - st.positionUm) * sign <= 0.5) {
+        const double waypoint = target - sign * config_.approach.overshootUm;
+        if (std::abs(waypoint - target) >= 1.0 && (waypoint < lo || waypoint > hi)) {
+            detail = "the approach overshoot to " + std::to_string(static_cast<long long>(std::llround(waypoint))) +
+                     " um would leave the travel envelope " + envelopeText() +
+                     "; choose a target further inside it";
+            return StageError::OutOfSoftLimits;
+        }
     }
     return StageError::None;
 }
@@ -316,12 +375,8 @@ StageService::StartResult StageService::enqueueOperation(OperationKind kind, dou
         } else if (snapshot_.activeOperation != 0) {
             result.error = StageError::Busy;
             result.detail = "another stage operation is active";
-        } else if (kind == OperationKind::Move) {
+        } else {
             result.error = validateMoveLocked(targetUm, absolute, result.detail);
-        } else if (snapshot_.status.emergencyStop) {
-            result.error = StageError::EmergencyStop;
-        } else if (snapshot_.status.driverAlarm) {
-            result.error = StageError::DriverAlarm;
         }
         if (result.error == StageError::None) {
             result.id = nextOperation_++;
@@ -355,30 +410,6 @@ StageService::StartResult StageService::moveBy(double deltaUm)
 bool StageService::limitsVerifiedFor(const std::string& serial) const
 {
     return limits_ && !serial.empty() && limits_->find(serial).has_value();
-}
-
-StageService::StartResult StageService::reference()
-{
-    std::string serial;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!snapshot_.connected) return {0, StageError::NotConnected, "not connected"};
-        serial = snapshot_.identity.serial;
-    }
-    // Read outside the lock (file I/O); a record written by the bench tool
-    // while the application runs takes effect without reconnecting.
-    const bool verified = limitsVerifiedFor(serial);
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.limitsVerified = verified;
-    }
-    if (!verified) {
-        return {0, StageError::LimitsUnverified,
-                "limit switches of controller " + serial +
-                    " are not verified; run the supervised check (zc300ctl verify-limits --supervised) with "
-                    "someone watching the stage"};
-    }
-    return enqueueOperation(OperationKind::Reference, 0.0, true);
 }
 
 StageError StageService::stop()
@@ -450,14 +481,32 @@ void StageService::finishOperation(OperationId id, OperationState state, StageEr
     cv_.notify_all();
 }
 
-void StageService::invalidateReference(const char* why)
+void StageService::invalidateZeroLocked(const char* why)
+{
+    if (snapshot_.zeroSet) SPDLOG_WARN("StageService: zero dropped: {}", why);
+    snapshot_.zeroSet = false;
+    snapshot_.midTravelDeclared = false;
+    snapshot_.status.zeroSet = false;
+    snapshot_.envelopeMinUm = snapshot_.envelopeMaxUm = 0.0;
+    zeroRecord_ = StageReferenceRecord{};
+    store_->clear();
+}
+
+void StageService::invalidateZero(const char* why)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (snapshot_.referenced) SPDLOG_WARN("StageService: reference dropped: {}", why);
-    snapshot_.referenced = false;
-    snapshot_.status.referenced = false;
-    snapshot_.spanUm = snapshot_.softMinUm = snapshot_.softMaxUm = 0.0;
-    store_->clear();
+    invalidateZeroLocked(why);
+}
+
+void StageService::adoptZeroLocked(const StageReferenceRecord& record)
+{
+    zeroRecord_ = record;
+    const Envelope env = envelopeOf(record, config_);
+    snapshot_.zeroSet = true;
+    snapshot_.midTravelDeclared = record.midTravelDeclared;
+    snapshot_.status.zeroSet = true;
+    snapshot_.envelopeMinUm = env.min;
+    snapshot_.envelopeMaxUm = env.max;
 }
 
 // --- worker ------------------------------------------------------------------
@@ -511,10 +560,15 @@ void StageService::workerLoop()
             else if (!profile) result = {StageError::InvalidArgument, "unknown stage profile"};
             else {
                 result.first = d->applyProfile(*profile);
-                invalidateReference("controller configuration was rewritten");
+                invalidateZero("controller configuration was rewritten");
                 std::lock_guard<std::mutex> lock(mutex_);
                 snapshot_.configured = d->isConfigured();
             }
+            if (job.reply) job.reply->set_value(std::move(result));
+            break;
+        }
+        case Job::Type::SetZero: {
+            auto result = doSetZero(job.midTravel);
             if (job.reply) job.reply->set_value(std::move(result));
             break;
         }
@@ -540,22 +594,19 @@ std::pair<StageError, std::string> StageService::doConnect()
         return {err, detail};
     }
 
-    // Once-per-power-up reference: valid only if the controller still holds
-    // the token written by the last successful Home (reads only).
-    bool referenced = false;
-    double span = 0.0;
+    // Once-per-power-up zero: valid only if the controller still holds the
+    // token written by the last Set zero (reads only).
+    std::optional<StageReferenceRecord> restored;
     if (cfg.reference.powerUpTokenRegister != 0 && d->isConfigured()) {
         if (const auto record = store_->load()) {
             std::uint16_t token = 0;
             if (record->controllerSerial == identity.serial && record->token != 0 &&
                 d->readPowerUpToken(token) == StageError::None && token == record->token) {
-                referenced = true;
-                span = record->spanUm;
-                SPDLOG_INFO("StageService: controller {} kept its Home since power-up (span {:.1f} um)",
-                            identity.serial, span);
+                restored = record;
+                SPDLOG_INFO("StageService: controller {} kept the operator's zero since power-up", identity.serial);
             } else {
-                SPDLOG_INFO("StageService: stored reference no longer valid (power cycle or other "
-                            "controller); Home required");
+                SPDLOG_INFO("StageService: stored zero no longer valid (power cycle or other controller); "
+                            "Set zero here required");
                 store_->clear();
             }
         }
@@ -578,15 +629,16 @@ std::pair<StageError, std::string> StageService::doConnect()
                 if (port.serialNumber == cfg.endpoint.usbSerial) snapshot_.systemPort = port.systemName;
             }
         }
-        snapshot_.referenced = referenced;
-        if (referenced) {
-            snapshot_.spanUm = span;
-            snapshot_.softMaxUm = span / 2.0 - cfg.reference.softLimitMarginUm;
-            snapshot_.softMinUm = -snapshot_.softMaxUm;
-        }
-        if (statusErr == StageError::None) {
-            status.referenced = referenced;
-            snapshot_.status = status;
+        snapshot_.spanUm = cfg.reference.expectedSpanUm;
+        zeroRecord_ = StageReferenceRecord{};
+        if (statusErr == StageError::None) snapshot_.status = status;
+        // An e-stop or driver alarm at connect means the counter may be off:
+        // do not trust a stored zero.
+        if (restored && statusErr == StageError::None && !status.emergencyStop && !status.driverAlarm) {
+            adoptZeroLocked(*restored);
+        } else if (restored) {
+            SPDLOG_WARN("StageService: stored zero not restored (status unreadable, e-stop or driver alarm)");
+            store_->clear();
         }
         if (!snapshot_.configured) snapshot_.lastError = detail;
     }
@@ -616,6 +668,16 @@ void StageService::pollStatus()
     const StageError err = d->readStatus(s);
     if (err == StageError::None) {
         publishStatus(s);
+        // A supervised check run by the bench tool while the application is
+        // open takes effect without reconnecting (it only clears a badge).
+        std::string serial;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            serial = snapshot_.identity.serial;
+        }
+        const bool verified = limitsVerifiedFor(serial); // file read, outside the lock
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (snapshot_.connected) snapshot_.limitsVerified = verified;
     } else {
         std::lock_guard<std::mutex> lock(mutex_);
         snapshot_.lastError = std::string("status poll: ") + stage::toString(err);
@@ -626,7 +688,12 @@ void StageService::publishStatus(const StageStatus& status)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_.status = status;
-    snapshot_.status.referenced = snapshot_.referenced;
+    snapshot_.status.zeroSet = snapshot_.zeroSet;
+    // An e-stop or a driver alarm can desync the open-loop counter, whether or
+    // not a move was running: the operator must set zero again (ADR 0013 A2).
+    if ((status.emergencyStop || status.driverAlarm) && snapshot_.zeroSet) {
+        invalidateZeroLocked(status.emergencyStop ? "emergency stop" : "driver alarm");
+    }
 }
 
 void StageService::runOperation(const Job& job)
@@ -643,20 +710,19 @@ void StageService::runOperation(const Job& job)
     }
 
     std::string detail;
-    bool wasReferenced = false;
+    bool hadZero = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        wasReferenced = snapshot_.referenced;
+        hadZero = snapshot_.zeroSet;
     }
-    const StageError err = job.kind == OperationKind::Move ? runMove(id, job.targetUm, job.absolute, detail)
-                                                           : runReference(id, detail);
+    const StageError err = runMove(id, job.targetUm, job.absolute, detail);
     const bool wasCancelled = cancelled(id);
     if (err != StageError::None || wasCancelled) {
         if (const auto d = driver()) d->stop(); // never leave the axis running
         pollStatus();
     }
-    if (err != StageError::None && wasReferenced && losesReference(err)) {
-        invalidateReference(stage::toString(err));
+    if (err != StageError::None && hadZero && losesReference(err)) {
+        invalidateZero(stage::toString(err));
     }
 
     OperationState state = OperationState::Completed;
@@ -681,7 +747,8 @@ StageError StageService::applySpeed(double umPerS)
 }
 
 StageError StageService::waitIdle(OperationId id, Clock::time_point deadline, StageStatus& status,
-                                  std::string& detail, const std::function<bool(const StageStatus&)>& abortIf)
+                                  std::string& detail,
+                                  const std::function<StageError(const StageStatus&)>& abortIf)
 {
     const auto d = driver();
     if (!d) return StageError::NotConnected;
@@ -696,9 +763,11 @@ StageError StageService::waitIdle(OperationId id, Clock::time_point deadline, St
         publishStatus(status);
         if (status.emergencyStop) return StageError::EmergencyStop;
         if (status.driverAlarm) return StageError::DriverAlarm;
-        if (abortIf && abortIf(status)) {
-            d->stop();
-            return StageError::ReferenceFailed;
+        if (abortIf) {
+            if (const StageError abort = abortIf(status); abort != StageError::None) {
+                d->stop();
+                return abort;
+            }
         }
         if (status.state != MoveState::Moving) return StageError::None;
         if (Clock::now() > deadline) {
@@ -721,10 +790,29 @@ StageError StageService::moveAndWait(OperationId id, double targetUm, double spe
     const double target = std::round(targetUm);
     const double distance = std::abs(target - status.positionUm);
     if (distance < 0.5) return StageError::None;
+    // Limit bits are a backstop that only stops (ADR 0013 A4): never a
+    // precondition, and only the switch in the direction of travel counts, so
+    // a stage sitting on a switch can always move away from it.
+    const bool towardPositive = target > status.positionUm;
+    const auto towardLimit = [towardPositive](const StageStatus& s) {
+        return towardPositive ? s.limitPositive : s.limitNegative;
+    };
+    if (towardLimit(status)) {
+        detail = std::string("the ") + (towardPositive ? "positive" : "negative") +
+                 " limit switch is active; the stage will not move toward it";
+        return StageError::LimitSwitch;
+    }
     if ((err = d->moveAbsolute(target)) != StageError::None) return err;
     const auto budget = std::chrono::duration<double>(distance / speedUmS * config().moveTimeoutMargin + 1.0);
     const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(budget);
-    if ((err = waitIdle(id, deadline, status, detail)) != StageError::None) return err;
+    if ((err = waitIdle(id, deadline, status, detail, [&](const StageStatus& s) {
+             if (!towardLimit(s)) return StageError::None;
+             detail = std::string("the ") + (towardPositive ? "positive" : "negative") +
+                      " limit switch became active during the move; stopped";
+             return StageError::LimitSwitch;
+         })) != StageError::None) {
+        return err;
+    }
     if (cancelled(id)) return StageError::None;
     // Whole-µm targets land within half a pulse (0.22 µm); anything further
     // means the axis stopped early.
@@ -752,7 +840,11 @@ StageError StageService::approachAndWait(OperationId id, double targetUm, double
     // direction, so backlash is taken up the same way every time.
     const double sign = cfg.approach.direction == Direction::Positive ? 1.0 : -1.0;
     if (cfg.approach.overshootUm > 0.0 && (targetUm - status.positionUm) * sign <= 0.5) {
-        const double waypoint = std::clamp(targetUm - sign * cfg.approach.overshootUm, minUm, maxUm);
+        const double waypoint = targetUm - sign * cfg.approach.overshootUm;
+        if (waypoint < minUm || waypoint > maxUm) {
+            detail = "the approach overshoot would leave the travel envelope";
+            return StageError::OutOfSoftLimits;
+        }
         if (std::abs(waypoint - targetUm) >= 1.0) {
             if ((err = moveAndWait(id, waypoint, cfg.speedUmS, detail)) != StageError::None) return err;
         }
@@ -763,127 +855,103 @@ StageError StageService::approachAndWait(OperationId id, double targetUm, double
 StageError StageService::runMove(OperationId id, double value, bool absolute, std::string& detail)
 {
     double target = 0.0;
-    double minUm = -std::numeric_limits<double>::infinity();
-    double maxUm = std::numeric_limits<double>::infinity();
-    bool referenced = false;
+    Envelope env;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // Re-check at start: the stage may have lost its reference or hit an
+        // Re-check at start: the stage may have lost its zero or hit an
         // e-stop since the operation was queued.
         if (const StageError err = validateMoveLocked(value, absolute, detail); err != StageError::None) return err;
         target = absolute ? value : std::round(snapshot_.status.positionUm) + value;
-        referenced = snapshot_.referenced;
-        if (referenced) {
-            minUm = snapshot_.softMinUm;
-            maxUm = snapshot_.softMaxUm;
-        }
+        env = {snapshot_.envelopeMinUm, snapshot_.envelopeMaxUm};
     }
     if (const StageError err = applySpeed(config().speedUmS); err != StageError::None) return err;
-    // An unreferenced jog (only when a rig allows it) moves directly, so the
-    // overshoot never exceeds max_unreferenced_jog_um.
-    if (!referenced) return moveAndWait(id, target, config().speedUmS, detail);
-    return approachAndWait(id, target, minUm, maxUm, detail);
+    return approachAndWait(id, target, env.min, env.max, detail);
 }
 
-StageError StageService::searchLimit(OperationId id, Direction direction, double& positionUm, std::string& detail)
+std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
 {
     const auto d = driver();
-    if (!d) return StageError::NotConnected;
-    const StageConfig cfg = config();
-    StageStatus status;
-    StageError err = d->readStatus(status);
-    if (err != StageError::None) return err;
-    const bool negative = direction == Direction::Negative;
-    if (negative ? status.limitNegative : status.limitPositive) {
-        positionUm = status.positionUm;
-        return StageError::None;
-    }
-    if ((err = applySpeed(cfg.reference.searchSpeedUmS)) != StageError::None) return err;
-    // The search is a relative move of at most expected_span + search_margin
-    // toward the switch, executed and bounded by the controller itself: it
-    // ends at the bound even if this thread stalls (host load, OS sleep
-    // granularity, USB latency). The ZC300 halts any motion at a tripped
-    // limit switch, so with working switches it ends there instead. Host
-    // polling only detects the end; it can stop the axis earlier, never later.
-    const double maxTravel = std::floor(cfg.reference.expectedSpanUm + cfg.reference.searchMarginUm);
-    const double start = status.positionUm;
-    const auto budget = std::chrono::duration<double>(
-        maxTravel / cfg.reference.searchSpeedUmS * cfg.moveTimeoutMargin + 2.0);
-    const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(budget);
-    if ((err = d->moveRelative(negative ? -maxTravel : maxTravel)) != StageError::None) return err;
-    const char* side = negative ? "negative" : "positive";
-    // Belt and braces: never let the host see more travel than the bound.
-    err = waitIdle(id, deadline, status, detail, [&](const StageStatus& s) {
-        if (std::abs(s.positionUm - start) <= maxTravel + 1.0) return false;
-        detail = std::string("travelled past the ") + std::to_string(static_cast<int>(maxTravel)) +
-                 " um search bound";
-        return true;
-    });
-    if (err != StageError::None || cancelled(id)) return err;
-    if (!(negative ? status.limitNegative : status.limitPositive)) {
-        detail = std::string("no ") + side + " limit switch within " + std::to_string(static_cast<int>(maxTravel)) +
-                 " um (check the limit-switch wiring)";
-        return StageError::ReferenceFailed;
-    }
-    positionUm = status.positionUm;
-    return StageError::None;
-}
-
-StageError StageService::runReference(OperationId id, std::string& detail)
-{
-    const auto d = driver();
-    if (!d) return StageError::NotConnected;
     const StageConfig cfg = config();
     std::string serial;
+    StageReferenceRecord previous;
+    bool hadZero = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!d || !snapshot_.connected) return {StageError::NotConnected, "not connected"};
+        if (!snapshot_.configured) {
+            return {StageError::Misconfigured, "the controller does not match the stage profile"};
+        }
+        if (snapshot_.activeOperation != 0) return {StageError::Busy, "a stage operation is active"};
         serial = snapshot_.identity.serial;
+        hadZero = snapshot_.zeroSet;
+        previous = zeroRecord_;
     }
-    // Re-checked at start: the record may have been removed since queueing.
-    if (!limitsVerifiedFor(serial)) {
-        detail = "limit switches of controller " + serial + " are not verified";
-        return StageError::LimitsUnverified;
+    StageStatus status;
+    if (const StageError err = d->readStatus(status); err != StageError::None) {
+        return {err, "could not read the stage status"};
     }
-    invalidateReference("Home started");
-    SPDLOG_INFO("StageService: Home started (probing both limits)");
+    if (status.emergencyStop) return {StageError::EmergencyStop, "emergency stop is active"};
+    if (status.driverAlarm || status.state == MoveState::Faulted) {
+        return {StageError::DriverAlarm, "the driver reports an alarm"};
+    }
+    if (status.state != MoveState::Idle) return {StageError::Busy, "the axis is moving; stop it first"};
+    const double position = status.positionUm;
+    if (!std::isfinite(position)) return {StageError::Protocol, "the position counter is unreadable"};
 
-    double negUm = 0.0;
-    double posUm = 0.0;
-    StageError err = searchLimit(id, Direction::Negative, negUm, detail);
-    if (err == StageError::None && !cancelled(id)) err = searchLimit(id, Direction::Positive, posUm, detail);
-    if (err != StageError::None || cancelled(id)) return err;
-
-    const double span = posUm - negUm;
-    if (std::abs(span - cfg.reference.expectedSpanUm) > cfg.reference.spanToleranceUm) {
-        detail = "measured span " + std::to_string(static_cast<int>(std::lround(span))) + " um is outside " +
-                 std::to_string(static_cast<int>(cfg.reference.expectedSpanUm)) + " +/- " +
-                 std::to_string(static_cast<int>(cfg.reference.spanToleranceUm)) + " um";
-        return StageError::ReferenceFailed;
+    // ADR 0013 A3: without a mid-travel declaration a later zero must stay
+    // inside the window the first zero of this power-up set, so repeated
+    // re-zeroing cannot walk the envelope along the stage.
+    if (hadZero && !midTravel && (position < previous.windowMinUm || position > previous.windowMaxUm)) {
+        return {StageError::OutOfSoftLimits,
+                "the stage is outside the window set by the first zero of this power-up; declare mid-travel "
+                "(only if the stage really is there) or power-cycle the controller"};
     }
-    if ((err = applySpeed(cfg.speedUmS)) != StageError::None) return err;
-    const double mid = std::round((negUm + posUm) / 2.0);
-    if ((err = approachAndWait(id, mid, negUm, posUm, detail)) != StageError::None || cancelled(id)) return err;
-    if ((err = d->setPosition(0.0)) != StageError::None) return err;
 
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.referenced = true;
-        snapshot_.spanUm = span;
-        snapshot_.softMaxUm = span / 2.0 - cfg.reference.softLimitMarginUm;
-        snapshot_.softMinUm = -snapshot_.softMaxUm;
+    StageReferenceRecord record;
+    record.controllerSerial = serial;
+    record.midTravelDeclared = midTravel;
+    if (midTravel) {
+        record.windowMinUm = -capFor(cfg);
+        record.windowMaxUm = capFor(cfg);
+    } else if (hadZero) {
+        record.windowMinUm = previous.windowMinUm - position;
+        record.windowMaxUm = previous.windowMaxUm - position;
+    } else {
+        record.windowMinUm = -cfg.envelope.defaultUm;
+        record.windowMaxUm = cfg.envelope.defaultUm;
     }
+
+    // Clear the stored record before the counter changes: if the application
+    // dies between the write and the new record, the stage reads as "zero not
+    // set" afterwards instead of restoring a frame that no longer exists.
+    store_->clear();
+    if (const StageError err = d->setPosition(0.0); err != StageError::None) {
+        invalidateZero("the position write failed");
+        return {err, "could not write the position counter"};
+    }
+    bool persisted = false;
     if (cfg.reference.powerUpTokenRegister != 0) {
         const std::uint16_t token = randomToken();
         if (d->writePowerUpToken(token) == StageError::None) {
-            store_->save({serial, token, span});
+            record.token = token;
+            persisted = true;
         } else {
-            SPDLOG_WARN("StageService: power-up token not written; the reference lasts this session only");
+            SPDLOG_WARN("StageService: power-up token not written; the zero lasts this session only");
         }
     }
+    Envelope env;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        adoptZeroLocked(record);
+        if (persisted) store_->save(record);
+        env = {snapshot_.envelopeMinUm, snapshot_.envelopeMaxUm};
+    }
     pollStatus();
-    SPDLOG_INFO("StageService: Home complete: span {:.1f} um, zero at mid-travel, soft limits +/-{:.1f} um", span,
-                span / 2.0 - cfg.reference.softLimitMarginUm);
-    return StageError::None;
+    SPDLOG_INFO("StageService: zero set here (counter was {:.1f} um); mid-travel declared: {}; travel envelope "
+                "[{:.0f}, {:.0f}] um",
+                position, midTravel ? "yes" : "no", env.min, env.max);
+    return {StageError::None, "zero set here; travel envelope [" + std::to_string(static_cast<long long>(env.min)) +
+                                  ", " + std::to_string(static_cast<long long>(env.max)) + "] um"};
 }
 
 } // namespace backend::services

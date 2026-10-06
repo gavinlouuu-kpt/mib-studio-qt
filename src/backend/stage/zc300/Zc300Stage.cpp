@@ -301,7 +301,7 @@ StageError Zc300Stage::readStatusLocked(StageStatus& status)
     status.home = sw.home;
     status.emergencyStop = sw.emergencyStop;
     status.driverAlarm = sw.driverAlarm;
-    status.referenced = false;
+    status.zeroSet = false;
     status.state = sw.driverAlarm ? MoveState::Faulted : moving ? MoveState::Moving : MoveState::Idle;
     status.sampledAtNs = steadyNowNs();
     return StageError::None;

@@ -95,7 +95,7 @@ int fail(std::string_view what, StageError error, const std::string& detail = {}
 void printStatus(const StageStatus& s)
 {
     std::cout << std::fixed << std::setprecision(2) << "position: " << s.positionUm
-              << " um (unreferenced)\n"
+              << " um (controller counter; the CLI does not track the operator's zero)\n"
               << "state: "
               << (s.state == MoveState::Moving ? "moving" : s.state == MoveState::Faulted ? "faulted" : "idle")
               << "\nlimits: negative=" << s.limitNegative << " positive=" << s.limitPositive

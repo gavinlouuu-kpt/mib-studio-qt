@@ -139,7 +139,7 @@ int main()
         b.device.setPulsesPerSecond(20000);
         b.device.setReplyDelayMs(80);
         const auto r = verifyLimits(*b.stage, options());
-        MIB_EXPECT(r.error == StageError::ReferenceFailed && r.detail.find("wiring") != std::string::npos,
+        MIB_EXPECT(r.error == StageError::LimitCheckFailed && r.detail.find("wiring") != std::string::npos,
                    "missing switch fails: " + r.detail);
         MIB_EXPECT(!b.device.moving() && std::abs(b.device.positionPulses()) <= 14858,
                    "total travel stayed within the 6500 um cap");
@@ -151,7 +151,7 @@ int main()
         Bench b;
         b.device.setSwapLimitBits(true); // the controller runs past the physical switch
         const auto r = verifyLimits(*b.stage, options());
-        MIB_EXPECT(r.error == StageError::ReferenceFailed && r.detail.find("swapped") != std::string::npos,
+        MIB_EXPECT(r.error == StageError::LimitCheckFailed && r.detail.find("swapped") != std::string::npos,
                    "swapped switches fail: " + r.detail);
         MIB_EXPECT(!b.device.moving() && b.device.positionPulses() >= -6858 - 1143 - 1,
                    "overran the physical switch by at most one step");
@@ -162,7 +162,7 @@ int main()
         Bench b;
         b.device.setLimits(-4000, 4000);
         const auto r = verifyLimits(*b.stage, options());
-        MIB_EXPECT(r.error == StageError::ReferenceFailed && r.detail.find("span") != std::string::npos,
+        MIB_EXPECT(r.error == StageError::LimitCheckFailed && r.detail.find("span") != std::string::npos,
                    "wrong span fails: " + r.detail);
         MIB_EXPECT(!b.device.moving(), "stopped");
     }

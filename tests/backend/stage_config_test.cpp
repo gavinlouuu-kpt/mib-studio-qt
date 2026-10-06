@@ -32,12 +32,11 @@ bool rejects(const J& block, const std::string& keyInMessage)
 
 int main()
 {
-    // 1) Defaults: the safe policy decided on 2026-10-05.
+    // 1) Defaults: the safe policy (ADR 0013 Amendment 1: no homing).
     {
         const StageConfig c = parseStageConfig(J::object());
         MIB_EXPECT(!c.enabled, "disabled by default");
-        MIB_EXPECT(!c.reference.onStartup, "read-only start-up by default");
-        MIB_EXPECT(c.requireReference && c.maxUnreferencedJogUm == 0.0, "only Home and Stop before Home");
+        MIB_EXPECT(c.envelope.defaultUm == 1000.0, "+/-1000 um around the operator's zero by default");
         MIB_EXPECT(c.reference.powerUpTokenRegister == 30054, "power-up token on 30054");
         MIB_EXPECT(c.profile == "tbzf6-60" && c.reference.expectedSpanUm == 6000.0, "TBZF6-60 defaults");
     }
@@ -48,10 +47,8 @@ int main()
             "enabled": true,
             "endpoint": {"usb_serial": "A10RB8XC", "port": "", "address": 1, "axis": 0},
             "profile": "tbzf6-60",
-            "reference": {"on_startup": false, "search_speed_um_s": 800, "expected_span_um": 6000,
-                          "span_tolerance_um": 250, "search_margin_um": 400,
-                          "soft_limit_margin_um": 150, "power_up_token_register": 0},
-            "require_reference": true, "max_unreferenced_jog_um": 0,
+            "reference": {"expected_span_um": 6000, "soft_limit_margin_um": 150, "power_up_token_register": 0},
+            "envelope": {"default_um": 400},
             "approach": {"direction": "negative", "overshoot_um": 30},
             "speed_um_s": 1500, "accel_um_s2": 2500,
             "poll_ms": {"moving": 40, "idle": 400}, "move_timeout_margin": 3
@@ -59,9 +56,9 @@ int main()
         const StageConfig c = parseStageConfig(block);
         MIB_EXPECT(c.enabled && c.endpoint.usbSerial == "A10RB8XC" && c.endpoint.modbusAddress == 1,
                    "endpoint parsed");
-        MIB_EXPECT(c.reference.searchSpeedUmS == 800 && c.reference.spanToleranceUm == 250 &&
-                       c.reference.softLimitMarginUm == 150 && c.reference.powerUpTokenRegister == 0,
-                   "reference block parsed");
+        MIB_EXPECT(c.reference.softLimitMarginUm == 150 && c.reference.powerUpTokenRegister == 0 &&
+                       c.envelope.defaultUm == 400,
+                   "reference and envelope blocks parsed");
         MIB_EXPECT(c.approach.direction == backend::stage::Direction::Negative && c.approach.overshootUm == 30,
                    "approach parsed");
         MIB_EXPECT(c.speedUmS == 1500 && c.pollMovingMs == 40 && c.pollIdleMs == 400 && c.moveTimeoutMargin == 3,
@@ -79,11 +76,22 @@ int main()
         MIB_EXPECT(rejects(J{{"reference", {{"soft_limit_margin_um", 3000}}}}, "soft_limit_margin_um"),
                    "margin that leaves no travel");
         MIB_EXPECT(rejects(J{{"speed_um_s", 9000}}, "speed_um_s"), "speed above the stage maximum");
-        MIB_EXPECT(rejects(J{{"reference", {{"search_speed_um_s", 3000}}}}, "search_speed_um_s"),
-                   "limit search faster than 2000 um/s");
+        MIB_EXPECT(rejects(J{{"envelope", {{"default_um", 1001}}}}, "default_um"),
+                   "a default envelope can be lowered, never raised above 1000 um");
+        MIB_EXPECT(rejects(J{{"envelope", {{"default_um", 0}}}}, "default_um"), "an empty envelope");
         MIB_EXPECT(rejects(J{{"approach", {{"direction", "up"}}}}, "direction"), "bad approach direction");
         MIB_EXPECT(rejects(J{{"enabled", "yes"}}, "enabled"), "non-boolean flag");
-        MIB_EXPECT(rejects(J{{"max_unreferenced_jog_um", -1}}, "max_unreferenced_jog_um"), "negative jog bound");
+    }
+
+    // 4) Keys of the removed Home are ignored, never acted on: an old config
+    // that asked for a start-up Home just connects, read-only.
+    {
+        const J old = J::parse(R"({"enabled": true,
+            "reference": {"on_startup": true, "search_speed_um_s": 800, "span_tolerance_um": 250,
+                          "search_margin_um": 400},
+            "require_reference": false, "max_unreferenced_jog_um": 5000})");
+        const StageConfig c = parseStageConfig(old);
+        MIB_EXPECT(c.enabled && c.envelope.defaultUm == 1000.0, "old Home keys do not break parsing or widen anything");
     }
 
     if (mib::test::exitCode() == 0) std::printf("stage config verified\n");

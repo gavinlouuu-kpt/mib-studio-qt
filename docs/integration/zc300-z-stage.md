@@ -32,9 +32,8 @@ operator sets zero and the backend bounds travel around it (ADR 0013, Amendment 
 
 **The supervised limit-switch check** is optional since ADR 0013 Amendment 1. It gates
 nothing and does not widen the travel envelope; a pass only clears the "wiring
-unverified" badge. (Until the implementation PR lands, the code on develop still
-refuses Home without it.) Run it on the bench with someone watching the stage,
-into the application's data directory:
+unverified" badge. Run it on the bench with someone watching the stage, into the
+application's data directory:
 
 ```bash
 zc300ctl verify-limits --usb-serial A10RB8XC --data-dir <app data dir> --supervised --allow-motion

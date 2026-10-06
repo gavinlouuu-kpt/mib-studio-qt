@@ -134,7 +134,7 @@ int main()
         StageStatus s;
         MIB_EXPECT(stage.readStatus(s) == StageError::None && std::abs(s.positionUm - 229 * kUmPerPulse) < 0.01,
                    "readback reports 100.19 um, finer than the command grid");
-        MIB_EXPECT(!s.referenced, "drivers never claim a reference");
+        MIB_EXPECT(!s.zeroSet, "drivers never claim a zero");
 
         MIB_EXPECT(stage.moveRelative(4) == StageError::None, "relative 4 um");
         MIB_EXPECT(waitIdle(stage), "relative move completes");

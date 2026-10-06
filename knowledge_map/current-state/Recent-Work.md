@@ -1,21 +1,34 @@
 # Recent Work
 
-## 2026-10-06 — ZC300 stage: no homing, ADR 0013 Amendment 1 (#464, docs only)
+## 2026-10-06 — ZC300 stage: no homing, "Set zero here" instead (#464, ABI 30)
 
-Gavin decided the ZC300 is not homed. This change is documentation only; the
-code on develop still has Home until the implementation PR (bridge ABI 30).
+Gavin decided the ZC300 is not homed (ADR 0013 Amendment 1, #528). The code now
+follows it. Fake controller only; nothing moved or was written on the real
+stage.
 
 - **Bench read (read-only):** register 30015 was `0x0124` on ten reads. The home
   bit floats (1 on all three axes) and the limit bits read 0 even on the
   unconnected axes, so the limit wiring is unproven.
-- **Replacement:** "Set zero here" (position register 30059 = 0, no motion) and a
-  travel envelope of ±1000 µm around it, widened to ±2900 µm only by a
-  "zero is at mid-travel" declaration. Moves outside it are refused, not
-  clamped. Limit bits only stop a move heading toward an active limit.
-- **Known limitation:** the counter is open-loop, so a hand move or stall is
+- **Removed:** `stage_home`, the `StageReference` operation, Home in the panel,
+  `reference.on_startup` and the Home gate. Old config keys are ignored.
+- **Added:** `stage_set_zero(mid_travel)`: one write of the position counter, no
+  motion. Moves are refused until it was done this power-up, and outside a
+  travel envelope of ±1000 µm around the zero (±2900 µm after a "zero is at
+  mid-travel" declaration). They are refused, not clamped, and so is an approach
+  overshoot that would leave it.
+- **Re-zeroing cannot walk the envelope:** without a declaration a later zero
+  must stay inside the window of the first zero of that power-up.
+- **Cleared by** an e-stop, a driver alarm, an applied profile or a failure that
+  can desync the counter; an operator Stop keeps it.
+- **Limit bits** only stop a move heading toward an active switch; they gate
+  nothing. `limits_verified` is a "wiring unverified" badge and never widens
+  the envelope.
+- **ABI 30** (28 and 29 belong to #482 and #493): `referenced` → `zero_set`,
+  `mid_travel_declared`, `soft_*` → `envelope_*_um`.
+- **Known limitation:** the counter is open-loop; a hand move or stall is
   invisible to the software.
-- **Docs:** ADR 0013 Amendment 1, the plan (slice 5b), the evidence doc and
-  pending-change notes on `StageService` and `ZC300Stage`.
+- **Next:** the first real Set zero (one register write plus a read-back) needs
+  Gavin present.
 
 ## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
 

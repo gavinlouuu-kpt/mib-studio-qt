@@ -79,12 +79,17 @@ fn abi_version_is_stable() {
     // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
     // never reused.
     // v26 = ZC300 stage bridge (#464, ADR 0013): stage_* commands,
-    // fetch_stage_status, operation kinds StageMove/StageReference, discovery
+    // fetch_stage_status, operation kind StageMove, discovery
     // kind MotionStage, stage_move_states. It landed before #501 P1, so it
     // took 26 under the landing-order rule; 27 reserved for #501 P1.
     // v27 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
     // fetch_run_preview (PZ7035 Align/Run camera modes).
-    assert_eq!(ffi::bridge_abi_version(), 27);
+    // v28/v29 are allocated to other work (#482, #493).
+    // v30 = ZC300 stage without homing (#464, ADR 0013 Amendment 1): stage_home and
+    // operation kind StageReference removed; stage_set_zero(mid_travel) added;
+    // fetch_stage_status: referenced -> zero_set, + mid_travel_declared,
+    // soft_min_um/soft_max_um -> envelope_min_um/envelope_max_um.
+    assert_eq!(ffi::bridge_abi_version(), 30);
 }
 
 // ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
@@ -287,9 +292,9 @@ fn pump_commands_fail_safely_without_hardware() {
     let _ = std::fs::remove_dir_all(&data_dir);
 }
 
-// Z stage (#464, ADR 0013): with no controller the commands fail cleanly
-// and never hang; Stop is always accepted; the snapshot reports a stage that
-// is neither connected, homed nor limit-verified.
+// Z stage (#464, ADR 0013 Amendment 1): with no controller the commands fail
+// cleanly and never hang; Stop is always accepted; the snapshot reports a stage
+// that is neither connected, zeroed nor limit-verified.
 #[test]
 #[serial]
 fn stage_commands_fail_safely_without_hardware() {
@@ -298,13 +303,16 @@ fn stage_commands_fail_safely_without_hardware() {
     assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
 
     let status = bridge.pin_mut().fetch_stage_status();
-    assert!(status.valid && !status.connected && !status.referenced && !status.limits_verified && !status.busy);
+    assert!(status.valid && !status.connected && !status.zero_set && !status.limits_verified && !status.busy);
+    assert!(!status.mid_travel_declared && status.envelope_min_um == 0.0 && status.envelope_max_um == 0.0);
 
     assert!(bridge.pin_mut().stage_stop().ok, "Stop is always accepted");
     assert!(!bridge.pin_mut().stage_move_to(0.0).ok);
     assert!(!bridge.pin_mut().stage_move_by(10.0).ok);
-    let home = bridge.pin_mut().stage_home();
-    assert!(!home.ok && home.operation_id == 0);
+    for mid_travel in [false, true] {
+        let zero = bridge.pin_mut().stage_set_zero(mid_travel);
+        assert!(!zero.ok && zero.operation_id == 0, "no stage to zero");
+    }
     assert!(!bridge.pin_mut().stage_apply_profile().ok);
     assert!(!bridge.pin_mut().stage_connect("", "", 0).ok, "no endpoint configured");
     assert!(!bridge.pin_mut().stage_connect("ttyMIB-NO-SUCH-PORT", "", 300).ok, "address out of range");

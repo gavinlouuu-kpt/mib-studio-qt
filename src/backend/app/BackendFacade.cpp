@@ -2126,7 +2126,7 @@ namespace backend::bridge
             const auto snap = stage.snapshot();
             std::string message = "Stage connected: " + snap.identity.model + " s/n " + snap.identity.serial;
             if (!snap.configured) message += " (controller does not match the stage profile; motion refused)";
-            else if (!snap.referenced) message += " (press Home before moving)";
+            else if (!snap.zeroSet) message += " (set zero before moving)";
             return {true, BackendCommandType::Stage, message};
         }
 
@@ -2154,24 +2154,21 @@ namespace backend::bridge
                           trackStageOperation(BackendOperationKind::StageMove, r.id, "stage " + what)};
                 return;
             }
-            case StageCommandAction::Home:
+            case StageCommandAction::SetZero:
             {
-                const auto r = stage.reference();
-                if (!r.accepted())
-                {
-                    result.message = "Home refused: " + refused(r);
-                    return;
-                }
-                result = {true, BackendCommandType::Stage, "Stage Home started",
-                          trackStageOperation(BackendOperationKind::StageReference, r.id,
-                                              "stage Home (both limits, zero at mid-travel)")};
+                // One register write, no motion; runs on the stage worker.
+                std::string detail;
+                const auto err = stage.setZero(command.midTravel, &detail);
+                result.ok = err == stage::StageError::None;
+                result.message = result.ok ? "Stage " + detail
+                                           : "Set zero refused: " + (detail.empty() ? std::string(stage::toString(err)) : detail);
                 return;
             }
             case StageCommandAction::ApplyProfile:
             {
                 const auto err = stage.applyProfile();
                 result.ok = err == stage::StageError::None;
-                result.message = result.ok ? "Stage profile applied and saved; press Home before moving"
+                result.message = result.ok ? "Stage profile applied and saved; set zero before moving"
                                            : std::string("Apply profile failed: ") + stage::toString(err);
                 return;
             }
@@ -2192,7 +2189,8 @@ namespace backend::bridge
         out.enabled = stage.config().enabled;
         out.connected = snap.connected;
         out.configured = snap.configured;
-        out.referenced = snap.referenced;
+        out.zeroSet = snap.zeroSet;
+        out.midTravelDeclared = snap.midTravelDeclared;
         out.limitsVerified = snap.limitsVerified;
         out.busy = snap.activeOperation != 0;
         out.model = snap.identity.model;
@@ -2207,8 +2205,8 @@ namespace backend::bridge
         out.emergencyStop = snap.status.emergencyStop;
         out.driverAlarm = snap.status.driverAlarm;
         out.spanUm = snap.spanUm;
-        out.softMinUm = snap.softMinUm;
-        out.softMaxUm = snap.softMaxUm;
+        out.envelopeMinUm = snap.envelopeMinUm;
+        out.envelopeMaxUm = snap.envelopeMaxUm;
         out.lastError = snap.lastError;
         return true;
     }

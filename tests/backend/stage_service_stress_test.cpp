@@ -37,8 +37,10 @@ int main()
         mib::test::StageRig rig;
         auto svc = rig.service();
         MIB_REQUIRE(svc->startup() == StageError::None, "start-up");
-        const auto home = svc->reference();
-        MIB_REQUIRE(home.accepted() && svc->waitForOperation(home.id, std::chrono::seconds(10)), "Home");
+        // Away from the switches, with the whole envelope declared, so random
+        // targets are accepted and a limit never ends an operation.
+        rig.device.setLimits(-20000, 20000);
+        MIB_REQUIRE(svc->setZero(true) == StageError::None, "Set zero");
 
         std::atomic<bool> done{false};
         std::thread stopper([&, seed = rng()] {
@@ -56,8 +58,8 @@ int main()
         std::thread reader([&] {
             while (!done.load()) {
                 const auto s = svc->snapshot();
-                if (s.referenced && (s.softMaxUm <= 0 || s.softMinUm >= 0)) {
-                    std::printf("inconsistent soft limits\n");
+                if (s.zeroSet && (s.envelopeMinUm > 0 || s.envelopeMaxUm < 0 || s.envelopeMinUm >= s.envelopeMaxUm)) {
+                    std::printf("inconsistent envelope\n");
                     std::_Exit(98);
                 }
             }
@@ -68,17 +70,14 @@ int main()
             const double value = absolute ? static_cast<double>(static_cast<int>(rng() % 5001) - 2500)
                                           : static_cast<double>(static_cast<int>(rng() % 401) - 200);
             const auto r = absolute ? svc->moveTo(value) : svc->moveBy(value);
-            if (!r.accepted()) continue; // refused (busy, unreferenced after a failure, limits): fine
+            if (!r.accepted()) continue; // refused (busy, zero dropped after a failure, envelope): fine
             ++accepted;
             MIB_EXPECT(svc->waitForOperation(r.id, std::chrono::seconds(10)), "operation terminates");
             const auto op = svc->operation(r.id);
             MIB_REQUIRE(op.has_value(), "operation retained");
             MIB_EXPECT(op->state != OpState::Queued && op->state != OpState::Running, "terminal state");
             ++terminalStates[static_cast<int>(op->state)];
-            if (!svc->snapshot().referenced) {
-                const auto again = svc->reference();
-                if (again.accepted()) svc->waitForOperation(again.id, std::chrono::seconds(10));
-            }
+            if (!svc->snapshot().zeroSet) svc->setZero(true); // an operator's explicit re-zero
         }
 
         // Shut down with an operation possibly in flight.

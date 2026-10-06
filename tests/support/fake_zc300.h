@@ -75,10 +75,26 @@ public:
             if (on) moving_ = jogging_ = false;
         });
     }
+    // The axis starts moving without any opcode from the host (front-panel or
+    // another master): moving until it reaches `targetPulse`.
+    void startExternalMove(std::int64_t targetPulse)
+    {
+        locked([&] {
+            advance();
+            target_ = targetPulse;
+            jogging_ = false;
+            moving_ = targetPulse != position_;
+            lastAdvance_ = Clock::now();
+        });
+    }
     void setDriverAlarm(bool on) { locked([&] { alarm_ = on; }); }
     void setEnabled(bool on) { locked([&] { enabled_ = on; }); }
     // Miswired stage: the + switch reports on the − bit and vice versa.
     void setSwapLimitBits(bool on) { locked([&] { swapLimits_ = on; }); }
+    // false: the controller keeps pulsing through a tripped limit switch (a
+    // fault, or a limit input the controller does not honour). Only the
+    // host-side limit backstop can stop the axis then.
+    void setLimitsHalt(bool on) { locked([&] { limitsHalt_ = on; }); }
     void setDropAfterMove(bool on) { locked([&] { dropAfterMove_ = on; }); }
     void setSaveDelayMs(int ms) { locked([&] { saveDelayMs_ = ms; }); }
     // Every reply arrives this late: models a stalled host poll (load, OS
@@ -393,7 +409,8 @@ private:
         lastDirection_ = direction;
         while (steps-- > 0 && moving_) {
             position_ += direction;
-            const bool hitLimit = (direction > 0 && positiveInput()) || (direction < 0 && negativeInput());
+            const bool hitLimit =
+                limitsHalt_ && ((direction > 0 && positiveInput()) || (direction < 0 && negativeInput()));
             if (hitLimit || (!jogging_ && position_ == target_)) {
                 moving_ = false;
                 jogging_ = false;
@@ -420,6 +437,7 @@ private:
     bool alarm_{false};
     bool enabled_{true};
     bool swapLimits_{false};
+    bool limitsHalt_{true};
     float stepDistance_{0.0f};
     std::uint16_t scratch_{0};
     std::map<int, std::uint16_t> extra_;

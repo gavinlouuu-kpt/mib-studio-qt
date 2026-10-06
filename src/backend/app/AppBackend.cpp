@@ -477,9 +477,10 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         // Nothing connects or moves here: the shell applies the stage block
-        // and calls startup(), which is read-only by default (ADR 0013 §5).
-        // Home needs a supervised limit-switch record for the controller,
-        // written only by `zc300ctl verify-limits --supervised` (#464).
+        // and calls startup(), which only connects (ADR 0013 §5). The stage is
+        // never homed (Amendment 1). The limit-switch record, written only by
+        // `zc300ctl verify-limits --supervised`, just clears the panel's
+        // "wiring unverified" badge (#464).
         stageService_ = std::make_unique<services::StageService>(
             *serialBusManager_,
             std::make_unique<services::FileStageReferenceStore>(

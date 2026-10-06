@@ -34,9 +34,9 @@
 - [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
   source) via Modbus RTU over serial; addressed device on a shared bus
-- [[StageService]] — motorized Z stage: read-only start-up, operator Home at
-  mid-travel, soft limits, one-sided approach, once-per-power-up reference
-  (ADR 0013, #464)
+- [[StageService]] — motorized Z stage: read-only start-up, operator "Set zero
+  here" (no Home), travel envelope around the zero, one-sided approach,
+  once-per-power-up zero (ADR 0013 + Amendment 1, #464)
 - [[ZC300Stage]] — Zolix ZC300 motorized Z stage driver (`IMotionStage`, µm
   API, observe-only connect, motion opcodes never re-sent); ADR 0013, #464
 

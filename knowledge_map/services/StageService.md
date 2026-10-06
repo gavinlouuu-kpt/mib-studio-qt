@@ -1,13 +1,9 @@
 # StageService (motorized Z stage)
 
-> Owns the Zolix ZC300 / TBZF6-60 Z stage: read-only start-up, operator Home
-> (mid-travel referencing), soft limits, one-sided approach and a reference
-> that lasts one controller power-up. ADR 0013, #464.
->
-> **Pending change (ADR 0013 Amendment 1, 2026-10-06):** Home is being removed.
-> The operator will "Set zero here" instead (register 30059 = 0, no motion) and
-> travel is bounded to ±1000 µm around it unless the operator declares mid-travel.
-> This note describes the code on develop and changes when that PR lands.
+> Owns the Zolix ZC300 / TBZF6-60 Z stage: read-only start-up, the operator's
+> "Set zero here", the travel envelope around that zero, one-sided approach and
+> a zero that lasts one controller power-up. **The stage is never homed**
+> (ADR 0013 Amendment 1, 2026-10-06). #464.
 
 **Source:**
 - `include/backend/services/StageService.h`, `src/backend/services/StageService.cpp`
@@ -25,73 +21,84 @@ The driver underneath is [[ZC300Stage]].
 **Related:** [[ZC300Stage]], [[SerialBus]], [[../architecture/AppBackend]],
 [[AutofocusService]] (the piezo is a separate focus actuator).
 
-## Policy (decided by Gavin, 2026-10-05)
+## Policy (Gavin, 2026-10-05 and 2026-10-06)
 
-- **Start-up is read-only.** `startup()` connects only when `stage.enabled`.
+> **Known limitation.** The position is an open-loop pulse counter with no
+> encoder. Without homing, nothing knows where the stage physically is: a hand
+> move, a stall or a collision silently shifts the real position against the
+> counter, and the software cannot detect it. The envelope below only bounds
+> the exposure.
+
+- **Start-up is read-only.** `startup()` only calls `connect()` when
+  `stage.enabled`.
   - It identifies the controller, checks the TBZF6-60 profile and reads the
     power-up token. It writes nothing and never moves the stage.
-  - `reference.on_startup` (default false) is the only way a rig can opt into
-    homing at start-up.
-- **The stage moves only after an operator presses Home.** Until Home has
-  succeeded for the current controller power-up, only `reference()` and
-  `stop()` are accepted. A rig may allow small jogs before Home with
-  `max_unreferenced_jog_um`, which defaults to 0.
-- **Nothing else moves the stage.** Discovery, reconnect, config changes and
-  recording start never do.
+  - There is no Home and no option to move at start-up. Old `on_startup`,
+    `search_*`, `span_tolerance_um`, `require_reference` and
+    `max_unreferenced_jog_um` keys are ignored.
+- **Moves need the operator's zero.** Until `setZero()` has succeeded for the
+  current controller power-up, only `setZero()` and `stop()` are accepted
+  (`ZeroNotSet`).
+- **Nothing else moves the stage or writes the position.** Discovery,
+  reconnect, config changes and recording start never do.
 
-## Home (`reference()`)
+## Set zero (`setZero(midTravel)`)
 
-1. **Search for the negative limit switch** at `search_speed_um_s` (at most
-   2000 µm/s; 1000 µm/s by default).
-   - The search is a relative move (opcode 0x65) of at most
-     `expected_span + search_margin` (6500 µm), never an open-ended jog.
-   - The ZC300 itself ends the move at the bound, or earlier at a tripped
-     limit switch, so host stalls (load, OS sleep granularity, USB latency)
-     cannot extend it. Host polling can only stop it earlier.
-   - If it ends without the switch active: `ReferenceFailed`, "check the
-     limit-switch wiring".
-2. Search for the positive limit switch the same way.
-3. Check the span: `|span − expected_span| ≤ span_tolerance`, otherwise
-   `ReferenceFailed`.
-4. Move to the midpoint with the one-sided approach.
-5. `setPosition(0)`. The stage is now referenced, with soft limits of
-   ±(span/2 − `soft_limit_margin_um`).
-6. Write a random token to controller register 30054 and store
-   {controller serial, token, span} in `<dataDir>/stage_reference.json`.
+One write to position register 30059 through the driver's `setPosition(0)`:
+**no motion, no opcode.** It runs on the worker as an exclusive job.
+- **Refused** with `Busy` while an operation is active or the axis moves
+  (even if this service did not start it), with `EmergencyStop` /
+  `DriverAlarm`, `Misconfigured`, or `NotConnected`.
+- **Window rule.** Without `midTravel`, when a zero is already set, the
+  current position must be inside the *window* set by the first zero of this
+  power-up, otherwise `OutOfSoftLimits` ("declare mid-travel only if the stage
+  really is there, or power-cycle"). The window is stored in the current
+  zero's coordinates and shifted by every re-zero, so repeated re-zeroing can
+  never walk the envelope along the stage.
+- **Order of writes.** The stored record is cleared before the counter
+  changes; then 30059 is written; then a fresh random token goes to register
+  30054 and `{serial, token, midTravelDeclared, window}` to
+  `<dataDir>/stage_reference.json`. If the application dies in between, the
+  stage reads "zero not set" afterwards, not a frame that no longer exists.
+  With `power_up_token_register: 0` the zero lasts the session only.
+- On the next `connect()` the zero is restored only if the serial and token
+  both match and no e-stop or driver alarm is active. A power cycle clears the
+  register, so the stage needs Set zero again.
+- **Cleared** by an e-stop or driver alarm seen at any poll, by
+  `applyProfile()`, and by the operation failures listed under Operations. An
+  operator Stop keeps it.
 
-On the next `connect()`, the reference is restored only if the serial and
-token both match. A power cycle clears the register, so the stage needs Home
-again. With `power_up_token_register: 0`, the reference lasts for the session
-only.
+## Travel envelope
 
-**The 6500 µm bound fixes timing, not wiring.** It is larger than the
-TBZF6-60's ~6000 µm travel, so on a stage whose limit switches are unwired
-or broken, a search reaches the mechanical hard stop before the bound. Before
-the first real Home on any stage, someone must do a **supervised slow jog to
-each limit, with Gavin present**, to confirm the switches (plan, slice 8).
-Slice 8 will add a per-controller "limits verified" record that Home
-requires.
+Moves must stay inside `[envelopeMin, envelopeMax]` µm around the zero. The
+edges round inward to whole micrometres.
+- **Default ±1000 µm** (`envelope.default_um`, 1–1000: a rig may only lower it),
+  intersected with the window above.
+- **±(span/2 − `soft_limit_margin_um`) = ±2900 µm** only when the operator
+  declared "the stage is at mid-travel" for this zero. The declaration is
+  cleared by the next Set zero. It replaces what Home used to prove, so it is
+  the only protection against the hard end stops.
+- **Refused, never clamped.** A target outside the envelope is refused
+  (`OutOfSoftLimits`), and so is a move whose approach overshoot waypoint
+  would leave it.
 
-### Limits-verified gate (#464 slice 4)
+## Limit bits: a backstop that only stops
 
-`reference()` is refused with `LimitsUnverified` unless
-`<dataDir>/stage_limits_verified.json` holds a record for the connected
-controller's serial. That includes the `on_startup` opt-in.
-- **When it's read:** on every Home request and again when Home starts, so a
-  record written while the app runs counts without a reconnect.
-- **Who writes it:** only the supervised bench procedure,
-  `zc300ctl verify-limits --supervised --allow-motion --data-dir <dataDir>`
-  (`stage::verifyLimits`, `include/backend/stage/LimitVerification.h`).
-  No facade, bridge, server or UI path can write it.
-- **What the procedure does:**
-  - It is operator-paced. It confirms each direction, then moves in
-    controller-bounded steps of at most 500 µm at 200 µm/s, with travel per
-    direction capped at span + 500 µm.
-  - Enter or Ctrl-C stops it.
-  - It checks that the correct switch trips at each end (catching swapped
-    wiring within one step) and that the span is right.
-  - It returns to the start position, and records only on success.
-- The snapshot exposes `limitsVerified`.
+- A move toward an active limit switch is refused before anything is sent
+  (`LimitSwitch`), and a limit that becomes active in the direction of travel
+  during a move stops the axis (host-side stop on every poll). A stage
+  sitting on a switch can always move away.
+- The bits gate nothing else: not Set zero, not other moves, not widening the
+  envelope. The home bit is a floating input (reads 1 on all three axes of the
+  bench unit) and is ignored.
+- The record `<dataDir>/stage_limits_verified.json` (written only by
+  `zc300ctl verify-limits --supervised --allow-motion --data-dir <dataDir>`,
+  `stage::verifyLimits`) only clears the panel's "wiring unverified" badge.
+  It is re-read on idle polls, so a record written while the app runs counts
+  without a reconnect. No facade, bridge, server or UI path can write it. The
+  procedure is operator-paced, bounded to ≤ 500 µm controller-bounded steps at
+  200 µm/s, checks that the right switch trips at each end, and returns to the
+  start. The snapshot exposes `limitsVerified`.
 
 ## Panel
 
@@ -100,21 +107,23 @@ panel). It mirrors these rules in the UI and shows why a control is disabled.
 
 ## Operations
 
-- **One at a time on the worker.** `moveTo` (absolute), `moveBy` (relative to
-  the µm grid point nearest the current position) and `reference` are each
-  validated twice: before they are queued, and again when they start. The
-  checks are connection, configuration, reference, soft limits, whole
-  micrometres, and no e-stop or alarm.
+- **One at a time on the worker.** `moveTo` (absolute) and `moveBy` (relative
+  to the µm grid point nearest the current position) are each validated
+  twice: before they are queued, and again when they start. The checks are
+  connection, configuration, zero set, travel envelope (including the
+  approach overshoot), limit direction, whole micrometres, and no e-stop or
+  alarm.
 - **Each operation returns an id**, and ends in exactly one terminal state:
   `Completed`, `Failed`, `Cancelled` or `TimedOut`.
 - **One-sided approach.** When the final motion would run against
-  `approach.direction`, the move first overshoots by `overshoot_um`, clamped
-  to the soft limits, then approaches. Unreferenced jogs move directly.
+  `approach.direction`, the move first overshoots by `overshoot_um`, then
+  approaches. The overshoot must itself stay inside the envelope, or the move
+  is refused.
 - **Deadline** = distance / speed × `move_timeout_margin` + 1 s. A missed
   deadline stops the axis and reports `TimedOut`.
-- **Failures that may desync the open-loop counter drop the reference** and
+- **Failures that may desync the open-loop counter drop the zero** and
   delete the record: limit switch, e-stop, driver alarm, lost ack, timeout,
-  and transport or protocol errors. An operator Stop keeps the reference.
+  and transport or protocol errors. An operator Stop keeps the zero.
 
 ## Threading
 
@@ -133,7 +142,7 @@ panel). It mirrors these rules in the UI and shows why a control is disabled.
 - **No call waits behind a running operation.** The bridge runs one command
   at a time, and `stage_stop` needs the same lock, so any call that waited
   for a move would hold Stop for the move's whole duration.
-  - `connect()` and `applyProfile()` are *exclusive* jobs: refused at once
+  - `connect()`, `applyProfile()` and `setZero()` are *exclusive* jobs: refused at once
     with `Busy` while an operation is active or another exclusive job is
     queued, and operations are refused (`Busy`) while one is pending, so
     nothing can slip in ahead of it.
@@ -154,8 +163,9 @@ panel). It mirrors these rules in the UI and shows why a control is disabled.
   calls `setConfig()` and then `startup()`.
 - `setConfig()` is refused while connected; disconnect first to change the
   endpoint.
-- Positions are the open-loop counter. Missed steps from a collision cannot
-  be detected, so if in doubt press Home.
+- Positions are the open-loop counter. Missed steps from a collision or a
+  hand move cannot be detected, so if in doubt set zero again (it needs a
+  declaration to leave the first window).
 - **Bench hold (2026-10-05):** the real stage stays read-only until the
   unexplained −6565 µm reading is resolved. Tests use the fake controller
   only.

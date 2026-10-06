@@ -2,11 +2,10 @@
 
 > `IMotionStage` driver for the Zolix ZC300 stepper controller and its
 > TBZF6-60 lift stage, over the shared [[SerialBus]]. Literal and
-> observe-only by default; soft limits, Home and backlash approach belong to
-> [[StageService]] (ADR 0013, #464).
->
-> **Pending change (ADR 0013 Amendment 1):** the stage will not be homed. The
-> driver is unaffected; `setPosition(0)` becomes the operator's "Set zero here".
+> observe-only by default; the travel envelope, "Set zero here" and backlash
+> approach belong to [[StageService]] (ADR 0013 + Amendment 1, #464). The
+> stage is never homed; the driver's `setPosition(0)` is the operator's "Set
+> zero here".
 
 **Source:**
 - interface: `include/backend/stage/{IMotionStage,StageTypes,StageProfiles}.h`
@@ -52,7 +51,7 @@ focus actuator; separate device class). Evidence:
   lead, pulses/rev and unit, then saves to flash (allowing a 3 s ack for the
   save). It is refused while the axis moves.
 - `read/writePowerUpToken` use the volatile reserved register 30054. It is
-  meant for `StageService`'s once-per-power-up reference (ADR 0013 §6); its
+  meant for `StageService`'s once-per-power-up zero (ADR 0013 Amendment 1); its
   hardware behaviour is still unverified.
 
 ## Wire rules
@@ -114,12 +113,16 @@ retries (~2 s at the default timing). `StageService` owns polling threads.
 ## Gotchas
 
 - `positionUm` is the controller's open-loop pulse counter. It is not a
-  measurement, and it means nothing until Home (`StageService`). The driver
-  always reports `referenced = false`.
+  measurement, and it means nothing until the operator sets zero
+  (`StageService`); even then a hand move or stall is invisible. The driver
+  always reports `zeroSet = false`.
 - Moves overwrite the controller's front-panel step distance (30114), which
   is also the absolute-move target register.
 - Only axis X is used on the ZC300-1A. On that model the Y/Z home bits float
-  high.
+  high, and a read-only bench check (2026-10-06, register 30015 = `0x0124`)
+  found the home bit set on all three axes and the limit bits clear on all
+  three, so the limit wiring is unproven. The software ignores the home bit
+  and uses the limit bits only as a stop-while-moving backstop.
 - `SerialBus.cpp` is compiled into `oeabt_serial` (the shared native serial
   archive), so `zc300ctl` links without the backend and the Rust bridge's
   archive list is unchanged.
