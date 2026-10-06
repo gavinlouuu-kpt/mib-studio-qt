@@ -200,6 +200,10 @@ public:
     // canonicalize (config schema 1).
     std::uint64_t requestSaveDraft(MethodDraft draft, std::string copyFromRevisionId = {});
     std::uint64_t requestDeleteDraft(std::string draftId);
+    // Replaces only the release notes of a saved, unsubmitted draft (a
+    // SaveDraft job). The draft is read on the worker thread, so a delete
+    // queued earlier wins: the job fails and nothing is recreated.
+    std::uint64_t requestSetDraftNotes(std::string draftId, std::string notes);
     // Submits a draft as a new immutable candidate revision. Stops with a
     // SubmitConflict (job Failed) when the method's published head is no
     // longer the draft's base, unless `asBranch`: then it is submitted with
@@ -230,6 +234,7 @@ private:
         std::string secret;   // password (sign-in only); cleared once taken
         std::optional<LocalValidationRequest> validation;
         std::optional<MethodDraft> draft;
+        std::optional<std::string> notes; // SaveDraft of notes only (argument = draft ID)
         CentralState target{CentralState::Submitted};
         std::string reason; // transition reason
         bool flag{false};   // asBranch (submit)
@@ -247,6 +252,7 @@ private:
     RegistryJobStatus doRecordValidation(const LocalValidationRequest& request);
     RegistryJobStatus doSaveDraft(MethodDraft draft, const std::string& copyFromRevisionId);
     RegistryJobStatus doDeleteDraft(const std::string& draftId);
+    RegistryJobStatus doSetDraftNotes(const std::string& draftId, const std::string& notes);
     RegistryJobStatus doSubmitDraft(const std::string& draftId, bool asBranch);
     RegistryJobStatus doTransition(const std::string& revisionId, CentralState target,
                                    const std::string& reason);

@@ -245,6 +245,20 @@ int main() {
         MIB_REQUIRE(run(alice, alice.requestSaveDraft(d, r1)).state == RegistryJobState::Succeeded, "dC");
         MIB_REQUIRE(run(alice, alice.requestDeleteDraft("dC")).state == RegistryJobState::Succeeded, "discarded");
         MIB_EXPECT(draftById(alice.snapshot(), "dC") == nullptr, "draft gone");
+        MIB_REQUIRE(run(alice, alice.requestSaveDraft(d, r1)).state == RegistryJobState::Succeeded, "dC again");
+        MIB_REQUIRE(run(alice, alice.requestSetDraftNotes("dC", "first")).state == RegistryJobState::Succeeded,
+                    "notes saved");
+        MIB_EXPECT(draftById(alice.snapshot(), "dC")->releaseNotes == "first", "notes on the draft");
+        // Delete then notes, both queued before either runs: the notes job
+        // must not recreate the discarded draft.
+        const auto del = alice.requestDeleteDraft("dC");
+        const auto notes = alice.requestSetDraftNotes("dC", "late edit");
+        MIB_REQUIRE(run(alice, del).state == RegistryJobState::Succeeded, "discarded again");
+        const auto late = run(alice, notes);
+        MIB_EXPECT(late.kind == RegistryJobKind::SaveDraft && late.state == RegistryJobState::Failed,
+                   "notes for a discarded draft fail");
+        MIB_EXPECT(draftById(alice.snapshot(), "dC") == nullptr, "the discarded draft stays gone");
+        MIB_EXPECT(alice.requestSetDraftNotes("", "x") == 0, "empty draft ID refused");
         MIB_REQUIRE(run(alice, alice.requestRefresh()).state == RegistryJobState::Succeeded, "alice refresh");
         const auto s = alice.snapshot();
         MIB_EXPECT(backend::app::newerPublishedRevision(s, *byNumber(s, 1)) == r2, "r1: r2 available");

@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-06 — Draft notes no longer recreate a discarded draft (#398 M3b follow-up)
+
+`BackendFacade::registrySetDraftNotes` queued a full SaveDraft of the snapshot's
+copy of the draft, so a Discard queued just before it ran first and the save then
+recreated the draft. It now queues `ProfileRegistryWorker::requestSetDraftNotes`,
+which reads the draft on the worker thread and fails if it is gone or submitted.
+Same job kind (SaveDraft), no bridge change. Guard: `profiles.registry_authoring`
+(delete then notes, both queued: the draft stays gone). Found by an independent
+review of #482. See [[../services/ProfileRegistryService]].
+
 ## 2026-10-06 — ZC300 stage: no homing, ADR 0013 Amendment 1 (#464, docs only)
 
 Gavin decided the ZC300 is not homed. This change is documentation only; the

@@ -2651,9 +2651,9 @@ namespace backend::bridge
         const auto *d = findDraft(s, draftId);
         if (!d) return {0, "Draft not found"};
         if (!d->submittedRevisionId.empty()) return {0, "A submitted draft cannot be changed"};
-        auto edited = *d;
-        edited.releaseNotes = notes;
-        return queued(backend_.profileRegistry().requestSaveDraft(std::move(edited)),
+        // Notes only, applied to the worker's current draft: a full save of
+        // this snapshot copy would recreate a draft whose delete is queued.
+        return queued(backend_.profileRegistry().requestSetDraftNotes(draftId, notes),
                       "The registry worker refused the draft");
     }
 

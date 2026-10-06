@@ -71,7 +71,11 @@ the current context — `checkValidationEvidence`). See
   compatibility, method and base are copied from it — only the content fields
   the caller left empty, so `AppBackend::currentConfigDraft()` can put the
   applied config.json on top of a revision. The draft must
-  canonicalize. `requestDeleteDraft`. `requestSubmitDraft(id, asBranch)`
+  canonicalize. `requestDeleteDraft`. `requestSetDraftNotes(id, notes)` (a
+  SaveDraft job) changes only the notes of the worker's current, unsubmitted
+  draft, so a delete queued before it wins (the facade's
+  `registrySetDraftNotes` uses it; a full save of a snapshot copy would
+  recreate the discarded draft). `requestSubmitDraft(id, asBranch)`
   (signed in): creates the method for a new-method draft, otherwise reads the
   method head (`listMethods`) and, when it is not the draft's base, stops with
   `snapshot().submitConflict` (base, head, upstream and draft-vs-head key
