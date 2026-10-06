@@ -345,7 +345,7 @@ Apply: same section semantics as the Qt `AppConfigWatcher` (v2
 delivery mode, pixel factor, autofocus, ROI), staged and fail-closed, exact
 text recorded as applied; `dot_grid` / `display_fps` reported as Qt-only.
 Refused while a run is in flight. Bridge `registry_plan_apply` /
-`registry_apply_method` (part of ABI 25); React previews the changed keys
+`registry_apply_method` (bridge ABI 29); React previews the changed keys
 before applying. Guards: `backend.config_document_apply`, `e2e.method_gate`
 (applier path + mid-run refusal), bridge cargo, `registry.test.ts`.
 

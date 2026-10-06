@@ -197,6 +197,9 @@ freeze exact revision identity/content into historical runs.
   bridge #513, 27 = #501 P1 #510); the bump is its own commit, and the ABI lines
   resolve to 28 when `develop` reaches 27. #510 landed (develop at 27) and the
   follow-up merge resolved the ABI lines to 28.
+- 2026-10-06 (M2c ABI): the React Apply (#493: `registry_plan_apply`,
+  `registry_apply_method`) changes the bridge FFI too; merge coordination assigned
+  **29**, bumped in its own commit on top of #482's 28.
 
 ## Validation
 

@@ -374,7 +374,7 @@ commands for that reason.
 label. **Materialize** (`registry_materialize`) and **Mark validated… /
 Record failed run…** (`@tauri-apps/plugin-dialog` picker →
 `registry_record_validation`; the backend refusal is shown) work.
-**Apply…** (#398 M2c, materialized published/superseded rows) calls
+**Apply…** (#398 M2c, bridge ABI 29; materialized published/superseded rows) calls
 `registry_plan_apply` and shows the changed config.json keys and the camera
 script path (`applyConfirmText`); **Apply** then calls `registry_apply_method`,
 which runs the backend config.json applier (`app::applyCentralMethod` →

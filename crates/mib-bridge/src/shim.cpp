@@ -2365,15 +2365,17 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // fetch_stage_status, StageMove/StageReference, MotionStage,
 // stage_move_states — #464); v27 added the PZ7035 Align/Run camera modes
 // (set_instrument_mode, set_service_mode, set_instrument_led,
-// fetch_run_preview — #501 P1); v28 added central method authoring (registry_new_draft_from_revision/new_method_draft/
-// set_draft_notes/draft_from_head/submit_draft/delete_draft/transition/
-// fetch_history, BridgeRegistryCommand and the snapshot's drafts, methods,
-// history and submit_conflict — #398 M3b). All additive over v1 (ADR
-// 0003/0004). Must match
+// fetch_run_preview — #501 P1); v28 added central method authoring
+// (registry_new_draft_from_revision/new_method_draft/set_draft_notes/
+// draft_from_head/submit_draft/delete_draft/transition/fetch_history,
+// BridgeRegistryCommand and the snapshot's drafts, methods, history and
+// submit_conflict — #398 M3b); v29 added the React central-method Apply
+// (registry_plan_apply, registry_apply_method — #398 M2c). All additive over
+// v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 28; }
+std::uint32_t bridge_abi_version() { return 29; }
 
 } // namespace mib_bridge
 
