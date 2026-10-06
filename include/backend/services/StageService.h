@@ -10,6 +10,7 @@
 
 #include "backend/services/StageConfig.h"
 #include "backend/stage/IMotionStage.h"
+#include "backend/stage/LimitVerification.h"
 
 #include <atomic>
 #include <chrono>
@@ -110,7 +111,11 @@ public:
         bool connected{false};
         bool configured{false};
         bool referenced{false};
+        // A supervised limit-switch check (zc300ctl verify-limits) passed for
+        // this controller; Home is refused without it.
+        bool limitsVerified{false};
         stage::StageIdentity identity;
+        std::string systemPort; // resolved port while connected (conflict checks)
         stage::StageStatus status;
         double spanUm{0.0};
         double softMinUm{0.0};
@@ -119,9 +124,13 @@ public:
         std::string lastError;
     };
 
-    StageService(serialbus::SerialBusManager& busManager, std::unique_ptr<IStageReferenceStore> store);
+    // `limits` holds the supervised limit-switch records; without one for the
+    // connected controller, Home is refused (null: nothing is verified).
+    StageService(serialbus::SerialBusManager& busManager, std::unique_ptr<IStageReferenceStore> store,
+                 std::shared_ptr<stage::LimitsVerificationStore> limits = nullptr);
     // Test seam: inject the driver (e.g. a ZC300 driver over a fake port).
-    StageService(DriverFactory driverFactory, std::unique_ptr<IStageReferenceStore> store);
+    StageService(DriverFactory driverFactory, std::unique_ptr<IStageReferenceStore> store,
+                 std::shared_ptr<stage::LimitsVerificationStore> limits = nullptr);
     ~StageService();
 
     StageService(const StageService&) = delete;
@@ -148,7 +157,10 @@ public:
     // before anything is queued, and again when the operation starts.
     StartResult moveTo(double targetUm);
     StartResult moveBy(double deltaUm);
-    StartResult reference(); // Home: probe both limits, zero at mid-travel
+    // Home: probe both limits, zero at mid-travel. Refused with
+    // LimitsUnverified unless a supervised limit check passed for the
+    // connected controller (re-read on every request).
+    StartResult reference();
 
     // Cancels the active operation and stops the axis. Always allowed.
     stage::StageError stop();
@@ -204,8 +216,11 @@ private:
     void invalidateReference(const char* why);
     std::shared_ptr<stage::IMotionStage> driver() const;
 
+    bool limitsVerifiedFor(const std::string& serial) const;
+
     DriverFactory driverFactory_;
     std::unique_ptr<IStageReferenceStore> store_;
+    std::shared_ptr<stage::LimitsVerificationStore> limits_;
 
     mutable std::mutex mutex_;
     mutable std::condition_variable cv_;

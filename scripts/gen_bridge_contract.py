@@ -62,6 +62,7 @@ ENUM_GROUPS = [
     ("pump_run_states", "PUMP_RUN_STATES"),
     ("pump_directions", "PUMP_DIRECTIONS"),
     ("pump_models", "PUMP_MODELS"),
+    ("stage_move_states", "STAGE_MOVE_STATES"),
     ("experiment_states", "EXPERIMENT_STATES"),
     ("experiment_command_actions", "EXPERIMENT_COMMAND_ACTIONS"),
     ("experiment_start_outcomes", "EXPERIMENT_START_OUTCOMES"),

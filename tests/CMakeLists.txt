@@ -237,6 +237,16 @@ if(UNIX AND NOT APPLE AND MIB_TASKSET_EXECUTABLE)
     set_tests_properties(backend.zc300_stage_two_cores PROPERTIES LABELS "backend;stage;safety;concurrency" TIMEOUT 120)
 endif()
 
+mib_add_backend_test_executable(stage_bridge_facade_test backend/stage_bridge_facade_test.cpp)
+mib_backend_test_link(stage_bridge_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> stage_bridge_facade_test)
+set_tests_properties(backend.stage_bridge_facade PROPERTIES LABELS "backend;stage;bridge;safety" TIMEOUT 180)
+
+mib_add_backend_test_executable(stage_limit_verification_test backend/stage_limit_verification_test.cpp)
+mib_backend_test_link(stage_limit_verification_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_limit_verification COMMAND $<TARGET_FILE:mib_backend_tests> stage_limit_verification_test)
+set_tests_properties(backend.stage_limit_verification PROPERTIES LABELS "backend;stage;safety" TIMEOUT 180)
+
 mib_add_backend_test_executable(stage_config_test backend/stage_config_test.cpp)
 add_test(NAME backend.stage_config COMMAND $<TARGET_FILE:mib_backend_tests> stage_config_test)
 set_tests_properties(backend.stage_config PROPERTIES LABELS "backend;stage" TIMEOUT 30)

@@ -436,7 +436,39 @@ takes 25 (24 went to #501 P0).
   `platform_capabilities_and_instrument_status_on_the_desktop`.
 - `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
-- 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
+- 25 is reserved for the #398 profile-registry stack. 26 = the ZC300 stage
+  bridge (#464); 27 is reserved for #501 P1.
+
+## ABI 26: Z stage commands (#464, ADR 0013)
+
+The Z stage landed before #501 P1, so under the landing-order rule it took 26;
+27 is reserved for #501 P1.
+
+- **Commands:** `stage_connect(port_name, usb_serial, modbus_address)`,
+  `stage_disconnect`, `stage_move_to(target_um)`, `stage_move_by(delta_um)`,
+  `stage_home`, `stage_stop`, `stage_apply_profile` and `fetch_stage_status`
+  (a `BridgeStageStatus` snapshot including `referenced`, `limits_verified`,
+  `busy` and the soft limits).
+- **Contract additions** (all appended): `command_types.Stage = 13`;
+  `operation_kinds` `StageMove = 7` and `StageReference = 8`;
+  `discovery_device_kinds.MotionStage = 4`; a new `stage_move_states`
+  group.
+- **Safety lives in the facade and `StageService`, not the shell:**
+  - moves are refused until Home in this power-up, and outside the soft
+    limits;
+  - Home needs the supervised limits-verified record, which no bridge path
+    can write;
+  - Connect is observe-only, and there is no start-up/auto-Home command;
+  - `stage_stop` is always accepted;
+  - everything else is refused while an experiment is active.
+- **Operations:** moves and Home are tracked operations. A facade waiter
+  thread mirrors the `StageService` operation, and a cancel stops the axis.
+- **Server:** every stage command except `stage_stop` and
+  `fetch_stage_status` is a `CONTROL_COMMANDS` entry. `stop_and_save` stops
+  a busy stage when the last client leaves.
+- **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
+  `stage_motion_is_control_only_but_stop_is_not` in the server;
+  `backend.stage_bridge_facade`.
 
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
