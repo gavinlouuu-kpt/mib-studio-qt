@@ -973,6 +973,7 @@ int main()
         MIB_EXPECT(svc->setZero(false, &detail) != StageError::None && detail.find("could not be stored") != std::string::npos,
                    "the result is a failure, not a success: " + detail);
         recording->setFailSave(false);
+        rig.device.setWriteObserver(nullptr); // it points into the store, which the next line's reset destroys
         MIB_EXPECT(!svc->snapshot().zeroSet && svc->moveTo(0).error == StageError::ZeroNotSet, "nothing is trusted");
         // After a reconnect the stored interim record (first zero: token 0, next token = the
         // controller's) is recognised: the declaration is still required.
