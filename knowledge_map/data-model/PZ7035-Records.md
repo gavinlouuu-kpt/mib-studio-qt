@@ -131,6 +131,12 @@ Both modes start the same way: LED off, then cell path off.
   and these are mutually exclusive with a run. `pz::PzBridgePreviewCamera` wraps them as the
   camera behind CaptureService, so the UI's live view is unchanged. Six timeouts in a row, or a
   bridge leaving ARMED/RUNNING, stop it with the reason.
+- **Cold start.** On the producer's first open the sensor powers up and the first previews take
+  seconds. The camera allows 20 timeouts (10 s) before the first frame, and the switch reports
+  success only once a frame has arrived. This was seen on the board on 2026-10-06; a cold
+  restart then passed.
+- **Preset recognition.** `PzPlatformMonitor` recognises both Align LED presets (100/135 and
+  0/125) as "align".
 - **Gate.** `/etc/yofo/expected-core.json` must list `align_whole_frame_preview` (`features`) and
   match the bridge BUILD_ID; otherwise Align falls back to the banded preview.
 - **Test.** `processing.pz_bridge_preview`.

@@ -41,7 +41,8 @@ constexpr double kLatencyClockMHz = 175.0;
 
 // LED presets (cycles of the 100 MHz strobe clock).
 constexpr uint32_t kRunDelay = 700, kRunWidth = 6000;   // 7 / 60 µs
-constexpr uint32_t kAlignDelay = 0, kAlignWidth = 12500; // 0 / 125 µs
+constexpr uint32_t kAlignDelay = 10000, kAlignWidth = 13500;    // 100 / 135 µs (whole frames, results8 on)
+constexpr uint32_t kAlignBandsDelay = 0, kAlignBandsWidth = 12500; // 0 / 125 µs (banded fallback)
 
 std::string coreId(uint32_t id3, uint32_t id2, uint32_t id1, uint32_t id0) {
     if ((id0 | id1 | id2 | id3) == 0) return {};
@@ -244,7 +245,9 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     s.ledWidthUs = width / kStrobeClockMHz;
     if (!s.ledOn) s.ledPreset = "off";
     else if (delay == kRunDelay && width == kRunWidth) s.ledPreset = "run";
-    else if (delay == kAlignDelay && width == kAlignWidth) s.ledPreset = "align";
+    else if ((delay == kAlignDelay && width == kAlignWidth) ||
+             (delay == kAlignBandsDelay && width == kAlignBandsWidth))
+        s.ledPreset = "align";
     else s.ledPreset = "custom";
     const uint32_t guard = r.strobe(kStrobeGuard);
     s.guardFault = (r.strobe(kStrobeStatus) & (1u << 4)) != 0 || (guard & 0x80000000u) != 0;

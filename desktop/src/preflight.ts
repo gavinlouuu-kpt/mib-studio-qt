@@ -253,7 +253,7 @@ function sensorLinkCheck(i: PreflightInput): PreflightCheck {
 /** PZ7035: LED strobe; the PL guards are authoritative, a trip fails preflight. */
 function ledCheck(i: PreflightInput): PreflightCheck {
   const s = i.instrument;
-  const base = { id: "led", label: "LED strobe", requirement: "required" as Requirement, expected: "Run 7/60 µs · Align 0/125 µs" };
+  const base = { id: "led", label: "LED strobe", requirement: "required" as Requirement, expected: "Run 7/60 µs · Align 100/135 µs" };
   if (!s || !s.available || !s.led) {
     return { ...base, status: "failed", detected: "—", detail: s?.error ? `Unavailable: ${s.error}.` : "Not read yet.", recovery: [RETRY] };
   }

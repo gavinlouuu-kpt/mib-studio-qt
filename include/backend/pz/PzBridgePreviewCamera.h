@@ -19,7 +19,7 @@ class PzBridgePreviewCamera final : public ::camera::common::ICamera {
 public:
     PzBridgePreviewCamera(processing::IExecutionProvider& provider, processing::pz::BridgePreviewConfig config,
                           std::chrono::milliseconds timeout = std::chrono::milliseconds(500),
-                          unsigned maxConsecutiveTimeouts = 6);
+                          unsigned maxConsecutiveTimeouts = 6, unsigned maxStartupTimeouts = 20);
     ~PzBridgePreviewCamera() override;
 
     void applyConfig(const ::camera::common::CameraConfig&) override {}
@@ -28,7 +28,9 @@ public:
     bool isRunning() const override { return running_.load(); }
     // One new whole frame, waiting up to the timeout. A few timeouts in a row are tolerated (the
     // bridge publishes every decimation-th frame); after `maxConsecutiveTimeouts`, or when the
-    // bridge leaves ARMED/RUNNING, the camera stops with the reason in lastFailure().
+    // bridge leaves ARMED/RUNNING, the camera stops with the reason in lastFailure(). Until the
+    // first frame `maxStartupTimeouts` apply: on the producer's first open the sensor powers up
+    // and the first previews take seconds (seen on the board, 2026-10-06).
     bool grabFrame(::camera::common::Frame& out) override;
     bool pollStats(::camera::common::CameraStats& out) const override;
     ::camera::common::CameraFailure lastFailure() const override;
@@ -40,6 +42,7 @@ private:
     processing::pz::BridgePreviewConfig config_;
     std::chrono::milliseconds timeout_;
     unsigned maxTimeouts_;
+    unsigned maxStartupTimeouts_;
     std::atomic<bool> running_{false};
     uint64_t lastFrameId_{0};
     unsigned timeouts_{0};

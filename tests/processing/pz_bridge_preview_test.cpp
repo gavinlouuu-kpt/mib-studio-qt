@@ -180,6 +180,17 @@ void testCamera() {
     MIB_EXPECT(!cam.grabFrame(f) && !cam.isRunning() && cam.lastFailure().code == "pz.preview_lost",
                "a faulted bridge stops at once");
 
+    // Before the first frame the sensor may still be powering up: a longer grace applies.
+    PreviewProvider cold;
+    backend::pz::PzBridgePreviewCamera warming(cold, ppz::BridgePreviewConfig{}, std::chrono::milliseconds(2), 2, 4);
+    MIB_REQUIRE(warming.start(), "cold start");
+    MIB_EXPECT(!warming.grabFrame(f) && !warming.grabFrame(f) && !warming.grabFrame(f) && warming.isRunning(),
+               "three timeouts before the first frame are tolerated (startup grace 4)");
+    cold.bridge.publish(0, 10, 3, cold.config);
+    MIB_EXPECT(warming.grabFrame(f) && f.data[0] == 3, "the first frame arrives late");
+    MIB_EXPECT(!warming.grabFrame(f) && !warming.grabFrame(f) && !warming.isRunning(),
+               "after it the normal limit (2) applies");
+
     PreviewProvider refusing;
     refusing.refuseStart = true;
     backend::pz::PzBridgePreviewCamera blocked(refusing, ppz::BridgePreviewConfig{});

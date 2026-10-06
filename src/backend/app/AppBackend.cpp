@@ -1355,6 +1355,19 @@ namespace backend
                 return fail("Align previews did not start" +
                             (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
             }
+            // Success means a whole frame arrived, not only an armed bridge.
+            const auto firstFrameUntil = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+            const auto framesBefore = captureService_->stats().framesProcessed.load();
+            while (captureService_->stats().framesProcessed.load() == framesBefore &&
+                   std::chrono::steady_clock::now() < firstFrameUntil &&
+                   captureService_->lifecycleSnapshot().cameraReady)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (captureService_->stats().framesProcessed.load() == framesBefore) {
+                snap = captureService_->lifecycleSnapshot();
+                captureService_->stop();
+                return fail("no Align preview arrived" +
+                            (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+            }
             if (!pzControl_->setLed(pz::kAlignLed, &err)) return fail(err);
             alignSource_.store(1);
         } else if (mode == pz::InstrumentMode::Align) {

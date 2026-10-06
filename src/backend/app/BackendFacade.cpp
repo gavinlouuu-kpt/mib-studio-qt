@@ -2602,7 +2602,9 @@ BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, i
     emitEvent(makeCameraStatus(m == pz::InstrumentMode::Align ? CameraState::Running : CameraState::Stopped));
     const auto [rx, ry] = backend_.instrumentRunOffset();
     return {true, BackendCommandType::Camera,
-            m == pz::InstrumentMode::Align ? std::string("Align: full sensor, LED 0/125 µs")
+            m == pz::InstrumentMode::Align
+                ? (backend_.alignSource() == "bridge" ? std::string("Align: full sensor, whole frames, LED 100/135 µs")
+                                                     : std::string("Align: full sensor (banded preview), LED 0/125 µs"))
                                            : "Run: 512x96 at (" + std::to_string(rx) + ", " + std::to_string(ry) +
                                                  "), 5 kHz, U-Net on, LED 7/60 µs"};
 }

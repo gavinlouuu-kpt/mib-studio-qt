@@ -10,8 +10,10 @@ constexpr uint64_t kMono8 = 0x01080001u; // PFNC Mono8
 
 PzBridgePreviewCamera::PzBridgePreviewCamera(processing::IExecutionProvider& provider,
                                              processing::pz::BridgePreviewConfig config,
-                                             std::chrono::milliseconds timeout, unsigned maxConsecutiveTimeouts)
-    : provider_(provider), config_(config), timeout_(timeout), maxTimeouts_(maxConsecutiveTimeouts) {}
+                                             std::chrono::milliseconds timeout, unsigned maxConsecutiveTimeouts,
+                                             unsigned maxStartupTimeouts)
+    : provider_(provider), config_(config), timeout_(timeout), maxTimeouts_(maxConsecutiveTimeouts),
+      maxStartupTimeouts_(maxStartupTimeouts) {}
 
 PzBridgePreviewCamera::~PzBridgePreviewCamera() { stop(); }
 
@@ -53,7 +55,8 @@ bool PzBridgePreviewCamera::grabFrame(::camera::common::Frame& out) {
     if (!provider_.fetchPreview(lastFrameId_, timeout_, image, &error)) {
         const bool lost = error.find("left ARMED/RUNNING") != std::string::npos ||
                           error.find("not configured") != std::string::npos;
-        if (lost || ++timeouts_ >= maxTimeouts_) {
+        const unsigned limit = frames_.load() == 0 ? maxStartupTimeouts_ : maxTimeouts_;
+        if (lost || ++timeouts_ >= limit) {
             fail(lost ? "pz.preview_lost" : "pz.preview_timeout", "Align preview: " + error);
             provider_.stopPreview();
         }
