@@ -88,6 +88,11 @@ controller's serial. That includes the `on_startup` opt-in.
   - It returns to the start position, and records only on success.
 - The snapshot exposes `limitsVerified`.
 
+## Panel
+
+The Tauri panel is described in [[../architecture/Desktop-Shell]] (Z stage
+panel). It mirrors these rules in the UI and shows why a control is disabled.
+
 ## Operations
 
 - **One at a time on the worker.** `moveTo` (absolute), `moveBy` (relative to
