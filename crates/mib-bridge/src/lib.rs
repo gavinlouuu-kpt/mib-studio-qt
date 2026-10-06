@@ -12,6 +12,12 @@
 //! [`ffi::BackendBridge::fetch_latest_frame`] — never pushed through the event
 //! channel and never base64-encoded per frame.
 
+// The review bridge (ReviewSession, ADR 0014) is always compiled; the backend
+// bridge below is not under the `review-only` feature.
+pub mod review_bridge;
+pub use review_bridge::review_ffi;
+
+#[cfg(not(feature = "review-only"))]
 #[cxx::bridge(namespace = "mib_bridge")]
 pub mod ffi {
     /// Flattened result of a dispatched command. `command` mirrors
@@ -1053,6 +1059,14 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
+        /// PZ7035 camera mode (ABI 27, #501 P1): "align" | "run" with the Run window offset.
+        fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
+        /// Service / Commissioning mode latch; raw LED values are refused outside it.
+        fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;
+        /// Raw LED delay/width in µs (Service mode, per-mode limits).
+        fn set_instrument_led(self: Pin<&mut BackendBridge>, delay_us: f64, width_us: f64) -> BridgeCommandResult;
+        /// Run mode: one PL cell capture as an MIBC packet; empty when unavailable.
+        fn fetch_run_preview(self: Pin<&mut BackendBridge>) -> Vec<u8>;
         /// PZ7035 identity and health for preflight (#501): `{"available": bool, "error"?,
         /// "core": {...}, "led": {...}, "link": {...}, "latency": {...}}`. Read-only.
         fn fetch_instrument_status(self: Pin<&mut BackendBridge>) -> String;
@@ -1116,17 +1130,20 @@ pub mod ffi {
 // and they do so through the shim's own mutex-guarded queue, not through shared
 // access to `BackendBridge`. Marking it `Send` (but never `Sync`) is therefore
 // sound and is what lets a `Mutex<UniquePtr<BackendBridge>>` be `Send + Sync`.
+#[cfg(not(feature = "review-only"))]
 unsafe impl Send for ffi::BackendBridge {}
 
 // Compile-time guard for the Tauri consumption pattern: a
 // `Mutex<UniquePtr<BackendBridge>>` (what a Tauri `State` holds) must be
 // `Send + Sync`. This holds iff `BackendBridge: Send` (above) — and breaks
 // loudly if someone ever adds a `Sync` requirement the type can't meet.
+#[cfg(not(feature = "review-only"))]
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<std::sync::Mutex<cxx::UniquePtr<ffi::BackendBridge>>>();
 };
 
+#[cfg(not(feature = "review-only"))]
 fn bytes_to_vec(bytes: &[u8]) -> Vec<u8> {
     bytes.to_vec()
 }

@@ -6,6 +6,8 @@
 //  - a file without records draws none, and opening it removes the previous
 //    file's contours (no leakage between files);
 //  - an unreadable record is ignored (warning), never fatal.
+//  - TD-17: a file recorded at another px→µm is shown, contoured and
+//    exported with its recorded factor; files without one use the live factor.
 
 #include "backend/app/AppBackend.h"
 #include "backend/processing/ProcessingService.h"
@@ -13,6 +15,7 @@
 #include "frontend/tabs/HdfReviewTab.h"
 #include "backend/processing/KdeCoreRecord.h"
 #include "frontend/utils/ApplicationSettings.h"
+#include "frontend/widgets/ZoomableChartView.h"
 
 #include "support/assert.h"
 #include "support/tempdir.h"
@@ -25,10 +28,12 @@
 #include <QEventLoop>
 #include <QLineSeries>
 #include <QPen>
+#include <QValueAxis>
 #include <QSettings>
 
 #include <opencv2/core.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -82,9 +87,10 @@ void writeExperiment(const std::string& path, const std::string& liveJson,
     hdf5.closeFile();
 }
 
-void writePopulation(const std::string& path, const std::string& liveJson) {
+void writePopulation(const std::string& path, const std::string& liveJson,
+                     double recordedFactor = 0.0) {
     // 400 valid cells in two clusters (areas in pixels; the tab converts with
-    // the current pixel-to-micron factor) plus a few invalid rows.
+    // the file's recorded factor, else the live one — TD-17).
     std::mt19937 rng(11);
     std::normal_distribution<double> ax(700, 60), ay(0.05, 0.01), bx(1300, 70), by(0.12, 0.015);
     std::vector<ProcessedFrame> valid;
@@ -99,6 +105,9 @@ void writePopulation(const std::string& path, const std::string& liveJson) {
     MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 4000, valid.size(), 0, cfg, roi, nullptr, nullptr),
                 "population info");
     if (!liveJson.empty()) MIB_REQUIRE(hdf5.writeKdeLiveJson(liveJson), "population live record");
+    if (recordedFactor > 0.0)
+        MIB_REQUIRE(hdf5.writeRunSnapshotJson("{\"pixel_to_micron\":" + std::to_string(recordedFactor) + "}", "{}"),
+                    "population run snapshot");
     hdf5.closeFile();
 }
 
@@ -274,6 +283,33 @@ int main(int argc, char* argv[]) {
         MIB_EXPECT(readAnalysis(ro).empty(), "nothing was written to the read-only file");
     else
         std::printf("NOTE: write bits not enforced for this user (root?); read-only refusal not checked\n");
+
+    // ---- TD-17: recorded factor ------------------------------------------------
+    wd.mark("td17");
+    const double liveFactor = backend.processing().getPixelToMicronFactor();
+    const double recorded = 0.25;
+    MIB_REQUIRE(std::abs(liveFactor - recorded) > 0.1, "fixture factor differs from the live one");
+    tab.loadHdfFileForTests(QString::fromStdString(pop));
+    settle(4);
+    MIB_EXPECT(tab.pixelToMicronForTests() == liveFactor, "no run snapshot: live factor");
+    const double liveMaxX = tab.scatterViewForTests()->chart()->axes(Qt::Horizontal).first()->property("max").toDouble();
+    const std::string scaled = (td.path() / "recorded025.h5").string();
+    writePopulation(scaled, {}, recorded);
+    tab.loadHdfFileForTests(QString::fromStdString(scaled));
+    settle(4);
+    MIB_EXPECT(std::abs(tab.pixelToMicronForTests() - recorded) < 1e-12, "recorded factor used");
+    const double recMaxX = tab.scatterViewForTests()->chart()->axes(Qt::Horizontal).first()->property("max").toDouble();
+    const double ratio = (liveFactor * liveFactor) / (recorded * recorded);
+    MIB_EXPECT(std::abs(liveMaxX / recMaxX - ratio) < 1e-6 * ratio,
+               "scatter areas scale with the recorded factor: " + std::to_string(liveMaxX / recMaxX) + " vs " +
+                   std::to_string(ratio));
+    tab.setOverwriteAnswerForTests(true);
+    tab.computeFullRunCoreForTests();
+    MIB_REQUIRE(waitFor([&] { return !tab.fullRunCoreJobInFlight(); }, 30000), "td17 computation finishes");
+    settle(2);
+    const auto td17 = mon::fromJson(readAnalysis(scaled));
+    MIB_EXPECT(td17 && std::abs(td17->pixelToMicron - recorded) < 1e-12,
+               "full-run record carries the recorded factor");
 
     tab.close();
     settle(2);

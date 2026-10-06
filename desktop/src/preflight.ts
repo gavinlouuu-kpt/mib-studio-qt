@@ -71,6 +71,8 @@ export interface PreflightInput {
   storageWritable: boolean;
   storageFreeOk: boolean;
   storagePath: string;
+  /** Non-blocking persistence warning for the destination (RAM root, #501); "" when none. */
+  storageWarning?: string;
   /** What this instrument has (#501); the MIB desktop when absent. */
   capabilities?: PlatformCapabilities;
   /** PZ7035 identity and health (`fetch_instrument_status`); null until polled. */
@@ -251,7 +253,7 @@ function sensorLinkCheck(i: PreflightInput): PreflightCheck {
 /** PZ7035: LED strobe; the PL guards are authoritative, a trip fails preflight. */
 function ledCheck(i: PreflightInput): PreflightCheck {
   const s = i.instrument;
-  const base = { id: "led", label: "LED strobe", requirement: "required" as Requirement, expected: "Run 7/60 µs · Align 0/125 µs" };
+  const base = { id: "led", label: "LED strobe", requirement: "required" as Requirement, expected: "Run 7/60 µs · Align 100/135 µs" };
   if (!s || !s.available || !s.led) {
     return { ...base, status: "failed", detected: "—", detail: s?.error ? `Unavailable: ${s.error}.` : "Not read yet.", recovery: [RETRY] };
   }
@@ -363,6 +365,10 @@ function storageCheck(i: PreflightInput, requirement: Requirement): PreflightChe
     status = "failed";
     detail = "Output location is not writable.";
     recovery = [RETRY];
+  } else if (i.storageWarning) {
+    // Recordings still work; the operator must copy them off before power-off.
+    status = "warning";
+    detail = i.storageWarning;
   } else if (!i.storageFreeOk) {
     status = "warning";
     detail = "Low free space at the output location.";
