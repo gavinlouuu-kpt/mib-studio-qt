@@ -186,7 +186,8 @@ freeze exact revision identity/content into historical runs.
 - 2026-10-06 (M3b ABI): the authoring surface (#482) changes the bridge FFI, so it
   takes its own number. Merge coordination assigned **28** (26 = the ZC300 stage
   bridge #513, 27 = #501 P1 #510); the bump is its own commit, and the ABI lines
-  resolve to 28 when `develop` reaches 27.
+  resolve to 28 when `develop` reaches 27. #510 landed (develop at 27) and the
+  follow-up merge resolved the ABI lines to 28.
 
 ## Validation
 

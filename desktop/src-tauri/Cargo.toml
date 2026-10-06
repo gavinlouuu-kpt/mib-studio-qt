@@ -20,6 +20,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 # Capability-scoped native open-folder / external-URL actions (BE-9, #279).
 tauri-plugin-opener = "2"
+# YOFO Review auto-update (review-only): signed latest.json per channel on R2.
+tauri-plugin-updater = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Updater manifest verification — SHA-256 must fail closed (BE-9, #279).
@@ -32,7 +34,7 @@ cxx = "1"
 mib-bridge = { path = "../../crates/mib-bridge" }
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 # The command layer, shared with the YOFO Studio WebSocket server (mib-bridge-server).
-mib-app-commands = { path = "../../crates/mib-app-commands" }
+mib-app-commands = { path = "../../crates/mib-app-commands", optional = true }
 
 # Desktop-only: an rlib consumed by the binary (main.rs) that links the C++
 # backend archives into an executable. The mobile crate-types (cdylib/staticlib)
@@ -43,5 +45,13 @@ name = "mib_studio_desktop_lib"
 crate-type = ["rlib"]
 
 [features]
+default = ["studio"]
+# MIB Studio: the library in lib.rs over the command layer (mib-app-commands).
+studio = ["dep:mib-app-commands"]
+# YOFO Review (plan 2026-10-01-standalone-review-app, ADR 0014): the binary's
+# review-only app (main.rs, review_app.rs), built with --no-default-features
+# and `tauri.review.conf.json`. It links the review bridge only (no
+# mib_backend) and carries its own minisign-verified updater.
+review-only = ["mib-bridge/review-only", "dep:tauri-plugin-updater"]
 # Production assets must be embedded; ordinary cargo builds otherwise use devUrl.
 custom-protocol = ["tauri/custom-protocol"]

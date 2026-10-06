@@ -96,6 +96,8 @@ namespace frontend
         // nullopt: ask with a dialog (default); true/false: answer for tests.
         void setOverwriteAnswerForTests(std::optional<bool> answer) { overwriteAnswerForTests_ = answer; }
         QString statusTextForTests() const;
+        // The px→µm the tab uses for the open file (recorded, else live).
+        double pixelToMicronForTests() const { return filePixelToMicron(); }
         QAction *computeCoreAction() const { return computeCoreAction_; }
 
         // Scatter interaction (issue #467): click a point to show the cell in
@@ -264,6 +266,9 @@ namespace frontend
         std::vector<QLineSeries*> storedKdeSeries_;
         void readStoredKdeRecords();
         void drawStoredKdeContours();
+        // Recorded factor of the open file, else the live processing factor.
+        double filePixelToMicron() const;
+        double pixelToMicronOf(const backend::services::Hdf5Service &reader) const;
         void startFullRunCoreComputation();
         void onFullRunCoreFinished();
         void updateComputeCoreActionState();
@@ -305,6 +310,9 @@ namespace frontend
         size_t recordingMultiImageCount_ = 1;
         backend::services::ProcessingService::Roi roi_{0, 0, 0, 0};
         QString loadedHdfFilePath_;
+        // TD-17: px→µm of the open file (its run snapshot's factor; the live
+        // processing factor only for files that record none). See filePixelToMicron().
+        double filePixelToMicron_ = 0.0;
         QString lastExportDir_;
         QFutureWatcher<backend::recording::HdfExportResult>* exportWatcher_ = nullptr;
         QProgressDialog* exportProgress_ = nullptr;

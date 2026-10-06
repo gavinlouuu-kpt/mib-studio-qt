@@ -3,6 +3,11 @@
 //! The commands live in `mib-app-commands` (transport-neutral, shared with the YOFO Studio
 //! WebSocket server); this crate exposes them as typed Tauri commands and keeps what only a
 //! desktop shell has: app paths, preferences, the updater and native installers.
+//!
+//! Built with the default feature `studio`. YOFO Review (`review-only`, ADR 0014)
+//! is a separate app built from this crate's binary (main.rs → review_app.rs);
+//! without `studio` this library is empty.
+#![cfg(feature = "studio")]
 
 use mib_app_commands as cmds;
 use cmds::AppState;
@@ -531,6 +536,26 @@ fn save_camera_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Re
 }
 
 #[tauri::command]
+fn set_instrument_mode(state: State<AppState>, mode: String, x: i32, y: i32) -> Result<cmds::CmdResult, String> {
+    cmds::set_instrument_mode(&state, &mode, x, y)
+}
+
+#[tauri::command]
+fn set_service_mode(state: State<AppState>, on: bool) -> Result<cmds::CmdResult, String> {
+    cmds::set_service_mode(&state, on)
+}
+
+#[tauri::command]
+fn set_instrument_led(state: State<AppState>, delay_us: f64, width_us: f64) -> Result<cmds::CmdResult, String> {
+    cmds::set_instrument_led(&state, delay_us, width_us)
+}
+
+#[tauri::command]
+fn fetch_run_preview(state: State<AppState>) -> Result<Response, String> {
+    cmds::fetch_run_preview(&state).map(Response::new)
+}
+
+#[tauri::command]
 fn fetch_platform_info(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::fetch_platform_info(&state)
 }
@@ -822,6 +847,10 @@ pub fn run() {
             set_camera_overview,
             save_camera_roi,
             fetch_camera_geometry,
+            set_instrument_mode,
+            set_service_mode,
+            set_instrument_led,
+            fetch_run_preview,
             fetch_platform_info,
             fetch_instrument_status,
             monitoring_set_active,

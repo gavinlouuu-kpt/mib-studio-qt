@@ -2025,6 +2025,35 @@ rust::String BackendBridge::fetch_instrument_status() {
     }
 }
 
+BridgeCommandResult BackendBridge::set_instrument_mode(rust::Str mode, std::int32_t x, std::int32_t y) {
+    try {
+        return toBridgeResult(impl_->facade.setInstrumentMode(toStd(mode), x, y));
+    } catch (const std::exception& e) { return errorResult(std::string("set_instrument_mode: ") + e.what()); }
+    catch (...) { return errorResult("set_instrument_mode: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_service_mode(bool on) {
+    try {
+        return toBridgeResult(impl_->facade.setServiceMode(on));
+    } catch (...) { return errorResult("set_service_mode: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_instrument_led(double delay_us, double width_us) {
+    try {
+        return toBridgeResult(impl_->facade.setInstrumentLed(delay_us, width_us));
+    } catch (const std::exception& e) { return errorResult(std::string("set_instrument_led: ") + e.what()); }
+    catch (...) { return errorResult("set_instrument_led: unknown error"); }
+}
+
+rust::Vec<std::uint8_t> BackendBridge::fetch_run_preview() {
+    try {
+        std::string error;
+        return bytesToVec(impl_->facade.fetchRunPreviewPacket(&error));
+    } catch (...) {
+        return {};
+    }
+}
+
 rust::String BackendBridge::fetch_camera_geometry() {
     try {
         return rust::String(impl_->facade.fetchCameraGeometryJson());
@@ -2300,8 +2329,9 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // renumbered once to 25: 23 = the instrument line, 24 = #501 P0; 15 and 19-24
 // are never reused); v26 added the ZC300 Z stage bridge (stage_* commands,
 // fetch_stage_status, StageMove/StageReference, MotionStage,
-// stage_move_states — #464; 27 is reserved for #501 P1); v28 added central
-// method authoring (registry_new_draft_from_revision/new_method_draft/
+// stage_move_states — #464); v27 added the PZ7035 Align/Run camera modes
+// (set_instrument_mode, set_service_mode, set_instrument_led,
+// fetch_run_preview — #501 P1); v28 added central method authoring (registry_new_draft_from_revision/new_method_draft/
 // set_draft_notes/draft_from_head/submit_draft/delete_draft/transition/
 // fetch_history, BridgeRegistryCommand and the snapshot's drafts, methods,
 // history and submit_conflict — #398 M3b). All additive over v1 (ADR

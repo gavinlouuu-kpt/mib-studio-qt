@@ -1015,6 +1015,17 @@ namespace backend::bridge
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.
         std::string fetchPlatformInfoJson() const;
+        // PZ7035 camera modes (ABI 27, #501 P1): "align" | "run" (window at x, y; snapped to
+        // x % 8, y % 4). Refused during an experiment/recording and with the PL unconfigured.
+        BackendCommandResult setInstrumentMode(const std::string &mode, int x, int y);
+        // The shell's Service / Commissioning mode, latched in the backend: raw LED values are
+        // refused outside it.
+        BackendCommandResult setServiceMode(bool on);
+        // Raw LED delay/width (µs): Service mode only, within the current mode's limits.
+        BackendCommandResult setInstrumentLed(double delayUs, double widthUs);
+        // Run mode: one PL cell capture (gray, U-Net mask, cells) as an MIBC packet; empty with
+        // `error` otherwise.
+        std::vector<std::uint8_t> fetchRunPreviewPacket(std::string *error);
         // PZ7035 identity and health for preflight (#501): the PL core against the
         // expected core and the pinned weights, LED strobe and guard, sensor-link
         // rates, latency. {available: false, error} off the instrument.

@@ -88,6 +88,11 @@ struct AravisCameraOptions {
     std::optional<AravisRegion> region;
     std::optional<double> frameRateHz;
     std::optional<double> exposureUs;
+    // PZ7035 line period (PzHmax, producer feat/gentl-pzhmax): 0 = the producer's automatic
+    // 58/116 rule, >= 58 forces HMAX (Align on results8: 232). Written after the region and
+    // before rate and exposure, whose maxima follow it. A forced value on a producer without
+    // the feature fails the start rather than run a timing the bridge cannot take.
+    std::optional<int> pzHmax;
     // Images per second the device should deliver (PzPreviewRate on the PZ7035 producer; the
     // PL processes every frame, the PS only displays). 0 = every frame. Ignored by devices
     // without the feature.

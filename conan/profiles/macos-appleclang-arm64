@@ -1,0 +1,17 @@
+# macOS host/build profile for YOFO Review's review core (Apple silicon,
+# Release, C++17, Ninja). Layers on the detected profile (`conan profile
+# detect`: apple-clang version from the installed Xcode) and pins the
+# deployment target to the bundle's minimumSystemVersion (13.0) so the
+# static Conan libraries, the CMake archives and the Rust/cc objects agree.
+# Used with the macos-review-core preset; see docs/howto/macos-build.md.
+include(default)
+
+[settings]
+os=Macos
+os.version=13.0
+arch=armv8
+build_type=Release
+compiler.cppstd=17
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
