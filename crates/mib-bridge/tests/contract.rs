@@ -89,7 +89,10 @@ fn abi_version_is_stable() {
     // registry_draft_from_head, registry_submit_draft, registry_delete_draft,
     // registry_transition, registry_fetch_history -> BridgeRegistryCommand,
     // and the snapshot's drafts, methods, history and submit_conflict.
-    assert_eq!(ffi::bridge_abi_version(), 28);
+    // v29 central-method Apply in the React shell (#398 M2c):
+    // registry_plan_apply and registry_apply_method over the backend
+    // config.json applier.
+    assert_eq!(ffi::bridge_abi_version(), 29);
 }
 
 // ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
@@ -1433,6 +1436,12 @@ fn registry_commands_through_shell_transport() {
         let submit = bridge.pin_mut().registry_submit_draft("d1", false);
         let job = wait_registry_job(&mut bridge, submit.job_id);
         assert_eq!((job.kind, job.state), (8, 4), "SubmitDraft needs a session");
+
+        // #398 M2c Apply: refusals cross the bridge as values.
+        let plan = bridge.pin_mut().registry_plan_apply("r1");
+        assert!(!plan.ok && plan.error.contains("cache"), "uncached revision: {}", plan.error);
+        let applied = bridge.pin_mut().registry_apply_method("r1");
+        assert!(!applied.ok && !applied.error.is_empty() && applied.applied.is_empty());
         bridge.pin_mut().shutdown();
     }
 

@@ -13,7 +13,10 @@ import {
 } from "./bridgeContract";
 import type { RegistryDraft } from "./bridge";
 import {
-  APPLY_UNAVAILABLE,
+  APPLY_HINT,
+  APPLY_NEEDS_FILES,
+  applyConfirmText,
+  applyResultText,
   CENTRAL_STATE_NOTE,
   actionsFor,
   conflictText,
@@ -218,11 +221,12 @@ describe("registry view model", () => {
     expect(localValidationText(revision({}))).toBe("Not validated here");
   });
 
-  it("M2b: actions follow selection, session and central state; Apply is never enabled here", () => {
+  it("M2b/M2c: actions follow selection, session, central state and materialization", () => {
     const signedIn = snapshot({
       session: REGISTRY_SESSION_STATES.SignedIn,
       revisions: [
-        revision({ revision_id: "pub" }),
+        revision({ revision_id: "pub", materialized_dir: "/data/methods/pub" }),
+        revision({ revision_id: "raw" }),
         revision({ revision_id: "rev", central_state: REGISTRY_CENTRAL_STATES.Revoked }),
         revision({ revision_id: "sub", central_state: REGISTRY_CENTRAL_STATES.Superseded }),
       ],
@@ -232,11 +236,12 @@ describe("registry view model", () => {
     expect(actionsFor(view, signedIn, "pub")).toEqual({
       canMaterialize: true,
       canMarkValidated: true,
-      canApply: false,
-      applyReason: APPLY_UNAVAILABLE,
+      canApply: true,
+      applyReason: APPLY_HINT,
     });
+    expect(actionsFor(view, signedIn, "raw")).toMatchObject({ canApply: false, applyReason: APPLY_NEEDS_FILES });
     expect(actionsFor(view, signedIn, "sub")).toMatchObject({ canMaterialize: true, canMarkValidated: true });
-    expect(actionsFor(view, signedIn, "rev")).toMatchObject({ canMaterialize: false, canMarkValidated: false });
+    expect(actionsFor(view, signedIn, "rev")).toMatchObject({ canMaterialize: false, canMarkValidated: false, canApply: false });
 
     const offline = { ...signedIn, session: REGISTRY_SESSION_STATES.CachedOffline };
     expect(actionsFor(toRegistryView(offline), offline, "pub")).toMatchObject({
@@ -244,10 +249,40 @@ describe("registry view model", () => {
       canMarkValidated: false,
     });
     const busy = { ...signedIn, busy: true };
-    expect(actionsFor(toRegistryView(busy), busy, "pub")).toMatchObject({ canMaterialize: false });
+    expect(actionsFor(toRegistryView(busy), busy, "pub")).toMatchObject({ canMaterialize: false, canApply: false });
     const noInstrument = { ...signedIn, instrument_id: "" };
     expect(actionsFor(toRegistryView(noInstrument), noInstrument, "pub").canMarkValidated).toBe(false);
-    expect(APPLY_UNAVAILABLE).toContain("no config.json applier");
+  });
+
+  it("M2c: Apply confirmation and outcome wording", () => {
+    const plan = {
+      ok: true,
+      error: "",
+      revision_id: "r2",
+      display_name: "Cell Sorting",
+      revision_number: "2",
+      central_state: "published",
+      changed_keys: ["gain", "image_processing.filters.enable_border_check"],
+      camera_script_path: "/data/methods/r2/egrabberConfig.js",
+    };
+    const text = applyConfirmText(plan);
+    expect(text).toContain('Apply "Cell Sorting" r2 (published)?');
+    expect(text).toContain("  • gain");
+    expect(text).toContain("travel with the method");
+    expect(text).toContain("/data/methods/r2/egrabberConfig.js");
+    expect(applyConfirmText({ ...plan, changed_keys: [] })).toContain("byte-for-byte");
+    expect(applyConfirmText({ ...plan, ok: false, error: "not materialized" })).toBe("Cannot apply: not materialized");
+    const many = applyConfirmText({ ...plan, changed_keys: Array.from({ length: 30 }, (_, i) => `k${i}`) });
+    expect(many).toContain("... and 5 more");
+    expect(applyResultText({ ok: true, error: "", applied: ["image_processing", "roi"], not_applied: [] })).toBe(
+      "Applied (image_processing, roi).",
+    );
+    expect(
+      applyResultText({ ok: true, error: "", applied: ["image_processing"], not_applied: ["dot_grid (Qt shell only)"] }),
+    ).toContain("Not applicable in this app: dot_grid (Qt shell only).");
+    expect(applyResultText({ ok: false, error: "An experiment is in progress", applied: [], not_applied: [] })).toBe(
+      "Apply failed: An experiment is in progress",
+    );
   });
 
   it("M2b: a local validation change re-renders without a generation bump", () => {

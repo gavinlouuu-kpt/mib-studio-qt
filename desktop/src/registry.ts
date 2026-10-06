@@ -5,10 +5,16 @@
 // central state is shown as itself (never collapsed into "ready"), central
 // state is never presented as local validation. #398 M2b adds per-revision
 // local validation on this instrument and the selected-row actions
-// (materialize, mark validated / failed). The React shell has no config.json
-// applier yet, so Apply is shown disabled with the reason rather than
-// simulated.
-import type { RegistryDraft, RegistryJob, RegistryRevision, RegistrySnapshot } from "./bridge";
+// (materialize, mark validated / failed). Apply (M2c) goes through the
+// backend config.json applier: preview the changed keys, confirm, apply.
+import type {
+  MethodApplyPlan,
+  MethodApplyResult,
+  RegistryDraft,
+  RegistryJob,
+  RegistryRevision,
+  RegistrySnapshot,
+} from "./bridge";
 import {
   REGISTRY_CENTRAL_STATES,
   REGISTRY_CONNECTIVITY,
@@ -43,7 +49,7 @@ export interface RegistryRow {
 export interface RegistryActions {
   canMaterialize: boolean;
   canMarkValidated: boolean;
-  /** Always false in the React shell; `applyReason` says why. */
+  /** Materialized published/superseded revision (M2c); `applyReason` is the tooltip. */
   canApply: boolean;
   applyReason: string;
 }
@@ -65,9 +71,8 @@ export interface RegistryView {
   rows: RegistryRow[];
 }
 
-export const APPLY_UNAVAILABLE =
-  "The React shell has no config.json applier yet (#398 follow-up), so applying here would not " +
-  "load the method.";
+export const APPLY_NEEDS_FILES = "Materialize the revision first; Apply loads its files exactly.";
+export const APPLY_HINT = "Load this revision's config.json exactly (you confirm the changed settings first).";
 
 export const CENTRAL_STATE_NOTE =
   "Central state is the registry's approval and publication record only. It is not local " +
@@ -148,7 +153,7 @@ export function instrumentText(s: RegistrySnapshot): string {
 }
 
 export function actionsFor(view: RegistryView, s: RegistrySnapshot | null, revisionId: string | null): RegistryActions {
-  const none = { canMaterialize: false, canMarkValidated: false, canApply: false, applyReason: APPLY_UNAVAILABLE };
+  const none = { canMaterialize: false, canMarkValidated: false, canApply: false, applyReason: APPLY_HINT };
   const row = view.rows.find((r) => r.revisionId === revisionId);
   if (!s || !row || s.busy || !s.valid || !s.configured) return none;
   const hasCache = s.session !== REGISTRY_SESSION_STATES.SignedOut;
@@ -156,9 +161,32 @@ export function actionsFor(view: RegistryView, s: RegistrySnapshot | null, revis
     canMaterialize: hasCache && row.usable,
     // The validator must be an authenticated registry user (backend rule).
     canMarkValidated: s.session === REGISTRY_SESSION_STATES.SignedIn && row.usable && !!s.instrument_id,
-    canApply: false,
-    applyReason: APPLY_UNAVAILABLE,
+    canApply: hasCache && row.usable && row.materialized,
+    applyReason: row.usable && !row.materialized ? APPLY_NEEDS_FILES : APPLY_HINT,
   };
+}
+
+/** Confirmation text for an Apply preview (#398 M2c). */
+export function applyConfirmText(plan: MethodApplyPlan): string {
+  if (!plan.ok) return `Cannot apply: ${plan.error}`;
+  const shown = plan.changed_keys.slice(0, 25).map((k) => `  • ${k}`);
+  if (plan.changed_keys.length > 25) shown.push(`  ... and ${plan.changed_keys.length - 25} more`);
+  const summary =
+    plan.changed_keys.length === 0
+      ? "The applied config.json already has these values; it will be loaded byte-for-byte."
+      : "These config.json settings change (instrument settings such as COM ports or the save directory travel with the method):\n" +
+        shown.join("\n");
+  return (
+    `Apply "${plan.display_name}" r${plan.revision_number} (${plan.central_state})?\n\n${summary}\n\n` +
+    `The camera script is not applied automatically: ${plan.camera_script_path}`
+  );
+}
+
+/** Outcome line of an Apply (#398 M2c). */
+export function applyResultText(result: MethodApplyResult): string {
+  if (!result.ok) return `Apply failed: ${result.error}`;
+  const skipped = result.not_applied.length > 0 ? ` Not applicable in this app: ${result.not_applied.join(", ")}.` : "";
+  return `Applied (${result.applied.join(", ")}).${skipped}`;
 }
 
 export function jobText(job: RegistryJob): string {

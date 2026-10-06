@@ -2,19 +2,21 @@
 // renders the worker snapshot (polled while open); the UI never waits on the
 // network. #398 M2b: select a row to materialize it or record a local
 // validation backed by a test-run file (the backend checks the file was
-// recorded with that revision on this instrument). Apply needs a backend
-// config.json applier (a follow-up) and is shown disabled with the reason.
-// #398 M3b: review actions by role with a required reason, revision
-// details/history, and a Drafts view (new method from the current config,
-// release notes, submit, and the explicit conflict choices); the rules live
-// in registry.ts.
+// recorded with that revision on this instrument). #398 M2c: Apply previews
+// the changed config.json keys, asks for confirmation, then loads the
+// revision exactly through the backend applier. #398 M3b: review actions by
+// role with a required reason, revision details/history, and a Drafts view
+// (new method from the current config, release notes, submit, and the
+// explicit conflict choices); the rules live in registry.ts.
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { bridge, type RegistryCommand, type RegistrySnapshot } from "./bridge";
+import { bridge, type MethodApplyPlan, type RegistryCommand, type RegistrySnapshot } from "./bridge";
 import { REGISTRY_CENTRAL_STATES, REGISTRY_SESSION_STATES } from "./bridgeContract";
 import {
   CENTRAL_STATE_NOTE,
   actionsFor,
+  applyConfirmText,
+  applyResultText,
   authorProjects,
   changed,
   conflictText,
@@ -44,6 +46,8 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
   const [newProject, setNewProject] = useState("");
   const [newName, setNewName] = useState("");
   const [keepDraftConfig, setKeepDraftConfig] = useState(true);
+  const [pendingApply, setPendingApply] = useState<MethodApplyPlan | null>(null);
+  const [applyNotice, setApplyNotice] = useState("");
   const last = useRef<RegistrySnapshot | null>(null);
   const report = props.onError;
 
@@ -120,6 +124,30 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
         return poll();
       })
       .catch((e) => report?.(`registry command failed: ${e}`));
+  };
+
+  const previewApply = () => {
+    if (!selected) return;
+    setActionError("");
+    setApplyNotice("");
+    void bridge
+      .registryPlanApply(selected)
+      .then((plan) => (plan.ok ? setPendingApply(plan) : setActionError(applyConfirmText(plan))))
+      .catch((e) => report?.(`apply preview failed: ${e}`));
+  };
+
+  const confirmApply = () => {
+    if (!pendingApply) return;
+    const id = pendingApply.revision_id;
+    setPendingApply(null);
+    void bridge
+      .registryApplyMethod(id)
+      .then((result) => {
+        if (result.ok) setApplyNotice(applyResultText(result));
+        else setActionError(applyResultText(result));
+        return poll();
+      })
+      .catch((e) => report?.(`apply failed: ${e}`));
   };
 
   const transition = (target: number) => {
@@ -277,7 +305,7 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
           >
             Materialize
           </button>
-          <button className="btn" disabled={!actions?.canApply} title={actions?.applyReason}>
+          <button className="btn" disabled={!actions?.canApply} title={actions?.applyReason} onClick={previewApply}>
             Apply...
           </button>
           <button className="btn" disabled={!actions?.canMarkValidated} onClick={() => void markValidated(true)}>
@@ -287,6 +315,24 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
             Record failed run...
           </button>
         </div>
+            {pendingApply && (
+              <div className="registry-confirm" role="alertdialog" aria-label="Apply central method">
+                <pre>{applyConfirmText(pendingApply)}</pre>
+                <div className="row">
+                  <button className="btn" onClick={confirmApply}>
+                    Apply
+                  </button>
+                  <button className="btn" onClick={() => setPendingApply(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {applyNotice && (
+              <p className="registry-activity" data-testid="registry-apply-notice">
+                {applyNotice}
+              </p>
+            )}
             <div className="row" data-testid="registry-review">
               <button
                 className="btn"

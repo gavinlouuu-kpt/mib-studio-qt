@@ -1840,6 +1840,40 @@ BridgeRegistryCommand BackendBridge::registry_fetch_history(rust::Str revision_i
     return registryCommand([&] { return impl_->facade.registryFetchHistory(toStd(revision_id)); });
 }
 
+BridgeMethodApplyPlan BackendBridge::registry_plan_apply(rust::Str revision_id) {
+    BridgeMethodApplyPlan out{};
+    try {
+        const auto p = impl_->facade.registryPlanApply(toStd(revision_id));
+        out.ok = p.ok;
+        out.error = rust::String(p.error);
+        out.revision_id = rust::String(p.revisionId);
+        out.display_name = rust::String(p.displayName);
+        out.revision_number = p.revisionNumber;
+        out.central_state = rust::String(p.centralState);
+        for (const auto& k : p.changedKeys) out.changed_keys.push_back(rust::String(k));
+        out.camera_script_path = rust::String(p.cameraScriptPath);
+    } catch (...) {
+        out = BridgeMethodApplyPlan{};
+        out.error = rust::String("registry_plan_apply failed");
+    }
+    return out;
+}
+
+BridgeMethodApplyResult BackendBridge::registry_apply_method(rust::Str revision_id) {
+    BridgeMethodApplyResult out{};
+    try {
+        const auto r = impl_->facade.registryApplyMethod(toStd(revision_id));
+        out.ok = r.ok;
+        out.error = rust::String(r.error);
+        for (const auto& s : r.applied) out.applied.push_back(rust::String(s));
+        for (const auto& s : r.notApplied) out.not_applied.push_back(rust::String(s));
+    } catch (...) {
+        out = BridgeMethodApplyResult{};
+        out.error = rust::String("registry_apply_method failed");
+    }
+    return out;
+}
+
 BridgeRegistryJob BackendBridge::fetch_registry_job(std::uint64_t job_id) {
     try {
         backend::bridge::BackendRegistryJob job;
@@ -2331,15 +2365,17 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // fetch_stage_status, StageMove/StageReference, MotionStage,
 // stage_move_states — #464); v27 added the PZ7035 Align/Run camera modes
 // (set_instrument_mode, set_service_mode, set_instrument_led,
-// fetch_run_preview — #501 P1); v28 added central method authoring (registry_new_draft_from_revision/new_method_draft/
-// set_draft_notes/draft_from_head/submit_draft/delete_draft/transition/
-// fetch_history, BridgeRegistryCommand and the snapshot's drafts, methods,
-// history and submit_conflict — #398 M3b). All additive over v1 (ADR
-// 0003/0004). Must match
+// fetch_run_preview — #501 P1); v28 added central method authoring
+// (registry_new_draft_from_revision/new_method_draft/set_draft_notes/
+// draft_from_head/submit_draft/delete_draft/transition/fetch_history,
+// BridgeRegistryCommand and the snapshot's drafts, methods, history and
+// submit_conflict — #398 M3b); v29 added the React central-method Apply
+// (registry_plan_apply, registry_apply_method — #398 M2c). All additive over
+// v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 28; }
+std::uint32_t bridge_abi_version() { return 29; }
 
 } // namespace mib_bridge
 

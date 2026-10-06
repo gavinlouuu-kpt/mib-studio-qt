@@ -103,6 +103,28 @@ pub struct RegistryConflict {
     draft_vs_head: Vec<String>,
 }
 
+/// #398 M2c Apply preview / outcome.
+#[derive(Serialize, Clone, Default)]
+pub struct MethodApplyPlan {
+    ok: bool,
+    error: String,
+    revision_id: String,
+    display_name: String,
+    #[serde(serialize_with = "cmds::event_transport::serialize_u64")]
+    revision_number: u64,
+    central_state: String,
+    changed_keys: Vec<String>,
+    camera_script_path: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct MethodApplyResult {
+    ok: bool,
+    error: String,
+    applied: Vec<String>,
+    not_applied: Vec<String>,
+}
+
 /// Authoring command outcome (#398 M3b): `job_id` "0" = refused.
 #[derive(Serialize, Clone, Default)]
 pub struct RegistryCommand {
@@ -393,6 +415,31 @@ pub fn registry_transition(
 pub fn registry_fetch_history(state: State<AppState>, revision_id: String) -> Result<RegistryCommand, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().registry_fetch_history(&revision_id).into())
+}
+
+/// #398 M2c: what applying `revision_id` would change.
+#[tauri::command]
+pub fn registry_plan_apply(state: State<AppState>, revision_id: String) -> Result<MethodApplyPlan, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let p = guard.pin_mut().registry_plan_apply(&revision_id);
+    Ok(MethodApplyPlan {
+        ok: p.ok,
+        error: p.error,
+        revision_id: p.revision_id,
+        display_name: p.display_name,
+        revision_number: p.revision_number,
+        central_state: p.central_state,
+        changed_keys: p.changed_keys,
+        camera_script_path: p.camera_script_path,
+    })
+}
+
+/// #398 M2c: apply `revision_id`'s config.json exactly (backend applier).
+#[tauri::command]
+pub fn registry_apply_method(state: State<AppState>, revision_id: String) -> Result<MethodApplyResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let r = guard.pin_mut().registry_apply_method(&revision_id);
+    Ok(MethodApplyResult { ok: r.ok, error: r.error, applied: r.applied, not_applied: r.not_applied })
 }
 
 /// Registry worker snapshot; never waits on a registry request.

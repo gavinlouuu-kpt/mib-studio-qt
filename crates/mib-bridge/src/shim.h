@@ -25,6 +25,8 @@ struct BridgeRegistrySnapshot;
 struct BridgeRegistryJob;
 struct BridgeRegistryValidationRequest;
 struct BridgeRegistryCommand;
+struct BridgeMethodApplyPlan;
+struct BridgeMethodApplyResult;
 struct BridgeCameraSelection;
 struct BridgeCommandResult;
 struct BridgeConfigDocument;
@@ -182,6 +184,8 @@ public:
     BridgeRegistryCommand registry_delete_draft(rust::Str draft_id);
     BridgeRegistryCommand registry_transition(rust::Str revision_id, std::uint32_t state, rust::Str reason);
     BridgeRegistryCommand registry_fetch_history(rust::Str revision_id);
+    BridgeMethodApplyPlan registry_plan_apply(rust::Str revision_id);
+    BridgeMethodApplyResult registry_apply_method(rust::Str revision_id);
     BridgeRegistrySnapshot fetch_registry_snapshot();
     BridgeRegistryJob fetch_registry_job(std::uint64_t job_id);
     BridgeCommandResult select_hardware_camera(std::int32_t interface_index,
