@@ -104,6 +104,24 @@ unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
 
+## 2026-10-04 — Apply and Mark validated for central methods (#398 M2b)
+
+`planMethodApply` says what applying a cached published or superseded
+revision would do: refused unless materialized and untampered, with the
+config.json keys that would change. **Mark validated… / Record failed run…**
+in the React Central Methods panel take a test-run `.h5`;
+`AppBackend::requestMethodValidation` only
+accepts a run whose frozen provenance names that exact revision on this
+instrument under the current core/camera context. Rows show local validation
+and the applied revision; the bridge gains `registry_materialize`,
+`registry_record_validation` and the `registry_local_validation` group
+(part of ABI 25). React shows Apply disabled with the reason (no
+config.json applier in that shell yet). Guards: `backend.method_provenance`
+(diff/evidence/local view), `e2e.method_gate` (evidence through real runs),
+`profiles.registry_facade`, bridge cargo tests, `registry.test.ts`. A Qt Apply
+(exact bytes through `AppConfigWatcher`) was built and dropped with the Qt UI
+(ADR 0011).
+
 ## 2026-10-04 — Central method provenance + `method.revision` gate (#398 M2a, backend)
 
 The applied config.json is now recognised as a cached central revision by its

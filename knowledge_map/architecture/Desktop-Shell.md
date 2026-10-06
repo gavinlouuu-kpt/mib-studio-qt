@@ -351,6 +351,15 @@ transport, and a sign-in carries a password that must not cross the YOFO Studio
 WebSocket. `dispatch::tests::every_command_is_dispatchable` exempts `registry::`
 commands for that reason.
 
+#398 M2b: rows are selectable and show local validation on this instrument
+(`local_validation`, contract `registry_local_validation`) and the instrument
+label. **Materialize** (`registry_materialize`) and **Mark validated… /
+Record failed run…** (`@tauri-apps/plugin-dialog` picker →
+`registry_record_validation`; the backend refusal is shown) work.
+**Apply…** is rendered disabled with `APPLY_UNAVAILABLE`: the React shell has
+no config.json applier (it edits the processing-config document instead), so
+it cannot load a method exactly — a follow-up.
+
 
 ## September 23 catch-up: camera setup
 

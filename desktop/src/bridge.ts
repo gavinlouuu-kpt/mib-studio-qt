@@ -198,6 +198,18 @@ export interface RegistryRevision {
   revision_number: string;
   metadata_version: string;
   central_state: number;
+  /** #398 M2b: "" = not materialized; `local_validation` is
+   *  REGISTRY_LOCAL_VALIDATION for this instrument + current method context. */
+  materialized_dir: string;
+  local_validation: number;
+  validated_by: string;
+  validated_at_utc: string;
+}
+
+/** "Mark validated" outcome (#398 M2b): job_id "0" = refused, `error` why. */
+export interface RegistryValidationRequest {
+  job_id: string;
+  error: string;
 }
 
 export interface RegistrySnapshot {
@@ -222,6 +234,8 @@ export interface RegistrySnapshot {
   last_job: RegistryJob;
   queued_jobs: string;
   busy: boolean;
+  instrument_id: string;
+  instrument_name: string;
 }
 
 /** Device-discovery request (schema v14, #419). Kinds are
@@ -650,6 +664,9 @@ export const bridge = {
   registryRefresh: () => invoke<string>("registry_refresh"),
   registryDownload: (revisionId: string) => invoke<string>("registry_download", { revisionId }),
   registryCancelAll: () => invoke<boolean>("registry_cancel_all"),
+  registryMaterialize: (revisionId: string) => invoke<string>("registry_materialize", { revisionId }),
+  registryRecordValidation: (revisionId: string, evidenceFile: string, passed: boolean) =>
+    invoke<RegistryValidationRequest>("registry_record_validation", { revisionId, evidenceFile, passed }),
   fetchRegistrySnapshot: () => invoke<RegistrySnapshot>("fetch_registry_snapshot"),
   fetchRegistryJob: (jobId: string) =>
     invoke<RegistryJob>("fetch_registry_job", { jobId: decimalU64(jobId) }),

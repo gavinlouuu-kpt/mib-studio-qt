@@ -8,6 +8,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/SyringePumpService.h"
@@ -152,6 +153,9 @@ static_assert(static_cast<std::uint32_t>(bp::CentralState::Published) == 3);
 static_assert(static_cast<std::uint32_t>(bp::CentralState::Superseded) == 4);
 static_assert(static_cast<std::uint32_t>(bp::CentralState::Archived) == 5);
 static_assert(static_cast<std::uint32_t>(bp::CentralState::Revoked) == 6);
+static_assert(static_cast<std::uint32_t>(backend::app::LocalValidationState::None) == 0);
+static_assert(static_cast<std::uint32_t>(backend::app::LocalValidationState::Passed) == 1);
+static_assert(static_cast<std::uint32_t>(backend::app::LocalValidationState::Failed) == 2);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::None) == 0);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Mock) == 1);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Hardware) == 2);
@@ -1552,6 +1556,30 @@ std::uint64_t BackendBridge::registry_download(rust::Str revision_id) {
 
 bool BackendBridge::registry_cancel_all() { return impl_->facade.registryCancelAll(); }
 
+std::uint64_t BackendBridge::registry_materialize(rust::Str revision_id) {
+    try {
+        return impl_->facade.registryMaterialize(toStd(revision_id));
+    } catch (...) {
+        return 0;
+    }
+}
+
+BridgeRegistryValidationRequest BackendBridge::registry_record_validation(rust::Str revision_id,
+                                                                          rust::Str evidence_file,
+                                                                          bool passed) {
+    BridgeRegistryValidationRequest out{};
+    try {
+        const auto r =
+            impl_->facade.registryRecordValidation(toStd(revision_id), toStd(evidence_file), passed);
+        out.job_id = r.jobId;
+        out.error = rust::String(r.error);
+    } catch (...) {
+        out.job_id = 0;
+        out.error = rust::String("registry_record_validation failed");
+    }
+    return out;
+}
+
 BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
     BridgeRegistrySnapshot out{};
     backend::bridge::BackendRegistrySnapshot s;
@@ -1591,6 +1619,10 @@ BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
             br.revision_number = r.revisionNumber;
             br.metadata_version = r.metadataVersion;
             br.central_state = static_cast<std::uint32_t>(r.centralState);
+            br.materialized_dir = rust::String(r.materializedDir);
+            br.local_validation = static_cast<std::uint32_t>(r.localValidation);
+            br.validated_by = rust::String(r.validatedBy);
+            br.validated_at_utc = rust::String(r.validatedAtUtc);
             out.revisions.push_back(std::move(br));
         }
         for (const auto& id : s.corruptRevisionIds) out.corrupt_revision_ids.push_back(rust::String(id));
@@ -1600,6 +1632,8 @@ BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
         out.last_job = toBridge(s.lastJob);
         out.queued_jobs = s.queuedJobs;
         out.busy = s.busy;
+        out.instrument_id = rust::String(s.instrumentId);
+        out.instrument_name = rust::String(s.instrumentName);
     } catch (...) {
         // Never let a conversion failure (e.g. non-UTF-8 text) cross the FFI.
         return BridgeRegistrySnapshot{};
@@ -2061,11 +2095,11 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // test); v25 added the central profile registry
 // (registry_sign_in/sign_out/refresh/download/cancel_all,
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
-// contract groups — #398; registry_job_kinds Materialize/RecordValidation were
-// appended; built as a provisional 15, renumbered once to 25: 23 = the
-// instrument line, 24 = #501 P0; 15 and 19-24 are never reused). All additive
-// over
-// v1 (ADR 0003/0004). Must match
+// contract groups — #398; registry_job_kinds Materialize/RecordValidation,
+// registry_local_validation, registry_materialize and
+// registry_record_validation were added; built as a provisional 15,
+// renumbered once to 25: 23 = the instrument line, 24 = #501 P0; 15 and 19-24
+// are never reused). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
