@@ -18,6 +18,7 @@ The stage is now reachable from the shell.
   operator-paced, stepped, bounded check.
 
 See [[../services/StageService]] and [[../architecture/Rust-Bridge]].
+
 ## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)
 
 PR #511's TSan lane stalled 60 s in `backend.zc300_stage`: a back-to-back
