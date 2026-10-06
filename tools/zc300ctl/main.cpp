@@ -6,18 +6,28 @@
 // StageService, so CLI positions are unreferenced.
 
 #include "backend/services/SerialBus.h"
+#include "backend/stage/LimitVerification.h"
 #include "backend/stage/zc300/Zc300Stage.h"
 
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <ctime>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+
+#if defined(_WIN32)
+#include <conio.h>
+#else
+#include <poll.h>
+#include <unistd.h>
+#endif
 
 using namespace backend::stage;
 using backend::services::serialbus::SerialBusManager;
@@ -38,6 +48,10 @@ void usage()
               << "  zc300ctl move   (--port <name> | --usb-serial <sn>) (--to <um> | --by <um>)\n"
               << "                  --allow-motion [--timeout-s N]\n"
               << "  zc300ctl configure (--port <name> | --usb-serial <sn>) --profile tbzf6-60 --allow-write\n"
+              << "  zc300ctl verify-limits (--port <name> | --usb-serial <sn>) --data-dir <app data dir>\n"
+              << "                  --supervised --allow-motion [--speed-um-s 200] [--step-um 500]\n"
+              << "      Supervised limit-switch check; with someone watching the stage. Home is refused\n"
+              << "      until it passes for the controller. Enter or Ctrl-C stops the stage.\n"
               << "Distances are whole micrometres.\n";
 }
 
@@ -89,6 +103,95 @@ void printStatus(const StageStatus& s)
               << "\ndriver alarm: " << s.driverAlarm << '\n';
 }
 
+// True once a line arrived on stdin (Enter) or Ctrl-C was pressed.
+bool stopRequested()
+{
+    if (gInterrupted.load()) return true;
+#if defined(_WIN32)
+    if (_kbhit()) {
+        _getch();
+        return true;
+    }
+    return false;
+#else
+    struct pollfd pfd{STDIN_FILENO, POLLIN, 0};
+    if (::poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN)) {
+        std::string line;
+        std::getline(std::cin, line);
+        return true;
+    }
+    return false;
+#endif
+}
+
+std::string utcNow()
+{
+    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &now);
+#else
+    gmtime_r(&now, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buf;
+}
+
+int verifyLimitsCommand(int argc, char** argv, zc300::Zc300Stage& stage, const StageIdentity& identity,
+                        const StageProfile& profile)
+{
+    const auto dataDir = optionValue(argc, argv, "--data-dir");
+    if (!dataDir || dataDir->empty()) {
+        std::cerr << "zc300ctl: verify-limits needs --data-dir (the application's data directory)\n";
+        return 2;
+    }
+    if (!stage.isConfigured()) return fail("verify-limits", StageError::Misconfigured, "run configure first");
+    LimitVerificationOptions o;
+    o.searchSpeedUmS = parseNumber(optionValue(argc, argv, "--speed-um-s")).value_or(200.0);
+    o.stepUm = parseNumber(optionValue(argc, argv, "--step-um")).value_or(500.0);
+    if (!(o.searchSpeedUmS > 0.0 && o.searchSpeedUmS <= 500.0) || !(o.stepUm >= 10.0 && o.stepUm <= 500.0)) {
+        std::cerr << "zc300ctl: --speed-um-s must be in (0, 500] and --step-um in [10, 500]\n";
+        return 2;
+    }
+    o.expectedSpanUm = profile.travelUm;
+    o.maxTravelUm = profile.travelUm + 500.0;
+    o.confirm = [](const std::string& prompt) {
+        std::cout << "\n" << prompt << "\nType 'yes' to move, anything else to abort: " << std::flush;
+        std::string answer;
+        if (!std::getline(std::cin, answer)) return false;
+        return answer == "yes";
+    };
+    o.cancelled = [] { return stopRequested(); };
+    o.report = [](const std::string& text) { std::cout << "  " << text << std::endl; };
+
+    std::cout << "Supervised limit-switch check for " << identity.model << " s/n " << identity.serial << ".\n"
+              << "The stage moves slowly toward each limit switch in small steps. Watch it; press Enter or\n"
+              << "Ctrl-C to stop at once. It returns to the start position at the end.\n";
+    std::signal(SIGINT, onSignal);
+    std::signal(SIGTERM, onSignal);
+    const auto result = verifyLimits(stage, o);
+    if (result.cancelled) {
+        stage.stop();
+        std::cerr << "zc300ctl: stopped" << (result.detail.empty() ? "" : ": " + result.detail)
+                  << "; nothing recorded\n";
+        return 130;
+    }
+    if (!result.passed()) return fail("verify-limits", result.error, result.detail + "; nothing recorded");
+
+    LimitsVerificationStore store((std::filesystem::path(*dataDir) / "stage_limits_verified.json").string());
+    LimitsVerifiedRecord record{identity.serial, utcNow(), result.negativeUm, result.positiveUm, result.spanUm,
+                                "zc300ctl verify-limits"};
+    if (!store.save(record)) {
+        std::cerr << "zc300ctl: the check passed but " << store.path() << " could not be written\n";
+        return 4;
+    }
+    std::cout << "Limit switches verified (span " << std::lround(result.spanUm) << " um"
+              << (result.returnedToStart ? ", back at the start position" : "") << "). Recorded in "
+              << store.path() << "; Home is now allowed for this controller.\n";
+    return 0;
+}
+
 int list(bool all)
 {
     for (const auto& port : backend::services::serialbus::availablePorts()) {
@@ -137,6 +240,12 @@ int main(int argc, char** argv)
         std::cerr << "zc300ctl: move requires --allow-motion\n";
         return 6;
     }
+    if (command == "verify-limits" &&
+        (!hasFlag(argc, argv, "--supervised") || !hasFlag(argc, argv, "--allow-motion"))) {
+        std::cerr << "zc300ctl: verify-limits moves the stage to both limit switches; it requires --supervised\n"
+                     "          (someone is watching the stage) and --allow-motion\n";
+        return 6;
+    }
     if (command == "configure" && !hasFlag(argc, argv, "--allow-write")) {
         std::cerr << "zc300ctl: configure writes and saves controller parameters; it requires --allow-write\n";
         return 6;
@@ -183,6 +292,7 @@ int main(int argc, char** argv)
         std::cout << "profile '" << profile->name << "' applied and saved to the controller\n";
         return 0;
     }
+    if (command == "verify-limits") return verifyLimitsCommand(argc, argv, stage, identity, *profile);
     if (command == "move") {
         const auto to = parseNumber(optionValue(argc, argv, "--to"));
         const auto by = parseNumber(optionValue(argc, argv, "--by"));

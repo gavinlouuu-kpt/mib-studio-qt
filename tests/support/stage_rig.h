@@ -9,6 +9,7 @@
 #include "backend/stage/zc300/Zc300Stage.h"
 
 #include "support/fake_zc300.h"
+#include "support/tempdir.h"
 
 #include <memory>
 
@@ -32,10 +33,22 @@ struct StageRig {
     backend::services::serialbus::SerialBusManager bus;
     std::shared_ptr<backend::services::MemoryStageReferenceStore> store =
         std::make_shared<backend::services::MemoryStageReferenceStore>();
+    TempDir dir{"stage_rig"};
+    // The supervised limit check has passed for the fake (serial 26017)
+    // unless a test calls unverifyLimits().
+    std::shared_ptr<backend::stage::LimitsVerificationStore> limits =
+        std::make_shared<backend::stage::LimitsVerificationStore>((dir.path() / "limits.json").string());
 
     explicit StageRig(FakeZc300Config controller = FakeZc300Config{}) : device(controller)
     {
         bus.setSerialPortFactory([this] { return std::make_unique<FakeZc300Port>(device); });
+        limits->save({"26017", "2026-10-06T00:00:00Z", -3000.0, 3000.0, 6000.0, "test rig"});
+    }
+
+    void unverifyLimits()
+    {
+        std::error_code ec;
+        std::filesystem::remove(limits->path(), ec);
     }
 
     backend::services::StageConfig config() const
@@ -54,7 +67,7 @@ struct StageRig {
         timing.transactionMs = 150;
         auto s = std::make_unique<backend::services::StageService>(
             [this, timing] { return std::make_unique<backend::stage::zc300::Zc300Stage>(bus, timing); },
-            std::make_unique<SharedStageReferenceStore>(store));
+            std::make_unique<SharedStageReferenceStore>(store), limits);
         s->setConfig(c);
         return s;
     }

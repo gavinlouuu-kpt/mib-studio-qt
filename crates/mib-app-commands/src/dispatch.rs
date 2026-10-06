@@ -93,6 +93,14 @@ pub const COMMANDS: &[&str] = &[
     "pump_poll_status",
     "fetch_pump_status",
     "pump_scan_addresses",
+    "stage_connect",
+    "stage_disconnect",
+    "stage_move_to",
+    "stage_move_by",
+    "stage_home",
+    "stage_stop",
+    "stage_apply_profile",
+    "fetch_stage_status",
     "fetch_review_metadata",
     "fetch_review_metrics_page",
     "fetch_review_image",
@@ -480,6 +488,37 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::pump_poll_status(state, a.pump).and_then(json)
         }
+        "stage_connect" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "portName", default)] port_name: String,
+                #[serde(rename = "usbSerial", default)] usb_serial: String,
+                #[serde(rename = "modbusAddress", default)] modbus_address: i32,
+            }
+            let a: A = args(value)?;
+            crate::stage_connect(state, a.port_name, a.usb_serial, a.modbus_address).and_then(json)
+        }
+        "stage_disconnect" => crate::stage_disconnect(state).and_then(json),
+        "stage_move_to" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "targetUm")] target_um: f64,
+            }
+            let a: A = args(value)?;
+            crate::stage_move_to(state, a.target_um).and_then(json)
+        }
+        "stage_move_by" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "deltaUm")] delta_um: f64,
+            }
+            let a: A = args(value)?;
+            crate::stage_move_by(state, a.delta_um).and_then(json)
+        }
+        "stage_home" => crate::stage_home(state).and_then(json),
+        "stage_stop" => crate::stage_stop(state).and_then(json),
+        "stage_apply_profile" => crate::stage_apply_profile(state).and_then(json),
+        "fetch_stage_status" => crate::fetch_stage_status(state).and_then(json),
         "fetch_pump_status" => {
             #[derive(Deserialize)]
             struct A {

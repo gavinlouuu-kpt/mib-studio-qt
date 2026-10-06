@@ -19,6 +19,7 @@ const char* toString(DeviceKind kind)
     case DeviceKind::Framegrabber: return "framegrabber";
     case DeviceKind::Nanopositioner: return "nanopositioner";
     case DeviceKind::PulseGenerator: return "pulse-generator";
+    case DeviceKind::MotionStage: return "motion-stage";
     }
     return "unknown";
 }
