@@ -29,6 +29,10 @@ after 15 s while every command was fine (slowest 40 ms).
 - **Fix:** [[../services/ZC300Stage]] now queues waiters and hands the
   driver straight to the next one, commands first. Polls and commands are
   both FIFO and bounded.
+- **Stop jumps the queue (review finding):** `stop()` had shared the command
+  FIFO, so queued moves and teardown went first and a Stop could time out
+  into `Busy` without sending. It now has its own queue, served first, with
+  at most four in a row while a Disconnect waits.
 - **Test:** a new fairness block with six tight pollers fails on the old lock
   every run (fewest 1 of mean 25; waits of 5–8 s) and passes on the new one
   (25 of 25; worst ~60 ms).

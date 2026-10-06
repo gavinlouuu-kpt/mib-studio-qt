@@ -73,10 +73,14 @@ bus session's call mutex is innermost (see [[SerialBus]]).
 
 **The lock is fair, prioritized and bounded (`Zc300Stage::Access`).**
 - Waiters queue, and a release **hands the driver straight to the next
-  waiter**: commands and teardown first (FIFO), then status polls (FIFO).
-  Nobody can jump the queue.
-- Commands are moves, `stop()`, writes, connect and token calls. Polls are
-  `readStatus`.
+  waiter**: **Stop first**, then commands and teardown (FIFO), then status
+  polls (FIFO). Nobody can jump the queue.
+- **Stop has its own queue**, served before everything else. It is sent right
+  after the call in flight, never behind queued moves or teardown. To keep a
+  Stop storm from starving a waiting Disconnect, at most four Stops are
+  granted in a row while anything else waits.
+- Commands are moves, writes, connect and token calls. Polls are
+  `readStatus`. `stop()` is its own kind.
 - A command or poll that cannot get the driver within 15 s returns `Busy`.
   `disconnect()` waits its turn however long it takes, because teardown must
   not be skipped.

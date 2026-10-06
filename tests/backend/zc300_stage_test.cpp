@@ -399,6 +399,75 @@ int main()
         MIB_EXPECT(worst < 2000, "no poll waited 2 s or more (worst " + std::to_string(worst) + " ms)");
     }
 
+    // Stop goes to the front of the line. A reviewer found that Stop shared the
+    // command FIFO: queued moves and teardown went first, and after the
+    // timeout it returned Busy without ever sending. With every reply delayed,
+    // each driver call holds the driver ~200 ms, so a queue builds up
+    // behind the in-flight call; Stop must be sent next, ahead of it.
+    watchdog.mark("stop jumps the queue");
+    {
+        FakeZc300 device;
+        device.setPulsesPerSecond(2000); // the first move keeps running
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setReplyDelayMs(200);
+        std::thread inFlight([&] { stage.moveRelative(100); });
+        while (stage.waitingCalls() == 0 && device.opcodeCount(0x65) == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::thread queuedMove([&] { stage.moveRelative(50); });
+        std::thread queuedSpeed([&] { stage.setSpeed(1000, 2000); });
+        const auto queued = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (stage.waitingCalls() < 2 && std::chrono::steady_clock::now() < queued) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        MIB_REQUIRE(stage.waitingCalls() >= 2, "two commands are queued behind the in-flight call");
+
+        const auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop is sent, not refused");
+        const long long stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        inFlight.join(); queuedMove.join(); queuedSpeed.join();
+        const auto ops = device.opcodeSequence();
+        // in-flight move (0x65), then Stop (0x68), only then the queued move (0x65)
+        MIB_REQUIRE(ops.size() >= 3, "all three opcodes reached the wire");
+        MIB_EXPECT(ops[0] == 0x65 && ops[1] == 0x68 && ops[2] == 0x65,
+                   "Stop was sent next, ahead of the queued move (sequence " + std::to_string(ops[0]) + "," +
+                       std::to_string(ops[1]) + "," + std::to_string(ops[2]) + ")");
+        MIB_EXPECT(stopMs < 1200, "Stop took about one in-flight call, not the whole queue (" + std::to_string(stopMs) + " ms)");
+        device.setReplyDelayMs(0);
+    }
+
+    // ...but a Stop storm must not starve teardown: at most four Stops are
+    // granted in a row while a Disconnect waits.
+    watchdog.mark("stop storm does not starve disconnect");
+    {
+        FakeZc300 device;
+        device.setPulsesPerSecond(2000);
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setReplyDelayMs(120);
+        std::thread inFlight([&] { stage.moveRelative(100); });
+        while (device.opcodeCount(0x65) == 0 && stage.waitingCalls() == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::atomic<int> completed{0};
+        std::atomic<int> disconnectIndex{-1};
+        std::thread disconnecting([&] { stage.disconnect(); disconnectIndex = completed.fetch_add(1); });
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (stage.waitingCalls() < 1 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::vector<std::thread> storm;
+        for (int i = 0; i < 6; ++i) storm.emplace_back([&] { stage.stop(); completed.fetch_add(1); });
+        while (stage.waitingCalls() < 7 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        MIB_REQUIRE(stage.waitingCalls() >= 7, "a Disconnect and six Stops are queued behind the in-flight call");
+        inFlight.join();
+        disconnecting.join();
+        for (auto& t : storm) t.join();
+        MIB_EXPECT(disconnectIndex.load() >= 0 && disconnectIndex.load() <= 4,
+                   "Disconnect finished after at most four Stops (index " + std::to_string(disconnectIndex.load()) + " of 7)");
+        MIB_EXPECT(!stage.isConnected(), "disconnected");
+        device.setReplyDelayMs(0);
+    }
+
     if (mib::test::exitCode() == 0) std::printf("ZC300 stage driver verified\n");
     return mib::test::exitCode();
 }

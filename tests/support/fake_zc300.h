@@ -111,6 +111,8 @@ public:
     int frames() { return locked([&] { return frames_; }); }
     int writes() { return locked([&] { return writes_; }); }       // FC06/FC16 frames
     int opcodes() { return locked([&] { return static_cast<int>(opcodeLog_.size()); }); }
+    // Every opcode written, in order (0x64..0x6D).
+    std::vector<std::uint16_t> opcodeSequence() { return locked([&] { return opcodeLog_; }); }
     int opcodeCount(std::uint16_t op)
     {
         return locked([&] { return static_cast<int>(std::count(opcodeLog_.begin(), opcodeLog_.end(), op)); });

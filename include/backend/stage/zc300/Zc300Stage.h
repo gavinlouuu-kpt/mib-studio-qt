@@ -52,6 +52,8 @@ public:
     StageError writePowerUpToken(std::uint16_t token) override;
 
     ControllerConfig controllerConfig() const;
+    // Calls currently queued for the driver (diagnostics and tests).
+    std::size_t waitingCalls() const;
 
 private:
     // All require the driver held (an owned Access).
@@ -75,15 +77,22 @@ private:
     // Nobody can jump the queue, so tight pollers cannot starve each other
     // or a Stop. Commands and polls give up with Busy after kLockTimeout;
     // disconnect (teardown) waits its turn however long it takes.
+    // Stop has its own queue served before everything else, so it is sent right
+    // after the call in flight, never behind queued moves or teardown. To keep
+    // a Stop storm from starving a waiting Disconnect forever, at most
+    // kMaxConsecutiveStops are granted in a row while anything else waits.
     class Access;
     struct Waiter {
         bool granted{false}; // set by the releasing thread, under gate_
     };
     static constexpr std::chrono::seconds kLockTimeout{15};
+    static constexpr int kMaxConsecutiveStops{4};
     mutable std::mutex gate_; // guards held_ and the queues; never held during bus I/O
     mutable std::condition_variable gateCv_;
     mutable bool held_{false};
+    mutable std::deque<Waiter*> stopQueue_;    // Stop only: served first
     mutable std::deque<Waiter*> commandQueue_; // commands and teardown
+    mutable int consecutiveStops_{0};
     mutable std::deque<Waiter*> pollQueue_;
     std::shared_ptr<services::serialbus::ModbusBusSession> bus_;
     std::uint8_t address_{1};

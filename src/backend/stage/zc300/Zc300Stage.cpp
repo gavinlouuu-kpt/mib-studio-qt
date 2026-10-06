@@ -47,12 +47,13 @@ std::int64_t steadyNowNs()
 } // namespace
 
 // RAII access to the driver; see the Waiter / queue notes in the header.
-// Command: priority queue, bounded by kLockTimeout. Poll: behind every waiting
-// command, bounded the same way. Lifecycle (disconnect): the priority queue,
-// but it waits however long it takes, because teardown must not be skipped.
+// Stop: its own queue, served first. Command: the command queue, bounded by
+// kLockTimeout. Poll: behind every waiting command, bounded the same way.
+// Lifecycle (disconnect): the command queue, but it waits however long it
+// takes, because teardown must not be skipped.
 class Zc300Stage::Access {
 public:
-    enum class Kind { Command, Poll, Lifecycle };
+    enum class Kind { Stop, Command, Poll, Lifecycle };
 
     Access(const Zc300Stage& stage, Kind kind) : stage_(stage)
     {
@@ -63,7 +64,7 @@ public:
             return;
         }
         Waiter waiter;
-        auto& queue = kind == Kind::Poll ? stage_.pollQueue_ : stage_.commandQueue_;
+        auto& queue = kind == Kind::Stop ? stage_.stopQueue_ : kind == Kind::Poll ? stage_.pollQueue_ : stage_.commandQueue_;
         queue.push_back(&waiter);
         if (kind == Kind::Lifecycle) {
             stage_.gateCv_.wait(lock, [&] { return waiter.granted; });
@@ -82,12 +83,24 @@ public:
         if (!owned_) return;
         std::lock_guard<std::mutex> lock(stage_.gate_);
         Waiter* next = nullptr;
-        if (!stage_.commandQueue_.empty()) {
-            next = stage_.commandQueue_.front();
-            stage_.commandQueue_.pop_front();
+        const auto take = [&next](std::deque<Waiter*>& queue) {
+            next = queue.front();
+            queue.pop_front();
+        };
+        // Stop first, but never more than kMaxConsecutiveStops in a row while
+        // a command, teardown or poll waits: a Stop storm must not starve them.
+        const bool othersWaiting = !stage_.commandQueue_.empty() || !stage_.pollQueue_.empty();
+        if (!stage_.stopQueue_.empty() && (stage_.consecutiveStops_ < kMaxConsecutiveStops || !othersWaiting)) {
+            take(stage_.stopQueue_);
+            ++stage_.consecutiveStops_;
+        } else if (!stage_.commandQueue_.empty()) {
+            take(stage_.commandQueue_);
+            stage_.consecutiveStops_ = 0;
         } else if (!stage_.pollQueue_.empty()) {
-            next = stage_.pollQueue_.front();
-            stage_.pollQueue_.pop_front();
+            take(stage_.pollQueue_);
+            stage_.consecutiveStops_ = 0;
+        } else {
+            stage_.consecutiveStops_ = 0;
         }
         if (next) { // direct hand-off: held_ stays true
             next->granted = true;
@@ -218,6 +231,12 @@ AxisCalibration Zc300Stage::calibration() const
     Access access(*this, Access::Kind::Command);
     if (!access.owned()) return AxisCalibration{};
     return calibrationFor(config_);
+}
+
+std::size_t Zc300Stage::waitingCalls() const
+{
+    std::lock_guard<std::mutex> lock(gate_);
+    return stopQueue_.size() + commandQueue_.size() + pollQueue_.size();
 }
 
 ControllerConfig Zc300Stage::controllerConfig() const
@@ -356,7 +375,7 @@ StageError Zc300Stage::jog(Direction direction)
 
 StageError Zc300Stage::stop()
 {
-    Access access(*this, Access::Kind::Command);
+    Access access(*this, Access::Kind::Stop);
     if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;
     // Idempotent, so it is retried after silence; allowed even when the
