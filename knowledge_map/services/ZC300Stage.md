@@ -4,6 +4,9 @@
 > TBZF6-60 lift stage, over the shared [[SerialBus]]. Literal and
 > observe-only by default; soft limits, Home and backlash approach belong to
 > [[StageService]] (ADR 0013, #464).
+>
+> **Pending change (ADR 0013 Amendment 1):** the stage will not be homed. The
+> driver is unaffected; `setPosition(0)` becomes the operator's "Set zero here".
 
 **Source:**
 - interface: `include/backend/stage/{IMotionStage,StageTypes,StageProfiles}.h`

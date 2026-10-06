@@ -3,6 +3,11 @@
 > Owns the Zolix ZC300 / TBZF6-60 Z stage: read-only start-up, operator Home
 > (mid-travel referencing), soft limits, one-sided approach and a reference
 > that lasts one controller power-up. ADR 0013, #464.
+>
+> **Pending change (ADR 0013 Amendment 1, 2026-10-06):** Home is being removed.
+> The operator will "Set zero here" instead (register 30059 = 0, no motion) and
+> travel is bounded to ±1000 µm around it unless the operator declares mid-travel.
+> This note describes the code on develop and changes when that PR lands.
 
 **Source:**
 - `include/backend/services/StageService.h`, `src/backend/services/StageService.cpp`

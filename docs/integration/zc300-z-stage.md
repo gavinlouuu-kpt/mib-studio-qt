@@ -15,17 +15,26 @@ bench client:
 ```bash
 zc300ctl list                                   # FTDI candidates + USB serial numbers
 zc300ctl info   --usb-serial A10RB8XC           # identity, config, profile match (read-only)
-zc300ctl status --usb-serial A10RB8XC           # position (unreferenced), limits, e-stop
+zc300ctl status --usb-serial A10RB8XC           # position, limits, e-stop (read-only)
 zc300ctl move   --usb-serial A10RB8XC --by 100 --allow-motion   # whole µm; Ctrl-C stops
 zc300ctl stop   --usb-serial A10RB8XC
 zc300ctl configure --usb-serial A10RB8XC --profile tbzf6-60 --allow-write
 ```
 
-There is no Home in the CLI. Referencing is `StageService`'s job (ADR 0013 §6).
+There is no Home in the CLI. The stage is not homed at all: since 2026-10-06 the
+operator sets zero and the backend bounds travel around it (ADR 0013, Amendment 1).
 
-**The supervised limit-switch check** is required once per controller before
-the application will Home it. Run it on the bench with someone watching the
-stage, into the application's data directory:
+> **Known limitation.** The position is an open-loop pulse counter with no
+> encoder. Without homing, nothing knows where the stage physically is: a hand
+> move, a stall or a collision silently shifts the real position against the
+> counter, and software cannot detect it. The default ±1000 µm envelope around
+> the operator's zero only bounds the exposure.
+
+**The supervised limit-switch check** is optional since ADR 0013 Amendment 1. It gates
+nothing and does not widen the travel envelope; a pass only clears the "wiring
+unverified" badge. (Until the implementation PR lands, the code on develop still
+refuses Home without it.) Run it on the bench with someone watching the stage,
+into the application's data directory:
 
 ```bash
 zc300ctl verify-limits --usb-serial A10RB8XC --data-dir <app data dir> --supervised --allow-motion
@@ -69,6 +78,31 @@ alongside):
 
 The `-1A` has one populated axis (X). Y/Z registers still answer; their
 home-switch bits read active because the inputs float.
+
+### Limit and home bits, read-only bench read (2026-10-06)
+
+Register 30015 (FC04) read `0x0124` on ten consecutive reads, 0.3 s apart, with
+nothing moving and no writes. Three bits per axis (positive limit, negative limit,
+home), then e-stop at bit 9 and driver alarms from bit 10:
+
+| Axis | positive limit | negative limit | home |
+|---|---|---|---|
+| X (the stage) | 0 | 0 | 1 |
+| Y (nothing attached) | 0 | 0 | 1 |
+| Z (nothing attached) | 0 | 0 | 1 |
+
+E-stop and alarms read 0. `zc300ctl status` agreed (limits negative=0 positive=0
+home=1; position -6564.99 µm).
+
+- The home bit is a floating input: it reads 1 on all three axes.
+- The limit bits read 0 on all three axes, including the two that are surely
+  unconnected. The X readings therefore do not show whether the limit switches
+  are wired or working.
+- The counter read -6565 µm after the stage was moved by hand to about 6.5 mm of
+  its 6 mm travel, with no limit tripped. That points to unwired or non-working limits
+  but does not prove it.
+- Telling the cases apart needs someone pressing a switch by hand or the stage
+  reaching an end, both of which need Gavin present.
 
 ## Wire protocol
 
@@ -165,7 +199,8 @@ the execution plan.
    every time; `N` with 0.02 mm reached −0.020 mm.
 5. **Position is a counter, not a measurement.** The ZC300 has no encoder
    input; readback is commanded pulses. After a stall, collision or power
-   cycle it is meaningless until re-homed. It powered up at 0.
+   cycle it is meaningless until the operator sets zero again (no Home; ADR 0013
+   Amendment 1). It powered up at 0.
 6. **Motion ran with factory settings** (1600 pp/rev, 8000 pp/s, 12000 pp/s²).
    +400 pp took 0.40 s; continuous run → stop after 0.25 s travelled 484 pp.
 

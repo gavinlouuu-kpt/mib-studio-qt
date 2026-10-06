@@ -1,5 +1,22 @@
 # Recent Work
 
+## 2026-10-06 — ZC300 stage: no homing, ADR 0013 Amendment 1 (#464, docs only)
+
+Gavin decided the ZC300 is not homed. This change is documentation only; the
+code on develop still has Home until the implementation PR (bridge ABI 30).
+
+- **Bench read (read-only):** register 30015 was `0x0124` on ten reads. The home
+  bit floats (1 on all three axes) and the limit bits read 0 even on the
+  unconnected axes, so the limit wiring is unproven.
+- **Replacement:** "Set zero here" (position register 30059 = 0, no motion) and a
+  travel envelope of ±1000 µm around it, widened to ±2900 µm only by a
+  "zero is at mid-travel" declaration. Moves outside it are refused, not
+  clamped. Limit bits only stop a move heading toward an active limit.
+- **Known limitation:** the counter is open-loop, so a hand move or stall is
+  invisible to the software.
+- **Docs:** ADR 0013 Amendment 1, the plan (slice 5b), the evidence doc and
+  pending-change notes on `StageService` and `ZC300Stage`.
+
 ## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
 
 ADR 0011's CI and compatibility-matrix consequences:
