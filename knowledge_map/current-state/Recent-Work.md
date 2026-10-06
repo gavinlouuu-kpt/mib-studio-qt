@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
+
+A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`
+with `MIB_PL_SCIENCE=ON` for the Cortex-A9 on every PR that touches the
+backend, so a 32-bit or ARM break in the PZ7035 code no longer waits for a
+board build. It uses the distro armhf toolchain, not the Yocto SDK, and leaves
+Aravis out; the SDK artifact job remains a follow-up. See
+[[../build-and-run/Build]].
 ## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
 
 Opening Camera & Alignment puts the instrument in Align: full sensor at

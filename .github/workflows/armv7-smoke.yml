@@ -1,0 +1,114 @@
+name: ARMv7 compile smoke
+
+# ADR 0011: the PZ7035 instrument runs this code on a 32-bit Cortex-A9. A change that builds
+# on x86-64 can still break there (size_t/long widths, time_t, alignment, a Linux-only API
+# used unguarded), and nothing else in CI compiles for ARM. This job cross-compiles
+# mib_processing + mib_backend with MIB_PL_SCIENCE=ON (the instrument configuration) using
+# the distro toolchain and the armhf apt libraries.
+#
+# What it is not: the shipped binary is built against the Yocto SDK (preset linux-armv7-yocto,
+# scripts/yofo/cargo-armv7.sh), whose library versions differ; Aravis (camera path) is off
+# because Ubuntu's armhf libaravis is older than the 0.9.3 the build needs. A real artifact
+# job (yofo-studio-server + the UI, stamped with commit and bridge ABI) needs the SDK published
+# for CI and is a follow-up.
+
+on:
+  pull_request:
+    branches: [main, master, develop, dev/react-tauri]
+  push:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Path gate: the job costs several minutes (armhf packages, cross compile) and only the C++
+  # backend and its build files matter. A skipped job still satisfies a required status
+  # context, so the steps are gated, not the job (same pattern as sanitizers.yml). Pushes and
+  # manual runs always execute.
+  changes:
+    name: Detect backend changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'src/backend/**'
+              - 'include/backend/**'
+              - 'cmake/**'
+              - 'CMakeLists.txt'
+              - 'CMakePresets.json'
+              - 'third_party/pz7035-abi/**'
+              - 'tools/pz_provider_probe/**'
+              - 'env/**'
+              - 'scripts/ci/enable-armhf-apt.sh'
+              - '.github/actions/setup-linux-env/**'
+              - '.github/workflows/armv7-smoke.yml'
+
+  armv7-smoke:
+    name: ARMv7 PL-science compile
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+        uses: actions/checkout@v6
+
+      - name: Enable the armhf architecture
+        if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+        run: sudo scripts/ci/enable-armhf-apt.sh
+
+      - name: Set up Linux build environment
+        if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,armhf-cross
+          conan: "false"
+          mindvision: "false"
+          assets: none
+
+      - name: Configure (linux-armhf-smoke)
+        if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+        shell: bash
+        run: cmake --preset linux-armhf-smoke
+
+      - name: Build mib_processing and mib_backend for armv7
+        if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+        shell: bash
+        run: cmake --build --preset linux-armhf-smoke-build --parallel 4
+
+      - name: Verify the objects are 32-bit ARM hard-float
+        if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+        shell: bash
+        # Guards against a toolchain that silently fell back to the host compiler (which would
+        # make the whole job a plain x86-64 build).
+        run: |
+          set -euo pipefail
+          obj="$(find build/linux-armhf-smoke -name 'PzPlatformMonitor.cpp.o' -print -quit)"
+          test -n "$obj"
+          arm-linux-gnueabihf-readelf -h "$obj" | grep -E 'Machine:.*ARM|Class:.*ELF32'
+          arm-linux-gnueabihf-readelf -A "$obj" | grep -E 'Tag_ABI_VFP_args: VFP registers'
+
+      - name: Compile the board probe (syntax only)
+        if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+        shell: bash
+        # tools/pz_provider_probe is built by hand against the Yocto SDK (tools/.../build.sh) and
+        # is in no CMake target; keep its main.cpp compiling against the same headers.
+        run: |
+          arm-linux-gnueabihf-g++ -std=c++17 -fsyntax-only -Wno-psabi -DSPDLOG_FMT_EXTERNAL \
+            -Iinclude -Ithird_party/pz7035-abi -I/usr/include/opencv4 \
+            tools/pz_provider_probe/main.cpp
