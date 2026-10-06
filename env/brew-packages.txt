@@ -1,6 +1,8 @@
 # Homebrew formulae for a macOS host, grouped like env/apt-packages.txt.
-# macOS is a development convenience (no CMake preset yet, no release
-# artefact); the Qt-free mib_processing core and the Python tools build here.
+# macOS ships one artefact: YOFO Review (sections base + desktop-shell; its
+# OpenCV / HDF5 come from Conan, statically — macos-review-core preset,
+# docs/howto/macos-build.md). The backend / frontend sections serve local
+# development of the Qt-free core and the Python tools from Homebrew.
 # section: base
 cmake
 ninja
@@ -20,3 +22,7 @@ openssl@3
 
 # section: frontend
 qt
+
+# section: desktop-shell
+node@22
+rustup

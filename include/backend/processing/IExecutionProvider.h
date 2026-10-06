@@ -9,9 +9,11 @@
 // sink and status.
 
 #include "backend/processing/ProcessingTypes.h"
+#include "backend/processing/pz/PzBridgePreview.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/pz/PzRecords.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -85,6 +87,22 @@ public:
     virtual ProviderStatus status() const = 0;
     // Side-effect free; a provider without a device reports !valid.
     virtual ProviderIdentity identity() { return {}; }
+
+    // Align whole-frame previews through the bridge's preview writer (#501 P1). Mutually
+    // exclusive with a run (start/stop). Providers without a device do not support them.
+    virtual bool startPreview(const pz::BridgePreviewConfig& config, std::string* error) {
+        (void)config;
+        if (error) *error = "the " + name() + " provider has no bridge preview";
+        return false;
+    }
+    // The newest whole frame newer than `lastFrameId`, waiting up to `timeout`.
+    virtual bool fetchPreview(uint64_t lastFrameId, std::chrono::milliseconds timeout, pz::BridgePreviewImage& out,
+                              std::string* error) {
+        (void)lastFrameId, (void)timeout, (void)out;
+        if (error) *error = "no bridge preview";
+        return false;
+    }
+    virtual void stopPreview() {}
 };
 
 // FilterResult view of one unet_cells_v2 cell, including the Laplacian and

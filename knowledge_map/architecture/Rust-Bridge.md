@@ -5,7 +5,8 @@
 > and no display. Wraps [[AppBackend]] via `backend::bridge::BackendFacade`.
 
 **Source:** `crates/mib-bridge/` (`src/lib.rs`, `src/shim.h`, `src/shim.cpp`,
-`build.rs`, `tests/contract.rs`)
+`build.rs`, `tests/contract.rs`); review bridge `src/review_bridge.rs`,
+`src/review_shim.{h,cpp}`, `tests/review_bridge.rs` (ADR 0014)
 **Backend seam:** `include/backend/app/BackendFacade.h`,
 `src/backend/app/BackendFacade.cpp`
 **Decision:** [`docs/decisions/0003-rust-cxx-bridge.md`](../../docs/decisions/0003-rust-cxx-bridge.md)
@@ -198,6 +199,23 @@ runtime on Ubuntu.
 
 CI: `.github/workflows/bridge-ci.yml` builds the archives then runs
 `cargo test` — no Qt, no webkit, no display.
+
+**Review-only link manifest (macOS / Windows, YOFO Review).** The
+`macos-review-core` / `windows-review-core` presets build the review core
+against static Conan deps (`conanfile.py` `review_core=True`) plus
+`mib_review_link_probe` (`tools/review_link_probe/main.cpp`, option
+`MIB_BUILD_REVIEW_LINK_PROBE`). `tools/gen_review_link_manifest.py` reads the
+probe's link edge from `build.ninja` (`LINK_LIBRARIES` / `LINK_PATH`, Ninja
+escapes and MSVC quoting handled) and the review core's flags from
+`compile_commands.json`, and writes `"format": "mib-review-link-v1"`.
+`build.rs` (`review_manifest` / `manifest_build`) replays it: static archives
+as `static:-bundle` in CMake's order, frameworks, system libraries, include
+dirs and defines. Picked from `MIB_BRIDGE_LINK_MANIFEST`, else
+`build/review-core/` for review-only builds on macOS (required) and Windows
+(when present); a review manifest with the default features is an error.
+Linux keeps its fixed list unless the env points at a manifest (how the
+mechanism is exercised locally). Parser tests:
+`tools/test_gen_review_link_manifest.py` (synthetic macOS + MSVC trees).
 
 ## Gotchas
 
@@ -452,6 +470,35 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 27: PZ7035 camera modes (#501 P1, 2026-10-05)
+
+- `set_instrument_mode(mode: align|run, x, y)` runs
+  `AppBackend::setInstrumentMode` ([[AppBackend]]).
+- `set_service_mode(on)` sets the backend latch for Service /
+  Commissioning mode.
+- `set_instrument_led(delayUs, widthUs)` sets raw LED values. The backend
+  refuses them:
+  - outside Service mode;
+  - during an experiment;
+  - outside the per-mode limits, which `fetch_platform_info` reports as
+    `capabilities.led_limits`.
+- `fetch_run_preview` returns a binary `MIBC` packet in Run (layout in
+  `bridge-contract.json` and `PzInstrumentControl.h`), else the error
+  `RUN_PREVIEW_UNAVAILABLE`.
+
+The three set commands are CONTROL commands on `yofo-studio-server`. All of
+them are refused while the PL is unconfigured (PCFG_DONE) or is not the
+U-Net cell image. `capabilities.align_mode` and `run_mode` are true when the
+register writer exists. `fetch_instrument_status` adds `mode{name, run_x,
+run_y, service}` and `storage{path, writable, ram, free_bytes, filesystem,
+warning}`: the recording target of the data directory, from
+`app::recordingTarget`. Test: `contract.rs`
+`instrument_mode_commands_off_the_instrument`.
+
+Final numbering from merge coordination: P0 (#502) takes 24, #398 takes 25,
+the ZC300 stage bridge (#513) takes 26, and this takes 27 (it was offline
+while #513 landed first).
+
 **Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
 processed previews, review overlays) through the Rust function
 `bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`
@@ -459,3 +506,66 @@ crosses the bridge per element: a 509 KB full-field frame took ~75 ms on the
 PZ7035's Cortex-A9 that way (88 ms per pull, ~10 fps in the browser; now
 27 ms per pull, display ~26 fps = all delivered images).
 
+## Review bridge (YOFO Review, review contract v1, ADR 0014)
+
+A second `#[cxx::bridge]` module, `review_ffi` (namespace
+`mib_review_bridge`), wraps [[../services/ReviewSession]] as an opaque
+`ReviewBridge`. It is YOFO Review's whole backend surface and is deliberately
+separate from `ffi::BackendBridge`; MIB Studio's Review tab does not use it
+(it keeps the facade's review commands, ADR 0014 decision A):
+
+- **Link set.** `review_shim.cpp` includes only `backend/review/*`,
+  `Hdf5Service.h` and `KdeCoreRecord.h`, so it links `mib_review_core` +
+  `mib_processing`. The cargo feature `review-only` compiles just this
+  bridge (`build.rs`: `bridge_sources()` / `shim_sources()` /
+  `archives()`), and the YOFO Review binary carries no `AppBackend`
+  (`review-ci.yml` checks `nm` for `backend::AppBackend`). Without the
+  feature both bridges compile (the review tests run in both configurations).
+- **Calls:** `review_open/close`, `set_fallback_pixel_to_micron`,
+  `fetch_review_info` (counts, ROI, datasets, series, multi-image window,
+  accounting + summary text, recorded factor, KDE JSON, recorded
+  ring-ratio range),
+  `fetch_review_rows` (full-column `ReviewRow`s), `fetch_review_frame(dataset,
+  index, overlay, roi)` → `ReviewFrame` Mono8 or **RGB8**
+  (`review_pixel_formats`), `fetch_review_series_count/frame`,
+  `fetch_review_thumbnails` (one frame of `size × (size·count)`),
+  `fetch_review_scatter` (columnar, with ring ratios), `review_save_core_record`,
+  `poll_review_events` (job lifecycle, `review_operation_kinds` ×
+  `operation_states`), `cancel_review_operation`, the jobs
+  `review_export_metrics/all`, `review_batch_export`,
+  `review_regenerate_masks` (`review_regenerate_sources`),
+  `review_export_charts` (kind `ExportCharts` = 6),
+  `review_compute_core` + `fetch_review_computed_core_json`,
+  `review_request_density` + `fetch_review_density` (contract
+  `review_density` constants), `review_jobs_busy`,
+  `review_bridge_abi_version()` (`review-contract.json` `review_abi_version`,
+  independent of `bridge_abi_version()`),
+  and the fixtures `review_fixture_write_experiment(path)` and
+  `review_fixture_write_population(path, cells, seed)` (two seeded
+  populations for the Charts view; `examples/review_fixture --population N`).
+- **Contract.** YOFO Review has its own versioned contract,
+  `contract/review-contract.json` (`review_abi_version` 1), so the shared
+  `bridge-contract.json` is never touched for it: `overlay_modes`,
+  `review_density` (incl. `ramp_rgb`, checked against `MonitoringDensity.h`
+  `kStops` by the generator), `review_pixel_formats`,
+  `review_operation_kinds`, `review_regenerate_sources`, and the review
+  frame packets (the bridge contract's header with pull kinds `review` (3),
+  `review_thumbnails` (5), `review_series` (6), RGB8 and zero capture
+  identities). `scripts/gen_bridge_contract.py` renders it to
+  `desktop/src/review/reviewContract.ts` and
+  `desktop/src-tauri/src/review_packet_contract.rs` (same `--check` gate);
+  `review_shim.cpp` pins the enums with `static_assert`s;
+  `tests/review_bridge.rs` runs in both feature configurations;
+  `tests/contract.rs` is `#![cfg(not(feature = "review-only"))]`.
+- **Tauri:** chart snapshots reach the jobs over the raw IPC body, not
+  JSON number arrays: `review_stage_chart` (body = PNG bytes, header
+  `x-chart-name`, ≤ 32 MB, ≤ 8 staged, name rule = the backend's),
+  `review_clear_charts`; `review_export_all` / `review_export_charts` take
+  the staged set. `review_list_dir(dir)` lists file names for the shell's
+  default export names.
+- **Tauri:** `desktop/src-tauri/src/review.rs` exposes the commands to
+  YOFO Review's binary (`review_app.rs`); `review_packet.rs` /
+  `desktop/src/review/reviewPacket.ts` encode and decode its packets (RGB8
+  allowed, stride = width × bytes/pixel), leaving MIB Studio's
+  `frame_packet.rs` / `framePacket.ts` as develop has them.
+  `desktop/src/review/reviewBridge.ts` is the TypeScript client.

@@ -47,6 +47,8 @@ export interface ContextBarFacts {
   outputPath: string;
   // Warnings — count of unresolved attention items surfaced elsewhere.
   warningsCount: number;
+  /** PZ7035 (#501): the recording destination is RAM ("" when persistent). */
+  storageWarning?: string;
 }
 
 export const SEG_STATUS_LABEL: Readonly<Record<SegStatus, string>> = {
@@ -174,6 +176,15 @@ function operatorSegment(f: ContextBarFacts): ContextSegment {
 }
 
 function storageSegment(f: ContextBarFacts): ContextSegment {
+  if (f.storageWarning) {
+    return {
+      id: "storage",
+      label: "Storage",
+      value: f.experimentActive && f.outputPath ? `RAM · ${baseName(f.outputPath)}` : "RAM",
+      status: "warn",
+      detail: f.storageWarning,
+    };
+  }
   if (f.experimentActive && f.outputPath) {
     return {
       id: "storage",
