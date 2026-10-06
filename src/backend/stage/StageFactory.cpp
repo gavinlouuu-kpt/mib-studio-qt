@@ -24,6 +24,7 @@ const char* toString(StageError error)
     case StageError::Protocol: return "protocol error";
     case StageError::Transport: return "transport error";
     case StageError::ReferenceFailed: return "referencing failed";
+    case StageError::LimitsUnverified: return "limit switches not verified for this controller";
     }
     return "unknown";
 }
