@@ -240,9 +240,13 @@ set_target_properties(stage_zc300_protocol PROPERTIES
 
 add_library(stage_zc300 STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/stage/StageFactory.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/LimitVerification.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/stage/zc300/Zc300Stage.cpp
 )
 target_link_libraries(stage_zc300 PUBLIC stage_zc300_protocol oeabt_serial spdlog::spdlog)
+if(TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(stage_zc300 PUBLIC nlohmann_json::nlohmann_json) # limits-verified record
+endif()
 set_target_properties(stage_zc300 PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
@@ -427,6 +431,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/Zc300Provider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp

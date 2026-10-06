@@ -9,6 +9,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/StageService.h"
+#include "backend/stage/LimitVerification.h"
 
 #include "support/assert.h"
 #include "support/fake_zc300.h"
@@ -73,6 +74,11 @@ int main()
         MIB_EXPECT(snap.connected && snap.configured && !snap.referenced, "connected, unreferenced");
         MIB_EXPECT(device.writes() == 0 && !device.moving(), "start-up: zero writes, no motion");
 
+        MIB_EXPECT(app.stage().reference().error == StageError::LimitsUnverified,
+                   "Home refused before the supervised limit check");
+        // What `zc300ctl verify-limits --supervised` writes on the bench.
+        backend::stage::LimitsVerificationStore((dataDir / "stage_limits_verified.json").string())
+            .save({"26017", "2026-10-06T12:00:00Z", -3000.0, 3000.0, 6000.0, "zc300ctl verify-limits"});
         const auto home = app.stage().reference();
         MIB_REQUIRE(home.accepted() && app.stage().waitForOperation(home.id, std::chrono::seconds(10)),
                     "operator Home");

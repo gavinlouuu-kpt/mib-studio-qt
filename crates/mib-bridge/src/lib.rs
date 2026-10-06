@@ -416,6 +416,40 @@ pub mod ffi {
         pub focus_direction: bool,
     }
 
+    /// Z stage snapshot (#464, ADR 0013). `move_state` is a contract
+    /// `stage_move_states` value; positions are micrometres in the homed
+    /// frame (zero at mid-travel) once `referenced`.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeStageStatus {
+        pub valid: bool,
+        pub enabled: bool,
+        pub connected: bool,
+        /// Controller matches the stage profile; otherwise motion is refused.
+        pub configured: bool,
+        /// Homed since the controller powered up; moves need it.
+        pub referenced: bool,
+        /// The supervised limit-switch check passed for this controller
+        /// (`zc300ctl verify-limits`); Home is refused without it.
+        pub limits_verified: bool,
+        /// A move or Home is queued or running.
+        pub busy: bool,
+        pub model: String,
+        pub serial: String,
+        pub firmware: String,
+        pub port_name: String,
+        pub move_state: u32,
+        pub position_um: f64,
+        pub limit_positive: bool,
+        pub limit_negative: bool,
+        pub home: bool,
+        pub emergency_stop: bool,
+        pub driver_alarm: bool,
+        pub span_um: f64,
+        pub soft_min_um: f64,
+        pub soft_max_um: f64,
+        pub last_error: String,
+    }
+
     /// Authoritative per-pump snapshot (schema v10, BE-7). `run_status` /
     /// `direction` are contract `pump_run_states` / `pump_directions` values.
     #[derive(Debug, Clone, Default)]
@@ -790,6 +824,27 @@ pub mod ffi {
             end_address: i32,
             timeout_ms: i32,
         ) -> BridgeCommandResult;
+
+        /// Z stage (#464, ADR 0013). Safety lives in the backend: moves are
+        /// refused until the stage was homed this power-up and outside the
+        /// soft limits; only `stage_home` homes; `stage_connect` is
+        /// observe-only; `stage_stop` is always accepted (also during an
+        /// experiment); everything else needs an idle experiment. Moves and
+        /// Home return a tracked operation id (kinds StageMove /
+        /// StageReference); cancelling it stops the axis.
+        fn stage_connect(
+            self: Pin<&mut BackendBridge>,
+            port_name: &str,
+            usb_serial: &str,
+            modbus_address: i32,
+        ) -> BridgeCommandResult;
+        fn stage_disconnect(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn stage_move_to(self: Pin<&mut BackendBridge>, target_um: f64) -> BridgeCommandResult;
+        fn stage_move_by(self: Pin<&mut BackendBridge>, delta_um: f64) -> BridgeCommandResult;
+        fn stage_home(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn stage_stop(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn stage_apply_profile(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn fetch_stage_status(self: Pin<&mut BackendBridge>) -> BridgeStageStatus;
 
         /// Pull the review metadata of the loaded HDF5 file (schema v9, BE-6).
         fn fetch_review_metadata(self: Pin<&mut BackendBridge>) -> BridgeReviewMetadata;

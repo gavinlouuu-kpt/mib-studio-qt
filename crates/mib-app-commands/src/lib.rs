@@ -665,6 +665,102 @@ pub fn fetch_pump_status(state: &AppState, pump: u32) -> Result<PumpStatus, Stri
     })
 }
 
+/// Z stage snapshot for the webview (#464, ADR 0013). Positions are
+/// micrometres in the homed frame once `referenced`.
+#[derive(Serialize, Clone, Default)]
+pub struct StageStatus {
+    valid: bool,
+    enabled: bool,
+    connected: bool,
+    configured: bool,
+    referenced: bool,
+    limits_verified: bool,
+    busy: bool,
+    model: String,
+    serial: String,
+    firmware: String,
+    port_name: String,
+    move_state: u32,
+    position_um: f64,
+    limit_positive: bool,
+    limit_negative: bool,
+    home: bool,
+    emergency_stop: bool,
+    driver_alarm: bool,
+    span_um: f64,
+    soft_min_um: f64,
+    soft_max_um: f64,
+    last_error: String,
+}
+
+/// Observe-only: identity, profile check and power-up token reads. Never homes or moves.
+pub fn stage_connect(state: &AppState, port_name: String, usb_serial: String, modbus_address: i32) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().stage_connect(&port_name, &usb_serial, modbus_address).into())
+}
+
+pub fn stage_disconnect(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().stage_disconnect().into())
+}
+
+/// Refused until homed this power-up and outside the soft limits (backend-enforced).
+pub fn stage_move_to(state: &AppState, target_um: f64) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().stage_move_to(target_um).into())
+}
+
+pub fn stage_move_by(state: &AppState, delta_um: f64) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().stage_move_by(delta_um).into())
+}
+
+/// The only command that homes: probes both limits, zero at mid-travel.
+pub fn stage_home(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().stage_home().into())
+}
+
+/// Always accepted, also during an experiment.
+pub fn stage_stop(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().stage_stop().into())
+}
+
+pub fn stage_apply_profile(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().stage_apply_profile().into())
+}
+
+pub fn fetch_stage_status(state: &AppState) -> Result<StageStatus, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let s = guard.pin_mut().fetch_stage_status();
+    Ok(StageStatus {
+        valid: s.valid,
+        enabled: s.enabled,
+        connected: s.connected,
+        configured: s.configured,
+        referenced: s.referenced,
+        limits_verified: s.limits_verified,
+        busy: s.busy,
+        model: s.model,
+        serial: s.serial,
+        firmware: s.firmware,
+        port_name: s.port_name,
+        move_state: s.move_state,
+        position_um: s.position_um,
+        limit_positive: s.limit_positive,
+        limit_negative: s.limit_negative,
+        home: s.home,
+        emergency_stop: s.emergency_stop,
+        driver_alarm: s.driver_alarm,
+        span_um: s.span_um,
+        soft_min_um: s.soft_min_um,
+        soft_max_um: s.soft_max_um,
+        last_error: s.last_error,
+    })
+}
+
 pub fn pump_scan_addresses(
     state: &AppState,
     com_port: i32,

@@ -117,14 +117,16 @@ void FileStageReferenceStore::clear()
 
 // --- lifecycle ---------------------------------------------------------------
 
-StageService::StageService(serialbus::SerialBusManager& busManager, std::unique_ptr<IStageReferenceStore> store)
+StageService::StageService(serialbus::SerialBusManager& busManager, std::unique_ptr<IStageReferenceStore> store,
+                           std::shared_ptr<stage::LimitsVerificationStore> limits)
     : StageService([&busManager] { return stage::createStage(stage::StageKind::Zc300, busManager); },
-                   std::move(store))
+                   std::move(store), std::move(limits))
 {
 }
 
-StageService::StageService(DriverFactory driverFactory, std::unique_ptr<IStageReferenceStore> store)
-    : driverFactory_(std::move(driverFactory)), store_(std::move(store))
+StageService::StageService(DriverFactory driverFactory, std::unique_ptr<IStageReferenceStore> store,
+                           std::shared_ptr<stage::LimitsVerificationStore> limits)
+    : driverFactory_(std::move(driverFactory)), store_(std::move(store)), limits_(std::move(limits))
 {
     if (!store_) store_ = std::make_unique<MemoryStageReferenceStore>();
     worker_ = std::thread([this] { workerLoop(); });
@@ -304,8 +306,32 @@ StageService::StartResult StageService::moveBy(double deltaUm)
     return enqueueOperation(OperationKind::Move, deltaUm, false);
 }
 
+bool StageService::limitsVerifiedFor(const std::string& serial) const
+{
+    return limits_ && !serial.empty() && limits_->find(serial).has_value();
+}
+
 StageService::StartResult StageService::reference()
 {
+    std::string serial;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!snapshot_.connected) return {0, StageError::NotConnected, "not connected"};
+        serial = snapshot_.identity.serial;
+    }
+    // Read outside the lock (file I/O); a record written by the bench tool
+    // while the application runs takes effect without reconnecting.
+    const bool verified = limitsVerifiedFor(serial);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        snapshot_.limitsVerified = verified;
+    }
+    if (!verified) {
+        return {0, StageError::LimitsUnverified,
+                "limit switches of controller " + serial +
+                    " are not verified; run the supervised check (zc300ctl verify-limits --supervised) with "
+                    "someone watching the stage"};
+    }
     return enqueueOperation(OperationKind::Reference, 0.0, true);
 }
 
@@ -495,6 +521,13 @@ std::pair<StageError, std::string> StageService::doConnect()
         snapshot_.connected = true;
         snapshot_.configured = d->isConfigured();
         snapshot_.identity = identity;
+        snapshot_.limitsVerified = limitsVerifiedFor(identity.serial);
+        snapshot_.systemPort = cfg.endpoint.systemPort;
+        if (snapshot_.systemPort.empty()) {
+            for (const auto& port : serialbus::availablePorts()) {
+                if (port.serialNumber == cfg.endpoint.usbSerial) snapshot_.systemPort = port.systemName;
+            }
+        }
         snapshot_.referenced = referenced;
         if (referenced) {
             snapshot_.spanUm = span;
@@ -755,6 +788,11 @@ StageError StageService::runReference(OperationId id, std::string& detail)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         serial = snapshot_.identity.serial;
+    }
+    // Re-checked at start: the record may have been removed since queueing.
+    if (!limitsVerifiedFor(serial)) {
+        detail = "limit switches of controller " + serial + " are not verified";
+        return StageError::LimitsUnverified;
     }
     invalidateReference("Home started");
     SPDLOG_INFO("StageService: Home started (probing both limits)");

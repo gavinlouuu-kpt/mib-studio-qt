@@ -5,6 +5,8 @@
 #include "backend/processing/ProcessingConfigJson.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/services/StageService.h"
+#include <optional>
 #include "backend/playback/FrameStore.h"
 #include <cmath>
 #include <limits>
@@ -201,6 +203,14 @@ J apply(AppBackend& backend, const J& snapshot) {
         af.initialVoltage > af.maxVoltage || af.safeShutdownVoltage < af.minVoltage ||
         af.safeShutdownVoltage > af.maxVoltage)
         throw std::runtime_error("Invalid autofocus voltage bounds");
+    // Z stage block (#464): validated here, applied with the other setters.
+    // Only the configuration changes; nothing connects, homes or moves.
+    std::optional<services::StageConfig> stageConfig;
+    if (root.contains("stage")) {
+        stageConfig = services::parseStageConfig(root.at("stage"));
+        if (backend.stage().snapshot().connected)
+            throw std::runtime_error("Disconnect the Z stage before applying a profile with a stage block");
+    }
     auto roi = processing.getRealtimeRoi();
     if (root.contains("roi")) {
         const auto& r = root.at("roi");
@@ -252,6 +262,7 @@ J apply(AppBackend& backend, const J& snapshot) {
     for (const auto* key : {"ring_ratio_stale_ms", "require_new_sample_per_step",
                             "safe_shutdown_voltage", "focus_direction"})
         if (root.contains(key)) provenance[key] = root.at(key);
+    if (root.contains("stage")) provenance["stage"] = root.at("stage");
     provenance["profile_selection"] = {{"name", snapshot.at("name")},
                                        {"path", snapshot.at("path")},
                                        {"revision", snapshot.at("revision")},
@@ -271,14 +282,16 @@ J apply(AppBackend& backend, const J& snapshot) {
     processing.setRealtimeRoi(roi);
     backend.capture().setConfig(capture);
     backend.autofocus().setConfig(af);
+    if (stageConfig) backend.stage().setConfig(*stageConfig); // disconnected: checked above
     backend.setLastConfigJson(provenanceBytes);
     return {
         {"applied", true},
         {"display_fps", fps},
         {"profile_id", snapshot.at("profile_id")},
         {"message",
-         "Applied processing, buffer, realtime, delivery, calibration, autofocus configuration and "
-         "validated ROI. No camera script or device connection was executed."}};
+         std::string("Applied processing, buffer, realtime, delivery, calibration, autofocus ") +
+             (stageConfig ? "and Z stage " : "") +
+             "configuration and validated ROI. No camera script or device connection was executed."}};
 }
 void write(const fs::path& p, const std::string& bytes) {
     std::ofstream f(p, std::ios::binary | std::ios::trunc);

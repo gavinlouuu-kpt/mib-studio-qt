@@ -228,6 +228,16 @@ mib_backend_test_link(zc300_stage_test PRIVATE stage_zc300)
 add_test(NAME backend.zc300_stage COMMAND $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
 set_tests_properties(backend.zc300_stage PROPERTIES LABELS "backend;stage;safety" TIMEOUT 90)
 
+mib_add_backend_test_executable(stage_bridge_facade_test backend/stage_bridge_facade_test.cpp)
+mib_backend_test_link(stage_bridge_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> stage_bridge_facade_test)
+set_tests_properties(backend.stage_bridge_facade PROPERTIES LABELS "backend;stage;bridge;safety" TIMEOUT 180)
+
+mib_add_backend_test_executable(stage_limit_verification_test backend/stage_limit_verification_test.cpp)
+mib_backend_test_link(stage_limit_verification_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_limit_verification COMMAND $<TARGET_FILE:mib_backend_tests> stage_limit_verification_test)
+set_tests_properties(backend.stage_limit_verification PROPERTIES LABELS "backend;stage;safety" TIMEOUT 180)
+
 mib_add_backend_test_executable(stage_config_test backend/stage_config_test.cpp)
 add_test(NAME backend.stage_config COMMAND $<TARGET_FILE:mib_backend_tests> stage_config_test)
 set_tests_properties(backend.stage_config PROPERTIES LABELS "backend;stage" TIMEOUT 30)

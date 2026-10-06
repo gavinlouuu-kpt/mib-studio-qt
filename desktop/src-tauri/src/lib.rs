@@ -318,6 +318,48 @@ fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<cmds::PumpStat
     cmds::fetch_pump_status(&state, pump)
 }
 
+// Z stage (#464, ADR 0013): safety is enforced in the backend (no motion
+// before Home, soft limits, Stop always accepted, experiment lock).
+#[tauri::command]
+fn stage_connect(state: State<AppState>, port_name: String, usb_serial: String, modbus_address: i32) -> Result<cmds::CmdResult, String> {
+    cmds::stage_connect(&state, port_name, usb_serial, modbus_address)
+}
+
+#[tauri::command]
+fn stage_disconnect(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_disconnect(&state)
+}
+
+#[tauri::command]
+fn stage_move_to(state: State<AppState>, target_um: f64) -> Result<cmds::CmdResult, String> {
+    cmds::stage_move_to(&state, target_um)
+}
+
+#[tauri::command]
+fn stage_move_by(state: State<AppState>, delta_um: f64) -> Result<cmds::CmdResult, String> {
+    cmds::stage_move_by(&state, delta_um)
+}
+
+#[tauri::command]
+fn stage_home(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_home(&state)
+}
+
+#[tauri::command]
+fn stage_stop(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_stop(&state)
+}
+
+#[tauri::command]
+fn stage_apply_profile(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stage_apply_profile(&state)
+}
+
+#[tauri::command]
+fn fetch_stage_status(state: State<AppState>) -> Result<cmds::StageStatus, String> {
+    cmds::fetch_stage_status(&state)
+}
+
 #[tauri::command]
 fn pump_scan_addresses(state: State<AppState>, com_port: i32, baud_rate: i32, start_address: i32, end_address: i32, timeout_ms: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_scan_addresses(&state, com_port, baud_rate, start_address, end_address, timeout_ms)
@@ -727,6 +769,14 @@ pub fn run() {
             pump_set_syringe_volume,
             pump_poll_status,
             fetch_pump_status,
+            stage_connect,
+            stage_disconnect,
+            stage_move_to,
+            stage_move_by,
+            stage_home,
+            stage_stop,
+            stage_apply_profile,
+            fetch_stage_status,
             pump_scan_addresses,
             fetch_review_metadata,
             fetch_review_metrics_page,

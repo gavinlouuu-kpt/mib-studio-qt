@@ -25,7 +25,8 @@
     "Review": 9,
     "Pump": 10,
     "Autofocus": 11,
-    "PulseGenerator": 12
+    "PulseGenerator": 12,
+    "Stage": 13
   },
   "review_image_datasets": {
     "ValidImage": 0,
@@ -49,7 +50,8 @@
     "Camera": 0,
     "Framegrabber": 1,
     "Nanopositioner": 2,
-    "PulseGenerator": 3
+    "PulseGenerator": 3,
+    "MotionStage": 4
   },
   "discovery_job_states": {
     "Queued": 0,
@@ -185,7 +187,9 @@
     "BatchMetrics": 3,
     "MaskRegeneration": 4,
     "Reanalysis": 5,
-    "PumpScan": 6
+    "PumpScan": 6,
+    "StageMove": 7,
+    "StageReference": 8
   },
   "pump_ids": {
     "Sample": 0,
@@ -204,6 +208,12 @@
   "pump_models": {
     "DlspSyringe": 0,
     "TushuiPeristaltic": 1
+  },
+  "stage_move_states": {
+    "Idle": 0,
+    "Moving": 1,
+    "Homing": 2,
+    "Faulted": 3
   },
   "operation_states": {
     "Started": 0,
@@ -502,6 +512,7 @@
     "reference_command": "fetch_monitoring_chart_reference -> JSON curves [{modulus,points}],curve_source;shared bundled review/Qt resource;explicit reference conditions"
   },
   "pump_connect_model": "pump, model (pump_models), port_name, baud_rate, modbus_address, microliters_per_rev -> CommandResult; either model can fill the Sample or Sheath slot; a peristaltic connect only reads registers 100-107; flow rates (µL/min or mL/min) convert to head speed with microliters_per_rev; out-of-range rates fail; purge runs at 100 rpm and stop restores the flow speed; syringe volume fails for peristaltic; fetch_pump_status adds model, microliters_per_rev, speed_rpm (v22)",
+  "stage_commands": "Z stage (#464, ADR 0013; ZC300 + TBZF6-60, micrometres). Enforced in the backend, not the shell: stage_move_to(target_um) / stage_move_by(delta_um) are refused until the stage was homed in the current controller power-up and outside the soft limits (+/-(span/2 - 100 um)), and need whole micrometres; stage_home is the only path that homes (probes both limit switches, zero at mid-travel) and is refused until a supervised limit-switch check passed for that controller (record written only by the bench tool zc300ctl verify-limits --supervised; no bridge, server or UI path can write it); nothing else homes or moves: stage_connect(port_name, usb_serial, modbus_address) is observe-only (identity, profile check, power-up token), stage_apply_profile only writes and saves controller configuration, discovery kind MotionStage only reads identity (FC04); stage_stop is always accepted, also during an experiment; every other stage command fails while an experiment is not idle. Moves and Home return an operation id (operation_kinds StageMove / StageReference) whose cancel stops the axis. fetch_stage_status -> {valid, enabled, connected, configured, referenced, limits_verified, busy, model, serial, firmware, port_name, move_state (stage_move_states), position_um, limit_positive, limit_negative, home, emergency_stop, driver_alarm, span_um, soft_min_um, soft_max_um, last_error}. On the remote server every stage command except stage_stop and fetch_stage_status is a CONTROL command.",
   "soft_trigger_camera": "Explicit MindVision camera software exposure trigger; shell requires armed Service mode, native command requires running MindVision camera and idle experiment; no automatic invocation",
   "camera_alignment": {
     "set_camera_overview": "overview bool -> CommandResult; MindVision and Aravis cameras; full sensor at the overview preset vs the saved experiment window; stops capture and realtime processing, swaps the frame store (8 frames in overview), restarts a capture that was running; rejected during experiment/recording; experiment readiness fails camera.mode while in overview",

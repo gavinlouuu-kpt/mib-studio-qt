@@ -69,9 +69,10 @@
 | `egrabber-framegrabber` | Framegrabber | `CameraControlService::discoverFramegrabbers` | none |
 | `nanopositioner` | Nanopositioner | `AutofocusService::availableEndpoints` + `probeEndpoint` via `nanopositioner::discover` | between endpoints |
 | `pulse-generator` | PulseGenerator | `PulseGeneratorService::scanBus` (callback-cancel overload) over the shared `SerialBusManager` session | between addresses |
+| `zc300-stage` | MotionStage | `Zc300Provider`: FC04 reads of the ZC300 model, serial and firmware over the shared `SerialBusManager` session at the fixed 115200 baud; identity `zc300:<serial>` (Persistent), never VID/PID; never writes, homes or moves (#464, ADR 0013) | between addresses |
 
 A compiled-out camera SDK reports `MissingSdk` (known-absent coverage, still
-decidable by the policy); a pulse-generator request without an explicit
+decidable by the policy); a pulse-generator or Z stage request without an explicit
 `serialScope` (port, serial settings, address range) is refused with
 `InvalidRequest` — no broad serial sweep can start from here.
 

@@ -37,6 +37,7 @@ export const COMMAND_TYPES = {
   Pump: 10,
   Autofocus: 11,
   PulseGenerator: 12,
+  Stage: 13,
 } as const;
 
 export const CAMERA_TYPES = {
@@ -57,6 +58,7 @@ export const DISCOVERY_DEVICE_KINDS = {
   Framegrabber: 1,
   Nanopositioner: 2,
   PulseGenerator: 3,
+  MotionStage: 4,
 } as const;
 
 export const DISCOVERY_JOB_STATES = {
@@ -170,6 +172,13 @@ export const PUMP_MODELS = {
   TushuiPeristaltic: 1,
 } as const;
 
+export const STAGE_MOVE_STATES = {
+  Idle: 0,
+  Moving: 1,
+  Homing: 2,
+  Faulted: 3,
+} as const;
+
 export const EXPERIMENT_STATES = {
   Idle: 0,
   Starting: 1,
@@ -240,6 +249,8 @@ export const OPERATION_KINDS = {
   MaskRegeneration: 4,
   Reanalysis: 5,
   PumpScan: 6,
+  StageMove: 7,
+  StageReference: 8,
 } as const;
 
 export const OPERATION_STATES = {

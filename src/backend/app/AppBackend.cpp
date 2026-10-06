@@ -38,6 +38,7 @@
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
 #include "backend/discovery/providers/CameraEnumerationProvider.h"
 #include "backend/discovery/providers/NanopositionerProvider.h"
+#include "backend/discovery/providers/Zc300Provider.h"
 #include "backend/discovery/providers/PulseGeneratorProvider.h"
 #include "backend/processing/EModulusLutCatalog.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -473,9 +474,14 @@ namespace backend
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         // Nothing connects or moves here: the shell applies the stage block
         // and calls startup(), which is read-only by default (ADR 0013 §5).
+        // Home needs a supervised limit-switch record for the controller,
+        // written only by `zc300ctl verify-limits --supervised` (#464).
         stageService_ = std::make_unique<services::StageService>(
-            *serialBusManager_, std::make_unique<services::FileStageReferenceStore>(
-                                    (std::filesystem::path(dataDir) / "stage_reference.json").string()));
+            *serialBusManager_,
+            std::make_unique<services::FileStageReferenceStore>(
+                (std::filesystem::path(dataDir) / "stage_reference.json").string()),
+            std::make_shared<stage::LimitsVerificationStore>(
+                (std::filesystem::path(dataDir) / "stage_limits_verified.json").string()));
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
         dotGridService_ = std::make_unique<services::DotGridService>();
         dotGridService_->setFrameStore(frameStore_);
@@ -494,6 +500,9 @@ namespace backend
         deviceDiscovery_->registerProvider(discovery::NanopositionerProvider::production());
         deviceDiscovery_->registerProvider(
             std::make_unique<discovery::PulseGeneratorProvider>(*pulseGeneratorService_));
+        // Z stage (#464): identity-only FC04 reads over an explicit scope;
+        // never connects, homes or moves (ADR 0013 §5).
+        deviceDiscovery_->registerProvider(std::make_unique<discovery::Zc300Provider>(*serialBusManager_));
         const auto captureBusy = [this] { return captureService_ && captureService_->isRunning(); };
         deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Camera, captureBusy);
         deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Framegrabber, captureBusy);
