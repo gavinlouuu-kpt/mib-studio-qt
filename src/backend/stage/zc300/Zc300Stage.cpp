@@ -63,7 +63,7 @@ public:
             stage_.held_ = true;
             owned_ = true;
             stage_.holderIsStop_ = kind == Kind::Stop;
-            if (stage_.grantLogEnabled_) stage_.grantLog_.push_back(code);
+            stage_.recordGrantLocked(code);
             return;
         }
         Waiter waiter;
@@ -110,7 +110,7 @@ public:
             stage_.consecutiveStops_ = 0;
         }
         if (next) { // direct hand-off: held_ stays true
-            if (stage_.grantLogEnabled_) stage_.grantLog_.push_back(next->kind);
+            stage_.recordGrantLocked(next->kind);
             next->granted = true;
             stage_.gateCv_.notify_all();
         } else {
@@ -247,6 +247,12 @@ std::size_t Zc300Stage::waitingCalls() const
     return stopQueue_.size() + commandQueue_.size() + pollQueue_.size();
 }
 
+void Zc300Stage::recordGrantLocked(char kind) const
+{
+    // Test hook only; bounded so that enabling it can never grow without limit.
+    if (grantLogEnabled_ && grantLog_.size() < kGrantLogLimit) grantLog_.push_back(kind);
+}
+
 void Zc300Stage::enableGrantLog()
 {
     std::lock_guard<std::mutex> lock(gate_);
@@ -272,9 +278,11 @@ StageError Zc300Stage::readLocked(int reg, std::uint16_t count, Frame& data)
     if (!bus_) return StageError::NotConnected;
     const Frame request = buildRead(address_, reg, count);
     for (int attempt = 0; attempt <= timing_.silenceRetries; ++attempt) {
-        // A Stop waiting for the driver must not sit behind the rest of a silent
-        // controller's retries (up to 4 x transactionMs): give way between attempts.
-        if (attempt > 0 && stopWaiting()) return StageError::Stopped;
+        // A Stop waiting for the driver must not sit behind further transactions of the
+        // call in flight, retries or not (up to 4 x transactionMs each): give way before
+        // every one. This also covers a lost-ack reconciliation read and each write of a
+        // profile apply, Save included: it is not started while a Stop waits.
+        if (stopWaiting()) return StageError::Stopped;
         const auto t = bus_->transact(request, timing_.transactionMs);
         if (t.error == serialbus::BusError::Timeout) continue;
         if (t.error != serialbus::BusError::None) return fromBus(t);
@@ -288,7 +296,7 @@ StageError Zc300Stage::writeLocked(const Frame& request, int timeoutMs)
 {
     if (!bus_) return StageError::NotConnected;
     for (int attempt = 0; attempt <= timing_.silenceRetries; ++attempt) {
-        if (attempt > 0 && stopWaiting()) return StageError::Stopped; // see readLocked
+        if (stopWaiting()) return StageError::Stopped; // see readLocked
         const auto t = bus_->transact(request, timeoutMs);
         if (t.error == serialbus::BusError::Timeout) continue;
         return fromBus(t);

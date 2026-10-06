@@ -101,18 +101,24 @@ public:
     }
     bool clear() override
     {
+        struct Mark { std::atomic<bool>& f; explicit Mark(std::atomic<bool>& x) : f(x) { f = true; } ~Mark() { f = false; } } mark(inClear_);
+        if (clearDelayMs_.load() > 0) std::this_thread::sleep_for(std::chrono::milliseconds(clearDelayMs_.load()));
         if (failClear_.load()) return false; // a failed deletion: the old record stays on disk
         inner_->clear();
         log_->add(StoreEvent{StoreEvent::Clear, 0, std::nullopt});
         return true;
     }
     void setFailSave(bool on) { failSave_.store(on); }
+    void setClearDelayMs(int ms) { clearDelayMs_.store(ms); }
+    bool inClear() const { return inClear_.load(); }
 
 private:
     std::shared_ptr<MemoryStageReferenceStore> inner_;
     std::shared_ptr<EventLog> log_;
     std::atomic<bool> failClear_;
     std::atomic<bool> failSave_;
+    std::atomic<int> clearDelayMs_{0};
+    std::atomic<bool> inClear_{false};
 };
 
 // A reconnect at any point of the log must recognise the same power-up: a record
@@ -967,6 +973,17 @@ int main()
                    "the result is a failure, not a success: " + detail);
         recording->setFailSave(false);
         MIB_EXPECT(!svc->snapshot().zeroSet && svc->moveTo(0).error == StageError::ZeroNotSet, "nothing is trusted");
+        // After a reconnect the stored interim record (first zero: token 0, next token = the
+        // controller's) is recognised: the declaration is still required.
+        svc.reset();
+        auto again = rig.service();
+        MIB_REQUIRE(again->startup() == StageError::None, "reconnect");
+        MIB_EXPECT(!again->snapshot().zeroSet, "no zero is restored");
+        MIB_EXPECT(rig.store->load().has_value(), "the interim record is kept");
+        std::string refusal;
+        MIB_EXPECT(again->setZero(false, &refusal) == StageError::OutOfSoftLimits && refusal.find("interrupted") != std::string::npos,
+                   "an undeclared zero is still refused after the reconnect: " + refusal);
+        MIB_EXPECT(again->setZero(true, &refusal) == StageError::None, "a declaration re-establishes it");
     }
 
     // 4. After a token rotation the replacement record keeps being retried, so the
@@ -1050,6 +1067,77 @@ int main()
         MIB_EXPECT(!svc->snapshot().zeroSet, "the zero is not restored once the token matches again");
         const auto k = rig.store->load();
         MIB_EXPECT(k.has_value() && !k->zeroValid, "its record says so, keeping the window");
+    }
+
+    // Final review: a token rotation whose replacement record never reached the disk must
+    // not read as a power cycle after a restart.
+    watchdog.mark("rotation without a stored replacement, then restart");
+    {
+        StageRig rig;
+        rig.device.setLimits(-20000, 20000);
+        auto log = std::make_shared<EventLog>();
+        auto* recording = new RecordingStore(rig.store, log, false, false);
+        std::uint16_t tokenAtZero = 0;
+        {
+            auto svc = rig.serviceWithStore(rig.config(), std::unique_ptr<IStageReferenceStore>(recording));
+            MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc) && moveTo(*svc, 900), "zero, then +900 um");
+            tokenAtZero = rig.device.scratch();
+            recording->setFailSave(true); // and the disk never comes back
+            rig.device.setDriverAlarm(true);
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().zeroSet; }), "an alarm drops the zero");
+            MIB_REQUIRE(waitFor([&] { return rig.device.scratch() != tokenAtZero; }), "the token is rotated");
+        }
+        rig.device.setDriverAlarm(false);
+        auto svc = rig.service(); // restart over the stale record; the controller token is non-zero and new
+        MIB_REQUIRE(svc->startup() == StageError::None, "restart");
+        MIB_EXPECT(!svc->snapshot().zeroSet, "no zero is restored");
+        std::string detail;
+        MIB_EXPECT(svc->setZero(false, &detail) == StageError::OutOfSoftLimits, "an undeclared zero is refused: this is not a power cycle: " + detail);
+        MIB_EXPECT(svc->setZero(true, &detail) == StageError::None, "a declaration is the way out");
+        // A real power cycle (the register reads 0) is a new power-up with a fresh window.
+        svc.reset();
+        rig.device.powerCycle();
+        auto fresh = rig.service();
+        MIB_REQUIRE(fresh->startup() == StageError::None && zero(*fresh), "zero after a power cycle needs no declaration");
+        MIB_EXPECT(fresh->snapshot().envelopeMaxUm == 1000.0, "and gets a fresh window");
+    }
+
+    // Final review: Set zero publishes the status it reads, so a fault that is gone by
+    // the next poll still costs the existing zero.
+    watchdog.mark("set zero sees a fault");
+    {
+        StageRig rig;
+        auto cfg = rig.config();
+        cfg.pollIdleMs = 60000; // no poll will notice
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "zero");
+        rig.device.setEmergencyStop(true);
+        std::string detail;
+        MIB_EXPECT(svc->setZero(false, &detail) == StageError::EmergencyStop, "refused during the e-stop");
+        rig.device.setEmergencyStop(false); // gone before any poll
+        MIB_EXPECT(!svc->snapshot().zeroSet, "but the old zero is already dropped");
+        MIB_EXPECT(!svc->moveTo(0).accepted(), "and no motion can use it");
+    }
+
+    // Final review: file I/O never runs under the service lock, so a slow store cannot
+    // hold stop() or snapshot().
+    watchdog.mark("slow store does not block stop");
+    {
+        StageRig rig;
+        auto log = std::make_shared<EventLog>();
+        auto* recording = new RecordingStore(rig.store, log, false, false);
+        auto svc = rig.serviceWithStore(rig.config(), std::unique_ptr<IStageReferenceStore>(recording));
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "zero");
+        recording->setClearDelayMs(1500);
+        rig.device.powerCycle(); // the next poll drops the record: a deletion that takes 1.5 s
+        MIB_REQUIRE(waitFor([&] { return recording->inClear(); }, 4000), "the slow deletion started");
+        const auto t0 = std::chrono::steady_clock::now();
+        svc->stop();
+        const auto snap = svc->snapshot();
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        MIB_EXPECT(ms < 400, "stop() and snapshot() did not wait for the deletion (" + std::to_string(ms) + " ms)");
+        MIB_EXPECT(!snap.zeroSet, "the zero is already dropped in memory");
+        recording->setClearDelayMs(0);
     }
 
     // 6b. The same when the fault is already there at connect (the first poll comes later).

@@ -81,11 +81,23 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   `FileStageReferenceStore::save` writes, flushes, fsyncs and closes before it
   renames, so a close-time failure cannot replace the record with a truncated file.
 - **Power-up detection.** The token is compared with the controller's on every
-  idle status poll, before every Set zero and before every motion opcode. A
-  mismatch (a power cycle while connected) drops the zero, the window and the
-  stored record (`ZeroNotSet`). A token that cannot be read fails the move.
-  At reconnect an unreadable token is *unknown*, not a mismatch: the record is
-  kept, motion is refused, and the next successful poll (or Set zero) decides.
+  idle status poll, before every Set zero and before every motion opcode, and
+  read as one of three verdicts (`classifyToken`):
+  - **0 = a new power-up** (a power cycle clears the register): the zero, the
+    window and the stored record are all gone; the next zero gets a fresh window.
+  - **matches the record's `token` or `nextToken`** (an interrupted Set zero is
+    the second case, including the *first* zero, whose interim record has token 0):
+    the same power-up; the record is kept as stored.
+  - **non-zero and matches nothing**: the token was changed by something that
+    never reached the disk (a rotation whose replacement record was not stored)
+    or by another host. That is **not** a power cycle: the zero is dropped and the
+    window is uncertain, so an undeclared re-zero is refused until the operator
+    declares mid-travel. The same applies at reconnect, also with no record at
+    all, and is persisted.
+  A token that cannot be read fails the move; at reconnect it is *unknown*: the
+  record is kept, motion refused, and the next successful poll (or Set zero)
+  decides. Relies on the register being cleared at power-up: part of hardware
+  acceptance.
 - **`power_up_token_register: 0` is hardware-acceptance only.** Config refuses
   it unless `reference.allow_session_only_zero: true` is set too (`setConfig`
   refuses it as well). It turns power-cycle detection off and persists nothing;
@@ -101,6 +113,12 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   undeclared Set zero must still be inside it, so a fault cannot be used to
   start a fresh ±1000 µm. Only a new power-up (token change) or a
   mid-travel declaration starts a new window. An operator Stop keeps the zero.
+- **No file I/O under the service lock.** Deleting a stored record is queued
+  (`storeClearPending_`) and done by the worker right after, outside `mutex_`
+  (`flushStoreClear`), as are saves, the port enumeration and the limit-record
+  read, so a slow disk cannot hold `stop()` or `snapshot()`.
+- **Set zero publishes the status it reads**, exactly as a poll would: a fault seen
+  there drops the existing zero too, even if it clears before the next poll.
 - **The invalidation is made durable by the worker** after the job or poll that
   caused it (`persistInvalidation`). If the store refuses the write, the
   controller token is rotated (once), so a stale "valid" record can never match

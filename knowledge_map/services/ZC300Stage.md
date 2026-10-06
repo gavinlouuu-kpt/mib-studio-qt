@@ -90,13 +90,16 @@ bus session's call mutex is innermost (see [[SerialBus]]).
   right before **every** motion opcode (move, relative move, jog), after the
   target write, and without a caller-supplied value it is read when the call
   starts, so a Stop queued behind a call in flight still wins.
-- **Stop latency.** While a Stop waits for the driver, the retries of the call in
-  flight give way between attempts (`Stopped`) instead of burning through
-  4 × `transactionMs`, so a Stop sits behind at most one transaction. A profile
-  Save (up to 3 s) is not interruptible, but it only runs on an idle axis with
-  no operation (the service admits nothing meanwhile), so no motion is pending.
+- **Stop latency.** While a Stop waits for the driver, the call in flight gives way
+  before **every** further transaction (`Stopped`): retries, a lost-ack
+  reconciliation read, each configuration write of a profile apply, and the Save
+  (which is not started while a Stop waits). A Stop therefore sits behind at most
+  the one transaction in progress (up to `transactionMs`). A Save already running
+  (up to 3 s) is not interruptible, but it only runs on an idle axis with no
+  operation.
 - **Test hook:** `enableGrantLog()` / `grantLog()` record the order in which calls
-  were *granted* (S stop, C command, P poll, L lifecycle); tests assert on it,
+  were *granted* (S stop, C command, P poll, L lifecycle; off by default, at most 4096
+  entries); tests assert on it,
   not on the order threads happened to return (#532).
 - A command or poll that cannot get the driver within 15 s returns `Busy`.
   `disconnect()` waits its turn however long it takes, because teardown must

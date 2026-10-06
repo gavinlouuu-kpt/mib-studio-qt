@@ -47,6 +47,13 @@ stage.
   token is unknown still drops the zero, and the record file is flushed, fsynced
   and closed before the rename. The #532 stop-storm test now measures the
   driver's grant order.
+- **Final review round (Codex, #531):** the power-up token is read as new power-up
+  (0), same lifetime (matches the record's old or new token) or uncertain (changed,
+  matches nothing: not a power cycle, window uncertain); the first zero's interim
+  record is recognised; Set zero publishes the status it reads; a Stop is yielded
+  to before every driver transaction, not just retries; no file I/O under the
+  service lock; the grant-log test hook is bounded. The experiment-lock gap
+  (#533) is a separate issue.
 - **Known limitation:** the counter is open-loop; a hand move or stall is
   invisible to the software.
 - **Next:** the first real Set zero (one register write plus a read-back) needs

@@ -56,8 +56,8 @@ public:
     // Calls currently queued for the driver (diagnostics and tests).
     std::size_t waitingCalls() const;
     // Test hook: records the kind of every call in the order the driver *granted* it
-    // (S stop, C command, P poll, L lifecycle). Unlike the order in which threads
-    // return, it does not depend on scheduling.
+    // (S stop, C command, P poll, L lifecycle), at most kGrantLogLimit entries. Off by
+    // default. Unlike the order in which threads return, it does not depend on scheduling.
     void enableGrantLog();
     std::string grantLog() const;
 
@@ -103,6 +103,8 @@ private:
     mutable std::deque<Waiter*> stopQueue_;    // Stop only: served first
     mutable std::deque<Waiter*> commandQueue_; // commands and teardown
     mutable int consecutiveStops_{0};
+    static constexpr std::size_t kGrantLogLimit{4096};
+    void recordGrantLocked(char kind) const; // under gate_
     mutable bool grantLogEnabled_{false};
     mutable std::string grantLog_; // under gate_
     mutable std::deque<Waiter*> pollQueue_;

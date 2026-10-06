@@ -322,7 +322,9 @@ int main()
                 while (!done.load()) { // deliberately no pause between polls
                     StageStatus s;
                     const auto t0 = std::chrono::steady_clock::now();
-                    if (stage.readStatus(s) != StageError::None) pollErrors.fetch_add(1);
+                    const StageError e = stage.readStatus(s);
+                    // Giving way to a Stop that is waiting for the driver is the intended outcome, not an error.
+                    if (e != StageError::None && e != StageError::Stopped) pollErrors.fetch_add(1);
                     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
                     long long seen = worstPollMs.load();
                     while (ms > seen && !worstPollMs.compare_exchange_weak(seen, ms)) {}
@@ -500,6 +502,51 @@ int main()
         MIB_EXPECT(stopMs < 1000, "Stop got through in under 1 s although a poll was retrying (" + std::to_string(stopMs) + " ms)");
         MIB_EXPECT(pollResult == StageError::Stopped, "the poll gave way instead of finishing its retries");
         MIB_EXPECT(device.opcodeCount(0x68) + device.opcodeCount(0x67) >= 1, "the stop opcode reached the fake");
+    }
+
+    // Final review of #531: a Stop yields between successive transactions of the
+    // call in flight too, not only between retries.
+    watchdog.mark("stop during lost-ack reconciliation");
+    {
+        FakeZc300 device;
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager); // 500 ms transactions
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.dropNextMotionAck(); // the opcode is executed, its reply never arrives
+        device.setSilentReads(true); // and the status read that reconciles it would burn 4 x 500 ms
+        StageError moveResult = StageError::None;
+        std::thread mover([&] { moveResult = stage.moveRelative(50); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // inside the opcode's 500 ms wait
+        const auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop gets through");
+        const long long stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        mover.join();
+        device.setSilentReads(false);
+        MIB_EXPECT(stopMs < 800, "Stop waited for the opcode's timeout only, not for the reconciliation read (" + std::to_string(stopMs) + " ms)");
+        MIB_EXPECT(moveResult == StageError::LostAck, "the move reports an unacknowledged opcode instead of reconciling");
+    }
+    watchdog.mark("stop during profile apply");
+    {
+        FakeZc300 device(mib::test::FakeZc300Config{0, 0, 4.0f, 1600}); // factory settings: a profile apply is needed
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setReplyDelayMs(100); // every transaction takes ~100 ms
+        StageError applyResult = StageError::None;
+        std::thread applier([&] { applyResult = stage.applyProfile(tbzf6_60Profile()); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(150)); // among the configuration writes
+        const auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop gets through");
+        const long long stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        applier.join();
+        device.setReplyDelayMs(0);
+        MIB_EXPECT(device.saves() == 0, "the Save was never started while a Stop was waiting");
+        MIB_EXPECT(applyResult == StageError::Stopped, "the apply gave way");
+        MIB_EXPECT(stopMs < 450, "Stop waited for one transaction, not the whole apply (" + std::to_string(stopMs) + " ms)");
     }
 
     // Stop goes to the front of the line. A reviewer found that Stop shared the

@@ -271,6 +271,7 @@ private:
     // thread, outside every lock). If that fails, the controller's token is
     // rotated instead, so a stale valid record can never match again.
     void persistInvalidation();
+    void flushStoreClear(); // worker only, outside every lock
     std::uint16_t distinctToken(std::initializer_list<std::uint16_t> avoid);
     // Compares the controller's power-up token with the one this zero was set
     // under, dropping everything on a mismatch (ZeroNotSet). A read error is
@@ -297,6 +298,7 @@ private:
     bool haveZeroRecord_{false};
     // An invalidation (zeroValid = false) is not durable yet.
     bool persistPending_{false};
+    bool storeClearPending_{false}; // delete the stored record, outside mutex_ (flushStoreClear)
     bool rotatedForPending_{false}; // the token was already rotated for this pending invalidation
     // After a reconnect the token could not be read: the record is kept, motion is
     // refused, and the next poll decides (same power-up or not).

@@ -69,6 +69,43 @@ Envelope envelopeOf(const StageReferenceRecord& r, const StageConfig& cfg)
     return {std::ceil(std::max(-base, r.windowMinUm) - 1e-6), std::floor(std::min(base, r.windowMaxUm) + 1e-6)};
 }
 
+enum class TokenVerdict { FreshPowerUp, SameLifetime, Uncertain };
+
+// What the controller's power-up token says about a stored record. A power cycle
+// clears the register to 0, so a 0 is a new power-up (and the old window is gone).
+// A non-zero token that matches neither token of the record means it was changed by
+// something that never reached the disk (a token rotation or an interrupted Set
+// zero whose record was not stored) or by another host: the same power-up, but
+// nothing about the zero or its window can be trusted (fail closed).
+TokenVerdict classifyToken(std::uint16_t controller, const std::optional<StageReferenceRecord>& record)
+{
+    if (controller == 0) return TokenVerdict::FreshPowerUp;
+    if (record && ((record->token != 0 && controller == record->token) ||
+                   (record->nextToken != 0 && controller == record->nextToken))) {
+        return TokenVerdict::SameLifetime;
+    }
+    return TokenVerdict::Uncertain;
+}
+
+// The record that stands for "this power-up is known to be in use, zero invalid,
+// window unknown": nothing is trusted until the operator declares mid-travel.
+StageReferenceRecord uncertainRecord(const std::optional<StageReferenceRecord>& previous, const std::string& serial,
+                                     std::uint16_t controllerToken, const StageConfig& cfg)
+{
+    StageReferenceRecord r;
+    if (previous) r = *previous;
+    else {
+        r.windowMinUm = -cfg.envelope.defaultUm;
+        r.windowMaxUm = cfg.envelope.defaultUm;
+    }
+    r.controllerSerial = serial;
+    r.token = controllerToken;
+    r.nextToken = 0;
+    r.zeroValid = false;
+    r.frameUncertain = true;
+    return r;
+}
+
 // Errors that mean the open-loop counter may no longer match the stage.
 bool losesReference(StageError e)
 {
@@ -548,9 +585,23 @@ void StageService::resetPowerUpLocked(const char* why)
     haveZeroRecord_ = false;
     persistPending_ = false;
     tokenUnverified_ = false;
-    // A record of another power-up can never match the controller's token, so a
-    // failed deletion is harmless; it is only logged by the store.
-    store_->clear();
+    // File I/O never runs under mutex_ (stop() and snapshot() take it): the worker
+    // deletes the record right after, outside the lock (flushStoreClear). A record
+    // of another power-up can never match the controller's token anyway.
+    storeClearPending_ = true;
+}
+
+void StageService::flushStoreClear()
+{
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!storeClearPending_) return;
+        storeClearPending_ = false;
+    }
+    if (!store_->clear()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        storeClearPending_ = true; // retried; harmless meanwhile (see above)
+    }
 }
 
 void StageService::setTokenSourceForTest(std::function<std::uint16_t()> source)
@@ -578,6 +629,7 @@ std::uint16_t StageService::distinctToken(std::initializer_list<std::uint16_t> a
 
 void StageService::persistInvalidation()
 {
+    flushStoreClear();
     StageReferenceRecord rec;
     bool rotated = false;
     {
@@ -631,37 +683,50 @@ void StageService::persistInvalidation()
 
 StageError StageService::checkPowerUp(const std::shared_ptr<stage::IMotionStage>& d)
 {
-    std::uint16_t expected = 0;
-    std::uint16_t next = 0;
+    std::optional<StageReferenceRecord> record;
+    std::string serial;
+    StageConfig cfg;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!haveZeroRecord_ || config_.reference.powerUpTokenRegister == 0) return StageError::None;
-        expected = zeroRecord_.token;
-        next = zeroRecord_.nextToken;
+        if (config_.reference.powerUpTokenRegister == 0) return StageError::None;
+        if (!haveZeroRecord_ && !tokenUnverified_) return StageError::None;
+        if (haveZeroRecord_) record = zeroRecord_;
+        serial = snapshot_.identity.serial;
+        cfg = config_;
     }
-    if (expected == 0) return StageError::None;
     std::uint16_t token = 0;
     if (const StageError err = d->readPowerUpToken(token); err != StageError::None) return err;
-    if (token == expected || (next != 0 && token == next)) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        zeroRecord_.token = token; // an interrupted Set zero: the controller holds the new one
-        zeroRecord_.nextToken = 0;
-        if (tokenUnverified_) {
-            // The reconnect could not read the token; it matches, so the same
-            // power-up: the zero is restored if it was valid and nothing is faulted.
-            tokenUnverified_ = false;
-            if (zeroRecord_.zeroValid && !zeroRecord_.frameUncertain && !snapshot_.status.emergencyStop &&
-                !snapshot_.status.driverAlarm) {
-                adoptZeroLocked(zeroRecord_);
-            } else if (zeroRecord_.zeroValid) {
-                invalidateZeroLocked("e-stop or driver alarm while the token was unverified");
-            }
-        }
-        return StageError::None;
-    }
     std::lock_guard<std::mutex> lock(mutex_);
-    resetPowerUpLocked("the controller was power-cycled (power-up token changed)");
-    return StageError::ZeroNotSet;
+    switch (classifyToken(token, record)) {
+    case TokenVerdict::FreshPowerUp:
+        resetPowerUpLocked("the controller was power-cycled (power-up token cleared)");
+        return StageError::ZeroNotSet;
+    case TokenVerdict::Uncertain: {
+        SPDLOG_WARN("StageService: the power-up token changed without a matching record; the zero and its window "
+                    "are not trusted until the operator sets zero again, declaring mid-travel");
+        invalidateZeroLocked("the power-up token no longer matches the stored record");
+        zeroRecord_ = uncertainRecord(record, serial, token, cfg);
+        haveZeroRecord_ = true;
+        tokenUnverified_ = false;
+        persistPending_ = true;
+        return StageError::ZeroNotSet;
+    }
+    case TokenVerdict::SameLifetime: break;
+    }
+    zeroRecord_.token = token; // an interrupted Set zero: the controller holds the new one
+    zeroRecord_.nextToken = 0;
+    if (tokenUnverified_) {
+        // The reconnect could not read the token; it matches, so the same
+        // power-up: the zero is restored if it was valid and nothing is faulted.
+        tokenUnverified_ = false;
+        if (zeroRecord_.zeroValid && !zeroRecord_.frameUncertain && !snapshot_.status.emergencyStop &&
+            !snapshot_.status.driverAlarm) {
+            adoptZeroLocked(zeroRecord_);
+        } else if (zeroRecord_.zeroValid) {
+            invalidateZeroLocked("e-stop or driver alarm while the token was unverified");
+        }
+    }
+    return StageError::None;
 }
 
 void StageService::invalidateZero(const char* why)
@@ -776,29 +841,52 @@ std::pair<StageError, std::string> StageService::doConnect()
     // refused, and the next poll decides.
     std::optional<StageReferenceRecord> restored;
     bool unverified = false;
+    bool uncertain = false;
     if (cfg.reference.powerUpTokenRegister != 0 && d->isConfigured()) {
-        if (const auto record = store_->load()) {
-            std::uint16_t token = 0;
-            if (record->controllerSerial != identity.serial || record->token == 0) {
-                SPDLOG_INFO("StageService: stored zero belongs to another controller; Set zero here required");
-                store_->clear();
-            } else if (const StageError tokenErr = d->readPowerUpToken(token); tokenErr != StageError::None) {
-                SPDLOG_WARN("StageService: power-up token not readable at connect ({}); the stored zero is kept but "
-                            "not trusted until it can be checked",
-                            stage::toString(tokenErr));
-                restored = record;
-                unverified = true;
-            } else if (token == record->token || (record->nextToken != 0 && token == record->nextToken)) {
+        flushStoreClear();
+        auto record = store_->load();
+        if (record && record->controllerSerial != identity.serial) {
+            SPDLOG_INFO("StageService: stored zero belongs to another controller; ignored");
+            store_->clear();
+            record.reset();
+        }
+        std::uint16_t token = 0;
+        if (const StageError tokenErr = d->readPowerUpToken(token); tokenErr != StageError::None) {
+            SPDLOG_WARN("StageService: power-up token not readable at connect ({}); a stored zero is kept but not "
+                        "trusted until it can be checked",
+                        stage::toString(tokenErr));
+            restored = record; // may be empty: the next poll classifies the token anyway
+            unverified = true;
+        } else {
+            switch (classifyToken(token, record)) {
+            case TokenVerdict::FreshPowerUp:
+                if (record) {
+                    SPDLOG_INFO("StageService: stored zero no longer valid (power cycle); Set zero here required");
+                    store_->clear();
+                }
+                break;
+            case TokenVerdict::SameLifetime:
                 restored = record;
                 restored->token = token; // an interrupted Set zero: the controller holds the new token
                 restored->nextToken = 0;
-                SPDLOG_INFO("StageService: controller {} kept the operator's zero since power-up", identity.serial);
-            } else {
-                SPDLOG_INFO("StageService: stored zero no longer valid (power cycle); Set zero here required");
-                store_->clear();
+                SPDLOG_INFO("StageService: controller {} kept the operator's zero record since power-up", identity.serial);
+                break;
+            case TokenVerdict::Uncertain:
+                SPDLOG_WARN("StageService: the controller's power-up token matches no stored record; nothing is trusted "
+                            "until the operator sets zero again, declaring mid-travel");
+                restored = uncertainRecord(record, identity.serial, token, cfg);
+                uncertain = true;
+                break;
             }
         }
     }
+    std::string systemPort = cfg.endpoint.systemPort;
+    if (systemPort.empty()) {
+        for (const auto& port : serialbus::availablePorts()) { // enumeration: not under the service lock
+            if (port.serialNumber == cfg.endpoint.usbSerial) systemPort = port.systemName;
+        }
+    }
+    const bool limitsVerified = limitsVerifiedFor(identity.serial); // file read, outside the lock
 
     StageStatus status;
     const StageError statusErr = d->readStatus(status);
@@ -810,13 +898,8 @@ std::pair<StageError, std::string> StageService::doConnect()
         snapshot_.connected = true;
         snapshot_.configured = d->isConfigured();
         snapshot_.identity = identity;
-        snapshot_.limitsVerified = limitsVerifiedFor(identity.serial);
-        snapshot_.systemPort = cfg.endpoint.systemPort;
-        if (snapshot_.systemPort.empty()) {
-            for (const auto& port : serialbus::availablePorts()) {
-                if (port.serialNumber == cfg.endpoint.usbSerial) snapshot_.systemPort = port.systemName;
-            }
-        }
+        snapshot_.limitsVerified = limitsVerified;
+        snapshot_.systemPort = systemPort;
         snapshot_.spanUm = cfg.reference.expectedSpanUm;
         zeroRecord_ = StageReferenceRecord{};
         haveZeroRecord_ = false;
@@ -824,11 +907,13 @@ std::pair<StageError, std::string> StageService::doConnect()
         snapshot_.sessionOnlyZero = cfg.reference.powerUpTokenRegister == 0;
         persistPending_ = false;
         tokenUnverified_ = false;
+        if (unverified && !restored) tokenUnverified_ = true; // no record: the next poll still classifies the token
         if (restored) {
             // The window of this power-up is kept either way.
             zeroRecord_ = *restored;
             haveZeroRecord_ = true;
             tokenUnverified_ = unverified;
+            persistPending_ = uncertain; // an invented record is written out
             // An e-stop or driver alarm at connect means the counter may be
             // off: do not trust a stored zero. An unverified token is resolved
             // by the next poll (checkPowerUp), not here.
@@ -1136,10 +1221,14 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
     if (const StageError err = checkPowerUp(d); err != StageError::None && err != StageError::ZeroNotSet) {
         return {err, "could not read the controller's power-up token"};
     }
+    flushStoreClear(); // a record dropped by the check above is gone before anything is saved
     StageStatus status;
     if (const StageError err = d->readStatus(status); err != StageError::None) {
         return {err, "could not read the stage status"};
     }
+    // Exactly as a poll would: a fault seen here drops the existing zero too, even if
+    // it clears before the next poll (and a stored-but-untrusted zero as well).
+    publishStatus(status);
     if (status.emergencyStop) return {StageError::EmergencyStop, "emergency stop is active"};
     if (status.driverAlarm || status.state == MoveState::Faulted) {
         return {StageError::DriverAlarm, "the driver reports an alarm"};
