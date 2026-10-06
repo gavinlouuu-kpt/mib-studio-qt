@@ -50,10 +50,24 @@ const Json* object(const Json& parent, const char* key, const std::string& where
     return &*it;
 }
 
+// Same precondition as the local-profile apply (app/ProfileStore.cpp):
+// nothing that reads these settings may be running. Raw recording runs with
+// the experiment idle, and the capture worker reads its Config unsynchronised,
+// so a live change would race it (#493 review). Empty = free to apply.
+std::string busyReason(AppBackend& backend) {
+    if (backend.isFrameRecording()) return "Stop raw recording before applying a method";
+    if (backend.capture().isRunning() || backend.autofocus().isEnabled() ||
+        backend.processing().isRealtimeRunning())
+        return "Stop capture/realtime processing and disable autofocus before applying a method";
+    return {};
+}
+
 } // namespace
 
 ConfigApplyReport applyConfigDocument(AppBackend& backend, const std::string& text) {
     ConfigApplyReport report;
+    report.error = busyReason(backend);
+    if (!report.error.empty()) return report;
     Json root;
     try {
         root = Json::parse(text);
@@ -209,6 +223,8 @@ ConfigApplyReport applyCentralMethod(AppBackend& backend, const std::string& rev
         report.error = "An experiment is in progress; apply the method after it ends";
         return report;
     }
+    report.error = busyReason(backend);
+    if (!report.error.empty()) return report;
     const auto plan = planMethodApply(backend.profileRegistry().snapshot(), revisionId, backend.getLastConfigJson());
     if (!plan.ok) {
         report.error = plan.error;

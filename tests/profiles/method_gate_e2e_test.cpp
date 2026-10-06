@@ -132,16 +132,11 @@ int main() {
     proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 96, 96});
     proc.setRealtimeProcessingMode(ProcessingService::RealtimeProcessingMode::Inline);
     proc.setRealtimeBackgroundGray(cv::Mat(96, 96, CV_8UC1, cv::Scalar(5)));
-    proc.startRealtime(backend.getFrameStore());
     camera::mock::MockCameraOptions opts;
     opts.folder = frames;
     opts.frameInterval = std::chrono::microseconds(2000);
     opts.loopFiles = true;
     backend.configureMockCamera(opts);
-    MIB_REQUIRE(backend.capture().requestStart() == backend::services::CaptureStartOutcome::Accepted,
-                "capture start");
-    MIB_REQUIRE(waitFor([&] { return backend.capture().stats().framesProcessed.load() > 2; }, 5s),
-                "frames flowing");
 
     const std::string out = (td.path() / "run-central.h5").string();
 
@@ -175,6 +170,18 @@ int main() {
         MIB_EXPECT(!revoked.ok && revoked.error.find("revoked") != std::string::npos &&
                        backend.getLastConfigJson() == r1Config,
                    "a revoked revision is not applied");
+    }
+    // Apply needs capture and realtime stopped (as the local-profile apply
+    // does); start them only now, for the readiness check and the runs.
+    proc.startRealtime(backend.getFrameStore());
+    MIB_REQUIRE(backend.capture().requestStart() == backend::services::CaptureStartOutcome::Accepted,
+                "capture start");
+    MIB_REQUIRE(waitFor([&] { return backend.capture().stats().framesProcessed.load() > 2; }, 5s),
+                "frames flowing");
+    {
+        const auto live = backend::app::applyCentralMethod(backend, "r1");
+        MIB_EXPECT(!live.ok && live.error.find("Stop capture") != std::string::npos,
+                   "Apply is refused while capture runs");
     }
     r = coord.evaluateReadiness(out);
     dumpGates(r);

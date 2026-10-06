@@ -12,6 +12,10 @@
 // services updated, and finally the exact text is recorded as the applied
 // config.json (AppBackend::setLastConfigJson), which is what the method gate
 // and run provenance match. A malformed document changes nothing.
+// Refused (nothing changed) while a raw recording, live capture, realtime
+// processing or autofocus runs — the local-profile apply's precondition: the
+// capture worker reads its Config unsynchronised, and raw recording runs with
+// the experiment idle.
 // Sections this shell cannot apply (dot_grid, which needs the Qt registry
 // loader; display_fps, a Qt display setting) are reported, never silently
 // dropped.
@@ -37,7 +41,8 @@ ConfigApplyReport applyConfigDocument(AppBackend& backend, const std::string& co
 
 // Apply a central revision exactly (#398 M2c): refused while an experiment is
 // starting, active or stopping (a running experiment keeps its frozen
-// method); otherwise planMethodApply (cached, published/superseded,
+// method) and under the same conditions as applyConfigDocument; otherwise
+// planMethodApply (cached, published/superseded,
 // materialized, untampered) then applyConfigDocument.
 ConfigApplyReport applyCentralMethod(AppBackend& backend, const std::string& revisionId);
 

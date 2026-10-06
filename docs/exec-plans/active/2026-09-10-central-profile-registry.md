@@ -74,10 +74,11 @@ freeze exact revision identity/content into historical runs.
 - [x] M2c: Apply in the React shell through the backend config.json applier
   (`app::applyConfigDocument`: the watcher's section semantics, staged and
   fail-closed, exact text recorded; dot_grid / display_fps reported as Qt-only;
-  refused while a run is in flight).
+  refused while a run is in flight, and while raw recording, capture, realtime
+  or autofocus runs — the local-profile apply's precondition, adopted after the
+  #493 review).
 - [ ] M2c: reconcile `app::applyConfigDocument` with develop's local-profile
-  apply (`app/ProfileStore.cpp`, arrived with #450): it also refuses while
-  capture/realtime/autofocus run, bounds every value, validates the ROI against a
+  apply (`app/ProfileStore.cpp`, arrived with #450): it also bounds every value, validates the ROI against a
   captured frame and applies `realtime_processing.enabled` / `drop_frames`;
   share one validated applier, keeping exact-text recording for central methods.
 - [ ] M2c: persist the applied method across Tauri restarts (today it lives in

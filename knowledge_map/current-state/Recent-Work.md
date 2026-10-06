@@ -439,10 +439,15 @@ Apply: same section semantics as the Qt `AppConfigWatcher` (v2
 `difference_threshold`, Laplacian keys, contract version, buffers, realtime,
 delivery mode, pixel factor, autofocus, ROI), staged and fail-closed, exact
 text recorded as applied; `dot_grid` / `display_fps` reported as Qt-only.
-Refused while a run is in flight. Bridge `registry_plan_apply` /
+Refused while a run is in flight, and (like the local-profile apply) while
+raw recording, live capture, realtime processing or autofocus runs: the capture
+worker reads its config unsynchronised, and raw recording runs with the
+experiment idle (both found in review of #493). Bridge `registry_plan_apply` /
 `registry_apply_method` (bridge ABI 29); React previews the changed keys
 before applying. Guards: `backend.config_document_apply`, `e2e.method_gate`
-(applier path + mid-run refusal), bridge cargo, `registry.test.ts`.
+(applier path, mid-run and live-capture refusals), bridge cargo,
+`registry.test.ts`; `backend.config_document_apply` also refuses under live
+mock capture and raw recording with nothing changed.
 
 ## 2026-10-04 — Central method authoring and review UI (#398 M3b)
 

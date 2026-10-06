@@ -378,7 +378,8 @@ Record failed run…** (`@tauri-apps/plugin-dialog` picker →
 `registry_plan_apply` and shows the changed config.json keys and the camera
 script path (`applyConfirmText`); **Apply** then calls `registry_apply_method`,
 which runs the backend config.json applier (`app::applyCentralMethod` →
-`applyConfigDocument`, refused while a run is in flight) and reports applied
+`applyConfigDocument`, refused while a run is in flight or while raw
+recording, capture, realtime processing or autofocus runs) and reports applied
 and not-applicable sections (`applyResultText`). The React shell has no
 config.json file: the applied method lives in the backend for the session.
 

@@ -8,11 +8,15 @@
 //    silently;
 //  - fail closed: a wrong type anywhere, an unsupported contract, a
 //    non-positive pixel factor, invalid JSON or a non-object root change
-//    nothing (services and applied text untouched).
+//    nothing (services and applied text untouched);
+//  - refused while live capture or a raw recording runs (the capture worker
+//    reads its config unsynchronised; recording runs with the experiment
+//    idle), with nothing changed.
 #include "backend/app/AppBackend.h"
 #include "backend/app/ConfigDocumentApply.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/services/CaptureService.h"
 
 #include "support/assert.h"
 #include "support/frames.h"
@@ -20,6 +24,7 @@
 #include "support/watchdog.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <string>
 
@@ -165,6 +170,40 @@ int main() {
     {
         const auto r = backend::app::applyCentralMethod(backend, "unknown-revision");
         MIB_EXPECT(!r.ok && r.error.find("cache") != std::string::npos, "uncached revision refused");
+    }
+
+    watchdog.mark("refused while capturing or recording");
+    {
+        using backend::services::CaptureLifecycleState;
+        const auto applied = backend.getLastConfigJson();
+        const auto before = proc.getProcessingConfig();
+        const auto unchanged = [&](const char* what) {
+            MIB_EXPECT(backend.getLastConfigJson() == applied, what);
+            MIB_EXPECT(proc.getProcessingConfig().area_threshold_max == before.area_threshold_max, what);
+        };
+        MIB_REQUIRE(backend.capture().start(), "mock capture accepted");
+        MIB_REQUIRE(backend.capture().waitForState({CaptureLifecycleState::Running, CaptureLifecycleState::Faulted},
+                                                   std::chrono::seconds(10)) == CaptureLifecycleState::Running,
+                    "mock capture running");
+        // Apply while the capture worker is live: refused before any setter
+        // runs (under TSan, a setConfig here would race the worker).
+        auto r = backend::app::applyConfigDocument(backend, kMethod);
+        MIB_EXPECT(!r.ok && r.error.find("Stop capture") != std::string::npos && r.applied.empty(),
+                   "live capture: apply refused");
+        unchanged("live capture: nothing changed");
+
+        MIB_REQUIRE(backend.startFrameRecording((dir / "raw.h5").string()), "raw recording started");
+        MIB_REQUIRE(backend.isFrameRecording(), "raw recording running");
+        r = backend::app::applyConfigDocument(backend, kMethod);
+        MIB_EXPECT(!r.ok && r.error.find("raw recording") != std::string::npos, "raw recording: apply refused");
+        r = backend::app::applyCentralMethod(backend, "unknown-revision");
+        MIB_EXPECT(!r.ok && r.error.find("raw recording") != std::string::npos,
+                   "raw recording: central method refused before planning");
+        unchanged("raw recording: nothing changed");
+        backend.stopFrameRecording();
+        backend.capture().stop();
+        MIB_EXPECT(!backend.capture().isRunning(), "capture stopped");
+        MIB_EXPECT(backend::app::applyConfigDocument(backend, kMethod).ok, "applies again once stopped");
     }
 
     backend.shutdown();
