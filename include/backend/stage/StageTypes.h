@@ -33,6 +33,7 @@ enum class StageError {
     LostAck,         // a motion command got no reply and status cannot prove it started
     Protocol,
     Transport,
+    ReferenceFailed, // Home: measured span outside tolerance, or a limit not reached
 };
 
 const char* toString(StageError error);

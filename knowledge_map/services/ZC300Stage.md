@@ -3,7 +3,7 @@
 > `IMotionStage` driver for the Zolix ZC300 stepper controller and its
 > TBZF6-60 lift stage, over the shared [[SerialBus]]. Literal and
 > observe-only by default; soft limits, Home and backlash approach belong to
-> the coming `StageService` (ADR 0013, #464).
+> [[StageService]] (ADR 0013, #464).
 
 **Source:**
 - interface: `include/backend/stage/{IMotionStage,StageTypes,StageProfiles}.h`

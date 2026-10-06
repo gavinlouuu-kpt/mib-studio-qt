@@ -6,7 +6,9 @@
 //  - the save opcode acknowledges after ~1.06 s (saveDelayMs);
 //  - in mm mode distances are truncated to 0.001 mm, then rounded to pulses.
 // Every frame, write and opcode is counted so tests can assert exactly what
-// reached the wire. Header-only; include as "support/fake_zc300.h".
+// reached the wire. The physical position (limits, home sensor) is kept apart
+// from the controller's counter, which setPosition and power cycles re-zero.
+// Header-only; include as "support/fake_zc300.h".
 #pragma once
 
 #include "backend/services/ISerialPort.h"
@@ -62,8 +64,17 @@ public:
     {
         locked([&] { negLimit_ = negPulse; posLimit_ = posPulse; });
     }
+    // Physical position; the counter keeps its current offset.
     void setPositionPulses(std::int64_t p) { locked([&] { position_ = p; }); }
-    void setEmergencyStop(bool on) { locked([&] { estop_ = on; }); }
+    // The controller stops pulsing when its e-stop input trips.
+    void setEmergencyStop(bool on)
+    {
+        locked([&] {
+            advance();
+            estop_ = on;
+            if (on) moving_ = jogging_ = false;
+        });
+    }
     void setDriverAlarm(bool on) { locked([&] { alarm_ = on; }); }
     void setEnabled(bool on) { locked([&] { enabled_ = on; }); }
     void setDropAfterMove(bool on) { locked([&] { dropAfterMove_ = on; }); }
@@ -79,7 +90,7 @@ public:
     {
         locked([&] {
             config_ = flash_;
-            position_ = 0;
+            offset_ = position_; // the counter restarts at 0 wherever the stage is
             moving_ = false;
             jogging_ = false;
             scratch_ = 0;
@@ -88,7 +99,9 @@ public:
     }
 
     // --- observations (thread-safe) --------------------------------------
-    std::int64_t positionPulses() { return locked([&] { advance(); return position_; }); }
+    std::int64_t positionPulses() { return locked([&] { advance(); return position_; }); } // physical
+    std::int64_t counterPulses() { return locked([&] { advance(); return position_ - offset_; }); }
+    int lastMoveDirection() { return locked([&] { return static_cast<int>(lastDirection_); }); }
     bool moving() { return locked([&] { advance(); return moving_; }); }
     int frames() { return locked([&] { return frames_; }); }
     int writes() { return locked([&] { return writes_; }); }       // FC06/FC16 frames
@@ -206,7 +219,7 @@ private:
         if (config_.unit == 0) return 1.0;
         return config_.pulsesPerRev / static_cast<double>(config_.leadMm); // per mm
     }
-    float positionInUnit() const { return static_cast<float>(position_ / pulsesPerUnit()); }
+    float positionInUnit() const { return static_cast<float>((position_ - offset_) / pulsesPerUnit()); }
     // The controller truncates unit distances to 0.001 before converting.
     std::int64_t distancePulses(float value) const
     {
@@ -263,7 +276,7 @@ private:
         const auto f = [&] { return wordsFloat(w[0], w[1]); };
         if (w.size() == 2) {
             switch (start) {
-            case 30059: position_ = static_cast<std::int64_t>(std::llround(f() * pulsesPerUnit())); return 0;
+            case 30059: offset_ = position_ - static_cast<std::int64_t>(std::llround(f() * pulsesPerUnit())); return 0;
             case 30075: config_.pulsesPerRev = static_cast<std::int32_t>((static_cast<std::uint32_t>(w[0]) << 16) | w[1]); return 0;
             case 30084: config_.leadMm = f(); return 0;
             case 30114: stepDistance_ = f(); return 0;
@@ -315,8 +328,8 @@ private:
         if (moving_) return 0x06;
         const bool positive = w[2] == 0x50;
         std::int64_t target = position_;
-        if (op == 0x64) {
-            target = distancePulses(stepDistance_) * (positive ? 1 : -1);
+        if (op == 0x64) { // absolute targets are counter values
+            target = distancePulses(stepDistance_) * (positive ? 1 : -1) + offset_;
         } else if (op == 0x65) {
             target = position_ + distancePulses(stepDistance_) * (positive ? 1 : -1);
         }
@@ -353,6 +366,7 @@ private:
         if (steps <= 0) return;
         lastAdvance_ = now;
         const std::int64_t direction = jogging_ ? jogDirection_ : (target_ > position_ ? 1 : -1);
+        lastDirection_ = direction;
         while (steps-- > 0 && moving_) {
             position_ += direction;
             const bool hitLimit = (direction > 0 && atPositiveLimit()) || (direction < 0 && atNegativeLimit());
@@ -368,8 +382,10 @@ private:
     Config config_;
     Config flash_;
     double pulsesPerSecond_{200000.0};
-    std::int64_t position_{0};
+    std::int64_t position_{0}; // physical
+    std::int64_t offset_{0};   // counter = position_ - offset_
     std::int64_t target_{0};
+    std::int64_t lastDirection_{0};
     std::int64_t negLimit_{-6858}; // about -3000 µm at 0.4375 µm/pulse
     std::int64_t posLimit_{6858};
     bool moving_{false};

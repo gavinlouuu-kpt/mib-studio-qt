@@ -32,6 +32,7 @@
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/StageService.h"
 #include "backend/services/MonitoringDensityService.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
@@ -382,6 +383,12 @@ namespace backend
             SPDLOG_INFO("AppBackend: shutdown disconnecting pulse generator");
             pulseGeneratorService_->disconnect();
         }
+        if (stageService_) {
+            // Cancels any operation (stopping the axis), joins the stage
+            // worker, then releases the port while the bus is alive.
+            SPDLOG_INFO("AppBackend: shutdown stopping the Z stage");
+            stageService_->shutdown();
+        }
         // All pipeline threads are stopped now, so the dump is an exact
         // snapshot of the recorded latency data.
         dumpPipelineTimingIfEnabled();
@@ -464,6 +471,11 @@ namespace backend
         serialBusManager_ = std::make_unique<services::serialbus::SerialBusManager>();
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
+        // Nothing connects or moves here: the shell applies the stage block
+        // and calls startup(), which is read-only by default (ADR 0013 §5).
+        stageService_ = std::make_unique<services::StageService>(
+            *serialBusManager_, std::make_unique<services::FileStageReferenceStore>(
+                                    (std::filesystem::path(dataDir) / "stage_reference.json").string()));
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
         dotGridService_ = std::make_unique<services::DotGridService>();
         dotGridService_->setFrameStore(frameStore_);
@@ -1172,6 +1184,7 @@ namespace backend
     services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
+    services::StageService &AppBackend::stage() { return *stageService_; }
     discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
     discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
     profiles::ProfileRegistryWorker &AppBackend::profileRegistry() { return *profileRegistry_; }
