@@ -373,6 +373,7 @@ int main()
         MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
         constexpr int kPollers = 6;
         std::atomic<bool> stopFlag{false};
+        std::atomic<long long> calls{0}; // finished polls, for the sample target below
         std::vector<long long> served(kPollers, 0), failed(kPollers, 0), worstMs(kPollers, 0); // one slot per thread
         std::vector<std::thread> threads;
         for (int p = 0; p < kPollers; ++p) {
@@ -382,10 +383,23 @@ int main()
                     const auto t0 = std::chrono::steady_clock::now();
                     if (stage.readStatus(s) == StageError::None) ++served[p]; else ++failed[p];
                     worstMs[p] = std::max<long long>(worstMs[p], std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+                    calls.fetch_add(1);
                 }
             });
         }
+        // Run for at least 1.5 s and until enough polls were served for the
+        // share check to mean something, bounded by a deadline. A fixed window
+        // is a Linux-speed assumption: on the Windows runner a poll takes
+        // ~28 ms (timer granularity in the fake serial path), so 1.5 s served
+        // only 53 polls although fairness was perfect (fewest 8, mean 8, worst
+        // wait 187 ms).
+        constexpr long long kSampleTarget = 120;
+        const auto windowStart = std::chrono::steady_clock::now();
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        while (calls.load() < kSampleTarget &&
+               std::chrono::steady_clock::now() - windowStart < std::chrono::seconds(10)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
         stopFlag.store(true);
         for (auto& t : threads) t.join();
         long long total = 0, fewest = served[0], worst = 0, errors = 0;
@@ -393,7 +407,8 @@ int main()
         const long long mean = total / kPollers;
         std::printf("fairness: %d pollers, %lld calls, fewest %lld, mean %lld, worst wait %lld ms\n", kPollers, total, fewest, mean, worst);
         MIB_EXPECT(errors == 0, "no poll was refused");
-        MIB_EXPECT(total > 100, "the pollers actually ran");
+        MIB_EXPECT(total >= kSampleTarget, "the pollers served the sample target within the deadline (" +
+                                                std::to_string(total) + " polls)");
         MIB_EXPECT(fewest * 4 >= mean, "every poller got at least a quarter of the average share (fewest " +
                                            std::to_string(fewest) + ", mean " + std::to_string(mean) + ")");
         MIB_EXPECT(worst < 2000, "no poll waited 2 s or more (worst " + std::to_string(worst) + " ms)");
