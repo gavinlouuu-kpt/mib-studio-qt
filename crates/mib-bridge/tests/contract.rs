@@ -154,6 +154,8 @@ fn platform_capabilities_and_instrument_status_on_the_desktop() {
     let status: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_instrument_status()).unwrap();
     assert_eq!(status["available"], serde_json::json!(false), "{status}");
     assert!(status["error"].as_str().is_some_and(|e| !e.is_empty()), "{status}");
+    // #501 live statistics: no PL result stream on the desktop, and the block says so.
+    assert_eq!(status["results"]["available"], serde_json::json!(false), "{status}");
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }

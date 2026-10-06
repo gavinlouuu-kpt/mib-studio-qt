@@ -136,6 +136,9 @@ void PzRecordPipeline::deliver(bpz::FrameResults&& fr, const IExecutionProvider:
         std::scoped_lock lk(statusMutex_);
         ++status_.frames;
         status_.results += fr.results.size();
+        if (fr.frame.flags & bpz::kFrameEmpty) ++status_.emptyFrames;
+        if (fr.frame.flags & bpz::kFrameInvalid) ++status_.invalidFrames;
+        if (fr.frame.flags & (bpz::kFrameResultsTruncated | bpz::kFrameResultsOverflow)) ++status_.truncatedFrames;
         status_.incompleteFrames += fr.incomplete ? 1 : 0;
         status_.unknownProfileResults += unknown;
     }

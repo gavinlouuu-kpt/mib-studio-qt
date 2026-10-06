@@ -56,6 +56,7 @@ import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { initialWindow, rateSummary, RUN_WINDOW, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
 import { holdBest, measureImage, sameBox } from "./imageQuality";
+import { formatResultsRates, resultsRates, type ResultsRates, type ResultsSample } from "./resultsRates";
 import { runPreviewRgba, type RunPreview } from "./runPreview";
 import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
@@ -265,6 +266,8 @@ export default function App() {
     alignBestRef.current = { best: null, box: null };
     setAlignImage(null);
   }, [instrumentModeName]);
+  const [resultsNow, setResultsNow] = useState<ResultsRates | null>(null);
+  const lastResultsSample = useRef<ResultsSample | null>(null);
   const instrumentRef = useRef<InstrumentStatus | null>(null);
   instrumentRef.current = instrument;
   const runMode = instrument?.mode?.name === "run";
@@ -922,8 +925,23 @@ export default function App() {
   useEffect(() => {
     if (!ready || !caps.pl_identity) { setInstrument(null); return; }
     let live = true;
-    const poll = () => void bridge.fetchInstrumentStatus().then((s) => { if (live) setInstrument(s); })
-      .catch((e) => { if (live) setInstrument({ available: false, error: String(e) }); });
+    const poll = () => void bridge.fetchInstrumentStatus().then((s) => {
+      if (!live) return;
+      // Result-stream rates from successive polls (#501); only while the provider runs.
+      const r = s.results;
+      if (r?.available && r.running) {
+        const cur: ResultsSample = {
+          atMs: performance.now(), frames: r.frames ?? 0, results: r.results ?? 0, empty_frames: r.empty_frames ?? 0,
+          invalid_frames: r.invalid_frames ?? 0, truncated_frames: r.truncated_frames ?? 0,
+        };
+        setResultsNow(resultsRates(lastResultsSample.current, cur));
+        lastResultsSample.current = cur;
+      } else {
+        lastResultsSample.current = null;
+        setResultsNow(null);
+      }
+      setInstrument(s);
+    }).catch((e) => { if (live) setInstrument({ available: false, error: String(e) }); });
     poll();
     const id = window.setInterval(poll, 1000);
     return () => { live = false; window.clearInterval(id); };
@@ -1802,6 +1820,10 @@ export default function App() {
                         Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
                         {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
                         {" · "}latency max {instrument?.latency ? `${instrument.latency.max_us.toFixed(0)} µs` : "—"}
+                        {instrument?.results?.running && <><br />{formatResultsRates(resultsNow)}
+                          {(instrument.results.overruns ?? 0) > 0 && ` · ring overruns ${instrument.results.overruns}`}
+                          {(instrument.results.decode_errors ?? 0) > 0 && ` · decode errors ${instrument.results.decode_errors}`}
+                          {(instrument.results.sequence_gaps ?? 0) > 0 && ` · frame gaps ${instrument.results.sequence_gaps}`}</>}
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
                       </p>
                     )}

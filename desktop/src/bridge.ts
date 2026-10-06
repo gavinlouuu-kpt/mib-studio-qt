@@ -468,8 +468,25 @@ export interface InstrumentModeState {
  *  "" once the target is persistent (SATA). */
 export interface RecordingTargetState { path: string; writable: boolean; ram: boolean; free_bytes: number; filesystem: string; warning: string }
 
+/** The PL result stream while an experiment runs (#501): the provider's cumulative counters. */
+export interface ResultsStreamState {
+  available: boolean;
+  running?: boolean;
+  frames?: number;
+  results?: number;
+  empty_frames?: number;
+  invalid_frames?: number;
+  truncated_frames?: number;
+  incomplete_frames?: number;
+  decode_errors?: number;
+  sequence_gaps?: number;
+  overruns?: number;
+  last_error?: string;
+}
+
 export interface InstrumentStatus {
   available: boolean;
+  results?: ResultsStreamState;
   mode?: InstrumentModeState;
   storage?: RecordingTargetState;
   error?: string;

@@ -208,6 +208,42 @@ void testBoardCapture(const char* path) {
 
 // Identity registers -> the hex prefix `pzres id` prints (ID3 first), as in
 // pz7035-imx426 tests/test_results_top_sim.py.
+// #501 live statistics: the provider status counts EMPTY, INVALID and truncated frames from the
+// FRAME flags, so the UI can show their rates during a run.
+void testFrameFlagCounters() {
+    std::vector<uint8_t> bytes;
+    uint32_t seq = 1;
+    uint64_t id = 5000;
+    auto frame = [&](uint32_t flags) {
+        bpz::FrameRecord f;
+        f.runId = 9;
+        f.frameId = id;
+        f.timestamp = id * 11880;
+        f.resultCount = 0; // no RESULT follows any of these
+        f.flags = flags;
+        f.scienceProfile = bpz::kScienceProfileUnetCells;
+        f.profileVersion = bpz::kUnetCellsProfileVersion;
+        f.width = 512;
+        f.height = 96;
+        const auto fb = bpz::encodeFrameRecord(f, seq++);
+        bytes.insert(bytes.end(), fb.begin(), fb.end());
+        ++id;
+    };
+    for (int i = 0; i < 5; ++i) frame(bpz::kFrameEmpty);
+    for (int i = 0; i < 2; ++i) frame(bpz::kFrameInvalid);
+    frame(bpz::kFrameResultsTruncated);
+    frame(bpz::kFrameResultsOverflow);
+    frame(bpz::kFrameEmpty | bpz::kFrameResultsTruncated); // counted in both
+    for (int i = 0; i < 3; ++i) frame(0);
+
+    backend::processing::ProviderStatus st;
+    replay(bytes, 0, &st);
+    MIB_EXPECT(st.frames == 13, "all frames counted: " + std::to_string(st.frames));
+    MIB_EXPECT(st.emptyFrames == 6, "EMPTY frames: " + std::to_string(st.emptyFrames));
+    MIB_EXPECT(st.invalidFrames == 2, "INVALID frames: " + std::to_string(st.invalidFrames));
+    MIB_EXPECT(st.truncatedFrames == 3, "truncated or overflowed frames: " + std::to_string(st.truncatedFrames));
+}
+
 void testCoreIdFormat() {
     const uint32_t build[4] = {0x44556677u, 0x00112233u, 0x89abcdefu, 0x01234567u};
     MIB_EXPECT(formatCoreId(build) == "0123456789abcdef0011223344556677", "build id, ID3 first");
@@ -250,5 +286,6 @@ int main(int argc, char** argv) {
         testBoardCapture(capture);
     }
     testProviderSpecDefault();
+    testFrameFlagCounters();
     return mib::test::exitCode();
 }

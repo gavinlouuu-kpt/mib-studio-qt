@@ -1,4 +1,5 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/processing/IExecutionProvider.h"
 #include "backend/app/RecordingTarget.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
@@ -2906,10 +2907,29 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                                  {"free_bytes", target.freeBytes},
                                  {"filesystem", target.filesystem},
                                  {"warning", app::recordingTargetWarning(target)}};
+    // The PL result stream while an experiment runs (#501 live statistics): cumulative counters,
+    // so the UI turns successive polls into rates. The counters restart with each run.
+    nlohmann::json results{{"available", false}};
+    if (auto* provider = initialized_ ? backend_.executionProvider() : nullptr) {
+        const auto st = provider->status();
+        results = nlohmann::json{{"available", true},
+                   {"running", st.running},
+                   {"frames", st.frames},
+                   {"results", st.results},
+                   {"empty_frames", st.emptyFrames},
+                   {"invalid_frames", st.invalidFrames},
+                   {"truncated_frames", st.truncatedFrames},
+                   {"incomplete_frames", st.incompleteFrames},
+                   {"decode_errors", st.decodeErrors},
+                   {"sequence_gaps", st.sequenceGaps},
+                   {"overruns", st.overruns},
+                   {"last_error", st.lastError}};
+    }
     auto* monitor = initialized_ ? backend_.pzPlatformMonitor() : nullptr;
     if (!monitor) {
         return nlohmann::json{{"available", false},
                               {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
+                              {"results", results},
                               {"mode", mode},
                               {"storage", storage}}
             .dump();
@@ -2921,6 +2941,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
     if (!s.available) {
         return nlohmann::json{
             {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode},
+            {"results", results},
             {"storage", storage}}
             .dump();
     }
@@ -2966,6 +2987,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"over_budget", s.latencyOverBudget},
           {"frames", s.latencyFrames}}},
         {"mode", mode},
+        {"results", results},
         {"storage", storage},
     }.dump();
 }
