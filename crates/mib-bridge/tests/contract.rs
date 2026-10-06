@@ -75,7 +75,11 @@ fn abi_version_is_stable() {
     // and contract groups, and the shell-injected HTTPS transport. Built as a
     // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
     // never reused.
-    assert_eq!(ffi::bridge_abi_version(), 25);
+    // v27 the Z stage (#464, ADR 0013): stage_* commands, fetch_stage_status,
+    // operation kinds StageMove/StageReference, discovery kind MotionStage,
+    // stage_move_states. 26 is #501 P1 (whichever lands first takes the
+    // lower number).
+    assert_eq!(ffi::bridge_abi_version(), 27);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and

@@ -410,9 +410,13 @@ takes 25 (24 went to #501 P0).
   `platform_capabilities_and_instrument_status_on_the_desktop`.
 - `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
-- 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
+- 25 is reserved for the #398 profile-registry stack, 26 for #501 P1, 27 for
+  the Z stage (#464).
 
-## Z stage commands (#464, ADR 0013)
+## ABI 27: Z stage commands (#464, ADR 0013)
+
+Provisional number: 26 belongs to #501 P1, and whichever lands first takes
+the lower one.
 
 - **Commands:** `stage_connect(port_name, usb_serial, modbus_address)`,
   `stage_disconnect`, `stage_move_to(target_um)`, `stage_move_by(delta_um)`,

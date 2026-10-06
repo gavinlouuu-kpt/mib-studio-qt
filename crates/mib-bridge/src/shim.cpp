@@ -2166,13 +2166,15 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
 // contract groups — #398; registry_job_kinds Materialize/RecordValidation were
 // appended; built as a provisional 15, renumbered once to 25: 23 = the
-// instrument line, 24 = #501 P0; 15 and 19-24 are never reused). All additive
+// instrument line, 24 = #501 P0; 15 and 19-24 are never reused); v27 added the
+// Z stage (stage_* commands, fetch_stage_status, StageMove/StageReference,
+// MotionStage, stage_move_states — #464; 26 is #501 P1). All additive
 // over
 // v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 25; }
+std::uint32_t bridge_abi_version() { return 27; }
 
 } // namespace mib_bridge
 
