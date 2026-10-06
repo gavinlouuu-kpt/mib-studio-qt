@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -91,6 +92,13 @@ public:
     void setEnabled(bool on) { locked([&] { enabled_ = on; }); }
     // Miswired stage: the + switch reports on the − bit and vice versa.
     void setSwapLimitBits(bool on) { locked([&] { swapLimits_ = on; }); }
+    // Called after every register write has been applied (device lock held: do
+    // not call back into the device). Lets a test order device writes against
+    // other side effects, e.g. to check what a crash at each point would leave.
+    void setWriteObserver(std::function<void(int startRegister, const std::vector<std::uint16_t>& words)> f)
+    {
+        locked([&] { writeObserver_ = std::move(f); });
+    }
     // false: the controller keeps pulsing through a tripped limit switch (a
     // fault, or a limit input the controller does not honour). Only the
     // host-side limit backstop can stop the axis then.
@@ -307,6 +315,13 @@ private:
 
     std::uint8_t writeRegisters(int start, const std::vector<std::uint16_t>& w)
     {
+        const std::uint8_t status = applyRegisters(start, w);
+        if (status == 0 && writeObserver_) writeObserver_(start, w);
+        return status;
+    }
+
+    std::uint8_t applyRegisters(int start, const std::vector<std::uint16_t>& w)
+    {
         const auto f = [&] { return wordsFloat(w[0], w[1]); };
         if (w.size() == 2) {
             switch (start) {
@@ -438,6 +453,7 @@ private:
     bool enabled_{true};
     bool swapLimits_{false};
     bool limitsHalt_{true};
+    std::function<void(int, const std::vector<std::uint16_t>&)> writeObserver_;
     float stepDistance_{0.0f};
     std::uint16_t scratch_{0};
     std::map<int, std::uint16_t> extra_;

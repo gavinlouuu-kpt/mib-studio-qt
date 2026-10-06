@@ -25,6 +25,12 @@ stage.
   the envelope.
 - **ABI 30** (28 and 29 belong to #482 and #493): `referenced` → `zero_set`,
   `mid_travel_declared`, `soft_*` → `envelope_*_um`.
+- **Review hardening (Codex, #531):** the power-up token is rechecked on every
+  idle poll and before every opcode, so a power cycle while connected drops the
+  zero; dropping the zero keeps the first window until a new power-up; Set zero
+  writes a fresh token before the counter, so no stale record can restore
+  against a rewritten counter even if deleting it fails; and fresh status is
+  checked before every opcode, not just at admission.
 - **Known limitation:** the counter is open-loop; a hand move or stall is
   invisible to the software.
 - **Next:** the first real Set zero (one register write plus a read-back) needs

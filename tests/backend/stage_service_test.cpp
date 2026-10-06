@@ -23,9 +23,12 @@
 
 #include <chrono>
 #include <cmath>
+#include <optional>
 #include <cstdio>
 #include <functional>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 using namespace backend::services;
 using backend::stage::StageError;
@@ -64,6 +67,74 @@ bool moveTo(StageService& s, double um)
 }
 
 void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+
+// A zero store that records every change in one ordered log shared with the
+// controller's register writes, and can be told to ignore clear() or save().
+// Used to ask: after each step of a Set zero, what would a crash leave behind?
+struct StoreEvent {
+    enum Kind { Token, Position, Save, Clear } kind{Save};
+    std::uint16_t token{0};                       // Token: the value written to register 30054
+    std::optional<StageReferenceRecord> record;   // Save: the record written
+};
+struct EventLog {
+    std::mutex mutex;
+    std::vector<StoreEvent> events;
+    void add(StoreEvent e) { std::lock_guard<std::mutex> lock(mutex); events.push_back(std::move(e)); }
+    std::vector<StoreEvent> copy() { std::lock_guard<std::mutex> lock(mutex); return events; }
+};
+class RecordingStore final : public IStageReferenceStore {
+public:
+    RecordingStore(std::shared_ptr<MemoryStageReferenceStore> inner, std::shared_ptr<EventLog> log, bool failClear,
+                   bool failSave)
+        : inner_(std::move(inner)), log_(std::move(log)), failClear_(failClear), failSave_(failSave) {}
+    std::optional<StageReferenceRecord> load() override { return inner_->load(); }
+    void save(const StageReferenceRecord& r) override
+    {
+        if (failSave_) return; // a failed write: nothing is stored, nothing is reported
+        inner_->save(r);
+        StoreEvent e; e.kind = StoreEvent::Save; e.record = r;
+        log_->add(std::move(e));
+    }
+    void clear() override
+    {
+        if (failClear_) return; // a failed deletion: the old record stays on disk
+        inner_->clear();
+        log_->add(StoreEvent{StoreEvent::Clear, 0, std::nullopt});
+    }
+
+private:
+    std::shared_ptr<MemoryStageReferenceStore> inner_;
+    std::shared_ptr<EventLog> log_;
+    bool failClear_;
+    bool failSave_;
+};
+
+// Replays the log from `initial` and returns the first prefix at which a
+// reconnect would restore a zero although the counter was already rewritten
+// and no record for the new frame exists yet; -1 when there is none.
+int firstUnsafeRestore(const std::vector<StoreEvent>& log, std::optional<StageReferenceRecord> record,
+                       std::uint16_t controllerToken)
+{
+    bool counterRewritten = false;
+    for (std::size_t i = 0; i < log.size(); ++i) {
+        const auto& e = log[i];
+        switch (e.kind) {
+        case StoreEvent::Token: controllerToken = e.token; break;
+        case StoreEvent::Position: counterRewritten = true; break;
+        case StoreEvent::Save:
+            record = e.record;
+            if (e.record && e.record->zeroValid && !e.record->frameUncertain && e.record->token == controllerToken) {
+                counterRewritten = false; // a record for the new frame is on disk
+            }
+            break;
+        case StoreEvent::Clear: record.reset(); break;
+        }
+        const bool restorable = record && record->zeroValid && !record->frameUncertain && record->token != 0 &&
+                                record->token == controllerToken;
+        if (restorable && counterRewritten) return static_cast<int>(i);
+    }
+    return -1;
+}
 
 bool waitFor(const std::function<bool()>& pred, int ms = 3000)
 {
@@ -331,7 +402,9 @@ int main()
         auto svc = rig.service();
         MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
         MIB_EXPECT(svc->applyProfile() == StageError::None, "profile applied");
-        MIB_EXPECT(!svc->snapshot().zeroSet && !rig.store->load(), "rewriting the configuration drops the zero");
+        MIB_EXPECT(!svc->snapshot().zeroSet, "rewriting the configuration drops the zero");
+        const auto kept = rig.store->load();
+        MIB_EXPECT(kept && !kept->zeroValid, "the stored record keeps its window but is no longer a valid zero");
     }
 
     // --- Set zero refusals --------------------------------------------------------
@@ -403,7 +476,8 @@ int main()
         else rig.device.setEmergencyStop(true);
         MIB_EXPECT(waitFor([&] { return !svc->snapshot().zeroSet; }),
                    std::string(alarm ? "a driver alarm" : "an e-stop") + " with the stage idle drops the zero");
-        MIB_EXPECT(!rig.store->load(), "and the stored record");
+        const auto kept = rig.store->load();
+        MIB_EXPECT(kept && !kept->zeroValid, "the stored record keeps its window but is no longer a valid zero");
         MIB_EXPECT(svc->snapshot().envelopeMinUm == 0.0 && svc->snapshot().envelopeMaxUm == 0.0, "no envelope");
         if (alarm) rig.device.setDriverAlarm(false);
         else rig.device.setEmergencyStop(false);
@@ -423,7 +497,9 @@ int main()
         rig.device.setEmergencyStop(true); // the e-stop is already active at the next connect
         auto svc = rig.service();
         MIB_REQUIRE(svc->startup() == StageError::None, "connect during an e-stop");
-        MIB_EXPECT(!svc->snapshot().zeroSet && !rig.store->load(), "a stored zero is not restored under an e-stop");
+        MIB_EXPECT(!svc->snapshot().zeroSet, "a stored zero is not restored under an e-stop");
+        const auto kept = rig.store->load();
+        MIB_EXPECT(kept && !kept->zeroValid, "and the record is marked not valid, keeping its window");
     }
 
     // --- limit bits: a backstop that only stops -------------------------------------------
@@ -470,6 +546,182 @@ int main()
                    "the move fails on the limit bit");
         MIB_EXPECT(!rig.device.moving(), "the axis is stopped");
         MIB_EXPECT(rig.device.positionPulses() < 458 + 300, "stopped by the host near the switch, not at the target");
+    }
+
+
+    // --- Codex review of #531: four P1 findings ------------------------------------------
+    // 1. A power cycle while the app stays connected resets the counter and the
+    //    token; the old zero and envelope must not stay trusted.
+    watchdog.mark("power cycle while connected");
+    {
+        StageRig rig;
+        auto cfg = rig.config();
+        cfg.pollIdleMs = 60000; // the idle poll must not be what saves us
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
+        rig.device.powerCycle(); // counter and token reset, the application never disconnected
+        const auto motions = rig.device.motionLog().size();
+        const auto r = svc->moveTo(100); // admitted from the cached state ...
+        if (r.accepted()) {
+            MIB_EXPECT(finish(*svc, r.id) == OpState::Failed && svc->operation(r.id)->error == StageError::ZeroNotSet,
+                       "... but the token check before the opcode fails it");
+        }
+        MIB_EXPECT(rig.device.motionLog().size() == motions, "no motion opcode reached the controller");
+        MIB_EXPECT(!svc->snapshot().zeroSet && !rig.store->load(), "the zero and its record are dropped");
+    }
+    {
+        StageRig rig;
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
+        rig.device.powerCycle();
+        MIB_EXPECT(waitFor([&] { return !svc->snapshot().zeroSet; }), "the idle status poll notices the new power-up");
+        MIB_EXPECT(svc->moveTo(0).error == StageError::ZeroNotSet, "moves are refused until the operator sets zero");
+    }
+
+    // 2. Dropping the zero (alarm, e-stop, applied profile...) must not hand out a
+    //    fresh +/-1000 um window within the same power-up.
+    watchdog.mark("the first window survives dropping the zero");
+    {
+        StageRig rig;
+        rig.device.setLimits(-20000, 20000);
+        {
+            auto svc = rig.service();
+            MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "first zero (window +/-1000 um)");
+            MIB_REQUIRE(moveTo(*svc, 900), "to +900 um");
+            rig.device.setDriverAlarm(true);
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().zeroSet; }), "an alarm drops the zero");
+            rig.device.setDriverAlarm(false);
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().status.driverAlarm; }), "alarm cleared");
+            // Moved outside the first window while the zero is dropped (a hand move): an
+            // undeclared zero there is refused just as if the zero had never been dropped.
+            rig.device.setPositionPulses(rig.device.positionPulses() + 5000);
+            std::string refusal;
+            MIB_EXPECT(svc->setZero(false, &refusal) == StageError::OutOfSoftLimits &&
+                           refusal.find("first zero of this power-up") != std::string::npos,
+                       "outside the first window with the zero dropped: refused: " + refusal);
+            rig.device.setPositionPulses(rig.device.positionPulses() - 5000);
+            MIB_REQUIRE(zero(*svc), "the operator sets zero again, here at +900 um of the first frame");
+            const auto snap = svc->snapshot();
+            MIB_EXPECT(snap.envelopeMinUm == -1000.0 && snap.envelopeMaxUm == 100.0,
+                       "only the 100 um left of the first window: [-1000, +100], not another +1000");
+            MIB_EXPECT(svc->moveTo(101).error == StageError::OutOfSoftLimits, "+101 um is refused");
+            // Same again after an e-stop, and after an applied profile.
+            rig.device.setEmergencyStop(true);
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().zeroSet; }), "an e-stop drops the zero");
+            rig.device.setEmergencyStop(false);
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().status.emergencyStop; }), "e-stop released");
+            MIB_REQUIRE(zero(*svc), "zero again");
+            MIB_EXPECT(svc->snapshot().envelopeMaxUm <= 100.0, "the window is still the first one");
+            MIB_EXPECT(svc->applyProfile() == StageError::None && !svc->snapshot().zeroSet, "profile applied");
+            MIB_REQUIRE(zero(*svc), "zero once more");
+            MIB_EXPECT(svc->snapshot().envelopeMaxUm <= 100.0, "an applied profile does not reset it either");
+        }
+        {
+            auto svc = rig.service();
+            MIB_REQUIRE(svc->startup() == StageError::None, "connect");
+            MIB_REQUIRE(svc->snapshot().zeroSet, "the zero set last is restored");
+            rig.device.setDriverAlarm(true); // drop it once more before the next restart
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().zeroSet; }), "dropped");
+            rig.device.setDriverAlarm(false);
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().status.driverAlarm; }), "alarm cleared");
+        }
+        {
+            auto svc = rig.service(); // application restart, same controller power-up
+            MIB_REQUIRE(svc->startup() == StageError::None, "restart");
+            MIB_EXPECT(!svc->snapshot().zeroSet, "the dropped zero is not restored");
+            MIB_REQUIRE(zero(*svc), "zero again after the restart");
+            MIB_EXPECT(svc->snapshot().envelopeMaxUm <= 100.0, "a restart does not reset the window either");
+        }
+        rig.device.powerCycle();
+        {
+            auto svc = rig.service();
+            MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "zero after a real power-up");
+            MIB_EXPECT(svc->snapshot().envelopeMinUm == -1000.0 && svc->snapshot().envelopeMaxUm == 1000.0,
+                       "only a real power-up starts a fresh window");
+        }
+    }
+
+    // 3. Whatever a crash leaves behind, a reconnect must not restore a stored zero
+    //    against a counter that was already rewritten, even if the stale record
+    //    could not be deleted (or the interim record could not be written).
+    watchdog.mark("crash ordering of Set zero");
+    for (const bool failClear : {false, true}) {
+        for (const bool failSave : {false, true}) {
+            StageRig rig;
+            rig.device.setLimits(-20000, 20000);
+            auto log = std::make_shared<EventLog>();
+            {
+                auto svc = rig.service(); // plain store: the first zero, before logging starts
+                MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc) && moveTo(*svc, 300), "first zero");
+            }
+            const auto before = rig.store->load();
+            MIB_REQUIRE(before.has_value(), "a record to go stale");
+            const std::uint16_t tokenBefore = rig.device.scratch();
+            rig.device.setWriteObserver([log](int start, const std::vector<std::uint16_t>& words) {
+                if (start == 30054 && words.size() == 1) log->add(StoreEvent{StoreEvent::Token, words[0], std::nullopt});
+                if (start == 30059) log->add(StoreEvent{StoreEvent::Position, 0, std::nullopt});
+            });
+            auto svc = rig.serviceWithStore(rig.config(), std::make_unique<RecordingStore>(rig.store, log, failClear, failSave));
+            MIB_REQUIRE(svc->startup() == StageError::None, "reconnect");
+            MIB_REQUIRE(svc->snapshot().zeroSet, "the zero was restored");
+            MIB_REQUIRE(zero(*svc), "Set zero again, the step sequence under test");
+            const auto events = log->copy();
+            const std::string label = std::string(" (clear fails: ") + (failClear ? "yes" : "no") +
+                                      ", save fails: " + (failSave ? "yes" : "no") + ")";
+            bool sawPosition = false;
+            for (const auto& e : events) sawPosition = sawPosition || e.kind == StoreEvent::Position;
+            MIB_EXPECT(sawPosition, "the counter was rewritten" + label);
+            const int unsafe = firstUnsafeRestore(events, before, tokenBefore);
+            MIB_EXPECT(unsafe < 0, "no crash point leaves a record that restores against the new counter; first unsafe step " +
+                                       std::to_string(unsafe) + label);
+        }
+    }
+
+    // 4. A fault that appears after the cached admission must stop the opcode.
+    watchdog.mark("fresh status before the opcode");
+    {
+        StageRig rig;
+        auto cfg = rig.config();
+        cfg.pollIdleMs = 60000; // the cached status stays "all clear"
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
+        rig.device.setEmergencyStop(true);
+        const auto motions = rig.device.motionLog().size();
+        const auto r = svc->moveTo(100);
+        MIB_REQUIRE(r.accepted(), "admitted from the stale cache");
+        MIB_EXPECT(finish(*svc, r.id) == OpState::Failed && svc->operation(r.id)->error == StageError::EmergencyStop,
+                   "the fresh status fails it with EmergencyStop");
+        MIB_EXPECT(rig.device.motionLog().size() == motions, "no motion opcode was sent");
+        MIB_EXPECT(!svc->snapshot().zeroSet, "and the fresh e-stop dropped the zero");
+    }
+    {
+        StageRig rig;
+        auto cfg = rig.config();
+        cfg.pollIdleMs = 60000;
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
+        rig.device.setDriverAlarm(true);
+        const auto motions = rig.device.motionLog().size();
+        const auto r = svc->moveTo(100);
+        MIB_REQUIRE(r.accepted(), "admitted from the stale cache");
+        MIB_EXPECT(finish(*svc, r.id) == OpState::Failed && svc->operation(r.id)->error == StageError::DriverAlarm,
+                   "DriverAlarm");
+        MIB_EXPECT(rig.device.motionLog().size() == motions && !svc->snapshot().zeroSet, "nothing sent, zero dropped");
+    }
+    {
+        StageRig rig;
+        rig.device.setPulsesPerSecond(2000);
+        auto cfg = rig.config();
+        cfg.pollIdleMs = 60000;
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
+        rig.device.startExternalMove(2000); // someone else started the axis after the last poll
+        const auto motions = rig.device.motionLog().size();
+        const auto r = svc->moveTo(100);
+        MIB_REQUIRE(r.accepted(), "admitted from the stale cache");
+        MIB_EXPECT(finish(*svc, r.id) == OpState::Failed && svc->operation(r.id)->error == StageError::Busy,
+                   "an axis that is already moving is not given another opcode");
+        MIB_EXPECT(rig.device.motionLog().size() == motions, "no motion opcode was sent");
     }
 
     // --- move failures ---------------------------------------------------------

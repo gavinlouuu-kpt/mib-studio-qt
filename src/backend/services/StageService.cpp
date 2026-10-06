@@ -108,6 +108,8 @@ std::optional<StageReferenceRecord> FileStageReferenceStore::load()
         r.midTravelDeclared = j.at("mid_travel_declared").get<bool>();
         r.windowMinUm = j.at("window_min_um").get<double>();
         r.windowMaxUm = j.at("window_max_um").get<double>();
+        r.zeroValid = j.at("zero_valid").get<bool>();
+        r.frameUncertain = j.at("frame_uncertain").get<bool>();
         // A record from the Home era has none of these keys and is ignored above.
         if (!std::isfinite(r.windowMinUm) || !std::isfinite(r.windowMaxUm) || r.windowMinUm > 0.0 ||
             r.windowMaxUm < 0.0) {
@@ -130,7 +132,9 @@ void FileStageReferenceStore::save(const StageReferenceRecord& r)
                               {"token", r.token},
                               {"mid_travel_declared", r.midTravelDeclared},
                               {"window_min_um", r.windowMinUm},
-                              {"window_max_um", r.windowMaxUm}}
+                              {"window_max_um", r.windowMaxUm},
+                              {"zero_valid", r.zeroValid},
+                              {"frame_uncertain", r.frameUncertain}}
                    .dump();
         if (!out) {
             SPDLOG_WARN("StageService: could not write reference record {}", tmp);
@@ -488,8 +492,41 @@ void StageService::invalidateZeroLocked(const char* why)
     snapshot_.midTravelDeclared = false;
     snapshot_.status.zeroSet = false;
     snapshot_.envelopeMinUm = snapshot_.envelopeMaxUm = 0.0;
+    // Keep the window of this power-up's first zero: only a new power-up may
+    // start a fresh one (ADR 0013 A3). The persisted record says "not valid".
+    if (haveZeroRecord_ && zeroRecord_.zeroValid) {
+        zeroRecord_.zeroValid = false;
+        if (zeroRecord_.token != 0) store_->save(zeroRecord_);
+    }
+}
+
+void StageService::resetPowerUpLocked(const char* why)
+{
+    if (snapshot_.zeroSet || haveZeroRecord_) SPDLOG_WARN("StageService: zero and window dropped: {}", why);
+    snapshot_.zeroSet = false;
+    snapshot_.midTravelDeclared = false;
+    snapshot_.status.zeroSet = false;
+    snapshot_.envelopeMinUm = snapshot_.envelopeMaxUm = 0.0;
     zeroRecord_ = StageReferenceRecord{};
+    haveZeroRecord_ = false;
     store_->clear();
+}
+
+StageError StageService::checkPowerUp(const std::shared_ptr<stage::IMotionStage>& d)
+{
+    std::uint16_t expected = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!haveZeroRecord_ || config_.reference.powerUpTokenRegister == 0) return StageError::None;
+        expected = zeroRecord_.token;
+    }
+    if (expected == 0) return StageError::None;
+    std::uint16_t token = 0;
+    if (const StageError err = d->readPowerUpToken(token); err != StageError::None) return err;
+    if (token == expected) return StageError::None;
+    std::lock_guard<std::mutex> lock(mutex_);
+    resetPowerUpLocked("the controller was power-cycled (power-up token changed)");
+    return StageError::ZeroNotSet;
 }
 
 void StageService::invalidateZero(const char* why)
@@ -501,6 +538,7 @@ void StageService::invalidateZero(const char* why)
 void StageService::adoptZeroLocked(const StageReferenceRecord& record)
 {
     zeroRecord_ = record;
+    haveZeroRecord_ = true;
     const Envelope env = envelopeOf(record, config_);
     snapshot_.zeroSet = true;
     snapshot_.midTravelDeclared = record.midTravelDeclared;
@@ -631,14 +669,21 @@ std::pair<StageError, std::string> StageService::doConnect()
         }
         snapshot_.spanUm = cfg.reference.expectedSpanUm;
         zeroRecord_ = StageReferenceRecord{};
+        haveZeroRecord_ = false;
         if (statusErr == StageError::None) snapshot_.status = status;
-        // An e-stop or driver alarm at connect means the counter may be off:
-        // do not trust a stored zero.
-        if (restored && statusErr == StageError::None && !status.emergencyStop && !status.driverAlarm) {
-            adoptZeroLocked(*restored);
-        } else if (restored) {
-            SPDLOG_WARN("StageService: stored zero not restored (status unreadable, e-stop or driver alarm)");
-            store_->clear();
+        if (restored) {
+            // The window of this power-up is kept either way.
+            zeroRecord_ = *restored;
+            haveZeroRecord_ = true;
+            // An e-stop or driver alarm at connect means the counter may be
+            // off: do not trust a stored zero.
+            if (restored->zeroValid && !restored->frameUncertain && statusErr == StageError::None &&
+                !status.emergencyStop && !status.driverAlarm) {
+                adoptZeroLocked(*restored);
+            } else if (restored->zeroValid) {
+                SPDLOG_WARN("StageService: stored zero not restored (status unreadable, e-stop or driver alarm)");
+                invalidateZeroLocked("e-stop, driver alarm or unreadable status at connect");
+            }
         }
         if (!snapshot_.configured) snapshot_.lastError = detail;
     }
@@ -668,6 +713,12 @@ void StageService::pollStatus()
     const StageError err = d->readStatus(s);
     if (err == StageError::None) {
         publishStatus(s);
+        // A power cycle while connected resets the counter and the token: the
+        // zero, its window and the stored record must not outlive it. A read
+        // error here is transient and only logged; moves insist on a match.
+        if (const StageError tokenErr = checkPowerUp(d); tokenErr != StageError::None && tokenErr != StageError::ZeroNotSet) {
+            SPDLOG_WARN("StageService: power-up token not readable: {}", stage::toString(tokenErr));
+        }
         // A supervised check run by the bench tool while the application is
         // open takes effect without reconnecting (it only clears a badge).
         std::string serial;
@@ -790,6 +841,31 @@ StageError StageService::moveAndWait(OperationId id, double targetUm, double spe
     const double target = std::round(targetUm);
     const double distance = std::abs(target - status.positionUm);
     if (distance < 0.5) return StageError::None;
+    // Admission used the cached status. Whatever happened since (an e-stop, an
+    // alarm, someone else moving the axis, a power cycle) is decided on fresh
+    // facts before any opcode goes out.
+    publishStatus(status); // an e-stop or alarm drops the zero here
+    if (status.emergencyStop) return StageError::EmergencyStop;
+    if (status.driverAlarm || status.state == MoveState::Faulted) return StageError::DriverAlarm;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!snapshot_.zeroSet) {
+            detail = "the stage zero is no longer set";
+            return StageError::ZeroNotSet;
+        }
+        if (target < snapshot_.envelopeMinUm || target > snapshot_.envelopeMaxUm) {
+            detail = "target " + std::to_string(static_cast<long long>(target)) + " um is outside the travel envelope";
+            return StageError::OutOfSoftLimits;
+        }
+    }
+    if (status.state != MoveState::Idle) {
+        detail = "the axis is already moving; no new motion command was sent";
+        return StageError::Busy;
+    }
+    if ((err = checkPowerUp(d)) != StageError::None) {
+        if (err == StageError::ZeroNotSet) detail = "the controller was power-cycled; set zero again";
+        return err;
+    }
     // Limit bits are a backstop that only stops (ADR 0013 A4): never a
     // precondition, and only the switch in the direction of travel counts, so
     // a stage sitting on a switch can always move away from it.
@@ -873,8 +949,6 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
     const auto d = driver();
     const StageConfig cfg = config();
     std::string serial;
-    StageReferenceRecord previous;
-    bool hadZero = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!d || !snapshot_.connected) return {StageError::NotConnected, "not connected"};
@@ -883,8 +957,10 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
         }
         if (snapshot_.activeOperation != 0) return {StageError::Busy, "a stage operation is active"};
         serial = snapshot_.identity.serial;
-        hadZero = snapshot_.zeroSet;
-        previous = zeroRecord_;
+    }
+    // A power cycle since the last poll must not leave an old window behind.
+    if (const StageError err = checkPowerUp(d); err != StageError::None && err != StageError::ZeroNotSet) {
+        return {err, "could not read the controller's power-up token"};
     }
     StageStatus status;
     if (const StageError err = d->readStatus(status); err != StageError::None) {
@@ -898,13 +974,28 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
     const double position = status.positionUm;
     if (!std::isfinite(position)) return {StageError::Protocol, "the position counter is unreadable"};
 
+    StageReferenceRecord previous;
+    bool windowKnown = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        previous = zeroRecord_;
+        windowKnown = haveZeroRecord_;
+    }
     // ADR 0013 A3: without a mid-travel declaration a later zero must stay
-    // inside the window the first zero of this power-up set, so repeated
+    // inside the window the first zero of this power-up set, even if the zero
+    // was dropped in between (e-stop, alarm, applied profile...), so repeated
     // re-zeroing cannot walk the envelope along the stage.
-    if (hadZero && !midTravel && (position < previous.windowMinUm || position > previous.windowMaxUm)) {
-        return {StageError::OutOfSoftLimits,
-                "the stage is outside the window set by the first zero of this power-up; declare mid-travel "
-                "(only if the stage really is there) or power-cycle the controller"};
+    if (windowKnown && !midTravel) {
+        if (previous.frameUncertain) {
+            return {StageError::OutOfSoftLimits,
+                    "an earlier Set zero was interrupted, so the first window can no longer be trusted; declare "
+                    "mid-travel (only if the stage really is there) or power-cycle the controller"};
+        }
+        if (position < previous.windowMinUm || position > previous.windowMaxUm) {
+            return {StageError::OutOfSoftLimits,
+                    "the stage is outside the window set by the first zero of this power-up; declare mid-travel "
+                    "(only if the stage really is there) or power-cycle the controller"};
+        }
     }
 
     StageReferenceRecord record;
@@ -913,7 +1004,7 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
     if (midTravel) {
         record.windowMinUm = -capFor(cfg);
         record.windowMaxUm = capFor(cfg);
-    } else if (hadZero) {
+    } else if (windowKnown) {
         record.windowMinUm = previous.windowMinUm - position;
         record.windowMaxUm = previous.windowMaxUm - position;
     } else {
@@ -921,29 +1012,53 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
         record.windowMaxUm = cfg.envelope.defaultUm;
     }
 
-    // Clear the stored record before the counter changes: if the application
-    // dies between the write and the new record, the stage reads as "zero not
-    // set" afterwards instead of restoring a frame that no longer exists.
-    store_->clear();
-    if (const StageError err = d->setPosition(0.0); err != StageError::None) {
-        invalidateZero("the position write failed");
-        return {err, "could not write the position counter"};
-    }
-    bool persisted = false;
-    if (cfg.reference.powerUpTokenRegister != 0) {
-        const std::uint16_t token = randomToken();
-        if (d->writePowerUpToken(token) == StageError::None) {
-            record.token = token;
-            persisted = true;
-        } else {
-            SPDLOG_WARN("StageService: power-up token not written; the zero lasts this session only");
+    // Order matters for a crash at any point: (1) a fresh power-up token goes to
+    // the controller first, so no stored record, however stale or undeletable,
+    // can match it any more; (2) an interim record keeps the old window but is
+    // not restorable; (3) the counter is rewritten; (4) the final record. The
+    // token is what makes this safe; the store is only trusted when it says "no".
+    const bool tokenUsed = cfg.reference.powerUpTokenRegister != 0;
+    std::uint16_t token = 0;
+    if (tokenUsed) {
+        token = randomToken();
+        if (const StageError err = d->writePowerUpToken(token); err != StageError::None) {
+            return {err, "could not write the power-up token (set stage.reference.power_up_token_register to 0 to "
+                         "hold the zero for this session only); nothing was changed"};
         }
     }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // The zero is not usable until the counter write has been confirmed.
+        snapshot_.zeroSet = false;
+        snapshot_.midTravelDeclared = false;
+        snapshot_.status.zeroSet = false;
+        snapshot_.envelopeMinUm = snapshot_.envelopeMaxUm = 0.0;
+        if (windowKnown) {
+            zeroRecord_.token = token;
+            zeroRecord_.zeroValid = false;
+            zeroRecord_.frameUncertain = true;
+            if (tokenUsed) store_->save(zeroRecord_);
+        } else if (tokenUsed) {
+            store_->clear(); // a record for another power-up can never match the new token anyway
+        }
+    }
+    if (const StageError err = d->setPosition(0.0); err != StageError::None) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // The write may or may not have happened: the old window is in an unknown frame.
+        if (haveZeroRecord_) zeroRecord_.frameUncertain = true;
+        if (haveZeroRecord_ && tokenUsed) store_->save(zeroRecord_);
+        snapshot_.lastError = "set zero: the position write failed";
+        return {err, "could not write the position counter"};
+    }
+    record.token = token;
+    record.zeroValid = true;
+    record.frameUncertain = false;
     Envelope env;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         adoptZeroLocked(record);
-        if (persisted) store_->save(record);
+        if (tokenUsed) store_->save(record);
+        else store_->clear();
         env = {snapshot_.envelopeMinUm, snapshot_.envelopeMaxUm};
     }
     pollStatus();

@@ -44,6 +44,14 @@ struct StageReferenceRecord {
     bool midTravelDeclared{false};
     double windowMinUm{0.0};
     double windowMaxUm{0.0};
+    // The zero was dropped (e-stop, alarm, applied profile, failed move...) but
+    // the controller was not power-cycled: the window still bounds the next
+    // undeclared zero, so a fault cannot be used to start a fresh window.
+    bool zeroValid{true};
+    // A Set zero was interrupted or failed: the counter may be in the old or
+    // the new frame, so the window cannot be trusted until the operator
+    // declares mid-travel (or the controller is power-cycled).
+    bool frameUncertain{false};
 };
 
 class IStageReferenceStore {
@@ -240,6 +248,14 @@ private:
     void invalidateZeroLocked(const char* why); // mutex_ held
     // Sets the snapshot's zero state and envelope from `record` (mutex_ held).
     void adoptZeroLocked(const StageReferenceRecord& record);
+    // The controller was power-cycled (or is another one): the zero, its window and
+    // the stored record are all gone (mutex_ held).
+    void resetPowerUpLocked(const char* why);
+    // Compares the controller's power-up token with the one this zero was set
+    // under, dropping everything on a mismatch (ZeroNotSet). A read error is
+    // returned as it is. Nothing to compare (no record, no token) is None.
+    // Worker thread only.
+    stage::StageError checkPowerUp(const std::shared_ptr<stage::IMotionStage>& d);
     std::shared_ptr<stage::IMotionStage> driver() const;
 
     bool limitsVerifiedFor(const std::string& serial) const;
@@ -253,7 +269,11 @@ private:
     StageConfig config_;
     std::shared_ptr<stage::IMotionStage> driver_; // replaced only by the worker
     Snapshot snapshot_;
-    StageReferenceRecord zeroRecord_; // valid while snapshot_.zeroSet
+    // The zero of this controller power-up and its window. It outlives the zero
+    // itself (an e-stop, alarm or failed move only marks it zeroValid = false), so
+    // dropping the zero never hands out a fresh window; only a new power-up does.
+    StageReferenceRecord zeroRecord_;
+    bool haveZeroRecord_{false};
     std::deque<Job> jobs_;
     std::map<OperationId, OperationInfo> operations_;
     OperationId nextOperation_{1};

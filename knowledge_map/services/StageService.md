@@ -55,18 +55,36 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   really is there, or power-cycle"). The window is stored in the current
   zero's coordinates and shifted by every re-zero, so repeated re-zeroing can
   never walk the envelope along the stage.
-- **Order of writes.** The stored record is cleared before the counter
-  changes; then 30059 is written; then a fresh random token goes to register
-  30054 and `{serial, token, midTravelDeclared, window}` to
-  `<dataDir>/stage_reference.json`. If the application dies in between, the
-  stage reads "zero not set" afterwards, not a frame that no longer exists.
-  With `power_up_token_register: 0` the zero lasts the session only.
-- On the next `connect()` the zero is restored only if the serial and token
-  both match and no e-stop or driver alarm is active. A power cycle clears the
-  register, so the stage needs Set zero again.
-- **Cleared** by an e-stop or driver alarm seen at any poll, by
-  `applyProfile()`, and by the operation failures listed under Operations. An
-  operator Stop keeps it.
+- **Order of writes, safe at every crash point.**
+  1. A fresh random **token goes to controller register 30054 first**, so no
+     stored record, however stale or undeletable, can match it any more. If this
+     write fails, Set zero is refused and nothing has changed (set
+     `power_up_token_register: 0` to hold the zero for the session only).
+  2. An interim record `{old window, zeroValid = false, frameUncertain = true}`
+     is saved, so a crash keeps the window but restores no zero.
+  3. Register 30059 is written (the counter).
+  4. The final record `{serial, token, midTravelDeclared, window, zeroValid}`
+     goes to `<dataDir>/stage_reference.json`.
+  The store is never trusted to have deleted anything. A failed counter write
+  leaves `frameUncertain` set: the next undeclared zero is refused until the
+  operator declares mid-travel or the controller is power-cycled.
+- **Power-up detection.** The token is compared with the controller's on every
+  idle status poll, before every Set zero and before every motion opcode. A
+  mismatch (a power cycle while connected) drops the zero, the window and the
+  stored record (`ZeroNotSet`). A token that cannot be read fails the move.
+  With `power_up_token_register: 0` there is nothing to compare, so a power
+  cycle goes unnoticed: that mode is only for hardware acceptance.
+- On the next `connect()` the record is restored only if the serial and token
+  both match, and the zero only if it was valid and no e-stop or driver alarm
+  is active. A power cycle clears the register, so the stage needs Set zero
+  again, with a fresh window.
+- **The zero is dropped, the window is not.** An e-stop or driver alarm seen at
+  any poll, `applyProfile()` and the operation failures listed under
+  Operations only mark the record `zeroValid = false` and keep the window of
+  this power-up's first zero (also across an application restart). The next
+  undeclared Set zero must still be inside it, so a fault cannot be used to
+  start a fresh ±1000 µm. Only a new power-up (token change) or a
+  mid-travel declaration starts a new window. An operator Stop keeps the zero.
 
 ## Travel envelope
 
@@ -107,6 +125,10 @@ panel). It mirrors these rules in the UI and shows why a control is disabled.
 
 ## Operations
 
+- **Fresh facts before every opcode.** Admission uses the cached status; each
+  `moveAndWait` leg re-reads the status, publishes it (an e-stop or alarm drops
+  the zero), refuses an e-stop, alarm or already-moving axis, re-checks the zero
+  and the envelope, and compares the power-up token, all before the opcode.
 - **One at a time on the worker.** `moveTo` (absolute) and `moveBy` (relative
   to the µm grid point nearest the current position) are each validated
   twice: before they are queued, and again when they start. The checks are
