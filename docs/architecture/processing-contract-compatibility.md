@@ -36,7 +36,12 @@ the reverse — the science differs, so the match must be exact.
 | 1 | contract 2 | contract 2 | — | ❌ refuse (contract mismatch) |
 | 2 | contract 1 / ABI 1 | contract 1 | — | ❌ refuse (contract mismatch / missing caps) |
 | 2 | contract 2, ABI 2, missing a required capability flag | — | — | ❌ refuse (capability gate) |
+| 3 | a PL core: bitstream plus weights, reporting `science_profile` 2 / `profile_version` 2, through an execution provider (PZ7035) | — | contract 3 (brightness mean and variance, contour area, pixel and blemish counts; no quartiles, no ring) | ✅ the instrument executes it, the host reads the recording |
+| 3 | any host core, bundled kernel or loader (`isSupportedProcessingContract(3)` is false) | contract 1/2 only (`SUPPORTED_CONTRACT_VERSIONS == (1, 2)`) | — | ❌ refuse, fail closed (no mask, no fallback) |
 | any | — | — | file schema newer than reader | ❌ fail closed with diagnostic |
+
+The ABI encodes Contract 3 as `science_profile` 2 / `profile_version` 2
+(pz7035-imx426 `abi/profiles/unet_cells_v2.json`); the two map 1:1 (ADR 0011).
 
 Capability flags are introduced by ABI v2 (V2-5): full pipeline, absolute
 difference, filter chain, per-object Laplacian variance. A Contract-2 profile
@@ -56,6 +61,12 @@ to generate masks or empty-frame decisions when the active core does not
 serve it (`processingContractMismatch()`), with no fallback. A profile without
 the key means Contract 1.
 
+The third line is **`unet-cells`** (Contract 3, registered here as ADR 0007
+requires). On the PZ7035 its core is a PL bitstream plus its model weights
+(ADR 0011, decision 12): a new bitstream or retrained weights is a new core
+version of the same contract. A host `unet-cells` plugin for desktop
+reprocessing is optional and is not an instrument dependency.
+
 Only the Python wheel is built with `MIB_PROCESSING_CORE_CONTRACT=research`,
 which runs either contract, selected per call.
 
@@ -65,6 +76,20 @@ cores (`mib_processing_get_api_v2` + Contract-2 capabilities). A Contract-2
 core owns its object science: the host sends the full config
 (`science_config_json`) and receives per-object metrics from
 `process_objects`.
+
+## Reference per contract
+
+What "correct" means differs by line, and so does how it may change.
+
+| Contract | Line | Reference | Check | A change is |
+|---|---|---|---|---|
+| 1 | `subtract-ring` | the frozen host science: `scripts/conformance/focus-50v-real-contract1.json` | host and native-core gold gates | a gold-reference change, with the `gold-reference-change` label (ADR 0007) |
+| 2 | `absdiff-laplacian` | the Contract 2 gold: `scripts/conformance/focus-50v-real-contract2.json` | the same, plus `scripts/run_native_core_conformance.py` against the built core | the same |
+| 3 | `unet-cells` | **the PL specification**, owned by pz7035-imx426: `abi/profiles/unet_cells_v2.json` and its vectors, vendored from a tag (ADR 0011, decision 10) | `processing.contract3_cells_conformance` and `processing.pz_unet_cells_host` against `scripts/conformance/unet-cells-v2-pl-vectors.json`; `scripts.pz7035_abi_vendor` pins the bundle | a new profile version in pz7035-imx426, then a new contract here |
+
+The tests that exercise the PL path without hardware carry the ctest label
+`pl`. CI runs them as the named "PL replay lane" step of `backend-ci`
+(`ctest -L pl`).
 
 ## Contract semantics (V2-8)
 
@@ -114,7 +139,11 @@ profile tolerances. The full PL set (45 frames, 181 cells) also passes.
 plus `brightness_mean`, `brightness_variance`, `contour_area`, `pixel_count`
 and `blemish_count`. A null brightness matches only null.
 
-No shipped core, wheel or loader serves Contract 3 yet. The science JSON adds
+No host core, wheel or loader serves Contract 3 yet. On the PZ7035 the PL core
+does, through an execution provider (ADR 0011). Its recordings carry the core
+that produced them: the run snapshot's `pl_core` holds the PL build id (the git
+commit prefix), the weights sha256 prefix, the ABI version and the science
+profile (see [HDF5-Storage](../../knowledge_map/data-model/HDF5-Storage.md)). The science JSON adds
 a `unet_cells` block (`min_cell_area_px`, `laplacian_kernel_size`) only for
 Contract 3, so Contract 1/2 documents are unchanged.
 
