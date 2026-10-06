@@ -12,6 +12,7 @@
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/SyringePumpService.h"
+#include "backend/stage/StageTypes.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -70,6 +71,15 @@ static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Trigger) == 8);
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Review) == 9);
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Pump) == 10);
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Autofocus) == 11);
+static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::PulseGenerator) == 12);
+// Z stage (#464, ADR 0013).
+static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Stage) == 13);
+static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageMove) == 7);
+static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageReference) == 8);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Idle) == 0);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Moving) == 1);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Homing) == 2);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Faulted) == 3);
 
 static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::PumpScan) == 6);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpId::Sample) == 0);
@@ -95,6 +105,7 @@ static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Camera) == 0);
 static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Framegrabber) == 1);
 static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Nanopositioner) == 2);
 static_assert(static_cast<std::uint32_t>(bd::DeviceKind::PulseGenerator) == 3);
+static_assert(static_cast<std::uint32_t>(bd::DeviceKind::MotionStage) == 4);
 static_assert(static_cast<std::uint32_t>(bd::JobState::Queued) == 0);
 static_assert(static_cast<std::uint32_t>(bd::JobState::Running) == 1);
 static_assert(static_cast<std::uint32_t>(bd::JobState::Completed) == 2);
@@ -797,6 +808,12 @@ BridgeMonitoringRow toMonitoringRow(const backend::bridge::MonitoringObjectRow& 
 
 namespace {
 
+backend::bridge::StageCommand makeStageCommand(backend::bridge::StageCommandAction action) {
+    backend::bridge::StageCommand cmd;
+    cmd.action = action;
+    return cmd;
+}
+
 backend::bridge::PumpCommand makePumpCommand(backend::bridge::PumpCommandAction action,
                                              std::uint32_t pump) {
     backend::bridge::PumpCommand cmd;
@@ -1107,6 +1124,92 @@ BridgeCommandResult BackendBridge::pump_poll_status(std::uint32_t pump) {
     } catch (...) {
         return errorResult("pump_poll_status: unknown error");
     }
+}
+
+// ---- Z stage (#464, ADR 0013) ----
+
+namespace {
+BridgeCommandResult dispatchStage(backend::bridge::BackendFacade& facade,
+                                  const backend::bridge::StageCommand& cmd, const char* name) {
+    try {
+        return toBridgeResult(facade.dispatch(cmd));
+    } catch (const std::exception& e) {
+        return errorResult(std::string(name) + ": " + e.what());
+    } catch (...) {
+        return errorResult(std::string(name) + ": unknown error");
+    }
+}
+} // namespace
+
+BridgeCommandResult BackendBridge::stage_connect(rust::Str port_name, rust::Str usb_serial,
+                                                 std::int32_t modbus_address) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::Connect);
+    cmd.portName = toStd(port_name);
+    cmd.usbSerial = toStd(usb_serial);
+    cmd.modbusAddress = modbus_address;
+    return dispatchStage(impl_->facade, cmd, "stage_connect");
+}
+
+BridgeCommandResult BackendBridge::stage_disconnect() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Disconnect),
+                         "stage_disconnect");
+}
+
+BridgeCommandResult BackendBridge::stage_move_to(double target_um) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::MoveTo);
+    cmd.targetUm = target_um;
+    return dispatchStage(impl_->facade, cmd, "stage_move_to");
+}
+
+BridgeCommandResult BackendBridge::stage_move_by(double delta_um) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::MoveBy);
+    cmd.targetUm = delta_um;
+    return dispatchStage(impl_->facade, cmd, "stage_move_by");
+}
+
+BridgeCommandResult BackendBridge::stage_home() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Home), "stage_home");
+}
+
+BridgeCommandResult BackendBridge::stage_stop() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Stop), "stage_stop");
+}
+
+BridgeCommandResult BackendBridge::stage_apply_profile() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::ApplyProfile),
+                         "stage_apply_profile");
+}
+
+BridgeStageStatus BackendBridge::fetch_stage_status() {
+    BridgeStageStatus out{};
+    backend::bridge::BackendStageStatus status;
+    if (!impl_->facade.fetchStageStatus(status)) {
+        out.valid = false;
+        return out;
+    }
+    out.valid = true;
+    out.enabled = status.enabled;
+    out.connected = status.connected;
+    out.configured = status.configured;
+    out.referenced = status.referenced;
+    out.limits_verified = status.limitsVerified;
+    out.busy = status.busy;
+    out.model = status.model;
+    out.serial = status.serial;
+    out.firmware = status.firmware;
+    out.port_name = status.portName;
+    out.move_state = static_cast<std::uint32_t>(status.moveState);
+    out.position_um = status.positionUm;
+    out.limit_positive = status.limitPositive;
+    out.limit_negative = status.limitNegative;
+    out.home = status.home;
+    out.emergency_stop = status.emergencyStop;
+    out.driver_alarm = status.driverAlarm;
+    out.span_um = status.spanUm;
+    out.soft_min_um = status.softMinUm;
+    out.soft_max_um = status.softMaxUm;
+    out.last_error = status.lastError;
+    return out;
 }
 
 BridgePumpStatus BackendBridge::fetch_pump_status(std::uint32_t pump) {
@@ -2104,11 +2207,14 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // registry_local_validation, registry_materialize, registry_record_validation
 // and the authoring job kinds 6-10 were added; built as a provisional 15,
 // renumbered once to 25: 23 = the instrument line, 24 = #501 P0; 15 and 19-24
-// are never reused). All additive over v1 (ADR 0003/0004). Must match
+// are never reused); v26 added the ZC300 Z stage bridge (stage_* commands,
+// fetch_stage_status, StageMove/StageReference, MotionStage,
+// stage_move_states — #464; 27 is reserved for #501 P1). All additive over v1 (ADR
+// 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 25; }
+std::uint32_t bridge_abi_version() { return 26; }
 
 } // namespace mib_bridge
 

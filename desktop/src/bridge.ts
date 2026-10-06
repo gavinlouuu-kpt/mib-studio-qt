@@ -43,6 +43,38 @@ export interface AutofocusConfig {
   focus_direction: boolean;
 }
 
+/** Z stage snapshot (#464, ADR 0013). `move_state` is a contract
+ *  STAGE_MOVE_STATES value; positions are micrometres in the homed frame
+ *  (zero at mid-travel) once `referenced`. */
+export interface StageStatus {
+  valid: boolean;
+  enabled: boolean;
+  connected: boolean;
+  /** Controller matches the stage profile; otherwise motion is refused. */
+  configured: boolean;
+  /** Homed since the controller powered up; moves need it. */
+  referenced: boolean;
+  /** Supervised limit-switch check passed for this controller; Home needs it. */
+  limits_verified: boolean;
+  /** A move or Home is queued or running. */
+  busy: boolean;
+  model: string;
+  serial: string;
+  firmware: string;
+  port_name: string;
+  move_state: number;
+  position_um: number;
+  limit_positive: boolean;
+  limit_negative: boolean;
+  home: boolean;
+  emergency_stop: boolean;
+  driver_alarm: boolean;
+  span_um: number;
+  soft_min_um: number;
+  soft_max_um: number;
+  last_error: string;
+}
+
 /** Authoritative per-pump snapshot (schema v10, BE-7). `run_status` /
  *  `direction` are contract PUMP_RUN_STATES / PUMP_DIRECTIONS values. */
 export interface PumpStatus {
@@ -594,6 +626,17 @@ export const bridge = {
     invokeCommand("pump_set_syringe_volume", { pump, volume, unit }),
   pumpPollStatus: (pump: number) => invokeCommand("pump_poll_status", { pump }),
   fetchPumpStatus: (pump: number) => invoke<PumpStatus>("fetch_pump_status", { pump }),
+  // Z stage (#464). The backend refuses moves before Home and outside the
+  // soft limits; only stageHome homes; stageStop is always accepted.
+  stageConnect: (portName = "", usbSerial = "", modbusAddress = 0) =>
+    invokeCommand("stage_connect", { portName, usbSerial, modbusAddress }),
+  stageDisconnect: () => invokeCommand("stage_disconnect"),
+  stageMoveTo: (targetUm: number) => invokeCommand("stage_move_to", { targetUm }),
+  stageMoveBy: (deltaUm: number) => invokeCommand("stage_move_by", { deltaUm }),
+  stageHome: () => invokeCommand("stage_home"),
+  stageStop: () => invokeCommand("stage_stop"),
+  stageApplyProfile: () => invokeCommand("stage_apply_profile"),
+  fetchStageStatus: () => invoke<StageStatus>("fetch_stage_status"),
   pumpScanAddresses: (
     comPort: number,
     baudRate: number,

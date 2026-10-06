@@ -15,6 +15,24 @@ ADR 0011's CI and compatibility-matrix consequences:
   the Contract 3 row, a "Reference per contract" table (Contract 3's
   reference is the pz7035 PL specification), the `unet-cells` line name and
   the `pl_core` provenance. See [[../services/ProcessingService]].
+## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
+
+The stage is now reachable from the shell.
+- **Commands:** `stage_connect/disconnect/move_to/move_by/home/stop/apply_profile`
+  and `fetch_stage_status`. Moves and Home are tracked operations.
+- **Discovery:** kind `MotionStage`, via the `zc300-stage` FC04 identity
+  provider.
+- **Profiles:** `stage` blocks apply through profiles.
+- **Safety (backend-enforced):**
+  - no motion before Home or outside the soft limits;
+  - Connect, apply-profile and discovery never home or move;
+  - Stop is always accepted;
+  - everything else is locked during an experiment.
+- **Home gate:** Home also needs a supervised limit-switch record for the
+  controller. `zc300ctl verify-limits --supervised` writes it after an
+  operator-paced, stepped, bounded check.
+
+See [[../services/StageService]] and [[../architecture/Rust-Bridge]].
 
 ## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)
 

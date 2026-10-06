@@ -23,6 +23,7 @@ enum class DeviceKind : int {
     Framegrabber = 1,
     Nanopositioner = 2,
     PulseGenerator = 3,
+    MotionStage = 4, // Z stage controller (#464, ADR 0013)
 };
 
 enum class JobState : int {

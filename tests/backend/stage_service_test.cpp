@@ -100,6 +100,34 @@ int main()
                    "explicit applyProfile configures it");
     }
 
+    // --- Home needs a supervised limit check for the controller ---------------
+    watchdog.mark("limits-verified gate");
+    {
+        StageRig rig;
+        rig.unverifyLimits();
+        auto cfg = rig.config();
+        cfg.reference.onStartup = true; // the opt-in cannot bypass the gate
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None, "start-up connects");
+        MIB_EXPECT(svc->snapshot().activeOperation == 0 && !svc->snapshot().limitsVerified,
+                   "on_startup did not home unverified switches");
+        const auto refused = svc->reference();
+        MIB_EXPECT(refused.error == StageError::LimitsUnverified &&
+                       refused.detail.find("zc300ctl verify-limits") != std::string::npos,
+                   "Home refused with a clear error: " + refused.detail);
+        MIB_EXPECT(rig.device.writes() == 0 && rig.device.motionLog().empty(), "nothing written or moved");
+
+        // The bench tool records a passing check while the app is connected.
+        rig.limits->save({"26017", "2026-10-06T12:00:00Z", -3000.0, 3000.0, 6000.0, "zc300ctl verify-limits"});
+        MIB_EXPECT(home(*svc), "Home allowed once the record exists (no reconnect)");
+        MIB_EXPECT(svc->snapshot().limitsVerified, "snapshot reports the verified limits");
+
+        // A record for another controller does not count.
+        rig.unverifyLimits();
+        rig.limits->save({"99999", "2026-10-06T12:00:00Z", -3000.0, 3000.0, 6000.0, "zc300ctl verify-limits"});
+        MIB_EXPECT(svc->reference().error == StageError::LimitsUnverified, "another serial's record is ignored");
+    }
+
     // --- Home -----------------------------------------------------------------
     watchdog.mark("Home at mid-travel");
     {

@@ -34,6 +34,7 @@ enum class StageError {
     Protocol,
     Transport,
     ReferenceFailed, // Home: measured span outside tolerance, or a limit not reached
+    LimitsUnverified, // Home refused: no supervised limit-switch check for this controller
 };
 
 const char* toString(StageError error);
