@@ -37,7 +37,7 @@ import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSE
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
-import { deriveQualityGates, GATE_STATUS_LABEL, type QualityInput } from "./quality";
+import { deriveQualityGates, GATE_STATUS_LABEL, type ImageQualityInput, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
 import {
   canActuate,
@@ -54,7 +54,8 @@ import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
-import { initialWindow, rateSummary, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { initialWindow, rateSummary, RUN_WINDOW, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { holdBest, measureImage, sameBox } from "./imageQuality";
 import { runPreviewRgba, type RunPreview } from "./runPreview";
 import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
@@ -249,7 +250,21 @@ export default function App() {
   const pz7035 = isPz7035(caps);
   // Backend-owned camera modes (#501 P1): Camera & Alignment = Align, Experiment = Run.
   const instrumentModes = caps.align_mode && caps.run_mode;
+  const instrumentModesRef = useRef(false);
+  instrumentModesRef.current = instrumentModes;
+  // PZ7035 Align (#501): the live frame's focus and brightness in the Run window, with the best
+  // focus seen since the window last moved. draw() measures every displayed frame (about 50 k
+  // pixels) and publishes at most every 200 ms.
+  const [alignImage, setAlignImage] = useState<ImageQualityInput | null>(null);
+  const alignBestRef = useRef<{ best: number | null; box: Rect | null }>({ best: null, box: null });
+  const alignImageMs = useRef(-Infinity);
   const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
+  // A mode switch (or leaving Align) starts a fresh peak and clears the numbers.
+  const instrumentModeName = instrument?.mode?.name;
+  useEffect(() => {
+    alignBestRef.current = { best: null, box: null };
+    setAlignImage(null);
+  }, [instrumentModeName]);
   const instrumentRef = useRef<InstrumentStatus | null>(null);
   instrumentRef.current = instrument;
   const runMode = instrument?.mode?.name === "run";
@@ -339,6 +354,21 @@ export default function App() {
         ctx.strokeStyle = "#ffd400";
         ctx.lineWidth = 2;
         ctx.strokeRect(experimentWindow.x + 1, experimentWindow.y + 1, experimentWindow.width - 2, experimentWindow.height - 2);
+      }
+      // PZ7035 Align: focus number and brightness of the whole frame's Run window.
+      if (instrumentModesRef.current && canvas === liveCanvasRef.current && cameraWindowRef.current &&
+          meta.width === RUN_WINDOW.sensorWidth && meta.height === RUN_WINDOW.sensorHeight) {
+        const box = cameraWindowRef.current;
+        const metrics = measureImage(bytes, meta.width, meta.height, meta.stride_bytes, box);
+        if (metrics) {
+          const held = alignBestRef.current;
+          if (!sameBox(held.box, box)) { held.best = null; held.box = { ...box }; }
+          held.best = holdBest(held.best, metrics.focus);
+          if (performance.now() - alignImageMs.current >= 200) {
+            alignImageMs.current = performance.now();
+            setAlignImage({ metrics, best: held.best });
+          }
+        }
       }
       const { data: _pixels, ...metadata } = meta;
       if (canvas !== reviewCanvasRef.current && performance.now() - lastMetadataRenderMs.current >= 200) {
@@ -1127,6 +1157,10 @@ export default function App() {
     frameH: lastMeta?.height ?? 0,
     pixelToMicron: stats?.pixel_to_micron ?? NaN,
     pz7035,
+    // Only while Align shows the full sensor; Run has no live camera frame to measure.
+    image: pz7035 && instrumentModes
+      ? (instrument?.mode?.name === "align" && alignImage ? alignImage : { metrics: null, best: null })
+      : undefined,
   };
   const quality = deriveQualityGates(qualityInput);
 
@@ -1688,6 +1722,12 @@ export default function App() {
                       {quality.pass} pass · {quality.warn} warn · {quality.fail} fail
                       {quality.unknown ? ` · ${quality.unknown} unknown` : ""}
                     </span>
+                    {qualityInput.image && (
+                      <button className="btn small" title="Forget the best focus seen and start again (after changing the sample)"
+                        onClick={() => { alignBestRef.current = { best: null, box: null }; setAlignImage(null); }}>
+                        Restart focus peak
+                      </button>
+                    )}
                   </div>
                   <div className="quality-gates">
                     {quality.gates.map((g) => (

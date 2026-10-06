@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-10-06 — PZ7035 Align focus number and brightness (#501)
+
+Align now shows an image-based focus number for hand focusing, replacing the nanopositioner
+ring ratio that the instrument does not have. It is the Laplacian variance inside the Run
+window, with the best value held and a "Restart focus peak" button. A brightness gate warns when
+the window is dark (LED not lit) or clipping. Frontend only; no bridge change. See
+[[../architecture/Desktop-Shell]].
+
 ## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
 
 Opening Camera & Alignment puts the instrument in Align: full sensor at

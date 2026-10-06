@@ -649,6 +649,24 @@ three places:
 
 None of them blocks a run. Desktop builds are unchanged.
 
+**Align focus and brightness (#501).** There is no nanopositioner ring ratio on the PZ7035,
+so the operator focuses by hand against a number from the live image (`imageQuality.ts`,
+pure and unit tested):
+- **Focus number.** The variance of the 4-neighbour Laplacian over the interior of the Run
+  window, the 512×96 box the U-Net will see. It rises toward best focus. The window's best
+  value is held and restarts when the window moves, the mode changes, or the operator presses
+  "Restart focus peak" (after changing the sample). On a real lit 512×96 frame it falls from
+  339 to 1.5 as a box blur grows from radius 0 to 8.
+- **Brightness.** Mean, 99th percentile and the saturated fraction of the same box. The gate
+  warns below 40 DN (dark; a lit Align frame is about 143 DN, a dark one about 18) and above 1 %
+  saturated.
+- **Where it runs.** `draw()` measures each displayed whole frame (about 50 k pixels) and
+  publishes at most every 200 ms. It only measures an 816×624 Align frame while a window is
+  placed. Run has no live camera frame, so the gates read "unknown" there.
+- **Gates.** `quality.ts` adds Focus and Brightness for the PZ7035 only when the Align view
+  supplies an image. The focus gate has no absolute pass level, because it depends on the
+  sample; it reports the number and its share of the best seen.
+
 ## Pump model per slot (2026-10-04)
 
 The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
