@@ -31,6 +31,7 @@
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/StageService.h"
 
 #include <algorithm>
 #include "backend/pz/PzPlatformMonitor.h"
@@ -93,9 +94,14 @@ namespace backend::bridge
                 {
                     return BackendCommandType::Pump;
                 }
-                else
+                else if constexpr (std::is_same_v<Command, AutofocusCommand>)
                 {
                     return BackendCommandType::Autofocus;
+                }
+                else
+                {
+                    static_assert(std::is_same_v<Command, StageCommand>, "unmapped BackendCommand");
+                    return BackendCommandType::Stage;
                 }
             }, command);
         }
@@ -156,6 +162,8 @@ namespace backend::bridge
                 return BackendErrorSource::Review;
             case BackendCommandType::Pump:
             case BackendCommandType::Autofocus:
+            case BackendCommandType::PulseGenerator:
+            case BackendCommandType::Stage:
                 return BackendErrorSource::Hardware;
             }
             return BackendErrorSource::Lifecycle;
@@ -389,9 +397,14 @@ namespace backend::bridge
             {
                 return handlePumpCommand(typedCommand);
             }
-            else
+            else if constexpr (std::is_same_v<Command, AutofocusCommand>)
             {
                 return handleAutofocusCommand(typedCommand);
+            }
+            else
+            {
+                static_assert(std::is_same_v<Command, StageCommand>, "unhandled BackendCommand");
+                return handleStageCommand(typedCommand);
             }
         }, command);
     }
@@ -1725,6 +1738,8 @@ namespace backend::bridge
             if (pulse.isConnected() && Bus::samePort(pulseConfig.portName, port) &&
                 pulseConfig.modbusAddress == command.modbusAddress)
                 return fail("Modbus address already claimed by the acquisition pulse generator");
+            if (stageClaims(port, command.modbusAddress))
+                return fail("Modbus address already claimed by the Z stage on this bus");
             auto& autofocus = backend_.autofocus();
             const auto autofocusPort =
                 autofocus.getBackendKind() == nanopositioner::BackendKind::Coremor
@@ -1968,6 +1983,224 @@ namespace backend::bridge
             return {true, BackendCommandType::Autofocus, "Autofocus config applied"};
         }
         return {false, BackendCommandType::Autofocus, "Unknown autofocus command"};
+    }
+
+    // ---- Z stage (#464, ADR 0013) ----
+
+    bool BackendFacade::stageClaims(const std::string &port, int modbusAddress) const
+    {
+        const auto snap = backend_.stage().snapshot();
+        return snap.connected && services::serialbus::SerialBusManager::samePort(snap.systemPort, port) &&
+               backend_.stage().config().endpoint.modbusAddress == modbusAddress;
+    }
+
+    std::uint64_t BackendFacade::trackStageOperation(BackendOperationKind kind, std::uint64_t stageOperation,
+                                                     const std::string &message)
+    {
+        CancelFlag cancel;
+        const std::uint64_t operationId = beginOperation(kind, &cancel, message);
+        std::thread worker([this, operationId, stageOperation, cancel]() {
+            using State = services::StageService::OperationState;
+            auto &stage = backend_.stage();
+            bool cancelSent = false;
+            while (!stage.waitForOperation(stageOperation, std::chrono::milliseconds(50)))
+            {
+                if (cancel && cancel->load() && !cancelSent)
+                {
+                    stage.cancel(stageOperation); // stops the axis
+                    cancelSent = true;
+                }
+            }
+            const auto info = stage.operation(stageOperation);
+            BackendOperationState state = BackendOperationState::Cancelled;
+            std::string detail = "stage operation no longer tracked";
+            if (info)
+            {
+                switch (info->state)
+                {
+                case State::Completed: state = BackendOperationState::Completed; break;
+                case State::Failed: state = BackendOperationState::Failed; break;
+                case State::TimedOut: state = BackendOperationState::TimedOut; break;
+                default: state = BackendOperationState::Cancelled; break;
+                }
+                detail = info->detail.empty() ? stage::toString(info->error) : info->detail;
+                if (state == BackendOperationState::Completed) detail = "done";
+            }
+            finishOperation(operationId, state, detail);
+        });
+        {
+            std::scoped_lock lock(reviewJobsMutex_); // joined in shutdown()
+            reviewJobThreads_.push_back(std::move(worker));
+        }
+        return operationId;
+    }
+
+    BackendCommandResult BackendFacade::handleStageCommand(const StageCommand &command)
+    {
+        auto &stage = backend_.stage();
+        auto fail = [this](const std::string &message) -> BackendCommandResult {
+            emitEvent(BackendErrorEvent{BackendErrorSource::Hardware, BackendCommandType::Stage, message});
+            return {false, BackendCommandType::Stage, message};
+        };
+        const auto refused = [](const services::StageService::StartResult &r) {
+            return r.detail.empty() ? std::string(stage::toString(r.error)) : r.detail;
+        };
+
+        // Stop wins: no experiment lock, no reference requirement.
+        if (command.action == StageCommandAction::Stop)
+        {
+            const auto err = stage.stop();
+            if (err == stage::StageError::NotConnected)
+                return {true, BackendCommandType::Stage, "Stage not connected; nothing to stop"};
+            if (err != stage::StageError::None) return fail(std::string("Stop: ") + stage::toString(err));
+            return {true, BackendCommandType::Stage, "Stage stopped"};
+        }
+
+        // Connect / Disconnect only read or stop, so the experiment lock is
+        // checked but not held across serial I/O.
+        if (command.action == StageCommandAction::Connect || command.action == StageCommandAction::Disconnect)
+        {
+            if (!backend_.experiment().withIdleConfiguration([] {}))
+                return fail("Stage connection cannot change during an experiment");
+            if (command.action == StageCommandAction::Disconnect)
+            {
+                stage.disconnect();
+                return {true, BackendCommandType::Stage, "Stage disconnected"};
+            }
+            if (stage.snapshot().connected) return fail("Stage already connected; disconnect first");
+            auto config = stage.config();
+            if (!command.portName.empty() || !command.usbSerial.empty())
+            {
+                if (command.portName.size() > 512 || command.usbSerial.size() > 128 ||
+                    command.portName.find('\0') != std::string::npos)
+                    return fail("Invalid stage serial endpoint");
+                config.endpoint.systemPort = command.portName;
+                config.endpoint.usbSerial = command.usbSerial;
+            }
+            if (command.modbusAddress != 0)
+            {
+                if (command.modbusAddress < 1 || command.modbusAddress > 247)
+                    return fail("Invalid Modbus address (1-247)");
+                config.endpoint.modbusAddress = static_cast<std::uint8_t>(command.modbusAddress);
+            }
+            if (config.endpoint.systemPort.empty() && config.endpoint.usbSerial.empty())
+                return fail("No stage endpoint configured");
+            using Bus = services::serialbus::SerialBusManager;
+            const std::string &port = config.endpoint.systemPort;
+            if (!port.empty())
+            {
+                auto &pumps = backend_.syringePump();
+                for (int id = 0; id < services::SyringePumpService::PUMP_COUNT; ++id)
+                {
+                    const auto pumpId = static_cast<services::SyringePumpService::PumpId>(id);
+                    const auto pumpConfig = pumps.getConfig(pumpId);
+                    if (pumps.isConnected(pumpId) && Bus::samePort(pumpConfig.portName, port) &&
+                        pumpConfig.modbusAddress == config.endpoint.modbusAddress)
+                        return fail("Modbus address already claimed by a syringe pump");
+                }
+                auto &pulse = backend_.pulseGenerator();
+                const auto pulseConfig = pulse.getConfig();
+                if (pulse.isConnected() && Bus::samePort(pulseConfig.portName, port) &&
+                    pulseConfig.modbusAddress == config.endpoint.modbusAddress)
+                    return fail("Modbus address already claimed by the acquisition pulse generator");
+                auto &autofocus = backend_.autofocus();
+                if (autofocus.isConnected() && Bus::samePort(autofocus.getEndpointId(), port))
+                    return fail("Serial endpoint already in use by autofocus");
+            }
+            if (!stage.setConfig(config)) return fail("Stage already connected; disconnect first");
+            std::string detail;
+            // Observe-only: identity, profile check and power-up token reads.
+            const auto err = stage.connect(&detail);
+            if (err != stage::StageError::None)
+                return fail("Stage connect failed: " + (detail.empty() ? std::string(stage::toString(err)) : detail));
+            const auto snap = stage.snapshot();
+            std::string message = "Stage connected: " + snap.identity.model + " s/n " + snap.identity.serial;
+            if (!snap.configured) message += " (controller does not match the stage profile; motion refused)";
+            else if (!snap.referenced) message += " (press Home before moving)";
+            return {true, BackendCommandType::Stage, message};
+        }
+
+        // Motion and controller-configuration writes: only with an idle
+        // experiment, serialized against Start by the coordinator lock.
+        // Queuing is non-blocking; the motion runs on the stage worker.
+        BackendCommandResult result{false, BackendCommandType::Stage, {}};
+        const auto act = [&] {
+            switch (command.action)
+            {
+            case StageCommandAction::MoveTo:
+            case StageCommandAction::MoveBy:
+            {
+                const bool absolute = command.action == StageCommandAction::MoveTo;
+                const auto r = absolute ? stage.moveTo(command.targetUm) : stage.moveBy(command.targetUm);
+                if (!r.accepted())
+                {
+                    result.message = "Move refused: " + refused(r);
+                    return;
+                }
+                const std::string what = std::string(absolute ? "move to " : "move by ") +
+                                         std::to_string(static_cast<long long>(std::llround(command.targetUm))) +
+                                         " um";
+                result = {true, BackendCommandType::Stage, "Stage " + what + " started",
+                          trackStageOperation(BackendOperationKind::StageMove, r.id, "stage " + what)};
+                return;
+            }
+            case StageCommandAction::Home:
+            {
+                const auto r = stage.reference();
+                if (!r.accepted())
+                {
+                    result.message = "Home refused: " + refused(r);
+                    return;
+                }
+                result = {true, BackendCommandType::Stage, "Stage Home started",
+                          trackStageOperation(BackendOperationKind::StageReference, r.id,
+                                              "stage Home (both limits, zero at mid-travel)")};
+                return;
+            }
+            case StageCommandAction::ApplyProfile:
+            {
+                const auto err = stage.applyProfile();
+                result.ok = err == stage::StageError::None;
+                result.message = result.ok ? "Stage profile applied and saved; press Home before moving"
+                                           : std::string("Apply profile failed: ") + stage::toString(err);
+                return;
+            }
+            default: result.message = "Unknown stage command"; return;
+            }
+        };
+        if (!backend_.experiment().withIdleConfiguration(act))
+            return fail("Stage motion is locked while an experiment is active");
+        if (!result.ok) return fail(result.message);
+        return result;
+    }
+
+    bool BackendFacade::fetchStageStatus(BackendStageStatus &out) const
+    {
+        if (!initialized_) return false;
+        const auto &stage = backend_.stage();
+        const auto snap = stage.snapshot();
+        out.enabled = stage.config().enabled;
+        out.connected = snap.connected;
+        out.configured = snap.configured;
+        out.referenced = snap.referenced;
+        out.limitsVerified = snap.limitsVerified;
+        out.busy = snap.activeOperation != 0;
+        out.model = snap.identity.model;
+        out.serial = snap.identity.serial;
+        out.firmware = snap.identity.firmware;
+        out.portName = snap.systemPort;
+        out.moveState = static_cast<int>(snap.status.state);
+        out.positionUm = snap.status.positionUm;
+        out.limitPositive = snap.status.limitPositive;
+        out.limitNegative = snap.status.limitNegative;
+        out.home = snap.status.home;
+        out.emergencyStop = snap.status.emergencyStop;
+        out.driverAlarm = snap.status.driverAlarm;
+        out.spanUm = snap.spanUm;
+        out.softMinUm = snap.softMinUm;
+        out.softMaxUm = snap.softMaxUm;
+        out.lastError = snap.lastError;
+        return true;
     }
 
     bool BackendFacade::fetchAutofocusStatus(BackendAutofocusStatus &out) const
@@ -2937,6 +3170,10 @@ BackendCommandResult BackendFacade::pulseGeneratorCommandJson(const std::string&
                         result.message = "Modbus address already claimed by a syringe pump";
                         return;
                     }
+                }
+                if (stageClaims(port, address)) {
+                    result.message = "Modbus address already claimed by the Z stage on this bus";
+                    return;
                 }
                 settings.parity = parity[0];
                 if (pulse.isConnected()) { result.message = "Disconnect the current pulse generator first"; return; }

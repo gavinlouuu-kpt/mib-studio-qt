@@ -34,6 +34,7 @@ struct BridgeProcessingCoreStatus;
 struct BridgeAutofocusConfig;
 struct BridgeAutofocusStatus;
 struct BridgePumpStatus;
+struct BridgeStageStatus;
 struct BridgeReviewMetadata;
 struct BridgeReviewMetricsPage;
 struct BridgeEvent;
@@ -112,6 +113,15 @@ public:
     BridgeCommandResult pump_scan_addresses(std::int32_t com_port, std::int32_t baud_rate,
                                             std::int32_t start_address, std::int32_t end_address,
                                             std::int32_t timeout_ms);
+    BridgeCommandResult stage_connect(rust::Str port_name, rust::Str usb_serial,
+                                      std::int32_t modbus_address);
+    BridgeCommandResult stage_disconnect();
+    BridgeCommandResult stage_move_to(double target_um);
+    BridgeCommandResult stage_move_by(double delta_um);
+    BridgeCommandResult stage_home();
+    BridgeCommandResult stage_stop();
+    BridgeCommandResult stage_apply_profile();
+    BridgeStageStatus fetch_stage_status();
     BridgeReviewMetadata fetch_review_metadata();
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);
