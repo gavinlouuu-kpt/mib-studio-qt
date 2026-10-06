@@ -204,7 +204,7 @@ std::pair<StageError, std::string> StageService::runExclusive(Job::Type type)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) return {StageError::NotConnected, "stage service is shutting down"};
-        if (snapshot_.activeOperation != 0 || exclusivePending_ > 0 || disconnecting_) {
+        if (snapshot_.activeOperation != 0 || exclusivePending_ > 0 || pendingDisconnects_ > 0) {
             return {StageError::Busy, "a stage operation is active; stop it or wait for it to finish"};
         }
         ++exclusivePending_;
@@ -238,7 +238,7 @@ void StageService::disconnect()
         if (stopping_) return;
         // Mark first, under the lock that admits operations: a move queued
         // behind this job ends at its first check, and no new one is admitted.
-        disconnecting_ = true;
+        ++pendingDisconnects_;
         if (snapshot_.activeOperation != 0) {
             cancelRequested_ = snapshot_.activeOperation;
             toStop = driver_;
@@ -305,7 +305,7 @@ StageService::StartResult StageService::enqueueOperation(OperationKind kind, dou
     StartResult result;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (stopping_ || !snapshot_.connected || disconnecting_) {
+        if (stopping_ || !snapshot_.connected || pendingDisconnects_ > 0) {
             result.error = StageError::NotConnected;
         } else if (exclusivePending_ > 0) {
             result.error = StageError::Busy;
@@ -427,7 +427,7 @@ bool StageService::waitForOperation(OperationId id, std::chrono::milliseconds ti
 bool StageService::cancelled(OperationId id) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return stopping_ || disconnecting_ || cancelRequested_ == id || stopEpoch_.load() != operationStopEpoch_;
+    return stopping_ || pendingDisconnects_ > 0 || cancelRequested_ == id || stopEpoch_.load() != operationStopEpoch_;
 }
 
 void StageService::finishOperation(OperationId id, OperationState state, StageError error, std::string detail)
@@ -493,7 +493,7 @@ void StageService::workerLoop()
             doDisconnect();
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                disconnecting_ = false;
+                if (pendingDisconnects_ > 0) --pendingDisconnects_; // shutdown() queues one without counting it
             }
             if (job.reply) job.reply->set_value({StageError::None, {}});
             break;
