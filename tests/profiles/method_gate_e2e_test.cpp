@@ -2,9 +2,12 @@
 // end through AppBackend with the mock camera and a fake Supabase.
 //  - a materialized central revision applied as config.json is recognised:
 //    method.revision Warn (not validated here), Start allowed;
-//  - recording a local validation (signed-in user, this instrument/context,
-//    test-run evidence) bumps the readiness generation and passes the gate;
-//    the stale preflight is refused;
+//  - planMethodApply hands out the exact materialized bytes + changed keys and
+//    refuses revoked/uncached revisions;
+//  - "Mark validated" accepts only a test run whose /run_provenance names the
+//    revision (a run of another revision, a local-method run or a missing file
+//    is refused); accepting it bumps the readiness generation and passes the
+//    gate; the stale preflight is refused;
 //  - Start freezes the exact revision + validation into /run_provenance
 //    (run snapshot schema v2 "method" block), readable after close;
 //  - a revoked revision (applied directly, or revoked centrally after a
@@ -12,6 +15,7 @@
 //  - a locally edited config is a local method (NotRequired).
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/MethodApply.h"
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/processing/ProcessingCoreSha256.h"
 #include "backend/processing/ProcessingService.h"
@@ -33,6 +37,7 @@
 #include <functional>
 #include <sstream>
 #include <thread>
+#include <vector>
 
 using backend::app::ExperimentStartOutcome;
 using backend::app::ExperimentStartRequest;
@@ -168,49 +173,73 @@ int main() {
     MIB_EXPECT(coord.evaluateReadiness(out).generation == unvalidatedGeneration,
                "stable method state keeps the generation");
 
-    wd.mark("record local validation");
-    const auto evidence = td.path() / "test-run.h5";
-    { std::ofstream(evidence, std::ios::binary) << "test run bytes"; }
-    backend::profiles::LocalValidationRequest validation;
-    validation.revisionId = "r1";
-    validation.context = backend.methodContext();
-    validation.instrumentName = backend.instrumentIdentity().name;
-    validation.evidenceFile = evidence.string();
-    MIB_REQUIRE(run(registry, registry.requestRecordValidation(validation)) == RegistryJobState::Succeeded,
-                "validation recorded");
+    // Start + finalize one run; returns its persisted run_snapshot_json.
+    const auto recordRun = [&](const std::string& path) {
+        const auto ready = coord.evaluateReadiness(path);
+        MIB_REQUIRE(ready.ready, "ready");
+        ExperimentStartRequest req;
+        req.outputPath = path;
+        req.readinessGeneration = ready.generation;
+        MIB_REQUIRE(coord.start(req).outcome == ExperimentStartOutcome::Started, "Started");
+        MIB_EXPECT(coord.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop");
+        MIB_REQUIRE(waitFor([&] { return coord.status().terminal; }, 20s), "run finalizes");
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(path), "reload run file");
+        std::string runJson;
+        MIB_REQUIRE(reader.readRunSnapshotJson(runJson), "run snapshot persisted");
+        reader.closeFile();
+        return Json::parse(runJson);
+    };
+
+    wd.mark("plan apply");
+    {
+        auto plan = backend::app::planMethodApply(registry.snapshot(), "r1",
+                                                  R"({"config_schema_version":1,"gain":42})");
+        MIB_EXPECT(plan.ok && plan.configText == r1Config, "plan carries the exact materialized bytes");
+        MIB_EXPECT(plan.changedKeys == std::vector<std::string>{"gain"}, "plan lists the changed key");
+        MIB_EXPECT(plan.cameraScriptPath == (methods / "r1" / "egrabberConfig.js").string(),
+                   "camera script path offered");
+        plan = backend::app::planMethodApply(registry.snapshot(), "r2", r1Config);
+        MIB_EXPECT(!plan.ok && plan.error.find("revoked") != std::string::npos, "revoked: not applicable");
+        plan = backend::app::planMethodApply(registry.snapshot(), "nope", r1Config);
+        MIB_EXPECT(!plan.ok, "uncached: not applicable");
+    }
+
+    wd.mark("unvalidated test run, then mark validated with it");
+    const std::string testRun = (td.path() / "test-run.h5").string();
+    const auto testJson = recordRun(testRun);
+    MIB_EXPECT(testJson.at("method").at("validation") == "none" &&
+                   testJson.at("method").at("revision_id") == "r1",
+               "test run recorded the unvalidated revision");
+    {
+        const auto missing = backend.requestMethodValidation("r1", (td.path() / "nope.h5").string(), true);
+        MIB_EXPECT(missing.jobId == 0 && missing.error.find("Cannot open") != std::string::npos,
+                   "missing evidence refused");
+        const auto wrongRevision = backend.requestMethodValidation("r2", testRun, true);
+        MIB_EXPECT(wrongRevision.jobId == 0 &&
+                       wrongRevision.error.find("not recorded with this revision") != std::string::npos,
+                   "a run of r1 cannot validate r2");
+        MIB_EXPECT(registry.snapshot().validations.empty(), "nothing recorded by refused requests");
+    }
+    r = coord.evaluateReadiness(out);
+    const auto beforeValidation = r.generation;
+    const auto accepted = backend.requestMethodValidation("r1", testRun, true);
+    MIB_REQUIRE(accepted.jobId != 0, accepted.error);
+    MIB_REQUIRE(run(registry, accepted.jobId) == RegistryJobState::Succeeded, "validation recorded");
     r = coord.evaluateReadiness(out);
     MIB_EXPECT(methodGate(r).status == GateStatus::Pass, "validated here: Pass");
-    MIB_EXPECT(r.generation != unvalidatedGeneration, "validation bumps the readiness generation");
+    MIB_EXPECT(r.generation != beforeValidation, "validation bumps the readiness generation");
     {
         ExperimentStartRequest stale;
         stale.outputPath = out;
-        stale.readinessGeneration = unvalidatedGeneration;
+        stale.readinessGeneration = beforeValidation;
         MIB_EXPECT(coord.start(stale).outcome == ExperimentStartOutcome::StaleReadiness,
                    "pre-validation preflight cannot authorize Start");
     }
 
     wd.mark("start freezes the revision into HDF5");
     {
-        r = coord.evaluateReadiness(out);
-        MIB_REQUIRE(r.ready, "ready");
-        ExperimentStartRequest req;
-        req.outputPath = out;
-        req.readinessGeneration = r.generation;
-        const auto started = coord.start(req);
-        MIB_REQUIRE(started.outcome == ExperimentStartOutcome::Started, "Started");
-        const auto active = coord.activeRun();
-        MIB_REQUIRE(active.has_value(), "active run");
-        MIB_EXPECT(active->method.revisionId == "r1" && active->method.validation == "passed",
-                   "frozen snapshot carries the revision");
-        MIB_EXPECT(coord.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop");
-        MIB_REQUIRE(waitFor([&] { return coord.status().terminal; }, 20s), "run finalizes");
-
-        backend::services::Hdf5Service reader;
-        MIB_REQUIRE(reader.loadFile(out), "reload run file");
-        std::string runJson;
-        MIB_REQUIRE(reader.readRunSnapshotJson(runJson), "run snapshot persisted");
-        reader.closeFile();
-        const auto j = Json::parse(runJson);
+        const auto j = recordRun(out);
         const auto& m = j.at("method");
         MIB_EXPECT(j.at("schema_version") == 2, "run snapshot schema v2");
         MIB_EXPECT(m.at("source") == "central" && m.at("revision_id") == "r1" &&
@@ -222,11 +251,20 @@ int main() {
                    "method block in /run_provenance");
         std::string hashError;
         MIB_EXPECT(m.at("validation_evidence_sha256") ==
-                       backend::processing::fileSha256(evidence, &hashError, {}),
-                   "evidence hash recorded");
-        MIB_EXPECT(m.at("content_hash") == active->method.contentHash &&
+                       backend::processing::fileSha256(testRun, &hashError, {}),
+                   "evidence hash is the test run's");
+        MIB_EXPECT(m.at("content_hash") == testJson.at("method").at("content_hash") &&
                        m.at("content_hash").get<std::string>().size() == 64,
                    "exact content hash frozen");
+    }
+
+    wd.mark("a local-method run is not evidence");
+    {
+        backend.setLastConfigJson(R"({"config_schema_version":1,"gain":42})");
+        const std::string localRun = (td.path() / "local-run.h5").string();
+        MIB_EXPECT(recordRun(localRun).at("method").at("source") == "local", "local run recorded");
+        const auto refused = backend.requestMethodValidation("r1", localRun, true);
+        MIB_EXPECT(refused.jobId == 0 && !refused.error.empty(), "local run refused as evidence");
     }
 
     wd.mark("revoked revision blocks Start");

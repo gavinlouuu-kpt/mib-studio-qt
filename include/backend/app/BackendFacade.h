@@ -678,6 +678,13 @@ namespace backend::bridge
         std::uint64_t revisionNumber{0};
         std::uint64_t metadataVersion{0};
         int centralState{0};
+        // #398 M2b: verified materialized files ("" = not materialized) and
+        // the local validation on this instrument under the current method
+        // context (`localValidation` = registry_local_validation).
+        std::string materializedDir;
+        int localValidation{0};
+        std::string validatedBy;
+        std::string validatedAtUtc;
     };
 
     struct BackendRegistryJob
@@ -711,6 +718,15 @@ namespace backend::bridge
         BackendRegistryJob lastJob;
         std::uint64_t queuedJobs{0};
         bool busy{false};
+        std::string instrumentId;   // #398 M2b: AppBackend::instrumentIdentity()
+        std::string instrumentName;
+    };
+
+    // "Mark validated" outcome: jobId 0 = refused, `error` says why.
+    struct BackendRegistryValidationRequest
+    {
+        std::uint64_t jobId{0};
+        std::string error;
     };
 
     // Authoritative selected-device snapshot (BE-2). `mode` values are
@@ -923,6 +939,14 @@ namespace backend::bridge
         std::uint64_t registryRefresh();
         std::uint64_t registryDownload(const std::string &revisionId);
         bool registryCancelAll();
+        // #398 M2b: write a cached revision's files (read-only) for Apply.
+        std::uint64_t registryMaterialize(const std::string &revisionId);
+        // #398 M2b: record a local validation of `revisionId` backed by the
+        // test-run HDF5 `evidenceFile`, which must have been recorded with
+        // that revision applied on this instrument under the current context.
+        BackendRegistryValidationRequest registryRecordValidation(const std::string &revisionId,
+                                                                  const std::string &evidenceFile,
+                                                                  bool passed);
         bool fetchRegistrySnapshot(BackendRegistrySnapshot &out) const;
         bool fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const;
         bool fetchCameraSelection(BackendCameraSelection &out) const;

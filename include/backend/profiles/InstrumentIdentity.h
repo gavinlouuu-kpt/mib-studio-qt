@@ -27,4 +27,8 @@ InstrumentIdentity loadOrCreateInstrumentIdentity(const std::filesystem::path& d
 // True for a lowercase RFC 4122 v4 UUID string.
 bool isInstrumentUuid(const std::string& id);
 
+// A fresh lowercase RFC 4122 v4 UUID (also used for draft, method and
+// revision IDs generated on this PC; #398 M3).
+std::string generateUuidV4();
+
 } // namespace backend::profiles

@@ -143,6 +143,40 @@ std::string methodContextJson(const MethodContext& context) {
         .dump(-1, ' ', false, Json::error_handler_t::replace);
 }
 
+namespace {
+constexpr std::size_t kMaxListedChanges = 200;
+void diffJson(const Json& a, const Json& b, const std::string& prefix, std::vector<std::string>& out) {
+    if (out.size() >= kMaxListedChanges) return;
+    if (a.is_object() && b.is_object()) {
+        for (const auto& [key, value] : a.items()) {
+            const auto path = prefix.empty() ? key : prefix + "." + key;
+            if (!b.contains(key))
+                out.push_back(path + " (removed)");
+            else
+                diffJson(value, b.at(key), path, out);
+        }
+        for (const auto& [key, value] : b.items())
+            if (!a.contains(key)) out.push_back((prefix.empty() ? key : prefix + "." + key) + " (added)");
+        return;
+    }
+    // Same normalization rule as the canonical hash: 2.0 == 2.
+    const bool bothNumbers = a.is_number() && b.is_number();
+    if (bothNumbers ? a.get<double>() != b.get<double>() : a != b)
+        out.push_back(prefix.empty() ? "<entire document>" : prefix);
+}
+} // namespace
+
+std::vector<std::string> jsonDifferences(const std::string& a, const std::string& b) {
+    std::vector<std::string> out;
+    try {
+        diffJson(Json::parse(a), Json::parse(b), {}, out);
+    } catch (const Json::exception&) {
+        out = {"<entire document>"};
+    }
+    if (out.size() >= kMaxListedChanges) out.push_back("... (more)");
+    return out;
+}
+
 std::string methodContextHash(const MethodContext& context) {
     if (context.instrumentId.empty()) return {};
     return contentHash("mib-method-context-v1\n" + methodContextJson(context));

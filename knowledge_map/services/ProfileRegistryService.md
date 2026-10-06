@@ -14,8 +14,12 @@ see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
 revisions. M2a (backend): the worker materializes a cached revision's files and
 records operator-confirmed local validations; [[../architecture/ExperimentCoordinator]]
 matches the applied config.json to a cached revision, gates Start on it
-(`method.revision`) and freezes it into `/run_provenance`. No Apply / "Mark
-validated" UI yet (M2b).
+(`method.revision`) and freezes it into `/run_provenance`. M2b: the Apply plan
+(`planMethodApply`; the React applier is a follow-up) and "Mark
+validated" (`AppBackend::requestMethodValidation` accepts only a
+test run whose `/run_provenance` names the revision on this instrument under
+the current context — `checkValidationEvidence`). See
+`include/backend/app/MethodApply.h`.
 
 ## Key APIs
 
@@ -57,11 +61,36 @@ validated" UI yet (M2b).
 - `canonicalConfigSha256(configJson)` / `revisionConfigSha256(envelope)` (M2):
   key-order/whitespace/integral-double independent config hash; every
   `CachedRevisionSummary` carries `configSha256`.
+- Authoring (M3a, backend only so far):
+  `requestSaveDraft(MethodDraft, copyFromRevisionId)` stores a local draft in
+  the per-user cache (`registry_drafts`; works offline; IDs for draft, method
+  and revision pre-generated with `generateUuidV4()` so a retried submit is
+  idempotent); with a source revision the config, camera script, core,
+  compatibility, method and base are copied from it. The draft must
+  canonicalize. `requestDeleteDraft`. `requestSubmitDraft(id, asBranch)`
+  (signed in): creates the method for a new-method draft, otherwise reads the
+  method head (`listMethods`) and, when it is not the draft's base, stops with
+  `snapshot().submitConflict` (base, head, upstream and draft-vs-head key
+  changes) without sending anything; `asBranch` submits with the base as
+  parent. A submitted draft is read-only. `requestTransition(id, state,
+  reason)` (Approved/Rejected/Published/Archived/Revoked; reason required;
+  cached metadata version, stale = Conflict); after a publish the worker
+  re-downloads the method's other Published revisions so the superseded state
+  shows at once. `requestHistory(id)` → `snapshot().history` (reviews + audit
+  events). Refresh also lists each project's methods (`snapshot().methods`
+  with heads). Summaries carry `parentRevisionId` and `releaseNotes` (cache
+  column added in place, immutable once known).
+  `app::newerPublishedRevision()` answers "update available".
 - `InstrumentIdentity` (M2): UUID v4 in `<dataDir>/instrument_identity.json`
   plus `MIB_INSTRUMENT_NAME`; a corrupt file is moved to `.corrupt-<n>` and
   replaced (old validations stop matching, the gate warns).
 
 ## Gotchas
+
+Close a file before renaming or moving it: Windows refuses to rename a file
+that is still open (Linux allows it). `InstrumentIdentity` reads the identity
+file in its own scope so a corrupt file can be moved to `.corrupt-<n>`
+(`profiles.instrument_identity` caught this on the first MSVC run).
 
 Everything except `ProfileRegistryWorker`'s public API is confined to the
 worker thread. Snapshots never wait on SQLite or the network (the cache is read
@@ -93,7 +122,9 @@ it), `profiles.registry_facade` (facade mapping + contract integers + shutdown a
 the bridge `registry_*` cargo tests, `desktop/src/registry.test.ts`,
 `profiles.registry_method`
 (canonical config hash, materialize, record validation, restart, cancel while hashing),
-`profiles.instrument_identity`, `backend.method_provenance`, `e2e.method_gate`, `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
+`profiles.instrument_identity`, `backend.method_provenance`, `e2e.method_gate`,
+`profiles.registry_authoring` (M3 lifecycle, conflict, branch, viewer refusal, old
+cache migration), `frontend.registry_http_transport` (Qt transport timeout/cancel/https-only on a
 worker thread), and the PGlite SQL suite.
 
 Setup, current scope, tests and recovery: `supabase/README.md`.

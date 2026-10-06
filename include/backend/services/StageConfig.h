@@ -19,7 +19,7 @@ struct StageConfig {
         // Read-only start-up is the default (Gavin, 2026-10-05): the stage
         // moves only when an operator presses Home. A rig may opt in.
         bool onStartup{false};
-        double searchSpeedUmS{1000.0};
+        double searchSpeedUmS{1000.0}; // Home's limit search; capped at 2000 um/s
         double expectedSpanUm{6000.0};
         double spanToleranceUm{300.0};
         double searchMarginUm{500.0};

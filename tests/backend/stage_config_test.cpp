@@ -79,6 +79,8 @@ int main()
         MIB_EXPECT(rejects(J{{"reference", {{"soft_limit_margin_um", 3000}}}}, "soft_limit_margin_um"),
                    "margin that leaves no travel");
         MIB_EXPECT(rejects(J{{"speed_um_s", 9000}}, "speed_um_s"), "speed above the stage maximum");
+        MIB_EXPECT(rejects(J{{"reference", {{"search_speed_um_s", 3000}}}}, "search_speed_um_s"),
+                   "limit search faster than 2000 um/s");
         MIB_EXPECT(rejects(J{{"approach", {{"direction", "up"}}}}, "direction"), "bad approach direction");
         MIB_EXPECT(rejects(J{{"enabled", "yes"}}, "enabled"), "non-boolean flag");
         MIB_EXPECT(rejects(J{{"max_unreferenced_jog_um", -1}}, "max_unreferenced_jog_um"), "negative jog bound");

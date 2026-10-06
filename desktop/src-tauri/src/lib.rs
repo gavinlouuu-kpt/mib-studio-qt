@@ -664,6 +664,8 @@ pub fn run() {
             registry::registry_refresh,
             registry::registry_download,
             registry::registry_cancel_all,
+            registry::registry_materialize,
+            registry::registry_record_validation,
             registry::fetch_registry_snapshot,
             registry::fetch_registry_job,
             abi_version,

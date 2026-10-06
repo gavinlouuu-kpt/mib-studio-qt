@@ -38,6 +38,11 @@ public:
     Revision submit(const Revision& draft, const std::string& expectedHead) override;
     Revision transition(const std::string& revisionId, CentralState state,
                         uint64_t expectedMetadataVersion, const std::string& reason) override;
+    std::vector<RegistryMethod> listMethods(const std::string& projectId) override;
+    RegistryMethod createMethod(const std::string& projectId, const std::string& methodId,
+                                const std::string& displayName,
+                                const std::string& description) override;
+    RevisionHistory revisionHistory(const std::string& revisionId) override;
 
 private:
     std::string rpc(const std::string& name, const std::string& body);

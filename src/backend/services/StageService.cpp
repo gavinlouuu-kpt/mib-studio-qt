@@ -702,7 +702,7 @@ StageError StageService::runMove(OperationId id, double value, bool absolute, st
     return approachAndWait(id, target, minUm, maxUm, detail);
 }
 
-StageError StageService::jogToLimit(OperationId id, Direction direction, double& positionUm, std::string& detail)
+StageError StageService::searchLimit(OperationId id, Direction direction, double& positionUm, std::string& detail)
 {
     const auto d = driver();
     if (!d) return StageError::NotConnected;
@@ -716,21 +716,30 @@ StageError StageService::jogToLimit(OperationId id, Direction direction, double&
         return StageError::None;
     }
     if ((err = applySpeed(cfg.reference.searchSpeedUmS)) != StageError::None) return err;
+    // The search is a relative move of at most expected_span + search_margin
+    // toward the switch, executed and bounded by the controller itself: it
+    // ends at the bound even if this thread stalls (host load, OS sleep
+    // granularity, USB latency). The ZC300 halts any motion at a tripped
+    // limit switch, so with working switches it ends there instead. Host
+    // polling only detects the end; it can stop the axis earlier, never later.
+    const double maxTravel = std::floor(cfg.reference.expectedSpanUm + cfg.reference.searchMarginUm);
     const double start = status.positionUm;
-    const double maxTravel = cfg.reference.expectedSpanUm + cfg.reference.searchMarginUm;
     const auto budget = std::chrono::duration<double>(
         maxTravel / cfg.reference.searchSpeedUmS * cfg.moveTimeoutMargin + 2.0);
     const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(budget);
-    if ((err = d->jog(direction)) != StageError::None) return err;
+    if ((err = d->moveRelative(negative ? -maxTravel : maxTravel)) != StageError::None) return err;
     const char* side = negative ? "negative" : "positive";
+    // Belt and braces: never let the host see more travel than the bound.
     err = waitIdle(id, deadline, status, detail, [&](const StageStatus& s) {
-        if (std::abs(s.positionUm - start) <= maxTravel) return false;
-        detail = std::string("no ") + side + " limit within " + std::to_string(static_cast<int>(maxTravel)) + " um";
+        if (std::abs(s.positionUm - start) <= maxTravel + 1.0) return false;
+        detail = std::string("travelled past the ") + std::to_string(static_cast<int>(maxTravel)) +
+                 " um search bound";
         return true;
     });
     if (err != StageError::None || cancelled(id)) return err;
     if (!(negative ? status.limitNegative : status.limitPositive)) {
-        detail = std::string("the stage stopped before the ") + side + " limit switch";
+        detail = std::string("no ") + side + " limit switch within " + std::to_string(static_cast<int>(maxTravel)) +
+                 " um (check the limit-switch wiring)";
         return StageError::ReferenceFailed;
     }
     positionUm = status.positionUm;
@@ -752,8 +761,8 @@ StageError StageService::runReference(OperationId id, std::string& detail)
 
     double negUm = 0.0;
     double posUm = 0.0;
-    StageError err = jogToLimit(id, Direction::Negative, negUm, detail);
-    if (err == StageError::None && !cancelled(id)) err = jogToLimit(id, Direction::Positive, posUm, detail);
+    StageError err = searchLimit(id, Direction::Negative, negUm, detail);
+    if (err == StageError::None && !cancelled(id)) err = searchLimit(id, Direction::Positive, posUm, detail);
     if (err != StageError::None || cancelled(id)) return err;
 
     const double span = posUm - negUm;

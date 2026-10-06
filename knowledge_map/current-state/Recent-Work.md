@@ -20,6 +20,30 @@ needed in either direction.
 Bridge ABI 26. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
 
+## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)
+
+PR #511's TSan lane stalled 60 s in `backend.zc300_stage`: a back-to-back
+status poller kept re-locking the driver's unfair mutex and starved a move.
+[[../services/ZC300Stage]] access is now prioritized (commands, including
+Stop, go first; polls step aside) and bounded (`Busy` after 15 s). The
+concurrency test now runs three tight pollers and bounds every command, and
+Stop, by time. Under TSan on two cores the slowest command went from 2 s to
+≤ 50 ms.
+
+## 2026-10-06 — Z stage Home: controller-bounded limit search (#464 fix)
+
+[[../services/StageService]] Home now searches for each limit switch with a
+relative move of at most 6500 µm (opcode 0x65) at the slow search speed.
+Before, it was an open-ended jog that the host stopped by polling.
+- **Why:** Windows CI saw the jog overshoot the bound by ~300 µm, through
+  sleep granularity.
+- **Now:** the controller enforces the bound even when the host stalls.
+- **Tests:** a reply-delayed (80 ms) fake proves it. Mutation checks (jog
+  back in; search at the move speed) fail.
+- **Config:** `search_speed_um_s` is capped at 2000 µm/s.
+- **Not fixed by this:** the bound exceeds the ~6000 µm travel, so a
+  supervised limit check stays a precondition for the first real Home.
+
 ## 2026-10-05 — StageService: read-only start-up, Home at mid-travel (#464, slice 3)
 
 [[../services/StageService]] owns the Z stage, and `AppBackend::stage()`
@@ -123,6 +147,39 @@ most significant word in ID3. Register map, header and fixtures are
 unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
+
+## 2026-10-04 — Central method authoring backend (#398 M3a)
+
+Supabase migration `202610040001_registry_authoring.sql` lets authors create
+methods (audited, idempotent), attaches immutable release notes to revisions,
+exposes method heads and per-revision review/audit history (PGlite tests in
+`supabase/tests/registry_authoring.sql`). The backend worker gains local
+drafts (new method, or copied from a cached revision; offline-capable),
+submit with a pre-submit head check that stops with a compared conflict
+(upstream vs draft key changes) or submits explicitly as a branch, reviewed
+transitions with reasons (publishing refreshes the superseded head), and
+history. `app::newerPublishedRevision` answers "update available". Job kinds
+6-10 join the ABI 25 contract. No UI yet (M3b). Guard:
+`profiles.registry_authoring` (three guard mutations caught).
+See [[../services/ProfileRegistryService]].
+
+## 2026-10-04 — Apply and Mark validated for central methods (#398 M2b)
+
+`planMethodApply` says what applying a cached published or superseded
+revision would do: refused unless materialized and untampered, with the
+config.json keys that would change. **Mark validated… / Record failed run…**
+in the React Central Methods panel take a test-run `.h5`;
+`AppBackend::requestMethodValidation` only
+accepts a run whose frozen provenance names that exact revision on this
+instrument under the current core/camera context. Rows show local validation
+and the applied revision; the bridge gains `registry_materialize`,
+`registry_record_validation` and the `registry_local_validation` group
+(part of ABI 25). React shows Apply disabled with the reason (no
+config.json applier in that shell yet). Guards: `backend.method_provenance`
+(diff/evidence/local view), `e2e.method_gate` (evidence through real runs),
+`profiles.registry_facade`, bridge cargo tests, `registry.test.ts`. A Qt Apply
+(exact bytes through `AppConfigWatcher`) was built and dropped with the Qt UI
+(ADR 0011).
 
 ## 2026-10-04 — Central method provenance + `method.revision` gate (#398 M2a, backend)
 

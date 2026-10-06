@@ -119,6 +119,11 @@ export const REGISTRY_JOB_KINDS = {
   Download: 3,
   Materialize: 4,
   RecordValidation: 5,
+  SaveDraft: 6,
+  DeleteDraft: 7,
+  SubmitDraft: 8,
+  Transition: 9,
+  FetchHistory: 10,
 } as const;
 
 export const REGISTRY_JOB_STATES = {
@@ -138,6 +143,12 @@ export const REGISTRY_CENTRAL_STATES = {
   Superseded: 4,
   Archived: 5,
   Revoked: 6,
+} as const;
+
+export const REGISTRY_LOCAL_VALIDATION = {
+  None: 0,
+  Passed: 1,
+  Failed: 2,
 } as const;
 
 export const REVIEW_IMAGE_DATASETS = {

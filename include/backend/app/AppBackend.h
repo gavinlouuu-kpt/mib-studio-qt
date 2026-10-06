@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -168,6 +169,19 @@ namespace backend
         // The local context a method validation binds to: this instrument,
         // the active processing core build and the effective camera source.
         profiles::MethodContext methodContext() const;
+        // "Mark validated" (#398 M2b): checks that the evidence test-run
+        // file's frozen /run_provenance names this exact revision, this
+        // instrument and the current method context (checkValidationEvidence),
+        // then enqueues the worker's RecordValidation. jobId 0 = refused;
+        // `error` says why.
+        struct MethodValidationRequestResult
+        {
+            std::uint64_t jobId{0};
+            std::string error;
+        };
+        MethodValidationRequestResult requestMethodValidation(const std::string &revisionId,
+                                                              const std::string &evidenceFile,
+                                                              bool passed);
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }

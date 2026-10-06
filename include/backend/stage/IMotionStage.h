@@ -41,7 +41,10 @@ public:
     // with OffGrid, never rounded.
     virtual StageError moveAbsolute(double targetUm) = 0;
     virtual StageError moveRelative(double deltaUm) = 0;
-    virtual StageError jog(Direction direction) = 0; // until stop() or a limit
+    // Open-ended: runs until stop() or a limit switch, so its extent depends
+    // on the caller stopping it in time. Prefer a bounded moveRelative; the
+    // service's Home search does not use jog (#464).
+    virtual StageError jog(Direction direction) = 0;
     virtual StageError stop() = 0;                   // immediate, idempotent, retried
 
     // Redefines the current position without motion.
