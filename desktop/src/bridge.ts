@@ -237,6 +237,54 @@ export interface RegistryRevision {
   local_validation: number;
   validated_by: string;
   validated_at_utc: string;
+  /** #398 M3b: lineage, author's notes, newer published revision ("" = none). */
+  parent_revision_id: string;
+  release_notes: string;
+  newer_revision_id: string;
+}
+
+/** #398 M3b authoring mirrors. Drafts are local until submitted. */
+export interface RegistryDraft {
+  draft_id: string;
+  project_id: string;
+  method_id: string;
+  new_method: boolean;
+  method_display_name: string;
+  base_revision_id: string;
+  release_notes: string;
+  submitted_revision_id: string;
+  updated_at_utc: string;
+}
+
+export interface RegistryMethod {
+  method_id: string;
+  project_id: string;
+  display_name: string;
+  head_revision_id: string;
+}
+
+export interface RegistryHistoryEntry {
+  who: string;
+  what: string;
+  reason: string;
+  created_at: string;
+  review: boolean;
+}
+
+export interface RegistryConflict {
+  present: boolean;
+  draft_id: string;
+  base_revision_id: string;
+  head_revision_id: string;
+  compared: boolean;
+  upstream_changes: string[];
+  draft_vs_head: string[];
+}
+
+/** Authoring command outcome: job_id "0" = refused, `error` why. */
+export interface RegistryCommand {
+  job_id: string;
+  error: string;
 }
 
 /** "Mark validated" outcome (#398 M2b): job_id "0" = refused, `error` why. */
@@ -269,6 +317,11 @@ export interface RegistrySnapshot {
   busy: boolean;
   instrument_id: string;
   instrument_name: string;
+  drafts: RegistryDraft[];
+  methods: RegistryMethod[];
+  history_revision_id: string;
+  history: RegistryHistoryEntry[];
+  submit_conflict: RegistryConflict;
 }
 
 /** Device-discovery request (schema v14, #419). Kinds are
@@ -734,6 +787,21 @@ export const bridge = {
   registryMaterialize: (revisionId: string) => invoke<string>("registry_materialize", { revisionId }),
   registryRecordValidation: (revisionId: string, evidenceFile: string, passed: boolean) =>
     invoke<RegistryValidationRequest>("registry_record_validation", { revisionId, evidenceFile, passed }),
+  // #398 M3b authoring.
+  registryNewDraftFromRevision: (revisionId: string, useCurrentConfig: boolean) =>
+    invoke<RegistryCommand>("registry_new_draft_from_revision", { revisionId, useCurrentConfig }),
+  registryNewMethodDraft: (projectId: string, name: string, releaseNotes: string) =>
+    invoke<RegistryCommand>("registry_new_method_draft", { projectId, name, releaseNotes }),
+  registrySetDraftNotes: (draftId: string, notes: string) =>
+    invoke<RegistryCommand>("registry_set_draft_notes", { draftId, notes }),
+  registryDraftFromHead: (draftId: string, keepDraftConfig: boolean) =>
+    invoke<RegistryCommand>("registry_draft_from_head", { draftId, keepDraftConfig }),
+  registrySubmitDraft: (draftId: string, asBranch: boolean) =>
+    invoke<RegistryCommand>("registry_submit_draft", { draftId, asBranch }),
+  registryDeleteDraft: (draftId: string) => invoke<RegistryCommand>("registry_delete_draft", { draftId }),
+  registryTransition: (revisionId: string, target: number, reason: string) =>
+    invoke<RegistryCommand>("registry_transition", { revisionId, target, reason }),
+  registryFetchHistory: (revisionId: string) => invoke<RegistryCommand>("registry_fetch_history", { revisionId }),
   fetchRegistrySnapshot: () => invoke<RegistrySnapshot>("fetch_registry_snapshot"),
   fetchRegistryJob: (jobId: string) =>
     invoke<RegistryJob>("fetch_registry_job", { jobId: decimalU64(jobId) }),

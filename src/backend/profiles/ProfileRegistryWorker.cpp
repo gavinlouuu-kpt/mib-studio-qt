@@ -142,6 +142,15 @@ const char* toString(RegistryWorkerSnapshot::Session session) {
     return "unknown";
 }
 
+bool hasProjectRole(const RegistryWorkerSnapshot& snapshot, const std::string& projectId,
+                    const std::string& role) {
+    for (const auto& p : snapshot.projects)
+        if (p.projectId == projectId)
+            return std::find(p.roles.begin(), p.roles.end(), role) != p.roles.end() ||
+                   std::find(p.roles.begin(), p.roles.end(), "admin") != p.roles.end();
+    return false;
+}
+
 struct ProfileRegistryWorker::Active {
     std::unique_ptr<ProfileCache> cache;
     std::unique_ptr<SupabaseProfileRegistry> registry;
@@ -898,12 +907,18 @@ RegistryJobStatus ProfileRegistryWorker::doSaveDraft(MethodDraft draft, const st
             return fail(std::string("Source revision not available: ") + e.what());
         }
         try {
+            // Fill only what the caller left empty: a pure copy, or the
+            // instrument's current config.json on top of the source revision.
             const auto envelope = Json::parse(source.canonicalContent);
-            draft.configJson = envelope.at("config").dump(4) + "\n";
-            draft.cameraScript = envelope.at("camera_script").get<std::string>();
-            draft.processingCoreId = envelope.at("processing_core_id").get<std::string>();
-            draft.processingContractVersion = envelope.at("processing_contract_version").get<int>();
-            draft.hardwareCompatibilityJson = envelope.at("declared_hardware_compatibility").dump();
+            if (draft.configJson.empty()) draft.configJson = envelope.at("config").dump(4) + "\n";
+            if (draft.cameraScript.empty())
+                draft.cameraScript = envelope.at("camera_script").get<std::string>();
+            if (draft.processingCoreId.empty()) {
+                draft.processingCoreId = envelope.at("processing_core_id").get<std::string>();
+                draft.processingContractVersion = envelope.at("processing_contract_version").get<int>();
+            }
+            if (draft.hardwareCompatibilityJson.empty() || draft.hardwareCompatibilityJson == "{}")
+                draft.hardwareCompatibilityJson = envelope.at("declared_hardware_compatibility").dump();
         } catch (const Json::exception&) {
             return fail("Source revision content unreadable");
         }

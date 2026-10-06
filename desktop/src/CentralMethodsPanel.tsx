@@ -4,11 +4,26 @@
 // validation backed by a test-run file (the backend checks the file was
 // recorded with that revision on this instrument). Apply needs a backend
 // config.json applier (a follow-up) and is shown disabled with the reason.
+// #398 M3b: review actions by role with a required reason, revision
+// details/history, and a Drafts view (new method from the current config,
+// release notes, submit, and the explicit conflict choices); the rules live
+// in registry.ts.
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { bridge, type RegistrySnapshot } from "./bridge";
-import { REGISTRY_SESSION_STATES } from "./bridgeContract";
-import { CENTRAL_STATE_NOTE, actionsFor, changed, toRegistryView } from "./registry";
+import { bridge, type RegistryCommand, type RegistrySnapshot } from "./bridge";
+import { REGISTRY_CENTRAL_STATES, REGISTRY_SESSION_STATES } from "./bridgeContract";
+import {
+  CENTRAL_STATE_NOTE,
+  actionsFor,
+  authorProjects,
+  changed,
+  conflictText,
+  detailLines,
+  draftActionsFor,
+  draftRows,
+  reviewActionsFor,
+  toRegistryView,
+} from "./registry";
 
 const H5_FILTER = [{ name: "HDF5 run", extensions: ["h5", "hdf5"] }];
 
@@ -21,6 +36,14 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
   const [inputError, setInputError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const [tab, setTab] = useState<"methods" | "drafts">("methods");
+  const [reason, setReason] = useState("");
+  const [useCurrentConfig, setUseCurrentConfig] = useState(false);
+  const [selectedDraft, setSelectedDraft] = useState<string | null>(null);
+  const [draftNotes, setDraftNotes] = useState("");
+  const [newProject, setNewProject] = useState("");
+  const [newName, setNewName] = useState("");
+  const [keepDraftConfig, setKeepDraftConfig] = useState(true);
   const last = useRef<RegistrySnapshot | null>(null);
   const report = props.onError;
 
@@ -82,6 +105,31 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
   };
 
   const actions = view ? actionsFor(view, snapshot, selected) : null;
+  const review = reviewActionsFor(snapshot, selected);
+  const draftActions = draftActionsFor(snapshot, selectedDraft);
+  const drafts = snapshot ? draftRows(snapshot) : [];
+  const projects = snapshot ? authorProjects(snapshot) : [];
+
+  // Authoring commands answer at once with a job (or a refusal and why).
+  const command = (action: () => Promise<RegistryCommand>, after?: () => void) => {
+    setActionError("");
+    void action()
+      .then((res) => {
+        if (res.job_id === "0") setActionError(res.error || "The request was refused.");
+        else after?.();
+        return poll();
+      })
+      .catch((e) => report?.(`registry command failed: ${e}`));
+  };
+
+  const transition = (target: number) => {
+    if (!selected) return;
+    if (!reason.trim()) {
+      setActionError("A reason is required; nothing was changed.");
+      return;
+    }
+    command(() => bridge.registryTransition(selected, target, reason), () => setReason(""));
+  };
 
   const markValidated = async (passed: boolean) => {
     if (!selected) return;
@@ -172,6 +220,16 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
           </button>
         </div>
 
+        <div className="row registry-tabs" role="tablist">
+          <button className={`btn${tab === "methods" ? " active" : ""}`} role="tab" aria-selected={tab === "methods"} onClick={() => setTab("methods")}>
+            Methods
+          </button>
+          <button className={`btn${tab === "drafts" ? " active" : ""}`} role="tab" aria-selected={tab === "drafts"} onClick={() => setTab("drafts")}>
+            Drafts ({drafts.length})
+          </button>
+        </div>
+        {tab === "methods" && (
+          <>
         <div className="registry-table-wrap">
           <table className="registry-table">
             <thead>
@@ -193,7 +251,7 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
                   onClick={() => setSelected(r.revisionId)}
                   aria-selected={r.revisionId === selected}
                 >
-                  <td>{r.method}</td>
+                  <td title={r.notes || undefined}>{r.method}</td>
                   <td>{r.revision}</td>
                   <td>{r.project}</td>
                   <td>{r.state}</td>
@@ -204,6 +262,7 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
                   <td className={r.validationFailed ? "validation-failed" : undefined}>
                     {r.validation}
                     {r.materialized ? " · files ready" : ""}
+                    {r.update ? ` · ${r.update}` : ""}
                   </td>
                 </tr>
               ))}
@@ -228,6 +287,176 @@ export function CentralMethodsPanel(props: { onClose: () => void; onError?: (mes
             Record failed run...
           </button>
         </div>
+            <div className="row" data-testid="registry-review">
+              <button
+                className="btn"
+                disabled={!review.canNewDraft}
+                onClick={() =>
+                  selected &&
+                  command(() => bridge.registryNewDraftFromRevision(selected, useCurrentConfig), () => setTab("drafts"))
+                }
+              >
+                New draft
+              </button>
+              <label className="registry-check">
+                <input type="checkbox" checked={useCurrentConfig} onChange={(e) => setUseCurrentConfig(e.target.checked)} />
+                from current config.json
+              </label>
+              <button className="btn" disabled={!review.canApprove} onClick={() => transition(REGISTRY_CENTRAL_STATES.Approved)}>
+                Approve
+              </button>
+              <button className="btn" disabled={!review.canReject} onClick={() => transition(REGISTRY_CENTRAL_STATES.Rejected)}>
+                Reject
+              </button>
+              <button className="btn" disabled={!review.canPublish} onClick={() => transition(REGISTRY_CENTRAL_STATES.Published)}>
+                Publish
+              </button>
+              <button className="btn" disabled={!review.canArchive} onClick={() => transition(REGISTRY_CENTRAL_STATES.Archived)}>
+                Archive
+              </button>
+              <button
+                className="btn"
+                disabled={!review.canRevoke}
+                title="Revocation is permanent: every instrument blocks Start with it."
+                onClick={() => transition(REGISTRY_CENTRAL_STATES.Revoked)}
+              >
+                Revoke
+              </button>
+              <button
+                className="btn"
+                disabled={!review.canHistory}
+                onClick={() => selected && command(() => bridge.registryFetchHistory(selected))}
+              >
+                History
+              </button>
+            </div>
+            <textarea
+              className="registry-reason"
+              placeholder="Reason for approve / reject / publish / archive / revoke (recorded in the audit trail)"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+            />
+            {snapshot && selected && (
+              <pre className="registry-details" data-testid="registry-details">
+                {detailLines(snapshot, selected).join("\n")}
+              </pre>
+            )}
+          </>
+        )}
+        {tab === "drafts" && (
+          <>
+            <div className="registry-table-wrap">
+              <table className="registry-table" data-testid="registry-drafts">
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th>Based on</th>
+                    <th>Status</th>
+                    <th>Release notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {drafts.map((d) => (
+                    <tr
+                      key={d.draftId}
+                      className={[d.conflict ? "conflict" : "", d.draftId === selectedDraft ? "selected" : ""].join(" ").trim() || undefined}
+                      onClick={() => {
+                        setSelectedDraft(d.draftId);
+                        setDraftNotes(d.notes);
+                      }}
+                      aria-selected={d.draftId === selectedDraft}
+                    >
+                      <td>{d.method}</td>
+                      <td>{d.base}</td>
+                      <td>{d.status}</td>
+                      <td title={d.notes}>{d.notes.split("\n")[0]}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {snapshot && conflictText(snapshot, selectedDraft) && (
+              <pre className="registry-conflict" role="alert">
+                {conflictText(snapshot, selectedDraft)}
+              </pre>
+            )}
+            <textarea
+              className="registry-reason"
+              placeholder="Release notes for the selected draft"
+              value={draftNotes}
+              onChange={(e) => setDraftNotes(e.target.value)}
+              rows={2}
+            />
+            <div className="row" data-testid="registry-draft-actions">
+              <button
+                className="btn"
+                disabled={!draftActions.canEditNotes}
+                onClick={() => selectedDraft && command(() => bridge.registrySetDraftNotes(selectedDraft, draftNotes))}
+              >
+                Save notes
+              </button>
+              <button
+                className="btn"
+                disabled={!draftActions.canSubmit}
+                onClick={() => selectedDraft && command(() => bridge.registrySubmitDraft(selectedDraft, false))}
+              >
+                Submit for review
+              </button>
+              <button
+                className="btn"
+                disabled={!draftActions.canBranch}
+                title="The head stays published; the branch cannot be published until the lineage is resolved."
+                onClick={() => selectedDraft && command(() => bridge.registrySubmitDraft(selectedDraft, true))}
+              >
+                Submit as branch
+              </button>
+              <button
+                className="btn"
+                disabled={!draftActions.canFromHead}
+                onClick={() => selectedDraft && command(() => bridge.registryDraftFromHead(selectedDraft, keepDraftConfig))}
+              >
+                New draft from head
+              </button>
+              <label className="registry-check">
+                <input type="checkbox" checked={keepDraftConfig} onChange={(e) => setKeepDraftConfig(e.target.checked)} />
+                keep my config.json
+              </label>
+              <button
+                className="btn"
+                disabled={!draftActions.canDiscard}
+                onClick={() => selectedDraft && command(() => bridge.registryDeleteDraft(selectedDraft), () => setSelectedDraft(null))}
+              >
+                Discard
+              </button>
+            </div>
+            <div className="row" data-testid="registry-new-method">
+              <select value={newProject} onChange={(e) => setNewProject(e.target.value)} disabled={!draftActions.canNewMethod}>
+                <option value="">Project…</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <input type="text" placeholder="New method name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              <button
+                className="btn"
+                disabled={!draftActions.canNewMethod || !newProject || !newName.trim()}
+                title="A new central method from the applied config.json (release notes from the box above)"
+                onClick={() =>
+                  command(() => bridge.registryNewMethodDraft(newProject, newName.trim(), draftNotes), () => setNewName(""))
+                }
+              >
+                New method from current config
+              </button>
+            </div>
+            <p className="registry-note">
+              Drafts stay on this PC under your registry account until you submit them. A submitted revision is
+              immutable and needs an independent review before it can be published.
+            </p>
+          </>
+        )}
         <p className="registry-note">{CENTRAL_STATE_NOTE}</p>
         <div className="actions">
           <button className="btn" onClick={props.onClose}>

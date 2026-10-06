@@ -84,7 +84,12 @@ fn abi_version_is_stable() {
     // took 26 under the landing-order rule; 27 reserved for #501 P1.
     // v27 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
     // fetch_run_preview (PZ7035 Align/Run camera modes).
-    assert_eq!(ffi::bridge_abi_version(), 27);
+    // v28 central method authoring (#398 M3b): registry_new_draft_from_revision,
+    // registry_new_method_draft, registry_set_draft_notes,
+    // registry_draft_from_head, registry_submit_draft, registry_delete_draft,
+    // registry_transition, registry_fetch_history -> BridgeRegistryCommand,
+    // and the snapshot's drafts, methods, history and submit_conflict.
+    assert_eq!(ffi::bridge_abi_version(), 28);
 }
 
 // ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
@@ -1407,6 +1412,27 @@ fn registry_commands_through_shell_transport() {
         let refused = bridge.pin_mut().registry_record_validation("r1", "/nonexistent/run.h5", true);
         assert_eq!(refused.job_id, 0, "validation without a cached revision is refused");
         assert!(!refused.error.is_empty(), "refusal carries a reason");
+
+        // #398 M3b authoring surface: values and refusals cross the bridge.
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert!(s.drafts.is_empty() && s.methods.is_empty() && !s.submit_conflict.present);
+        let no_config = bridge.pin_mut().registry_new_draft_from_revision("r1", true);
+        assert_eq!(no_config.job_id, 0, "no applied config.json: refused");
+        assert!(no_config.error.contains("config.json"), "reason: {}", no_config.error);
+        let blank = bridge.pin_mut().registry_transition("r1", 1, "   ");
+        assert_eq!(blank.job_id, 0, "blank reason refused");
+        assert!(!blank.error.is_empty());
+        assert_eq!(bridge.pin_mut().registry_transition("r1", 99, "x").job_id, 0, "unknown state refused");
+        let missing = bridge.pin_mut().registry_set_draft_notes("nope", "notes");
+        assert_eq!(missing.job_id, 0);
+        assert!(missing.error.contains("not found"));
+        let copy = bridge.pin_mut().registry_new_draft_from_revision("r1", false);
+        assert_ne!(copy.job_id, 0, "copy draft queued");
+        let job = wait_registry_job(&mut bridge, copy.job_id);
+        assert_eq!((job.kind, job.state), (6, 4), "SaveDraft fails without a cache: {}", job.message);
+        let submit = bridge.pin_mut().registry_submit_draft("d1", false);
+        let job = wait_registry_job(&mut bridge, submit.job_id);
+        assert_eq!((job.kind, job.state), (8, 4), "SubmitDraft needs a session");
         bridge.pin_mut().shutdown();
     }
 

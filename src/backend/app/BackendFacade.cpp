@@ -2554,7 +2554,8 @@ namespace backend::bridge
                                      r.contentHash, r.revisionNumber, r.metadataVersion,
                                      static_cast<int>(r.state), r.materializedDir,
                                      static_cast<int>(local.state), local.validatorId,
-                                     local.validatedAtUtc});
+                                     local.validatedAtUtc, r.parentRevisionId, r.releaseNotes,
+                                     app::newerPublishedRevision(s, r)});
         }
         out.corruptRevisionIds = s.corruptRevisionIds;
         out.cacheError = s.cacheError;
@@ -2571,7 +2572,132 @@ namespace backend::bridge
         out.busy = s.busy;
         out.instrumentId = backend_.instrumentIdentity().id;
         out.instrumentName = backend_.instrumentIdentity().name;
+        for (const auto &d : s.drafts)
+            out.drafts.push_back({d.draftId, d.projectId, d.methodId, d.newMethod, d.methodDisplayName,
+                                  d.baseRevisionId, d.releaseNotes, d.submittedRevisionId, d.updatedAtUtc});
+        for (const auto &m : s.methods)
+            out.methods.push_back({m.methodId, m.projectId, m.displayName, m.headRevisionId});
+        if (s.history)
+        {
+            out.historyRevisionId = s.history->revisionId;
+            for (const auto &v : s.history->reviews)
+                out.history.push_back({v.reviewerId, v.decision, v.reason, v.createdAt, true});
+            for (const auto &e : s.history->events)
+                out.history.push_back({e.actorId, e.action, e.reason, e.createdAt, false});
+        }
+        if (s.submitConflict)
+        {
+            const auto &c = *s.submitConflict;
+            out.submitConflict = {true, c.draftId, c.baseRevisionId, c.headRevisionId, c.compared,
+                                  c.upstreamChanges, c.draftVsHead};
+        }
         return true;
+    }
+
+    namespace
+    {
+        BackendRegistryCommand queued(std::uint64_t jobId, const char *refused)
+        {
+            return jobId ? BackendRegistryCommand{jobId, {}} : BackendRegistryCommand{0, refused};
+        }
+        const profiles::MethodDraft *findDraft(const profiles::RegistryWorkerSnapshot &s, const std::string &id)
+        {
+            for (const auto &d : s.drafts)
+                if (d.draftId == id) return &d;
+            return nullptr;
+        }
+    } // namespace
+
+    BackendRegistryCommand BackendFacade::registryNewDraftFromRevision(const std::string &revisionId,
+                                                                       bool useCurrentConfig)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        profiles::MethodDraft draft;
+        if (useCurrentConfig)
+        {
+            std::string error;
+            draft = backend_.currentConfigDraft(&error);
+            if (!error.empty()) return {0, error};
+        }
+        return queued(backend_.profileRegistry().requestSaveDraft(std::move(draft), revisionId),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryNewMethodDraft(const std::string &projectId,
+                                                                 const std::string &name,
+                                                                 const std::string &releaseNotes)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        if (projectId.empty() || name.find_first_not_of(" \t") == std::string::npos)
+            return {0, "A project and a method name are required"};
+        std::string error;
+        auto draft = backend_.currentConfigDraft(&error);
+        if (!error.empty()) return {0, error};
+        draft.projectId = projectId;
+        draft.newMethod = true;
+        draft.methodDisplayName = name;
+        draft.releaseNotes = releaseNotes;
+        if (draft.hardwareCompatibilityJson.empty()) draft.hardwareCompatibilityJson = "{}";
+        return queued(backend_.profileRegistry().requestSaveDraft(std::move(draft)),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registrySetDraftNotes(const std::string &draftId, const std::string &notes)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        const auto s = backend_.profileRegistry().snapshot();
+        const auto *d = findDraft(s, draftId);
+        if (!d) return {0, "Draft not found"};
+        if (!d->submittedRevisionId.empty()) return {0, "A submitted draft cannot be changed"};
+        auto edited = *d;
+        edited.releaseNotes = notes;
+        return queued(backend_.profileRegistry().requestSaveDraft(std::move(edited)),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryDraftFromHead(const std::string &draftId, bool keepDraftConfig)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        const auto s = backend_.profileRegistry().snapshot();
+        const auto *d = findDraft(s, draftId);
+        if (!d) return {0, "Draft not found"};
+        if (!s.submitConflict || s.submitConflict->draftId != draftId || s.submitConflict->headRevisionId.empty())
+            return {0, "This draft has no conflict with a published head"};
+        profiles::MethodDraft next;
+        next.methodDisplayName = d->methodDisplayName;
+        next.releaseNotes = d->releaseNotes;
+        if (keepDraftConfig) next.configJson = d->configJson;
+        return queued(backend_.profileRegistry().requestSaveDraft(std::move(next), s.submitConflict->headRevisionId),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registrySubmitDraft(const std::string &draftId, bool asBranch)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        return queued(backend_.profileRegistry().requestSubmitDraft(draftId, asBranch), "Invalid draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryDeleteDraft(const std::string &draftId)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        return queued(backend_.profileRegistry().requestDeleteDraft(draftId), "Invalid draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryTransition(const std::string &revisionId, int state,
+                                                             const std::string &reason)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        if (state < 0 || state > static_cast<int>(profiles::CentralState::Revoked))
+            return {0, "Unknown central state"};
+        return queued(backend_.profileRegistry().requestTransition(
+                          revisionId, static_cast<profiles::CentralState>(state), reason),
+                      "Refused: a reason is required and only review, publish, archive or revoke are allowed");
+    }
+
+    BackendRegistryCommand BackendFacade::registryFetchHistory(const std::string &revisionId)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        return queued(backend_.profileRegistry().requestHistory(revisionId), "Invalid revision");
     }
 
     std::uint64_t BackendFacade::registryMaterialize(const std::string &revisionId)

@@ -15,6 +15,7 @@
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/profiles/InstrumentIdentity.h"
+#include "backend/profiles/ProfileCache.h" // MethodDraft
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
 
@@ -182,6 +183,12 @@ namespace backend
         MethodValidationRequestResult requestMethodValidation(const std::string &revisionId,
                                                               const std::string &evidenceFile,
                                                               bool passed);
+        // Draft content from the instrument (#398 M3b): the applied
+        // config.json and the active processing core (version as core id,
+        // its contract version). Camera script / compatibility are left empty
+        // for SaveDraft to take from a base revision. `error` set (and the
+        // draft empty) when no config.json is applied.
+        profiles::MethodDraft currentConfigDraft(std::string *error = nullptr) const;
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }

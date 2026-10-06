@@ -164,6 +164,11 @@ struct RegistryWorkerSnapshot {
 };
 const char* toString(RegistryWorkerSnapshot::Session session);
 
+// True when the signed-in user holds `role` (or admin) in `projectId`, per the
+// last project listing. UI enablement only: the server enforces roles.
+bool hasProjectRole(const RegistryWorkerSnapshot& snapshot, const std::string& projectId,
+                    const std::string& role);
+
 class ProfileRegistryWorker {
 public:
     // An unconfigured worker starts no thread and refuses every request; its
@@ -188,9 +193,11 @@ public:
     // #398 M3 authoring. Drafts are local (work offline); submit/transition/
     // history need a signed-in session.
     // Saves (inserts or replaces) a draft; missing draft/method/revision IDs
-    // are generated. With `copyFromRevisionId`, the content (config, camera
-    // script, core, compatibility), method and base come from that cached
-    // revision. The draft must canonicalize (config schema 1).
+    // are generated. With `copyFromRevisionId`, the method and base come from
+    // that cached revision, and so does every content field the caller left
+    // empty (config, camera script, core + contract, compatibility) — a pure
+    // copy, or the current config.json on top of it. The draft must
+    // canonicalize (config schema 1).
     std::uint64_t requestSaveDraft(MethodDraft draft, std::string copyFromRevisionId = {});
     std::uint64_t requestDeleteDraft(std::string draftId);
     // Submits a draft as a new immutable candidate revision. Stops with a
