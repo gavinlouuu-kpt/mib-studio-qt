@@ -8,6 +8,7 @@ bool ProfileRegistryService::attempt(const std::function<void()>& action) {
         ++health_.successfulRequests;
         return true;
     } catch (const RegistryError& e) {
+        lastErrorCode_ = e.code;
         ++health_.failedRequests;
         health_.message = e.what();
         switch (e.code) {
@@ -58,5 +59,46 @@ std::optional<std::string> ProfileRegistryService::syncPage(const std::string& p
         }))
         return std::nullopt;
     return next;
+}
+std::optional<std::vector<RegistryMethod>>
+ProfileRegistryService::listMethods(const std::string& project) {
+    std::vector<RegistryMethod> methods;
+    if (!attempt([&] { methods = registry_.listMethods(project); })) return std::nullopt;
+    return methods;
+}
+std::optional<RegistryMethod> ProfileRegistryService::createMethod(const std::string& project,
+                                                                   const std::string& methodId,
+                                                                   const std::string& name,
+                                                                   const std::string& description) {
+    RegistryMethod method;
+    if (!attempt([&] { method = registry_.createMethod(project, methodId, name, description); }))
+        return std::nullopt;
+    return method;
+}
+std::optional<Revision> ProfileRegistryService::submit(const Revision& draft,
+                                                       const std::string& expectedHead) {
+    Revision result;
+    if (!attempt([&] {
+            result = registry_.submit(draft, expectedHead);
+            cache_.store(result);
+        }))
+        return std::nullopt;
+    return result;
+}
+std::optional<Revision> ProfileRegistryService::transition(const std::string& id, CentralState state,
+                                                           uint64_t version,
+                                                           const std::string& reason) {
+    Revision result;
+    if (!attempt([&] {
+            result = registry_.transition(id, state, version, reason);
+            cache_.store(result);
+        }))
+        return std::nullopt;
+    return result;
+}
+std::optional<RevisionHistory> ProfileRegistryService::history(const std::string& id) {
+    RevisionHistory result;
+    if (!attempt([&] { result = registry_.revisionHistory(id); })) return std::nullopt;
+    return result;
 }
 } // namespace backend::profiles

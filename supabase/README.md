@@ -43,8 +43,14 @@ inside fixed-search-path functions against `auth.uid()` and project roles.
 
 `registry_list_projects` (the caller's memberships and roles),
 `registry_fetch_revision`, `registry_list_revisions`, `registry_submit` and
-`registry_transition` correspond to the provider interface. A worker refresh lists
-the user's projects, then scans each from its first page, bounded by a page count
+`registry_transition` correspond to the provider interface; migration
+`202610040001_registry_authoring.sql` (#398 M3) adds `registry_create_method`
+(author role, idempotent by the caller's method UUID, audited as
+`method_created`), `registry_list_methods` (each method's published head),
+`registry_revision_history` (reviews + audit events; RLS applies) and immutable
+`release_notes` on revisions (`registry_submit` gains a defaulted
+`p_release_notes`; a retry must repeat the same notes). A worker refresh lists
+the user's projects and their methods, then scans each project from its first page, bounded by a page count
 and a time budget (exceeding either ends the job as Partial; the cache stays valid). One full revision per
 page bounds responses for methods of up to 1 MiB. The cursor is a UUID keyset cursor,
 **not a synchronization watermark**: every explicit refresh restarts the scan to
@@ -68,7 +74,12 @@ This structural validation does not validate hardware configuration or camera sc
 safety; the local instrument validation and existing Apply/Verify gates must do so.
 
 Submission is idempotent by caller-assigned revision UUID plus exact immutable
-content, author, method and parent. A changed central head produces HTTP 409.
+content, author, method, parent and release notes. A changed central head produces
+HTTP 409. The desktop worker checks the head itself before submitting a draft and
+stops with a compared conflict when the draft's base is no longer the head; it never
+rebases silently. An explicit "submit as branch" sends the current head as the
+expected head with the draft's base as parent; publishing such a branch is then
+refused (409) until it is resolved.
 Publication rechecks the parent against the locked method head. Reviews apply to the
 exact hash and require someone other than the author. Review/publication mutations
 require the last-seen metadata version and a reason. A lost transition response must
@@ -83,7 +94,9 @@ npm ci --prefix supabase
 npm test --prefix supabase
 ```
 
-The pinned PGlite harness executes the migration and role/lifecycle tests in an
+The pinned PGlite harness applies every migration in order and runs every
+`tests/*.sql` file (`profile_registry.sql`, `registry_authoring.sql`), each in a
+rolled-back transaction. It executes the role/lifecycle tests in an
 isolated PostgreSQL engine, stubbing only `auth.users` and `auth.uid()`. It tests
 actual grants, RLS, functions and transactions. It does not exercise hosted
 Supabase Auth, PostgREST HTTP status mapping, networking, or deployment configuration.
@@ -94,6 +107,9 @@ The C++ `profiles.registry` CTest verifies canonicalization/hash vectors, immuta
 cache contents, persisted reopen, account isolation, local validation context,
 offline/expiry/reconnect, stale metadata, terminal revocation and disk corruption.
 It is registered with backend CTest and requires no hardware or live credentials.
+`profiles.registry_authoring` drives the M3 lifecycle (drafts, submit, independent
+review, publish, conflict + branch, viewer refusal) through two workers over a fake
+Supabase that mirrors these RPCs' role and lifecycle rules.
 
 ## Recovery and pilot operations
 

@@ -1400,6 +1400,11 @@ mib_backend_test_link(method_gate_e2e_test PRIVATE Threads::Threads)
 add_test(NAME e2e.method_gate COMMAND $<TARGET_FILE:mib_backend_tests> method_gate_e2e_test)
 set_tests_properties(e2e.method_gate PROPERTIES LABELS "e2e;profiles;hdf5;roundtrip" TIMEOUT 120)
 
+mib_add_backend_test_executable(registry_authoring_test profiles/registry_authoring_test.cpp)
+mib_backend_test_link(registry_authoring_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_authoring COMMAND $<TARGET_FILE:mib_backend_tests> registry_authoring_test)
+set_tests_properties(profiles.registry_authoring PROPERTIES LABELS "backend;profiles;e2e;fault-injection" TIMEOUT 90)
+
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # The vendored PZ7035 ABI header, for tests that fake bridge registers
