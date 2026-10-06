@@ -9,6 +9,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 
@@ -52,7 +54,7 @@ public:
     ControllerConfig controllerConfig() const;
 
 private:
-    // All require mutex_ held.
+    // All require the driver held (an owned Access).
     StageError readLocked(int reg, std::uint16_t count, Frame& data);
     StageError writeLocked(const Frame& request, int timeoutMs);
     StageError motionLocked(Opcode op, std::uint16_t direction);
@@ -65,15 +67,24 @@ private:
     services::serialbus::SerialBusManager& busManager_;
     const Timing timing_;
 
-    // Bounded, prioritized access (#511: one tight status poller stalled a
-    // move for 60 s on a TSan CI runner). Commands register as priority
-    // waiters and status polls step aside for them, so back-to-back polls
-    // cannot starve a move or a Stop. Commands give up with Busy after
-    // kLockTimeout instead of waiting forever.
+    // Fair, prioritized, bounded access to the driver (#511, then #516).
+    // `std::mutex` is not fair, and a try_lock + sleep loop is worse: a thread
+    // that re-locks within nanoseconds keeps the driver while sleepers lose
+    // every race. So waiters queue, and a release hands the driver straight to
+    // the next waiter: commands first (FIFO), then status polls (FIFO).
+    // Nobody can jump the queue, so tight pollers cannot starve each other
+    // or a Stop. Commands and polls give up with Busy after kLockTimeout;
+    // disconnect (teardown) waits its turn however long it takes.
     class Access;
+    struct Waiter {
+        bool granted{false}; // set by the releasing thread, under gate_
+    };
     static constexpr std::chrono::seconds kLockTimeout{15};
-    mutable std::mutex mutex_;
-    mutable std::atomic<int> priorityWaiters_{0};
+    mutable std::mutex gate_; // guards held_ and the queues; never held during bus I/O
+    mutable std::condition_variable gateCv_;
+    mutable bool held_{false};
+    mutable std::deque<Waiter*> commandQueue_; // commands and teardown
+    mutable std::deque<Waiter*> pollQueue_;
     std::shared_ptr<services::serialbus::ModbusBusSession> bus_;
     std::uint8_t address_{1};
     int axis_{0};

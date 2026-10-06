@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <thread>
@@ -45,39 +46,55 @@ std::int64_t steadyNowNs()
 
 } // namespace
 
-// RAII access to the driver. Command: counts as a priority waiter while it
-// acquires, bounded by kLockTimeout. Poll: first lets pending commands go,
-// then acquires, with the same bound. Lifecycle (disconnect): a priority
-// waiter that keeps trying, because teardown must not be skipped.
+// RAII access to the driver; see the Waiter / queue notes in the header.
+// Command: priority queue, bounded by kLockTimeout. Poll: behind every waiting
+// command, bounded the same way. Lifecycle (disconnect): the priority queue,
+// but it waits however long it takes, because teardown must not be skipped.
 class Zc300Stage::Access {
 public:
     enum class Kind { Command, Poll, Lifecycle };
 
     Access(const Zc300Stage& stage, Kind kind) : stage_(stage)
     {
-        using Clock = std::chrono::steady_clock;
-        const auto deadline = Clock::now() + kLockTimeout;
-        if (kind == Kind::Poll) {
-            while (stage_.priorityWaiters_.load() > 0 && Clock::now() < deadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        } else {
-            stage_.priorityWaiters_.fetch_add(1);
+        std::unique_lock<std::mutex> lock(stage_.gate_);
+        if (!stage_.held_) { // free: a release with waiters hands off without ever clearing held_
+            stage_.held_ = true;
+            owned_ = true;
+            return;
         }
-        for (;;) {
-            if (stage_.mutex_.try_lock()) {
-                owned_ = true;
-                break;
-            }
-            if (kind != Kind::Lifecycle && Clock::now() >= deadline) break;
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        Waiter waiter;
+        auto& queue = kind == Kind::Poll ? stage_.pollQueue_ : stage_.commandQueue_;
+        queue.push_back(&waiter);
+        if (kind == Kind::Lifecycle) {
+            stage_.gateCv_.wait(lock, [&] { return waiter.granted; });
+            owned_ = true;
+            return;
         }
-        if (kind != Kind::Poll) stage_.priorityWaiters_.fetch_sub(1);
-        if (!owned_) SPDLOG_WARN("Zc300Stage: driver busy for {} s; call refused", kLockTimeout.count());
+        if (stage_.gateCv_.wait_for(lock, kLockTimeout, [&] { return waiter.granted; })) {
+            owned_ = true;
+            return;
+        }
+        queue.erase(std::find(queue.begin(), queue.end(), &waiter)); // timed out; still queued, under gate_
+        SPDLOG_WARN("Zc300Stage: driver busy for {} s; call refused", kLockTimeout.count());
     }
     ~Access()
     {
-        if (owned_) stage_.mutex_.unlock();
+        if (!owned_) return;
+        std::lock_guard<std::mutex> lock(stage_.gate_);
+        Waiter* next = nullptr;
+        if (!stage_.commandQueue_.empty()) {
+            next = stage_.commandQueue_.front();
+            stage_.commandQueue_.pop_front();
+        } else if (!stage_.pollQueue_.empty()) {
+            next = stage_.pollQueue_.front();
+            stage_.pollQueue_.pop_front();
+        }
+        if (next) { // direct hand-off: held_ stays true
+            next->granted = true;
+            stage_.gateCv_.notify_all();
+        } else {
+            stage_.held_ = false;
+        }
     }
     Access(const Access&) = delete;
     Access& operator=(const Access&) = delete;

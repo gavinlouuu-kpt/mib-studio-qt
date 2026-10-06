@@ -315,12 +315,17 @@ int main()
         MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
         std::atomic<bool> done{false};
         std::atomic<int> pollErrors{0};
+        std::atomic<long long> worstPollMs{0};
         std::vector<std::thread> pollers;
         for (int p = 0; p < 3; ++p) {
             pollers.emplace_back([&] {
                 while (!done.load()) { // deliberately no pause between polls
                     StageStatus s;
+                    const auto t0 = std::chrono::steady_clock::now();
                     if (stage.readStatus(s) != StageError::None) pollErrors.fetch_add(1);
+                    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+                    long long seen = worstPollMs.load();
+                    while (ms > seen && !worstPollMs.compare_exchange_weak(seen, ms)) {}
                 }
             });
         }
@@ -347,9 +352,51 @@ int main()
         std::printf("concurrency: slowest command %lld ms, stop %lld ms, step %lld ms\n", slowestCommandMs, stopMs,
                     static_cast<long long>(elapsed(stepStart)));
         MIB_EXPECT(moveErrors == 0 && pollErrors.load() == 0, "20 moves with three tight pollers, no errors");
+        MIB_EXPECT(worstPollMs.load() < 2000, "no status poll waited 2 s or more behind the other pollers (worst " +
+                                                   std::to_string(worstPollMs.load()) + " ms)");
         MIB_EXPECT(slowestCommandMs < 2000, "no command waited more than 2 s behind the pollers");
         MIB_EXPECT(stopMs < 1000, "Stop got through the pollers within 1 s");
         MIB_EXPECT(!device.moving(), "stopped");
+    }
+
+    // Tight pollers must share the driver fairly. PR #516's plain Linux lane saw
+    // a poll refused after 15 s while commands were fine (slowest command 40 ms):
+    // the lock was a try_lock + sleep loop, so a thread that re-locked within
+    // nanoseconds kept the driver while sleepers lost every race.
+    watchdog.mark("fairness");
+    {
+        FakeZc300 device;
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        constexpr int kPollers = 6;
+        std::atomic<bool> stopFlag{false};
+        std::vector<long long> served(kPollers, 0), failed(kPollers, 0), worstMs(kPollers, 0); // one slot per thread
+        std::vector<std::thread> threads;
+        for (int p = 0; p < kPollers; ++p) {
+            threads.emplace_back([&, p] {
+                while (!stopFlag.load()) {
+                    StageStatus s;
+                    const auto t0 = std::chrono::steady_clock::now();
+                    if (stage.readStatus(s) == StageError::None) ++served[p]; else ++failed[p];
+                    worstMs[p] = std::max<long long>(worstMs[p], std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+                }
+            });
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        stopFlag.store(true);
+        for (auto& t : threads) t.join();
+        long long total = 0, fewest = served[0], worst = 0, errors = 0;
+        for (int p = 0; p < kPollers; ++p) { total += served[p]; fewest = std::min(fewest, served[p]); worst = std::max(worst, worstMs[p]); errors += failed[p]; }
+        const long long mean = total / kPollers;
+        std::printf("fairness: %d pollers, %lld calls, fewest %lld, mean %lld, worst wait %lld ms\n", kPollers, total, fewest, mean, worst);
+        MIB_EXPECT(errors == 0, "no poll was refused");
+        MIB_EXPECT(total > 100, "the pollers actually ran");
+        MIB_EXPECT(fewest * 4 >= mean, "every poller got at least a quarter of the average share (fewest " +
+                                           std::to_string(fewest) + ", mean " + std::to_string(mean) + ")");
+        MIB_EXPECT(worst < 2000, "no poll waited 2 s or more (worst " + std::to_string(worst) + " ms)");
     }
 
     if (mib::test::exitCode() == 0) std::printf("ZC300 stage driver verified\n");
