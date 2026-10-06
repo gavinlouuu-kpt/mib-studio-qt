@@ -221,6 +221,28 @@ int main()
         MIB_EXPECT(waitFor([&] { return !device.moving(); }, std::chrono::seconds(2)), "cancel stopped the axis");
         device.setPulsesPerSecond(200000);
 
+        // The bridge runs one command at a time and Stop needs the same lock:
+        // Disconnect and ApplyProfile must not wait for a running move.
+        device.setPulsesPerSecond(2000);
+        const auto running = stage(facade, StageCommandAction::MoveTo, 2000);
+        MIB_REQUIRE(running.ok, "slow move for the lock check");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const auto since = [](std::chrono::steady_clock::time_point t0) {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        };
+        auto t0 = std::chrono::steady_clock::now();
+        const auto applyDuring = stage(facade, StageCommandAction::ApplyProfile);
+        MIB_EXPECT(!applyDuring.ok && since(t0) < 500,
+                   "ApplyProfile during a move is refused at once (" + std::to_string(since(t0)) + " ms)");
+        MIB_EXPECT(device.moving(), "and the move carries on");
+        t0 = std::chrono::steady_clock::now();
+        const auto disconnectDuring = stage(facade, StageCommandAction::Disconnect);
+        MIB_EXPECT(disconnectDuring.ok && since(t0) < 1500,
+                   "Disconnect during a move stops it and returns (" + std::to_string(since(t0)) + " ms)");
+        MIB_EXPECT(ops.wait(running.operationId) == BackendOperationState::Cancelled, "the move ended Cancelled");
+        MIB_EXPECT(waitFor([&] { return !device.moving(); }, std::chrono::seconds(2)), "axis stopped");
+        device.setPulsesPerSecond(200000);
+
         // Rule 2 with verified limits and a homed stage: a reconnect must
         // still be observe-only (the gate cannot mask an implicit Home here).
         MIB_REQUIRE(stage(facade, StageCommandAction::Disconnect).ok, "Disconnect");

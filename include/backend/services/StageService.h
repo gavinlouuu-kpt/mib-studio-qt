@@ -143,7 +143,8 @@ public:
     // Observe-only: identifies the controller, checks the profile and the
     // power-up token. Writes nothing.
     stage::StageError connect(std::string* detail = nullptr);
-    // Stops a moving axis, then releases the port.
+    // Stops a running move or Home (it ends Cancelled), then releases the port.
+    // Returns promptly: it never waits for the operation to run to its end.
     void disconnect();
     // Start-up policy: connects when enabled; references only when the rig
     // opted in with reference.on_startup (default false: zero motion, zero
@@ -170,7 +171,7 @@ public:
     bool waitForOperation(OperationId id, std::chrono::milliseconds timeout) const;
 
     // The only controller-configuration write: applies and saves the stage
-    // profile. Refused while an operation is active.
+    // profile. Refused at once (Busy) while an operation is active.
     stage::StageError applyProfile();
 
     // Cancels any operation, stops the axis, joins the worker, disconnects.
@@ -188,6 +189,11 @@ private:
     };
 
     std::pair<stage::StageError, std::string> runSync(Job::Type type);
+    // Connect / ApplyProfile: refused with Busy while an operation is active
+    // or another exclusive job is queued, instead of queuing behind a move.
+    // The bridge runs one command at a time and Stop needs the same lock, so a
+    // call that waits for a running move would hold Stop for its duration.
+    std::pair<stage::StageError, std::string> runExclusive(Job::Type type);
     StartResult enqueueOperation(OperationKind kind, double targetUm, bool absolute);
     stage::StageError validateMoveLocked(double targetUm, bool absolute, std::string& detail) const;
 
@@ -239,6 +245,8 @@ private:
     double appliedSpeedUmS_{0.0}; // worker only
     bool stopping_{false};
     bool shutDown_{false};
+    int exclusivePending_{0};   // queued or running Connect / ApplyProfile jobs
+    bool disconnecting_{false}; // a Disconnect is queued: operations end and no new ones start
     std::thread worker_;
 };
 

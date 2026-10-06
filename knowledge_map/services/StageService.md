@@ -120,6 +120,19 @@ controller's serial. That includes the `on_startup` opt-in.
   stops a moving axis), joins the worker and refuses further work.
   `AppBackend::shutdown()` calls it after the pulse generator, while the bus
   is alive.
+- **No call waits behind a running operation.** The bridge runs one command
+  at a time, and `stage_stop` needs the same lock, so any call that waited
+  for a move would hold Stop for the move's whole duration.
+  - `connect()` and `applyProfile()` are *exclusive* jobs: refused at once
+    with `Busy` while an operation is active or another exclusive job is
+    queued, and operations are refused (`Busy`) while one is pending, so
+    nothing can slip in ahead of it.
+  - `disconnect()` marks the service `disconnecting_` under the admission
+    lock, cancels the active operation and stops the axis immediately, then
+    queues the disconnect. The operation ends `Cancelled` at its next poll
+    (≤ `poll_ms.moving`); no new operation is admitted meanwhile.
+  - Found while designing the Tauri panel: before this, `applyProfile()`
+    during a 3 s move blocked 2.9 s and then *applied and saved* the profile.
 
 ## Gotchas
 
