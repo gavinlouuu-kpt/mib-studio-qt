@@ -15,6 +15,14 @@ ADR 0011's CI and compatibility-matrix consequences:
   the Contract 3 row, a "Reference per contract" table (Contract 3's
   reference is the pz7035 PL specification), the `unet-cells` line name and
   the `pl_core` provenance. See [[../services/ProcessingService]].
+## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
+
+A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`
+with `MIB_PL_SCIENCE=ON` for the Cortex-A9 on every PR that touches the
+backend, so a 32-bit or ARM break in the PZ7035 code no longer waits for a
+board build. It uses the distro armhf toolchain, not the Yocto SDK, and leaves
+Aravis out; the SDK artifact job remains a follow-up. See
+[[../build-and-run/Build]].
 ## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
 
 Opening Camera & Alignment puts the instrument in Align: full sensor at
@@ -34,6 +42,20 @@ needed in either direction.
 
 Bridge ABI 27. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
+
+## 2026-10-06 — Z stage: Disconnect and ApplyProfile can no longer hold Stop (#464)
+
+[[../services/StageService]] `disconnect()` and `applyProfile()` used to queue
+behind a running move or Home. The bridge runs one command at a time and
+`stage_stop` needs the same lock, so Stop could have waited out the whole
+operation.
+- **Reproduced:** `applyProfile()` during a 3 s move blocked 2.9 s, then
+  applied and saved the profile.
+- **Now:** `applyProfile()` and `connect()` are refused at once (`Busy`)
+  while an operation is active. `disconnect()` stops the axis and cancels
+  the operation, then disconnects within ~50 ms.
+- **Tests:** `backend.stage_service` and `backend.stage_bridge_facade`
+  cover it at both layers, and the mutations fail them.
 
 ## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
 
