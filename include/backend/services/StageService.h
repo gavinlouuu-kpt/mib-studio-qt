@@ -185,6 +185,11 @@ public:
 
     Snapshot snapshot() const;
 
+    // True while the axis may be moving: an operation is active, the last published status says
+    // Moving, or a cleanup Stop failed and no status has confirmed the axis idle since (#533,
+    // fail closed). The experiment Start probe uses this, not just activeOperation.
+    bool motionPossible() const;
+
     // Operations run one at a time on the worker. Validation (connection,
     // configuration, zero set, travel envelope, whole micrometres) happens
     // before anything is queued, and again when the operation starts. A target
@@ -306,6 +311,7 @@ private:
     bool haveZeroRecord_{false};
     // An invalidation (zeroValid = false) is not durable yet.
     bool persistPending_{false};
+    bool motionUnverified_{false}; // a cleanup Stop failed; cleared by a status that is not Moving
     bool storeClearPending_{false}; // delete the stored record, outside mutex_ (flushStoreClear)
     bool rotatedForPending_{false}; // the token was already rotated for this pending invalidation
     // After a reconnect the token could not be read: the record is kept, motion is

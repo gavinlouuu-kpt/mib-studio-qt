@@ -177,6 +177,11 @@ panel). It mirrors these rules in the UI and shows why a control is disabled.
   refused (`Busy`, "a Z stage operation is active") while a stage operation is active
   (`ExperimentCoordinator::setStageBusyProbe`, checked under the coordinator lock, which
   is also held while a stage move is queued, so check and queueing cannot interleave).
+  The probe is `motionPossible()`, which fails closed: an operation is active, **or the
+  last published status says Moving, or a cleanup Stop failed** and no status has confirmed
+  the axis not moving since (`motionUnverified_`, cleared by `publishStatus` on any
+  non-Moving status). A Stop that fails while the axis keeps going therefore does not let
+  Start through just because the operation record is over.
   The worker re-checks `setMotionGate` (the coordinator's idle gate) outside every
   service lock right before each opcode, every leg; a refusal ends the operation `Busy`
   with the zero kept. Lock order: coordinator, then stage; the gate is never called with

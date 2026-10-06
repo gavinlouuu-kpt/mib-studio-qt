@@ -490,7 +490,7 @@ namespace backend
         // An experiment and a moving stage exclude each other (#533): Start is refused while a
         // stage operation is active, and the stage worker re-checks right before every opcode.
         experimentCoordinator_->setStageBusyProbe(
-            [this] { return stageService_ && stageService_->snapshot().activeOperation != 0; });
+            [this] { return stageService_ && stageService_->motionPossible(); });
         stageService_->setMotionGate(
             [this] { return !experimentCoordinator_ || experimentCoordinator_->withIdleConfiguration([] {}); });
         frameStore_ = std::make_shared<playback::FrameStore>(5000);

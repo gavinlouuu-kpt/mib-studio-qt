@@ -1235,6 +1235,31 @@ int main()
         MIB_EXPECT(moveTo(*svc, 100), "and without a gate it moves");
     }
 
+    // #533 review: a cleanup Stop that fails while the axis keeps moving must not make the stage look
+    // idle. Motion stays "possible" (the Start probe's input) until a status read says it is not moving.
+    watchdog.mark("failed cleanup stop keeps motion possible");
+    {
+        StageRig rig;
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
+        rig.device.setPulsesPerSecond(2000);
+        MIB_EXPECT(!svc->motionPossible(), "idle: no motion possible");
+        const auto move = svc->moveTo(950);
+        MIB_REQUIRE(move.accepted(), "slow move");
+        MIB_REQUIRE(waitFor([&] { return rig.device.moving(); }, 5000), "the axis moves");
+        MIB_EXPECT(svc->motionPossible(), "a running operation: motion possible");
+        rig.device.setStopFails(true); // Stop is refused and does not stop the axis
+        MIB_EXPECT(svc->stop() != StageError::None, "the Stop reports its failure");
+        MIB_EXPECT(finish(*svc, move.id) == OpState::Cancelled, "the operation ends Cancelled");
+        MIB_EXPECT(rig.device.moving(), "but the axis is still moving");
+        MIB_EXPECT(svc->motionPossible(), "motion is still possible although the operation is over");
+        sleepMs(200); // several polls, all reporting Moving
+        MIB_EXPECT(svc->motionPossible(), "and stays so while the polls see it moving");
+        rig.device.setStopFails(false);
+        MIB_EXPECT(svc->stop() == StageError::None, "a Stop that works");
+        MIB_EXPECT(waitFor([&] { return !svc->motionPossible(); }), "motion is not possible once a poll sees the axis idle");
+    }
+
     // --- move failures ---------------------------------------------------------
     watchdog.mark("move failures");
     {

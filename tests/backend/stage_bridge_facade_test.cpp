@@ -355,6 +355,36 @@ int main()
             MIB_EXPECT(waitFor([&] { return !device.moving(); }, std::chrono::seconds(2)), "axis stopped");
             device.setPulsesPerSecond(200000);
         }
+        // Fail closed: a cleanup Stop that fails while the axis keeps moving must not let Start through,
+        // although the operation is over.
+        {
+            bridge::BackendStageStatus st;
+            facade.fetchStageStatus(st);
+            // Halfway to the roomier edge, so a move against the approach direction still has its
+            // overshoot inside the envelope.
+            const double up = st.envelopeMaxUm - st.positionUm;
+            const double down = st.positionUm - st.envelopeMinUm;
+            const double target = std::round(up > down ? st.positionUm + up / 2 : st.positionUm - down / 2);
+            MIB_REQUIRE(std::abs(target - st.positionUm) > 50, "room to move");
+            device.setPulsesPerSecond(2000);
+            const auto slow = stage(facade, StageCommandAction::MoveTo, std::round(target));
+            MIB_REQUIRE(slow.ok && slow.operationId != 0, "a slow move is running: " + slow.message);
+            MIB_REQUIRE(waitFor([&] { return device.moving(); }, std::chrono::seconds(5)), "the move has started");
+            device.setStopFails(true);
+            stage(facade, StageCommandAction::Stop); // reports a failure: the axis keeps going
+            MIB_EXPECT(ops.wait(slow.operationId) == BackendOperationState::Cancelled, "the operation ended Cancelled");
+            MIB_EXPECT(device.moving(), "the axis is still moving");
+            const auto refused = coord.start(req);
+            MIB_EXPECT(refused.outcome == backend::app::ExperimentStartOutcome::Busy,
+                       "Start is still refused: " + refused.message);
+            MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Idle, "no experiment was started");
+            device.setStopFails(false);
+            MIB_EXPECT(stage(facade, StageCommandAction::Stop).ok, "a Stop that works");
+            MIB_EXPECT(waitFor([&] { return !device.moving(); }, std::chrono::seconds(2)), "axis stopped");
+            device.setPulsesPerSecond(200000);
+            MIB_EXPECT(waitFor([&] { return !app.stage().motionPossible(); }, std::chrono::seconds(3)),
+                       "a poll confirms idle, so motion is no longer possible");
+        }
         MIB_REQUIRE(coord.start(req).outcome == backend::app::ExperimentStartOutcome::Started, "experiment started");
 
         const int opcodesBefore = motionOpcodes(device);

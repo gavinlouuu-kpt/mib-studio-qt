@@ -99,6 +99,9 @@ public:
     {
         locked([&] { writeObserver_ = std::move(f); });
     }
+    // Stop opcodes (0x67/0x68) are refused with a device failure and do not stop the axis: a Stop
+    // that fails while the axis keeps moving.
+    void setStopFails(bool on) { locked([&] { stopFails_ = on; }); }
     // The next `count` writes to `reg` are executed but never answered: the host sees
     // a timeout although the controller applied the value.
     void dropWriteAcks(int reg, int count) { locked([&] { dropAckRegister_ = reg; dropAckCount_ = count; }); }
@@ -383,6 +386,7 @@ private:
             suppressReply = true;
             return 0;
         }
+        if ((op == 0x67 || op == 0x68) && stopFails_) return 0x04;
         if (op == 0x67 || op == 0x68) {
             moving_ = false;
             jogging_ = false;
@@ -477,6 +481,7 @@ private:
     bool limitsHalt_{true};
     int failTokenReads_{0};
     bool silentReads_{false};
+    bool stopFails_{false};
     int dropAckRegister_{0};
     int dropAckCount_{0};
     std::function<void(int, const std::vector<std::uint16_t>&)> writeObserver_;
