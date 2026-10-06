@@ -120,7 +120,7 @@ public:
     BridgeCommandResult stage_disconnect();
     BridgeCommandResult stage_move_to(double target_um);
     BridgeCommandResult stage_move_by(double delta_um);
-    BridgeCommandResult stage_home();
+    BridgeCommandResult stage_set_zero(bool mid_travel);
     BridgeCommandResult stage_stop();
     BridgeCommandResult stage_apply_profile();
     BridgeStageStatus fetch_stage_status();

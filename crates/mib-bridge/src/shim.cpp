@@ -75,7 +75,6 @@ static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::PulseGenerator)
 // Z stage (#464, ADR 0013).
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Stage) == 13);
 static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageMove) == 7);
-static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageReference) == 8);
 static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Idle) == 0);
 static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Moving) == 1);
 static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Homing) == 2);
@@ -1167,8 +1166,10 @@ BridgeCommandResult BackendBridge::stage_move_by(double delta_um) {
     return dispatchStage(impl_->facade, cmd, "stage_move_by");
 }
 
-BridgeCommandResult BackendBridge::stage_home() {
-    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Home), "stage_home");
+BridgeCommandResult BackendBridge::stage_set_zero(bool mid_travel) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::SetZero);
+    cmd.midTravel = mid_travel;
+    return dispatchStage(impl_->facade, cmd, "stage_set_zero");
 }
 
 BridgeCommandResult BackendBridge::stage_stop() {
@@ -1191,7 +1192,9 @@ BridgeStageStatus BackendBridge::fetch_stage_status() {
     out.enabled = status.enabled;
     out.connected = status.connected;
     out.configured = status.configured;
-    out.referenced = status.referenced;
+    out.zero_set = status.zeroSet;
+    out.mid_travel_declared = status.midTravelDeclared;
+    out.session_only_zero = status.sessionOnlyZero;
     out.limits_verified = status.limitsVerified;
     out.busy = status.busy;
     out.model = status.model;
@@ -1206,8 +1209,8 @@ BridgeStageStatus BackendBridge::fetch_stage_status() {
     out.emergency_stop = status.emergencyStop;
     out.driver_alarm = status.driverAlarm;
     out.span_um = status.spanUm;
-    out.soft_min_um = status.softMinUm;
-    out.soft_max_um = status.softMaxUm;
+    out.envelope_min_um = status.envelopeMinUm;
+    out.envelope_max_um = status.envelopeMaxUm;
     out.last_error = status.lastError;
     return out;
 }
@@ -2362,7 +2365,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // and the authoring job kinds 6-10 were added; built as a provisional 15,
 // renumbered once to 25: 23 = the instrument line, 24 = #501 P0; 15 and 19-24
 // are never reused); v26 added the ZC300 Z stage bridge (stage_* commands,
-// fetch_stage_status, StageMove/StageReference, MotionStage,
+// fetch_stage_status, StageMove, MotionStage,
 // stage_move_states — #464); v27 added the PZ7035 Align/Run camera modes
 // (set_instrument_mode, set_service_mode, set_instrument_led,
 // fetch_run_preview — #501 P1); v28 added central method authoring
@@ -2370,12 +2373,14 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // draft_from_head/submit_draft/delete_draft/transition/fetch_history,
 // BridgeRegistryCommand and the snapshot's drafts, methods, history and
 // submit_conflict — #398 M3b); v29 added the React central-method Apply
-// (registry_plan_apply, registry_apply_method — #398 M2c). All additive over
-// v1 (ADR 0003/0004). Must match
+// (registry_plan_apply, registry_apply_method — #398 M2c); v30 is the ZC300 stage
+// without homing (#464, ADR 0013 Amendment 1: stage_home and StageReference
+// removed, stage_set_zero added, referenced -> zero_set, soft_* -> envelope_*,
+// session_only_zero). All additive over v1 except that removal (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 29; }
+std::uint32_t bridge_abi_version() { return 30; }
 
 } // namespace mib_bridge
 

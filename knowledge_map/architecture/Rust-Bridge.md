@@ -456,7 +456,8 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_disconnect`, `stage_move_to(target_um)`, `stage_move_by(delta_um)`,
   `stage_home`, `stage_stop`, `stage_apply_profile` and `fetch_stage_status`
   (a `BridgeStageStatus` snapshot including `referenced`, `limits_verified`,
-  `busy` and the soft limits).
+  `busy` and the soft limits). *(`stage_home` and `referenced` were removed
+  at ABI 30, below.)*
 - **Contract additions** (all appended): `command_types.Stage = 13`;
   `operation_kinds` `StageMove = 7` and `StageReference = 8`;
   `discovery_device_kinds.MotionStage = 4`; a new `stage_move_states`
@@ -469,14 +470,40 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   - Connect is observe-only, and there is no start-up/auto-Home command;
   - `stage_stop` is always accepted;
   - everything else is refused while an experiment is active.
-- **Operations:** moves and Home are tracked operations. A facade waiter
-  thread mirrors the `StageService` operation, and a cancel stops the axis.
+- **Operations:** moves are tracked operations (Home was one until ABI 30). A
+  facade waiter thread mirrors the `StageService` operation, and a cancel
+  stops the axis.
 - **Server:** every stage command except `stage_stop` and
   `fetch_stage_status` is a `CONTROL_COMMANDS` entry. `stop_and_save` stops
   a busy stage when the last client leaves.
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI 30: no homing for the Z stage (#464, ADR 0013 Amendment 1)
+
+28 belongs to #482 and 29 to #493 (allocated by the coordinator); the ZC300
+change took 30. The stage is never homed.
+
+- **Removed:** the `stage_home` command and the `StageReference` operation kind
+  (`operation_kinds` is now `…, StageMove = 7`).
+- **Added:** `stage_set_zero(mid_travel)` (Tauri `stage_set_zero`, server
+  `CONTROL` command, dispatch args `{midTravel}`): one write of the position
+  counter, no motion, no operation id.
+- **`fetch_stage_status` changes:** `referenced` → `zero_set`; new
+  `mid_travel_declared` and `session_only_zero` (power-up token off: a power
+  cycle is not detected; hardware acceptance only); `soft_min_um` / `soft_max_um` → `envelope_min_um` /
+  `envelope_max_um` (0/0 until zero is set). `limits_verified` is now only a
+  badge; `home` is the raw, floating controller input.
+- **Backend rules** (the shell enforces none of them): moves are refused until
+  zero is set this power-up and outside the envelope (±1000 µm, ±2900 µm after
+  a mid-travel declaration), refused rather than clamped; an e-stop or driver
+  alarm clears `zero_set`; limit bits only stop a move toward an active switch;
+  `stage_set_zero` is locked during an experiment like every stage command
+  except `stage_stop`. Details: [[../services/StageService]].
+- **Tests:** `contract.rs` (`abi_version_is_stable` = 30,
+  `stage_commands_fail_safely_without_hardware` incl. `stage_set_zero`),
+  `stage_bridge_facade_test`, the server's `stage_motion_is_control_only_…`.
 
 ## ABI 27: PZ7035 camera modes (#501 P1, 2026-10-05)
 

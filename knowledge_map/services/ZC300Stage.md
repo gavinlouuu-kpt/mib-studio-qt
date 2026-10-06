@@ -2,11 +2,10 @@
 
 > `IMotionStage` driver for the Zolix ZC300 stepper controller and its
 > TBZF6-60 lift stage, over the shared [[SerialBus]]. Literal and
-> observe-only by default; soft limits, Home and backlash approach belong to
-> [[StageService]] (ADR 0013, #464).
->
-> **Pending change (ADR 0013 Amendment 1):** the stage will not be homed. The
-> driver is unaffected; `setPosition(0)` becomes the operator's "Set zero here".
+> observe-only by default; the travel envelope, "Set zero here" and backlash
+> approach belong to [[StageService]] (ADR 0013 + Amendment 1, #464). The
+> stage is never homed; the driver's `setPosition(0)` is the operator's "Set
+> zero here".
 
 **Source:**
 - interface: `include/backend/stage/{IMotionStage,StageTypes,StageProfiles}.h`
@@ -52,7 +51,7 @@ focus actuator; separate device class). Evidence:
   lead, pulses/rev and unit, then saves to flash (allowing a 3 s ack for the
   save). It is refused while the axis moves.
 - `read/writePowerUpToken` use the volatile reserved register 30054. It is
-  meant for `StageService`'s once-per-power-up reference (ADR 0013 §6); its
+  meant for `StageService`'s once-per-power-up zero (ADR 0013 Amendment 1); its
   hardware behaviour is still unverified.
 
 ## Wire rules
@@ -84,6 +83,26 @@ bus session's call mutex is innermost (see [[SerialBus]]).
   granted in a row while anything else waits.
 - Commands are moves, writes, connect and token calls. Polls are
   `readStatus`. `stop()` is its own kind.
+  Every `stop()` bumps `stopGeneration()` before it waits for the driver, and
+  `moveAbsolute(target, generation)` returns `Stopped` under the driver lock
+  if a Stop arrived after the caller read the generation: a move decided
+  before a Stop never starts motion after it. The generation is checked again
+  right before **every** motion opcode (move, relative move, jog), after the
+  target write, and without a caller-supplied value it is read when the call
+  starts, so a Stop queued behind a call in flight still wins.
+- **Stop latency.** While a Stop waits for the driver, the call in flight gives way
+  before **every further** transaction (`Stopped`), but never before the *first* one of
+  a call that was just granted the driver: a fairness grant to a poll under a Stop storm
+  always completes a read, or a sustained Stop queue would starve it: retries, a lost-ack
+  reconciliation read, each configuration write of a profile apply, and the Save
+  (which is not started while a Stop waits). A Stop therefore sits behind at most
+  the one transaction in progress (up to `transactionMs`). A Save already running
+  (up to 3 s) is not interruptible, but it only runs on an idle axis with no
+  operation.
+- **Test hook:** `enableGrantLog()` / `grantLog()` record the order in which calls
+  were *granted* (S stop, C command, P poll, L lifecycle; off by default, at most 4096
+  entries); tests assert on it,
+  not on the order threads happened to return (#532).
 - A command or poll that cannot get the driver within 15 s returns `Busy`.
   `disconnect()` waits its turn however long it takes, because teardown must
   not be skipped.
@@ -114,12 +133,16 @@ retries (~2 s at the default timing). `StageService` owns polling threads.
 ## Gotchas
 
 - `positionUm` is the controller's open-loop pulse counter. It is not a
-  measurement, and it means nothing until Home (`StageService`). The driver
-  always reports `referenced = false`.
+  measurement, and it means nothing until the operator sets zero
+  (`StageService`); even then a hand move or stall is invisible. The driver
+  always reports `zeroSet = false`.
 - Moves overwrite the controller's front-panel step distance (30114), which
   is also the absolute-move target register.
 - Only axis X is used on the ZC300-1A. On that model the Y/Z home bits float
-  high.
+  high, and a read-only bench check (2026-10-06, register 30015 = `0x0124`)
+  found the home bit set on all three axes and the limit bits clear on all
+  three, so the limit wiring is unproven. The software ignores the home bit
+  and uses the limit bits only as a stop-while-moving backstop.
 - `SerialBus.cpp` is compiled into `oeabt_serial` (the shared native serial
   archive), so `zc300ctl` links without the backend and the Rust bridge's
   archive list is unchanged.

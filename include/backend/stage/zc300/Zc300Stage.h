@@ -41,10 +41,11 @@ public:
     AxisCalibration calibration() const override;
 
     StageError readStatus(StageStatus& status) override;
-    StageError moveAbsolute(double targetUm) override;
+    StageError moveAbsolute(double targetUm, std::uint64_t expectedStopGeneration = kAnyStopGeneration) override;
     StageError moveRelative(double deltaUm) override;
     StageError jog(Direction direction) override;
     StageError stop() override;
+    std::uint64_t stopGeneration() const override { return stopGeneration_.load(); }
     StageError setPosition(double positionUm) override;
     StageError setSpeed(double umPerS, double umPerS2) override;
     StageError applyProfile(const StageProfile& profile) override;
@@ -54,16 +55,27 @@ public:
     ControllerConfig controllerConfig() const;
     // Calls currently queued for the driver (diagnostics and tests).
     std::size_t waitingCalls() const;
+    // Test hook: records the kind of every call in the order the driver *granted* it
+    // (S stop, C command, P poll, L lifecycle), at most kGrantLogLimit entries. Off by
+    // default. Unlike the order in which threads return, it does not depend on scheduling.
+    void enableGrantLog();
+    std::string grantLog() const;
 
 private:
     // All require the driver held (an owned Access).
     StageError readLocked(int reg, std::uint16_t count, Frame& data);
     StageError writeLocked(const Frame& request, int timeoutMs);
-    StageError motionLocked(Opcode op, std::uint16_t direction);
+    StageError motionLocked(Opcode op, std::uint16_t direction, std::uint64_t expectedStopGeneration);
+    // True while a Stop is waiting for the driver and the current holder is not that Stop: retries
+    // and further transactions give way to it (Stop latency, #531).
+    // Only *between* transactions of one call: a call that was just granted the driver (a fairness
+    // grant to a poll under a Stop storm, say) always completes its first transaction, or a
+    // sustained Stop queue would starve everything else.
+    bool stopWaiting() const { return transactionsInCall_ > 0 && !holderIsStop_ && stopsWaiting_.load() > 0; }
     StageError readStatusLocked(StageStatus& status);
     StageError readConfigLocked(ControllerConfig& config);
     StageError requireMotionLocked() const;
-    StageError moveLocked(Opcode op, double um);
+    StageError moveLocked(Opcode op, double um, std::uint64_t expectedStopGeneration);
     void releaseLocked();
 
     services::serialbus::SerialBusManager& busManager_;
@@ -84,6 +96,7 @@ private:
     class Access;
     struct Waiter {
         bool granted{false}; // set by the releasing thread, under gate_
+        char kind{'C'};      // S stop, C command, P poll, L lifecycle (grant log)
     };
     static constexpr std::chrono::seconds kLockTimeout{15};
     static constexpr int kMaxConsecutiveStops{4};
@@ -93,12 +106,20 @@ private:
     mutable std::deque<Waiter*> stopQueue_;    // Stop only: served first
     mutable std::deque<Waiter*> commandQueue_; // commands and teardown
     mutable int consecutiveStops_{0};
+    static constexpr std::size_t kGrantLogLimit{4096};
+    void recordGrantLocked(char kind) const; // under gate_
+    mutable bool grantLogEnabled_{false};
+    mutable std::string grantLog_; // under gate_
     mutable std::deque<Waiter*> pollQueue_;
     std::shared_ptr<services::serialbus::ModbusBusSession> bus_;
     std::uint8_t address_{1};
     int axis_{0};
     StageProfile profile_;
     ControllerConfig config_;
+    std::atomic<std::uint64_t> stopGeneration_{0};
+    std::atomic<int> stopsWaiting_{0}; // stop() calls between entry and return
+    mutable bool holderIsStop_{false}; // written and read only by the current holder of the driver
+    mutable int transactionsInCall_{0}; // holder only: transactions sent since the call got the driver
     std::atomic<bool> connected_{false};
     std::atomic<bool> configured_{false};
 };

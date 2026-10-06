@@ -766,28 +766,36 @@ Camera editors stage bounded validated content in a randomized `tempfile::NamedT
 `StageControls` (`desktop/src/components/StageControls.tsx`, pure rules in
 `stageControlModel.ts`) sits under the pump and autofocus panel on the
 Connect tab. It uses only the `stage_*` commands and `fetch_stage_status` from
-[[Rust-Bridge]] (ABI 26), so it needs no bridge change. It is hidden on the
+[[Rust-Bridge]] (ABI 30). It is hidden on the
 PZ7035 until that board has a serial path for the stage. The service rules are
 in [[../services/StageService]].
 
 **The panel mirrors the backend rules; it does not replace them.** A disabled
 button is a courtesy, not a safety gate, and the reason for every disabled
 control is shown.
-- **Position is shown as unknown until Home**, together with the controller
-  counter. The counter is only a position once the stage has been homed.
-- **Moves need a homed stage.**
+- **There is no Home** (ADR 0013 Amendment 1, ABI 30). The stage is never
+  homed; the panel offers "Set zero here" instead.
+- **Position is shown as unknown until zero is set**, together with the
+  controller counter. The counter is only a position once the operator has
+  set zero, and even then a hand move or stall is invisible.
+- **Moves need the zero to be set this power-up.**
   - Targets are whole micrometres.
-  - They are pre-checked against the soft limits, which are also enforced in
-    the backend.
-- **Home is disabled until the controller's limit switches were verified.**
-  The reason names `zc300ctl verify-limits --supervised`; nothing in the app
-  can record that check.
-  - Pressing Home first shows a warning (full 6 mm travel, focus position
-    lost) and a "the full travel is clear" checkbox.
-  - Home then needs Service mode and arming like the pumps.
-- **Arming is one-shot**, consumed only when a move or Home is actually sent.
-  A rejected input (a mistyped target, a target past a soft limit) keeps the
-  arming.
+  - They are pre-checked against the travel envelope the backend reports
+    (±1000 µm around the zero, ±2900 µm after a mid-travel declaration); the
+    backend enforces it, refusing instead of clamping.
+- **Set zero here…** asks for confirmation. The warning says it moves nothing
+  and that nothing checks where the stage physically is; an optional
+  "the stage is at mid-travel" checkbox widens the travel and does not carry
+  over to the next zero. It needs Service mode and arming like the pumps.
+- **Session-only zero warning:** when the backend reports `session_only_zero`
+  (hardware-acceptance mode, power-cycle detection off) the panel shows an
+  alert; it is silent otherwise.
+- **The limit switches are a badge, not a gate:** the indicators carry
+  "wiring unverified" until a supervised `zc300ctl verify-limits` passed, and
+  that never enables or widens anything. The home bit is not shown (it floats).
+- **Arming is one-shot**, consumed only when a move or Set zero is actually
+  sent. A rejected input (a mistyped target, a target outside the envelope)
+  keeps the arming.
 - **Stop is always enabled and fires while the backend is ready.**
   - It does not use the panel's command lock, so a pending command cannot
     hold it.
@@ -803,8 +811,8 @@ control is shown.
 
 **Open follow-up:** relax the one-shot arming for small jogs only after the
 first supervised session. The candidate is a jog-only arm window (about 30 s,
-small whole-micrometre steps, homed and limits verified, any other action or
-Stop disarms).
+small whole-micrometre steps inside the envelope, any other action or Stop
+disarms; #521).
 
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).

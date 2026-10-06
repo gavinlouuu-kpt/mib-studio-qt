@@ -527,9 +527,10 @@ pub mod ffi {
         pub focus_direction: bool,
     }
 
-    /// Z stage snapshot (#464, ADR 0013). `move_state` is a contract
-    /// `stage_move_states` value; positions are micrometres in the homed
-    /// frame (zero at mid-travel) once `referenced`.
+    /// Z stage snapshot (#464, ADR 0013 Amendment 1; ABI 30 = no homing).
+    /// `move_state` is a contract `stage_move_states` value; positions are
+    /// micrometres in the operator's frame once `zero_set`, otherwise the raw
+    /// controller counter, which means nothing.
     #[derive(Debug, Clone, Default)]
     pub struct BridgeStageStatus {
         pub valid: bool,
@@ -537,12 +538,18 @@ pub mod ffi {
         pub connected: bool,
         /// Controller matches the stage profile; otherwise motion is refused.
         pub configured: bool,
-        /// Homed since the controller powered up; moves need it.
-        pub referenced: bool,
+        /// The operator set zero since the controller powered up; moves need it.
+        pub zero_set: bool,
+        /// ... and declared the stage was at mid-travel (widens the envelope).
+        pub mid_travel_declared: bool,
+        /// Power-up token off (hardware-acceptance mode): a controller power cycle
+        /// is NOT detected and the zero is not persisted. The shell must warn.
+        pub session_only_zero: bool,
         /// The supervised limit-switch check passed for this controller
-        /// (`zc300ctl verify-limits`); Home is refused without it.
+        /// (`zc300ctl verify-limits`). It clears a "wiring unverified" badge and
+        /// gates nothing.
         pub limits_verified: bool,
-        /// A move or Home is queued or running.
+        /// A move is queued or running.
         pub busy: bool,
         pub model: String,
         pub serial: String,
@@ -556,8 +563,9 @@ pub mod ffi {
         pub emergency_stop: bool,
         pub driver_alarm: bool,
         pub span_um: f64,
-        pub soft_min_um: f64,
-        pub soft_max_um: f64,
+        /// Allowed travel around the zero (0/0 until zero is set).
+        pub envelope_min_um: f64,
+        pub envelope_max_um: f64,
         pub last_error: String,
     }
 
@@ -936,13 +944,14 @@ pub mod ffi {
             timeout_ms: i32,
         ) -> BridgeCommandResult;
 
-        /// Z stage (#464, ADR 0013). Safety lives in the backend: moves are
-        /// refused until the stage was homed this power-up and outside the
-        /// soft limits; only `stage_home` homes; `stage_connect` is
-        /// observe-only; `stage_stop` is always accepted (also during an
-        /// experiment); everything else needs an idle experiment. Moves and
-        /// Home return a tracked operation id (kinds StageMove /
-        /// StageReference); cancelling it stops the axis.
+        /// Z stage (#464, ADR 0013 Amendment 1). The stage is never homed.
+        /// Safety lives in the backend: moves are refused until the operator
+        /// set zero this power-up (`stage_set_zero`: one register write, no
+        /// motion) and outside the travel envelope around it; `stage_connect`
+        /// is observe-only; `stage_stop` is always accepted (also during an
+        /// experiment); everything else needs an idle experiment. Moves return
+        /// a tracked operation id (kind StageMove); cancelling it stops the
+        /// axis.
         fn stage_connect(
             self: Pin<&mut BackendBridge>,
             port_name: &str,
@@ -952,7 +961,7 @@ pub mod ffi {
         fn stage_disconnect(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn stage_move_to(self: Pin<&mut BackendBridge>, target_um: f64) -> BridgeCommandResult;
         fn stage_move_by(self: Pin<&mut BackendBridge>, delta_um: f64) -> BridgeCommandResult;
-        fn stage_home(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn stage_set_zero(self: Pin<&mut BackendBridge>, mid_travel: bool) -> BridgeCommandResult;
         fn stage_stop(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn stage_apply_profile(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn fetch_stage_status(self: Pin<&mut BackendBridge>) -> BridgeStageStatus;

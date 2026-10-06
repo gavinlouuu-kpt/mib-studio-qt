@@ -10,22 +10,64 @@ Same job kind (SaveDraft), no bridge change. Guard: `profiles.registry_authoring
 (delete then notes, both queued: the draft stays gone). Found by an independent
 review of #482. See [[../services/ProfileRegistryService]].
 
-## 2026-10-06 — ZC300 stage: no homing, ADR 0013 Amendment 1 (#464, docs only)
+## 2026-10-06 — ZC300 stage: no homing, "Set zero here" instead (#464, ABI 30)
 
-Gavin decided the ZC300 is not homed. This change is documentation only; the
-code on develop still has Home until the implementation PR (bridge ABI 30).
+Gavin decided the ZC300 is not homed (ADR 0013 Amendment 1, #528). The code now
+follows it. Fake controller only; nothing moved or was written on the real
+stage.
 
 - **Bench read (read-only):** register 30015 was `0x0124` on ten reads. The home
   bit floats (1 on all three axes) and the limit bits read 0 even on the
   unconnected axes, so the limit wiring is unproven.
-- **Replacement:** "Set zero here" (position register 30059 = 0, no motion) and a
-  travel envelope of ±1000 µm around it, widened to ±2900 µm only by a
-  "zero is at mid-travel" declaration. Moves outside it are refused, not
-  clamped. Limit bits only stop a move heading toward an active limit.
-- **Known limitation:** the counter is open-loop, so a hand move or stall is
+- **Removed:** `stage_home`, the `StageReference` operation, Home in the panel,
+  `reference.on_startup` and the Home gate. Old config keys are ignored.
+- **Added:** `stage_set_zero(mid_travel)`: one write of the position counter, no
+  motion. Moves are refused until it was done this power-up, and outside a
+  travel envelope of ±1000 µm around the zero (±2900 µm after a "zero is at
+  mid-travel" declaration). They are refused, not clamped, and so is an approach
+  overshoot that would leave it.
+- **Re-zeroing cannot walk the envelope:** without a declaration a later zero
+  must stay inside the window of the first zero of that power-up.
+- **Cleared by** an e-stop, a driver alarm, an applied profile or a failure that
+  can desync the counter; an operator Stop keeps it.
+- **Limit bits** only stop a move heading toward an active switch; they gate
+  nothing. `limits_verified` is a "wiring unverified" badge and never widens
+  the envelope.
+- **ABI 30** (28 and 29 belong to #482 and #493): `referenced` → `zero_set`,
+  `mid_travel_declared`, `soft_*` → `envelope_*_um`.
+- **Review hardening (Codex, #531):** the power-up token is rechecked on every
+  idle poll and before every opcode, so a power cycle while connected drops the
+  zero; dropping the zero keeps the first window until a new power-up; Set zero
+  writes a fresh token before the counter, so no stale record can restore
+  against a rewritten counter even if deleting it fails; and fresh status is
+  checked before every opcode, not just at admission.
+- **Second review round (Codex, #531):** Stop now beats a queued move at the
+  driver (`stopGeneration`, `Stopped`); an invalidation is made durable and, if
+  the store refuses, the controller token is rotated; tokens never repeat; an
+  interim record accepting the old or the new token keeps the window across a
+  crash; an unreadable token at reconnect is unknown, not a mismatch; and
+  `power_up_token_register: 0` needs `allow_session_only_zero` and shows an
+  alert.
+- **Third review round (Codex, #531):** the Stop generation is checked right
+  before every motion opcode on every path, and Stop no longer sits behind a
+  silent controller's retries; and the lifetime of the zero fails closed: the
+  first zero stores its interim record too, a failed final save trusts nothing,
+  a replacement record after a token rotation is retried until stored, an
+  unacknowledged token write keeps the interim record, a fault seen while the
+  token is unknown still drops the zero, and the record file is flushed, fsynced
+  and closed before the rename. The #532 stop-storm test now measures the
+  driver's grant order.
+- **Final review round (Codex, #531):** the power-up token is read as new power-up
+  (0), same lifetime (matches the record's old or new token) or uncertain (changed,
+  matches nothing: not a power cycle, window uncertain); the first zero's interim
+  record is recognised; Set zero publishes the status it reads; a Stop is yielded
+  to before every driver transaction, not just retries; no file I/O under the
+  service lock; the grant-log test hook is bounded. The experiment-lock gap
+  (#533) is a separate issue.
+- **Known limitation:** the counter is open-loop; a hand move or stall is
   invisible to the software.
-- **Docs:** ADR 0013 Amendment 1, the plan (slice 5b), the evidence doc and
-  pending-change notes on `StageService` and `ZC300Stage`.
+- **Next:** the first real Set zero (one register write plus a read-back) needs
+  Gavin present.
 
 ## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
 

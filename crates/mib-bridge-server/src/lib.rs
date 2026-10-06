@@ -150,7 +150,7 @@ const CONTROL_COMMANDS: &[&str] = &[
     "set_instrument_mode", "set_service_mode", "set_instrument_led",
     // Z stage (#464). stage_stop is deliberately absent: any client may stop
     // the axis (Stop is always accepted, ADR 0013 §5).
-    "stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_home",
+    "stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_set_zero",
     "stage_apply_profile",
 ];
 
@@ -355,7 +355,7 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
             }
         }
     }
-    // A Z stage move or Home left running by a vanished operator is stopped.
+    // A Z stage move left running by a vanished operator is stopped.
     if let Ok(stage) = mib_app_commands::fetch_stage_status(state) {
         let stage = serde_json::to_value(stage).unwrap_or_default();
         if stage["busy"] == json!(true) {
@@ -523,7 +523,7 @@ mod stage_control_tests {
     // control; Stop and the status read stay available to every client.
     #[test]
     fn stage_motion_is_control_only_but_stop_is_not() {
-        for cmd in ["stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_home",
+        for cmd in ["stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_set_zero",
                     "stage_apply_profile"] {
             assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
         }

@@ -75,22 +75,23 @@ StageConfig parseStageConfig(const J& block)
 
     const auto& ref = object(block, "reference");
     auto& r = c.reference;
-    r.onStartup = boolean(ref, "on_startup", r.onStartup);
-    // Home searches for the limit switches at this speed; keep it slow, as a
-    // stage with unverified switches may reach its hard stop (#464).
-    r.searchSpeedUmS = number(ref, "search_speed_um_s", r.searchSpeedUmS, 1.0, 2000.0);
+    // Keys of the removed Home (on_startup, search_*, span_tolerance_um,
+    // require_reference, max_unreferenced_jog_um) are ignored, never acted on.
     r.expectedSpanUm = number(ref, "expected_span_um", r.expectedSpanUm, 1.0, 1e6);
-    r.spanToleranceUm = number(ref, "span_tolerance_um", r.spanToleranceUm, 0.0, 1e6);
-    r.searchMarginUm = number(ref, "search_margin_um", r.searchMarginUm, 0.0, 1e6);
     r.softLimitMarginUm = number(ref, "soft_limit_margin_um", r.softLimitMarginUm, 0.0, 1e6);
     r.powerUpTokenRegister = integer(ref, "power_up_token_register", r.powerUpTokenRegister, 0, 65535);
     if (r.powerUpTokenRegister != 0 && r.powerUpTokenRegister != 30054)
         throw std::runtime_error("stage.reference.power_up_token_register must be 30054 or 0");
+    r.allowSessionOnlyZero = boolean(ref, "allow_session_only_zero", r.allowSessionOnlyZero);
+    if (r.powerUpTokenRegister == 0 && !r.allowSessionOnlyZero)
+        throw std::runtime_error(
+            "stage.reference.power_up_token_register 0 turns off power-cycle detection; it is for hardware "
+            "acceptance only and needs stage.reference.allow_session_only_zero: true");
     if (2 * r.softLimitMarginUm >= r.expectedSpanUm)
         throw std::runtime_error("stage.reference.soft_limit_margin_um leaves no travel");
 
-    c.requireReference = boolean(block, "require_reference", c.requireReference);
-    c.maxUnreferencedJogUm = number(block, "max_unreferenced_jog_um", c.maxUnreferencedJogUm, 0.0, 1e6);
+    // The default envelope can be lowered by a rig, never raised.
+    c.envelope.defaultUm = number(object(block, "envelope"), "default_um", c.envelope.defaultUm, 1.0, 1000.0);
 
     const auto& ap = object(block, "approach");
     const std::string dir = text(ap, "direction", "positive");

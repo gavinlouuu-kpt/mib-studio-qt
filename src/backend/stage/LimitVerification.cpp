@@ -105,7 +105,7 @@ StageError search(IMotionStage& stage, const LimitVerificationOptions& o, Direct
             const bool switchActive = status.limitNegative || status.limitPositive;
             if (!switchActive && std::abs(status.positionUm - before) < move - 1.0) {
                 result.detail = "the axis stopped short of its step without a limit switch (obstruction or stall?)";
-                return StageError::ReferenceFailed;
+                return StageError::LimitCheckFailed;
             }
         }
     }
@@ -114,12 +114,12 @@ StageError search(IMotionStage& stage, const LimitVerificationOptions& o, Direct
     if (unexpected) {
         result.detail = std::string("the ") + other + " switch is active at the " + side +
                         " end: switches swapped or shorted";
-        return StageError::ReferenceFailed;
+        return StageError::LimitCheckFailed;
     }
     if (!expected) {
         result.detail = std::string("no ") + side + " limit switch within " + std::to_string(static_cast<int>(cap)) +
                         " um: check the limit-switch wiring";
-        return StageError::ReferenceFailed;
+        return StageError::LimitCheckFailed;
     }
     positionUm = status.positionUm;
     say(o, std::string("the ") + side + " switch tripped at " + std::to_string(std::lround(positionUm)) + " um");
@@ -202,7 +202,7 @@ LimitVerificationResult verifyLimits(IMotionStage& stage, const LimitVerificatio
         return result;
     }
     if (status.limitNegative && status.limitPositive) {
-        result.error = StageError::ReferenceFailed;
+        result.error = StageError::LimitCheckFailed;
         result.detail = "both limit switches are active: wiring fault";
         return result;
     }
@@ -234,7 +234,7 @@ LimitVerificationResult verifyLimits(IMotionStage& stage, const LimitVerificatio
         result.detail = "measured span " + std::to_string(std::lround(result.spanUm)) + " um is outside " +
                         std::to_string(static_cast<int>(o.expectedSpanUm)) + " +/- " +
                         std::to_string(static_cast<int>(o.spanToleranceUm)) + " um";
-        return fail(StageError::ReferenceFailed);
+        return fail(StageError::LimitCheckFailed);
     }
 
     // Back to where the operator left it (inside the switches just found).

@@ -16,15 +16,15 @@ const char* toString(StageError error)
     case StageError::EmergencyStop: return "emergency stop active";
     case StageError::DriverAlarm: return "driver alarm";
     case StageError::NotEnabled: return "axis not enabled";
-    case StageError::NotReferenced: return "not referenced";
+    case StageError::ZeroNotSet: return "zero not set";
+    case StageError::Stopped: return "stopped";
     case StageError::OffGrid: return "target is not a whole micrometre";
     case StageError::InvalidArgument: return "invalid argument";
     case StageError::Timeout: return "timeout";
     case StageError::LostAck: return "motion command reply lost";
     case StageError::Protocol: return "protocol error";
     case StageError::Transport: return "transport error";
-    case StageError::ReferenceFailed: return "referencing failed";
-    case StageError::LimitsUnverified: return "limit switches not verified for this controller";
+    case StageError::LimitCheckFailed: return "limit-switch check failed";
     }
     return "unknown";
 }

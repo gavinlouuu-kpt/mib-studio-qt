@@ -1,15 +1,15 @@
 // e2e_stage_startup_test
 //
-// The Z stage through a real AppBackend (#464, ADR 0013): a fake ZC300 behind
-// the backend's shared serial bus. Start-up is read-only (zero writes, no
-// motion); an operator Home is persisted under the data directory, so a new
-// AppBackend on the same data directory starts referenced while the
-// controller stays powered; AppBackend::shutdown stops a moving axis.
+// The Z stage through a real AppBackend (#464, ADR 0013 Amendment 1): a fake
+// ZC300 behind the backend's shared serial bus. Start-up is read-only (zero
+// writes, no motion); the operator's "Set zero here" is persisted under the
+// data directory, so a new AppBackend on the same data directory starts with
+// the zero set while the controller stays powered; AppBackend::shutdown stops a
+// moving axis. The stage is never homed.
 
 #include "backend/app/AppBackend.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/StageService.h"
-#include "backend/stage/LimitVerification.h"
 
 #include "support/assert.h"
 #include "support/fake_zc300.h"
@@ -71,23 +71,19 @@ int main()
         MIB_REQUIRE(app.stage().setConfig(stageConfig(device)), "config accepted");
         MIB_REQUIRE(app.stage().startup() == StageError::None, "start-up connects");
         const auto snap = app.stage().snapshot();
-        MIB_EXPECT(snap.connected && snap.configured && !snap.referenced, "connected, unreferenced");
+        MIB_EXPECT(snap.connected && snap.configured && !snap.zeroSet, "connected, zero not set");
         MIB_EXPECT(device.writes() == 0 && !device.moving(), "start-up: zero writes, no motion");
+        MIB_EXPECT(app.stage().moveTo(0).error == StageError::ZeroNotSet, "no motion before the operator sets zero");
 
-        MIB_EXPECT(app.stage().reference().error == StageError::LimitsUnverified,
-                   "Home refused before the supervised limit check");
-        // What `zc300ctl verify-limits --supervised` writes on the bench.
-        backend::stage::LimitsVerificationStore((dataDir / "stage_limits_verified.json").string())
-            .save({"26017", "2026-10-06T12:00:00Z", -3000.0, 3000.0, 6000.0, "zc300ctl verify-limits"});
-        const auto home = app.stage().reference();
-        MIB_REQUIRE(home.accepted() && app.stage().waitForOperation(home.id, std::chrono::seconds(10)),
-                    "operator Home");
-        MIB_EXPECT(app.stage().snapshot().referenced, "referenced");
+        // No supervised limit check exists: the stage still works (it is a badge).
+        MIB_REQUIRE(app.stage().setZero(false) == StageError::None, "operator Set zero");
+        MIB_EXPECT(app.stage().snapshot().zeroSet, "zero set");
+        MIB_EXPECT(device.opcodes() == 0 && !device.moving(), "Set zero issued no opcode and moved nothing");
         app.shutdown();
-        MIB_EXPECT(std::filesystem::exists(record), "reference record persisted in the data directory");
+        MIB_EXPECT(std::filesystem::exists(record), "zero record persisted in the data directory");
     }
 
-    watchdog.mark("restart keeps the reference");
+    watchdog.mark("restart keeps the zero");
     {
         backend::AppBackend app;
         MIB_REQUIRE(app.initialize(dataDir.string()), "second backend initializes");
@@ -95,11 +91,11 @@ int main()
         app.stage().setConfig(stageConfig(device));
         const int writes = device.writes();
         MIB_REQUIRE(app.stage().startup() == StageError::None, "start-up");
-        MIB_EXPECT(app.stage().snapshot().referenced, "same power-up: still referenced");
+        MIB_EXPECT(app.stage().snapshot().zeroSet, "same power-up: zero still set");
         MIB_EXPECT(device.writes() == writes, "restart start-up wrote nothing");
 
         device.setPulsesPerSecond(2000);
-        const auto move = app.stage().moveTo(2000);
+        const auto move = app.stage().moveTo(900);
         MIB_REQUIRE(move.accepted(), "slow move");
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         app.shutdown(); // must stop the axis before releasing the bus

@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -75,10 +76,42 @@ public:
             if (on) moving_ = jogging_ = false;
         });
     }
+    // The axis starts moving without any opcode from the host (front-panel or
+    // another master): moving until it reaches `targetPulse`.
+    void startExternalMove(std::int64_t targetPulse)
+    {
+        locked([&] {
+            advance();
+            target_ = targetPulse;
+            jogging_ = false;
+            moving_ = targetPulse != position_;
+            lastAdvance_ = Clock::now();
+        });
+    }
     void setDriverAlarm(bool on) { locked([&] { alarm_ = on; }); }
     void setEnabled(bool on) { locked([&] { enabled_ = on; }); }
     // Miswired stage: the + switch reports on the − bit and vice versa.
     void setSwapLimitBits(bool on) { locked([&] { swapLimits_ = on; }); }
+    // Called after every register write has been applied (device lock held: do
+    // not call back into the device). Lets a test order device writes against
+    // other side effects, e.g. to check what a crash at each point would leave.
+    void setWriteObserver(std::function<void(int startRegister, const std::vector<std::uint16_t>& words)> f)
+    {
+        locked([&] { writeObserver_ = std::move(f); });
+    }
+    // The next `count` writes to `reg` are executed but never answered: the host sees
+    // a timeout although the controller applied the value.
+    void dropWriteAcks(int reg, int count) { locked([&] { dropAckRegister_ = reg; dropAckCount_ = count; }); }
+    // Reads (FC03/FC04) get no reply at all while writes are answered normally: a
+    // controller whose status reads go silent, so a poller burns through its retries.
+    void setSilentReads(bool on) { locked([&] { silentReads_ = on; }); }
+    // The next `n` reads of the power-up token register (30054) fail with a device
+    // failure exception: a transient read error, not a different token.
+    void failTokenReads(int n) { locked([&] { failTokenReads_ = n; }); }
+    // false: the controller keeps pulsing through a tripped limit switch (a
+    // fault, or a limit input the controller does not honour). Only the
+    // host-side limit backstop can stop the axis then.
+    void setLimitsHalt(bool on) { locked([&] { limitsHalt_ = on; }); }
     void setDropAfterMove(bool on) { locked([&] { dropAfterMove_ = on; }); }
     void setSaveDelayMs(int ms) { locked([&] { saveDelayMs_ = ms; }); }
     // Every reply arrives this late: models a stalled host poll (load, OS
@@ -157,10 +190,19 @@ public:
         reply.send = true;
         reply.readyAt = Clock::now() + std::chrono::milliseconds(replyDelayMs_);
 
+        if ((func == 0x03 || func == 0x04) && silentReads_) {
+            reply.send = false;
+            return reply;
+        }
         if (func == 0x03 || func == 0x04) {
             const bool input = start < 30050;
             if (input != (func == 0x04) || count < 1 || count > 125) {
                 reply.frame = exception(func, 0x02);
+                return reply;
+            }
+            if (func == 0x03 && start == 30054 && failTokenReads_ > 0) {
+                --failTokenReads_;
+                reply.frame = exception(func, 0x04);
                 return reply;
             }
             reply.frame = {address, func, static_cast<std::uint8_t>(count * 2)};
@@ -191,6 +233,10 @@ public:
             if (words[0] == 0x6D && exc == 0) reply.readyAt += std::chrono::milliseconds(saveDelayMs_);
         } else {
             exc = writeRegisters(start, words);
+            if (exc == 0 && start == dropAckRegister_ && dropAckCount_ > 0) {
+                --dropAckCount_;
+                suppressReply = true; // applied, never answered
+            }
         }
         if (suppressReply) {
             reply.send = false;
@@ -290,6 +336,13 @@ private:
     }
 
     std::uint8_t writeRegisters(int start, const std::vector<std::uint16_t>& w)
+    {
+        const std::uint8_t status = applyRegisters(start, w);
+        if (status == 0 && writeObserver_) writeObserver_(start, w);
+        return status;
+    }
+
+    std::uint8_t applyRegisters(int start, const std::vector<std::uint16_t>& w)
     {
         const auto f = [&] { return wordsFloat(w[0], w[1]); };
         if (w.size() == 2) {
@@ -393,7 +446,8 @@ private:
         lastDirection_ = direction;
         while (steps-- > 0 && moving_) {
             position_ += direction;
-            const bool hitLimit = (direction > 0 && positiveInput()) || (direction < 0 && negativeInput());
+            const bool hitLimit =
+                limitsHalt_ && ((direction > 0 && positiveInput()) || (direction < 0 && negativeInput()));
             if (hitLimit || (!jogging_ && position_ == target_)) {
                 moving_ = false;
                 jogging_ = false;
@@ -420,6 +474,12 @@ private:
     bool alarm_{false};
     bool enabled_{true};
     bool swapLimits_{false};
+    bool limitsHalt_{true};
+    int failTokenReads_{0};
+    bool silentReads_{false};
+    int dropAckRegister_{0};
+    int dropAckCount_{0};
+    std::function<void(int, const std::vector<std::uint16_t>&)> writeObserver_;
     float stepDistance_{0.0f};
     std::uint16_t scratch_{0};
     std::map<int, std::uint16_t> extra_;

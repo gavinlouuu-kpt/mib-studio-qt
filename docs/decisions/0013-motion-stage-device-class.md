@@ -269,11 +269,12 @@ and stays consistent with this amendment. Each jog step is checked against
 the envelope, and Set zero stays one-shot. The first supervised session is
 now: Set zero, small jogs inside ±1000 µm, and optionally `verify-limits`.
 
-**A8. Rollout.** This amendment lands first as documentation only. The code
-on develop keeps Home, with its limits-verified gate and the rule that no
-real Home runs without Gavin present, until the implementation PR lands. That
-PR removes `stage_home` and adds `stage_set_zero`, so it takes a new bridge
-ABI number (allocated by the coordinator: 30). Real hardware stays read-only
+**A8. Rollout.** This amendment landed first as documentation only. The
+implementation PR removes `stage_home` and adds `stage_set_zero`, so it took
+a new bridge ABI number (allocated by the coordinator: 30; 28 and 29 belong to
+other work). Until it merged, the code on develop kept Home with its
+limits-verified gate and the rule that no real Home runs without Gavin
+present. Real hardware stays read-only
 until Gavin is present; the first real Set zero test is one register write
 plus a read-back.
 

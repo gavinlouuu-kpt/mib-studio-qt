@@ -323,8 +323,9 @@ fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<cmds::PumpStat
     cmds::fetch_pump_status(&state, pump)
 }
 
-// Z stage (#464, ADR 0013): safety is enforced in the backend (no motion
-// before Home, soft limits, Stop always accepted, experiment lock).
+// Z stage (#464, ADR 0013 Amendment 1): safety is enforced in the backend (no
+// motion before the operator sets zero, travel envelope, Stop always accepted,
+// experiment lock). The stage is never homed.
 #[tauri::command]
 fn stage_connect(state: State<AppState>, port_name: String, usb_serial: String, modbus_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::stage_connect(&state, port_name, usb_serial, modbus_address)
@@ -346,8 +347,8 @@ fn stage_move_by(state: State<AppState>, delta_um: f64) -> Result<cmds::CmdResul
 }
 
 #[tauri::command]
-fn stage_home(state: State<AppState>) -> Result<cmds::CmdResult, String> {
-    cmds::stage_home(&state)
+fn stage_set_zero(state: State<AppState>, mid_travel: bool) -> Result<cmds::CmdResult, String> {
+    cmds::stage_set_zero(&state, mid_travel)
 }
 
 #[tauri::command]
@@ -810,7 +811,7 @@ pub fn run() {
             stage_disconnect,
             stage_move_to,
             stage_move_by,
-            stage_home,
+            stage_set_zero,
             stage_stop,
             stage_apply_profile,
             fetch_stage_status,

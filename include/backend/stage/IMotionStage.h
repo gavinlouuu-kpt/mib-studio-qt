@@ -36,10 +36,19 @@ public:
 
     virtual StageError readStatus(StageStatus& status) = 0;
 
+    // Counts every stop() call, bumped when the call starts (before it waits for
+    // the driver). A caller that read it before deciding to move can pass it to
+    // moveAbsolute: a Stop that arrived in between, even one still queued, makes
+    // the move fail with Stopped instead of starting motion after the Stop.
+    static constexpr std::uint64_t kAnyStopGeneration = ~std::uint64_t{0};
+    virtual std::uint64_t stopGeneration() const = 0;
+
     // Motion returns once the controller accepted the command; poll
     // readStatus() for completion. Targets off the command grid are rejected
-    // with OffGrid, never rounded.
-    virtual StageError moveAbsolute(double targetUm) = 0;
+    // with OffGrid, never rounded. `expectedStopGeneration` (see above) is
+    // checked under the driver lock, immediately before the opcode.
+    virtual StageError moveAbsolute(double targetUm,
+                                    std::uint64_t expectedStopGeneration = kAnyStopGeneration) = 0;
     virtual StageError moveRelative(double deltaUm) = 0;
     // Open-ended: runs until stop() or a limit switch, so its extent depends
     // on the caller stopping it in time. Prefer a bounded moveRelative; the

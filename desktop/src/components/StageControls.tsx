@@ -5,8 +5,8 @@ import { DEFAULT_MODE, type OperatingMode } from '../commissioning';
 import { EndpointDiscovery } from './EndpointDiscovery';
 import { HardwareCommandOwner, numericInput } from './hardwareControlModel';
 import {
-  HOME_WARNING, JOG_STEPS_UM, connectionText, moveStateText, parseMicrons, pollIntervalMs, positionText,
-  softLimitProblem, stageGate, stageIndicators, type StageGateKind,
+  JOG_STEPS_UM, MID_TRAVEL_LABEL, SESSION_ONLY_WARNING, SET_ZERO_WARNING, connectionText, envelopeProblem, limitWiringText, moveStateText,
+  parseMicrons, pollIntervalMs, positionText, stageGate, stageIndicators, zeroText, type StageGateKind,
 } from './stageControlModel';
 import './HardwareControls.css';
 import './StageControls.css';
@@ -20,10 +20,10 @@ type Props = {
   onDisarm: () => void;
 };
 
-/** Z stage (ZC300 + TBZF6-60, #464, ADR 0013). Positions are micrometres.
- *  The backend enforces the safety rules; this panel mirrors them so the
- *  operator sees why a control is disabled. Nothing here homes or moves on
- *  mount, on connect, or on reconnect. */
+/** Z stage (ZC300 + TBZF6-60, #464, ADR 0013 Amendment 1). Positions are micrometres.
+ *  The stage is never homed: the operator sets zero and the backend bounds travel around it. The backend
+ *  enforces the safety rules; this panel mirrors them so the operator sees why a control is disabled. Nothing
+ *  here moves or writes on mount, on connect, or on reconnect. */
 export function StageControls({ ready, experimentActive, append, mode = DEFAULT_MODE, armed = false, onDisarm }: Props) {
   const [status, setStatus] = useState<StageStatus | null>(null);
   const [statusError, setStatusError] = useState('');
@@ -34,8 +34,8 @@ export function StageControls({ ready, experimentActive, append, mode = DEFAULT_
   const [address, setAddress] = useState('1');
   const [step, setStep] = useState<number>(10);
   const [target, setTarget] = useState('');
-  const [homeConfirming, setHomeConfirming] = useState(false);
-  const [homeClear, setHomeClear] = useState(false);
+  const [zeroConfirming, setZeroConfirming] = useState(false);
+  const [midTravel, setMidTravel] = useState(false);
   const owner = useRef(new HardwareCommandOwner());
   const polling = useRef(false);
   const generation = useRef(0);
@@ -80,7 +80,7 @@ export function StageControls({ ready, experimentActive, append, mode = DEFAULT_
     try {
       const command = prepare();
       const result = await owner.current.run(() => {
-        if (kind === 'move' || kind === 'home') onDisarm(); // one-shot arming, like the pumps
+        if (kind === 'move' || kind === 'set-zero') onDisarm(); // one-shot arming, like the pumps
         return command();
       });
       append(`${label}: ${result.message || 'Command accepted'}`);
@@ -108,7 +108,7 @@ export function StageControls({ ready, experimentActive, append, mode = DEFAULT_
 
   const connected = !!status?.connected;
   const moveReason = gate('move');
-  const homeReason = gate('home');
+  const zeroReason = gate('set-zero');
   const connectReason = gate('connect');
   const disconnectReason = gate('disconnect');
   const applyReason = gate('apply-profile');
@@ -116,27 +116,29 @@ export function StageControls({ ready, experimentActive, append, mode = DEFAULT_
 
   const jog = (sign: 1 | -1) => run('Move stage', 'move', () => {
     const delta = sign * step;
-    const problem = status ? softLimitProblem(status, delta, true) : '';
+    const problem = status ? envelopeProblem(status, delta, true) : '';
     if (problem) throw new Error(problem);
     return () => bridge.stageMoveBy(delta);
   });
   const goTo = () => run('Move stage', 'move', () => {
     const value = parseMicrons(target, 'Target position');
-    const problem = status ? softLimitProblem(status, value, false) : '';
+    const problem = status ? envelopeProblem(status, value, false) : '';
     if (problem) throw new Error(problem);
     return () => bridge.stageMoveTo(value);
   });
-  const startHome = () => {
-    setHomeConfirming(false); setHomeClear(false);
-    return run('Home stage', 'home', () => () => bridge.stageHome());
+  const setZero = () => {
+    const declared = midTravel;
+    setZeroConfirming(false); setMidTravel(false);
+    return run('Set zero', 'set-zero', () => () => bridge.stageSetZero(declared));
   };
 
   return <section className="hardware-controls stage-controls" aria-label="Z stage controls">
     <h2>Z stage</h2>
-    <p>Home and moves need Service / Commissioning mode and arming, and the stage must be homed first. Stop is always available, also during an experiment. Positions are in micrometres.</p>
+    <p>Setting zero and moves need Service / Commissioning mode and arming, and moves need the zero to be set first. The stage is never homed. Stop is always available, also during an experiment. Positions are in micrometres.</p>
     {error && <p role="alert">{error}</p>}
     {statusError && <p role="alert">Status unavailable: {statusError}</p>}
     {status?.last_error && <p role="status">Last stage error: {status.last_error}</p>}
+    {status?.connected && status.session_only_zero && <p role="alert" className="stage-session-only">{SESSION_ONLY_WARNING}</p>}
 
     <fieldset><legend>Connection</legend>
       <p>{connectionText(status)}</p>
@@ -165,7 +167,8 @@ export function StageControls({ ready, experimentActive, append, mode = DEFAULT_
     <fieldset><legend>Position</legend>
       {status && connected ? <>
         <p className="stage-position" aria-label="Stage position">{positionText(status)}</p>
-        <p>{status.referenced ? `Homed · soft limits ${Math.round(status.soft_min_um)} to ${Math.round(status.soft_max_um)} µm (span ${Math.round(status.span_um)} µm)` : 'Not homed'} · {moveStateText(status)} · Limit switches {status.limits_verified ? 'verified' : 'not verified'}</p>
+        <p>{zeroText(status)} · {moveStateText(status)}</p>
+        <p>Limit switches: {limitWiringText(status)}</p>
         <ul className="stage-indicators" aria-label="Stage indicators">
           {stageIndicators(status).map(item => <li key={item.key} data-active={item.active} data-severity={item.alarm ? 'alarm' : 'info'}>{item.label}: {item.active ? 'ACTIVE' : 'clear'}</li>)}
         </ul>
@@ -175,19 +178,19 @@ export function StageControls({ ready, experimentActive, append, mode = DEFAULT_
       </div>
     </fieldset>
 
-    <fieldset><legend>Home</legend>
-      <p>Home finds both limit switches and zeroes the position at mid-travel. It is needed once after the controller powers up.</p>
-      {!homeConfirming
-        ? <div className="hardware-actions"><button disabled={busy || !!homeReason} onClick={() => setHomeConfirming(true)}>Home…</button></div>
-        : <div className="stage-home-confirm" role="group" aria-label="Confirm Home">
-            <p role="alert">{HOME_WARNING}</p>
-            <label><input type="checkbox" checked={homeClear} onChange={e => setHomeClear(e.target.checked)} />The full travel is clear</label>
+    <fieldset><legend>Zero</legend>
+      <p>The stage is never homed. Set zero here tells the software that the stage is at 0 µm now; it moves nothing. It is needed once after the controller powers up, and after an emergency stop or driver alarm.</p>
+      {!zeroConfirming
+        ? <div className="hardware-actions"><button disabled={busy || !!zeroReason} onClick={() => setZeroConfirming(true)}>Set zero here…</button></div>
+        : <div className="stage-zero-confirm" role="group" aria-label="Confirm Set zero">
+            <p role="alert">{SET_ZERO_WARNING}</p>
+            <label><input type="checkbox" checked={midTravel} onChange={e => setMidTravel(e.target.checked)} />{MID_TRAVEL_LABEL}</label>
             <div className="hardware-actions">
-              <button disabled={busy || !homeClear || !!homeReason} onClick={() => void startHome()}>Start Home</button>
-              <button onClick={() => { setHomeConfirming(false); setHomeClear(false); }}>Cancel</button>
+              <button disabled={busy || !!zeroReason} onClick={() => void setZero()}>Set zero here</button>
+              <button onClick={() => { setZeroConfirming(false); setMidTravel(false); }}>Cancel</button>
             </div>
           </div>}
-      {homeReason && connected && <p>{homeReason}</p>}
+      {zeroReason && connected && <p>{zeroReason}</p>}
     </fieldset>
 
     <fieldset><legend>Move</legend>

@@ -141,8 +141,7 @@ namespace backend::bridge
         MaskRegeneration,
         Reanalysis,
         PumpScan,
-        StageMove,      // Z stage move (#464, ABI 26)
-        StageReference, // Z stage Home: probe both limits, zero at mid-travel
+        StageMove, // Z stage move (#464, ABI 26)
     };
 
     enum class BackendOperationState
@@ -305,11 +304,13 @@ namespace backend::bridge
 
     // Z stage commands (#464, ADR 0013) over StageService. The backend
     // enforces the safety rules, whatever the shell does:
-    //  - MoveTo/MoveBy are refused until the stage was homed this controller
-    //    power-up, and outside the soft limits (StageService);
-    //  - Home is only ever this explicit action: Connect, Disconnect,
-    //    ApplyProfile and discovery never home or move (Connect is
-    //    observe-only; there is deliberately no start-up action here);
+    //  - MoveTo/MoveBy are refused until the operator set zero this controller
+    //    power-up, and outside the travel envelope around it (StageService;
+    //    ADR 0013 Amendment 1). There is no Home: the stage is never homed;
+    //  - SetZero writes the position counter (no motion) and is only ever this
+    //    explicit action: Connect, Disconnect, ApplyProfile and discovery never
+    //    move or write the position (Connect is observe-only; there is
+    //    deliberately no start-up action here);
     //  - Stop is always accepted, also during an experiment;
     //  - every other action needs an idle experiment.
     enum class StageCommandAction
@@ -318,7 +319,7 @@ namespace backend::bridge
         Disconnect,
         MoveTo,
         MoveBy,
-        Home,
+        SetZero,
         Stop,
         ApplyProfile,
     };
@@ -331,6 +332,7 @@ namespace backend::bridge
         std::string usbSerial;
         int modbusAddress{0}; // 0 = keep the configured address
         double targetUm{0.0}; // MoveTo: absolute, MoveBy: relative (whole micrometres)
+        bool midTravel{false}; // SetZero: the operator declares the stage is at mid-travel
     };
 
     using BackendCommand = std::variant<CameraCommand,
@@ -945,17 +947,20 @@ namespace backend::bridge
         double speedRpm{0.0}; // peristaltic head speed setpoint
     };
 
-    // Z stage snapshot (#464, ABI 26): connection, identity, reference state,
-    // live status and soft limits. Positions are micrometres in the homed
-    // frame (zero at mid-travel) once referenced.
+    // Z stage snapshot (#464; ABI 30 = no homing): connection, identity, zero
+    // state, live status and the travel envelope. Positions are micrometres in
+    // the operator's frame once zero is set; before that the position is the
+    // controller's raw counter and means nothing.
     struct BackendStageStatus
     {
         bool enabled{false};
         bool connected{false};
         bool configured{false}; // controller matches the stage profile
-        bool referenced{false}; // homed since the controller powered up
-        bool limitsVerified{false}; // supervised limit check passed; Home needs it
-        bool busy{false};       // a move or Home is queued or running
+        bool zeroSet{false};    // the operator set zero since the controller powered up
+        bool midTravelDeclared{false}; // ... and declared the stage at mid-travel
+        bool sessionOnlyZero{false};   // power-up token off (acceptance mode): a power cycle is NOT detected
+        bool limitsVerified{false}; // supervised limit check passed; clears "wiring unverified"
+        bool busy{false};       // a move is queued or running
         std::string model;
         std::string serial;
         std::string firmware;
@@ -968,8 +973,8 @@ namespace backend::bridge
         bool emergencyStop{false};
         bool driverAlarm{false};
         double spanUm{0.0};
-        double softMinUm{0.0};
-        double softMaxUm{0.0};
+        double envelopeMinUm{0.0}; // allowed travel around the zero (0/0 until zero is set)
+        double envelopeMaxUm{0.0};
         std::string lastError;
     };
 

@@ -44,20 +44,25 @@ export interface AutofocusConfig {
   focus_direction: boolean;
 }
 
-/** Z stage snapshot (#464, ADR 0013). `move_state` is a contract
- *  STAGE_MOVE_STATES value; positions are micrometres in the homed frame
- *  (zero at mid-travel) once `referenced`. */
+/** Z stage snapshot (#464, ADR 0013 Amendment 1; ABI 30 = no homing).
+ *  `move_state` is a contract STAGE_MOVE_STATES value; positions are
+ *  micrometres in the operator's frame once `zero_set`, otherwise the raw
+ *  controller counter, which means nothing. */
 export interface StageStatus {
   valid: boolean;
   enabled: boolean;
   connected: boolean;
   /** Controller matches the stage profile; otherwise motion is refused. */
   configured: boolean;
-  /** Homed since the controller powered up; moves need it. */
-  referenced: boolean;
-  /** Supervised limit-switch check passed for this controller; Home needs it. */
+  /** The operator set zero since the controller powered up; moves need it. */
+  zero_set: boolean;
+  /** ... and declared the stage was at mid-travel (widens the envelope). */
+  mid_travel_declared: boolean;
+  /** Power-up token off (hardware-acceptance mode): a power cycle is NOT detected. Show a warning. */
+  session_only_zero: boolean;
+  /** Supervised limit-switch check passed for this controller. A badge only. */
   limits_verified: boolean;
-  /** A move or Home is queued or running. */
+  /** A move is queued or running. */
   busy: boolean;
   model: string;
   serial: string;
@@ -71,8 +76,9 @@ export interface StageStatus {
   emergency_stop: boolean;
   driver_alarm: boolean;
   span_um: number;
-  soft_min_um: number;
-  soft_max_um: number;
+  /** Allowed travel around the zero (0/0 until zero is set). */
+  envelope_min_um: number;
+  envelope_max_um: number;
   last_error: string;
 }
 
@@ -716,14 +722,15 @@ export const bridge = {
     invokeCommand("pump_set_syringe_volume", { pump, volume, unit }),
   pumpPollStatus: (pump: number) => invokeCommand("pump_poll_status", { pump }),
   fetchPumpStatus: (pump: number) => invoke<PumpStatus>("fetch_pump_status", { pump }),
-  // Z stage (#464). The backend refuses moves before Home and outside the
-  // soft limits; only stageHome homes; stageStop is always accepted.
+  // Z stage (#464, ADR 0013 Amendment 1). The stage is never homed. The backend
+  // refuses moves before stageSetZero and outside the travel envelope around it;
+  // stageStop is always accepted.
   stageConnect: (portName = "", usbSerial = "", modbusAddress = 0) =>
     invokeCommand("stage_connect", { portName, usbSerial, modbusAddress }),
   stageDisconnect: () => invokeCommand("stage_disconnect"),
   stageMoveTo: (targetUm: number) => invokeCommand("stage_move_to", { targetUm }),
   stageMoveBy: (deltaUm: number) => invokeCommand("stage_move_by", { deltaUm }),
-  stageHome: () => invokeCommand("stage_home"),
+  stageSetZero: (midTravel = false) => invokeCommand("stage_set_zero", { midTravel }),
   stageStop: () => invokeCommand("stage_stop"),
   stageApplyProfile: () => invokeCommand("stage_apply_profile"),
   fetchStageStatus: () => invoke<StageStatus>("fetch_stage_status"),
