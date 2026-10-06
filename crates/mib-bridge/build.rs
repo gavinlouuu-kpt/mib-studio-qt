@@ -140,13 +140,16 @@ fn windows_build(repo: &Path, include_dir: &Path) {
     // Order matters for static archives: the backend before its dependencies,
     // exactly as CMake linked the reference test.
     for lib in strings("libs") {
-        if matches!(lib.as_str(), "mib_backend" | "mib_processing" | "oeabt_serial" | "oeabt_core") {
+        if matches!(
+            lib.as_str(),
+            "mib_backend" | "mib_processing" | "stage_zc300" | "stage_zc300_protocol" | "oeabt_serial" | "oeabt_core"
+        ) {
             println!("cargo:rustc-link-lib=static={lib}");
         } else {
             println!("cargo:rustc-link-lib={lib}");
         }
     }
-    for lib in ["mib_backend", "mib_processing", "oeabt_serial", "oeabt_core"] {
+    for lib in ["mib_backend", "mib_processing", "stage_zc300", "stage_zc300_protocol", "oeabt_serial", "oeabt_core"] {
         let dir = manifest["runtime_dirs"][0].as_str().unwrap_or("build/Release");
         println!("cargo:rerun-if-changed={dir}/{lib}.lib");
     }
@@ -202,9 +205,11 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=static=mib_backend");
         println!("cargo:rustc-link-lib=static=mib_processing");
-        // Autofocus and SerialBus use the native serial transport; its protocol
-        // implementation is another static archive. Preserve dependency order.
-        for lib in ["oeabt_serial", "oeabt_core"] {
+        // The Z stage driver (StageService) and its protocol library, then the
+        // native serial transport they, Autofocus and SerialBus use; its
+        // protocol implementation is another static archive. Preserve
+        // dependency order.
+        for lib in ["stage_zc300", "stage_zc300_protocol", "oeabt_serial", "oeabt_core"] {
             println!("cargo:rerun-if-changed={}/lib{lib}.a", build_dir.display());
             println!("cargo:rustc-link-lib=static={lib}");
         }

@@ -277,6 +277,11 @@ terminal event, file reloads), `rust_enums_match_contract_json`.
 
 ### OEABT link dependencies
 
+Since #464 slice 3 the backend links the Z-stage archives too: the bridge
+links `stage_zc300` and `stage_zc300_protocol` between the backend/processing
+archives and the OEABT ones, and the Windows manifest path marks them static
+(`crates/mib-bridge/build.rs`). `SerialBus.cpp` lives in `oeabt_serial`.
+
 The Linux bridge links `oeabt_serial` and then `oeabt_core` from
 `<build-dir>` (the CMake archive output directory), after the backend/processing archives. These contain
 both the nanopositioner protocol and the shared native serial transport. The

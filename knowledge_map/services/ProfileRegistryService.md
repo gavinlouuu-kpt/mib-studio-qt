@@ -87,6 +87,11 @@ the current context — `checkValidationEvidence`). See
 
 ## Gotchas
 
+Close a file before renaming or moving it: Windows refuses to rename a file
+that is still open (Linux allows it). `InstrumentIdentity` reads the identity
+file in its own scope so a corrupt file can be moved to `.corrupt-<n>`
+(`profiles.instrument_identity` caught this on the first MSVC run).
+
 Everything except `ProfileRegistryWorker`'s public API is confined to the
 worker thread. Snapshots never wait on SQLite or the network (the cache is read
 outside the lock). A cancelled/aborted request is not counted as an outage.
