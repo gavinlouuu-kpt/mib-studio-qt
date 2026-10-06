@@ -45,6 +45,7 @@ namespace backend::bridge
         Pump = 10,
         Autofocus = 11,
         PulseGenerator = 12,
+        Stage = 13,
     };
 
     enum class CameraCommandAction
@@ -57,6 +58,10 @@ namespace backend::bridge
         SoftTriggerCamera,
         StartCapture,
         StopCapture,
+        // Camera & Alignment: full-sensor Overview on/off (restarts a running capture) and the
+        // experiment window saved on it (ABI 20).
+        SetCameraOverview,
+        SaveCameraRoi,
     };
 
     struct CameraCommand
@@ -72,6 +77,8 @@ namespace backend::bridge
         std::string mindVisionLabel;
         std::string mindVisionConfigPath;
         std::string cameraScriptPath;
+        bool cameraOverview{false};
+        int roiX{0}, roiY{0}, roiWidth{0}, roiHeight{0};
     };
 
     enum class RecordingCommandAction
@@ -134,6 +141,8 @@ namespace backend::bridge
         MaskRegeneration,
         Reanalysis,
         PumpScan,
+        StageMove,      // Z stage move (#464, ABI 26)
+        StageReference, // Z stage Home: probe both limits, zero at mid-travel
     };
 
     enum class BackendOperationState
@@ -266,6 +275,8 @@ namespace backend::bridge
         int scanStartAddress{1};
         int scanEndAddress{8};
         int scanTimeoutMs{300};
+        int model{0}; // Connect: contract pump_models (0 dLSP syringe, 1 Tushui peristaltic)
+        double microlitersPerRev{25.0}; // Connect, peristaltic: flow calibration
     };
 
     // Autofocus / nanopositioner commands (BE-8, #278) over AutofocusService.
@@ -292,6 +303,36 @@ namespace backend::bridge
         services::AutofocusService::Config config{};
     };
 
+    // Z stage commands (#464, ADR 0013) over StageService. The backend
+    // enforces the safety rules, whatever the shell does:
+    //  - MoveTo/MoveBy are refused until the stage was homed this controller
+    //    power-up, and outside the soft limits (StageService);
+    //  - Home is only ever this explicit action: Connect, Disconnect,
+    //    ApplyProfile and discovery never home or move (Connect is
+    //    observe-only; there is deliberately no start-up action here);
+    //  - Stop is always accepted, also during an experiment;
+    //  - every other action needs an idle experiment.
+    enum class StageCommandAction
+    {
+        Connect,
+        Disconnect,
+        MoveTo,
+        MoveBy,
+        Home,
+        Stop,
+        ApplyProfile,
+    };
+
+    struct StageCommand
+    {
+        StageCommandAction action{StageCommandAction::Stop};
+        // Connect: optional endpoint override of the configured stage block.
+        std::string portName;
+        std::string usbSerial;
+        int modbusAddress{0}; // 0 = keep the configured address
+        double targetUm{0.0}; // MoveTo: absolute, MoveBy: relative (whole micrometres)
+    };
+
     using BackendCommand = std::variant<CameraCommand,
                                         RecordingCommand,
                                         ProcessingSettingsCommand,
@@ -303,7 +344,8 @@ namespace backend::bridge
                                         TriggerCommand,
                                         ReviewCommand,
                                         PumpCommand,
-                                        AutofocusCommand>;
+                                        AutofocusCommand,
+                                        StageCommand>;
 
     struct BackendCommandResult
     {
@@ -645,6 +687,82 @@ namespace backend::bridge
         std::string origin;
     };
 
+    // ---- Central profile registry (issue #398, ABI 25) ----
+    // Frontend-neutral mirror of backend::profiles::ProfileRegistryWorker.
+    // Integer fields are contract-pinned (bridge-contract.json):
+    // `session` = registry_session_states, `connectivity` =
+    // registry_connectivity, job `kind`/`state` = registry_job_kinds /
+    // registry_job_states, revision `centralState` = registry_central_states.
+    // No token or password is ever part of these values.
+    struct BackendRegistryProject
+    {
+        std::string projectId;
+        std::string displayName;
+        std::vector<std::string> roles;
+    };
+
+    struct BackendRegistryRevision
+    {
+        std::string revisionId;
+        std::string methodId;
+        std::string projectId;
+        std::string displayName;
+        std::string authorId;
+        std::string contentHash;
+        std::uint64_t revisionNumber{0};
+        std::uint64_t metadataVersion{0};
+        int centralState{0};
+        // #398 M2b: verified materialized files ("" = not materialized) and
+        // the local validation on this instrument under the current method
+        // context (`localValidation` = registry_local_validation).
+        std::string materializedDir;
+        int localValidation{0};
+        std::string validatedBy;
+        std::string validatedAtUtc;
+    };
+
+    struct BackendRegistryJob
+    {
+        std::uint64_t jobId{0}; // 0: unknown, evicted or refused
+        int kind{0};
+        int state{0};
+        std::string message;
+    };
+
+    struct BackendRegistrySnapshot
+    {
+        bool valid{false}; // false only when the facade is not initialized
+        bool configured{false};
+        std::uint64_t generation{0};
+        std::string origin;
+        int session{0};
+        std::string subjectId;
+        std::string email;
+        int connectivity{0};
+        std::string healthMessage;
+        std::uint64_t successfulRequests{0};
+        std::uint64_t failedRequests{0};
+        std::uint64_t rejectedRevisions{0};
+        std::vector<BackendRegistryProject> projects;
+        std::vector<BackendRegistryRevision> revisions;
+        std::vector<std::string> corruptRevisionIds;
+        std::string cacheError;
+        bool hasLastSuccessfulRefresh{false};
+        std::int64_t lastSuccessfulRefreshUnixMs{0};
+        BackendRegistryJob lastJob;
+        std::uint64_t queuedJobs{0};
+        bool busy{false};
+        std::string instrumentId;   // #398 M2b: AppBackend::instrumentIdentity()
+        std::string instrumentName;
+    };
+
+    // "Mark validated" outcome: jobId 0 = refused, `error` says why.
+    struct BackendRegistryValidationRequest
+    {
+        std::uint64_t jobId{0};
+        std::string error;
+    };
+
     // Authoritative selected-device snapshot (BE-2). `mode` values are
     // contract-pinned: 0 None, 1 Mock, 2 Hardware, 3 MindVision.
     struct BackendCameraSelection
@@ -741,6 +859,37 @@ namespace backend::bridge
         double configuredFlowRate{0.0};
         int flowRateUnit{100};
         int direction{0};
+        int model{0}; // contract pump_models
+        double microlitersPerRev{0.0};
+        double speedRpm{0.0}; // peristaltic head speed setpoint
+    };
+
+    // Z stage snapshot (#464, ABI 26): connection, identity, reference state,
+    // live status and soft limits. Positions are micrometres in the homed
+    // frame (zero at mid-travel) once referenced.
+    struct BackendStageStatus
+    {
+        bool enabled{false};
+        bool connected{false};
+        bool configured{false}; // controller matches the stage profile
+        bool referenced{false}; // homed since the controller powered up
+        bool limitsVerified{false}; // supervised limit check passed; Home needs it
+        bool busy{false};       // a move or Home is queued or running
+        std::string model;
+        std::string serial;
+        std::string firmware;
+        std::string portName;
+        int moveState{0}; // contract stage_move_states
+        double positionUm{0.0};
+        bool limitPositive{false};
+        bool limitNegative{false};
+        bool home{false};
+        bool emergencyStop{false};
+        bool driverAlarm{false};
+        double spanUm{0.0};
+        double softMinUm{0.0};
+        double softMaxUm{0.0};
+        std::string lastError;
     };
 
     // Autofocus / nanopositioner status snapshot (BE-8): connection, enable
@@ -799,6 +948,28 @@ namespace backend::bridge
 
         BackendCommandResult closeReview();
         std::string fetchPreviewBufferJson() const;
+        // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
+        // the last camera read-back (ABI 20).
+        std::string fetchCameraGeometryJson() const;
+        // Where the science runs and what this build has (ABI 21): {science: host|pl,
+        // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
+        // `capabilities` (#501) says which surfaces exist on this instrument.
+        std::string fetchPlatformInfoJson() const;
+        // PZ7035 camera modes (ABI 27, #501 P1): "align" | "run" (window at x, y; snapped to
+        // x % 8, y % 4). Refused during an experiment/recording and with the PL unconfigured.
+        BackendCommandResult setInstrumentMode(const std::string &mode, int x, int y);
+        // The shell's Service / Commissioning mode, latched in the backend: raw LED values are
+        // refused outside it.
+        BackendCommandResult setServiceMode(bool on);
+        // Raw LED delay/width (µs): Service mode only, within the current mode's limits.
+        BackendCommandResult setInstrumentLed(double delayUs, double widthUs);
+        // Run mode: one PL cell capture (gray, U-Net mask, cells) as an MIBC packet; empty with
+        // `error` otherwise.
+        std::vector<std::uint8_t> fetchRunPreviewPacket(std::string *error);
+        // PZ7035 identity and health for preflight (#501): the PL core against the
+        // expected core and the pinned weights, LED strobe and guard, sensor-link
+        // rates, latency. {available: false, error} off the instrument.
+        std::string fetchInstrumentStatusJson();
         std::string savePreviewBufferJson(const std::string& request);
         bool fetchLatestFrame(BackendFrame &out) const;
         bool fetchFrameByIndex(std::uint64_t frameIndex, BackendFrame &out) const;
@@ -820,9 +991,30 @@ namespace backend::bridge
         // job deadline). Worker-thread callers only; never call from a UI
         // thread. New consumers use the asynchronous trio above.
         bool fetchCameraDiscovery(BackendCameraDiscovery &out) const;
+        // Central profile registry (issue #398, ABI 25): enqueue commands on
+        // the backend registry worker (job IDs; 0 = refused) and read its
+        // value snapshot. Never blocks on the network; never touches capture,
+        // recording or Start. The password is handed to the worker and not
+        // retained here.
+        std::uint64_t registrySignIn(const std::string &email, std::string password);
+        std::uint64_t registrySignOut();
+        std::uint64_t registryRefresh();
+        std::uint64_t registryDownload(const std::string &revisionId);
+        bool registryCancelAll();
+        // #398 M2b: write a cached revision's files (read-only) for Apply.
+        std::uint64_t registryMaterialize(const std::string &revisionId);
+        // #398 M2b: record a local validation of `revisionId` backed by the
+        // test-run HDF5 `evidenceFile`, which must have been recorded with
+        // that revision applied on this instrument under the current context.
+        BackendRegistryValidationRequest registryRecordValidation(const std::string &revisionId,
+                                                                  const std::string &evidenceFile,
+                                                                  bool passed);
+        bool fetchRegistrySnapshot(BackendRegistrySnapshot &out) const;
+        bool fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const;
         bool fetchCameraSelection(BackendCameraSelection &out) const;
         bool fetchPumpStatus(int pumpId, BackendPumpStatus &out) const;
         bool fetchAutofocusStatus(BackendAutofocusStatus &out) const;
+        bool fetchStageStatus(BackendStageStatus &out) const;
         bool fetchAutofocusConfig(services::AutofocusService::Config &out) const;
         // Processing configuration (BE-3): the full lossless config document
         // as JSON — image_processing (config.json schema), realtime settings,
@@ -919,6 +1111,15 @@ namespace backend::bridge
         BackendCommandResult handleReviewCommand(const ReviewCommand &command);
         BackendCommandResult handlePumpCommand(const PumpCommand &command);
         BackendCommandResult handleAutofocusCommand(const AutofocusCommand &command);
+        BackendCommandResult handleStageCommand(const StageCommand &command);
+        // Mirrors a StageService operation as a tracked facade operation: a
+        // joined worker waits for the stage operation and turns a facade
+        // cancel into a stage cancel (which stops the axis).
+        std::uint64_t trackStageOperation(BackendOperationKind kind, std::uint64_t stageOperation,
+                                          const std::string &message);
+        // True when the connected stage already claims this port (and, for
+        // Modbus devices, this address): pump / pulse-generator conflicts.
+        bool stageClaims(const std::string &port, int modbusAddress) const;
 
         BackendCommandResult lifecycleError(BackendCommandType command, const std::string &message);
         void emitEvent(const BackendEvent &event) const;

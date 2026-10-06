@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 19;
+export const BRIDGE_ABI_VERSION = 27;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -37,6 +37,7 @@ export const COMMAND_TYPES = {
   Pump: 10,
   Autofocus: 11,
   PulseGenerator: 12,
+  Stage: 13,
 } as const;
 
 export const CAMERA_TYPES = {
@@ -57,6 +58,7 @@ export const DISCOVERY_DEVICE_KINDS = {
   Framegrabber: 1,
   Nanopositioner: 2,
   PulseGenerator: 3,
+  MotionStage: 4,
 } as const;
 
 export const DISCOVERY_JOB_STATES = {
@@ -97,6 +99,60 @@ export const DISCOVERY_ERROR_KINDS = {
   TooManyJobs: 13,
 } as const;
 
+export const REGISTRY_SESSION_STATES = {
+  SignedOut: 0,
+  SignedIn: 1,
+  CachedOffline: 2,
+} as const;
+
+export const REGISTRY_CONNECTIVITY = {
+  Unknown: 0,
+  Online: 1,
+  Offline: 2,
+  AuthenticationRequired: 3,
+  PermissionDenied: 4,
+  Failed: 5,
+} as const;
+
+export const REGISTRY_JOB_KINDS = {
+  SignIn: 0,
+  SignOut: 1,
+  Refresh: 2,
+  Download: 3,
+  Materialize: 4,
+  RecordValidation: 5,
+  SaveDraft: 6,
+  DeleteDraft: 7,
+  SubmitDraft: 8,
+  Transition: 9,
+  FetchHistory: 10,
+} as const;
+
+export const REGISTRY_JOB_STATES = {
+  Queued: 0,
+  Running: 1,
+  Succeeded: 2,
+  Partial: 3,
+  Failed: 4,
+  Cancelled: 5,
+} as const;
+
+export const REGISTRY_CENTRAL_STATES = {
+  Submitted: 0,
+  Approved: 1,
+  Rejected: 2,
+  Published: 3,
+  Superseded: 4,
+  Archived: 5,
+  Revoked: 6,
+} as const;
+
+export const REGISTRY_LOCAL_VALIDATION = {
+  None: 0,
+  Passed: 1,
+  Failed: 2,
+} as const;
+
 export const REVIEW_IMAGE_DATASETS = {
   ValidImage: 0,
   InvalidImage: 1,
@@ -120,6 +176,18 @@ export const PUMP_RUN_STATES = {
 export const PUMP_DIRECTIONS = {
   Infuse: 0,
   Withdraw: 1,
+} as const;
+
+export const PUMP_MODELS = {
+  DlspSyringe: 0,
+  TushuiPeristaltic: 1,
+} as const;
+
+export const STAGE_MOVE_STATES = {
+  Idle: 0,
+  Moving: 1,
+  Homing: 2,
+  Faulted: 3,
 } as const;
 
 export const EXPERIMENT_STATES = {
@@ -192,6 +260,8 @@ export const OPERATION_KINDS = {
   MaskRegeneration: 4,
   Reanalysis: 5,
   PumpScan: 6,
+  StageMove: 7,
+  StageReference: 8,
 } as const;
 
 export const OPERATION_STATES = {

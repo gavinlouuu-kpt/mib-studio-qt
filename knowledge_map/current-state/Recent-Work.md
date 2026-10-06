@@ -25,6 +25,457 @@ mid-clip, env overrides), verified to fail when frames are dropped, the
 saved config differs, the provenance write or the reserve check is removed.
 Next: live per-frame results for the clip frames and paced replay (plan
 `docs/exec-plans/active/2026-09-30-replay-clip-capture.md`).
+## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
+
+ADR 0011's CI and compatibility-matrix consequences:
+
+- **PL replay lane:** the 15 hardware-free PZ7035 tests carry the ctest label
+  `pl`: record decoder, provider replay and ingest, profile compiler,
+  platform monitor, the Align/Run mode writer and the bridge preview, Contract 3 vectors, host-versus-PL equality and the ABI
+  vendor check. `backend-ci` runs them as a named step ("PL replay lane") with
+  `--no-tests=error` and a lower bound of 15, so a dropped label or test
+  fails CI. `processing.unet_c4` and `processing.pz_board_run_host` report
+  SKIP there: they need the private weights or a board run.
+- **Matrix:** `docs/architecture/processing-contract-compatibility.md` gains
+  the Contract 3 row, a "Reference per contract" table (Contract 3's
+  reference is the pz7035 PL specification), the `unet-cells` line name and
+  the `pl_core` provenance. See [[../services/ProcessingService]].
+## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
+
+A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`
+with `MIB_PL_SCIENCE=ON` for the Cortex-A9 on every PR that touches the
+backend, so a 32-bit or ARM break in the PZ7035 code no longer waits for a
+board build. It uses the distro armhf toolchain, not the Yocto SDK, and leaves
+Aravis out; the SDK artifact job remains a follow-up. See
+[[../build-and-run/Build]].
+## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
+
+Opening Camera & Alignment puts the instrument in Align: full sensor at
+500 fps, LED 0/125 µs. Opening Experiment puts it in Run at the placed
+window: 512×96 at 5 kHz, U-Net on, LED 7/60 µs. No shell commands are
+needed in either direction.
+
+- **Sequencing.** The backend does the switch in the order agreed with the
+  PL owner. The GenTL producer applies the sensor timing.
+  `PzInstrumentControl` is the single writer of the LED, the cell path and
+  the cell capture.
+- **Run.** The live camera stays stopped, and the preview is the PL's own
+  frame with the U-Net mask and cell boxes. Readiness asks for Run instead
+  of a live camera.
+- **LED.** Raw values are Service-mode only, enforced by the backend.
+- **Not tested on hardware yet.** The board run is pending.
+
+Bridge ABI 27. See [[../data-model/PZ7035-Records]],
+[[../architecture/Desktop-Shell]].
+
+## 2026-10-06 — Z stage: Disconnect and ApplyProfile can no longer hold Stop (#464)
+
+[[../services/StageService]] `disconnect()` and `applyProfile()` used to queue
+behind a running move or Home. The bridge runs one command at a time and
+`stage_stop` needs the same lock, so Stop could have waited out the whole
+operation.
+- **Reproduced:** `applyProfile()` during a 3 s move blocked 2.9 s, then
+  applied and saved the profile.
+- **Now:** `applyProfile()` and `connect()` are refused at once (`Busy`)
+  while an operation is active. `disconnect()` stops the axis and cancels
+  the operation, then disconnects within ~50 ms.
+- **Tests:** `backend.stage_service` and `backend.stage_bridge_facade`
+  cover it at both layers, and the mutations fail them.
+
+## 2026-10-06 — Z stage panel in the Tauri app (#464, slice 5)
+
+The Connect tab gains a Z stage panel (`StageControls`) under the pump and
+autofocus panel. It uses only the existing `stage_*` bridge commands
+(ABI 26), and is hidden on the PZ7035.
+- **Position:** unknown until Home.
+- **Home:** disabled until the limit switches are verified, then needs a
+  confirmation, Service mode and arming.
+- **Moves:** whole micrometres, pre-checked against the soft limits.
+- **Stop:** always available, and never waits for another panel command.
+- **Everything else:** locked during an experiment.
+
+See [[../architecture/Desktop-Shell]] (Z stage panel).
+
+## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
+
+The stage is now reachable from the shell.
+- **Commands:** `stage_connect/disconnect/move_to/move_by/home/stop/apply_profile`
+  and `fetch_stage_status`. Moves and Home are tracked operations.
+- **Discovery:** kind `MotionStage`, via the `zc300-stage` FC04 identity
+  provider.
+- **Profiles:** `stage` blocks apply through profiles.
+- **Safety (backend-enforced):**
+  - no motion before Home or outside the soft limits;
+  - Connect, apply-profile and discovery never home or move;
+  - Stop is always accepted;
+  - everything else is locked during an experiment.
+- **Home gate:** Home also needs a supervised limit-switch record for the
+  controller. `zc300ctl verify-limits --supervised` writes it after an
+  operator-paced, stepped, bounded check.
+
+See [[../services/StageService]] and [[../architecture/Rust-Bridge]].
+
+## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)
+
+PR #511's TSan lane stalled 60 s in `backend.zc300_stage`: a back-to-back
+status poller kept re-locking the driver's unfair mutex and starved a move.
+[[../services/ZC300Stage]] access is now prioritized (commands, including
+Stop, go first; polls step aside) and bounded (`Busy` after 15 s). The
+concurrency test now runs three tight pollers and bounds every command, and
+Stop, by time. Under TSan on two cores the slowest command went from 2 s to
+≤ 50 ms.
+
+## 2026-10-06 — Z stage Home: controller-bounded limit search (#464 fix)
+
+[[../services/StageService]] Home now searches for each limit switch with a
+relative move of at most 6500 µm (opcode 0x65) at the slow search speed.
+Before, it was an open-ended jog that the host stopped by polling.
+- **Why:** Windows CI saw the jog overshoot the bound by ~300 µm, through
+  sleep granularity.
+- **Now:** the controller enforces the bound even when the host stalls.
+- **Tests:** a reply-delayed (80 ms) fake proves it. Mutation checks (jog
+  back in; search at the move speed) fail.
+- **Config:** `search_speed_um_s` is capped at 2000 µm/s.
+- **Not fixed by this:** the bound exceeds the ~6000 µm travel, so a
+  supervised limit check stays a precondition for the first real Home.
+
+## 2026-10-06 — develop merged into the YOFO Review branch (decision A)
+
+MIB Studio's Tauri shell keeps develop's review stack (#450);
+`ReviewSession` and the review bridge serve YOFO Review only (ADR 0014,
+renumbered from 0008, amended). The shared bridge contract is exactly
+develop's; YOFO Review has its own `review-contract.json` (v1) generated to
+`src/review/reviewContract.ts` and `src-tauri/src/review_packet_contract.rs`,
+with its own packet codec (`review_packet.rs` / `reviewPacket.ts`). The Tauri
+crate is MIB Studio's library behind the default `studio` feature and YOFO
+Review's binary with `--no-default-features --features review-only`
+(`desktop/scripts/tauri-review.mjs`). `mib_backend` links `mib_review_core`
+for the one copy of `ReviewExport.cpp`. Convergence is #512. Notes:
+[[../frontend/YofoReview]], [[../architecture/Rust-Bridge]].
+
+## 2026-10-05 — YOFO Review parity sign-off and manual (plan PR 8)
+
+YOFO Review matches the Qt Review tab on four inputs (z-adjustment-50v, the
+512x96 real-cell run, two 0.25 µm/px fixtures; 40 checks,
+`tools/review_parity/`). Fixes that came with it: the core record's
+`cell_count` is the in-core count, the fallback px→µm is 0.4886, batch
+exports use each file's recorded factor, and the Qt tab reads the recorded
+factor too (TD-17 closed). Accepted differences are listed in
+[[../frontend/YofoReview]]. The operator manual has a YOFO Review page
+(`docs/manual/yofo-review.md`): install, open, export, regenerate,
+pixel-to-micron, updates. TD-18 (Qt Charts scatter cost) is superseded by
+the standalone app.
+
+## 2026-10-04 — YOFO Review-only release tags
+
+`review-vX.Y.Z[-beta.N]` tags release YOFO Review alone
+(`review-release.yml`): `release.yml` ignores them, the bundles get their own
+GitHub Release ("YOFO Review X.Y.Z", not latest) and the signed updates go to
+`review-stable/` or `review-beta/`. Used for the first signed update
+(`review-v1.1.3-beta.1`). Note: [[../frontend/YofoReview]].
+
+## 2026-10-04 — YOFO Review auto-update
+
+YOFO Review gained the Tauri updater: channel-specific Tauri manifests on R2
+(`review-stable/`, `review-beta/`), minisign signature plus a SHA-256 pin
+checked before install (fail closed), Help ▸ Check for updates…, a channel
+preference and a launch-time notice. Releases build signed update bundles
+and publish them (`publish-review-update.py`) once the owner's public key is
+in `tauri.review.conf.json` and the signing secret exists; until then the
+updater is off. Note: [[../frontend/YofoReview]].
+
+## 2026-10-03 — YOFO Review releases, Finder opens, macOS bootstrap
+
+`v*` tags now attach YOFO Review's DMG and NSIS installer (+ SHA-256 sums)
+to the GitHub Release (`review-release.yml` over the reusable
+`review-bundles.yml`, version stamped from the tag). macOS Finder opens reach
+the app (`RunEvent::Opened` → queued request + `review-open-file` event,
+taken once). `scripts/bootstrap.sh` / `doctor.sh` print the YOFO Review steps
+on macOS instead of "no preset yet"; `env/brew-packages.txt` gained the
+desktop-shell section. Note: [[../frontend/YofoReview]].
+
+## 2026-10-03 — YOFO Review macOS and Windows CI lanes (plan PR 5 / PR 6 CI)
+
+`review-ci.yml` gained `review-macos` (macos-14 → unsigned, ad-hoc-signed
+DMG) and `review-windows` (windows-2022 → per-user NSIS installer). The
+review core builds against a static Conan graph (`conanfile.py`
+`review_core=True`: no Qt, OpenCV reduced to core / imgproc / imgcodecs /
+videoio) with new `macos-review-core` / `windows-review-core` presets and
+profile `conan/profiles/macos-appleclang-arm64`; the bridge links from a
+CMake-derived manifest (`mib_review_link_probe` +
+`tools/gen_review_link_manifest.py`, replayed by `build.rs`), so macOS gets a
+working bridge link for the first time. Each lane checks the binaries load no
+third-party dylib/DLL, installs/mounts the bundle and smoke-launches it.
+The manifest path was exercised on Linux against system libraries. Notes:
+[[../frontend/YofoReview]], [[../architecture/Rust-Bridge]],
+[[../build-and-run/Build]].
+
+## 2026-10-02 — YOFO Review exports, regenerate dialog, preferences (PR 4)
+
+Exports in the shared review panel now run behind a progress dialog with
+Cancel (no partial output left) and Show in folder; the toolbar has the Qt
+**More…** menu (Batch Metrics, Batch Export All, Export Charts,
+Regenerate masks). Default metrics names, the `_N` suffix rule, the
+remembered export directory and the Export All series prompt (`9-15`)
+follow the Qt tab. Chart TIFFs are rendered by the same drawing code as
+the Charts view at 1200 × 1200 and reach the new backend Export Charts job
+(all or nothing) over raw IPC. The Regenerate masks dialog covers every
+source and reopens the result; YOFO Review gained File ▸ Preferences
+(fallback px→µm). Fixed on the way: MIB Studio never drained review events
+(the panel owns the drain now), density / computed-record results could
+leak to the next file, batch metrics were named `run_metrics2.csv`.
+Note: [[../frontend/YofoReview]].
+
+## 2026-10-01 — YOFO Review charts view (PR 3)
+
+The review panel's Charts tab now matches the Qt tab on `<canvas>`: the
+deformability-vs-area scatter coloured by the backend density levels,
+isoelastic curves (embedded in the Tauri binary), stored / live / unsaved
+full-run KDE core contours with compute and save from the context menu,
+the Qt `ZoomableChartView` gestures and a click-to-view frame pane, and
+the ring-width histogram over the file's **recorded** ring-ratio range.
+Hit testing is checked against the fixture the Qt test uses. The scatter
+gained a ring-ratio column and the info the recorded config range; a new
+`review_fixture --population N` writes chart test files (20 000 cells:
+density in ~2–3 s). Also fixed: MIB Studio never loaded `review.css` (the
+panel now imports it). Note: [[../frontend/YofoReview]].
+
+## 2026-10-01 — YOFO Review frames view (PR 2)
+
+The shared review panel now has the Qt tab's frames layout: a virtualised
+thumbnail grid fed by 64-tile packed strips from `ReviewSession` (aspect-
+true cells, bounded LRU, keyboard selection), the selected frame's preview
+over a 100-row paged metrics table with every Qt column and a persisted
+column chooser, and an in-app frame viewer with frame / series navigation
+and zoom. Files open from the command line (file associations) or `?open=`.
+Found by driving the real app on real 512×96 cells: a 100-tile strip
+(12 800 px) exceeded the frame packet's 8192 px limit, so pages are 64 tiles
+and the bridge refuses taller strips. New dev tool
+`crates/mib-bridge/examples/review_fixture.rs` writes a synthetic or
+real-cell (regenerate-masks job over a frame folder) review file. Note:
+[[../frontend/YofoReview]].
+
+## 2026-10-01 — Review jobs in the review core (YOFO Review PR 1b)
+
+`ReviewJobs` (`mib_review_core`, [[../services/ReviewSession]]) runs the
+review's long work as single-flight tracked operations on their own
+readers: metrics / Export All / batch exports through `HdfExportService`
+with the recorded factor and shell-rendered chart snapshots, mask
+regeneration through the bundled kernel with the recorded config, the
+full-run core contour, and the review density estimate (grid path above
+5000 cells). Exposed on the review bridge (`review_export_*`,
+`review_batch_export`, `review_regenerate_masks`, `review_compute_core`,
+`review_request_density`, contract groups `review_regenerate_sources`,
+`review_density`) and wired to the React panel's export / batch /
+regenerate buttons. Guards: `review.jobs`, `tests/review_bridge.rs`.
+
+## 2026-10-01 — ReviewSession and the review bridge (YOFO Review PR 1a/1c)
+
+One Qt-free review implementation now sits behind every shell
+([[../services/ReviewSession]], new `mib_review_core` library on
+`mib_processing` only): its own reader (never the experiment writer's
+handle), full-column metrics pages, frames with the overlay and ROI
+composed in the backend (`OverlayCompose`, a port of the Qt renderer),
+series, packed thumbnail strips, columnar scatter, run accounting, stored
+KDE records and the **recorded** pixel-to-micron factor (TD-17 backend
+half). `BackendFacade` delegates its review surface to it, so the Tauri
+shell no longer scrubs the live FrameStore for file frames and can load a
+file during an experiment. A second cxx bridge (`review_ffi`,
+[[../architecture/Rust-Bridge]]) exposes it; contract ABI 15 adds
+`overlay_modes`, `review_pixel_formats` (RGB8 packets), thumbnail/series
+pull kinds and `review_operation_kinds`. The `review-only` cargo feature
+builds only that bridge: the YOFO Review binary links no `AppBackend`
+(`nm` check in `review-ci.yml`). The React review panel now uses the review
+bridge in both products (overlay + ROI controls, Close File, µm² column).
+Guards: `review.session`, `tests/review_bridge.rs` (both feature
+configurations), desktop `review::tests`, `frontend` vitest. Jobs (export,
+batch, regenerate, core contour, density) follow in PR 1b.
+
+## 2026-10-01 — YOFO Review: the Review tab as a React + Tauri product (PR 0)
+
+Decision (ADR 0014, plan
+[`2026-10-01-standalone-review-app`](../../docs/exec-plans/active/2026-10-01-standalone-review-app.md)):
+the standalone review product ships on the React + Tauri shell, not Qt.
+PR 0 lands the product split with no behaviour change: the Review panel
+moved out of `App.tsx` into `desktop/src/review/ReviewPanel.tsx` (mounted
+by MIB Studio's Review tab and by the new `review.html` →
+`ReviewApp.tsx` window), a second Vite page, the cargo feature
+`review-only` that registers only the review / platform / dialog commands,
+the config overlay `tauri.review.conf.json` (name, `bio.yofo.review`,
+`yofo-review`, dmg + nsis targets, `.h5` association, `.icns`), the
+version stamp `scripts/release/stamp-tauri-version.py` (both Tauri
+products carry the repository version) and `review-ci.yml` (Linux build of
+the review context under `TAURI_CONFIG`, Xvfb boot). Vault:
+[[../frontend/YofoReview]]. Next: PR 1 moves review into a Qt-free
+`ReviewSession` behind the bridge.
+## 2026-10-05 — StageService: read-only start-up, Home at mid-travel (#464, slice 3)
+
+[[../services/StageService]] owns the Z stage, and `AppBackend::stage()`
+exposes it.
+- **Start-up is read-only.** `startup()` connects and checks the profile and
+  the power-up token, with zero writes and zero motion.
+- **Before Home**, only Home and Stop are accepted.
+- **Home** probes both limits, checks the span (6000 ± 300 µm), zeroes at
+  mid-travel with a one-sided approach, and sets ±(span/2 − 100) µm soft
+  limits.
+- **The reference survives application restarts** while the controller stays
+  powered: a token on register 30054 plus `<dataDir>/stage_reference.json`.
+- **Failures** stop the axis. Failures that can desync the counter drop the
+  reference.
+- One worker thread; a stop epoch makes a racing Stop cancel the operation.
+
+Tested against the fake controller only (bench hold); the TSan stress test
+races moves against Stop. The Rust bridge links the stage archives.
+
+## 2026-10-05 — ZC300 Z stage driver and `zc300ctl` (#464, slice 2)
+
+`IMotionStage` and the ZC300 driver landed. They are not wired into
+`AppBackend` yet; that is slice 3, `StageService`.
+- `stage_zc300_protocol` is the pure register map, frames and µm encoding.
+- `stage_zc300` is the driver over the shared bus.
+- `zc300ctl` is the diagnostic CLI; motion is gated behind `--allow-motion`.
+
+Behaviour:
+- Connect is observe-only. A controller that does not match the TBZF6-60
+  profile stays read-only.
+- Motion is in whole micrometres; off-grid targets are rejected.
+- Motion opcodes are never re-sent; a lost reply is reconciled from status.
+
+Tests run against a fake controller with the bench quirks
+(`tests/support/fake_zc300.h`).
+
+`SerialBus.cpp` now compiles into `oeabt_serial`, so the Rust bridge archive
+list is unchanged. See [[../services/ZC300Stage]].
+
+## 2026-10-05 — PZ7035 instrument UI P0a: capabilities, PL-core preflight, token prompt (#501)
+
+On the PZ7035, preflight checks the instrument's own equipment, and a healthy
+instrument at idle shows 0 warnings:
+
+- **PL core:** build vs `/etc/yofo/expected-core.json`, weights vs the pinned
+  `.npz`.
+- **Sensor link:** the error and resync rates.
+- **LED strobe:** a guard trip fails.
+
+The rest of P0a:
+
+- **Capabilities:** the backend reports them, and the UI hides the MIB-only
+  surfaces (nanopositioner, EGrabber, MindVision, host background, frame
+  buffer, core updates, reanalysis, pulse generator).
+- **Pumps** default to the two peristaltic pumps on `/dev/ttyPS1` (Sample 3,
+  Sheath 4).
+- **Token:** the browser asks `GET /auth` and prompts for the token instead of
+  failing silently.
+- **Reads only:** `PzPlatformMonitor` never writes a register. Align/Run mode
+  switching with LED presets is P0b.
+
+See [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]] and
+[[../data-model/PZ7035-Records]].
+
+## 2026-10-05 — Bridge ABI 23: one contract for develop and the instrument line
+
+ADR 0011's single renumber: develop (19) and the instrument line (20-22)
+merged into one contract that takes 23, so no release build from `develop`
+carries an interim number. No new commands. The #398 stack takes 25 (24 went to #501 P0). See
+[[../architecture/Rust-Bridge]].
+
+## 2026-10-05 — FC04 in the shared Modbus layer; Z stage spec (#464, slice 1)
+
+`ModbusRtu.h` now frames, predicts the length of, and correlates FC04 (read
+input registers), which the Zolix ZC300 stage controller needs for its
+identity and status registers. FC03 and FC04 share one code path, and
+existing devices are unaffected.
+- Known-answer vectors from the vendor manual are in
+  `backend.modbus_rtu`.
+- `backend.serial_bus_pty` round-trips FC04 and its exception path through a
+  real session.
+
+Spec:
+- [ADR 0013](../../docs/decisions/0013-motion-stage-device-class.md) (proposed)
+- the [execution plan](../../docs/exec-plans/active/2026-09-30-zc300-z-stage.md)
+- the [integration evidence](../../docs/integration/zc300-z-stage.md)
+
+Start-up is read-only. The stage moves only when an operator presses Home,
+and its position is unknown until it has been homed once per controller
+power-up (decided 2026-10-05; ADR 0013 §5–6).
+
+See [[../services/SerialBus]].
+
+## 2026-10-05 — pz7035 ABI bundle vendored from the `abi-v1.2.0` tag (ADR 0011)
+
+`third_party/pz7035-abi` now comes from the tagged bundle on pz7035-imx426
+main (`abi-v1.2.0`, c726d338) instead of a feature-branch commit. Only the
+identity register docs changed: `BUILD_ID3..0` hold the first 128 bits of the
+PL build's git commit and `PROFILE_ID3..0` those of the weights `.npz` sha256,
+most significant word in ID3. Register map, header and fixtures are
+unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
+and refuses a tag that does not resolve to the checkout's commit. See
+[[../data-model/PZ7035-Records]].
+
+## 2026-10-04 — Central method authoring backend (#398 M3a)
+
+Supabase migration `202610040001_registry_authoring.sql` lets authors create
+methods (audited, idempotent), attaches immutable release notes to revisions,
+exposes method heads and per-revision review/audit history (PGlite tests in
+`supabase/tests/registry_authoring.sql`). The backend worker gains local
+drafts (new method, or copied from a cached revision; offline-capable),
+submit with a pre-submit head check that stops with a compared conflict
+(upstream vs draft key changes) or submits explicitly as a branch, reviewed
+transitions with reasons (publishing refreshes the superseded head), and
+history. `app::newerPublishedRevision` answers "update available". Job kinds
+6-10 join the ABI 25 contract. No UI yet (M3b). Guard:
+`profiles.registry_authoring` (three guard mutations caught).
+See [[../services/ProfileRegistryService]].
+
+## 2026-10-04 — Apply and Mark validated for central methods (#398 M2b)
+
+`planMethodApply` says what applying a cached published or superseded
+revision would do: refused unless materialized and untampered, with the
+config.json keys that would change. **Mark validated… / Record failed run…**
+in the React Central Methods panel take a test-run `.h5`;
+`AppBackend::requestMethodValidation` only
+accepts a run whose frozen provenance names that exact revision on this
+instrument under the current core/camera context. Rows show local validation
+and the applied revision; the bridge gains `registry_materialize`,
+`registry_record_validation` and the `registry_local_validation` group
+(part of ABI 25). React shows Apply disabled with the reason (no
+config.json applier in that shell yet). Guards: `backend.method_provenance`
+(diff/evidence/local view), `e2e.method_gate` (evidence through real runs),
+`profiles.registry_facade`, bridge cargo tests, `registry.test.ts`. A Qt Apply
+(exact bytes through `AppConfigWatcher`) was built and dropped with the Qt UI
+(ADR 0011).
+
+## 2026-10-04 — Central method provenance + `method.revision` gate (#398 M2a, backend)
+
+The applied config.json is now recognised as a cached central revision by its
+canonical config hash, gated at Start and frozen into `/run_provenance`
+(`run_snapshot_schema_version` 2, `method` block: exact revision, content
+hash, central state, instrument UUID + name, context hash, local validation +
+evidence test-run SHA-256). Policy as decided on #398: unvalidated → Warn
+(Start allowed), validated on this instrument/context → Pass, revoked → Fail.
+New: `InstrumentIdentity` (UUID file + `MIB_INSTRUMENT_NAME`), worker
+`Materialize` (read-only files under `<dataDir>/methods/`) and
+`RecordValidation` (signed-in validator, cancellable evidence hashing) jobs —
+appended to `registry_job_kinds` (4, 5) inside ABI 25 —, the pure
+`MethodProvenance` resolver, and `processing::fileSha256` with cancellation.
+No Apply / "Mark validated" UI yet (M2b). Guards: `profiles.instrument_identity`,
+`profiles.registry_method`, `backend.method_provenance`, `e2e.method_gate`; four
+behaviour mutations of the gate/memo/invalidation were each caught.
+See [[../architecture/ExperimentCoordinator]], [[../services/ProfileRegistryService]].
+
+## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 25)
+
+`BackendFacade` gained registry commands and a value snapshot; the bridge
+exposes them (ABI 25, five new `registry_*` contract groups pinned in C++,
+Rust and TypeScript) plus `set_registry_transport`, through which the Tauri app
+installs a `ureq`/rustls HTTPS POST (ADR 0002 addendum) whose in-flight request
+a cancel or shutdown aborts via a polled handle. **Settings → Central Methods…**
+in the React app renders the worker snapshot through a pure view model. A Qt
+dialog was prototyped (#475) and dropped: Qt is fixes-only (ADR 0011).
+Fixed on the way: facade shutdown left the registry worker running. Guards:
+`profiles.registry_facade`, bridge `registry_*` tests, Tauri
+`registry_transport` tests, `registry.test.ts`. See
+[[../architecture/Desktop-Shell]] and [[../services/ProfileRegistryService]].
 
 ## 2026-10-04 — Host C4 U-Net, bit-exact with the PZ7035 PL (W3.D)
 
@@ -53,10 +504,124 @@ pz7035-imx426 ABI bundle vendored and pinned (`third_party/pz7035-abi`,
 - all 26 bundle fixtures decode with the expected outcome;
 - FRAME and RESULT re-encode byte-identically;
 - 60 frames pass through a wrapping ring;
-- the PL vectors' RESULT payloads decode to the host science's cells.
+- the PL vectors' RESULT payloads decode to the cells they list.
 
 See [[../data-model/PZ7035-Records]].
 
+Execution providers (YOFO S1, first slice): the `IExecutionProvider` seam,
+`PzRecordPipeline`, `ReplayExecutionProvider`, and `PzDevMemExecutionProvider`
+(the PS result ring through `/dev/mem`, as `pzres`). Three board ring
+captures (800k frames) replay with 0 decode errors and 0 gaps
+(`processing.pz_execution_provider`).
+
+PL results reach the application: `ProcessingService::ingestProviderFrame`
+feeds run accounting, the identification funnel (8 reason codes) and
+monitoring rows without images; it never fires a PS trigger. `AppBackend`
+selects the provider with `MIB_EXECUTION_PROVIDER`. `ExperimentCoordinator`
+arms it at Start and stops it before the drain at Stop, and `science.pl`
+readiness passes with a provider. Tests: `processing.pz_provider_ingest`,
+`backend.pl_science_provider`.
+
+Recording PL runs (S3): one metadata row per cell, with no images. The
+per-object HDF5 compound gains the Laplacian and the U-Net cell members, in
+develop's names and order. Readers accept groups without images, and the run
+snapshot records the science placement and the provider. A replayed run
+persists 810/810 rows and completes.
+
+On the board, the C++ provider (`tools/pz_provider_probe`, 120 s at 5 kHz)
+read 600,251 frames and 600,192 cells with 0 decode errors, 0 gaps and 0
+overruns. `pzres monitor` straight after agrees.
+
+Profile compiler (S2): settings become the PL's `unet_cells_v2` page and
+E-modulus table. The host defaults reproduce the board's committed page and
+table byte for byte. Providers commit the profile with `configure()` before
+arming, and readiness gate `processing.profileCompile` blocks a Start whose
+settings do not compile.
+
+Settings plumbing for the PL profile: the size gate, Laplacian aperture and
+Laplacian gate are `config.json` `image_processing` keys (in the defaults,
+validated, applied through the config transaction). They are always read, but
+written only in `MIB_PL_SCIENCE` builds, so desktop documents and the
+Contract 1/2 science JSON stay byte-identical; develop carries the same
+values in `toScienceJson`'s `abi_v2` / `unet_cells` objects.
+
+Channel band from the off-path background (T3.7). With the science on the PL,
+background calibration takes the median of preview frames; the channel walls
+are detected in it (develop's `ChannelRoiDetect`, `auto_roi_*` keys), and the
+band reaches the PL profile page.
+
+## 2026-10-04 — Tushui peristaltic pump as a Sample/Sheath pump model (ABI 22)
+
+Each pump slot now takes a Longer dLSP syringe pump or the Tushui peristaltic
+pump fitted to the PZ7035 instrument (RS485 on PS UART1, `/dev/ttyPS1`,
+address 3). Flow rates convert to head speed with a µL/rev calibration
+(default 25: 0.4 rpm = 10 µL/min); connect only reads; out-of-range rates
+fail. `pump_connect_model` + a model select in the React Pumps panel. See
+[[../services/SyringePumpService]], [[../architecture/Rust-Bridge]],
+`docs/integration/tushui-peristaltic-pump.md`.
+
+## 2026-10-01 — Phase 0 for the instrument: PL science switch, preview-rate cap, one controller, packaging
+
+`MIB_PL_SCIENCE` keeps the host pipeline off on the PS (ABI 21
+`fetch_platform_info`; UI hides its controls); the producer's `PzPreviewRate`
+(default 60/s from the Aravis profile) and its NEON window copy take the PS
+from ~90 % to ~8 % of a core while previewing at 1 kHz; the server has one
+controlling client; `scripts/yofo/stage_image.sh` + meta-yofo's `yofo-studio`
+recipe put the server, UI and a service into the image. See
+[[../architecture/Desktop-Shell]], [[../architecture/AppBackend]],
+[[../architecture/Rust-Bridge]].
+
+## 2026-10-01 — Camera & Alignment shows the full sensor (ABI 20)
+
+The React Camera & Alignment tab now follows the Qt Overview workflow for
+MindVision and Aravis cameras: full sensor on entry, experiment window placed
+and saved on it, Experiment acquires that window. New bridge commands
+`set_camera_overview`, `save_camera_roi`, `fetch_camera_geometry`; Aravis
+cameras gained an Overview mode and a camera profile. See
+[[../architecture/Desktop-Shell]] and [[../architecture/AppBackend]].
+
+## 2026-10-01 — Shared command layer and the YOFO Studio WebSocket server
+
+The Tauri command bodies moved to `crates/mib-app-commands` (Tauri keeps typed
+shims and the desktop-only commands); `dispatch` runs any of them by name.
+`crates/mib-bridge-server` serves them over a WebSocket with server-pushed
+events, binary frame packets and stop-and-save on client loss. The React UI
+reaches either through `desktop/src/transport` (Tauri IPC or the WebSocket);
+the full UI ran in headless Chromium against the server with live mock frames.
+See [[../architecture/Desktop-Shell]].
+
+## 2026-10-01 — Backend on the PZ7035 PS (YOFO Studio S6)
+
+`linux-armv7-yocto` cross-builds the backend with the YOFO Yocto SDK;
+`scripts/yofo/deploy_target.sh` runs `target_smoke.sh` on the PS: the runner's
+lifecycle, experiment, mock, processing and Aravis tests plus
+`yofo_preview_soak` against the live producer all pass. 10-minute soaks:
+512x96 previews at 1 kHz 387.5 images/s, full-field Overview at 830 Hz 25.9
+images/s, no loss, flat RSS (7.0 / 11.4 MiB), 84 % / 64 % CPU. See
+[[../build-and-run/Build]] and [[../camera/AravisCamera]].
+
+## 2026-10-01 — Aravis adapter for YOFO Studio (PZ7035 GenTL producer)
+
+`AravisCamera` now prefers the `YOFO` vendor on auto-selection, keeps GigE
+Vision discovery off unless `MIB_ARAVIS_GIGE` is set, applies an optional
+region / frame rate / exposure with read-back (`sessionInfo()`, clamps
+reported, region never clamped), reads the PZ7035 delivered-rate model
+(`PzBandCount`, `PzDeliveredFrameRate`, limits) and supports `LatestFrame`
+preview delivery. YOFO producer timestamps are declared host steady ns.
+`camera.aravis_pz7035_pattern` (opt-in via `MIB_PZ7035_GENTL_CTI`) runs the
+adapter against the producer's pattern device. See [[../camera/AravisCamera]].
+
+## 2026-09-27 — Optional Aravis Fake consumer first slice
+
+Added the Qt-free `AravisCamera` adapter behind `MIB_ENABLE_ARAVIS` with
+explicit device/Fake selection, copied single-part Mono8 `EveryFrame` delivery,
+bounded stop/restart ownership, structured failures, opaque device timestamp
+semantics, and queue telemetry. `MIB_CAMERA_MODE=aravis` now preserves truthful
+requested/effective/simulated state; disabled builds fail visibly rather than
+falling back to MockCamera. The local Fake test passed against Aravis 0.9.3;
+the PZ7035 driver, GenTL producer, SSD path and full-rate recording remain
+follow-up work. See [[../camera/AravisCamera]] and
+[[../task/2026-09-27-aravis-framework]].
 ## 2026-10-04 — Contract 3 science (`unet-cells`) equal to the PZ7035 PL
 
 The host science for U-Net cells, the same rules as the PZ7035 PL cell stage:

@@ -1,10 +1,12 @@
 #pragma once
-// Backend-owned central profile registry worker (#398 M1).
+// Backend-owned central profile registry worker (#398 M1/M2).
 //
 // One thread owns sign-in, the Supabase provider, the per-user SQLite cache and
 // every network request. Shells enqueue commands and read value snapshots; no
-// call here blocks on the network, and nothing here selects, applies or starts
-// anything. The registry is never on the acquisition/recording/Start path: an
+// call here blocks on the network, and nothing here applies or starts
+// anything. Materialize only writes a cached revision's files (read-only) under
+// methodsDir for a shell to apply; RecordValidation stores the operator's
+// local validation in the cache. The registry is never on the acquisition/recording/Start path: an
 // outage only changes this worker's snapshot (`health`), never instrument state.
 //
 // Threading: request*/cancelAll/snapshot/job are callable from any thread and
@@ -41,6 +43,10 @@ struct RegistryWorkerConfig {
     std::string origin;         // https://<project>.supabase.co
     std::string publishableKey; // sb_publishable_... (never a service-role key)
     std::filesystem::path cacheDir;
+    // Materialized revisions: <methodsDir>/<revisionId>/{config.json,
+    // egrabberConfig.js, method.canonical.json}, read-only. Empty disables
+    // Materialize.
+    std::filesystem::path methodsDir;
     // A refresh scans every member project from the first page; these bound one
     // refresh job. Hitting either ends the job as Partial (cache stays valid).
     std::size_t maxPagesPerRefresh{2000};
@@ -50,7 +56,21 @@ struct RegistryWorkerConfig {
     bool configured() const { return !origin.empty() && !publishableKey.empty(); }
 };
 
-enum class RegistryJobKind { SignIn, SignOut, Refresh, Download };
+// Contract-pinned (bridge-contract.json registry_job_kinds); append only.
+enum class RegistryJobKind {
+    SignIn,
+    SignOut,
+    Refresh,
+    Download,
+    Materialize,
+    RecordValidation,
+    // #398 M3 authoring.
+    SaveDraft,
+    DeleteDraft,
+    SubmitDraft,
+    Transition,
+    FetchHistory,
+};
 enum class RegistryJobState { Queued, Running, Succeeded, Partial, Failed, Cancelled };
 const char* toString(RegistryJobKind kind);
 const char* toString(RegistryJobState state);
@@ -75,6 +95,26 @@ struct CachedRevisionSummary {
     std::uint64_t revisionNumber{0};
     std::uint64_t metadataVersion{0};
     CentralState state{CentralState::Submitted};
+    // canonicalConfigSha256 of the embedded config.json: the coordinator
+    // matches the applied config.json against it (#398 M2).
+    std::string configSha256;
+    // Directory holding the verified materialized files; empty when not
+    // materialized (or the files no longer match the revision).
+    std::string materializedDir;
+    // #398 M3: lineage and the author's immutable notes.
+    std::string parentRevisionId;
+    std::string releaseNotes;
+};
+
+// An operator's explicit local validation of a cached revision (#398 M2):
+// "this revision ran correctly on this instrument/context; here is the test
+// run". The validator is the signed-in registry user.
+struct LocalValidationRequest {
+    std::string revisionId;
+    MethodContext context;      // context.instrumentId required
+    std::string instrumentName; // label recorded in the evidence (may be empty)
+    std::string evidenceFile;   // test-run file recorded with this revision applied
+    bool passed{true};          // false records a failed validation (blocks nothing; gate warns)
 };
 
 struct RegistryWorkerSnapshot {
@@ -95,6 +135,26 @@ struct RegistryWorkerSnapshot {
     RegistryHealth health;
     std::vector<RegistryProject> projects;
     std::vector<CachedRevisionSummary> revisions;
+    std::vector<LocalValidationRecord> validations; // newest first, every instrument
+    // #398 M3: the signed-in user's local drafts (newest first), the methods of
+    // every member project with their published heads (from the last refresh
+    // or authoring call), the last fetched revision history, and the last
+    // submit that stopped because the draft's base is no longer the head.
+    std::vector<MethodDraft> drafts;
+    std::vector<RegistryMethod> methods;
+    std::optional<RevisionHistory> history;
+    struct SubmitConflict {
+        std::string draftId;
+        std::string baseRevisionId;
+        std::string headRevisionId;
+        // config.json keys changed upstream (base -> head) and where the
+        // draft differs from the head; empty when either revision is not
+        // cached (refresh to compare).
+        std::vector<std::string> upstreamChanges;
+        std::vector<std::string> draftVsHead;
+        bool compared{false};
+    };
+    std::optional<SubmitConflict> submitConflict;
     std::vector<std::string> corruptRevisionIds; // failed verification on read
     std::string cacheError;                      // cache could not be opened/read
     std::optional<std::chrono::system_clock::time_point> lastSuccessfulRefresh;
@@ -119,11 +179,36 @@ public:
     std::uint64_t requestSignOut();
     std::uint64_t requestRefresh(); // every project the user is a member of
     std::uint64_t requestDownload(std::string revisionId);
+    // Writes a cached, verified revision's files under methodsDir (idempotent).
+    std::uint64_t requestMaterialize(std::string revisionId);
+    // Hashes the evidence file (cancellable) and records the validation.
+    // Needs a signed-in session; refused (0) without instrument id or file.
+    std::uint64_t requestRecordValidation(LocalValidationRequest request);
+
+    // #398 M3 authoring. Drafts are local (work offline); submit/transition/
+    // history need a signed-in session.
+    // Saves (inserts or replaces) a draft; missing draft/method/revision IDs
+    // are generated. With `copyFromRevisionId`, the content (config, camera
+    // script, core, compatibility), method and base come from that cached
+    // revision. The draft must canonicalize (config schema 1).
+    std::uint64_t requestSaveDraft(MethodDraft draft, std::string copyFromRevisionId = {});
+    std::uint64_t requestDeleteDraft(std::string draftId);
+    // Submits a draft as a new immutable candidate revision. Stops with a
+    // SubmitConflict (job Failed) when the method's published head is no
+    // longer the draft's base, unless `asBranch`: then it is submitted with
+    // that base as parent (publishing it later needs explicit resolution).
+    std::uint64_t requestSubmitDraft(std::string draftId, bool asBranch = false);
+    // Review (Approved/Rejected), Published, Archived or Revoked with a
+    // reason (required). Uses the cached metadata version (stale = Conflict).
+    std::uint64_t requestTransition(std::string revisionId, CentralState target, std::string reason);
+    std::uint64_t requestHistory(std::string revisionId);
 
     // Drops queued jobs (Cancelled) and aborts the running one. Idempotent.
     void cancelAll();
 
     RegistryWorkerSnapshot snapshot() const;
+    // snapshot().generation without copying (cheap change detection).
+    std::uint64_t generation() const;
     RegistryJobStatus job(std::uint64_t id) const;
     bool waitForJob(std::uint64_t id, std::chrono::milliseconds timeout) const; // tests/tools
     bool waitIdle(std::chrono::milliseconds timeout) const;                     // tests/tools
@@ -136,6 +221,11 @@ private:
         RegistryJobKind kind{RegistryJobKind::Refresh};
         std::string argument; // email (sign-in) or revision ID (download)
         std::string secret;   // password (sign-in only); cleared once taken
+        std::optional<LocalValidationRequest> validation;
+        std::optional<MethodDraft> draft;
+        CentralState target{CentralState::Submitted};
+        std::string reason; // transition reason
+        bool flag{false};   // asBranch (submit)
     };
     struct Active; // per-user cache + provider + service (worker thread only)
 
@@ -146,6 +236,17 @@ private:
     RegistryJobStatus doSignOut();
     RegistryJobStatus doRefresh();
     RegistryJobStatus doDownload(const std::string& revisionId);
+    RegistryJobStatus doMaterialize(const std::string& revisionId);
+    RegistryJobStatus doRecordValidation(const LocalValidationRequest& request);
+    RegistryJobStatus doSaveDraft(MethodDraft draft, const std::string& copyFromRevisionId);
+    RegistryJobStatus doDeleteDraft(const std::string& draftId);
+    RegistryJobStatus doSubmitDraft(const std::string& draftId, bool asBranch);
+    RegistryJobStatus doTransition(const std::string& revisionId, CentralState target,
+                                   const std::string& reason);
+    RegistryJobStatus doHistory(const std::string& revisionId);
+    bool refreshMethods(const std::string& projectId); // methods_ for one project
+    RegistryWorkerSnapshot::SubmitConflict conflictFor(const MethodDraft& draft, const std::string& head);
+    void scanMaterialized(); // methodsDir entries matching this user's cache
     bool openUser(const std::string& subject, const std::string& email, bool persistLastSession);
     void closeUser();
     void loadLastSession();
@@ -175,6 +276,10 @@ private:
     std::vector<RegistryProject> projects_;
     std::string cacheError_;
     std::optional<std::chrono::system_clock::time_point> lastSuccessfulRefresh_;
+    std::map<std::string, std::string> materialized_; // revisionId -> dir (verified)
+    std::vector<RegistryMethod> methods_;
+    std::optional<RevisionHistory> history_;
+    std::optional<RegistryWorkerSnapshot::SubmitConflict> submitConflict_;
 
     mutable std::mutex mutex_;
     mutable std::condition_variable cv_;

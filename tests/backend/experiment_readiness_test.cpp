@@ -343,7 +343,8 @@ int main()
         MIB_EXPECT(runJson == backend::app::runSnapshotToJson(frozen), "persisted snapshot equals the frozen one");
         MIB_EXPECT(runJson.find("\"requested\":\"mock\"") != std::string::npos &&
                        runJson.find("\"profile_id\":\"profile-A\"") != std::string::npos &&
-                       runJson.find("\"schema_version\":1") != std::string::npos,
+                       runJson.find("\"schema_version\":2") != std::string::npos &&
+                       runJson.find("\"method\":{") != std::string::npos,
                    "snapshot JSON content");
         MIB_EXPECT(readinessJson.find("\"camera.session\"") != std::string::npos, "readiness JSON persisted");
         reader.closeFile();

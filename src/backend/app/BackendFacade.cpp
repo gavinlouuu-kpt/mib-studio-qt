@@ -1,9 +1,14 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/app/RecordingTarget.h"
+#include "backend/pz/PzInstrumentControl.h"
+#include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/app/ProfileCatalog.h"
 #include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/app/MethodApply.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 
 #include "backend/app/ExperimentCoordinator.h"
 
@@ -28,8 +33,11 @@
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/StageService.h"
 
 #include <algorithm>
+#include "backend/pz/PzPlatformMonitor.h"
+#include "backend/services/TushuiPumpProtocol.h"
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -88,9 +96,14 @@ namespace backend::bridge
                 {
                     return BackendCommandType::Pump;
                 }
-                else
+                else if constexpr (std::is_same_v<Command, AutofocusCommand>)
                 {
                     return BackendCommandType::Autofocus;
+                }
+                else
+                {
+                    static_assert(std::is_same_v<Command, StageCommand>, "unmapped BackendCommand");
+                    return BackendCommandType::Stage;
                 }
             }, command);
         }
@@ -151,6 +164,8 @@ namespace backend::bridge
                 return BackendErrorSource::Review;
             case BackendCommandType::Pump:
             case BackendCommandType::Autofocus:
+            case BackendCommandType::PulseGenerator:
+            case BackendCommandType::Stage:
                 return BackendErrorSource::Hardware;
             }
             return BackendErrorSource::Lifecycle;
@@ -230,6 +245,12 @@ namespace backend::bridge
         {
             return;
         }
+
+        // Central profile registry (issue #398): shares nothing with the
+        // instrument; stop it first so an in-flight registry request is
+        // aborted rather than waited out. AppBackend::shutdown() repeats this
+        // idempotently.
+        backend_.profileRegistry().shutdown();
 
         // Finish/abort an active experiment first (finalizes the HDF5 file so
         // shutdown never corrupts it — BE-4), then drain/cancel the remaining
@@ -378,9 +399,14 @@ namespace backend::bridge
             {
                 return handlePumpCommand(typedCommand);
             }
-            else
+            else if constexpr (std::is_same_v<Command, AutofocusCommand>)
             {
                 return handleAutofocusCommand(typedCommand);
+            }
+            else
+            {
+                static_assert(std::is_same_v<Command, StageCommand>, "unhandled BackendCommand");
+                return handleStageCommand(typedCommand);
             }
         }, command);
     }
@@ -639,7 +665,53 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Configured));
             return {true, BackendCommandType::Camera, "Camera reset requested"};
         }
+        case CameraCommandAction::SetCameraOverview:
+        {
+            const bool wasRunning = backend_.capture().isRunning();
+            std::string error;
+            if (!backend_.setCameraOverview(command.cameraOverview, &error))
+            {
+                const std::string message = error.empty() ? "Camera mode change failed" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            const std::string mode = command.cameraOverview ? "full sensor overview" : "experiment window";
+            if (wasRunning && !backend_.capture().isRunning())
+            {
+                emitEvent(makeCameraStatus(CameraState::Starting));
+                if (!backend_.capture().start())
+                {
+                    emitEvent(makeCameraStatus(CameraState::Error));
+                    const std::string message = "Camera switched to the " + mode + " but did not restart";
+                    emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                    return {false, BackendCommandType::Camera, message};
+                }
+                emitEvent(makeCameraStatus(CameraState::Running));
+            }
+            return {true, BackendCommandType::Camera, "Camera shows the " + mode};
+        }
+        case CameraCommandAction::SaveCameraRoi:
+        {
+            std::string error;
+            if (!backend_.saveCameraRoi(command.roiX, command.roiY, command.roiWidth, command.roiHeight, &error))
+            {
+                const std::string message = error.empty() ? "Camera ROI was not saved" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            return {true, BackendCommandType::Camera,
+                    "Camera ROI saved: " + std::to_string(command.roiWidth) + "x" + std::to_string(command.roiHeight) +
+                        " at (" + std::to_string(command.roiX) + ", " + std::to_string(command.roiY) + ")"};
+        }
         case CameraCommandAction::StartCapture:
+            if (backend_.instrumentMode() == pz::InstrumentMode::Run)
+            {
+                // #501 P1: the producer stays stopped while the U-Net cell path runs.
+                const std::string message = "In Run mode the live camera stays stopped (previews come from the PL); "
+                                            "switch to Align for the live camera";
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             emitEvent(makeCameraStatus(CameraState::Starting));
             if (!backend_.capture().start())
             {
@@ -827,6 +899,8 @@ namespace backend::bridge
                     merged);
             if (command.roi) roi = *command.roi;
             if (command.realtimeEnabled) enabled = *command.realtimeEnabled;
+            if (enabled && !app::hostProcessingAvailable())
+                throw std::runtime_error("realtime processing runs on the PL on this instrument; the host pipeline is not available");
             if (command.realtimeDropFrames) drop = *command.realtimeDropFrames;
             if (command.realtimeProcessingMode) mode = *command.realtimeProcessingMode;
             if (command.realtimeBatchSettings) batch = *command.realtimeBatchSettings;
@@ -1657,6 +1731,11 @@ namespace backend::bridge
                 return fail("Invalid pump serial endpoint");
             if (command.modbusAddress < 1 || command.modbusAddress > 247)
                 return fail("Invalid Modbus address (1-247)");
+            if (command.model != static_cast<int>(Pump::PumpModel::DlspSyringe) &&
+                command.model != static_cast<int>(Pump::PumpModel::TushuiPeristaltic))
+                return fail("Invalid pump model");
+            if (!(command.microlitersPerRev > 0.0 && command.microlitersPerRev <= 100000.0))
+                return fail("Invalid peristaltic calibration (µL per revolution)");
             using Bus = services::serialbus::SerialBusManager;
             const auto otherId =
                 pumpId == Pump::PumpId::Sample ? Pump::PumpId::Sheath : Pump::PumpId::Sample;
@@ -1669,6 +1748,8 @@ namespace backend::bridge
             if (pulse.isConnected() && Bus::samePort(pulseConfig.portName, port) &&
                 pulseConfig.modbusAddress == command.modbusAddress)
                 return fail("Modbus address already claimed by the acquisition pulse generator");
+            if (stageClaims(port, command.modbusAddress))
+                return fail("Modbus address already claimed by the Z stage on this bus");
             auto& autofocus = backend_.autofocus();
             const auto autofocusPort =
                 autofocus.getBackendKind() == nanopositioner::BackendKind::Coremor
@@ -1676,12 +1757,14 @@ namespace backend::bridge
                     : autofocus.getEndpointId();
             if (autofocus.isConnected() && Bus::samePort(autofocusPort, port))
                 return fail("Serial endpoint already in use by autofocus");
+            const auto model = static_cast<Pump::PumpModel>(command.model);
             const bool connected =
-                command.portName.empty()
+                command.portName.empty() && model == Pump::PumpModel::DlspSyringe
                     ? pumps.connect(pumpId, command.comPort, command.baudRate,
                                     static_cast<std::uint8_t>(command.modbusAddress))
                     : pumps.connect(pumpId, port, command.baudRate,
-                                    static_cast<std::uint8_t>(command.modbusAddress));
+                                    static_cast<std::uint8_t>(command.modbusAddress), model,
+                                    command.microlitersPerRev);
             if (!connected) return fail("Pump connect failed (no Modbus response)");
             return {true, BackendCommandType::Pump, "Pump connected"};
         }
@@ -1816,6 +1899,9 @@ namespace backend::bridge
         out.configuredFlowRate = config.flowRate;
         out.flowRateUnit = config.flowRateUnit;
         out.direction = static_cast<int>(config.direction);
+        out.model = static_cast<int>(config.model);
+        out.microlitersPerRev = config.microlitersPerRev;
+        out.speedRpm = status.speedRpm;
         return true;
     }
 
@@ -1907,6 +1993,224 @@ namespace backend::bridge
             return {true, BackendCommandType::Autofocus, "Autofocus config applied"};
         }
         return {false, BackendCommandType::Autofocus, "Unknown autofocus command"};
+    }
+
+    // ---- Z stage (#464, ADR 0013) ----
+
+    bool BackendFacade::stageClaims(const std::string &port, int modbusAddress) const
+    {
+        const auto snap = backend_.stage().snapshot();
+        return snap.connected && services::serialbus::SerialBusManager::samePort(snap.systemPort, port) &&
+               backend_.stage().config().endpoint.modbusAddress == modbusAddress;
+    }
+
+    std::uint64_t BackendFacade::trackStageOperation(BackendOperationKind kind, std::uint64_t stageOperation,
+                                                     const std::string &message)
+    {
+        CancelFlag cancel;
+        const std::uint64_t operationId = beginOperation(kind, &cancel, message);
+        std::thread worker([this, operationId, stageOperation, cancel]() {
+            using State = services::StageService::OperationState;
+            auto &stage = backend_.stage();
+            bool cancelSent = false;
+            while (!stage.waitForOperation(stageOperation, std::chrono::milliseconds(50)))
+            {
+                if (cancel && cancel->load() && !cancelSent)
+                {
+                    stage.cancel(stageOperation); // stops the axis
+                    cancelSent = true;
+                }
+            }
+            const auto info = stage.operation(stageOperation);
+            BackendOperationState state = BackendOperationState::Cancelled;
+            std::string detail = "stage operation no longer tracked";
+            if (info)
+            {
+                switch (info->state)
+                {
+                case State::Completed: state = BackendOperationState::Completed; break;
+                case State::Failed: state = BackendOperationState::Failed; break;
+                case State::TimedOut: state = BackendOperationState::TimedOut; break;
+                default: state = BackendOperationState::Cancelled; break;
+                }
+                detail = info->detail.empty() ? stage::toString(info->error) : info->detail;
+                if (state == BackendOperationState::Completed) detail = "done";
+            }
+            finishOperation(operationId, state, detail);
+        });
+        {
+            std::scoped_lock lock(reviewJobsMutex_); // joined in shutdown()
+            reviewJobThreads_.push_back(std::move(worker));
+        }
+        return operationId;
+    }
+
+    BackendCommandResult BackendFacade::handleStageCommand(const StageCommand &command)
+    {
+        auto &stage = backend_.stage();
+        auto fail = [this](const std::string &message) -> BackendCommandResult {
+            emitEvent(BackendErrorEvent{BackendErrorSource::Hardware, BackendCommandType::Stage, message});
+            return {false, BackendCommandType::Stage, message};
+        };
+        const auto refused = [](const services::StageService::StartResult &r) {
+            return r.detail.empty() ? std::string(stage::toString(r.error)) : r.detail;
+        };
+
+        // Stop wins: no experiment lock, no reference requirement.
+        if (command.action == StageCommandAction::Stop)
+        {
+            const auto err = stage.stop();
+            if (err == stage::StageError::NotConnected)
+                return {true, BackendCommandType::Stage, "Stage not connected; nothing to stop"};
+            if (err != stage::StageError::None) return fail(std::string("Stop: ") + stage::toString(err));
+            return {true, BackendCommandType::Stage, "Stage stopped"};
+        }
+
+        // Connect / Disconnect only read or stop, so the experiment lock is
+        // checked but not held across serial I/O.
+        if (command.action == StageCommandAction::Connect || command.action == StageCommandAction::Disconnect)
+        {
+            if (!backend_.experiment().withIdleConfiguration([] {}))
+                return fail("Stage connection cannot change during an experiment");
+            if (command.action == StageCommandAction::Disconnect)
+            {
+                stage.disconnect();
+                return {true, BackendCommandType::Stage, "Stage disconnected"};
+            }
+            if (stage.snapshot().connected) return fail("Stage already connected; disconnect first");
+            auto config = stage.config();
+            if (!command.portName.empty() || !command.usbSerial.empty())
+            {
+                if (command.portName.size() > 512 || command.usbSerial.size() > 128 ||
+                    command.portName.find('\0') != std::string::npos)
+                    return fail("Invalid stage serial endpoint");
+                config.endpoint.systemPort = command.portName;
+                config.endpoint.usbSerial = command.usbSerial;
+            }
+            if (command.modbusAddress != 0)
+            {
+                if (command.modbusAddress < 1 || command.modbusAddress > 247)
+                    return fail("Invalid Modbus address (1-247)");
+                config.endpoint.modbusAddress = static_cast<std::uint8_t>(command.modbusAddress);
+            }
+            if (config.endpoint.systemPort.empty() && config.endpoint.usbSerial.empty())
+                return fail("No stage endpoint configured");
+            using Bus = services::serialbus::SerialBusManager;
+            const std::string &port = config.endpoint.systemPort;
+            if (!port.empty())
+            {
+                auto &pumps = backend_.syringePump();
+                for (int id = 0; id < services::SyringePumpService::PUMP_COUNT; ++id)
+                {
+                    const auto pumpId = static_cast<services::SyringePumpService::PumpId>(id);
+                    const auto pumpConfig = pumps.getConfig(pumpId);
+                    if (pumps.isConnected(pumpId) && Bus::samePort(pumpConfig.portName, port) &&
+                        pumpConfig.modbusAddress == config.endpoint.modbusAddress)
+                        return fail("Modbus address already claimed by a syringe pump");
+                }
+                auto &pulse = backend_.pulseGenerator();
+                const auto pulseConfig = pulse.getConfig();
+                if (pulse.isConnected() && Bus::samePort(pulseConfig.portName, port) &&
+                    pulseConfig.modbusAddress == config.endpoint.modbusAddress)
+                    return fail("Modbus address already claimed by the acquisition pulse generator");
+                auto &autofocus = backend_.autofocus();
+                if (autofocus.isConnected() && Bus::samePort(autofocus.getEndpointId(), port))
+                    return fail("Serial endpoint already in use by autofocus");
+            }
+            if (!stage.setConfig(config)) return fail("Stage already connected; disconnect first");
+            std::string detail;
+            // Observe-only: identity, profile check and power-up token reads.
+            const auto err = stage.connect(&detail);
+            if (err != stage::StageError::None)
+                return fail("Stage connect failed: " + (detail.empty() ? std::string(stage::toString(err)) : detail));
+            const auto snap = stage.snapshot();
+            std::string message = "Stage connected: " + snap.identity.model + " s/n " + snap.identity.serial;
+            if (!snap.configured) message += " (controller does not match the stage profile; motion refused)";
+            else if (!snap.referenced) message += " (press Home before moving)";
+            return {true, BackendCommandType::Stage, message};
+        }
+
+        // Motion and controller-configuration writes: only with an idle
+        // experiment, serialized against Start by the coordinator lock.
+        // Queuing is non-blocking; the motion runs on the stage worker.
+        BackendCommandResult result{false, BackendCommandType::Stage, {}};
+        const auto act = [&] {
+            switch (command.action)
+            {
+            case StageCommandAction::MoveTo:
+            case StageCommandAction::MoveBy:
+            {
+                const bool absolute = command.action == StageCommandAction::MoveTo;
+                const auto r = absolute ? stage.moveTo(command.targetUm) : stage.moveBy(command.targetUm);
+                if (!r.accepted())
+                {
+                    result.message = "Move refused: " + refused(r);
+                    return;
+                }
+                const std::string what = std::string(absolute ? "move to " : "move by ") +
+                                         std::to_string(static_cast<long long>(std::llround(command.targetUm))) +
+                                         " um";
+                result = {true, BackendCommandType::Stage, "Stage " + what + " started",
+                          trackStageOperation(BackendOperationKind::StageMove, r.id, "stage " + what)};
+                return;
+            }
+            case StageCommandAction::Home:
+            {
+                const auto r = stage.reference();
+                if (!r.accepted())
+                {
+                    result.message = "Home refused: " + refused(r);
+                    return;
+                }
+                result = {true, BackendCommandType::Stage, "Stage Home started",
+                          trackStageOperation(BackendOperationKind::StageReference, r.id,
+                                              "stage Home (both limits, zero at mid-travel)")};
+                return;
+            }
+            case StageCommandAction::ApplyProfile:
+            {
+                const auto err = stage.applyProfile();
+                result.ok = err == stage::StageError::None;
+                result.message = result.ok ? "Stage profile applied and saved; press Home before moving"
+                                           : std::string("Apply profile failed: ") + stage::toString(err);
+                return;
+            }
+            default: result.message = "Unknown stage command"; return;
+            }
+        };
+        if (!backend_.experiment().withIdleConfiguration(act))
+            return fail("Stage motion is locked while an experiment is active");
+        if (!result.ok) return fail(result.message);
+        return result;
+    }
+
+    bool BackendFacade::fetchStageStatus(BackendStageStatus &out) const
+    {
+        if (!initialized_) return false;
+        const auto &stage = backend_.stage();
+        const auto snap = stage.snapshot();
+        out.enabled = stage.config().enabled;
+        out.connected = snap.connected;
+        out.configured = snap.configured;
+        out.referenced = snap.referenced;
+        out.limitsVerified = snap.limitsVerified;
+        out.busy = snap.activeOperation != 0;
+        out.model = snap.identity.model;
+        out.serial = snap.identity.serial;
+        out.firmware = snap.identity.firmware;
+        out.portName = snap.systemPort;
+        out.moveState = static_cast<int>(snap.status.state);
+        out.positionUm = snap.status.positionUm;
+        out.limitPositive = snap.status.limitPositive;
+        out.limitNegative = snap.status.limitNegative;
+        out.home = snap.status.home;
+        out.emergencyStop = snap.status.emergencyStop;
+        out.driverAlarm = snap.status.driverAlarm;
+        out.spanUm = snap.spanUm;
+        out.softMinUm = snap.softMinUm;
+        out.softMaxUm = snap.softMaxUm;
+        out.lastError = snap.lastError;
+        return true;
     }
 
     bool BackendFacade::fetchAutofocusStatus(BackendAutofocusStatus &out) const
@@ -2170,6 +2474,131 @@ namespace backend::bridge
         return out.valid;
     }
 
+    // ---- Central profile registry (issue #398, ABI 25) ----
+    namespace
+    {
+        BackendRegistryJob toRegistryJob(const profiles::RegistryJobStatus &job)
+        {
+            BackendRegistryJob out;
+            out.jobId = job.id;
+            out.kind = static_cast<int>(job.kind);
+            out.state = static_cast<int>(job.state);
+            out.message = job.message;
+            return out;
+        }
+    } // namespace
+
+    std::uint64_t BackendFacade::registrySignIn(const std::string &email, std::string password)
+    {
+        if (!initialized_)
+        {
+            std::fill(password.begin(), password.end(), '\0');
+            return 0;
+        }
+        return backend_.profileRegistry().requestSignIn(email, std::move(password));
+    }
+
+    std::uint64_t BackendFacade::registrySignOut()
+    {
+        return initialized_ ? backend_.profileRegistry().requestSignOut() : 0;
+    }
+
+    std::uint64_t BackendFacade::registryRefresh()
+    {
+        return initialized_ ? backend_.profileRegistry().requestRefresh() : 0;
+    }
+
+    std::uint64_t BackendFacade::registryDownload(const std::string &revisionId)
+    {
+        return initialized_ ? backend_.profileRegistry().requestDownload(revisionId) : 0;
+    }
+
+    bool BackendFacade::registryCancelAll()
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        backend_.profileRegistry().cancelAll();
+        return true;
+    }
+
+    bool BackendFacade::fetchRegistrySnapshot(BackendRegistrySnapshot &out) const
+    {
+        out = BackendRegistrySnapshot{};
+        if (!initialized_)
+        {
+            return false;
+        }
+        const auto s = backend_.profileRegistry().snapshot();
+        out.valid = true;
+        out.configured = s.configured;
+        out.generation = s.generation;
+        out.origin = s.origin;
+        out.session = static_cast<int>(s.session);
+        out.subjectId = s.subjectId;
+        out.email = s.email;
+        out.connectivity = static_cast<int>(s.health.connectivity);
+        out.healthMessage = s.health.message;
+        out.successfulRequests = s.health.successfulRequests;
+        out.failedRequests = s.health.failedRequests;
+        out.rejectedRevisions = s.health.rejectedRevisions;
+        for (const auto &p : s.projects)
+            out.projects.push_back({p.projectId, p.displayName, p.roles});
+        const auto context = backend_.methodContext();
+        const auto contextHash = profiles::methodContextHash(context);
+        for (const auto &r : s.revisions)
+        {
+            const auto local = app::localValidationFor(s, r, context.instrumentId, contextHash);
+            out.revisions.push_back({r.revisionId, r.methodId, r.projectId, r.displayName, r.authorId,
+                                     r.contentHash, r.revisionNumber, r.metadataVersion,
+                                     static_cast<int>(r.state), r.materializedDir,
+                                     static_cast<int>(local.state), local.validatorId,
+                                     local.validatedAtUtc});
+        }
+        out.corruptRevisionIds = s.corruptRevisionIds;
+        out.cacheError = s.cacheError;
+        if (s.lastSuccessfulRefresh)
+        {
+            out.hasLastSuccessfulRefresh = true;
+            out.lastSuccessfulRefreshUnixMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    s.lastSuccessfulRefresh->time_since_epoch())
+                    .count();
+        }
+        out.lastJob = toRegistryJob(s.lastJob);
+        out.queuedJobs = s.queuedJobs;
+        out.busy = s.busy;
+        out.instrumentId = backend_.instrumentIdentity().id;
+        out.instrumentName = backend_.instrumentIdentity().name;
+        return true;
+    }
+
+    std::uint64_t BackendFacade::registryMaterialize(const std::string &revisionId)
+    {
+        return initialized_ ? backend_.profileRegistry().requestMaterialize(revisionId) : 0;
+    }
+
+    BackendRegistryValidationRequest BackendFacade::registryRecordValidation(const std::string &revisionId,
+                                                                             const std::string &evidenceFile,
+                                                                             bool passed)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        const auto r = backend_.requestMethodValidation(revisionId, evidenceFile, passed);
+        return {r.jobId, r.error};
+    }
+
+    bool BackendFacade::fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const
+    {
+        out = BackendRegistryJob{};
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = toRegistryJob(backend_.profileRegistry().job(jobId));
+        return out.jobId != 0;
+    }
+
     bool BackendFacade::fetchCameraDiscovery(BackendCameraDiscovery &out) const
     {
         if (!initialized_)
@@ -2371,6 +2800,198 @@ app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const 
 }
 
 namespace backend::bridge {
+std::string BackendFacade::fetchPlatformInfoJson() const {
+    const bool host = app::hostProcessingAvailable();
+    // The PZ7035 has no nanopositioner, host trigger, host background, live frame
+    // buffer, host reanalysis, core updater or EGrabber script (ADR 0011 §8, #501).
+    nlohmann::json capabilities{
+        {"instrument", host ? "desktop" : "pz7035"},
+        {"autofocus", host},
+        {"trigger", host},
+        {"host_background", host},
+        {"frame_buffer", host},
+        {"reanalysis", host},
+        {"core_updates", host},
+        {"egrabber_script", host},
+        {"pl_identity", !host},
+        {"led_strobe", !host},
+        // Backend-owned camera modes (#501 P1): with the PZ7035 register writer.
+        {"align_mode", backend_.instrumentControlAvailable()},
+        {"run_mode", backend_.instrumentControlAvailable()},
+    };
+    if (backend_.instrumentControlAvailable()) {
+        const auto limits = [](pz::InstrumentMode m) {
+            const auto l = pz::ledLimits(m);
+            return nlohmann::json{{"delay_min_us", l.delayMinUs}, {"delay_max_us", l.delayMaxUs},
+                                  {"width_min_us", l.widthMinUs}, {"width_max_us", l.widthMaxUs}};
+        };
+        capabilities["led_limits"] = {{"run", limits(pz::InstrumentMode::Run)},
+                                      {"align", limits(pz::InstrumentMode::Align)}};
+    }
+    // The PZ7035's two peristaltic pumps share RS485 on /dev/ttyPS1: slave 3
+    // feeds the sample, slave 4 the sheath (confirmed on the bench 2026-10-05).
+    capabilities["pump"] = host ? nlohmann::json(nullptr)
+                                : nlohmann::json{{"model", "tushui_peristaltic"},
+                                                 {"port", "/dev/ttyPS1"},
+                                                 {"sample_address", 3},
+                                                 {"sheath_address", 4},
+                                                 {"microliters_per_rev", services::tushui::kDefaultMicrolitersPerRev}};
+    return nlohmann::json{
+        {"science", app::sciencePlacement()},
+        {"host_processing", host},
+        {"aravis", MIB_HAS_ARAVIS != 0},
+        {"capabilities", std::move(capabilities)},
+    }.dump();
+}
+
+BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, int x, int y) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    pz::InstrumentMode m = pz::InstrumentMode::Unknown;
+    if (mode == "align") m = pz::InstrumentMode::Align;
+    else if (mode == "run") m = pz::InstrumentMode::Run;
+    else return {false, BackendCommandType::Camera, "camera mode must be align or run"};
+    std::string error;
+    if (!backend_.setInstrumentMode(m, x, y, &error)) {
+        emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, error});
+        return {false, BackendCommandType::Camera, error};
+    }
+    // Align streams the producer's previews; Run stops it (previews come from the PL).
+    emitEvent(makeCameraStatus(m == pz::InstrumentMode::Align ? CameraState::Running : CameraState::Stopped));
+    const auto [rx, ry] = backend_.instrumentRunOffset();
+    return {true, BackendCommandType::Camera,
+            m == pz::InstrumentMode::Align
+                ? (backend_.alignSource() == "bridge" ? std::string("Align: full sensor, whole frames, LED 100/135 µs")
+                                                     : std::string("Align: full sensor (banded preview), LED 0/125 µs"))
+                                           : "Run: 512x96 at (" + std::to_string(rx) + ", " + std::to_string(ry) +
+                                                 "), 5 kHz, U-Net on, LED 7/60 µs"};
+}
+
+BackendCommandResult BackendFacade::setServiceMode(bool on) {
+    backend_.setServiceMode(on);
+    return {true, BackendCommandType::Camera, on ? "Service mode" : "Operator mode"};
+}
+
+BackendCommandResult BackendFacade::setInstrumentLed(double delayUs, double widthUs) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error;
+    if (!backend_.setInstrumentLed(delayUs, widthUs, &error)) return {false, BackendCommandType::Camera, error};
+    char text[64];
+    std::snprintf(text, sizeof(text), "LED %.1f/%.1f µs", delayUs, widthUs);
+    return {true, BackendCommandType::Camera, text};
+}
+
+std::vector<std::uint8_t> BackendFacade::fetchRunPreviewPacket(std::string* error) {
+    std::vector<std::uint8_t> out;
+    if (!initialized_) {
+        if (error) *error = "backend is not initialized";
+        return out;
+    }
+    if (!backend_.fetchRunPreview(out, error)) out.clear();
+    return out;
+}
+
+std::string BackendFacade::fetchInstrumentStatusJson() {
+    // Camera mode the backend applied last (#501 P1); "unknown" until the operator picks one.
+    const auto [runX, runY] = backend_.instrumentRunOffset();
+    const nlohmann::json mode{{"name", pz::instrumentModeName(backend_.instrumentMode())},
+                              {"run_x", runX},
+                              {"run_y", runY},
+                              {"service", backend_.serviceMode()},
+                              {"align_source", backend_.alignSource()}};
+    // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off.
+    const auto target = app::recordingTarget(backend_.dataDir());
+    const nlohmann::json storage{{"path", target.path},
+                                 {"writable", target.writable},
+                                 {"ram", target.ram},
+                                 {"free_bytes", target.freeBytes},
+                                 {"filesystem", target.filesystem},
+                                 {"warning", app::recordingTargetWarning(target)}};
+    auto* monitor = initialized_ ? backend_.pzPlatformMonitor() : nullptr;
+    if (!monitor) {
+        return nlohmann::json{{"available", false},
+                              {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
+                              {"mode", mode},
+                              {"storage", storage}}
+            .dump();
+    }
+    const auto nowUs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    const auto s = monitor->sample(nowUs);
+    if (!s.available) {
+        return nlohmann::json{
+            {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode},
+            {"storage", storage}}
+            .dump();
+    }
+    nlohmann::json expected = nullptr;
+    if (s.expectedPresent) {
+        expected = {{"build_id", s.expected.buildId},
+                    {"profile_id", s.expected.profileId},
+                    {"commit", s.expected.commit},
+                    {"image", s.expected.image},
+                    {"abi_major", s.expected.abiMajor},
+                    {"abi_minor", s.expected.abiMinor}};
+    }
+    return nlohmann::json{
+        {"available", true},
+        {"core",
+         {{"build_id", s.buildId},
+          {"profile_id", s.profileId},
+          {"abi_version", s.abiVersion},
+          {"science_profile", s.scienceProfile},
+          {"profile_version", s.profileVersion},
+          {"expected", std::move(expected)},
+          {"pinned_profile_id", s.pinnedProfileId},
+          {"build_match", pz::idMatchName(s.buildMatch)},
+          {"profile_match", pz::idMatchName(s.profileMatch)}}},
+        {"led",
+         {{"on", s.ledOn},
+          {"preset", s.ledPreset},
+          {"delay_us", s.ledDelayUs},
+          {"width_us", s.ledWidthUs},
+          {"guard_fault", s.guardFault},
+          {"guard_trips", s.guardTrips}}},
+        {"link",
+         {{"rates_valid", s.ratesValid},
+          {"ingress_errors_per_s", s.ingressErrorsPerS},
+          {"resyncs_per_s", s.resyncsPerS},
+          {"bad_frames_per_s", s.badFramesPerS},
+          {"dropped_per_s", s.droppedPerS},
+          {"ingress_errors_warn_per_s", pz::kIngressErrorWarnPerS},
+          {"resyncs_warn_per_s", pz::kResyncWarnPerS}}},
+        {"latency",
+         {{"last_us", s.latencyLastUs},
+          {"max_us", s.latencyMaxUs},
+          {"over_budget", s.latencyOverBudget},
+          {"frames", s.latencyFrames}}},
+        {"mode", mode},
+        {"storage", storage},
+    }.dump();
+}
+
+std::string BackendFacade::fetchCameraGeometryJson() const {
+    if (!initialized_) return nlohmann::json{{"supported", false}}.dump();
+    const auto g = backend_.cameraGeometry();
+    nlohmann::json session = nlohmann::json::parse(g.sessionJson, nullptr, false);
+    if (session.is_discarded()) session = nlohmann::json::object();
+    return nlohmann::json{
+        {"supported", g.supported},
+        {"overview", g.overview},
+        {"camera", g.camera},
+        {"sensor_width", g.sensorWidth},
+        {"sensor_height", g.sensorHeight},
+        {"roi", {{"x", g.roiX}, {"y", g.roiY}, {"width", g.roiWidth}, {"height", g.roiHeight}}},
+        {"width_increment", g.widthIncrement},
+        {"height_increment", g.heightIncrement},
+        {"offset_x_increment", g.offsetXIncrement},
+        {"offset_y_increment", g.offsetYIncrement},
+        {"min_width", g.minWidth},
+        {"min_height", g.minHeight},
+        {"session", session},
+    }.dump();
+}
+
 std::string BackendFacade::fetchPreviewBufferJson() const {
     uint64_t first = 0, last = 0; size_t count = 0;
     const bool available = initialized_ && backend_.playback().queryRange(first, last, count);
@@ -2509,6 +3130,10 @@ BackendCommandResult BackendFacade::pulseGeneratorCommandJson(const std::string&
                         result.message = "Modbus address already claimed by a syringe pump";
                         return;
                     }
+                }
+                if (stageClaims(port, address)) {
+                    result.message = "Modbus address already claimed by the Z stage on this bus";
+                    return;
                 }
                 settings.parity = parity[0];
                 if (pulse.isConnected()) { result.message = "Disconnect the current pulse generator first"; return; }
@@ -2706,7 +3331,11 @@ BackendCommandResult BackendFacade::backgroundCalibrationCommandJson(const std::
         request.timeoutMs = static_cast<std::uint64_t>(timeout);
         BackendCommandResult result{false, type, "Experiment must be idle for background calibration"};
         backend_.experiment().withIdleConfiguration([&] {
-            result.ok = backend_.processing().startBackgroundCalibration(request, &result.message);
+            // PL science: no host frame is classified; median of preview frames.
+            result.ok = app::hostProcessingAvailable()
+                            ? backend_.processing().startBackgroundCalibration(request, &result.message)
+                            : backend_.processing().startPreviewBackgroundCalibration(backend_.getFrameStore(),
+                                                                                      request, &result.message);
             if (result.ok) result.message = "Background calibration started; previous background remains active until success";
         });
         return result;

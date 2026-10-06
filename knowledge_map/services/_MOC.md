@@ -16,6 +16,7 @@
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
 - [[HdfExportService]] — Qt-free bounded/cancellable CSV+TIFF export job (issue #344)
+- [[ReviewSession]] — YOFO Review's review implementation, also the Qt tab's factor (ADR 0014; `mib_review_core`)
 - [[SqliteService]] — small metadata DB
 - [[ReplayClipRecorder]] — silent start-of-run clip (first 1000 frames or
   1 s + config/background) for small-scale reruns (#463)
@@ -35,6 +36,11 @@
 - [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
   source) via Modbus RTU over serial; addressed device on a shared bus
+- [[StageService]] — motorized Z stage: read-only start-up, operator Home at
+  mid-travel, soft limits, one-sided approach, once-per-power-up reference
+  (ADR 0013, #464)
+- [[ZC300Stage]] — Zolix ZC300 motorized Z stage driver (`IMotionStage`, µm
+  API, observe-only connect, motion opcodes never re-sent); ADR 0013, #464
 
 ## Optional / specialised
 - [[YoloService]] — ONNX Runtime session (segmentation; placeholder-ish)

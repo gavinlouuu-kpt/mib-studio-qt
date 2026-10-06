@@ -184,6 +184,32 @@ Options:
 - `--dry-run`: show what would happen without making changes
 - `--profile`: AWS/R2 profile for publishing; defaults to `MIB_STUDIO_R2_PROFILE`
 
+### YOFO Review (same tag)
+
+The same `vX.Y.Z` tag also releases YOFO Review, the standalone review app:
+`.github/workflows/review-release.yml` builds the macOS DMG and the Windows
+NSIS installer at the tag (through the reusable `review-bundles.yml`, with
+the tag's version stamped by `scripts/release/stamp-tauri-version.py
+--version`) and appends `YOFO_Review_v<version>_aarch64.dmg`,
+`YOFO_Review_v<version>_x64-setup.exe` and `SHA256SUMS-yofo-review.txt` to
+the tag's GitHub Release. Rerun it for an existing tag with **Run workflow**
+(input `tag`). Both bundles are unsigned (no Developer ID / Authenticode);
+the release notes carry the "Open Anyway" / "Run anyway" steps. Committed
+Tauri configs keep the numeric `X.Y.Z`; only the build workspace carries a
+pre-release suffix. Note: tags pushed by `GITHUB_TOKEN` (e.g. the automatic
+develop betas) do not start other workflows, so betas get YOFO Review
+bundles only when the workflow is run by hand for their tag.
+
+**YOFO Review on its own.** A `review-vX.Y.Z` or `review-vX.Y.Z-beta.N`
+tag releases only YOFO Review: `release.yml` (`v*.*.*`) does not match it,
+so no MIB Studio Qt build or R2 publish runs. The bundles go to their own
+GitHub Release named "YOFO Review X.Y.Z" (never marked latest) and, when
+signed, to the `review-stable` / `review-beta` update channel:
+
+```bash
+git tag review-v1.1.3-beta.1 <commit> && git push origin review-v1.1.3-beta.1
+```
+
 ## Prerequisites
 
 Before starting a release, ensure you have:

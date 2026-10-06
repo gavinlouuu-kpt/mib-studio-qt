@@ -124,6 +124,7 @@ private:
         double pixelToMicron{0.0};
         std::string outputPath;
         std::string profileId;
+        std::string method; // methodInvalidationKey (#398 M2)
         bool faulted{false};
         bool operator==(const InvalidationKey& o) const;
         bool operator!=(const InvalidationKey& o) const { return !(*this == o); }
@@ -173,6 +174,18 @@ private:
     std::optional<RunConfigurationSnapshot> lastRun_;
     // Provisional KDE core record for the active run (guarded by mutex_).
     std::string liveKdeCoreJson_;
+    // Method provenance memo (guarded by mutex_): readiness is polled, so the
+    // registry snapshot copy and config canonicalization run only when an
+    // input changes.
+    struct MethodMemo {
+        bool valid{false};
+        std::string rawConfigSha256;
+        uint64_t registryGeneration{0};
+        std::string contextHash;
+        std::string instrumentName;
+        MethodProvenance method;
+    };
+    mutable MethodMemo methodMemo_;
     // Multi-image series runs force inline realtime processing; restored on
     // finalize (moved here from the Qt window).
     bool restoreRealtimeMode_{false};

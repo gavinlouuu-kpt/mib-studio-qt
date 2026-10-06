@@ -1,8 +1,11 @@
 #include "backend/profiles/ProfileRegistryWorker.h"
+#include "backend/processing/ProcessingCoreSha256.h"
+#include "backend/profiles/InstrumentIdentity.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <ctime>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -16,9 +19,68 @@ constexpr std::size_t kPublishEveryPages = 25;
 constexpr std::size_t kMaxRevisionIdBytes = 128;
 constexpr const char* kLastSessionFile = "last_session.json";
 
+constexpr const char* kMethodConfigFile = "config.json";
+constexpr const char* kMethodCameraFile = "egrabberConfig.js";
+constexpr const char* kMethodCanonicalFile = "method.canonical.json";
+
 void wipe(std::string& secret) {
     std::fill(secret.begin(), secret.end(), '\0');
     secret.clear();
+}
+
+// Revision IDs come from the server; only a plain token may name a directory.
+bool safePathToken(const std::string& id) {
+    if (id.empty() || id.size() > kMaxRevisionIdBytes || id.front() == '.') return false;
+    return std::all_of(id.begin(), id.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '-' || c == '_' || c == '.';
+    });
+}
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    std::stringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+// The exact files a revision materializes to.
+std::map<std::string, std::string> methodFiles(const Revision& revision) {
+    const auto envelope = Json::parse(revision.canonicalContent);
+    return {{kMethodConfigFile, envelope.at("config").dump(4) + "\n"},
+            {kMethodCameraFile, envelope.at("camera_script").get<std::string>()},
+            {kMethodCanonicalFile, revision.canonicalContent}};
+}
+
+bool filesMatch(const std::filesystem::path& dir, const std::map<std::string, std::string>& files) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) return false;
+    for (const auto& [name, bytes] : files)
+        if (readFile(dir / name) != bytes) return false;
+    return true;
+}
+
+void makeWritable(const std::filesystem::path& dir) {
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec)) return;
+    for (auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+        std::filesystem::permissions(it->path(), std::filesystem::perms::owner_write,
+                                     std::filesystem::perm_options::add, ec);
+}
+
+std::string utcNowIso8601() {
+    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &now);
+#else
+    gmtime_r(&now, &tm);
+#endif
+    char out[32];
+    std::strftime(out, sizeof(out), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return out;
 }
 } // namespace
 
@@ -32,6 +94,20 @@ const char* toString(RegistryJobKind kind) {
         return "refresh";
     case RegistryJobKind::Download:
         return "download";
+    case RegistryJobKind::Materialize:
+        return "materialize";
+    case RegistryJobKind::RecordValidation:
+        return "record_validation";
+    case RegistryJobKind::SaveDraft:
+        return "save_draft";
+    case RegistryJobKind::DeleteDraft:
+        return "delete_draft";
+    case RegistryJobKind::SubmitDraft:
+        return "submit_draft";
+    case RegistryJobKind::Transition:
+        return "transition";
+    case RegistryJobKind::FetchHistory:
+        return "fetch_history";
     }
     return "unknown";
 }
@@ -168,6 +244,76 @@ std::uint64_t ProfileRegistryWorker::requestDownload(std::string revisionId) {
     return enqueue(std::move(command));
 }
 
+std::uint64_t ProfileRegistryWorker::requestMaterialize(std::string revisionId) {
+    if (!safePathToken(revisionId) || config_.methodsDir.empty()) return 0;
+    Command command;
+    command.kind = RegistryJobKind::Materialize;
+    command.argument = std::move(revisionId);
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestRecordValidation(LocalValidationRequest request) {
+    if (request.revisionId.empty() || request.revisionId.size() > kMaxRevisionIdBytes ||
+        request.context.instrumentId.empty() || request.evidenceFile.empty())
+        return 0;
+    Command command;
+    command.kind = RegistryJobKind::RecordValidation;
+    command.argument = request.revisionId;
+    command.validation = std::move(request);
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestSaveDraft(MethodDraft draft, std::string copyFrom) {
+    if (copyFrom.size() > kMaxRevisionIdBytes || draft.draftId.size() > kMaxRevisionIdBytes) return 0;
+    Command command;
+    command.kind = RegistryJobKind::SaveDraft;
+    command.argument = std::move(copyFrom);
+    command.draft = std::move(draft);
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestDeleteDraft(std::string draftId) {
+    if (draftId.empty() || draftId.size() > kMaxRevisionIdBytes) return 0;
+    Command command;
+    command.kind = RegistryJobKind::DeleteDraft;
+    command.argument = std::move(draftId);
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestSubmitDraft(std::string draftId, bool asBranch) {
+    if (draftId.empty() || draftId.size() > kMaxRevisionIdBytes) return 0;
+    Command command;
+    command.kind = RegistryJobKind::SubmitDraft;
+    command.argument = std::move(draftId);
+    command.flag = asBranch;
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestTransition(std::string revisionId, CentralState target,
+                                                       std::string reason) {
+    const bool supported = target == CentralState::Approved || target == CentralState::Rejected ||
+                           target == CentralState::Published || target == CentralState::Archived ||
+                           target == CentralState::Revoked;
+    const auto trimmed = reason.find_first_not_of(" \t\r\n");
+    if (!supported || revisionId.empty() || revisionId.size() > kMaxRevisionIdBytes ||
+        trimmed == std::string::npos || reason.size() > 4000)
+        return 0;
+    Command command;
+    command.kind = RegistryJobKind::Transition;
+    command.argument = std::move(revisionId);
+    command.target = target;
+    command.reason = std::move(reason);
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestHistory(std::string revisionId) {
+    if (revisionId.empty() || revisionId.size() > kMaxRevisionIdBytes) return 0;
+    Command command;
+    command.kind = RegistryJobKind::FetchHistory;
+    command.argument = std::move(revisionId);
+    return enqueue(std::move(command));
+}
+
 void ProfileRegistryWorker::cancelAll() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -187,6 +333,11 @@ RegistryWorkerSnapshot ProfileRegistryWorker::snapshot() const {
     out.queuedJobs = queue_.size();
     out.busy = runningJob_ != 0 || loading_;
     return out;
+}
+
+std::uint64_t ProfileRegistryWorker::generation() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return published_.generation;
 }
 
 RegistryJobStatus ProfileRegistryWorker::job(std::uint64_t id) const {
@@ -287,6 +438,22 @@ RegistryJobStatus ProfileRegistryWorker::execute(Command& command) {
         return doRefresh();
     case RegistryJobKind::Download:
         return doDownload(command.argument);
+    case RegistryJobKind::Materialize:
+        return doMaterialize(command.argument);
+    case RegistryJobKind::RecordValidation:
+        if (command.validation) return doRecordValidation(*command.validation);
+        break;
+    case RegistryJobKind::SaveDraft:
+        if (command.draft) return doSaveDraft(std::move(*command.draft), command.argument);
+        break;
+    case RegistryJobKind::DeleteDraft:
+        return doDeleteDraft(command.argument);
+    case RegistryJobKind::SubmitDraft:
+        return doSubmitDraft(command.argument, command.flag);
+    case RegistryJobKind::Transition:
+        return doTransition(command.argument, command.target, command.reason);
+    case RegistryJobKind::FetchHistory:
+        return doHistory(command.argument);
     }
     return {command.id, command.kind, RegistryJobState::Failed, "Unknown registry command"};
 }
@@ -407,6 +574,7 @@ bool ProfileRegistryWorker::openUser(const std::string& subject, const std::stri
     cacheError_.clear();
     subjectId_ = subject;
     email_ = email;
+    scanMaterialized();
     if (persistLastSession) {
         // No tokens: just enough to reopen this user's cache offline.
         const auto path = config_.cacheDir / kLastSessionFile;
@@ -428,6 +596,26 @@ void ProfileRegistryWorker::closeUser() {
     email_.clear();
     projects_.clear();
     lastSuccessfulRefresh_.reset();
+    materialized_.clear();
+    methods_.clear();
+    history_.reset();
+    submitConflict_.reset();
+}
+
+void ProfileRegistryWorker::scanMaterialized() {
+    materialized_.clear();
+    if (config_.methodsDir.empty() || !active_) return;
+    try {
+        for (const auto& r : active_->cache->listAll()) {
+            if (!safePathToken(r.revisionId)) continue;
+            const auto dir = config_.methodsDir / r.revisionId;
+            std::error_code ec;
+            if (std::filesystem::is_directory(dir, ec) && filesMatch(dir, methodFiles(r)))
+                materialized_[r.revisionId] = dir.string();
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("ProfileRegistry: materialized method scan failed: {}", e.what());
+    }
 }
 
 void ProfileRegistryWorker::loadLastSession() {
@@ -510,6 +698,9 @@ RegistryJobStatus ProfileRegistryWorker::doRefresh() {
     projects_ = *projects;
     publish();
 
+    for (const auto& project : projects_)
+        if (!refreshMethods(project.projectId)) return fail("Could not list registry methods");
+
     std::size_t pages = 0;
     for (const auto& project : projects_) {
         std::string cursor;
@@ -549,22 +740,376 @@ RegistryJobStatus ProfileRegistryWorker::doDownload(const std::string& revisionI
     return {0, RegistryJobKind::Download, RegistryJobState::Succeeded, "Downloaded"};
 }
 
+RegistryJobStatus ProfileRegistryWorker::doMaterialize(const std::string& revisionId) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::Materialize, RegistryJobState::Failed,
+                                 message};
+    };
+    if (!active_) return fail("No cached methods are open; sign in first");
+    Revision revision;
+    try {
+        revision = active_->cache->read(revisionId); // verified on read
+    } catch (const RegistryError& e) {
+        return fail(std::string("Revision not available in the cache: ") + e.what());
+    }
+    std::map<std::string, std::string> files;
+    try {
+        files = methodFiles(revision);
+    } catch (const std::exception& e) {
+        return fail(std::string("Revision content unreadable: ") + e.what());
+    }
+    const auto dir = config_.methodsDir / revisionId;
+    if (filesMatch(dir, files)) {
+        materialized_[revisionId] = dir.string();
+        return {0, RegistryJobKind::Materialize, RegistryJobState::Succeeded,
+                "Already materialized at " + dir.string()};
+    }
+    // Stage the whole directory, then swap it in: a crash leaves either the
+    // old verified files or none, never a half-written method.
+    const auto staging = config_.methodsDir / (".staging-" + revisionId);
+    std::error_code ec;
+    makeWritable(staging);
+    std::filesystem::remove_all(staging, ec);
+    std::filesystem::create_directories(staging, ec);
+    if (ec) return fail("Cannot create " + staging.string() + ": " + ec.message());
+    for (const auto& [name, bytes] : files) {
+        std::ofstream out(staging / name, std::ios::binary | std::ios::trunc);
+        out << bytes;
+        out.close();
+        if (!out) return fail("Cannot write " + (staging / name).string());
+        std::filesystem::permissions(staging / name,
+                                     std::filesystem::perms::owner_read |
+                                         std::filesystem::perms::group_read |
+                                         std::filesystem::perms::others_read,
+                                     ec);
+    }
+    makeWritable(dir);
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::rename(staging, dir, ec);
+    if (ec) return fail("Cannot install " + dir.string() + ": " + ec.message());
+    materialized_[revisionId] = dir.string();
+    return {0, RegistryJobKind::Materialize, RegistryJobState::Succeeded,
+            "Materialized to " + dir.string()};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doRecordValidation(const LocalValidationRequest& request) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::RecordValidation, RegistryJobState::Failed,
+                                 message};
+    };
+    // "Who" must be an authenticated registry user, not a remembered name.
+    if (!session_.valid() || !active_)
+        return fail("Sign in to record a local validation; the validator is the signed-in user");
+    Revision revision;
+    try {
+        revision = active_->cache->read(request.revisionId);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Revision not available in the cache: ") + e.what());
+    }
+    if (revision.state != CentralState::Published && revision.state != CentralState::Superseded)
+        return fail(std::string("Only published or superseded revisions can be validated (this "
+                                "one is ") +
+                    toString(revision.state) + ")");
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(request.evidenceFile, ec);
+    if (ec) return fail("Evidence file not readable: " + request.evidenceFile);
+    std::string hashError;
+    const auto evidenceSha = processing::fileSha256(request.evidenceFile, &hashError,
+                                                    [this] { return cancelRequested(); });
+    if (evidenceSha.empty()) {
+        if (hashError == "cancelled")
+            return {0, RegistryJobKind::RecordValidation, RegistryJobState::Cancelled,
+                    "Cancelled"};
+        return fail("Evidence file could not be hashed: " + request.evidenceFile);
+    }
+    LocalValidation validation;
+    validation.revisionId = revision.revisionId;
+    validation.instrumentId = request.context.instrumentId;
+    validation.contentHash = revision.contentHash;
+    validation.contextHash = methodContextHash(request.context);
+    validation.validatorId = subjectId_;
+    validation.evidence =
+        Json({{"schema", 1},
+              {"run_file", request.evidenceFile},
+              {"run_file_sha256", evidenceSha},
+              {"run_file_bytes", bytes},
+              {"instrument_name", request.instrumentName},
+              {"validator_email", email_},
+              {"confirmed_at_utc", utcNowIso8601()},
+              {"context", Json::parse(methodContextJson(request.context))}})
+            .dump(-1, ' ', false, Json::error_handler_t::replace);
+    validation.passed = request.passed;
+    try {
+        active_->cache->recordValidation(validation);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Validation not recorded: ") + e.what());
+    }
+    SPDLOG_INFO("ProfileRegistry: local validation of {} recorded ({}) by {}", revision.revisionId,
+                request.passed ? "passed" : "failed", subjectId_);
+    return {0, RegistryJobKind::RecordValidation, RegistryJobState::Succeeded,
+            request.passed ? "Local validation recorded" : "Failed validation recorded"};
+}
+
+RegistryWorkerSnapshot::SubmitConflict ProfileRegistryWorker::conflictFor(const MethodDraft& draft,
+                                                                         const std::string& head) {
+    RegistryWorkerSnapshot::SubmitConflict conflict{draft.draftId, draft.baseRevisionId, head, {}, {}, false};
+    const auto configOf = [this](const std::string& id) -> std::optional<std::string> {
+        if (id.empty()) return std::string("{}");
+        try {
+            return Json::parse(active_->cache->read(id).canonicalContent).at("config").dump();
+        } catch (const std::exception&) {
+            return std::nullopt; // not cached (or unreadable): no comparison
+        }
+    };
+    const auto base = configOf(draft.baseRevisionId);
+    const auto headConfig = configOf(head);
+    if (base && headConfig) {
+        conflict.upstreamChanges = jsonDifferences(*base, *headConfig);
+        conflict.draftVsHead = jsonDifferences(*headConfig, draft.configJson);
+        conflict.compared = true;
+    }
+    return conflict;
+}
+
+bool ProfileRegistryWorker::refreshMethods(const std::string& projectId) {
+    std::optional<std::vector<RegistryMethod>> listed;
+    if (!withSession([&] {
+            listed = active_->service->listMethods(projectId);
+            return listed.has_value();
+        }))
+        return false;
+    methods_.erase(std::remove_if(methods_.begin(), methods_.end(),
+                                  [&](const RegistryMethod& m) { return m.projectId == projectId; }),
+                   methods_.end());
+    methods_.insert(methods_.end(), listed->begin(), listed->end());
+    return true;
+}
+
+RegistryJobStatus ProfileRegistryWorker::doSaveDraft(MethodDraft draft, const std::string& copyFrom) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::SaveDraft, RegistryJobState::Failed, message};
+    };
+    if (!active_) return fail("No cached methods are open; sign in first");
+    if (!copyFrom.empty()) {
+        Revision source;
+        try {
+            source = active_->cache->read(copyFrom); // verified
+        } catch (const RegistryError& e) {
+            return fail(std::string("Source revision not available: ") + e.what());
+        }
+        try {
+            const auto envelope = Json::parse(source.canonicalContent);
+            draft.configJson = envelope.at("config").dump(4) + "\n";
+            draft.cameraScript = envelope.at("camera_script").get<std::string>();
+            draft.processingCoreId = envelope.at("processing_core_id").get<std::string>();
+            draft.processingContractVersion = envelope.at("processing_contract_version").get<int>();
+            draft.hardwareCompatibilityJson = envelope.at("declared_hardware_compatibility").dump();
+        } catch (const Json::exception&) {
+            return fail("Source revision content unreadable");
+        }
+        draft.projectId = source.projectId;
+        draft.methodId = source.methodId;
+        draft.newMethod = false;
+        draft.baseRevisionId = source.revisionId;
+        if (draft.methodDisplayName.empty()) draft.methodDisplayName = source.displayName;
+    }
+    if (draft.draftId.empty()) draft.draftId = generateUuidV4();
+    if (draft.revisionId.empty()) draft.revisionId = generateUuidV4();
+    if (draft.newMethod && draft.methodId.empty()) draft.methodId = generateUuidV4();
+    if (draft.newMethod) draft.baseRevisionId.clear();
+    if (draft.projectId.empty() || draft.methodId.empty())
+        return fail("A draft needs a project and a method");
+    if (draft.methodDisplayName.empty()) return fail("A draft needs a method name");
+    if (draft.hardwareCompatibilityJson.empty()) draft.hardwareCompatibilityJson = "{}";
+    try {
+        // Reject what could never be submitted, now rather than at submit.
+        canonicalMethod(draft.configJson, draft.cameraScript, draft.processingCoreId,
+                        draft.processingContractVersion, draft.hardwareCompatibilityJson);
+        active_->cache->saveDraft(draft);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Draft not saved: ") + e.what());
+    }
+    if (submitConflict_ && submitConflict_->draftId == draft.draftId &&
+        submitConflict_->baseRevisionId != draft.baseRevisionId)
+        submitConflict_.reset(); // the operator rebased the draft explicitly
+    return {0, RegistryJobKind::SaveDraft, RegistryJobState::Succeeded, "Draft saved: " + draft.draftId};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doDeleteDraft(const std::string& draftId) {
+    if (!active_)
+        return {0, RegistryJobKind::DeleteDraft, RegistryJobState::Failed,
+                "No cached methods are open; sign in first"};
+    try {
+        active_->cache->deleteDraft(draftId);
+    } catch (const RegistryError& e) {
+        return {0, RegistryJobKind::DeleteDraft, RegistryJobState::Failed, e.what()};
+    }
+    if (submitConflict_ && submitConflict_->draftId == draftId) submitConflict_.reset();
+    return {0, RegistryJobKind::DeleteDraft, RegistryJobState::Succeeded, "Draft discarded"};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doSubmitDraft(const std::string& draftId, bool asBranch) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::SubmitDraft, RegistryJobState::Failed, message};
+    };
+    if (!session_.valid() || !active_) return fail("Sign in to submit a draft");
+    MethodDraft draft;
+    try {
+        draft = active_->cache->readDraft(draftId);
+    } catch (const RegistryError& e) {
+        return fail(e.what());
+    }
+    if (!draft.submittedRevisionId.empty())
+        return {0, RegistryJobKind::SubmitDraft, RegistryJobState::Succeeded,
+                "Already submitted as " + draft.submittedRevisionId};
+    Revision candidate;
+    candidate.methodId = draft.methodId;
+    candidate.revisionId = draft.revisionId;
+    candidate.parentRevisionId = draft.baseRevisionId;
+    candidate.releaseNotes = draft.releaseNotes;
+    try {
+        candidate.canonicalContent =
+            canonicalMethod(draft.configJson, draft.cameraScript, draft.processingCoreId,
+                            draft.processingContractVersion, draft.hardwareCompatibilityJson);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Draft cannot be submitted: ") + e.what());
+    }
+    candidate.contentHash = contentHash(candidate.canonicalContent);
+
+    std::string head;
+    if (draft.newMethod) {
+        std::optional<RegistryMethod> created;
+        if (!withSession([&] {
+                created = active_->service->createMethod(draft.projectId, draft.methodId,
+                                                         draft.methodDisplayName,
+                                                         draft.methodDescription);
+                return created.has_value();
+            }))
+            return fail(health_.message.empty() ? "Method could not be created" : health_.message);
+        head = created->headRevisionId; // empty for a fresh method; set on an idempotent retry
+    } else {
+        if (!refreshMethods(draft.projectId))
+            return fail(health_.message.empty() ? "Could not read the method head" : health_.message);
+        const auto it = std::find_if(methods_.begin(), methods_.end(),
+                                     [&](const RegistryMethod& m) { return m.methodId == draft.methodId; });
+        if (it == methods_.end()) return fail("The method is not visible in the registry");
+        head = it->headRevisionId;
+    }
+    if (head != draft.baseRevisionId && !asBranch) {
+        // Never silently rebase: the operator compares and decides.
+        submitConflict_ = conflictFor(draft, head);
+        return fail("Conflict: the method's published head changed since this draft was based on it");
+    }
+    std::optional<Revision> submitted;
+    const bool ok = withSession([&] {
+        submitted = active_->service->submit(candidate, head);
+        return submitted.has_value();
+    });
+    if (!ok) {
+        if (active_->service->lastErrorCode() == RegistryErrorCode::Conflict) {
+            // The head moved between the check and the submit.
+            refreshMethods(draft.projectId);
+            const auto it = std::find_if(methods_.begin(), methods_.end(),
+                                         [&](const RegistryMethod& m) { return m.methodId == draft.methodId; });
+            submitConflict_ = conflictFor(draft, it == methods_.end() ? head : it->headRevisionId);
+        }
+        return fail(health_.message.empty() ? "Submit failed" : health_.message);
+    }
+    try {
+        active_->cache->markDraftSubmitted(draft.draftId, submitted->revisionId);
+    } catch (const RegistryError& e) {
+        SPDLOG_WARN("ProfileRegistry: submitted {} but could not mark the draft: {}", submitted->revisionId,
+                    e.what());
+    }
+    if (submitConflict_ && submitConflict_->draftId == draft.draftId) submitConflict_.reset();
+    if (draft.newMethod) refreshMethods(draft.projectId);
+    SPDLOG_INFO("ProfileRegistry: submitted draft {} as revision {} r{}", draft.draftId,
+                submitted->revisionId, submitted->revisionNumber);
+    return {0, RegistryJobKind::SubmitDraft, RegistryJobState::Succeeded,
+            "Submitted r" + std::to_string(submitted->revisionNumber) + " for review"};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doTransition(const std::string& revisionId, CentralState target,
+                                                      const std::string& reason) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::Transition, RegistryJobState::Failed, message};
+    };
+    if (!session_.valid() || !active_) return fail("Sign in to review or publish");
+    Revision revision;
+    try {
+        revision = active_->cache->read(revisionId);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Revision not available in the cache: ") + e.what());
+    }
+    std::optional<Revision> result;
+    if (!withSession([&] {
+            result = active_->service->transition(revisionId, target, revision.metadataVersion, reason);
+            return result.has_value();
+        })) {
+        if (active_->service->lastErrorCode() == RegistryErrorCode::Conflict)
+            return fail("Not changed: " + health_.message + " (refresh and check the revision again)");
+        return fail(health_.message.empty() ? "Transition failed" : health_.message);
+    }
+    if (target == CentralState::Published) {
+        // The server superseded the previous head; learn that now rather
+        // than at the next refresh.
+        try {
+            for (const auto& other : active_->cache->listAll())
+                if (other.methodId == revision.methodId && other.revisionId != revisionId &&
+                    other.state == CentralState::Published)
+                    withSession([&] { return active_->service->download(other.revisionId); });
+        } catch (const std::exception& e) {
+            SPDLOG_WARN("ProfileRegistry: could not refresh superseded revisions: {}", e.what());
+        }
+        refreshMethods(revision.projectId);
+    }
+    return {0, RegistryJobKind::Transition, RegistryJobState::Succeeded,
+            std::string("Revision is now ") + toString(result->state)};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doHistory(const std::string& revisionId) {
+    if (!session_.valid() || !active_)
+        return {0, RegistryJobKind::FetchHistory, RegistryJobState::Failed, "Sign in to read the history"};
+    std::optional<RevisionHistory> fetched;
+    if (!withSession([&] {
+            fetched = active_->service->history(revisionId);
+            return fetched.has_value();
+        }))
+        return {0, RegistryJobKind::FetchHistory, RegistryJobState::Failed,
+                health_.message.empty() ? "History unavailable" : health_.message};
+    history_ = std::move(fetched);
+    return {0, RegistryJobKind::FetchHistory, RegistryJobState::Succeeded,
+            std::to_string(history_->reviews.size()) + " review(s), " +
+                std::to_string(history_->events.size()) + " event(s)"};
+}
+
 void ProfileRegistryWorker::publish() {
     // Read the cache on the worker thread, outside the lock: snapshot() callers
     // (UI thread) never wait on SQLite or hashing.
     std::vector<CachedRevisionSummary> revisions;
+    std::vector<LocalValidationRecord> validations;
+    std::vector<MethodDraft> drafts;
     std::vector<std::string> corrupt;
     std::string cacheError = cacheError_;
     if (active_) {
         try {
-            for (const auto& r : active_->cache->listAll(&corrupt))
+            for (const auto& r : active_->cache->listAll(&corrupt)) {
+                const auto materialized = materialized_.find(r.revisionId);
                 revisions.push_back({r.revisionId, r.methodId, r.projectId, r.displayName,
                                      r.authorId, r.contentHash, r.revisionNumber, r.metadataVersion,
-                                     r.state});
+                                     r.state, revisionConfigSha256(r.canonicalContent),
+                                     materialized == materialized_.end() ? std::string{}
+                                                                         : materialized->second,
+                                     r.parentRevisionId, r.releaseNotes});
+            }
+            validations = active_->cache->listValidations();
+            drafts = active_->cache->listDrafts();
         } catch (const std::exception& e) {
             // publish() runs outside run()'s job try-block: nothing may escape
             // the worker thread.
             revisions.clear();
+            validations.clear();
+            drafts.clear();
             cacheError = std::string("Profile cache unreadable: ") + e.what();
         }
     }
@@ -578,6 +1123,11 @@ void ProfileRegistryWorker::publish() {
     published_.health = health_;
     published_.projects = projects_;
     published_.revisions = std::move(revisions);
+    published_.validations = std::move(validations);
+    published_.drafts = std::move(drafts);
+    published_.methods = methods_;
+    published_.history = history_;
+    published_.submitConflict = submitConflict_;
     published_.corruptRevisionIds = std::move(corrupt);
     published_.cacheError = std::move(cacheError);
     published_.lastSuccessfulRefresh = lastSuccessfulRefresh_;

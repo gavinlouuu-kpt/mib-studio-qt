@@ -64,12 +64,14 @@
   `saveChartSnapshot(path, image)`.
 
 - **Run configuration snapshot (issue #369, `run_snapshot_schema_version`
-  = 1)** — `Hdf5Service::writeRunSnapshotJson` stores the frozen
+  = 2 since #398 M2; v1 files lack the `method` block)** — `Hdf5Service::writeRunSnapshotJson` stores the frozen
   `RunConfigurationSnapshot` (`run_snapshot_json`, stable key order: camera
   requested/effective/simulated/fallback, delivery mode, timestamp
   descriptor, ROI, frame geometry, processing core + pin, config version /
   sha, `config.json` sha, profile, pixel-to-micron, background
-  generation/sha, trigger binding, output path, application identity) and
+  generation/sha, trigger binding, output path, application identity, and the
+  `method` block naming the exact central revision + content hash + local
+  validation, or a local method) and
   the readiness evaluation (`readiness_json`, per-gate status/reason) as
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for
@@ -145,6 +147,31 @@
 - Small batch (e.g. thumbnails): `readImagesRange(datasetPath, start, count, vec)`.
 - Dataset shape discovery: `getDatasetInfo(path, count, H, W, channels)`;
   `getSeriesImageInfo(count, seriesCount, H, W)`.
+
+## PL runs (YOFO S3)
+
+- With the science on the PL, a run records **metadata only**: one row per
+  cell (valid cells always; invalid ones at `invalidFrameSamplingRate`), and
+  no `images` or `masks` datasets.
+- `appendFrames` takes an all-imageless batch as metadata rows. Each group is
+  imageless or not for the whole run; a mixed batch is refused, because rows
+  and images would misalign.
+- `readValidFrames` / `readInvalidFrames` return metadata-only frames when
+  neither dataset exists.
+- **Per-object compound:** `laplacianVariance` and the U-Net cell members
+  (`brightness_mean`, `brightness_variance`, `contourArea`, `pixelCount`,
+  `blemishCount`, `degenerateContour`) are appended. The names and order are
+  develop's, so files from both lines share one layout. Older files read the
+  members as not present.
+- The run snapshot records `science_placement` and `execution_provider`,
+  plus `pl_core` (ADR 0011: a core is a PL build plus its weights). `pl_core`
+  holds `valid`, `abi_version`, `science_profile`, `profile_version`,
+  `build_id` (git commit prefix) and `weights_sha256_prefix`, read from the
+  bridge identity registers at Start. A replay has `valid: false`.
+- Images can later come from the PL frame store (store drain, not yet built).
+- Tests: `recording.experiment_roundtrip` (imageless round trip, mixing
+  refused) and `backend.pl_science_provider` (810/810 rows persisted from a
+  replayed PL run).
 
 ## Contract-2 focus metric
 

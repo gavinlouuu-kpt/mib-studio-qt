@@ -24,7 +24,7 @@ Jump to the notes that match your task:
 
 | If you're touching... | Start here |
 |---|---|
-| Frame acquisition / camera | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`) |
+| Frame acquisition / camera | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`, `[[camera/AravisCamera]]`) |
 | Image analysis / metrics | [[services/ProcessingService]] + [[domain/Microscopy-Pipeline]] |
 | Monitoring scatter density (KDE) / core contour | [[services/MonitoringDensityService]] + [[frontend/ExperimentMonitoringTab]] |
 | Saving/reading experiment files | [[services/Hdf5Service]] + [[data-model/HDF5-Storage]] |
@@ -42,8 +42,10 @@ Jump to the notes that match your task:
 | Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |
 | React + Tauri migration / Rust bridge | [[architecture/Rust-Bridge]] + `docs/decisions/0003-rust-cxx-bridge.md` |
 | React + Tauri desktop app (`desktop/`) | [[architecture/Desktop-Shell]] |
+| YOFO Review (standalone review product, `desktop/src/review/`) | [[frontend/YofoReview]] + `docs/exec-plans/active/2026-10-01-standalone-review-app.md` |
 | Syringe pumps | [[services/SyringePumpService]] + [[frontend/SyringePumpTab]] |
 | Pulse generator / shared RS485 bus | [[services/PulseGeneratorService]] + [[services/SerialBus]] + [[frontend/ConfigTabs]] |
+| Motorized Z stage (ZC300 / TBZF6-60): Home, soft limits, read-only start-up | [[services/StageService]] + [[services/ZC300Stage]] + `docs/decisions/0013-motion-stage-device-class.md` |
 | Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |
 | Pipeline / trigger latency diagnosis | [[diagnostics/PipelineTimingRecorder]] + `docs/howto/pipeline-latency-diagnosis.md` |
 | Build / deploy | [[build-and-run/Build]], [[build-and-run/Run-Modes]] |
@@ -60,6 +62,11 @@ Jump to the notes that match your task:
 ## Step 5 — Domain lookup
 
 9. If microscopy terms are unfamiliar, skim [[domain/Glossary]].
+
+For the optional Aravis consumer, read [[camera/AravisCamera]] and
+[[task/2026-09-27-aravis-framework]]. It is a real Aravis Fake-interface
+consumer for copied Mono8 preview frames; it does not prove the future
+PZ7035 PL/driver/GenTL path.
 
 ## Ground rules
 

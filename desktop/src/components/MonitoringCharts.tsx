@@ -1,5 +1,5 @@
 import {useEffect,useId,useState} from "react";
-import {invoke} from "@tauri-apps/api/core";
+import {invoke} from "../transport";
 import type { MonitoringRow, MonitoringSnapshot } from "../bridge";
 
 const LIMIT = 200;

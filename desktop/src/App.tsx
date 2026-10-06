@@ -4,19 +4,22 @@ import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
-import { invoke } from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {open, save} from "./transport/dialogs";
+import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
   bridge,
   mono8ToImageData,
   type AutofocusStatus,
   type BridgeEvent,
+  type CameraGeometry,
+  type PlatformInfo,
+  type InstrumentStatus,
   type CameraDiscovery,
   type CameraSelection,
   type ExperimentStatus,
@@ -30,9 +33,10 @@ import {
   type ReviewMetricsPage,
   type TriggerStatus,
 } from "./bridge";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSES } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
+import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
 import { deriveQualityGates, GATE_STATUS_LABEL, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
 import {
@@ -42,13 +46,18 @@ import {
   DEFAULT_MODE,
   type OperatingMode,
 } from "./commissioning";
+import { CentralMethodsPanel } from "./CentralMethodsPanel";
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
+import { StageControls } from "./components/StageControls";
 import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
+import { initialWindow, rateSummary, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { runPreviewRgba, type RunPreview } from "./runPreview";
+import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
@@ -153,6 +162,7 @@ export default function App() {
   );
   const [fitWindow, setFitWindow] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
+  const [showCentralMethods, setShowCentralMethods] = useState(false);
 
   // Camera discovery/selection (bridge schema v7, BE-2). The selection
   // snapshot from the backend is authoritative — no local mirror of it.
@@ -230,6 +240,31 @@ export default function App() {
   const lastMetadataRenderMs = useRef(-Infinity);
   const tabRef = useRef<MainTab>("connect");
   tabRef.current = tab;
+  // ---- Camera & Alignment (ABI 20): the whole sensor and the experiment window on it ----
+  // Where the science runs (ABI 21). On the PZ7035 the PL processes every frame and the host
+  // pipeline's controls (realtime switch, backgrounds, calibration, processed preview) do not apply.
+  const [platform, setPlatform] = useState<PlatformInfo | null>(null);
+  const hostProcessing = platform ? platform.host_processing : true;
+  // #501: surfaces follow what the instrument has; the PZ7035 reports its PL core and health.
+  const caps = capabilitiesOf(platform);
+  const pz7035 = isPz7035(caps);
+  // Backend-owned camera modes (#501 P1): Camera & Alignment = Align, Experiment = Run.
+  const instrumentModes = caps.align_mode && caps.run_mode;
+  const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
+  const instrumentRef = useRef<InstrumentStatus | null>(null);
+  instrumentRef.current = instrument;
+  const runMode = instrument?.mode?.name === "run";
+  const [runPreviewInfo, setRunPreviewInfo] = useState<{frameId: number; listed: number; cells: number; blemishes: number} | null>(null);
+  const [showRunMask, setShowRunMask] = useState(true);
+  const showRunMaskRef = useRef(true);
+  showRunMaskRef.current = showRunMask;
+  const [cameraGeometry, setCameraGeometry] = useState<CameraGeometry | null>(null);
+  const [cameraWindow, setCameraWindow] = useState<Rect | null>(null);
+  const cameraGeometryRef = useRef<CameraGeometry | null>(null);
+  cameraGeometryRef.current = cameraGeometry;
+  const cameraWindowRef = useRef<Rect | null>(null);
+  cameraWindowRef.current = cameraWindow;
+  const windowDragRef = useRef<{dx: number; dy: number} | null>(null);
 
   // Display-side measurements (frames actually drawn / bytes actually pulled
   // over the last 1s window). These are UI measurements, not backend claims.
@@ -298,6 +333,14 @@ export default function App() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
+      // Camera & Alignment: the experiment window over a full-sensor image.
+      const geometry = cameraGeometryRef.current, experimentWindow = cameraWindowRef.current;
+      if (canvas === liveCanvasRef.current && geometry?.overview && experimentWindow &&
+          meta.width === geometry.sensor_width && meta.height === geometry.sensor_height) {
+        ctx.strokeStyle = "#ffd400";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(experimentWindow.x + 1, experimentWindow.y + 1, experimentWindow.width - 2, experimentWindow.height - 2);
+      }
       const { data: _pixels, ...metadata } = meta;
       if (canvas !== reviewCanvasRef.current && performance.now() - lastMetadataRenderMs.current >= 200) {
         lastMetadataRenderMs.current = performance.now();
@@ -595,6 +638,37 @@ export default function App() {
     return stopLoop;
   }, [ready, running, stopLoop, previewFpsLimit]);
 
+  // PZ7035 Run (#501 P1): the producer is stopped; the preview is the PL cell capture with the
+  // U-Net mask and the listed cells of the same frame.
+  const drawRunPreview = useCallback((p: RunPreview) => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+    canvas.width = p.width;
+    canvas.height = p.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.putImageData(new ImageData(runPreviewRgba(p, showRunMaskRef.current), p.width, p.height), 0, 0);
+    ctx.lineWidth = 1;
+    for (const c of p.list) {
+      ctx.strokeStyle = c.valid ? "#1a7f37" : "#b42318";
+      ctx.strokeRect(c.x + 0.5, c.y + 0.5, Math.max(1, c.width - 1), Math.max(1, c.height - 1));
+    }
+    setRunPreviewInfo({frameId: p.frameId, listed: p.list.length, cells: p.cells, blemishes: p.blemishes});
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !runMode || tab !== "experiment") { setRunPreviewInfo(null); return; }
+    let busy = false, live = true;
+    const id = window.setInterval(() => {
+      if (busy) return;
+      busy = true;
+      void bridge.fetchRunPreview().then((p) => { if (live) drawRunPreview(p); })
+        .catch(() => { /* a capture can time out; the next one follows */ })
+        .finally(() => { busy = false; });
+    }, 100);
+    return () => { live = false; window.clearInterval(id); };
+  }, [ready, runMode, tab, drawRunPreview]);
+
   const onStartCamera = useCallback(async () => {
     try {
       setReviewing(false);
@@ -673,9 +747,11 @@ export default function App() {
   const experimentPending = useRef(false);
   const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
   const [readinessMessage, setReadinessMessage] = useState("");
+  // Non-blocking readiness warnings shown at run start (e.g. recording to RAM, #501).
+  const [startNotice, setStartNotice] = useState("");
   const onStartExperiment = useCallback(async () => {
     if (experimentPending.current) return;
-    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage("");
+    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
       const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
       if (!picked) return;
@@ -686,9 +762,11 @@ export default function App() {
         setReadinessMessage(`${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}`);
         return;
       }
+      const notice = readiness.gates.filter(g => g.id === "storage.persistent" && g.status === READINESS_GATE_STATUSES.Warn).map(g => g.reason).join(" ");
       const res = await bridge.experimentStart(picked);
       if (!res.ok) {setReadinessMessage(`${picked}: ${res.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${res.message}`); }
       append(`experiment started → ${picked}`);
+      if (notice) { setStartNotice(notice); append(notice); }
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment start error: ${e}`);
@@ -806,6 +884,120 @@ export default function App() {
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
 
+  useEffect(() => {
+    if (!ready) return;
+    void bridge.fetchPlatformInfo().then(setPlatform).catch(() => setPlatform(null));
+  }, [ready]);
+
+  // PZ7035 identity and health, once a second (link rates need two samples).
+  useEffect(() => {
+    if (!ready || !caps.pl_identity) { setInstrument(null); return; }
+    let live = true;
+    const poll = () => void bridge.fetchInstrumentStatus().then((s) => { if (live) setInstrument(s); })
+      .catch((e) => { if (live) setInstrument({ available: false, error: String(e) }); });
+    poll();
+    const id = window.setInterval(poll, 1000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [ready, caps.pl_identity]);
+
+  const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
+    try {
+      const geometry = await bridge.fetchCameraGeometry();
+      setCameraGeometry(geometry);
+      if (geometry.supported && geometry.sensor_width > 0) setCameraWindow((w) => w ?? initialWindow(geometry));
+      return geometry;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
+  // saved window, other tabs leave the camera as it is; never during a run. A running capture
+  // restarts in the new mode (backend).
+  useEffect(() => {
+    if (!ready || (tab !== "overview" && tab !== "experiment")) return;
+    let cancelled = false;
+    void (async () => {
+      const geometry = await refreshCameraGeometry();
+      if (cancelled || expActive) return;
+      if (instrumentModes) {
+        // PZ7035 (#501 P1): the backend owns the switch (LED, cell path, producer timing).
+        const want = tab === "overview" ? "align" : "run";
+        const current = instrumentRef.current?.mode;
+        const win = cameraWindowRef.current ? snapRunWindow(cameraWindowRef.current) : null;
+        if (want === "run" && !win) return append("Run: place the window in Camera & Alignment first");
+        if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) return;
+        append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
+        const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
+        append(result.ok ? result.message : `Camera mode: ${result.message}`);
+        if (cancelled) return;
+        setRunning(result.ok && want === "align");
+        await refreshCameraGeometry();
+        return;
+      }
+      if (!geometry?.supported) return;
+      const overview = tab === "overview";
+      if (geometry.overview === overview) return;
+      const result = await bridge.setCameraOverview(overview);
+      append(result.ok ? result.message : `Camera mode: ${result.message}`);
+      if (!cancelled) await refreshCameraGeometry();
+    })();
+    return () => { cancelled = true; };
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes]);
+
+  // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
+  useEffect(() => {
+    if (!ready || tab !== "overview") return;
+    const id = window.setInterval(() => void refreshCameraGeometry(), 2000);
+    return () => window.clearInterval(id);
+  }, [ready, tab, refreshCameraGeometry]);
+
+  const saveCameraWindow = useCallback(async (rect: Rect) => {
+    if (instrumentModes) {
+      // The Run window is applied (and saved) by the switch to Run when Experiment opens.
+      const snapped = snapRunWindow(rect);
+      setCameraWindow(snapped);
+      append(`Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`);
+      return;
+    }
+    const geometry = cameraGeometryRef.current;
+    if (!geometry?.supported) return;
+    const snapped = snapWindow(rect, geometry);
+    setCameraWindow(snapped);
+    const result = await bridge.saveCameraRoi(snapped.x, snapped.y, snapped.width, snapped.height);
+    append(result.ok ? result.message : `Camera ROI not saved: ${result.message}`);
+    await refreshCameraGeometry();
+  }, [append, refreshCameraGeometry, instrumentModes]);
+
+  // Drag the window on the full-sensor image; release saves it (Qt saves on every move).
+  const canvasPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = e.currentTarget, box = canvas.getBoundingClientRect();
+    return {x: (e.clientX - box.left) * canvas.width / box.width, y: (e.clientY - box.top) * canvas.height / box.height};
+  };
+  const onWindowPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
+    if (!geometry?.overview || !rect || expActive) return;
+    const p = canvasPoint(e);
+    if (p.x < rect.x || p.y < rect.y || p.x > rect.x + rect.width || p.y > rect.y + rect.height) return;
+    windowDragRef.current = {dx: p.x - rect.x, dy: p.y - rect.y};
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onWindowPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = windowDragRef.current, geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
+    if (!drag || !geometry || !rect) return;
+    const p = canvasPoint(e);
+    const next = instrumentModes
+      ? snapRunWindow({x: p.x - drag.dx, y: p.y - drag.dy})
+      : snapWindow({...rect, x: p.x - drag.dx, y: p.y - drag.dy}, geometry);
+    cameraWindowRef.current = next;
+    setCameraWindow(next);
+  };
+  const onWindowPointerUp = () => {
+    if (!windowDragRef.current) return;
+    windowDragRef.current = null;
+    if (cameraWindowRef.current) void saveCameraWindow(cameraWindowRef.current);
+  };
+
 
   const cameraScript = useCameraScript({
     ready, running, experimentActive: expActive, selection: camSelection, append,
@@ -907,12 +1099,14 @@ export default function App() {
       identity: sheathPump?.connected ? (sheathPump.port_name || `COM${sheathPump.com_port}`) : "",
     },
     trigger: { valid: trigStatus?.valid ?? false, cameraAttached: trigStatus?.camera_attached ?? false },
-    // Authoritative storage/free-space status is not bridged yet (backend
-    // follow-up); the check stays informational until it is.
-    storageKnown: false,
-    storageWritable: false,
-    storageFreeOk: false,
-    storagePath: "",
+    // The PZ7035 reports its recording target (#501); the desktop's check stays informational.
+    storageKnown: !!instrument?.storage,
+    storageWritable: instrument?.storage?.writable ?? false,
+    storageFreeOk: (instrument?.storage?.free_bytes ?? 0) >= 1e9,
+    storagePath: instrument?.storage?.path ?? "",
+    storageWarning: instrument?.storage?.warning ?? "",
+    capabilities: caps,
+    instrument,
   };
   const preflight = derivePreflight(preflightInput);
 
@@ -933,6 +1127,7 @@ export default function App() {
     frameW: lastMeta?.width ?? 0,
     frameH: lastMeta?.height ?? 0,
     pixelToMicron: stats?.pixel_to_micron ?? NaN,
+    pz7035,
   };
   const quality = deriveQualityGates(qualityInput);
 
@@ -953,6 +1148,7 @@ export default function App() {
     operatorName: "", // operator identity not captured yet
     outputPath: expStatus?.output_path ?? "",
     warningsCount,
+    storageWarning: instrument?.storage?.warning ?? "",
   };
   const contextBar = deriveContextBar(contextFacts);
 
@@ -974,6 +1170,8 @@ export default function App() {
     }
     setOperatingMode(next);
     if (next !== "service") setTriggerArmed(false);
+    // The backend refuses raw LED values outside Service mode (#501 P1).
+    if (instrumentModes) void bridge.setServiceMode(next === "service").catch(() => {});
   };
 
   const actuateCheck = canActuate({
@@ -1045,6 +1243,7 @@ export default function App() {
             { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+            { label: "Central Methods…", onClick: () => setShowCentralMethods(true) },
             { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           ]}
         />
@@ -1091,20 +1290,21 @@ export default function App() {
       <div className="body">
         {/* ---- Telemetry sidebar ---- */}
         <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`} aria-label="Telemetry sidebar">
-          <div className="side-section">
+          {caps.host_background && <div className="side-section">
             <div className="bg-preview" title="Processing background state (set/clear in Experiment ▸ Preview)">
               {backgroundSet ? "Background set" : "No background set"}
             </div>
-          </div>
+          </div>}
           <div className="side-section">
             <h4>Display</h4>
             <SideRow k="FPS:" v={displayFps.toFixed(1)} />
           </div>
           <div className="side-section">
             <h4>Processing</h4>
-            <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />
+            {!hostProcessing && <SideRow k="Runs on:" v="PL (every frame)" />}
+            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
             <SideRow k="px→µm:" v={stats?.valid ? String(stats.pixel_to_micron) : "—"} cls={stats?.valid ? "" : "dim"} />
           </div>
           <div className="side-section">
@@ -1113,7 +1313,18 @@ export default function App() {
             <SideRow k="Display rate:" v={`${displayFps.toFixed(1)} fps`} />
             <SideRow k="Data rate:" v={`${dataRate.toFixed(1)} MB/s`} />
           </div>
-          <div className="side-section">
+          {pz7035 && <div className="side-section" title="PZ7035 PL core and health (#501)">
+            <h4>PL core</h4>
+            <SideRow k="Build:" v={instrument?.core ? instrument.core.build_id.slice(0, 8) || "—" : "—"}
+              cls={instrument?.core?.build_match === "match" ? "ok" : "dim"} />
+            <SideRow k="Weights:" v={instrument?.core ? instrument.core.profile_id.slice(0, 8) || "—" : "—"}
+              cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
+            <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
+              cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
+            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${instrument.latency.max_us.toFixed(1)} µs` : "—"}
+              cls={instrument?.latency && instrument.latency.frames > 0 ? "" : "dim"} />
+          </div>}
+          {caps.autofocus && <div className="side-section">
             <h4>Autofocus</h4>
             <SideRow
               k="Ring width:"
@@ -1125,7 +1336,7 @@ export default function App() {
               v={afStatus?.connected ? `connected (${afStatus.enabled ? "auto" : "manual"})` : "disconnected"}
               cls={afStatus?.connected ? "ok" : "dim"}
             />
-          </div>
+          </div>}
           <div className="side-section">
             <h4>Experiment</h4>
             <SideRow
@@ -1142,7 +1353,7 @@ export default function App() {
               v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}
             />
           </div>
-          <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
+          {caps.autofocus && <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
             <h4>Nanopositioner Autofocus</h4>
             <SideRow
               k="Endpoint:"
@@ -1163,7 +1374,7 @@ export default function App() {
               }
               cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
             />
-          </div>
+          </div>}
         </aside>
         <button
           className="sidebar-toggle"
@@ -1250,12 +1461,15 @@ export default function App() {
 
           <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => setTab("connect")} />
           <ExperimentRecovery ready={ready} status={expStatus} onStatus={setExpStatus} />
-          <ReanalysisStatus model={reanalysis}/>
+          {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
           <ExportStatus model={reviewExport} />
           <div className="tab-body">
             <div hidden={tab !== "connect"}>
-              <HardwareControls ready={ready} experimentActive={expActive} append={append}
+              <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
+              {/* Z stage (#464): hidden on the PZ7035 until the board has a serial path for it. */}
+              {!pz7035 && <StageControls ready={ready} experimentActive={expActive} append={append}
+                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} />}
             </div>
             {/* ---- Connect ---- */}
             {tab === "connect" && (
@@ -1265,12 +1479,12 @@ export default function App() {
                   <button className={connectTab === "cameras" ? "active" : ""} onClick={() => setConnectTab("cameras")}>
                     Cameras
                   </button>
-                  <button className={connectTab === "mindvision" ? "active" : ""} onClick={() => setConnectTab("mindvision")}>
+                  {!pz7035 && <button className={connectTab === "mindvision" ? "active" : ""} onClick={() => setConnectTab("mindvision")}>
                     MindVision
-                  </button>
-                  <button className={connectTab === "framegrabbers" ? "active" : ""} onClick={() => setConnectTab("framegrabbers")}>
+                  </button>}
+                  {caps.egrabber_script && <button className={connectTab === "framegrabbers" ? "active" : ""} onClick={() => setConnectTab("framegrabbers")}>
                     Framegrabbers
-                  </button>
+                  </button>}
                 </div>
                 <div className="subtab-body">
                   <div className="devices-list" role="listbox" aria-label="Discovered devices">
@@ -1402,25 +1616,72 @@ export default function App() {
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
 
-                  <label>
-                    X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
-                  </label>
-                  <label>
-                    Y: <input type="number" value={roiFields.y} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
-                  </label>
-                  <label>
-                    W: <input type="number" value={roiFields.w} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
-                  </label>
-                  <label>
-                    H: <input type="number" value={roiFields.h} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
-                  </label>
-                  <button className="btn" onClick={onApplyRoi} disabled={!ready}>
-                    Apply ROI
-                  </button>
+                  {cameraGeometry?.supported ? (
+                    <>
+                      {/* Camera window (ROI 1, sensor coordinates), placed on the full sensor. */}
+                      {(["x", "y", "width", "height"] as const).map((key) => (
+                        <label key={key}>
+                          {key === "x" ? "X" : key === "y" ? "Y" : key === "width" ? "W" : "H"}:{" "}
+                          <input
+                            type="number"
+                            aria-label={`Camera window ${key}`}
+                            value={cameraWindow ? cameraWindow[key] : 0}
+                            disabled={!cameraWindow || expActive}
+                            onChange={(e) => setCameraWindow((w) => (w ? {...w, [key]: Number(e.target.value) || 0} : w))}
+                          />
+                          {key === "width" || key === "height" ? " px" : ""}
+                        </label>
+                      ))}
+                      <button
+                        className="btn"
+                        onClick={() => cameraWindow && void saveCameraWindow(cameraWindow)}
+                        disabled={!ready || expActive || !cameraWindow || cameraGeometry.sensor_width === 0}
+                        title="Save the experiment window; Experiment uses it"
+                      >
+                        Save camera ROI
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                    <label>
+                      X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
+                    </label>
+                    <label>
+                      Y: <input type="number" value={roiFields.y} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
+                    </label>
+                    <label>
+                      W: <input type="number" value={roiFields.w} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
+                    </label>
+                    <label>
+                      H: <input type="number" value={roiFields.h} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
+                    </label>
+                    <button className="btn" onClick={onApplyRoi} disabled={!ready}>
+                      Apply ROI
+                    </button>
+                    </>
+                  )}
                 </div>
+                {cameraGeometry?.supported && (
+                  <div className="camera-alignment-status" aria-label="Camera mode">
+                    <strong>
+                      {cameraGeometry.overview
+                        ? `Full sensor ${cameraGeometry.sensor_width || "?"}×${cameraGeometry.sensor_height || "?"}`
+                        : "Experiment window"}
+                    </strong>
+                    {cameraGeometry.overview && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+                    {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
+                  </div>
+                )}
                 <div className="canvas-wrap">
                   {!lastMeta && <span className="canvas-hint">No frame yet — configure a camera and press Start Camera</span>}
-                  <canvas ref={liveCanvasRef} className={fitWindow ? "fit" : ""} />
+                  <canvas
+                    ref={liveCanvasRef}
+                    className={fitWindow ? "fit" : ""}
+                    onPointerDown={onWindowPointerDown}
+                    onPointerMove={onWindowPointerMove}
+                    onPointerUp={onWindowPointerUp}
+                    onPointerCancel={onWindowPointerUp}
+                  />
                 </div>
 
                 {/* ---- UX-4 image quality gates ---- */}
@@ -1451,7 +1712,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <CameraScriptControls model={cameraScript} />
+                {caps.egrabber_script && <CameraScriptControls model={cameraScript} />}
                 <p className="mono">
                   {lastMeta
                     ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`
@@ -1490,13 +1751,28 @@ export default function App() {
                 </div>
 
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+                {startNotice && <p role="status" className="start-notice">{startNotice}</p>}
 
                 {expTab === "preview" && (
                   <>
                     <div className="canvas-wrap">
-                      {!lastMeta && <span className="canvas-hint">No frame yet — configure a camera and press Start Camera</span>}
+                      {!lastMeta && !runPreviewInfo && <span className="canvas-hint">{instrumentModes
+                        ? (runMode ? "Waiting for the PL cell capture…" : "Switching to Run…")
+                        : "No frame yet — configure a camera and press Start Camera"}</span>}
                       <canvas ref={previewCanvasRef} className={fitWindow ? "fit" : ""} />
                     </div>
+                    {instrumentModes && runMode && (
+                      <p className="mono" role="status">
+                        Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
+                        {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
+                        {" · "}latency max {instrument?.latency ? `${instrument.latency.max_us.toFixed(0)} µs` : "—"}
+                        {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
+                      </p>
+                    )}
+                    {instrumentModes && operatingMode === "service" && (runMode || instrument?.mode?.name === "align") && (
+                      <InstrumentLedControls mode={runMode ? "run" : "align"} alignBands={instrument?.mode?.align_source === "bands"} limits={caps.led_limits?.[runMode ? "run" : "align"]}
+                        current={instrument?.led} disabled={!ready || expActive} apply={bridge.setInstrumentLed} append={append} />
+                    )}
                     <div className="toolbar" style={{ marginTop: 6 }}>
 
                       <span className="legend">
@@ -1504,7 +1780,7 @@ export default function App() {
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
                       </span>
-                      <button
+                      {hostProcessing && <button
                         onClick={async () => {
                           const res = await bridge.setBackgroundFromCurrentFrame();
                           append(res.ok ? "background captured from current frame" : `set background failed: ${res.message}`);
@@ -1514,7 +1790,7 @@ export default function App() {
                         title={running ? "Capture the current frame as the processing background" : "Camera is not running"}
                       >
                         Set Background
-                      </button>
+                      </button>}
                       <button
                         onClick={async () => {
                           await bridge.clearBackgroundImage();
@@ -1545,17 +1821,23 @@ export default function App() {
                       </button>
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
-                    <PreviewBufferControls model={previewBuffer} />
-                    <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
-                    <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                    {caps.frame_buffer && <PreviewBufferControls model={previewBuffer} />}
+                    {hostProcessing ? (
+                      <>
+                        <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
+                        <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                      </>
+                    ) : (
+                      <p className="mono" role="status">Processing runs on the PL for every frame. Its results reach this screen once the record path is connected; previews and recording work now.</p>
+                    )}
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>
                         App config (config.json)
                       </button>
-                      <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
+                      {caps.egrabber_script && <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
                         Camera script
-                      </button>
+                      </button>}
                     </div>
                     <div className="subtab-body">
                       {configTab === "app" && (
@@ -1574,7 +1856,7 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
-                          <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />
+                          {caps.core_updates && <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />}
                           <ProfilesPanel model={profiles} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
@@ -1591,7 +1873,7 @@ export default function App() {
                                 aria-label="Processing configuration JSON"
                               />
                             </div>
-                            <div className="config-group">
+                            {hostProcessing && <div className="config-group">
                               <h5>realtime_processing</h5>
                               <div className="row">
                                 <label>
@@ -1625,11 +1907,11 @@ export default function App() {
                                 </p>
                               )}
                               <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
-                            </div>
+                            </div>}
                           </div>
                         </>
                       )}
-                      {configTab === "script" && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
+                      {configTab === "script" && caps.egrabber_script && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
                     </div>
                   </>
                 )}
@@ -1884,7 +2166,7 @@ export default function App() {
                 </div>
                 <div className="subtab-body">
                   <ReviewExportOptions model={reviewExport}/>
-                  <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>
+                  {caps.reanalysis && <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
                   <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
                     <div className="frames">
@@ -2099,6 +2381,11 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ---- Central Methods (registry, #398) ---- */}
+      {showCentralMethods && (
+        <CentralMethodsPanel onClose={() => setShowCentralMethods(false)} onError={append} />
       )}
 
       {/* ---- About modal ---- */}

@@ -1,8 +1,9 @@
+import { decodeRunPreview } from "./runPreview";
 import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
-import { invoke } from "@tauri-apps/api/core";
+import {invoke} from "./transport";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
@@ -43,6 +44,38 @@ export interface AutofocusConfig {
   focus_direction: boolean;
 }
 
+/** Z stage snapshot (#464, ADR 0013). `move_state` is a contract
+ *  STAGE_MOVE_STATES value; positions are micrometres in the homed frame
+ *  (zero at mid-travel) once `referenced`. */
+export interface StageStatus {
+  valid: boolean;
+  enabled: boolean;
+  connected: boolean;
+  /** Controller matches the stage profile; otherwise motion is refused. */
+  configured: boolean;
+  /** Homed since the controller powered up; moves need it. */
+  referenced: boolean;
+  /** Supervised limit-switch check passed for this controller; Home needs it. */
+  limits_verified: boolean;
+  /** A move or Home is queued or running. */
+  busy: boolean;
+  model: string;
+  serial: string;
+  firmware: string;
+  port_name: string;
+  move_state: number;
+  position_um: number;
+  limit_positive: boolean;
+  limit_negative: boolean;
+  home: boolean;
+  emergency_stop: boolean;
+  driver_alarm: boolean;
+  span_um: number;
+  soft_min_um: number;
+  soft_max_um: number;
+  last_error: string;
+}
+
 /** Authoritative per-pump snapshot (schema v10, BE-7). `run_status` /
  *  `direction` are contract PUMP_RUN_STATES / PUMP_DIRECTIONS values. */
 export interface PumpStatus {
@@ -61,6 +94,12 @@ export interface PumpStatus {
   configured_flow_rate: number;
   flow_rate_unit: number;
   direction: number;
+  /** Contract PUMP_MODELS value (v22). */
+  model?: number;
+  /** Peristaltic flow calibration, µL per head revolution (v22). */
+  microliters_per_rev?: number;
+  /** Peristaltic head speed setpoint, rpm (v22). */
+  speed_rpm?: number;
 }
 
 /** Per-dataset capabilities of the loaded review file (schema v9, BE-6). */
@@ -162,6 +201,74 @@ export interface CameraDiscovery {
   job_id: string;
   cameras: DiscoveredCamera[];
   framegrabbers: DiscoveredFramegrabber[];
+}
+
+/** Central profile registry (bridge schema v25, #398). Integers are contract
+ *  values: `session` REGISTRY_SESSION_STATES, `connectivity`
+ *  REGISTRY_CONNECTIVITY, job `kind`/`state` REGISTRY_JOB_KINDS /
+ *  REGISTRY_JOB_STATES, `central_state` REGISTRY_CENTRAL_STATES. u64 values
+ *  arrive as decimal strings. No token or password is ever part of these. */
+export interface RegistryJob {
+  job_id: string;
+  kind: number;
+  state: number;
+  message: string;
+}
+
+export interface RegistryProject {
+  project_id: string;
+  display_name: string;
+  roles: string[];
+}
+
+export interface RegistryRevision {
+  revision_id: string;
+  method_id: string;
+  project_id: string;
+  display_name: string;
+  author_id: string;
+  content_hash: string;
+  revision_number: string;
+  metadata_version: string;
+  central_state: number;
+  /** #398 M2b: "" = not materialized; `local_validation` is
+   *  REGISTRY_LOCAL_VALIDATION for this instrument + current method context. */
+  materialized_dir: string;
+  local_validation: number;
+  validated_by: string;
+  validated_at_utc: string;
+}
+
+/** "Mark validated" outcome (#398 M2b): job_id "0" = refused, `error` why. */
+export interface RegistryValidationRequest {
+  job_id: string;
+  error: string;
+}
+
+export interface RegistrySnapshot {
+  valid: boolean;
+  configured: boolean;
+  generation: string;
+  origin: string;
+  session: number;
+  subject_id: string;
+  email: string;
+  connectivity: number;
+  health_message: string;
+  successful_requests: string;
+  failed_requests: string;
+  rejected_revisions: string;
+  projects: RegistryProject[];
+  revisions: RegistryRevision[];
+  corrupt_revision_ids: string[];
+  cache_error: string;
+  has_last_successful_refresh: boolean;
+  last_successful_refresh_unix_ms: number;
+  last_job: RegistryJob;
+  queued_jobs: string;
+  busy: boolean;
+  instrument_id: string;
+  instrument_name: string;
 }
 
 /** Device-discovery request (schema v14, #419). Kinds are
@@ -315,6 +422,112 @@ export interface TriggerStatus {
   periodic_interval_ms: number;
 }
 
+/** Where the science runs (ABI 21). `host_processing` false = the PL processes every frame
+ *  and the host pipeline's controls do not apply. */
+export interface PlatformInfo {
+  science: "host" | "pl";
+  host_processing: boolean;
+  aravis: boolean;
+  /** Which surfaces exist on this instrument (#501). Absent from older servers. */
+  capabilities?: PlatformCapabilities;
+}
+
+/** #501: the backend says what the instrument has; the UI hides the rest. */
+export interface PlatformCapabilities {
+  instrument: "desktop" | "pz7035";
+  autofocus: boolean;
+  trigger: boolean;
+  host_background: boolean;
+  frame_buffer: boolean;
+  reanalysis: boolean;
+  core_updates: boolean;
+  egrabber_script: boolean;
+  pl_identity: boolean;
+  led_strobe: boolean;
+  align_mode: boolean;
+  run_mode: boolean;
+  /** Raw LED limits per mode (µs) for Service mode (ABI 27); present with the camera modes. */
+  led_limits?: { run: LedLimits; align: LedLimits };
+  /** The instrument's pumps: one RS485 port, a Modbus address per slot. */
+  pump: null | { model: string; port: string; sample_address: number; sheath_address: number; microliters_per_rev: number };
+}
+
+export type IdMatch = "match" | "mismatch" | "unknown";
+
+/** PZ7035 identity and health (#501, `fetch_instrument_status`). Read-only. */
+export interface LedLimits { delay_min_us: number; delay_max_us: number; width_min_us: number; width_max_us: number }
+
+/** Camera mode the backend applied last (ABI 27, #501 P1). */
+export interface InstrumentModeState {
+  name: "align" | "run" | "unknown"; run_x: number; run_y: number; service: boolean;
+  /** Align live view: whole frames from the PL bridge (results8 on) or the producer's bands. */
+  align_source?: "bridge" | "bands" | "";
+}
+
+/** Where recordings land (#501): `ram` on today's JTAG RAM root; `warning` is the operator text,
+ *  "" once the target is persistent (SATA). */
+export interface RecordingTargetState { path: string; writable: boolean; ram: boolean; free_bytes: number; filesystem: string; warning: string }
+
+export interface InstrumentStatus {
+  available: boolean;
+  mode?: InstrumentModeState;
+  storage?: RecordingTargetState;
+  error?: string;
+  pinned_profile_id?: string;
+  core?: {
+    build_id: string;
+    profile_id: string;
+    abi_version: number;
+    science_profile: number;
+    profile_version: number;
+    expected: null | { build_id: string; profile_id: string; commit: string; image: string; abi_major: number; abi_minor: number };
+    pinned_profile_id: string;
+    build_match: IdMatch;
+    profile_match: IdMatch;
+  };
+  led?: { on: boolean; preset: "run" | "align" | "custom" | "off"; delay_us: number; width_us: number; guard_fault: boolean; guard_trips: number };
+  link?: {
+    rates_valid: boolean;
+    ingress_errors_per_s: number;
+    resyncs_per_s: number;
+    bad_frames_per_s: number;
+    dropped_per_s: number;
+    ingress_errors_warn_per_s: number;
+    resyncs_warn_per_s: number;
+  };
+  latency?: { last_us: number; max_us: number; over_budget: number; frames: number };
+}
+
+/** Camera & Alignment geometry (ABI 20, `fetch_camera_geometry`). Sensor coordinates. */
+export interface CameraGeometry {
+  supported: boolean;
+  overview: boolean;
+  camera: string;
+  sensor_width: number;
+  sensor_height: number;
+  roi: {x: number; y: number; width: number; height: number};
+  width_increment: number;
+  height_increment: number;
+  offset_x_increment: number;
+  offset_y_increment: number;
+  min_width: number;
+  min_height: number;
+  /** Last camera read-back (Aravis): applied window, sensor rate and the delivered rate. */
+  session: {
+    overview?: boolean;
+    region?: {x: number; y: number; width: number; height: number};
+    frame_rate_hz?: number;
+    frame_rate_max_hz?: number;
+    frame_rate_clamped?: boolean;
+    frame_rate_limit?: string;
+    exposure_us?: number;
+    band_count?: number;
+    delivered_frame_rate_hz?: number;
+    delivered_limit?: string;
+    preview_rate_hz?: number;
+  };
+}
+
 async function invokeCommand(command: string, args?: Record<string, unknown>): Promise<CmdResult> {
   return decodeCommandResult(await invoke<unknown>(command,args));
 }
@@ -412,6 +625,9 @@ export const bridge = {
   fetchAutofocusConfig: () => invoke<AutofocusConfig>("fetch_autofocus_config"),
   // Syringe pumps (schema v10, BE-7): pump 0 = Sample, 1 = Sheath.
   pumpConnectEndpoint: (pump: number, portName: string, baudRate: number, modbusAddress: number) => invokeCommand("pump_connect_endpoint", {pump, portName, baudRate, modbusAddress}),
+  // v22: either pump model in either slot; microlitersPerRev calibrates peristaltic flow.
+  pumpConnectModel: (pump: number, model: number, portName: string, baudRate: number, modbusAddress: number, microlitersPerRev: number) =>
+    invokeCommand("pump_connect_model", { pump, model, portName, baudRate, modbusAddress, microlitersPerRev }),
   pumpConnect: (pump: number, comPort: number, baudRate: number, modbusAddress: number) =>
     invokeCommand("pump_connect", { pump, comPort, baudRate, modbusAddress }),
   pumpDisconnect: (pump: number) => invokeCommand("pump_disconnect", { pump }),
@@ -428,6 +644,17 @@ export const bridge = {
     invokeCommand("pump_set_syringe_volume", { pump, volume, unit }),
   pumpPollStatus: (pump: number) => invokeCommand("pump_poll_status", { pump }),
   fetchPumpStatus: (pump: number) => invoke<PumpStatus>("fetch_pump_status", { pump }),
+  // Z stage (#464). The backend refuses moves before Home and outside the
+  // soft limits; only stageHome homes; stageStop is always accepted.
+  stageConnect: (portName = "", usbSerial = "", modbusAddress = 0) =>
+    invokeCommand("stage_connect", { portName, usbSerial, modbusAddress }),
+  stageDisconnect: () => invokeCommand("stage_disconnect"),
+  stageMoveTo: (targetUm: number) => invokeCommand("stage_move_to", { targetUm }),
+  stageMoveBy: (deltaUm: number) => invokeCommand("stage_move_by", { deltaUm }),
+  stageHome: () => invokeCommand("stage_home"),
+  stageStop: () => invokeCommand("stage_stop"),
+  stageApplyProfile: () => invokeCommand("stage_apply_profile"),
+  fetchStageStatus: () => invoke<StageStatus>("fetch_stage_status"),
   pumpScanAddresses: (
     comPort: number,
     baudRate: number,
@@ -458,6 +685,19 @@ export const bridge = {
     sourceMutation("apply_processing_config_json", { json }),
   setProcessingRoi: (x: number, y: number, w: number, h: number) =>
     sourceMutation("set_processing_roi", { x, y, w, h }),
+  // Camera & Alignment (ABI 20): the overview changes the frame geometry, so it is a source
+  // mutation; saving the window only persists it for the next experiment-mode start.
+  setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
+  saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
+  fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
+  fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
+  fetchInstrumentStatus: () => invoke<InstrumentStatus>("fetch_instrument_status"),
+  // PZ7035 camera modes (ABI 27, #501 P1). A mode switch restarts or stops the camera, so it
+  // is a source mutation like the overview switch.
+  setInstrumentMode: (mode: "align" | "run", x = 0, y = 0) => sourceMutation("set_instrument_mode", {mode, x, y}),
+  setServiceMode: (on: boolean) => invokeCommand("set_service_mode", {on}),
+  setInstrumentLed: (delayUs: number, widthUs: number) => invokeCommand("set_instrument_led", {delayUs, widthUs}),
+  fetchRunPreview: async () => decodeRunPreview(await invoke<ArrayBuffer>("fetch_run_preview")),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),
@@ -483,6 +723,20 @@ export const bridge = {
       },
       opts,
     ),
+  // Central profile registry (bridge schema v25, #398). Commands return a job
+  // ID as a decimal string; "0" means refused (not configured / not ready).
+  registrySignIn: (email: string, password: string) =>
+    invoke<string>("registry_sign_in", { email, password }),
+  registrySignOut: () => invoke<string>("registry_sign_out"),
+  registryRefresh: () => invoke<string>("registry_refresh"),
+  registryDownload: (revisionId: string) => invoke<string>("registry_download", { revisionId }),
+  registryCancelAll: () => invoke<boolean>("registry_cancel_all"),
+  registryMaterialize: (revisionId: string) => invoke<string>("registry_materialize", { revisionId }),
+  registryRecordValidation: (revisionId: string, evidenceFile: string, passed: boolean) =>
+    invoke<RegistryValidationRequest>("registry_record_validation", { revisionId, evidenceFile, passed }),
+  fetchRegistrySnapshot: () => invoke<RegistrySnapshot>("fetch_registry_snapshot"),
+  fetchRegistryJob: (jobId: string) =>
+    invoke<RegistryJob>("fetch_registry_job", { jobId: decimalU64(jobId) }),
   // Camera selection (bridge schema v7, BE-2).
   fetchCameraSelection: () => invoke<CameraSelection>("fetch_camera_selection"),
   selectHardwareCamera: (interfaceIndex: number, deviceIndex: number, label: string) =>

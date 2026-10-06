@@ -23,11 +23,23 @@ Revision decode(const Json& j) {
         r.revisionNumber = j.at("revision_number").get<uint64_t>();
         r.metadataVersion = j.at("metadata_version").get<uint64_t>();
         r.state = centralStateFromString(j.at("state").get<std::string>());
+        // Absent on servers without the M3 migration.
+        const auto notes = j.find("release_notes");
+        if (notes != j.end() && notes->is_string()) r.releaseNotes = notes->get<std::string>();
         verifyRevision(r);
         return r;
     } catch (const Json::exception&) {
         throw RegistryError(RegistryErrorCode::Invalid, "Malformed registry revision");
     }
+}
+std::string optionalString(const Json& j, const char* key) {
+    const auto it = j.find(key);
+    return it == j.end() || it->is_null() ? std::string{} : it->get<std::string>();
+}
+RegistryMethod decodeMethod(const Json& j) {
+    return {j.at("method_id").get<std::string>(), j.at("project_id").get<std::string>(),
+            j.at("display_name").get<std::string>(), optionalString(j, "description"),
+            optionalString(j, "head_revision_id")};
 }
 Json parse(const std::string& body) {
     try {
@@ -140,11 +152,14 @@ Revision SupabaseProfileRegistry::submit(const Revision& draft, const std::strin
                    {"p_parent_revision_id", draft.parentRevisionId},
                    {"p_expected_head", expectedHead},
                    {"p_content", draft.canonicalContent},
-                   {"p_hash", draft.contentHash}});
+                   {"p_hash", draft.contentHash},
+                   {"p_release_notes", draft.releaseNotes}});
     auto result = decode(parse(rpc("registry_submit", j.dump())));
     if (result.revisionId != draft.revisionId || result.methodId != draft.methodId ||
         result.contentHash != draft.contentHash ||
-        result.canonicalContent != draft.canonicalContent)
+        result.canonicalContent != draft.canonicalContent ||
+        result.parentRevisionId != draft.parentRevisionId ||
+        result.releaseNotes != draft.releaseNotes)
         throw RegistryError(RegistryErrorCode::Integrity, "Submitted revision identity mismatch");
     return result;
 }
@@ -158,5 +173,56 @@ Revision SupabaseProfileRegistry::transition(const std::string& id, CentralState
     if (result.revisionId != id)
         throw RegistryError(RegistryErrorCode::Integrity, "Transition revision identity mismatch");
     return result;
+}
+std::vector<RegistryMethod> SupabaseProfileRegistry::listMethods(const std::string& project) {
+    auto j = parse(rpc("registry_list_methods", Json({{"p_project_id", project}}).dump()));
+    try {
+        std::vector<RegistryMethod> methods;
+        for (const auto& item : j.at("methods")) {
+            auto m = decodeMethod(item);
+            if (m.projectId != project)
+                throw RegistryError(RegistryErrorCode::Integrity,
+                                    "Registry returned another project's method");
+            methods.push_back(std::move(m));
+        }
+        return methods;
+    } catch (const Json::exception&) {
+        throw RegistryError(RegistryErrorCode::Invalid, "Malformed registry method list");
+    }
+}
+RegistryMethod SupabaseProfileRegistry::createMethod(const std::string& project,
+                                                     const std::string& methodId,
+                                                     const std::string& displayName,
+                                                     const std::string& description) {
+    auto j = parse(rpc("registry_create_method", Json({{"p_project_id", project},
+                                                       {"p_method_id", methodId},
+                                                       {"p_display_name", displayName},
+                                                       {"p_description", description}})
+                                                     .dump()));
+    try {
+        auto m = decodeMethod(j);
+        if (m.methodId != methodId || m.projectId != project)
+            throw RegistryError(RegistryErrorCode::Integrity, "Created method identity mismatch");
+        return m;
+    } catch (const Json::exception&) {
+        throw RegistryError(RegistryErrorCode::Invalid, "Malformed registry method");
+    }
+}
+RevisionHistory SupabaseProfileRegistry::revisionHistory(const std::string& id) {
+    auto j = parse(rpc("registry_revision_history", Json({{"p_revision_id", id}}).dump()));
+    try {
+        RevisionHistory h;
+        h.revisionId = id;
+        for (const auto& v : j.at("reviews"))
+            h.reviews.push_back({optionalString(v, "reviewer_id"), v.at("decision").get<std::string>(),
+                                 optionalString(v, "reason"), optionalString(v, "content_hash"),
+                                 optionalString(v, "created_at")});
+        for (const auto& e : j.at("events"))
+            h.events.push_back({optionalString(e, "actor_id"), e.at("action").get<std::string>(),
+                                optionalString(e, "reason"), optionalString(e, "created_at")});
+        return h;
+    } catch (const Json::exception&) {
+        throw RegistryError(RegistryErrorCode::Invalid, "Malformed registry history");
+    }
 }
 } // namespace backend::profiles

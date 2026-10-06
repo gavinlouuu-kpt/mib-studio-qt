@@ -65,6 +65,13 @@ one can be synthesized from the least-changing image tiles.
 Use this to rescue an experiment recorded with a bad threshold, or to
 compare configurations on identical input.
 
+## YOFO Review (standalone review app)
+
+**YOFO Review** is this Review tab as its own app for macOS and Windows,
+for reviewing recordings on a computer without the instrument. See
+[YOFO Review](yofo-review.md) for installation, updates and how it differs
+from this tab.
+
 ## Standalone tools
 
 For working with recordings on machines without the full app (and without

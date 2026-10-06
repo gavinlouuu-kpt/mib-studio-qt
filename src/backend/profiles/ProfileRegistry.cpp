@@ -113,6 +113,75 @@ std::string canonicalMethod(const std::string& configJson, const std::string& ca
     return result;
 }
 
+std::string canonicalConfigSha256(const std::string& configJson) noexcept {
+    try {
+        auto config = parse(configJson);
+        if (!config.is_object()) return {};
+        normalize(config);
+        return contentHash(config.dump());
+    } catch (...) {
+        return {};
+    }
+}
+
+std::string revisionConfigSha256(const std::string& canonicalContent) noexcept {
+    try {
+        const auto envelope = parse(canonicalContent);
+        const auto& config = envelope.at("config");
+        if (!config.is_object()) return {};
+        return contentHash(config.dump()); // already canonical inside the envelope
+    } catch (...) {
+        return {};
+    }
+}
+
+std::string methodContextJson(const MethodContext& context) {
+    return Json({{"instrument_id", context.instrumentId},
+                 {"processing_core_version", context.processingCoreVersion},
+                 {"processing_core_sha256", context.processingCoreSha256},
+                 {"camera_source", context.cameraSource}})
+        .dump(-1, ' ', false, Json::error_handler_t::replace);
+}
+
+namespace {
+constexpr std::size_t kMaxListedChanges = 200;
+void diffJson(const Json& a, const Json& b, const std::string& prefix, std::vector<std::string>& out) {
+    if (out.size() >= kMaxListedChanges) return;
+    if (a.is_object() && b.is_object()) {
+        for (const auto& [key, value] : a.items()) {
+            const auto path = prefix.empty() ? key : prefix + "." + key;
+            if (!b.contains(key))
+                out.push_back(path + " (removed)");
+            else
+                diffJson(value, b.at(key), path, out);
+        }
+        for (const auto& [key, value] : b.items())
+            if (!a.contains(key)) out.push_back((prefix.empty() ? key : prefix + "." + key) + " (added)");
+        return;
+    }
+    // Same normalization rule as the canonical hash: 2.0 == 2.
+    const bool bothNumbers = a.is_number() && b.is_number();
+    if (bothNumbers ? a.get<double>() != b.get<double>() : a != b)
+        out.push_back(prefix.empty() ? "<entire document>" : prefix);
+}
+} // namespace
+
+std::vector<std::string> jsonDifferences(const std::string& a, const std::string& b) {
+    std::vector<std::string> out;
+    try {
+        diffJson(Json::parse(a), Json::parse(b), {}, out);
+    } catch (const Json::exception&) {
+        out = {"<entire document>"};
+    }
+    if (out.size() >= kMaxListedChanges) out.push_back("... (more)");
+    return out;
+}
+
+std::string methodContextHash(const MethodContext& context) {
+    if (context.instrumentId.empty()) return {};
+    return contentHash("mib-method-context-v1\n" + methodContextJson(context));
+}
+
 void verifyRevision(const Revision& revision) {
     if (revision.methodId.empty() || revision.revisionId.empty() || revision.projectId.empty() ||
         revision.revisionNumber == 0 || revision.metadataVersion == 0)

@@ -20,6 +20,7 @@
 #include <sstream>
 #include <filesystem>
 #include <algorithm>
+#include <optional>
 #include <limits>
 
 namespace backend::services
@@ -50,6 +51,9 @@ namespace backend::services
         bool datasetsInitialized_{false};
         hsize_t validFramesWritten_{0};
         hsize_t invalidFramesWritten_{0};
+        // Set by the first batch of each group: imageless (PL results) or not.
+        std::optional<bool> validImageless_;
+        std::optional<bool> invalidImageless_;
         hsize_t seriesImagesWritten_{0}; // tracks /valid_frames/series_images row count
 
         // Time-interval flush state: append paths flush at most once per
@@ -348,6 +352,8 @@ namespace backend::services
         impl_->lastIntervalFlush_ = std::chrono::steady_clock::now();
         impl_->validFramesWritten_ = 0;
         impl_->invalidFramesWritten_ = 0;
+        impl_->validImageless_.reset();
+        impl_->invalidImageless_.reset();
         impl_->seriesImagesWritten_ = 0;
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance();
@@ -1146,6 +1152,33 @@ namespace backend::services
         return true;
     }
 
+    // A batch whose frames carry no images (PL results, YOFO S3).
+    static bool imagelessBatch(const std::vector<ProcessedFrame> &frames)
+    {
+        return !frames.empty() && std::all_of(frames.begin(), frames.end(), [](const ProcessedFrame &f) {
+                   return f.originalImage.empty() && f.processedImage.empty();
+               });
+    }
+
+    // Metadata rows only. A group is imageless for the whole run: mixing with
+    // image batches would misalign rows and images, so it is refused.
+    static bool appendMetadataOnly(hid_t fileId, const std::string &path,
+                                   const std::vector<ProcessedFrame> &frames, hsize_t &written,
+                                   std::optional<bool> &imageless)
+    {
+        if (imageless.has_value() && !*imageless)
+        {
+            SPDLOG_ERROR("HDF5: an imageless batch after frames with images in {}", path);
+            return false;
+        }
+        imageless = true;
+        const bool ok = written == 0 ? writeMetadataDataset(fileId, path, frames)
+                                     : appendMetadataDataset(fileId, path, frames, written);
+        if (ok)
+            written += frames.size();
+        return ok;
+    }
+
     bool Hdf5Service::appendFrames(const std::vector<ProcessedFrame> &validFrames,
                                    const std::vector<ProcessedFrame> &invalidFrames)
     {
@@ -1176,38 +1209,55 @@ namespace backend::services
         if (!validFrames.empty())
         {
             const auto tVS = lag_clock::now();
-            // Create datasets if they don't exist
-            if (impl_->validFramesWritten_ == 0)
+            if (imagelessBatch(validFrames))
             {
-                std::vector<cv::Mat> validImages, validMasks;
-                for (const auto &frame : validFrames)
-                {
-                    validImages.push_back(frame.originalImage);
-                    validMasks.push_back(frame.processedImage);
-                }
-                if (!writeImageDataset(impl_->fileId_, "/valid_frames/images", validImages))
+                // PL results (YOFO S3): no images reach the PS live, so the
+                // run's rows are metadata only; images/masks are absent.
+                if (!appendMetadataOnly(impl_->fileId_, "/valid_frames/metadata", validFrames,
+                                        impl_->validFramesWritten_, impl_->validImageless_))
                     return false;
-                if (!writeImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks))
-                    return false;
-                if (!writeMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames))
-                    return false;
-                impl_->validFramesWritten_ = validFrames.size();
             }
             else
             {
-                // Append to existing datasets
-                std::vector<cv::Mat> validImages, validMasks;
-                for (const auto &frame : validFrames)
+                if (impl_->validImageless_.value_or(false))
                 {
-                    validImages.push_back(frame.originalImage);
-                    validMasks.push_back(frame.processedImage);
+                    SPDLOG_ERROR("HDF5: frames with images after an imageless batch in /valid_frames");
+                    return false;
                 }
-                if (!appendImageDataset(impl_->fileId_, "/valid_frames/images", validImages, impl_->validFramesWritten_))
-                    return false;
-                if (!appendImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks, impl_->validFramesWritten_))
-                    return false;
-                if (!appendMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames, impl_->validFramesWritten_))
-                    return false;
+                impl_->validImageless_ = false;
+                // Create datasets if they don't exist
+                if (impl_->validFramesWritten_ == 0)
+                {
+                    std::vector<cv::Mat> validImages, validMasks;
+                    for (const auto &frame : validFrames)
+                    {
+                        validImages.push_back(frame.originalImage);
+                        validMasks.push_back(frame.processedImage);
+                    }
+                    if (!writeImageDataset(impl_->fileId_, "/valid_frames/images", validImages))
+                        return false;
+                    if (!writeImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks))
+                        return false;
+                    if (!writeMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames))
+                        return false;
+                    impl_->validFramesWritten_ = validFrames.size();
+                }
+                else
+                {
+                    // Append to existing datasets
+                    std::vector<cv::Mat> validImages, validMasks;
+                    for (const auto &frame : validFrames)
+                    {
+                        validImages.push_back(frame.originalImage);
+                        validMasks.push_back(frame.processedImage);
+                    }
+                    if (!appendImageDataset(impl_->fileId_, "/valid_frames/images", validImages, impl_->validFramesWritten_))
+                        return false;
+                    if (!appendImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks, impl_->validFramesWritten_))
+                        return false;
+                    if (!appendMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames, impl_->validFramesWritten_))
+                        return false;
+                }
             }
             msValidImages = elapsedMs(tVS);
 
@@ -1243,36 +1293,53 @@ namespace backend::services
         if (!invalidFrames.empty())
         {
             const auto tInv = lag_clock::now();
-            if (impl_->invalidFramesWritten_ == 0)
+            if (imagelessBatch(invalidFrames))
             {
-                std::vector<cv::Mat> invalidImages, invalidMasks;
-                for (const auto &frame : invalidFrames)
-                {
-                    invalidImages.push_back(frame.originalImage);
-                    invalidMasks.push_back(frame.processedImage);
-                }
-                if (!writeImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages))
+                // PL results (YOFO S3): no images reach the PS live, so the
+                // run's rows are metadata only; images/masks are absent.
+                if (!appendMetadataOnly(impl_->fileId_, "/invalid_frames/metadata", invalidFrames,
+                                        impl_->invalidFramesWritten_, impl_->invalidImageless_))
                     return false;
-                if (!writeImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks))
-                    return false;
-                if (!writeMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames))
-                    return false;
-                impl_->invalidFramesWritten_ = invalidFrames.size();
             }
             else
             {
-                std::vector<cv::Mat> invalidImages, invalidMasks;
-                for (const auto &frame : invalidFrames)
+                if (impl_->invalidImageless_.value_or(false))
                 {
-                    invalidImages.push_back(frame.originalImage);
-                    invalidMasks.push_back(frame.processedImage);
+                    SPDLOG_ERROR("HDF5: frames with images after an imageless batch in /invalid_frames");
+                    return false;
                 }
-                if (!appendImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages, impl_->invalidFramesWritten_))
-                    return false;
-                if (!appendImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks, impl_->invalidFramesWritten_))
-                    return false;
-                if (!appendMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames, impl_->invalidFramesWritten_))
-                    return false;
+                impl_->invalidImageless_ = false;
+                if (impl_->invalidFramesWritten_ == 0)
+                {
+                    std::vector<cv::Mat> invalidImages, invalidMasks;
+                    for (const auto &frame : invalidFrames)
+                    {
+                        invalidImages.push_back(frame.originalImage);
+                        invalidMasks.push_back(frame.processedImage);
+                    }
+                    if (!writeImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages))
+                        return false;
+                    if (!writeImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks))
+                        return false;
+                    if (!writeMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames))
+                        return false;
+                    impl_->invalidFramesWritten_ = invalidFrames.size();
+                }
+                else
+                {
+                    std::vector<cv::Mat> invalidImages, invalidMasks;
+                    for (const auto &frame : invalidFrames)
+                    {
+                        invalidImages.push_back(frame.originalImage);
+                        invalidMasks.push_back(frame.processedImage);
+                    }
+                    if (!appendImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages, impl_->invalidFramesWritten_))
+                        return false;
+                    if (!appendImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks, impl_->invalidFramesWritten_))
+                        return false;
+                    if (!appendMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames, impl_->invalidFramesWritten_))
+                        return false;
+                }
             }
             msInvalid = elapsedMs(tInv);
         }
@@ -2056,6 +2123,13 @@ namespace backend::services
             return false;
         }
 
+        // A PL run (YOFO S3) records metadata only: no images or masks.
+        if (H5Lexists(impl_->fileId_, "/valid_frames/images", H5P_DEFAULT) <= 0 &&
+            H5Lexists(impl_->fileId_, "/valid_frames/masks", H5P_DEFAULT) <= 0)
+        {
+            return true;
+        }
+
         // Read images
         std::vector<cv::Mat> images;
         if (!readImageDataset(impl_->fileId_, "/valid_frames/images", images))
@@ -2103,6 +2177,13 @@ namespace backend::services
         if (!readMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", frames))
         {
             return false;
+        }
+
+        // A PL run (YOFO S3) records metadata only: no images or masks.
+        if (H5Lexists(impl_->fileId_, "/invalid_frames/images", H5P_DEFAULT) <= 0 &&
+            H5Lexists(impl_->fileId_, "/invalid_frames/masks", H5P_DEFAULT) <= 0)
+        {
+            return true;
         }
 
         // Read images
@@ -3990,7 +4071,8 @@ namespace backend::services {
             if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
             H5Aclose(attr);
         };
-        writeU64("run_snapshot_schema_version", 1);
+        // Mirrors RunConfigurationSnapshot::kSchemaVersion (v2: "method" block, #398 M2).
+        writeU64("run_snapshot_schema_version", 2);
         writeStr("run_snapshot_json", runSnapshotJson);
         writeStr("readiness_json", readinessJson);
         H5Sclose(scalar);

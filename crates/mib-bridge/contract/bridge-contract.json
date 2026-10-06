@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 19,
+  "abi_version": 27,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -25,7 +25,8 @@
     "Review": 9,
     "Pump": 10,
     "Autofocus": 11,
-    "PulseGenerator": 12
+    "PulseGenerator": 12,
+    "Stage": 13
   },
   "review_image_datasets": {
     "ValidImage": 0,
@@ -49,7 +50,8 @@
     "Camera": 0,
     "Framegrabber": 1,
     "Nanopositioner": 2,
-    "PulseGenerator": 3
+    "PulseGenerator": 3,
+    "MotionStage": 4
   },
   "discovery_job_states": {
     "Queued": 0,
@@ -84,6 +86,54 @@
     "Overflow": 11,
     "ShuttingDown": 12,
     "TooManyJobs": 13
+  },
+  "registry_session_states": {
+    "SignedOut": 0,
+    "SignedIn": 1,
+    "CachedOffline": 2
+  },
+  "registry_connectivity": {
+    "Unknown": 0,
+    "Online": 1,
+    "Offline": 2,
+    "AuthenticationRequired": 3,
+    "PermissionDenied": 4,
+    "Failed": 5
+  },
+  "registry_job_kinds": {
+    "SignIn": 0,
+    "SignOut": 1,
+    "Refresh": 2,
+    "Download": 3,
+    "Materialize": 4,
+    "RecordValidation": 5,
+    "SaveDraft": 6,
+    "DeleteDraft": 7,
+    "SubmitDraft": 8,
+    "Transition": 9,
+    "FetchHistory": 10
+  },
+  "registry_job_states": {
+    "Queued": 0,
+    "Running": 1,
+    "Succeeded": 2,
+    "Partial": 3,
+    "Failed": 4,
+    "Cancelled": 5
+  },
+  "registry_central_states": {
+    "Submitted": 0,
+    "Approved": 1,
+    "Rejected": 2,
+    "Published": 3,
+    "Superseded": 4,
+    "Archived": 5,
+    "Revoked": 6
+  },
+  "registry_local_validation": {
+    "None": 0,
+    "Passed": 1,
+    "Failed": 2
   },
   "experiment_states": {
     "Idle": 0,
@@ -147,7 +197,9 @@
     "BatchMetrics": 3,
     "MaskRegeneration": 4,
     "Reanalysis": 5,
-    "PumpScan": 6
+    "PumpScan": 6,
+    "StageMove": 7,
+    "StageReference": 8
   },
   "pump_ids": {
     "Sample": 0,
@@ -162,6 +214,16 @@
   "pump_directions": {
     "Infuse": 0,
     "Withdraw": 1
+  },
+  "pump_models": {
+    "DlspSyringe": 0,
+    "TushuiPeristaltic": 1
+  },
+  "stage_move_states": {
+    "Idle": 0,
+    "Moving": 1,
+    "Homing": 2,
+    "Faulted": 3
   },
   "operation_states": {
     "Started": 0,
@@ -459,5 +521,18 @@
     "calibrated_plot": "valid finite rows with known positive analysis-time factor;never rescale old rows by current config",
     "reference_command": "fetch_monitoring_chart_reference -> JSON curves [{modulus,points}],curve_source;shared bundled review/Qt resource;explicit reference conditions"
   },
-  "soft_trigger_camera": "Explicit MindVision camera software exposure trigger; shell requires armed Service mode, native command requires running MindVision camera and idle experiment; no automatic invocation"
+  "pump_connect_model": "pump, model (pump_models), port_name, baud_rate, modbus_address, microliters_per_rev -> CommandResult; either model can fill the Sample or Sheath slot; a peristaltic connect only reads registers 100-107; flow rates (µL/min or mL/min) convert to head speed with microliters_per_rev; out-of-range rates fail; purge runs at 100 rpm and stop restores the flow speed; syringe volume fails for peristaltic; fetch_pump_status adds model, microliters_per_rev, speed_rpm (v22)",
+  "stage_commands": "Z stage (#464, ADR 0013; ZC300 + TBZF6-60, micrometres). Enforced in the backend, not the shell: stage_move_to(target_um) / stage_move_by(delta_um) are refused until the stage was homed in the current controller power-up and outside the soft limits (+/-(span/2 - 100 um)), and need whole micrometres; stage_home is the only path that homes (probes both limit switches, zero at mid-travel) and is refused until a supervised limit-switch check passed for that controller (record written only by the bench tool zc300ctl verify-limits --supervised; no bridge, server or UI path can write it); nothing else homes or moves: stage_connect(port_name, usb_serial, modbus_address) is observe-only (identity, profile check, power-up token), stage_apply_profile only writes and saves controller configuration, discovery kind MotionStage only reads identity (FC04); stage_stop is always accepted, also during an experiment; every other stage command fails while an experiment is not idle. Moves and Home return an operation id (operation_kinds StageMove / StageReference) whose cancel stops the axis. fetch_stage_status -> {valid, enabled, connected, configured, referenced, limits_verified, busy, model, serial, firmware, port_name, move_state (stage_move_states), position_um, limit_positive, limit_negative, home, emergency_stop, driver_alarm, span_um, soft_min_um, soft_max_um, last_error}. On the remote server every stage command except stage_stop and fetch_stage_status is a CONTROL command.",
+  "soft_trigger_camera": "Explicit MindVision camera software exposure trigger; shell requires armed Service mode, native command requires running MindVision camera and idle experiment; no automatic invocation",
+  "camera_alignment": {
+    "set_camera_overview": "overview bool -> CommandResult; MindVision and Aravis cameras; full sensor at the overview preset vs the saved experiment window; stops capture and realtime processing, swaps the frame store (8 frames in overview), restarts a capture that was running; rejected during experiment/recording; experiment readiness fails camera.mode while in overview",
+    "save_camera_roi": "x,y,width,height (sensor coordinates) -> CommandResult; bounds and steps from the camera; MindVision writes its profile, Aravis <data>/config/aravis-camera.json; applies at the next experiment-mode start",
+    "fetch_platform_info": "-> JSON {science: host|pl, host_processing, aravis, capabilities{instrument: desktop|pz7035, autofocus, trigger, host_background, frame_buffer, reanalysis, core_updates, egrabber_script, pl_identity, led_strobe, align_mode, run_mode, pump: null|{model, port, sample_address, sheath_address, microliters_per_rev}}}; science=pl when built with MIB_PL_SCIENCE (PZ7035 PS) or MIB_PL_SCIENCE=1 in the environment: apply_processing with realtime on fails, experiment start does not start the host pipeline, the host pipeline's readiness gates are replaced by science.pl",
+    "set_instrument_mode": "mode (align|run), x, y -> CommandResult; PZ7035 only (#501 P1, v27). Order: LED off and U-Net cell path off; producer staged (align: full field 400 fps / 2299.7 us with PzHmax 232 = HMAX 232 / VMAX 800 / SHS 64, then the producer stopped and whole frames from the bridge preview slots as the live camera (needs expected-core.json feature align_whole_frame_preview and a matching BUILD_ID, results8 on; otherwise the banded fallback 500 fps / 1899.7 us = 116 / 1280 / 64 with the producer streaming); run: 512x96 at x snapped to 8, y to 4, 5000 fps / 150 us = 58 / 256 / 64); capture start (AcquisitionStart applies ROI, timing, S[9], receiver reset); align: LED 100/135 us (bands: 0/125 us); run: capture stopped, cell path on, latency cleared, LED 7/60 us. Refused during an experiment or recording, when the PL is not configured (DEVCFG PCFG_DONE) or not the U-Net cell image. In run, start_capture and set_camera_overview are refused and readiness has instrument.mode instead of the live-camera gates",
+    "set_service_mode": "on bool -> CommandResult; the shell's Service / Commissioning mode latched in the backend (v27)",
+    "set_instrument_led": "delayUs, widthUs -> CommandResult; raw LED, refused unless set_service_mode(true), during an experiment, without a camera mode or outside its limits (run: delay 0-100, width 20-80 us; align: 0-400, 60-150 us; also in fetch_platform_info capabilities.led_limits); the next mode switch restores the preset (v27)",
+    "fetch_run_preview": "-> binary MIBC packet (run mode only, else error RUN_PREVIEW_UNAVAILABLE): 32-byte LE header 'MIBC' | u16 version 1 | u16 header 32 | u32 frame id | u16 width 512 | u16 height 96 | u16 listed | u16 flags | u16 cells | u16 blemishes | u32 dropped | u32 0; then gray (width*height), U-Net mask (width*height/8, 1 bit/px LSB first, row-major), listed x 18 u32 cell words (0-14 unet_cells_v2 payload, 15 = y<<16|x, 16 = h<<16|w, 17 = count<<24|rank<<16|valid); one PL cell capture (S[36]) of a single frame (v27)",
+    "fetch_instrument_status": "-> JSON {available, error?, core{build_id, profile_id, abi_version, science_profile, profile_version, expected: null|{build_id, profile_id, commit, image, abi_major, abi_minor}, pinned_profile_id, build_match, profile_match: match|mismatch|unknown}, led{on, preset: run|align|custom|off, delay_us, width_us, guard_fault, guard_trips}, link{rates_valid, ingress_errors_per_s, resyncs_per_s, bad_frames_per_s, dropped_per_s, ingress_errors_warn_per_s, resyncs_warn_per_s}, latency{last_us, max_us, over_budget, frames}}; read-only (#501); available=false off the PZ7035 or when the PL bridge is not loaded; build_match is unknown without /etc/yofo/expected-core.json; profile_match compares PROFILE_ID with the pinned unet-c4-multiline-v1 weights; v27: mode{name: align|run|unknown, run_x, run_y, service, align_source: bridge|bands|\"\"} and storage{path, writable, ram, free_bytes, filesystem, warning} (recording target of the data dir; ram = tmpfs/ramfs, warning = \"Recording to RAM: lost on power-off. Copy data off before shutdown. <N> GB free.\" or \"\")",
+    "fetch_camera_geometry": "-> JSON {supported, overview, camera, sensor_width, sensor_height, roi{x,y,width,height}, width/height/offset_x/offset_y_increment, min_width, min_height, session{...}}; session is the last Aravis read-back (rate, limit, bands, delivered rate)"
+  }
 }

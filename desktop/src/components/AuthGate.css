@@ -1,0 +1,15 @@
+.auth-gate {
+  box-sizing: border-box;
+  max-width: 28rem;
+  margin: 4rem auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.auth-gate label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}

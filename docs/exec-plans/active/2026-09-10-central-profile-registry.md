@@ -52,14 +52,40 @@ freeze exact revision identity/content into historical runs.
   member projects (`registry_list_projects`), offline reopen of the last user's cache.
 - [ ] M1: refresh-token persistence in the OS keychain (shell-owned seam) so a
   restart does not require a password; today a restart is CachedOffline until sign-in.
-- [ ] M1: shared backend snapshots/commands through BackendFacade and Rust bridge;
-  Qt and React method discovery/details showing separate central/cache states.
-- [ ] M2: authoritative selected/applied/verified method aggregate; compatibility
-  validator tied to real core/camera/calibration context; explicit update selection.
-- [ ] M2: Start readiness binds revision/hash and local execution permission;
-  exact canonical content + identities frozen into HDF5 without network lookup.
-- [ ] M2: hardware/mock run continues unchanged during update and registry outage;
-  reopen historical HDF5 proves exact revision independently of the registry.
+- [~] M1 (Qt): a Settings → Central Methods… dialog was built (#475) and dropped
+  unmerged: ADR 0011 makes Qt fixes-only, so the registry UI is React/Tauri only.
+  The shared fake Supabase it introduced (`tests/support/fake_supabase.h`) stays.
+- [x] M1 (bridge + React): `BackendFacade` registry commands/snapshot, bridge ABI
+  24 (`registry_*` contract groups, `set_registry_transport` with polled cancel
+  handles), Tauri `ureq` HTTPS transport (desktop-only `registry` module), React
+  Central Methods panel over a pure view model.
+- [x] M2a (backend): instrument identity (UUID + name); worker Materialize and
+  RecordValidation jobs; the applied config.json matched to a cached revision by
+  canonical config hash; `method.revision` gate (unvalidated → Warn, validated
+  here → Pass, revoked/not published → Fail) bound into the readiness
+  generation; exact revision, content hash, validation and evidence hash frozen
+  into `/run_provenance` (schema v2) with no network lookup.
+- [x] M2b: "Mark validated" in React (evidence must be a run of that revision
+  on this instrument/context) and Materialize; bridge
+  `registry_materialize` / `registry_record_validation` /
+  `registry_local_validation`. The readiness panels list `method.revision` like
+  any gate. A Qt Apply (exact bytes through `AppConfigWatcher`, with a backup)
+  was built and dropped with the Qt UI (ADR 0011).
+- [ ] M2: Apply in the React shell (needs a backend config.json applier; the
+  shell edits the processing-config document today).
+- [ ] M2: compatibility validator against declared hardware compatibility and
+  calibration context; camera script compared as well as config.json; explicit
+  update selection when a newer revision is published.
+- [ ] M2: hardware run continues unchanged during update and registry outage
+  (mock-run and HDF5 reopen are covered by `e2e.method_gate`; hardware not yet).
+- [x] M3a (backend): Supabase authoring RPCs (create method, immutable release
+  notes, method heads, revision history) with PGlite tests; local drafts; submit
+  with a pre-submit base-vs-head check that stops with a compared conflict and an
+  explicit branch option; independent review / publish / archive / revoke with
+  reasons; history; update-available helper. `profiles.registry_authoring`.
+- [ ] M3b: authoring/review UI in Qt and React (drafts, submit, conflict
+  compare / branch / new draft from head / discard, review actions by role,
+  release notes, history, update-available badge) and the bridge surface.
 - [ ] M3: local drafts, authoring/submission UI, conflict comparison/branch handling,
   release notes and review/publication management UI.
 - [ ] M4: operator execution entitlements, project distribution, role management,
@@ -90,6 +116,54 @@ freeze exact revision identity/content into historical runs.
   Tests: `profiles.registry_worker`, `profiles.registry_backend` (hung registry
   vs running mock capture; shutdown abort), `frontend.registry_http_transport`;
   all three behaviour mutations of the worker were caught; TSan clean (3 repeats).
+
+- 2026-10-04 (M1 bridge + React): found and fixed on the way — `BackendFacade::
+  shutdown()` did not stop the registry worker, so a hung registry request outlived
+  facade shutdown (caught by the new `profiles.registry_facade` test); the facade
+  now stops it first. ABI 15 was free on `develop`; the review-scatter plan also
+  names "14 → 15", so whichever lands second takes the next number.
+- 2026-10-05 (renumber): the registry surface was built as a provisional ABI 15 and
+  rode develop's number through the restack. #495 took 23 for the instrument line
+  and #502 took 24 (#501 P0), so the stack is **25** (contract, `shim.cpp`, contract
+  test, generated `bridgeContract.ts`, registry comments): a bump to 24 was first
+  committed (17b08e71), then set to 25 when develop reached 24 (merge commit
+  resolving the ABI lines). 15 and 19-24 are never reused. The Tauri commands moved to `mib-app-commands` on
+  develop; the registry commands stay in the desktop crate (`registry` module)
+  because they need the shell's transport and a sign-in carries a password that must
+  not cross the YOFO Studio WebSocket.
+
+- 2026-10-04 (M2a backend): decisions — (1) operator choices on #398: an
+  unvalidated central revision warns and Start is allowed; validation is an
+  explicit operator confirmation (who = signed-in registry user, when, instrument
+  UUID + context hash, test-run file + SHA-256); a known-revoked revision blocks
+  Start; instrument identity = generated UUID + optional name. (2) The Qt
+  `AppConfigWatcher` stays the applier of config.json, so the backend recognises
+  the applied method by canonical config hash instead of tracking an "applied"
+  flag that could drift from what is really loaded; any local edit makes it a
+  local method. (3) The coordinator reads only the worker's value snapshot
+  (memoized on registry generation), keeping the network and SQLite off the
+  readiness path. (4) A failed local validation warns rather than blocks (not
+  decided on the issue; easy to tighten). (5) Validation needs an authenticated
+  session; the offline cache can materialize but not validate. (6) Context =
+  instrument + core version/SHA + camera source; the free-form camera label is
+  excluded because it is not stable across sessions.
+
+- 2026-10-04 (M2b): decisions — (1) Apply replaces config.json exactly, never
+  merged, because only exact bytes are recognisable as the revision; instrument
+  keys travel with the method, so the confirmation lists every changed key and
+  the old file is backed up. (2) "Mark validated" requires the test run's frozen
+  provenance to name the revision, this instrument and the current context, so
+  a validation cannot be attached to an unrelated file. (3) React Apply stays
+  disabled with the reason instead of approximating it through the
+  processing-config document.
+
+- 2026-10-04 (M3a): decisions — (1) methods are created by authors through an
+  audited, idempotent RPC (M0 left method creation to administrators, which made
+  authoring impossible from the app); (2) release notes are immutable revision
+  metadata outside the content hash; (3) the worker checks the head before
+  submitting so a conflict costs no server write and shows both diffs; the server's
+  own 409 remains the authority; (4) drafts live in the per-user cache, so they
+  follow the registry account, not the instrument.
 
 ## Validation
 

@@ -148,6 +148,7 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `camera.geometry` | no frame received yet | — |
 | `processing.roi` | — | no ROI (full frame) |
 | `processing.core` | pinned core not active | — |
+| `method.revision` (#398 M2) | applied config.json is a cached central revision that is revoked or not published/superseded (`NotRequired` for a local method or no config) | central revision not validated on this instrument/context, a failed local validation, or unknown instrument |
 | `calibration.pixelToMicron` | factor not positive | — |
 | `processing.background` | — | no background image |
 | `trigger.output` | sorting enabled but TriggerService not bound to the running session (`NotRequired` when sorting is off) | — |
@@ -156,7 +157,25 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `lifecycle.fault` | unresolved fault reported | — |
 | `telemetry.transportLoss` | no active session | backend cannot / has not reported transport loss |
 
-## RunConfigurationSnapshot (schema v1)
+## Method provenance (#398 M2)
+
+`candidateLocked` resolves `RunConfigurationSnapshot::method` with the pure
+`resolveMethodProvenance()` (`include/backend/app/MethodProvenance.h`):
+`canonicalConfigSha256(getLastConfigJson())` is matched against the
+`configSha256` of every revision in the registry worker's **value snapshot**
+(no network, no SQLite on the caller's thread), then the newest matching local
+validation for this instrument UUID + `methodContextHash(backend.methodContext())`
++ exact content hash. Several revisions sharing a config: usable state first,
+then validated here, then published over superseded, then newest
+(`matching_revisions` records the count). The result is memoized on (raw
+config sha, registry generation, context hash, instrument name) because
+readiness is polled. `methodInvalidationKey()` is an invalidation input, so
+recording a validation, a revocation reaching the cache, or a core/camera
+change bumps the readiness generation and a stale preflight is refused.
+Policy (operator decisions): unvalidated → Warn (Start allowed); validated
+here → Pass; revoked → Fail (existing runs stay reviewable).
+
+## RunConfigurationSnapshot (schema v2)
 
 Frozen at Start and never mutated: readiness/start/capture generations,
 start times, `CameraSourceInfo` (requested vs effective, simulated,
@@ -164,7 +183,12 @@ fallback + reason), delivery modes, `TimestampDescriptor` text, ROI, frame
 geometry, processing-core identity + pin state, processing config version +
 canonical sha, raw `config.json` sha, profile id, pixel-to-micron factor,
 background presence/generation/sha, trigger requirement/binding, output
-path, realtime mode, application version/build/OS. `runSnapshotToJson()` /
+path, realtime mode, application version/build/OS, and (v2, #398 M2) the
+`method` block: source central/local/none, revision/method/project IDs,
+display name, author, exact content hash, revision number, metadata version,
+central state, matching revisions, instrument UUID + name, context hash,
+validation (passed/failed/none/notApplicable), validator, time, evidence
+test-run SHA-256, registry origin + session. `runSnapshotToJson()` /
 `readinessToJson()` produce the stable-key JSON stored on `/run_provenance`
 (see [[../data-model/HDF5-Storage]]).
 

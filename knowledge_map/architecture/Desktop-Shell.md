@@ -30,9 +30,24 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   toggle + px→µm, review load/scrub); controls whose backend surface is not
   bridged yet render disabled with a tooltip naming the blocking issue
   (BE-2…BE-9, #272–#279) — backend/hardware state is never simulated.
-- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` holds `AppState`
-  (`Mutex<UniquePtr<BackendBridge>>` + a cached last-frame buffer) and the
-  `#[tauri::command]` layer; `main.rs` calls `run()`.
+- `crates/mib-app-commands/` — the transport-neutral command layer (YOFO
+  Studio S5): `AppState` (`Mutex<UniquePtr<BackendBridge>>`), the DTOs, every
+  backend command as a plain function over `&AppState`, the event JSON and
+  frame-packet encoders, and `dispatch::dispatch(state, host, name, args)` for
+  non-Tauri transports (camelCase argument keys, exactly what `invoke` sends;
+  `Reply::Json` or `Reply::Binary`). `dispatch::tests` asserts every Tauri
+  command except the desktop-only ones is dispatchable.
+- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` exposes the shared
+  commands as typed one-line `#[tauri::command]` shims and keeps the
+  desktop-only pieces (app paths, preferences, updater, installers);
+  `main.rs` calls `run()`.
+- `desktop/src/review/` + `review.html` — **YOFO Review**, the standalone
+  review app built from this tree: the binary without the default `studio`
+  feature (`--no-default-features --features review-only`; `main.rs` →
+  `src-tauri/src/review_app.rs`, config overlay `tauri.review.conf.json`,
+  `npm run tauri:review:build`). It holds only the review bridge; MIB
+  Studio's Review tab keeps its own components and commands (ADR 0014,
+  decision A). See [[../frontend/YofoReview]].
 - `desktop/scripts/xvfb-smoke.sh` — headless GUI smoke launcher.
 - `desktop/src/workflow.ts` — pure guided-workflow stage derivation (UX-1),
   with `desktop/src/workflow.test.ts` vitest coverage.
@@ -120,15 +135,117 @@ manifests fail-closed (SHA-256 pinning, unit tested). Native open-URL /
 reveal-in-dir actions go through `tauri-plugin-opener`, capability-scoped to
 `https://**` and directory reveals only.
 
+## Remote server (YOFO Studio)
+
+`crates/mib-bridge-server` (`yofo-studio-server`) runs the same command layer
+in a headless process for a browser UI, e.g. on the PZ7035 PS (ADR 0008, impl
+spec S5). Protocol on `/ws`, token on the upgrade (`?token=` or
+`Authorization: Bearer`, from `/etc/yofo-studio/token`; `--no-token` only on
+loopback):
+
+- request `{"request_id", "cmd", "args"}` with the `invoke` name and camelCase
+  arguments; reply `{"request_id", "ok"}` / `{"request_id", "error"}`;
+- binary replies: 8-byte little-endian request id, then the unchanged bytes
+  (MIBF frame packets); frames stay client-pulled;
+- events: the server alone drains the backend queue every 20 ms and pushes
+  `{"event": EventEnvelope}` to every client; `poll_events_exact` from a client
+  fails with `SERVER_OWNS_EVENTS` (two pollers would steal each other's
+  events). Live frames emit no FrameReady (they are pulled);
+- `init` is idempotent; commands of one connection run in order, each on a
+  blocking thread;
+- client loss: pings every 2 s, a connection silent for 5 s is dropped; when
+  the last client has been gone for 5 s the server stops and saves (active
+  experiment -> `experiment_stop`, raw recording -> `stop_recording`; capture
+  keeps running). The desktop close guard refuses to close instead; a remote
+  operator who lost the link cannot see the run. SIGTERM does the same, then
+  shuts the backend down. `/healthz` reports clients and passes.
+
+The desktop-only platform commands (`app_paths`, `get_preferences`,
+`set_preferences`, `shell_log`) are answered from the server's data
+directory (`config/preferences.json`, `logs/remote-shell.log`), shared by all
+clients.
+
+**Frontend transport.** Every call site imports `invoke` from
+`desktop/src/transport` instead of `@tauri-apps/api/core`: inside Tauri it is
+Tauri IPC, in a browser `wsTransport` (socket at `/ws` of the page origin, or
+`?server=`; token from `?token=`; `VITE_MIB_TRANSPORT=tauri|ws` forces one;
+unit tests use the mocked Tauri API). `wsTransport` returns binary replies as
+`ArrayBuffer` like Tauri, answers `poll_events_exact` from the pushed
+envelopes (so the event loop is unchanged), reconnects on the next call and
+rejects calls in flight with `TRANSPORT_LOST`. `transport/dialogs` replaces the
+dialog/opener plugins: native in Tauri, prompts for instrument paths and
+`window.open` in a browser. In a browser the close guard only warns on
+`beforeunload` (the server owns stop-and-save) and the installer updater is
+hidden. Verified in headless Chromium: the full UI, live mock frames at 30 fps
+over the socket.
+
+**One controller.** The first client controls the instrument; others are
+viewers whose instrument-changing commands (`CONTROL_COMMANDS` in the server)
+fail with `VIEWER_ONLY`. `take_control` claims control; it passes to the
+oldest remaining client when the controller disconnects. Every client gets
+`{"session": {"client_id", "controller_id"}}` on connect and on each change.
+Test: `one_client_controls_the_instrument`.
+
+**Packaging.** `scripts/yofo/stage_image.sh` builds the ARMv7 backend, the
+server and the UI and stages them for pz7035-imx426's `yofo-studio` recipe
+(meta-yofo), which installs `/usr/bin/yofo-studio-server`,
+`/usr/share/yofo-studio/dist` and `yofo-studio.service` (port 8427, token
+generated on first boot in `/etc/yofo-studio/token`, data in
+`/var/lib/yofo-studio`). The backend is not built by BitBake because it needs
+the SDK of the same image.
+
+**Science on the PL.** After `init` the UI reads `fetch_platform_info`; with
+`host_processing` false the realtime switch, backgrounds, calibration and the
+processed preview are hidden and the sidebar says processing runs on the PL
+(ABI 21, [[Rust-Bridge]]).
+
+On the PZ7035 PS (2026-10-01): the ARMv7 server with `MIB_CAMERA_MODE=aravis`,
+`MIB_ARAVIS_FPS=1000`, `MIB_ARAVIS_EXPOSURE_US=900` served the UI to a browser
+on the bench PC, which showed live lit 512x96 IMX426 previews at the UI's
+30 fps pull rate. Server footprint: ~2 % CPU and 12-15 MiB RSS idle; with
+capture running ~90 % CPU (the backend takes every preview the producer
+delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
+(desktop-sized buffers; a target profile is open in impl spec S6).
+
+`desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
+capture over the socket, wrong token refused, client loss and quick reconnect).
+
+## Camera & Alignment (Qt Overview parity)
+
+With a camera that has an overview (MindVision, Aravis/PZ7035), entering the
+Camera & Alignment tab calls `set_camera_overview(true)` and entering
+Experiment `set_camera_overview(false)`, as Qt's tab change does; other tabs
+leave the camera alone and nothing changes during a run. The tab then shows
+the whole sensor with the experiment window as a yellow box (drag to move;
+release saves, as Qt saves on move) and X/Y/W/H fields with "Save camera ROI";
+`cameraAlignment.ts` snaps to the camera's steps and states "Sensor N Hz (max,
+limit) -> >= M images/s here (limit, bands)". For other cameras the fields keep
+setting the processing ROI. Verified on the PZ7035 through the browser:
+816x624 lit overview, window dragged to (232, 356) and saved, Experiment
+showed that 512x96 window. The browser shows the full field at ~26 fps (all
+the producer delivers at the 830 Hz preset) and the preview at the 30 fps
+display rate. Before `bytes_to_vec` (see [[Rust-Bridge]]) the full field was
+held at ~10 fps by per-byte frame copies in the bridge.
+`vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
+`src-tauri/target`'s cxx symlink loop hung `vitest run`.
+
 ## Command layer
 
-Thin wrappers over the bridge (all take the managed `AppState`):
+Thin wrappers over the bridge (all take the managed `AppState`; bodies in
+`crates/mib-app-commands`, Tauri shims in `desktop/src-tauri/src/lib.rs`):
 
 - **Live capture:** existing lifecycle commands remain serialized through
   `AppState.bridge`. `fetch_frame_packet` returns one owned binary response.
 - **Recording/review:** `fetch_indexed_frame_packet(frame_index)` and
   `fetch_review_frame_packet(dataset,index)` accept canonical decimal-string
   indices. `fetch_background_packet` uses the same codec.
+- **Review (ADR 0014):** `src-tauri/src/review.rs` — `review_open/close`,
+  `fetch_review_info/rows/frame/series_*/thumbnails_packet/scatter`,
+  `review_save_core_record`, `poll_review_events`, `cancel_review_operation`
+  over the review bridge ([[Rust-Bridge]]); the only commands the
+  `review-only` build registers besides `init`/`is_initialized`/
+  `abi_version` (review-bridge versions) and `platform::*`. Backend-bridge
+  commands are `#[cfg(not(feature = "review-only"))]`.
 - **Compatibility:** old split-cache commands return
   `FRAME_PROTOCOL_UPGRADE_REQUIRED`; they cannot return a substitute image.
   C++ ABI 11 is unchanged; desktop frame wire protocol v1 is independently
@@ -156,7 +273,11 @@ explicit backend prerequisites and executed versus pending evidence.
 ## Build & run
 
 - Frontend: `npm install && npm run build` in `desktop/` → `desktop/dist`
-  (Tauri's `frontendDist`). `tsc` typechecks under strict mode.
+  (Tauri's `frontendDist`): two pages, `index.html` (MIB Studio) and
+  `review.html` (YOFO Review). `tsc` typechecks under strict mode.
+- Version: `tauri.conf.json` and `package.json` carry the repository
+  version, stamped by `scripts/release/stamp-tauri-version.py` from
+  `cmake/MIBVersion.cmake` (`--check` runs in `review-ci.yml`).
 - App: `cargo build` in `desktop/src-tauri` (needs `dist/` to exist — Tauri
   validates `frontendDist` at compile time). Links the bridge via
   `MIB_BRIDGE_NO_CMAKE=1` when the archives are prebuilt.
@@ -226,6 +347,37 @@ completion / gate-status values; `bridge.ts` exposes
 `fetchExperimentReadiness`. Guards: `eventAdapter.test.ts` (golden decode
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
+
+## Central profile registry (ABI 25, issue #398)
+
+**Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
+sign in/out, refresh (also on open when signed in), cancel, and the cached
+revisions with each central state shown as itself. All wording and enablement
+come from the pure `desktop/src/registry.ts` view model (vitest
+`registry.test.ts`). The panel polls
+`fetch_registry_snapshot` every 250 ms only while open and re-renders on a
+generation/busy change; the password field is cleared on submit. The HTTPS
+transport is `src-tauri/src/registry_transport.rs` (`ureq` + rustls with the
+platform verifier; HTTPS only, no redirects, global timeout, response cap,
+CR/LF header refusal, helper thread so a cancel returns at once, never panics
+across the FFI), installed with `set_registry_transport` when `AppState` is
+built — before the UI's `init`. Enabled by the same
+`MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY` environment as the backend
+worker. The registry commands live in the desktop crate's `registry` module
+(`src-tauri/src/registry.rs`), not in `mib-app-commands`: they need the shell's
+transport, and a sign-in carries a password that must not cross the YOFO Studio
+WebSocket. `dispatch::tests::every_command_is_dispatchable` exempts `registry::`
+commands for that reason.
+
+#398 M2b: rows are selectable and show local validation on this instrument
+(`local_validation`, contract `registry_local_validation`) and the instrument
+label. **Materialize** (`registry_materialize`) and **Mark validated… /
+Record failed run…** (`@tauri-apps/plugin-dialog` picker →
+`registry_record_validation`; the backend refusal is shown) work.
+**Apply…** is rendered disabled with `APPLY_UNAVAILABLE`: the React shell has
+no config.json applier (it edits the processing-config document instead), so
+it cannot load a method exactly — a follow-up.
+
 
 ## September 23 catch-up: camera setup
 
@@ -438,6 +590,75 @@ remain active. Shell statistics polling is independent of a possibly stale UI dr
 of the realtime-enabled toggle. Raw MIBF v2 acquisition/store epochs require bridge
 ABI 18; processed preview recipe identity remains separately scoped.
 
+## PZ7035 instrument surfaces (#501 P0a, 2026-10-05)
+
+The UI follows `fetch_platform_info` `capabilities` (`platformCapabilities.ts`;
+a server without them is the MIB desktop). On the PZ7035:
+
+- **Hidden:** host background, autofocus/nanopositioner (sidebar and
+  Hardware), framegrabbers and the EGrabber camera script, MindVision, the live
+  frame buffer, core updates, HDF reanalysis and the pulse generator.
+- **Pumps:** default to the instrument's two peristaltic pumps on
+  `/dev/ttyPS1`: Sample at Modbus address 3, Sheath at 4, 25 µL/rev
+  (confirmed on the bench 2026-10-05). Infuse turns the heads
+  counter-clockwise.
+- **Sidebar:** gains "PL core": build, weights, LED and latency max.
+- **Preflight** (`preflight.ts`) replaces the host core pin with:
+  - **PL core** (build vs `expected-core.json`, weights vs the pin);
+  - **Sensor link**: warn above 10 ingress errors/s or 1 resync/s;
+  - **LED strobe**: a guard trip fails.
+
+  Autofocus and trigger read "not on this instrument". The quality gates
+  keep only calibration until the image focus metric (P0b). A healthy
+  instrument at idle shows 0 warnings (`preflightPz7035.test.ts`).
+- **Token prompt** (`components/AuthGate.tsx`, `transport/auth.ts`): in a
+  browser the app mounts only after `GET /auth` accepts the token, taken
+  from `?token=` or typed once into sessionStorage. Otherwise it shows a
+  prompt or "unreachable". The socket URL is read when it opens, so a typed
+  token counts.
+
+## PZ7035 Align and Run (#501 P1, 2026-10-05)
+
+With `capabilities.align_mode` and `run_mode` set, tab changes drive the
+backend's camera modes instead of `set_camera_overview`:
+
+- **Opening a tab switches the mode.** Camera & Alignment means Align: the
+  full sensor at 400 fps, shown as whole frames from the PL bridge (results8
+  on, LED 100/135 µs) or as the producer's bands on older images (LED
+  0/125 µs). Status `mode.align_source` tells which. Experiment means Run at the
+  window placed there: 512×96, x on 8 and y on 4 (`snapRunWindow`), LED
+  7/60 µs, the U-Net on.
+- **Placing the window.** Dragging only moves it. The switch to Run applies
+  and saves it.
+- **Run preview.** In Run the live camera is stopped. The Experiment preview
+  polls `fetch_run_preview` every 100 ms (`runPreview.ts`) and draws the PL
+  gray frame with the U-Net mask tinted (toggle) and the listed cells' boxes
+  (valid green, invalid red). A status line shows the frame, listed cells,
+  cells, blemishes and the latency max.
+- **Service mode.** It also sets the backend latch (`set_service_mode`). In
+  it, `InstrumentLedControls` adjusts delay/width (±0.5 µs width steps,
+  clamped to the limits) or restores the preset. The next mode switch
+  restores the preset anyway.
+
+**Recording to RAM (#501).** `fetch_instrument_status.storage.warning` feeds
+three places:
+- the preflight Storage check (a warning, not a failure);
+- the context bar's Storage segment ("RAM");
+- a status note after Start Experiment, from the readiness gate
+  `storage.persistent`.
+
+None of them blocks a run. Desktop builds are unchanged.
+
+## Pump model per slot (2026-10-04)
+
+The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
+field (µL per revolution, default 25), pre-fills the instrument endpoint
+`/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe
+volume controls and shows head rpm and the estimated delivered volume.
+Connect goes through `pump_connect_model` (ABI 22, [[Rust-Bridge]]), which the
+WebSocket server allows for the controlling client.
+
 ## Remembered discovery and named pump endpoints (2026-09-23)
 
 Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.
@@ -521,3 +742,51 @@ The root Conan recipe defaults `with_qt=True` to preserve Qt builds. The Windows
 ### Portable camera-document Save As
 
 Camera editors stage bounded validated content in a randomized `tempfile::NamedTempFile` in the destination directory, sync file data, then use `persist_noclobber` for Save As. The maintained tempfile implementation uses non-replacing `MoveFileExW` on Windows (including filesystems without hard links) and native no-replace rename where supported on Unix; unavailable safe publication remains an error rather than an overwrite fallback. Existing Save retains its revision recheck and file permissions before replacement. RAII removes staging files on failure. Tests cover exact Unicode/revision roundtrip, existing file/directory conflicts, concurrent creators, bounded input and legacy staging-name collisions. Removable-media hardware/mount testing is not claimed.
+
+## Z stage panel (#464, slice 5)
+
+`StageControls` (`desktop/src/components/StageControls.tsx`, pure rules in
+`stageControlModel.ts`) sits under the pump and autofocus panel on the
+Connect tab. It uses only the `stage_*` commands and `fetch_stage_status` from
+[[Rust-Bridge]] (ABI 26), so it needs no bridge change. It is hidden on the
+PZ7035 until that board has a serial path for the stage. The service rules are
+in [[../services/StageService]].
+
+**The panel mirrors the backend rules; it does not replace them.** A disabled
+button is a courtesy, not a safety gate, and the reason for every disabled
+control is shown.
+- **Position is shown as unknown until Home**, together with the controller
+  counter. The counter is only a position once the stage has been homed.
+- **Moves need a homed stage.**
+  - Targets are whole micrometres.
+  - They are pre-checked against the soft limits, which are also enforced in
+    the backend.
+- **Home is disabled until the controller's limit switches were verified.**
+  The reason names `zc300ctl verify-limits --supervised`; nothing in the app
+  can record that check.
+  - Pressing Home first shows a warning (full 6 mm travel, focus position
+    lost) and a "the full travel is clear" checkbox.
+  - Home then needs Service mode and arming like the pumps.
+- **Arming is one-shot**, consumed only when a move or Home is actually sent.
+  A rejected input (a mistyped target, a target past a soft limit) keeps the
+  arming.
+- **Stop is always enabled and fires while the backend is ready.**
+  - It does not use the panel's command lock, so a pending command cannot
+    hold it.
+  - It works with unreadable status, in operator mode and during an
+    experiment.
+- **Everything else is locked while an experiment is active.**
+  Disconnect is allowed while a move runs: the backend stops the axis first.
+  Apply stage settings is not, and is refused at once with `Busy`.
+- **Status refresh** is 1 s, or 250 ms while something moves.
+- **Endpoint discovery** needs an explicit serial port and looks for kind
+  `MotionStage` with an address scope. Selecting a result fills the fields
+  and never connects.
+
+**Open follow-up:** relax the one-shot arming for small jogs only after the
+first supervised session. The candidate is a jog-only arm window (about 30 s,
+small whole-micrometre steps, homed and limits verified, any other action or
+Stop disarms).
+
+Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
+(panel behaviour with a mocked bridge).

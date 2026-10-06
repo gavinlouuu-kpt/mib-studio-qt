@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import {invoke} from "./transport";
+import {open} from "./transport/dialogs";
 import { useEffect, useRef, useState } from "react";
 import { ProfileCatalogPanel, useProfileCatalog } from "./profileCatalog";
 import { configDocument } from "./configDocument";
@@ -47,7 +47,7 @@ export function useProfiles({ready,active,resume=false,append,onOpen,onApplied}:
 }
 export function ProfilesPanel({model:m}:{model:ReturnType<typeof useProfiles>}) {
   return <section aria-label="Local profiles"><h5>Local configuration profiles</h5>
-    <p>Choose an existing Qt profiles folder or a new local folder. Saving creates a new profile; existing profiles are never silently overwritten.</p>
+    <p>Choose an existing profiles folder (including one from MIB Studio Qt) or a new local folder. Saving creates a new profile; existing profiles are never silently overwritten.</p>
     <div className="toolbar"><button disabled={m.blocked} onClick={()=>void m.run("choose")}>Choose Profiles Folder…</button><button disabled={m.blocked||!m.base} onClick={()=>void m.run("list")}>Refresh Profiles</button><button disabled={m.blocked} onClick={()=>void m.run("import")}>Import Config to Draft…</button></div>
     <p className="mono">{m.base||"No profile folder selected"}</p><p>Runtime profile: {m.activeProfile?`${m.activeProfile.profile_id??m.activeProfile.name} · ${m.activeProfile.revision.slice(0,12)}`:"none applied"}</p>
     <select aria-label="Profile" disabled={m.blocked||!m.base} value={m.selected?.name??""} onChange={e=>{const p=m.profiles.find(p=>p.name===e.target.value);if(p)void m.run("read",p);}}><option value="">Select profile…</option>{m.profiles.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}</select>

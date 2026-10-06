@@ -8,8 +8,11 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/app/MethodApply.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/SyringePumpService.h"
+#include "backend/stage/StageTypes.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -18,6 +21,9 @@
 #include <windows.h>
 #endif
 #include <algorithm>
+#include <map>
+#include <functional>
+#include <atomic>
 #include <cstdlib>
 #include <deque>
 #include <mutex>
@@ -65,6 +71,15 @@ static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Trigger) == 8);
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Review) == 9);
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Pump) == 10);
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Autofocus) == 11);
+static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::PulseGenerator) == 12);
+// Z stage (#464, ADR 0013).
+static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Stage) == 13);
+static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageMove) == 7);
+static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageReference) == 8);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Idle) == 0);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Moving) == 1);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Homing) == 2);
+static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Faulted) == 3);
 
 static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::PumpScan) == 6);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpId::Sample) == 0);
@@ -73,6 +88,8 @@ static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::RunStatus::Pause) == 3);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::Direction::Infuse) == 0);
 static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::Direction::Withdraw) == 1);
+static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpModel::DlspSyringe) == 0);
+static_assert(static_cast<std::uint32_t>(backend::services::SyringePumpService::PumpModel::TushuiPeristaltic) == 1);
 
 static_assert(static_cast<std::uint32_t>(bb::ReviewImageDataset::ValidImage) == 0);
 static_assert(static_cast<std::uint32_t>(bb::ReviewImageDataset::InvalidImage) == 1);
@@ -88,6 +105,7 @@ static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Camera) == 0);
 static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Framegrabber) == 1);
 static_assert(static_cast<std::uint32_t>(bd::DeviceKind::Nanopositioner) == 2);
 static_assert(static_cast<std::uint32_t>(bd::DeviceKind::PulseGenerator) == 3);
+static_assert(static_cast<std::uint32_t>(bd::DeviceKind::MotionStage) == 4);
 static_assert(static_cast<std::uint32_t>(bd::JobState::Queued) == 0);
 static_assert(static_cast<std::uint32_t>(bd::JobState::Running) == 1);
 static_assert(static_cast<std::uint32_t>(bd::JobState::Completed) == 2);
@@ -114,6 +132,46 @@ static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Cancelled) == 10);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::Overflow) == 11);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::ShuttingDown) == 12);
 static_assert(static_cast<std::uint32_t>(bd::ErrorKind::TooManyJobs) == 13);
+// ABI 25 (#398): central profile registry groups.
+namespace bp = backend::profiles;
+using RegistrySession = bp::RegistryWorkerSnapshot::Session;
+using RegistryConnectivity = bp::RegistryHealth::Connectivity;
+static_assert(static_cast<std::uint32_t>(RegistrySession::SignedOut) == 0);
+static_assert(static_cast<std::uint32_t>(RegistrySession::SignedIn) == 1);
+static_assert(static_cast<std::uint32_t>(RegistrySession::CachedOffline) == 2);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Unknown) == 0);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Online) == 1);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Offline) == 2);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::AuthenticationRequired) == 3);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::PermissionDenied) == 4);
+static_assert(static_cast<std::uint32_t>(RegistryConnectivity::Failed) == 5);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SignIn) == 0);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SignOut) == 1);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Refresh) == 2);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Download) == 3);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Materialize) == 4);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::RecordValidation) == 5);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SaveDraft) == 6);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::DeleteDraft) == 7);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SubmitDraft) == 8);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Transition) == 9);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::FetchHistory) == 10);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Queued) == 0);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Running) == 1);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Succeeded) == 2);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Partial) == 3);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Failed) == 4);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Cancelled) == 5);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Submitted) == 0);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Approved) == 1);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Rejected) == 2);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Published) == 3);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Superseded) == 4);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Archived) == 5);
+static_assert(static_cast<std::uint32_t>(bp::CentralState::Revoked) == 6);
+static_assert(static_cast<std::uint32_t>(backend::app::LocalValidationState::None) == 0);
+static_assert(static_cast<std::uint32_t>(backend::app::LocalValidationState::Passed) == 1);
+static_assert(static_cast<std::uint32_t>(backend::app::LocalValidationState::Failed) == 2);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::None) == 0);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Mock) == 1);
 static_assert(static_cast<std::uint32_t>(backend::AppBackend::CameraSelectionSnapshot::Mode::Hardware) == 2);
@@ -168,6 +226,13 @@ static_assert(static_cast<std::uint32_t>(bb::BackendOperationState::TimedOut) ==
 
 std::string toStd(rust::Str s) { return std::string(s.data(), s.size()); }
 
+// One FFI call per buffer: rust::Vec::push_back crosses the bridge per byte.
+template <typename Bytes>
+rust::Vec<std::uint8_t> bytesToVec(const Bytes& bytes) {
+    return bytes_to_vec(rust::Slice<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
+}
+
 BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     BridgeFrame out{};
     out.valid = true;
@@ -179,10 +244,7 @@ BridgeFrame toBridgeFrame(const backend::bridge::BackendFrame& frame) {
     out.height = frame.height;
     out.pixel_format = frame.pixelFormat;
     out.stride_bytes = static_cast<std::uint64_t>(frame.strideBytes);
-    out.data.reserve(frame.data.size());
-    for (std::uint8_t byte : frame.data) {
-        out.data.push_back(byte);
-    }
+    out.data = bytesToVec(frame.data);
     return out;
 }
 
@@ -746,6 +808,12 @@ BridgeMonitoringRow toMonitoringRow(const backend::bridge::MonitoringObjectRow& 
 
 namespace {
 
+backend::bridge::StageCommand makeStageCommand(backend::bridge::StageCommandAction action) {
+    backend::bridge::StageCommand cmd;
+    cmd.action = action;
+    return cmd;
+}
+
 backend::bridge::PumpCommand makePumpCommand(backend::bridge::PumpCommandAction action,
                                              std::uint32_t pump) {
     backend::bridge::PumpCommand cmd;
@@ -916,6 +984,23 @@ BridgeCommandResult BackendBridge::pump_connect_endpoint(std::uint32_t pump, rus
     }
 }
 
+BridgeCommandResult BackendBridge::pump_connect_model(std::uint32_t pump, std::uint32_t model,
+                                                      rust::Str port_name, std::int32_t baud_rate,
+                                                      std::int32_t modbus_address,
+                                                      double microliters_per_rev) {
+    try {
+        auto cmd = makePumpCommand(backend::bridge::PumpCommandAction::Connect, pump);
+        cmd.model = static_cast<int>(std::min<std::uint32_t>(model, 0x7fffffff));
+        cmd.portName = toStd(port_name);
+        cmd.baudRate = baud_rate;
+        cmd.modbusAddress = modbus_address;
+        cmd.microlitersPerRev = microliters_per_rev;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& error) {
+        return errorResult(std::string("pump_connect_model: ") + error.what());
+    }
+}
+
 BridgeCommandResult BackendBridge::pump_connect(std::uint32_t pump, std::int32_t com_port,
                                                 std::int32_t baud_rate,
                                                 std::int32_t modbus_address) {
@@ -1041,6 +1126,92 @@ BridgeCommandResult BackendBridge::pump_poll_status(std::uint32_t pump) {
     }
 }
 
+// ---- Z stage (#464, ADR 0013) ----
+
+namespace {
+BridgeCommandResult dispatchStage(backend::bridge::BackendFacade& facade,
+                                  const backend::bridge::StageCommand& cmd, const char* name) {
+    try {
+        return toBridgeResult(facade.dispatch(cmd));
+    } catch (const std::exception& e) {
+        return errorResult(std::string(name) + ": " + e.what());
+    } catch (...) {
+        return errorResult(std::string(name) + ": unknown error");
+    }
+}
+} // namespace
+
+BridgeCommandResult BackendBridge::stage_connect(rust::Str port_name, rust::Str usb_serial,
+                                                 std::int32_t modbus_address) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::Connect);
+    cmd.portName = toStd(port_name);
+    cmd.usbSerial = toStd(usb_serial);
+    cmd.modbusAddress = modbus_address;
+    return dispatchStage(impl_->facade, cmd, "stage_connect");
+}
+
+BridgeCommandResult BackendBridge::stage_disconnect() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Disconnect),
+                         "stage_disconnect");
+}
+
+BridgeCommandResult BackendBridge::stage_move_to(double target_um) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::MoveTo);
+    cmd.targetUm = target_um;
+    return dispatchStage(impl_->facade, cmd, "stage_move_to");
+}
+
+BridgeCommandResult BackendBridge::stage_move_by(double delta_um) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::MoveBy);
+    cmd.targetUm = delta_um;
+    return dispatchStage(impl_->facade, cmd, "stage_move_by");
+}
+
+BridgeCommandResult BackendBridge::stage_home() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Home), "stage_home");
+}
+
+BridgeCommandResult BackendBridge::stage_stop() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Stop), "stage_stop");
+}
+
+BridgeCommandResult BackendBridge::stage_apply_profile() {
+    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::ApplyProfile),
+                         "stage_apply_profile");
+}
+
+BridgeStageStatus BackendBridge::fetch_stage_status() {
+    BridgeStageStatus out{};
+    backend::bridge::BackendStageStatus status;
+    if (!impl_->facade.fetchStageStatus(status)) {
+        out.valid = false;
+        return out;
+    }
+    out.valid = true;
+    out.enabled = status.enabled;
+    out.connected = status.connected;
+    out.configured = status.configured;
+    out.referenced = status.referenced;
+    out.limits_verified = status.limitsVerified;
+    out.busy = status.busy;
+    out.model = status.model;
+    out.serial = status.serial;
+    out.firmware = status.firmware;
+    out.port_name = status.portName;
+    out.move_state = static_cast<std::uint32_t>(status.moveState);
+    out.position_um = status.positionUm;
+    out.limit_positive = status.limitPositive;
+    out.limit_negative = status.limitNegative;
+    out.home = status.home;
+    out.emergency_stop = status.emergencyStop;
+    out.driver_alarm = status.driverAlarm;
+    out.span_um = status.spanUm;
+    out.soft_min_um = status.softMinUm;
+    out.soft_max_um = status.softMaxUm;
+    out.last_error = status.lastError;
+    return out;
+}
+
 BridgePumpStatus BackendBridge::fetch_pump_status(std::uint32_t pump) {
     BridgePumpStatus out{};
     backend::bridge::BackendPumpStatus status;
@@ -1063,6 +1234,9 @@ BridgePumpStatus BackendBridge::fetch_pump_status(std::uint32_t pump) {
     out.configured_flow_rate = status.configuredFlowRate;
     out.flow_rate_unit = status.flowRateUnit;
     out.direction = static_cast<std::uint32_t>(status.direction);
+    out.model = static_cast<std::uint32_t>(status.model);
+    out.microliters_per_rev = status.microlitersPerRev;
+    out.speed_rpm = status.speedRpm;
     return out;
 }
 
@@ -1155,11 +1329,7 @@ void BackendBridge::set_processed_preview_enabled(bool enabled) {
 }
 rust::Vec<std::uint8_t> BackendBridge::fetch_processed_preview() {
     const auto bytes = impl_->facade.fetchProcessedPreviewPacket();
-    rust::Vec<std::uint8_t> out;
-    out.reserve(bytes.size());
-    for (const auto byte : bytes)
-        out.push_back(byte);
-    return out;
+    return bytesToVec(bytes);
 }
 
 BridgeCommandResult BackendBridge::background_calibration_command(rust::Str json) { return toBridgeResult(impl_->facade.backgroundCalibrationCommandJson(toStd(json))); }
@@ -1180,9 +1350,8 @@ rust::String BackendBridge::pulse_generator_status() {
     return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
 }
 rust::Vec<uint8_t> BackendBridge::render_review_overlay(rust::Str json) {
-    rust::Vec<uint8_t> output;
-    try {for(const auto byte:impl_->facade.renderReviewOverlayJson(toStd(json)))output.push_back(byte);}catch(const std::exception&) {}
-    return output;
+    try {return bytesToVec(impl_->facade.renderReviewOverlayJson(toStd(json)));}catch(const std::exception&) {}
+    return {};
 }
 
 BridgeFrame BackendBridge::fetch_review_reanalysis_preview(rust::Str json) {
@@ -1397,6 +1566,199 @@ bool BackendBridge::cancel_device_discovery(std::uint64_t job_id) {
     return impl_->facade.cancelDeviceDiscovery(job_id);
 }
 
+// ---- Central profile registry (schema v25, #398) ----
+namespace {
+// In-flight registry requests: handle -> the backend's cancel predicate. The
+// Rust transport polls registry_request_cancelled(handle) while it waits.
+std::mutex& registryCancelMutex() {
+    static std::mutex m;
+    return m;
+}
+std::map<std::uint64_t, std::function<bool()>>& registryCancels() {
+    static std::map<std::uint64_t, std::function<bool()>> m;
+    return m;
+}
+std::atomic<std::uint64_t> nextRegistryCancelHandle{1};
+
+BridgeRegistryJob toBridge(const backend::bridge::BackendRegistryJob& job) {
+    BridgeRegistryJob out{};
+    out.job_id = job.jobId;
+    out.kind = static_cast<std::uint32_t>(job.kind);
+    out.state = static_cast<std::uint32_t>(job.state);
+    out.message = rust::String(job.message);
+    return out;
+}
+} // namespace
+
+bool registry_request_cancelled(std::uint64_t cancel_handle) {
+    std::function<bool()> cancelled;
+    {
+        std::scoped_lock lock(registryCancelMutex());
+        const auto it = registryCancels().find(cancel_handle);
+        if (it == registryCancels().end()) return true;
+        cancelled = it->second;
+    }
+    try {
+        return cancelled ? cancelled() : false; // no predicate: never cancelled
+    } catch (...) {
+        return true;
+    }
+}
+
+bool BackendBridge::set_registry_transport(
+    rust::Fn<BridgeHttpResponse(const BridgeHttpRequest&)> transport) {
+    if (impl_->facade.isInitialized()) return false; // read once at initialize()
+    impl_->app.setProfileRegistryTransport(
+        [transport](const backend::profiles::RegistryHttpRequest& request) {
+            backend::profiles::RegistryHttpResponse out; // status 0 = transport failure
+            const std::uint64_t handle = nextRegistryCancelHandle.fetch_add(1);
+            {
+                std::scoped_lock lock(registryCancelMutex());
+                registryCancels()[handle] = request.cancelled;
+            }
+            try {
+                BridgeHttpRequest req{};
+                req.url = rust::String(request.url);
+                req.body = rust::String(request.body);
+                for (const auto& [name, value] : request.headers) {
+                    BridgeHttpHeader h{};
+                    h.name = rust::String(name);
+                    h.value = rust::String(value);
+                    req.headers.push_back(std::move(h));
+                }
+                req.timeout_ms = request.timeoutMs;
+                req.max_response_bytes = static_cast<std::uint64_t>(request.maxResponseBytes);
+                req.cancel_handle = handle;
+                const BridgeHttpResponse response = transport(req);
+                out.status = response.status;
+                out.body.assign(reinterpret_cast<const char*>(response.body.data()),
+                                response.body.size());
+            } catch (...) {
+                out = {};
+            }
+            std::scoped_lock lock(registryCancelMutex());
+            registryCancels().erase(handle);
+            return out;
+        });
+    return true;
+}
+
+std::uint64_t BackendBridge::registry_sign_in(rust::Str email, rust::Str password) {
+    try {
+        return impl_->facade.registrySignIn(toStd(email), toStd(password));
+    } catch (...) {
+        return 0;
+    }
+}
+
+std::uint64_t BackendBridge::registry_sign_out() { return impl_->facade.registrySignOut(); }
+std::uint64_t BackendBridge::registry_refresh() { return impl_->facade.registryRefresh(); }
+
+std::uint64_t BackendBridge::registry_download(rust::Str revision_id) {
+    try {
+        return impl_->facade.registryDownload(toStd(revision_id));
+    } catch (...) {
+        return 0;
+    }
+}
+
+bool BackendBridge::registry_cancel_all() { return impl_->facade.registryCancelAll(); }
+
+std::uint64_t BackendBridge::registry_materialize(rust::Str revision_id) {
+    try {
+        return impl_->facade.registryMaterialize(toStd(revision_id));
+    } catch (...) {
+        return 0;
+    }
+}
+
+BridgeRegistryValidationRequest BackendBridge::registry_record_validation(rust::Str revision_id,
+                                                                          rust::Str evidence_file,
+                                                                          bool passed) {
+    BridgeRegistryValidationRequest out{};
+    try {
+        const auto r =
+            impl_->facade.registryRecordValidation(toStd(revision_id), toStd(evidence_file), passed);
+        out.job_id = r.jobId;
+        out.error = rust::String(r.error);
+    } catch (...) {
+        out.job_id = 0;
+        out.error = rust::String("registry_record_validation failed");
+    }
+    return out;
+}
+
+BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
+    BridgeRegistrySnapshot out{};
+    backend::bridge::BackendRegistrySnapshot s;
+    try {
+        if (!impl_->facade.fetchRegistrySnapshot(s)) return out; // valid=false
+    } catch (...) {
+        return out;
+    }
+    try {
+        out.valid = s.valid;
+        out.configured = s.configured;
+        out.generation = s.generation;
+        out.origin = rust::String(s.origin);
+        out.session = static_cast<std::uint32_t>(s.session);
+        out.subject_id = rust::String(s.subjectId);
+        out.email = rust::String(s.email);
+        out.connectivity = static_cast<std::uint32_t>(s.connectivity);
+        out.health_message = rust::String(s.healthMessage);
+        out.successful_requests = s.successfulRequests;
+        out.failed_requests = s.failedRequests;
+        out.rejected_revisions = s.rejectedRevisions;
+        for (const auto& p : s.projects) {
+            BridgeRegistryProject bp{};
+            bp.project_id = rust::String(p.projectId);
+            bp.display_name = rust::String(p.displayName);
+            for (const auto& role : p.roles) bp.roles.push_back(rust::String(role));
+            out.projects.push_back(std::move(bp));
+        }
+        for (const auto& r : s.revisions) {
+            BridgeRegistryRevision br{};
+            br.revision_id = rust::String(r.revisionId);
+            br.method_id = rust::String(r.methodId);
+            br.project_id = rust::String(r.projectId);
+            br.display_name = rust::String(r.displayName);
+            br.author_id = rust::String(r.authorId);
+            br.content_hash = rust::String(r.contentHash);
+            br.revision_number = r.revisionNumber;
+            br.metadata_version = r.metadataVersion;
+            br.central_state = static_cast<std::uint32_t>(r.centralState);
+            br.materialized_dir = rust::String(r.materializedDir);
+            br.local_validation = static_cast<std::uint32_t>(r.localValidation);
+            br.validated_by = rust::String(r.validatedBy);
+            br.validated_at_utc = rust::String(r.validatedAtUtc);
+            out.revisions.push_back(std::move(br));
+        }
+        for (const auto& id : s.corruptRevisionIds) out.corrupt_revision_ids.push_back(rust::String(id));
+        out.cache_error = rust::String(s.cacheError);
+        out.has_last_successful_refresh = s.hasLastSuccessfulRefresh;
+        out.last_successful_refresh_unix_ms = s.lastSuccessfulRefreshUnixMs;
+        out.last_job = toBridge(s.lastJob);
+        out.queued_jobs = s.queuedJobs;
+        out.busy = s.busy;
+        out.instrument_id = rust::String(s.instrumentId);
+        out.instrument_name = rust::String(s.instrumentName);
+    } catch (...) {
+        // Never let a conversion failure (e.g. non-UTF-8 text) cross the FFI.
+        return BridgeRegistrySnapshot{};
+    }
+    return out;
+}
+
+BridgeRegistryJob BackendBridge::fetch_registry_job(std::uint64_t job_id) {
+    try {
+        backend::bridge::BackendRegistryJob job;
+        impl_->facade.fetchRegistryJob(job_id, job);
+        return toBridge(job);
+    } catch (...) {
+        return BridgeRegistryJob{};
+    }
+}
+
 BridgeDiscoverySnapshot BackendBridge::fetch_device_discovery(std::uint64_t job_id) {
     BridgeDiscoverySnapshot out{};
     backend::bridge::BackendDiscoverySnapshot snapshot;
@@ -1530,6 +1892,83 @@ BridgeCommandResult BackendBridge::soft_trigger_camera() {
         return toBridgeResult(impl_->facade.dispatch(cmd));
     } catch (const std::exception& e) { return errorResult(e.what()); }
     catch (...) { return errorResult("Software camera trigger failed"); }
+}
+
+BridgeCommandResult BackendBridge::set_camera_overview(bool overview) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::SetCameraOverview;
+        cmd.cameraOverview = overview;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(std::string("set_camera_overview: ") + e.what()); }
+    catch (...) { return errorResult("set_camera_overview: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width,
+                                                   std::int32_t height) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::SaveCameraRoi;
+        cmd.roiX = x;
+        cmd.roiY = y;
+        cmd.roiWidth = width;
+        cmd.roiHeight = height;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) { return errorResult(std::string("save_camera_roi: ") + e.what()); }
+    catch (...) { return errorResult("save_camera_roi: unknown error"); }
+}
+
+rust::String BackendBridge::fetch_platform_info() {
+    try {
+        return rust::String(impl_->facade.fetchPlatformInfoJson());
+    } catch (...) {
+        return rust::String("{}");
+    }
+}
+
+rust::String BackendBridge::fetch_instrument_status() {
+    try {
+        return rust::String(impl_->facade.fetchInstrumentStatusJson());
+    } catch (...) {
+        return rust::String(R"({"available":false,"error":"fetch_instrument_status failed"})");
+    }
+}
+
+BridgeCommandResult BackendBridge::set_instrument_mode(rust::Str mode, std::int32_t x, std::int32_t y) {
+    try {
+        return toBridgeResult(impl_->facade.setInstrumentMode(toStd(mode), x, y));
+    } catch (const std::exception& e) { return errorResult(std::string("set_instrument_mode: ") + e.what()); }
+    catch (...) { return errorResult("set_instrument_mode: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_service_mode(bool on) {
+    try {
+        return toBridgeResult(impl_->facade.setServiceMode(on));
+    } catch (...) { return errorResult("set_service_mode: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_instrument_led(double delay_us, double width_us) {
+    try {
+        return toBridgeResult(impl_->facade.setInstrumentLed(delay_us, width_us));
+    } catch (const std::exception& e) { return errorResult(std::string("set_instrument_led: ") + e.what()); }
+    catch (...) { return errorResult("set_instrument_led: unknown error"); }
+}
+
+rust::Vec<std::uint8_t> BackendBridge::fetch_run_preview() {
+    try {
+        std::string error;
+        return bytesToVec(impl_->facade.fetchRunPreviewPacket(&error));
+    } catch (...) {
+        return {};
+    }
+}
+
+rust::String BackendBridge::fetch_camera_geometry() {
+    try {
+        return rust::String(impl_->facade.fetchCameraGeometryJson());
+    } catch (...) {
+        return rust::String("{\"supported\":false}");
+    }
 }
 
 BridgeCommandResult BackendBridge::reset_hardware_camera() {
@@ -1789,11 +2228,22 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // (BE-8); v14 replaced the synchronous fetch_camera_discovery with the
 // device-discovery job trio (start_device_discovery / start_camera_discovery,
 // fetch_device_discovery, cancel_device_discovery) and the discovery contract
-// groups (#419, ADR 0005). All additive over v1 (ADR 0003/0004). Must match
+// groups (#419, ADR 0005); v20-v23 the instrument line (see the contract
+// test); v25 added the central profile registry
+// (registry_sign_in/sign_out/refresh/download/cancel_all,
+// fetch_registry_snapshot/job, set_registry_transport and the registry_*
+// contract groups — #398; registry_job_kinds Materialize/RecordValidation,
+// registry_local_validation, registry_materialize, registry_record_validation
+// and the authoring job kinds 6-10 were added; built as a provisional 15,
+// renumbered once to 25: 23 = the instrument line, 24 = #501 P0; 15 and 19-24
+// are never reused); v26 added the ZC300 Z stage bridge (stage_* commands,
+// fetch_stage_status, StageMove/StageReference, MotionStage,
+// stage_move_states — #464; 27 is reserved for #501 P1). All additive over v1 (ADR
+// 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 19; }
+std::uint32_t bridge_abi_version() { return 27; }
 
 } // namespace mib_bridge
 

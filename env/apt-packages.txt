@@ -59,3 +59,20 @@ xvfb
 # section: test-extras
 # Conformance-input test in the backend/sanitizer lanes.
 python3-numpy
+
+# section: armhf-cross
+# armv7 compile smoke (.github/workflows/armv7-smoke.yml, cmake/toolchains/linux-armhf.cmake):
+# the distro cross compiler plus the armhf development libraries the backend links. Run
+# scripts/ci/enable-armhf-apt.sh first: it adds the armhf architecture (apt cannot resolve
+# the :armhf names otherwise). Pair with `base`. Not the shipped target: that is built
+# against the Yocto SDK (linux-armv7-yocto).
+gcc-arm-linux-gnueabihf
+g++-arm-linux-gnueabihf
+libopencv-dev:armhf
+libhdf5-dev:armhf
+libspdlog-dev:armhf
+libfmt-dev:armhf
+libsqlite3-dev:armhf
+libssl-dev:armhf
+libcurl4-openssl-dev:armhf
+nlohmann-json3-dev

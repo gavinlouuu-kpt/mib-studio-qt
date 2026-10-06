@@ -11,7 +11,15 @@
 // follow-up / UX-2 #306), so DEFAULT_REQUIREMENTS is applied until a profile
 // can declare them — the shape is ready for that override.
 //
+// On the PZ7035 (#501) the checks follow the instrument's capabilities: the
+// PL core (build + weights) replaces the host core pin, the sensor link and
+// the LED strobe are required, and MIB-only gear reads "not on this
+// instrument" instead of a warning.
+//
 // Pure module: no React/Tauri imports so it is unit-testable in plain Node.
+
+import type { InstrumentStatus, PlatformCapabilities } from "./bridge";
+import { DESKTOP_CAPABILITIES, isPz7035 } from "./platformCapabilities";
 
 export type CheckStatus = "passed" | "warning" | "failed" | "not-required";
 export type Requirement = "required" | "optional" | "not-applicable";
@@ -63,6 +71,12 @@ export interface PreflightInput {
   storageWritable: boolean;
   storageFreeOk: boolean;
   storagePath: string;
+  /** Non-blocking persistence warning for the destination (RAM root, #501); "" when none. */
+  storageWarning?: string;
+  /** What this instrument has (#501); the MIB desktop when absent. */
+  capabilities?: PlatformCapabilities;
+  /** PZ7035 identity and health (`fetch_instrument_status`); null until polled. */
+  instrument?: InstrumentStatus | null;
 }
 
 /** Per-device requirement, normally declared by the selected profile. */
@@ -81,6 +95,15 @@ export const DEFAULT_REQUIREMENTS: PreflightRequirements = {
   trigger: "optional",
   storage: "optional",
 };
+
+/** The requirements an instrument implies before any profile declares them. */
+export function requirementsFor(capabilities: PlatformCapabilities): PreflightRequirements {
+  return {
+    ...DEFAULT_REQUIREMENTS,
+    autofocus: capabilities.autofocus ? DEFAULT_REQUIREMENTS.autofocus : "not-applicable",
+    trigger: capabilities.trigger ? DEFAULT_REQUIREMENTS.trigger : "not-applicable",
+  };
+}
 
 export interface PreflightReport {
   checks: PreflightCheck[];
@@ -161,6 +184,90 @@ function coreCheck(i: PreflightInput): PreflightCheck {
   };
 }
 
+const shortId = (id: string) => (id ? id.slice(0, 8) : "—");
+
+/** PZ7035: the PL build and its weights are the core (ADR 0011 §12). */
+function plCoreCheck(i: PreflightInput): PreflightCheck {
+  const s = i.instrument;
+  const base = { id: "plCore", label: "PL core (build + weights)", requirement: "required" as Requirement };
+  if (!s || !s.available || !s.core) {
+    return {
+      ...base,
+      status: "failed",
+      expected: "",
+      detected: "—",
+      detail: s?.error ? `PL core unavailable: ${s.error}.` : "PL core identity not read yet.",
+      recovery: [RETRY],
+    };
+  }
+  const c = s.core;
+  const detected = `build ${shortId(c.build_id)} · weights ${shortId(c.profile_id)}`;
+  const expected = `${c.expected ? `${c.expected.image || "image"} ${shortId(c.expected.build_id)}` : "build ?"} · weights ${shortId(c.pinned_profile_id)}`;
+  let status: CheckStatus = "passed";
+  let detail = `PL build and weights match${c.expected?.image ? ` ${c.expected.image}` : ""}.`;
+  let recovery: RecoveryAction[] = [];
+  if (c.profile_match === "mismatch") {
+    status = "failed";
+    detail = `The PL runs weights ${shortId(c.profile_id)}, not the pinned ${shortId(c.pinned_profile_id)}: load the matching image.`;
+    recovery = [RETRY];
+  } else if (c.build_match === "mismatch") {
+    status = "failed";
+    detail = `The PL build ${shortId(c.build_id)} is not the expected image ${shortId(c.expected?.build_id ?? "")}: reload the image or install its core.json.`;
+    recovery = [RETRY];
+  } else if (c.profile_match === "unknown") {
+    status = "warning";
+    detail = "No pinned weights in this build: the PL weights are not checked.";
+  } else if (c.build_match === "unknown") {
+    status = "warning";
+    detail = "No /etc/yofo/expected-core.json: the PL build is not checked (install it with pz_install_core.sh).";
+    recovery = [RETRY];
+  }
+  return { ...base, status, expected, detected, detail, recovery };
+}
+
+function fmtRate(v: number) {
+  return v < 10 ? v.toFixed(1) : v.toFixed(0);
+}
+
+/** PZ7035: sensor link health from the PL's cumulative counters. */
+function sensorLinkCheck(i: PreflightInput): PreflightCheck {
+  const s = i.instrument;
+  const base = { id: "sensorLink", label: "Sensor link", requirement: "required" as Requirement, expected: "" };
+  if (!s || !s.available || !s.link) {
+    return { ...base, status: "failed", detected: "—", detail: s?.error ? `Unavailable: ${s.error}.` : "Not read yet.", recovery: [RETRY] };
+  }
+  const l = s.link;
+  if (!l.rates_valid) {
+    return { ...base, status: "warning", detected: "measuring", detail: "Measuring link error rates…", recovery: [] };
+  }
+  const detected = `${fmtRate(l.ingress_errors_per_s)} err/s · ${fmtRate(l.resyncs_per_s)} resync/s`;
+  const issues: string[] = [];
+  if (l.ingress_errors_per_s > l.ingress_errors_warn_per_s) issues.push(`ingress errors above ${l.ingress_errors_warn_per_s}/s`);
+  if (l.resyncs_per_s > l.resyncs_warn_per_s) issues.push(`resyncs above ${l.resyncs_warn_per_s}/s`);
+  if (l.bad_frames_per_s > 0) issues.push("bad frames rising");
+  return issues.length
+    ? { ...base, status: "warning", detected, detail: `Sensor link: ${issues.join(", ")}. Check the sensor cable and the LED wiring.`, recovery: [RETRY] }
+    : { ...base, status: "passed", detected, detail: "Link errors within the known baseline.", recovery: [] };
+}
+
+/** PZ7035: LED strobe; the PL guards are authoritative, a trip fails preflight. */
+function ledCheck(i: PreflightInput): PreflightCheck {
+  const s = i.instrument;
+  const base = { id: "led", label: "LED strobe", requirement: "required" as Requirement, expected: "Run 7/60 µs · Align 100/135 µs" };
+  if (!s || !s.available || !s.led) {
+    return { ...base, status: "failed", detected: "—", detail: s?.error ? `Unavailable: ${s.error}.` : "Not read yet.", recovery: [RETRY] };
+  }
+  const led = s.led;
+  const detected = led.on ? `${led.preset} ${led.delay_us}/${led.width_us} µs` : "off";
+  if (led.guard_fault) {
+    return { ...base, status: "failed", detected, detail: `The strobe guard tripped (${led.guard_trips} trips): the LED is held off. Switching a mode clears it.`, recovery: [RETRY] };
+  }
+  if (led.on && led.preset === "custom") {
+    return { ...base, status: "warning", detected, detail: "The LED runs a service setting, not a preset.", recovery: [] };
+  }
+  return { ...base, status: "passed", detected, detail: led.on ? `${led.preset === "run" ? "Run" : "Align"} preset.` : "Off; Align and Run switch it on.", recovery: [] };
+}
+
 function captureCheck(i: PreflightInput): PreflightCheck {
   // Capture stability can only be judged once the stream is running; before
   // that it is simply pending rather than a failure.
@@ -184,6 +291,7 @@ function deviceCheck(
   label: string,
   requirement: Requirement,
   dev: DeviceSnapshot,
+  notApplicableDetail = "Not used by this profile.",
 ): PreflightCheck {
   let status: CheckStatus;
   let detail: string;
@@ -192,7 +300,7 @@ function deviceCheck(
 
   if (requirement === "not-applicable") {
     status = "not-required";
-    detail = "Not used by this profile.";
+    detail = notApplicableDetail;
   } else if (dev.connected) {
     status = "passed";
     detail = "Connected and responding.";
@@ -208,7 +316,7 @@ function deviceCheck(
   return { id, label, requirement, status, expected: "", detected, detail, recovery };
 }
 
-function triggerCheck(i: PreflightInput, requirement: Requirement): PreflightCheck {
+function triggerCheck(i: PreflightInput, requirement: Requirement, notApplicableDetail = "Not used by this profile."): PreflightCheck {
   const attached = i.trigger.valid && i.trigger.cameraAttached;
   let status: CheckStatus;
   let detail: string;
@@ -216,7 +324,7 @@ function triggerCheck(i: PreflightInput, requirement: Requirement): PreflightChe
 
   if (requirement === "not-applicable") {
     status = "not-required";
-    detail = "Not used by this profile.";
+    detail = notApplicableDetail;
   } else if (attached) {
     status = "passed";
     detail = "Sorter trigger is attached to the camera.";
@@ -257,6 +365,10 @@ function storageCheck(i: PreflightInput, requirement: Requirement): PreflightChe
     status = "failed";
     detail = "Output location is not writable.";
     recovery = [RETRY];
+  } else if (i.storageWarning) {
+    // Recordings still work; the operator must copy them off before power-off.
+    status = "warning";
+    detail = i.storageWarning;
   } else if (!i.storageFreeOk) {
     status = "warning";
     detail = "Low free space at the output location.";
@@ -282,17 +394,21 @@ function storageCheck(i: PreflightInput, requirement: Requirement): PreflightChe
  *  device requirements. */
 export function derivePreflight(
   input: PreflightInput,
-  requirements: PreflightRequirements = DEFAULT_REQUIREMENTS,
+  requirements?: PreflightRequirements,
 ): PreflightReport {
+  const caps = input.capabilities ?? DESKTOP_CAPABILITIES;
+  const req = requirements ?? requirementsFor(caps);
+  const pz = isPz7035(caps);
+  const notHere = pz ? "Not on this instrument." : "Not used by this profile.";
   const checks: PreflightCheck[] = [
     cameraCheck(input),
-    coreCheck(input),
+    ...(pz ? [plCoreCheck(input), sensorLinkCheck(input), ledCheck(input)] : [coreCheck(input)]),
     captureCheck(input),
-    deviceCheck("autofocus", "Autofocus / nanopositioner", requirements.autofocus, input.autofocus),
-    deviceCheck("samplePump", "Sample pump", requirements.samplePump, input.samplePump),
-    deviceCheck("sheathPump", "Sheath pump", requirements.sheathPump, input.sheathPump),
-    triggerCheck(input, requirements.trigger),
-    storageCheck(input, requirements.storage),
+    deviceCheck("autofocus", "Autofocus / nanopositioner", req.autofocus, input.autofocus, notHere),
+    deviceCheck("samplePump", "Sample pump", req.samplePump, input.samplePump),
+    deviceCheck("sheathPump", "Sheath pump", req.sheathPump, input.sheathPump),
+    triggerCheck(input, req.trigger, pz ? "The PL times the sort output." : notHere),
+    storageCheck(input, req.storage),
   ];
 
   let passed = 0;
