@@ -65,9 +65,14 @@ freeze exact revision identity/content into historical runs.
   here → Pass, revoked/not published → Fail) bound into the readiness
   generation; exact revision, content hash, validation and evidence hash frozen
   into `/run_provenance` (schema v2) with no network lookup.
-- [ ] M2b: Apply (materialized config → config.json with confirmation) and
-  "Mark validated" (pick the test-run file) in React; bridge commands for
-  materialize / record validation; method row in the readiness panels.
+- [x] M2b: "Mark validated" in React (evidence must be a run of that revision
+  on this instrument/context) and Materialize; bridge
+  `registry_materialize` / `registry_record_validation` /
+  `registry_local_validation`. The readiness panels list `method.revision` like
+  any gate. A Qt Apply (exact bytes through `AppConfigWatcher`, with a backup)
+  was built and dropped with the Qt UI (ADR 0011).
+- [ ] M2: Apply in the React shell (needs a backend config.json applier; the
+  shell edits the processing-config document today).
 - [ ] M2: compatibility validator against declared hardware compatibility and
   calibration context; camera script compared as well as config.json; explicit
   update selection when a newer revision is published.
@@ -134,6 +139,15 @@ freeze exact revision identity/content into historical runs.
   session; the offline cache can materialize but not validate. (6) Context =
   instrument + core version/SHA + camera source; the free-form camera label is
   excluded because it is not stable across sessions.
+
+- 2026-10-04 (M2b): decisions — (1) Apply replaces config.json exactly, never
+  merged, because only exact bytes are recognisable as the revision; instrument
+  keys travel with the method, so the confirmation lists every changed key and
+  the old file is backed up. (2) "Mark validated" requires the test run's frozen
+  provenance to name the revision, this instrument and the current context, so
+  a validation cannot be attached to an unrelated file. (3) React Apply stays
+  disabled with the reason instead of approximating it through the
+  processing-config document.
 
 ## Validation
 

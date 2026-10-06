@@ -444,6 +444,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/MethodApply.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h
     ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLutCatalog.cpp

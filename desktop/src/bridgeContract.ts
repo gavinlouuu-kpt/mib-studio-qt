@@ -140,6 +140,12 @@ export const REGISTRY_CENTRAL_STATES = {
   Revoked: 6,
 } as const;
 
+export const REGISTRY_LOCAL_VALIDATION = {
+  None: 0,
+  Passed: 1,
+  Failed: 2,
+} as const;
+
 export const REVIEW_IMAGE_DATASETS = {
   ValidImage: 0,
   InvalidImage: 1,

@@ -7,7 +7,9 @@
 //    with contract-pinned integer enums (session, connectivity, job kind and
 //    state, central state) and no credential in any value;
 //  - facade shutdown aborts a hung registry request promptly;
-//  - AppBackend loads the instrument identity (#398 M2) at initialize.
+//  - AppBackend loads the instrument identity (#398 M2) at initialize;
+//  - M2b: materialize (kind 4), per-revision materialized dir + local
+//    validation, instrument identity, and refused validation evidence.
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -19,6 +21,7 @@
 #include "support/watchdog.h"
 
 #include <chrono>
+#include <fstream>
 #include <cstdlib>
 #include <thread>
 
@@ -90,7 +93,9 @@ int main() {
         MIB_EXPECT(!facade.fetchRegistrySnapshot(s) && !s.valid, "no snapshot before initialize");
         MIB_EXPECT(facade.registrySignIn("bob@lab", "pw-bob") == 0 &&
                        facade.registryRefresh() == 0 && facade.registrySignOut() == 0 &&
-                       facade.registryDownload("r1") == 0 && !facade.registryCancelAll(),
+                       facade.registryDownload("r1") == 0 && !facade.registryCancelAll() &&
+                       facade.registryMaterialize("r1") == 0 &&
+                       facade.registryRecordValidation("r1", "x.h5", true).jobId == 0,
                    "uninitialized facade refuses registry commands");
     }
 
@@ -138,6 +143,27 @@ int main() {
 
         const auto download = waitJob(facade, facade.registryDownload("r1"));
         MIB_EXPECT(download.kind == 3 && download.state == 2, "kind 3 = Download succeeded");
+        watchdog.mark("materialize + validation through the facade (M2b)");
+        const auto materialize = waitJob(facade, facade.registryMaterialize("r1"));
+        MIB_EXPECT(materialize.kind == 4 && materialize.state == 2, "kind 4 = Materialize succeeded");
+        MIB_EXPECT(facade.registryMaterialize("../x") == 0, "unsafe revision ID refused");
+        MIB_REQUIRE(facade.fetchRegistrySnapshot(s), "snapshot");
+        MIB_EXPECT(s.instrumentId == app.instrumentIdentity().id && s.instrumentName == "MIB-test",
+                   "instrument identity mirrored");
+        for (const auto& r : s.revisions) {
+            if (r.revisionId == "r1")
+                MIB_EXPECT(!r.materializedDir.empty() && r.localValidation == 0,
+                           "r1 materialized, local validation 0 = None");
+            if (r.revisionId == "r2") MIB_EXPECT(r.materializedDir.empty(), "r2 not materialized");
+        }
+        const auto notARun = scratch / "not-a-run.h5";
+        { std::ofstream(notARun) << "x"; }
+        const auto refused = facade.registryRecordValidation("r1", notARun.string(), true);
+        MIB_EXPECT(refused.jobId == 0 && !refused.error.empty(), "non-run evidence refused with a reason");
+        MIB_EXPECT(facade.registryRecordValidation("missing", notARun.string(), true).error.find("cache") !=
+                       std::string::npos,
+                   "uncached revision refused");
+
         BackendRegistryJob unknown;
         MIB_EXPECT(!facade.fetchRegistryJob(999999, unknown) && unknown.jobId == 0,
                    "unknown job is invalid");

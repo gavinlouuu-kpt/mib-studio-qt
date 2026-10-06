@@ -56,6 +56,7 @@ ENUM_GROUPS = [
     ("registry_job_kinds", "REGISTRY_JOB_KINDS"),
     ("registry_job_states", "REGISTRY_JOB_STATES"),
     ("registry_central_states", "REGISTRY_CENTRAL_STATES"),
+    ("registry_local_validation", "REGISTRY_LOCAL_VALIDATION"),
     ("review_image_datasets", "REVIEW_IMAGE_DATASETS"),
     ("pump_ids", "PUMP_IDS"),
     ("pump_run_states", "PUMP_RUN_STATES"),
