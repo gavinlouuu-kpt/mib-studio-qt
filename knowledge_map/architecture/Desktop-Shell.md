@@ -611,6 +611,15 @@ backend's camera modes instead of `set_camera_overview`:
   clamped to the limits) or restores the preset. The next mode switch
   restores the preset anyway.
 
+**Recording to RAM (#501).** `fetch_instrument_status.storage.warning` feeds
+three places:
+- the preflight Storage check (a warning, not a failure);
+- the context bar's Storage segment ("RAM");
+- a status note after Start Experiment, from the readiness gate
+  `storage.persistent`.
+
+None of them blocks a run. Desktop builds are unchanged.
+
 ## Pump model per slot (2026-10-04)
 
 The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:

@@ -110,6 +110,8 @@ namespace backend
         processing::IExecutionProvider *executionProvider();
         // Read-only PZ7035 identity and health (#501); null off the instrument.
         pz::PzPlatformMonitor *pzPlatformMonitor();
+        // The data directory given to initialize() (recordings default under it).
+        const std::string &dataDir() const { return dataDir_; }
 
         // ---- PZ7035 camera modes (#501 P1) ----
         // Align = the full sensor at 500 fps, LED 0/125 µs, the producer streaming previews.

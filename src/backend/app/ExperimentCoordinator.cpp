@@ -1,4 +1,5 @@
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/RecordingTarget.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
@@ -648,6 +649,17 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         } else {
             r.gates.push_back(gate("storage.output", GateStatus::Fail, why,
                                    "choose a writable destination with free space", outputPath));
+        }
+        // PZ7035 (#501): a RAM-backed destination (today's JTAG RAM root) loses the run at
+        // power-off. Non-blocking: the operator sees it at start and copies the data off.
+        if (!app::hostProcessingAvailable()) {
+            const auto target = app::recordingTarget(outputPath);
+            if (target.ram) {
+                r.gates.push_back(gate("storage.persistent", GateStatus::Warn, app::recordingTargetWarning(target),
+                                       "record to the SATA disk once it is mounted", target.filesystem));
+            } else {
+                r.gates.push_back(gate("storage.persistent", GateStatus::Pass, {}, {}, target.filesystem));
+            }
         }
     }
     if (backend_.hdf5().isFileOpen()) {

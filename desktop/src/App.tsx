@@ -33,7 +33,7 @@ import {
   type ReviewMetricsPage,
   type TriggerStatus,
 } from "./bridge";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSES } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
@@ -746,9 +746,11 @@ export default function App() {
   const experimentPending = useRef(false);
   const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
   const [readinessMessage, setReadinessMessage] = useState("");
+  // Non-blocking readiness warnings shown at run start (e.g. recording to RAM, #501).
+  const [startNotice, setStartNotice] = useState("");
   const onStartExperiment = useCallback(async () => {
     if (experimentPending.current) return;
-    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage("");
+    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
       const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
       if (!picked) return;
@@ -759,9 +761,11 @@ export default function App() {
         setReadinessMessage(`${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}`);
         return;
       }
+      const notice = readiness.gates.filter(g => g.id === "storage.persistent" && g.status === READINESS_GATE_STATUSES.Warn).map(g => g.reason).join(" ");
       const res = await bridge.experimentStart(picked);
       if (!res.ok) {setReadinessMessage(`${picked}: ${res.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${res.message}`); }
       append(`experiment started → ${picked}`);
+      if (notice) { setStartNotice(notice); append(notice); }
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment start error: ${e}`);
@@ -1094,12 +1098,12 @@ export default function App() {
       identity: sheathPump?.connected ? (sheathPump.port_name || `COM${sheathPump.com_port}`) : "",
     },
     trigger: { valid: trigStatus?.valid ?? false, cameraAttached: trigStatus?.camera_attached ?? false },
-    // Authoritative storage/free-space status is not bridged yet (backend
-    // follow-up); the check stays informational until it is.
-    storageKnown: false,
-    storageWritable: false,
-    storageFreeOk: false,
-    storagePath: "",
+    // The PZ7035 reports its recording target (#501); the desktop's check stays informational.
+    storageKnown: !!instrument?.storage,
+    storageWritable: instrument?.storage?.writable ?? false,
+    storageFreeOk: (instrument?.storage?.free_bytes ?? 0) >= 1e9,
+    storagePath: instrument?.storage?.path ?? "",
+    storageWarning: instrument?.storage?.warning ?? "",
     capabilities: caps,
     instrument,
   };
@@ -1143,6 +1147,7 @@ export default function App() {
     operatorName: "", // operator identity not captured yet
     outputPath: expStatus?.output_path ?? "",
     warningsCount,
+    storageWarning: instrument?.storage?.warning ?? "",
   };
   const contextBar = deriveContextBar(contextFacts);
 
@@ -1742,6 +1747,7 @@ export default function App() {
                 </div>
 
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+                {startNotice && <p role="status" className="start-notice">{startNotice}</p>}
 
                 {expTab === "preview" && (
                   <>

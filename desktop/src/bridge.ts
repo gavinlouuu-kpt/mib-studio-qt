@@ -414,9 +414,14 @@ export interface LedLimits { delay_min_us: number; delay_max_us: number; width_m
 /** Camera mode the backend applied last (ABI 26, #501 P1). */
 export interface InstrumentModeState { name: "align" | "run" | "unknown"; run_x: number; run_y: number; service: boolean }
 
+/** Where recordings land (#501): `ram` on today's JTAG RAM root; `warning` is the operator text,
+ *  "" once the target is persistent (SATA). */
+export interface RecordingTargetState { path: string; writable: boolean; ram: boolean; free_bytes: number; filesystem: string; warning: string }
+
 export interface InstrumentStatus {
   available: boolean;
   mode?: InstrumentModeState;
+  storage?: RecordingTargetState;
   error?: string;
   pinned_profile_id?: string;
   core?: {

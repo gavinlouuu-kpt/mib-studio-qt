@@ -10,6 +10,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/RecordingTarget.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/services/CaptureService.h"
@@ -20,6 +21,8 @@
 #include "support/watchdog.h"
 
 #include <cstdlib>
+#include <filesystem>
+#include <unistd.h>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -232,6 +235,23 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_EXPECT(gateOf(readiness, "instrument.mode") &&
                    gateOf(readiness, "instrument.mode")->status == backend::app::GateStatus::Pass,
                "Run passes the instrument gate");
+    {
+        const auto* persistent = gateOf(readiness, "storage.persistent");
+        const bool onRam = backend::app::recordingTarget(out).ram;
+        MIB_EXPECT(persistent && persistent->status == (onRam ? backend::app::GateStatus::Warn
+                                                              : backend::app::GateStatus::Pass),
+                   "storage.persistent follows the destination's filesystem");
+        std::error_code ec;
+        if (std::filesystem::is_directory("/dev/shm", ec) && backend::app::recordingTarget("/dev/shm").ram) {
+            const auto ramOut = "/dev/shm/mib_gate_" + std::to_string(::getpid()) + ".h5";
+            const auto ramReadiness = backend.experiment().evaluateReadiness(ramOut, "pl");
+            const auto* warn = gateOf(ramReadiness, "storage.persistent");
+            MIB_EXPECT(warn && warn->status == backend::app::GateStatus::Warn &&
+                           warn->reason.rfind("Recording to RAM: lost on power-off.", 0) == 0,
+                       "a RAM destination warns at run start");
+            MIB_EXPECT(!warn->blocksStart(), "and does not block the run");
+        }
+    }
     MIB_EXPECT(!gateOf(readiness, "camera.session") && !gateOf(readiness, "camera.geometry") &&
                    !gateOf(readiness, "camera.deliveryMode"),
                "the live-camera gates do not apply in Run");
@@ -262,6 +282,36 @@ void testModeSequence(const mib::test::TempDir& td) {
     facade.shutdown();
 }
 
+// Both states of the persistence warning (#501): a RAM-backed destination (tmpfs, like the JTAG
+// RAM root) warns with the operator text; a disk destination does not.
+void testRecordingTarget(const mib::test::TempDir& td) {
+    namespace fs = std::filesystem;
+    const auto disk = backend::app::recordingTarget((td.path() / "runs" / "run.h5").string());
+    MIB_EXPECT(disk.exists && disk.writable, "a temp dir on disk is writable: " + disk.path);
+    std::error_code ec;
+    const fs::path shm = "/dev/shm";
+    if (fs::is_directory(shm, ec) && backend::app::recordingTarget(shm.string()).filesystem == "tmpfs") {
+        const auto dir = shm / ("mib_target_" + std::to_string(::getpid()));
+        fs::create_directories(dir, ec);
+        const auto ram = backend::app::recordingTarget((dir / "run.h5").string());
+        const auto warning = backend::app::recordingTargetWarning(ram);
+        MIB_EXPECT(ram.ram && ram.writable, "tmpfs is RAM");
+        MIB_EXPECT(warning.rfind("Recording to RAM: lost on power-off. Copy data off before shutdown. ", 0) == 0 &&
+                       warning.find(" GB free.") != std::string::npos,
+                   "the operator warning: " + warning);
+        fs::remove_all(dir, ec);
+    } else {
+        std::fprintf(stderr, "instrument_modes: /dev/shm is not tmpfs here; RAM state checked by construction only\n");
+    }
+    backend::app::RecordingTarget ram;
+    ram.ram = true;
+    ram.freeBytes = 2'500'000'000ull;
+    MIB_EXPECT(backend::app::recordingTargetWarning(ram) ==
+                   "Recording to RAM: lost on power-off. Copy data off before shutdown. 2.5 GB free.",
+               "warning wording");
+    if (!disk.ram) MIB_EXPECT(backend::app::recordingTargetWarning(disk).empty(), "a disk destination does not warn");
+}
+
 } // namespace
 
 int main() {
@@ -270,5 +320,6 @@ int main() {
     testControl();
     testLedLimits();
     testModeSequence(td);
+    testRecordingTarget(td);
     return mib::test::exitCode();
 }

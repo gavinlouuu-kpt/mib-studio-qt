@@ -133,3 +133,19 @@ describe("capabilities", () => {
     expect(desktop.checks.map((c) => c.id)).not.toContain("plCore");
   });
 });
+
+describe("PZ7035 recording target (#501)", () => {
+  const ON_DISK = { ...IDLE, storageKnown: true, storageWritable: true, storageFreeOk: true, storagePath: "/mnt/sata/yofo", storageWarning: "" };
+  const warning = "Recording to RAM: lost on power-off. Copy data off before shutdown. 0.6 GB free.";
+  it("warns, without blocking, while recordings go to RAM", () => {
+    const r = derivePreflight({ ...ON_DISK, storagePath: "/var/lib/yofo-studio", storageWarning: warning });
+    expect(check({ ...ON_DISK, storageWarning: warning }, "storage")).toMatchObject({ status: "warning", detail: warning });
+    expect(r.warning).toBe(1);
+    expect(r.criticalPassed).toBe(true);
+  });
+  it("clears once the target is a disk", () => {
+    const r = derivePreflight(ON_DISK);
+    expect(check(ON_DISK, "storage")?.status).toBe("passed");
+    expect(r.warning + r.failed).toBe(0);
+  });
+});

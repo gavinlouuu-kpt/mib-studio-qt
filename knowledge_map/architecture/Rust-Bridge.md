@@ -432,7 +432,9 @@ The three set commands are CONTROL commands on `yofo-studio-server`. All of
 them are refused while the PL is unconfigured (PCFG_DONE) or is not the
 U-Net cell image. `capabilities.align_mode` and `run_mode` are true when the
 register writer exists. `fetch_instrument_status` adds `mode{name, run_x,
-run_y, service}`. Test: `contract.rs`
+run_y, service}` and `storage{path, writable, ram, free_bytes, filesystem,
+warning}`: the recording target of the data directory, from
+`app::recordingTarget`. Test: `contract.rs`
 `instrument_mode_commands_off_the_instrument`.
 
 Final numbering from merge coordination: P0 (#502) takes 24, #398 takes 25,

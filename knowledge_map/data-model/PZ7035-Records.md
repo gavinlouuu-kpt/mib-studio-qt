@@ -127,6 +127,19 @@ U-Net enable, so the producer never runs while the cell path is on. In Run:
 With the cell path on, the grabber window holds the cell capture, so Run
 previews come from `captureCell`, not from the producer.
 
+**Recording target.** `app/RecordingTarget.h` holds the one detection
+function. It decides whether recordings land in RAM (tmpfs or ramfs: today's
+JTAG RAM root) and are lost at power-off. With the science on the PL:
+
+- the readiness gate `storage.persistent` warns, without blocking, with
+  "Recording to RAM: lost on power-off. Copy data off before shutdown. <N>
+  GB free.";
+- the UI shows the same text in preflight and in the context bar's Storage
+  segment, and as a status note at run start.
+
+It clears by itself once the destination is on a persistent filesystem (the
+SATA disk). The decision is merge coordination's, 2026-10-06.
+
 Test: `backend.instrument_modes`. It covers the write order, no access while
 the PL is blank, the cell path never on while the camera streams, the
 snapped window, the gates, and the Service-mode LED.

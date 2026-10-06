@@ -1,4 +1,5 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/app/RecordingTarget.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
@@ -2637,11 +2638,20 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                               {"run_x", runX},
                               {"run_y", runY},
                               {"service", backend_.serviceMode()}};
+    // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off.
+    const auto target = app::recordingTarget(backend_.dataDir());
+    const nlohmann::json storage{{"path", target.path},
+                                 {"writable", target.writable},
+                                 {"ram", target.ram},
+                                 {"free_bytes", target.freeBytes},
+                                 {"filesystem", target.filesystem},
+                                 {"warning", app::recordingTargetWarning(target)}};
     auto* monitor = initialized_ ? backend_.pzPlatformMonitor() : nullptr;
     if (!monitor) {
         return nlohmann::json{{"available", false},
                               {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
-                              {"mode", mode}}
+                              {"mode", mode},
+                              {"storage", storage}}
             .dump();
     }
     const auto nowUs = static_cast<uint64_t>(
@@ -2650,7 +2660,8 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
     const auto s = monitor->sample(nowUs);
     if (!s.available) {
         return nlohmann::json{
-            {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode}}
+            {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode},
+            {"storage", storage}}
             .dump();
     }
     nlohmann::json expected = nullptr;
@@ -2695,6 +2706,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"over_budget", s.latencyOverBudget},
           {"frames", s.latencyFrames}}},
         {"mode", mode},
+        {"storage", storage},
     }.dump();
 }
 
