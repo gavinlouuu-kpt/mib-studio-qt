@@ -1,5 +1,25 @@
 # Recent Work
 
+## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
+
+Opening Camera & Alignment puts the instrument in Align: full sensor at
+500 fps, LED 0/125 µs. Opening Experiment puts it in Run at the placed
+window: 512×96 at 5 kHz, U-Net on, LED 7/60 µs. No shell commands are
+needed in either direction.
+
+- **Sequencing.** The backend does the switch in the order agreed with the
+  PL owner. The GenTL producer applies the sensor timing.
+  `PzInstrumentControl` is the single writer of the LED, the cell path and
+  the cell capture.
+- **Run.** The live camera stays stopped, and the preview is the PL's own
+  frame with the U-Net mask and cell boxes. Readiness asks for Run instead
+  of a live camera.
+- **LED.** Raw values are Service-mode only, enforced by the backend.
+- **Not tested on hardware yet.** The board run is pending.
+
+Bridge ABI 27. See [[../data-model/PZ7035-Records]],
+[[../architecture/Desktop-Shell]].
+
 ## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
 
 The stage is now reachable from the shell.

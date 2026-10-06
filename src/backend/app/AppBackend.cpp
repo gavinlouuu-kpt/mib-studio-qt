@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "backend/app/AppBackend.h"
+#include <thread>
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
 #include "backend/app/Tools.h"
@@ -62,6 +63,8 @@
 #include <spdlog/spdlog.h>
 #include <opencv2/core.hpp>
 #include "backend/processing/OpenCvThreads.h"
+#include "backend/pz/PzBridgePreviewCamera.h"
+#include "backend/pz/PzInstrumentControl.h"
 #include "backend/pz/PzPlatformMonitor.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -777,6 +780,18 @@ namespace backend
 #endif
             }
             pzPlatformMonitor_ = std::make_unique<pz::PzPlatformMonitor>(std::move(platformRegisters), platformError);
+#if defined(__linux__)
+            // The one writer of LED, cell path and cell capture (#501 P1). Mapping reads no PL
+            // register; nothing is written until the operator picks a camera mode.
+            if (executionProvider_ && executionProvider_->name() == "pz-devmem")
+            {
+                std::string controlError;
+                if (auto registers = pz::openDevMemControlRegisters(&controlError))
+                    pzControl_ = std::make_unique<pz::PzInstrumentControl>(std::move(registers));
+                else
+                    SPDLOG_ERROR("AppBackend: PZ7035 control registers: {}", controlError);
+            }
+#endif
         }
 
         // Wire autofocus service to receive ring ratios from processing service
@@ -1186,6 +1201,242 @@ namespace backend
     services::ProcessingService &AppBackend::processing() { return *processingService_; }
     processing::IExecutionProvider *AppBackend::executionProvider() { return executionProvider_.get(); }
     pz::PzPlatformMonitor *AppBackend::pzPlatformMonitor() { return pzPlatformMonitor_.get(); }
+
+    // ---- PZ7035 camera modes (#501 P1; pz7035-imx426 docs/YOFO_HOST_INTERFACE.md) ----
+
+    namespace {
+    // Producer settings that give the qualified timings (HMAX/VMAX/SHS from rate and exposure,
+    // pz7035_gentl.c choose_hmax): Run 58/256/64, Align 116/1280/64.
+    constexpr double kRunFps = 5000.0, kRunExposureUs = 150.0;
+    // Align, whole frames from the bridge (results8 on): HMAX 232 / VMAX 800 / SHS 64, 400 fps;
+    // HMAX 116 would overflow the bridge tap. Banded fallback for older images: 116 / 1280 / 64.
+    constexpr double kAlignFps = 400.0, kAlignExposureUs = 2299.7;
+    constexpr int kAlignHmax = 232;
+    constexpr double kAlignBandsFps = 500.0, kAlignBandsExposureUs = 1899.7;
+    constexpr int kRunWidth = 512, kRunHeight = 96;
+    // ROI offsets: the producer takes x in steps of 8; the sensor lands y on a multiple of 4.
+    constexpr int kRunXStep = 8, kRunYStep = 4, kRunXMax = 816 - kRunWidth, kRunYMax = 624 - kRunHeight;
+    constexpr auto kCameraStartTimeout = std::chrono::seconds(10);
+    } // namespace
+
+    bool AppBackend::instrumentControlAvailable() const { return pzControl_ != nullptr; }
+
+    pz::InstrumentMode AppBackend::instrumentMode() const
+    {
+        return static_cast<pz::InstrumentMode>(instrumentMode_.load());
+    }
+
+    std::pair<int, int> AppBackend::instrumentRunOffset() const
+    {
+        return {instrumentRunX_.load(), instrumentRunY_.load()};
+    }
+
+    void AppBackend::setServiceMode(bool on) { serviceMode_.store(on); }
+
+    std::string AppBackend::alignSource() const
+    {
+        const int s = alignSource_.load();
+        return s == 1 ? "bridge" : s == 2 ? "bands" : "";
+    }
+
+    bool AppBackend::alignWholeFrameAvailable(std::string *why)
+    {
+        auto *provider = executionProvider_.get();
+        if (!provider || provider->name() != "pz-devmem") {
+            if (why) *why = "no PZ7035 results bridge";
+            return false;
+        }
+        std::string error;
+        const auto expected = pz::loadExpectedCore(pz::kExpectedCorePath, &error);
+        if (!expected) {
+            if (why) *why = "expected-core.json: " + (error.empty() ? std::string("missing") : error);
+            return false;
+        }
+        if (!expected->has(pz::kFeatureAlignWholeFrame)) {
+            if (why) *why = "the loaded build has no whole-frame Align preview (results8 or later)";
+            return false;
+        }
+        const auto identity = provider->identity();
+        if (!identity.valid || identity.buildId != expected->buildId) {
+            if (why) *why = "the PL BUILD_ID does not match expected-core.json";
+            return false;
+        }
+        return true;
+    }
+    bool AppBackend::serviceMode() const { return serviceMode_.load(); }
+
+    void AppBackend::setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers)
+    {
+        pzControl_ = std::make_unique<pz::PzInstrumentControl>(std::move(registers));
+    }
+
+    bool AppBackend::setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            SPDLOG_WARN("AppBackend: instrument mode {}: {}", pz::instrumentModeName(mode), message);
+            return false;
+        };
+        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (mode == pz::InstrumentMode::Unknown) return fail("choose Align or Run");
+        if (!captureService_) return fail("the backend is not initialized");
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing camera mode");
+        if (mode == pz::InstrumentMode::Run) {
+            x = std::clamp(x - x % kRunXStep, 0, kRunXMax - kRunXMax % kRunXStep);
+            y = std::clamp(y - y % kRunYStep, 0, kRunYMax);
+        }
+        std::string err;
+        // 1. LED off, cell path off: no producer AcquisitionStart may run with the U-Net enable set
+        //    (its command pulses clear bit 4), and the guard never sees a timing transient lit.
+        if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
+        instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));
+        captureService_->stop(); // also stops Align's bridge previews (bridge STOP)
+        alignSource_.store(0);
+        // Whole-frame Align needs results8 or later (expected-core.json feature + BUILD_ID match);
+        // otherwise the producer's banded preview at the older timing.
+        std::string wholeFrameWhy;
+        const bool wholeFrame = mode == pz::InstrumentMode::Align && alignWholeFrameAvailable(&wholeFrameWhy);
+        if (mode == pz::InstrumentMode::Align && !wholeFrame)
+            SPDLOG_INFO("AppBackend: Align uses the banded preview: {}", wholeFrameWhy);
+#if MIB_HAS_ARAVIS
+        // 2. Stage the producer settings. Every capture start reopens the device and writes rate,
+        //    exposure and region, so the producer re-applies the mode even if something else
+        //    touched the sensor meanwhile.
+        if (aravisCameraConfigured_) {
+            AravisProfile next = aravisProfile_;
+            if (mode == pz::InstrumentMode::Align) {
+                next.overviewFps = wholeFrame ? kAlignFps : kAlignBandsFps;
+                next.overviewExposureUs = wholeFrame ? kAlignExposureUs : kAlignBandsExposureUs;
+                next.overviewHmax = wholeFrame ? kAlignHmax : 0;
+            } else {
+                next.hasRoi = true;
+                next.x = x;
+                next.y = y;
+                next.width = kRunWidth;
+                next.height = kRunHeight;
+                next.experimentFps = kRunFps;
+                next.experimentExposureUs = kRunExposureUs;
+            }
+            if (!saveAravisProfile(next, &err)) return fail(err);
+            aravisProfile_ = next;
+            if (!setAravisOverview(mode == pz::InstrumentMode::Align, &err)) return fail(err);
+            installAravisFactory();
+        }
+#endif
+        // 3. AcquisitionStart applies ROI, timing, ingress geometry and the receiver reset.
+        captureService_->requestStart();
+        const auto until = std::chrono::steady_clock::now() + kCameraStartTimeout;
+        services::CaptureLifecycleSnapshot snap = captureService_->lifecycleSnapshot();
+        while (!snap.cameraReady && std::chrono::steady_clock::now() < until) {
+            if (snap.state == services::CaptureLifecycleState::Faulted) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            snap = captureService_->lifecycleSnapshot();
+        }
+        if (!snap.cameraReady) {
+            captureService_->stop();
+            return fail("the camera did not start" +
+                        (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+        }
+        if (mode == pz::InstrumentMode::Align && wholeFrame) {
+            // 4a. Align (results8 on): stop the producer stream (the sensor keeps the applied
+            //     232/800/64 timing), then whole frames from the bridge's preview slots through a
+            //     camera behind CaptureService, so the live view is unchanged. LED 100/135.
+            captureService_->stop();
+            processing::pz::BridgePreviewConfig preview; // 816x624, every 40th frame, 0x3F100000
+            auto *provider = executionProvider_.get();
+            captureService_->setCameraFactory([provider, preview]() -> std::unique_ptr<::camera::common::ICamera> {
+                if (!provider) return nullptr;
+                return std::make_unique<pz::PzBridgePreviewCamera>(*provider, preview);
+            });
+            captureService_->requestStart();
+            const auto previewUntil = std::chrono::steady_clock::now() + kCameraStartTimeout;
+            snap = captureService_->lifecycleSnapshot();
+            while (!snap.cameraReady && std::chrono::steady_clock::now() < previewUntil &&
+                   snap.state != services::CaptureLifecycleState::Faulted) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                snap = captureService_->lifecycleSnapshot();
+            }
+            if (!snap.cameraReady) {
+                captureService_->stop();
+                return fail("Align previews did not start" +
+                            (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+            }
+            // Success means a whole frame arrived, not only an armed bridge.
+            const auto firstFrameUntil = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+            const auto framesBefore = captureService_->stats().framesProcessed.load();
+            while (captureService_->stats().framesProcessed.load() == framesBefore &&
+                   std::chrono::steady_clock::now() < firstFrameUntil &&
+                   captureService_->lifecycleSnapshot().cameraReady)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (captureService_->stats().framesProcessed.load() == framesBefore) {
+                snap = captureService_->lifecycleSnapshot();
+                captureService_->stop();
+                return fail("no Align preview arrived" +
+                            (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+            }
+            if (!pzControl_->setLed(pz::kAlignLed, &err)) return fail(err);
+            alignSource_.store(1);
+        } else if (mode == pz::InstrumentMode::Align) {
+            // 4a'. Align on older images: previews from the producer's band capture, LED 0/125.
+            if (!pzControl_->setLed(pz::kAlignBandsLed, &err)) return fail(err);
+            alignSource_.store(2);
+        } else {
+            // 4b. Run: stop the producer stream (the sensor keeps streaming at the applied
+            //     timing), then the cell path, the latency monitor and the LED Run preset.
+            captureService_->stop();
+            if (!pzControl_->setCellPath(true, &err) || !pzControl_->clearLatency(&err) ||
+                !pzControl_->setLed(pz::kRunLed, &err))
+                return fail(err);
+            instrumentRunX_.store(x);
+            instrumentRunY_.store(y);
+        }
+        instrumentMode_.store(static_cast<int>(mode));
+        SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),
+                    mode == pz::InstrumentMode::Run ? fmt::format(" at ({}, {})", x, y) : std::string());
+        return true;
+    }
+
+    bool AppBackend::setInstrumentLed(double delayUs, double widthUs, std::string *errorOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (!serviceMode_.load()) return fail("raw LED values need Service / Commissioning mode");
+        const auto run = experimentCoordinator_->state();
+        if (run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+            run == app::ExperimentRunState::Stopping)
+            return fail("the LED cannot change during an experiment");
+        const pz::LedSetting setting{delayUs, widthUs};
+        if (auto why = pz::checkLed(instrumentMode(), setting); !why.empty()) return fail(why);
+        std::string err;
+        if (!pzControl_->setLed(setting, &err)) return fail(err);
+        SPDLOG_INFO("AppBackend: LED {:.1f}/{:.1f} µs (service, {})", delayUs, widthUs,
+                    pz::instrumentModeName(instrumentMode()));
+        return true;
+    }
+
+    bool AppBackend::fetchRunPreview(std::vector<uint8_t> &out, std::string *errorOut)
+    {
+        if (!pzControl_) {
+            if (errorOut) *errorOut = "no PZ7035 control on this platform";
+            return false;
+        }
+        if (instrumentMode() != pz::InstrumentMode::Run) {
+            if (errorOut) *errorOut = "the run preview needs Run mode";
+            return false;
+        }
+        pz::PzCellCapture capture;
+        if (!pzControl_->captureCell(capture, std::chrono::milliseconds(100), errorOut)) return false;
+        out = pz::encodeRunPreview(capture);
+        return true;
+    }
     services::PlaybackService &AppBackend::playback() { return *playbackService_; }
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
@@ -1758,6 +2009,8 @@ namespace backend
         options.enableGigEVision = aravisGigE_;
         const auto& profile = aravisProfile_;
         if (profile.previewRateHz > 0) options.previewRateHz = profile.previewRateHz;
+        // PZ7035 line period: forced only for the whole-frame Align overview, otherwise automatic.
+        options.pzHmax = aravisOverview_.load() ? profile.overviewHmax : 0;
         if (aravisOverview_.load()) {
             options.fullSensor = true;
             if (profile.overviewFps > 0) options.frameRateHz = profile.overviewFps;
@@ -1797,7 +2050,13 @@ namespace backend
             std::lock_guard<std::mutex> lock(aravisSessionMutex_);
             aravisSession_ = std::move(geometry);
         };
-        captureService_->setCameraFactory([options]() mutable {
+        captureService_->setCameraFactory([this, options]() mutable -> std::unique_ptr<::camera::common::ICamera> {
+            // #501 P1: in Run the PZ7035 cell path is on, and a producer AcquisitionStart would
+            // clear the U-Net enable. Whatever asks for a capture start, the producer stays shut.
+            if (instrumentMode() == pz::InstrumentMode::Run) {
+                SPDLOG_WARN("AppBackend: camera start refused in Run mode (switch to Align for the live camera)");
+                return nullptr;
+            }
             return std::make_unique<::camera::aravis::AravisCamera>(options);
         });
 #endif
@@ -1937,6 +2196,10 @@ namespace backend
 
     bool AppBackend::setCameraOverview(bool overview, std::string* errorOut)
     {
+        if (instrumentMode() == pz::InstrumentMode::Run) {
+            if (errorOut) *errorOut = "The instrument is in Run mode; switch camera modes with Align/Run";
+            return false;
+        }
         if (isMindVisionCameraSelected()) return setMindVisionOverview(overview, errorOut);
 #if MIB_HAS_ARAVIS
         if (aravisCameraConfigured_) return setAravisOverview(overview, errorOut);

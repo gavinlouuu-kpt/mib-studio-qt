@@ -52,3 +52,15 @@ export function rateSummary(g: CameraGeometry): string {
   }
   return parts.join(" → ");
 }
+
+/** PZ7035 Run window (#501 P1): ROI 2 is the fixed 512x96 U-Net window; the producer takes x in
+ *  steps of 8 and the sensor lands y on a multiple of 4 (pz7035-imx426 YOFO_HOST_INTERFACE.md). */
+export const RUN_WINDOW = {width: 512, height: 96, xStep: 8, yStep: 4, sensorWidth: 816, sensorHeight: 624};
+
+export function snapRunWindow(rect: Pick<Rect, "x" | "y">): Rect {
+  const {width, height, xStep, yStep, sensorWidth, sensorHeight} = RUN_WINDOW;
+  const maxX = Math.floor((sensorWidth - width) / xStep) * xStep, maxY = Math.floor((sensorHeight - height) / yStep) * yStep;
+  const x = Math.min(Math.max(Math.round(rect.x / xStep) * xStep, 0), maxX);
+  const y = Math.min(Math.max(Math.round(rect.y / yStep) * yStep, 0), maxY);
+  return {x, y, width, height};
+}

@@ -70,7 +70,6 @@ fn abi_version_is_stable() {
     // interim number).
     // v24 #501 instrument UI P0: fetch_platform_info capabilities and
     // fetch_instrument_status (PZ7035 PL core, LED, link, latency).
-    // 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
     // v25 the central profile registry (#398): registry_* commands, snapshot
     // and contract groups, and the shell-injected HTTPS transport. Built as a
     // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
@@ -79,7 +78,31 @@ fn abi_version_is_stable() {
     // fetch_stage_status, operation kinds StageMove/StageReference, discovery
     // kind MotionStage, stage_move_states. It landed before #501 P1, so it
     // took 26 under the landing-order rule; 27 reserved for #501 P1.
-    assert_eq!(ffi::bridge_abi_version(), 26);
+    // v27 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
+    // fetch_run_preview (PZ7035 Align/Run camera modes).
+    assert_eq!(ffi::bridge_abi_version(), 27);
+}
+
+// ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
+// is refused, and there is no run preview.
+#[test]
+#[serial]
+fn instrument_mode_commands_off_the_instrument() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_modes_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let refused = bridge.pin_mut().set_instrument_mode("run", 152, 200);
+    assert!(!refused.ok && refused.message.contains("no PZ7035 control"), "{}", refused.message);
+    let bad = bridge.pin_mut().set_instrument_mode("sideways", 0, 0);
+    assert!(!bad.ok && bad.message.contains("align or run"), "{}", bad.message);
+    assert!(bridge.pin_mut().set_service_mode(true).ok);
+    assert!(!bridge.pin_mut().set_instrument_led(7.0, 60.0).ok);
+    assert!(bridge.pin_mut().set_service_mode(false).ok);
+    assert!(bridge.pin_mut().fetch_run_preview().is_empty());
+    let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
+    assert_eq!(info["capabilities"]["run_mode"], serde_json::json!(false), "{info}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and

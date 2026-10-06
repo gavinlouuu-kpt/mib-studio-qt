@@ -53,6 +53,20 @@ start it (see [[Rust-Bridge]] ABI 21). The Aravis profile's `preview_rate_hz`
 frame. Measured on the PS at 512x96 / 1 kHz: uncapped ~500 previews/s at 70 %
 of a core, 60/s at 8 %, 30/s at 4 %.
 
+**PZ7035 camera modes (#501 P1).**
+- **Owner.** `pzControl_` (`pz::PzInstrumentControl`) is created beside the
+  `pz-devmem` provider. It writes nothing until a mode is chosen.
+- **Switching.** `setInstrumentMode(Align|Run, x, y)` holds
+  `instrumentModeMutex_` and is refused during an experiment or recording.
+  It sequences the LED, the cell path and the Aravis profile (Align
+  500 fps / 1899.7 µs; Run 5 kHz / 150 µs at the snapped window) around a
+  capture start; the full sequence is in [[../data-model/PZ7035-Records]].
+- **Run guard.** In Run the Aravis factory returns null, so no capture
+  start can reach the producer.
+- **LED.** `setServiceMode` latches Service mode; `setInstrumentLed`
+  requires it.
+- **Preview.** `fetchRunPreview` encodes one cell capture.
+
 **Camera & Alignment.** `setCameraOverview` / `saveCameraRoi` /
 `cameraGeometry` generalise the MindVision Overview to Aravis cameras. The
 Aravis profile `<data>/config/aravis-camera.json` (or `MIB_ARAVIS_PROFILE`)

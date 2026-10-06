@@ -65,8 +65,10 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzPlatformMonitor.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzInstrumentControl.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzExecutionProviders.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/ExecutionProviderFactory.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzBridgePreview.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
@@ -406,6 +408,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/InstrumentIdentity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/RecordingTarget.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzBridgePreviewCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
