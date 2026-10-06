@@ -246,7 +246,11 @@ private:
     bool stopping_{false};
     bool shutDown_{false};
     int exclusivePending_{0};   // queued or running Connect / ApplyProfile jobs
-    bool disconnecting_{false}; // a Disconnect is queued: operations end and no new ones start
+    // Disconnects queued or running. While any is pending, operations end and
+    // no new operation, Connect or ApplyProfile is admitted. A counter, not a
+    // flag: with two concurrent disconnect() calls the first to finish must not
+    // reopen admission while the second is still queued.
+    int pendingDisconnects_{0};
     std::thread worker_;
 };
 

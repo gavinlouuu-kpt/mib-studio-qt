@@ -127,10 +127,13 @@ controller's serial. That includes the `on_startup` opt-in.
     with `Busy` while an operation is active or another exclusive job is
     queued, and operations are refused (`Busy`) while one is pending, so
     nothing can slip in ahead of it.
-  - `disconnect()` marks the service `disconnecting_` under the admission
+  - `disconnect()` counts itself in `pendingDisconnects_` under the admission
     lock, cancels the active operation and stops the axis immediately, then
     queues the disconnect. The operation ends `Cancelled` at its next poll
-    (≤ `poll_ms.moving`); no new operation is admitted meanwhile.
+    (≤ `poll_ms.moving`). While any Disconnect is pending, no operation,
+    Connect or ApplyProfile is admitted. It is a counter, not a flag, so the
+    first of two overlapping `disconnect()` calls cannot reopen admission
+    while the second is still queued.
   - Found while designing the Tauri panel: before this, `applyProfile()`
     during a 3 s move blocked 2.9 s and then *applied and saved* the profile.
 
