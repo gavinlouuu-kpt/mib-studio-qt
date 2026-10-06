@@ -33,7 +33,7 @@ import {
   type ReviewMetricsPage,
   type TriggerStatus,
 } from "./bridge";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSES } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
@@ -55,7 +55,9 @@ import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
-import { initialWindow, rateSummary, snapWindow, type Rect } from "./cameraAlignment";
+import { initialWindow, rateSummary, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { runPreviewRgba, type RunPreview } from "./runPreview";
+import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
@@ -246,7 +248,16 @@ export default function App() {
   // #501: surfaces follow what the instrument has; the PZ7035 reports its PL core and health.
   const caps = capabilitiesOf(platform);
   const pz7035 = isPz7035(caps);
+  // Backend-owned camera modes (#501 P1): Camera & Alignment = Align, Experiment = Run.
+  const instrumentModes = caps.align_mode && caps.run_mode;
   const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
+  const instrumentRef = useRef<InstrumentStatus | null>(null);
+  instrumentRef.current = instrument;
+  const runMode = instrument?.mode?.name === "run";
+  const [runPreviewInfo, setRunPreviewInfo] = useState<{frameId: number; listed: number; cells: number; blemishes: number} | null>(null);
+  const [showRunMask, setShowRunMask] = useState(true);
+  const showRunMaskRef = useRef(true);
+  showRunMaskRef.current = showRunMask;
   const [cameraGeometry, setCameraGeometry] = useState<CameraGeometry | null>(null);
   const [cameraWindow, setCameraWindow] = useState<Rect | null>(null);
   const cameraGeometryRef = useRef<CameraGeometry | null>(null);
@@ -627,6 +638,37 @@ export default function App() {
     return stopLoop;
   }, [ready, running, stopLoop, previewFpsLimit]);
 
+  // PZ7035 Run (#501 P1): the producer is stopped; the preview is the PL cell capture with the
+  // U-Net mask and the listed cells of the same frame.
+  const drawRunPreview = useCallback((p: RunPreview) => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+    canvas.width = p.width;
+    canvas.height = p.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.putImageData(new ImageData(runPreviewRgba(p, showRunMaskRef.current), p.width, p.height), 0, 0);
+    ctx.lineWidth = 1;
+    for (const c of p.list) {
+      ctx.strokeStyle = c.valid ? "#1a7f37" : "#b42318";
+      ctx.strokeRect(c.x + 0.5, c.y + 0.5, Math.max(1, c.width - 1), Math.max(1, c.height - 1));
+    }
+    setRunPreviewInfo({frameId: p.frameId, listed: p.list.length, cells: p.cells, blemishes: p.blemishes});
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !runMode || tab !== "experiment") { setRunPreviewInfo(null); return; }
+    let busy = false, live = true;
+    const id = window.setInterval(() => {
+      if (busy) return;
+      busy = true;
+      void bridge.fetchRunPreview().then((p) => { if (live) drawRunPreview(p); })
+        .catch(() => { /* a capture can time out; the next one follows */ })
+        .finally(() => { busy = false; });
+    }, 100);
+    return () => { live = false; window.clearInterval(id); };
+  }, [ready, runMode, tab, drawRunPreview]);
+
   const onStartCamera = useCallback(async () => {
     try {
       setReviewing(false);
@@ -705,9 +747,11 @@ export default function App() {
   const experimentPending = useRef(false);
   const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
   const [readinessMessage, setReadinessMessage] = useState("");
+  // Non-blocking readiness warnings shown at run start (e.g. recording to RAM, #501).
+  const [startNotice, setStartNotice] = useState("");
   const onStartExperiment = useCallback(async () => {
     if (experimentPending.current) return;
-    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage("");
+    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
       const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
       if (!picked) return;
@@ -718,9 +762,11 @@ export default function App() {
         setReadinessMessage(`${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}`);
         return;
       }
+      const notice = readiness.gates.filter(g => g.id === "storage.persistent" && g.status === READINESS_GATE_STATUSES.Warn).map(g => g.reason).join(" ");
       const res = await bridge.experimentStart(picked);
       if (!res.ok) {setReadinessMessage(`${picked}: ${res.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${res.message}`); }
       append(`experiment started → ${picked}`);
+      if (notice) { setStartNotice(notice); append(notice); }
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment start error: ${e}`);
@@ -873,7 +919,23 @@ export default function App() {
     let cancelled = false;
     void (async () => {
       const geometry = await refreshCameraGeometry();
-      if (cancelled || !geometry?.supported || expActive) return;
+      if (cancelled || expActive) return;
+      if (instrumentModes) {
+        // PZ7035 (#501 P1): the backend owns the switch (LED, cell path, producer timing).
+        const want = tab === "overview" ? "align" : "run";
+        const current = instrumentRef.current?.mode;
+        const win = cameraWindowRef.current ? snapRunWindow(cameraWindowRef.current) : null;
+        if (want === "run" && !win) return append("Run: place the window in Camera & Alignment first");
+        if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) return;
+        append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
+        const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
+        append(result.ok ? result.message : `Camera mode: ${result.message}`);
+        if (cancelled) return;
+        setRunning(result.ok && want === "align");
+        await refreshCameraGeometry();
+        return;
+      }
+      if (!geometry?.supported) return;
       const overview = tab === "overview";
       if (geometry.overview === overview) return;
       const result = await bridge.setCameraOverview(overview);
@@ -881,7 +943,7 @@ export default function App() {
       if (!cancelled) await refreshCameraGeometry();
     })();
     return () => { cancelled = true; };
-  }, [tab, ready, expActive, refreshCameraGeometry, append]);
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes]);
 
   // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
   useEffect(() => {
@@ -891,6 +953,13 @@ export default function App() {
   }, [ready, tab, refreshCameraGeometry]);
 
   const saveCameraWindow = useCallback(async (rect: Rect) => {
+    if (instrumentModes) {
+      // The Run window is applied (and saved) by the switch to Run when Experiment opens.
+      const snapped = snapRunWindow(rect);
+      setCameraWindow(snapped);
+      append(`Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`);
+      return;
+    }
     const geometry = cameraGeometryRef.current;
     if (!geometry?.supported) return;
     const snapped = snapWindow(rect, geometry);
@@ -898,7 +967,7 @@ export default function App() {
     const result = await bridge.saveCameraRoi(snapped.x, snapped.y, snapped.width, snapped.height);
     append(result.ok ? result.message : `Camera ROI not saved: ${result.message}`);
     await refreshCameraGeometry();
-  }, [append, refreshCameraGeometry]);
+  }, [append, refreshCameraGeometry, instrumentModes]);
 
   // Drag the window on the full-sensor image; release saves it (Qt saves on every move).
   const canvasPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -917,7 +986,9 @@ export default function App() {
     const drag = windowDragRef.current, geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
     if (!drag || !geometry || !rect) return;
     const p = canvasPoint(e);
-    const next = snapWindow({...rect, x: p.x - drag.dx, y: p.y - drag.dy}, geometry);
+    const next = instrumentModes
+      ? snapRunWindow({x: p.x - drag.dx, y: p.y - drag.dy})
+      : snapWindow({...rect, x: p.x - drag.dx, y: p.y - drag.dy}, geometry);
     cameraWindowRef.current = next;
     setCameraWindow(next);
   };
@@ -1028,12 +1099,12 @@ export default function App() {
       identity: sheathPump?.connected ? (sheathPump.port_name || `COM${sheathPump.com_port}`) : "",
     },
     trigger: { valid: trigStatus?.valid ?? false, cameraAttached: trigStatus?.camera_attached ?? false },
-    // Authoritative storage/free-space status is not bridged yet (backend
-    // follow-up); the check stays informational until it is.
-    storageKnown: false,
-    storageWritable: false,
-    storageFreeOk: false,
-    storagePath: "",
+    // The PZ7035 reports its recording target (#501); the desktop's check stays informational.
+    storageKnown: !!instrument?.storage,
+    storageWritable: instrument?.storage?.writable ?? false,
+    storageFreeOk: (instrument?.storage?.free_bytes ?? 0) >= 1e9,
+    storagePath: instrument?.storage?.path ?? "",
+    storageWarning: instrument?.storage?.warning ?? "",
     capabilities: caps,
     instrument,
   };
@@ -1077,6 +1148,7 @@ export default function App() {
     operatorName: "", // operator identity not captured yet
     outputPath: expStatus?.output_path ?? "",
     warningsCount,
+    storageWarning: instrument?.storage?.warning ?? "",
   };
   const contextBar = deriveContextBar(contextFacts);
 
@@ -1098,6 +1170,8 @@ export default function App() {
     }
     setOperatingMode(next);
     if (next !== "service") setTriggerArmed(false);
+    // The backend refuses raw LED values outside Service mode (#501 P1).
+    if (instrumentModes) void bridge.setServiceMode(next === "service").catch(() => {});
   };
 
   const actuateCheck = canActuate({
@@ -1677,13 +1751,28 @@ export default function App() {
                 </div>
 
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+                {startNotice && <p role="status" className="start-notice">{startNotice}</p>}
 
                 {expTab === "preview" && (
                   <>
                     <div className="canvas-wrap">
-                      {!lastMeta && <span className="canvas-hint">No frame yet — configure a camera and press Start Camera</span>}
+                      {!lastMeta && !runPreviewInfo && <span className="canvas-hint">{instrumentModes
+                        ? (runMode ? "Waiting for the PL cell capture…" : "Switching to Run…")
+                        : "No frame yet — configure a camera and press Start Camera"}</span>}
                       <canvas ref={previewCanvasRef} className={fitWindow ? "fit" : ""} />
                     </div>
+                    {instrumentModes && runMode && (
+                      <p className="mono" role="status">
+                        Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
+                        {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
+                        {" · "}latency max {instrument?.latency ? `${instrument.latency.max_us.toFixed(0)} µs` : "—"}
+                        {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
+                      </p>
+                    )}
+                    {instrumentModes && operatingMode === "service" && (runMode || instrument?.mode?.name === "align") && (
+                      <InstrumentLedControls mode={runMode ? "run" : "align"} alignBands={instrument?.mode?.align_source === "bands"} limits={caps.led_limits?.[runMode ? "run" : "align"]}
+                        current={instrument?.led} disabled={!ready || expActive} apply={bridge.setInstrumentLed} append={append} />
+                    )}
                     <div className="toolbar" style={{ marginTop: 6 }}>
 
                       <span className="legend">

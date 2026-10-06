@@ -151,6 +151,9 @@ int main() {
     r->strobeWindow[1] = 0;
     r->strobeWindow[2] = 12500;
     MIB_EXPECT(monitor.sample(15'000'000).ledPreset == "align", "LED Align preset 0/125");
+    r->strobeWindow[1] = 10000;
+    r->strobeWindow[2] = 13500;
+    MIB_EXPECT(monitor.sample(15'500'000).ledPreset == "align", "LED Align preset 100/135 (results8 whole frames)");
     r->strobeWindow[0] = 0;
     MIB_EXPECT(monitor.sample(16'000'000).ledPreset == "off", "LED off");
 

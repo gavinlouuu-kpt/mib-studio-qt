@@ -1,0 +1,375 @@
+name: YOFO Review bundles
+
+# The shipped YOFO Review bundles (plan 2026-10-01-standalone-review-app,
+# PR 5 / PR 6): an unsigned, ad-hoc-signed DMG on macOS (Apple silicon) and a
+# per-user NSIS installer on Windows x64. Called by review-ci.yml on every
+# push (no version: the committed X.Y.Z) and by review-release.yml on v* tags
+# (version = the tag, stamped into the Tauri configs before bundling).
+#
+# Both lanes build the review core against static Conan dependencies
+# (conanfile.py review_core=True, <os>-review-core preset), link the bridge
+# from the CMake-derived manifest (tools/gen_review_link_manifest.py), check
+# that nothing third-party is loaded dynamically, bundle, install / mount,
+# smoke-launch and upload the bundle as an artifact. No signing or
+# notarisation (decision log 2026-10-01).
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to stamp (e.g. 1.2.0 or 1.2.0-beta.abc1234); empty = committed version"
+        type: string
+        default: ""
+      ref:
+        description: "Git ref to build (default: the caller's ref)"
+        type: string
+        default: ""
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        description: "minisign private key for updater artifacts (release only)"
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+    outputs:
+      macos-artifact:
+        description: "Artifact holding the DMG"
+        value: yofo-review-macos-arm64
+      windows-artifact:
+        description: "Artifact holding the NSIS installer"
+        value: yofo-review-windows-x64
+
+permissions:
+  contents: read
+
+jobs:
+  review-macos:
+    name: YOFO Review (macOS arm64, DMG)
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      # One deployment target for Conan (profile os.version), CMake, cc and
+      # rustc: the bundle's minimumSystemVersion.
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      MIB_BRIDGE_NO_CMAKE: "1"
+      MIB_BRIDGE_LINK_MANIFEST: ${{ github.workspace }}/build/review-core/mib-bridge-link-manifest.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Conan and Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install conan ninja
+          conan profile detect --force
+          conan profile show -pr:h conan/profiles/macos-appleclang-arm64
+
+      - name: Restore Conan cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2/p
+          key: conan-review-macos-arm64-${{ hashFiles('conanfile.py', 'conan/profiles/macos-appleclang-arm64') }}
+          restore-keys: |
+            conan-review-macos-arm64-
+
+      - name: Conan install (static review-core graph)
+        shell: bash
+        run: |
+          set -euo pipefail
+          conan install . -of build/review-core --build=missing \
+            -o "&:review_core=True" \
+            -pr:h conan/profiles/macos-appleclang-arm64 \
+            -pr:b conan/profiles/macos-appleclang-arm64
+
+      - name: Build the review core and link probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset macos-review-core
+          cmake --build --preset macos-review-core-build
+
+      - name: Probe runs and links no third-party dylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe=build/review-core/mib_review_link_probe
+          "$probe"
+          otool -L "$probe"
+          if otool -L "$probe" | tail -n +2 | grep -vE '^[[:space:]]+(/usr/lib/|/System/)'; then
+            echo "probe links a non-system dylib (expected static Conan deps)" >&2; exit 1
+          fi
+
+      - name: Generate the bridge link manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/test_gen_review_link_manifest.py
+          python3 tools/gen_review_link_manifest.py --build-dir build/review-core
+          cat build/review-core/mib-bridge-link-manifest.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/mib-bridge -> target
+            desktop/src-tauri -> target
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Review bridge tests (review-only, manifest link)
+        shell: bash
+        working-directory: crates/mib-bridge
+        run: cargo test --no-fail-fast --features review-only
+
+      - name: Stamp the release version
+        if: inputs.version != ''
+        shell: bash
+        run: python3 scripts/release/stamp-tauri-version.py --version "${{ inputs.version }}"
+
+      # Updater artifacts (.app.tar.gz + .sig) only when the app carries the
+      # minisign public key AND the private key secret is present (release
+      # builds); otherwise a plain DMG.
+      - name: Build YOFO Review.app and DMG (unsigned, ad-hoc signature)
+        shell: bash
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          npm install
+          extra=()
+          if python3 ../scripts/release/review-updater-enabled.py && [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            extra=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
+            echo "building signed updater artifacts"
+          fi
+          npm run tauri:review:build -- --ci --features review-only --bundles app,dmg ${extra[@]+"${extra[@]}"}
+
+      - name: Verify the bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=desktop/src-tauri/target/release/bundle
+          app="$bundle/macos/YOFO Review.app"
+          test -d "$app"
+          plist="$app/Contents/Info.plist"
+          test "$(plutil -extract CFBundleIdentifier raw "$plist")" = bio.yofo.review
+          test "$(plutil -extract LSMinimumSystemVersion raw "$plist")" = 13.0
+          bin="$app/Contents/MacOS/$(plutil -extract CFBundleExecutable raw "$plist")"
+          otool -L "$bin"
+          if otool -L "$bin" | tail -n +2 | grep -vE '^[[:space:]]+(/usr/lib/|/System/)'; then
+            echo "app binary links a non-system dylib" >&2; exit 1
+          fi
+          # Capture, then match: under pipefail a `| grep -q` that exits at
+          # the first match kills the writer with SIGPIPE and fails the step.
+          sig=$(codesign -dv "$app" 2>&1)
+          echo "$sig"
+          grep -q "Signature=adhoc" <<<"$sig"
+          dmg=$(ls "$bundle"/dmg/*.dmg)
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          test -d "$mnt/YOFO Review.app"
+          hdiutil detach "$mnt"
+          echo "DMG=$dmg" >> "$GITHUB_ENV"
+          echo "APP_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: Smoke-launch YOFO Review
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$APP_BIN" > smoke.log 2>&1 &
+          pid=$!
+          sleep 20
+          if ! kill -0 "$pid" 2>/dev/null; then
+            cat smoke.log; echo "YOFO Review exited during startup" >&2; exit 1
+          fi
+          kill "$pid"
+          cat smoke.log
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: yofo-review-macos-arm64
+          # The DMG, plus the updater bundle + signature in signed builds.
+          path: |
+            ${{ env.DMG }}
+            desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 14
+
+  review-windows:
+    name: YOFO Review (Windows x64, NSIS)
+    runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      MIB_BRIDGE_NO_CMAKE: "1"
+      MIB_BRIDGE_LINK_MANIFEST: ${{ github.workspace }}\build\review-core\mib-bridge-link-manifest.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # MSVC (cl, link, dumpbin) on PATH for Conan, CMake/Ninja and cargo.
+      - name: VS 2022 x64 developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Conan and Ninja
+        shell: pwsh
+        run: |
+          python -m pip install conan ninja
+          conan profile detect --force
+          conan profile show -pr:h conan/profiles/windows-msvc194-ninja
+
+      - name: Restore Conan cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2/p
+          key: conan-review-windows-x64-${{ hashFiles('conanfile.py', 'conan/profiles/windows-msvc194*') }}
+          restore-keys: |
+            conan-review-windows-x64-
+
+      - name: Conan install (static review-core graph)
+        shell: pwsh
+        run: |
+          conan install . -of build/review-core --build=missing `
+            -o "&:review_core=True" `
+            -pr:h conan/profiles/windows-msvc194-ninja `
+            -pr:b conan/profiles/windows-msvc194-ninja
+          if ($LASTEXITCODE -ne 0) { throw "conan install failed" }
+
+      - name: Build the review core and link probe
+        shell: pwsh
+        run: |
+          cmake --preset windows-review-core
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+          cmake --build --preset windows-review-core-build
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Probe runs and loads no third-party DLL
+        shell: pwsh
+        run: |
+          $probe = "build/review-core/mib_review_link_probe.exe"
+          & $probe
+          if ($LASTEXITCODE -ne 0) { throw "probe failed ($LASTEXITCODE)" }
+          $deps = dumpbin /nologo /dependents $probe | Out-String
+          Write-Host $deps
+          if ($deps -match '(?im)^\s+(opencv|hdf5|spdlog|fmt|zlib|libpng|jpeg|tiff)\S*\.dll') {
+            throw "probe depends on a third-party DLL (expected static Conan deps)"
+          }
+
+      - name: Generate the bridge link manifest
+        shell: pwsh
+        run: |
+          python tools/test_gen_review_link_manifest.py
+          if ($LASTEXITCODE -ne 0) { throw "generator tests failed" }
+          python tools/gen_review_link_manifest.py --build-dir build/review-core
+          if ($LASTEXITCODE -ne 0) { throw "manifest generation failed" }
+          Get-Content build/review-core/mib-bridge-link-manifest.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/mib-bridge -> target
+            desktop/src-tauri -> target
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Review bridge tests (review-only, manifest link)
+        shell: pwsh
+        working-directory: crates/mib-bridge
+        run: |
+          cargo test --no-fail-fast --features review-only
+          if ($LASTEXITCODE -ne 0) { throw "bridge tests failed" }
+
+      - name: Stamp the release version
+        if: inputs.version != ''
+        shell: pwsh
+        run: |
+          python scripts/release/stamp-tauri-version.py --version "${{ inputs.version }}"
+          if ($LASTEXITCODE -ne 0) { throw "version stamp failed" }
+
+      - name: Build the YOFO Review NSIS installer (unsigned, per-user)
+        shell: pwsh
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm install
+          if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+          $extra = @()
+          python ../scripts/release/review-updater-enabled.py
+          if ($LASTEXITCODE -eq 0 -and $env:TAURI_SIGNING_PRIVATE_KEY) {
+            $extra = @('--config', '{"bundle":{"createUpdaterArtifacts":true}}')
+            Write-Host "building signed updater artifacts"
+          }
+          npm run tauri:review:build -- --ci --features review-only --bundles nsis @extra
+          if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
+
+      - name: Verify, install silently and smoke-launch
+        shell: pwsh
+        run: |
+          $bundle = "desktop/src-tauri/target/release/bundle/nsis"
+          $setup = Get-ChildItem $bundle -Filter *-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "no NSIS installer in $bundle" }
+          Write-Host "installer: $($setup.FullName)"
+          "SETUP=$($setup.FullName)" >> $env:GITHUB_ENV
+          $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "installer exit code $($proc.ExitCode)" }
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\YOFO Review" -Filter *.exe -Recurse |
+            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (-not $exe) { throw "installed executable not found under $env:LOCALAPPDATA\YOFO Review" }
+          Write-Host "installed: $($exe.FullName)"
+          $deps = dumpbin /nologo /dependents $exe.FullName | Out-String
+          Write-Host $deps
+          if ($deps -match '(?im)^\s+(opencv|hdf5|spdlog|fmt|zlib|libpng|jpeg|tiff)\S*\.dll') {
+            throw "installed app depends on a third-party DLL"
+          }
+          $app = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 20
+          if ($app.HasExited) { throw "YOFO Review exited during startup (code $($app.ExitCode))" }
+          Stop-Process -Id $app.Id -Force
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: yofo-review-windows-x64
+          # The installer, plus its updater signature in signed builds.
+          path: |
+            ${{ env.SETUP }}
+            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+          if-no-files-found: error
+          retention-days: 14

@@ -1,6 +1,6 @@
 import {describe, expect, it} from "vitest";
 import type {CameraGeometry} from "./bridge";
-import {initialWindow, rateSummary, snapWindow} from "./cameraAlignment";
+import {initialWindow, rateSummary, snapRunWindow, snapWindow} from "./cameraAlignment";
 
 const pz: CameraGeometry = {
   supported: true, overview: true, camera: "aravis", sensor_width: 816, sensor_height: 624,
@@ -27,5 +27,14 @@ describe("camera alignment", () => {
     expect(rateSummary(pz)).toBe(
       "Sensor 830 Hz (max 1665 Hz: window height) → ≥ 25.2 images/s here (limit: band readout to the PS, 11 bands per image)");
     expect(rateSummary({...pz, session: {}})).toBe("");
+  });
+});
+
+describe("PZ7035 Run window (#501 P1)", () => {
+  it("is 512x96 with x on 8 and y on 4, inside the 816x624 sensor", () => {
+    expect(snapRunWindow({x: 157, y: 203})).toEqual({x: 160, y: 204, width: 512, height: 96});
+    expect(snapRunWindow({x: 151, y: 201})).toEqual({x: 152, y: 200, width: 512, height: 96});
+    expect(snapRunWindow({x: 999, y: 999})).toEqual({x: 304, y: 528, width: 512, height: 96});
+    expect(snapRunWindow({x: -5, y: -5})).toEqual({x: 0, y: 0, width: 512, height: 96});
   });
 });

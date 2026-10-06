@@ -1,0 +1,463 @@
+/* YOFO Review window: the review panel fills the window between the menu
+   row and the status bar. Shared widget styles come from App.css. */
+.review-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.review-app .review-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 6px;
+}
+
+.review-app .review-main .subtab-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.review-app .product-name {
+  padding: 0 10px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+/* ---- Frames view (PR 2): grid | (preview over table) ------------------ */
+.review-frames {
+  display: flex;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.thumb-grid {
+  flex: 3;
+  min-width: 160px;
+  overflow-y: auto;
+  position: relative;
+  border: 1px solid var(--border);
+  background: #fff;
+  outline: none;
+}
+
+.thumb-grid:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+
+.thumb-canvas {
+  position: relative;
+}
+
+.thumb-cell {
+  position: absolute;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.thumb {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #111;
+  border: 2px solid transparent;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.thumb.selected {
+  border-color: var(--accent);
+}
+
+.thumb canvas,
+.thumb-pending {
+  width: 100%;
+  height: calc(100% - 12px);
+  display: block;
+}
+
+.thumb-pending {
+  background: repeating-linear-gradient(45deg, #1b1b1b, #1b1b1b 6px, #222 6px, #222 12px);
+}
+
+.thumb {
+  background: transparent;
+}
+
+.thumb-label {
+  position: absolute;
+  left: 2px;
+  bottom: 0;
+  font: 10px monospace;
+  color: var(--muted);
+}
+
+.thumb-empty,
+.review-empty {
+  padding: 24px;
+  color: var(--muted);
+}
+
+.review-side {
+  flex: 2;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.canvas-wrap.preview {
+  flex: 0 0 40%;
+  min-height: 120px;
+  position: relative;
+}
+
+.preview-caption {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  color: #ddd;
+  text-shadow: 0 0 2px #000;
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-toolbar .right {
+  flex: 1;
+}
+
+.review-side .table-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.review-side .metrics-table tr {
+  cursor: pointer;
+}
+
+.review-side .metrics-table tr.selected td {
+  background: #dbe8f8;
+}
+
+.review-side .metrics-table tr.target td:first-child {
+  box-shadow: 3px 0 0 #2b6cb0 inset;
+}
+
+.column-chooser {
+  position: relative;
+}
+
+.column-popup {
+  right: 0;
+  left: auto;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+}
+
+.column-popup label {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* ---- Frame viewer overlay ------------------------------------------- */
+.viewer-backdrop {
+  z-index: 50;
+}
+
+.viewer {
+  background: var(--panel);
+  width: min(94vw, 1400px);
+  height: min(90vh, 1000px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+}
+
+.viewer .toolbar .right {
+  flex: 1;
+}
+
+.viewer .toolbar button.active {
+  background: #dbe8f8;
+}
+
+.viewer-image {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.viewer-image.fit canvas {
+  object-fit: contain;
+  width: 100%;
+  height: 100%;
+}
+
+.viewer-image canvas {
+  image-rendering: pixelated;
+}
+
+.viewer-metrics {
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* ---- Charts view (PR 3): scatter | (frame pane over histogram) ------- */
+.review-charts {
+  display: flex;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  outline: none;
+}
+
+.charts-left {
+  flex: 3;
+  min-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.charts-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--muted);
+}
+
+.scatter-wrap,
+.histogram-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.scatter-canvas {
+  display: block;
+  touch-action: none;
+}
+
+.scatter-tip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(30, 30, 30, 0.88);
+  color: #fff;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 30;
+}
+
+.menu-popup.scatter-menu {
+  top: auto;
+}
+
+.charts-right {
+  flex: 2;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.charts-frame {
+  flex: 3;
+  min-height: 140px;
+  display: flex;
+}
+
+.charts-frame .canvas-wrap.preview {
+  flex: 1;
+}
+
+.charts-right .histogram-wrap {
+  flex: 2;
+  min-height: 140px;
+}
+
+@media (max-width: 760px) {
+  .review-frames {
+    flex-direction: column;
+  }
+  .review-side {
+    min-width: 0;
+  }
+  .review-charts {
+    flex-direction: column;
+  }
+  .charts-left,
+  .charts-right {
+    min-width: 0;
+  }
+}
+
+/* ---- Jobs and dialogs (PR 4) -------------------------------------------- */
+.more-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.job-dialog {
+  min-width: 420px;
+}
+
+.job-progress {
+  height: 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #f0f0f0;
+  overflow: hidden;
+  margin: 6px 0 8px;
+}
+
+.job-progress-bar {
+  height: 100%;
+  background: #2b6cb0;
+  transition: width 0.2s ease;
+}
+
+.job-progress-bar.indeterminate {
+  width: 30%;
+  animation: job-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes job-slide {
+  0% { margin-left: -30%; }
+  100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .job-progress-bar.indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+.job-outcome {
+  margin: 6px 0;
+  word-break: break-all;
+}
+
+.job-outcome.failed {
+  color: #b42318;
+}
+
+.job-outcome.completed {
+  color: #1a7f37;
+}
+
+.job-failures {
+  max-height: 160px;
+  overflow: auto;
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.radio-row,
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.series-range-input {
+  width: 110px;
+  padding: 3px 6px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.regenerate-dialog fieldset {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin: 0 0 8px;
+  padding: 4px 10px 6px;
+}
+
+.regenerate-dialog .row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.regenerate-dialog .row input[type="number"] {
+  width: 90px;
+  flex: none;
+}
+
+.form-error {
+  color: #b42318;
+  margin: 6px 0 0;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+button.btn.primary {
+  background: #2b6cb0;
+  border-color: #2b6cb0;
+  color: #fff;
+}
+
+button.btn.primary:hover:not(:disabled) {
+  background: #245a93;
+}
+
+/* Menu items inside the toolbar are menu rows, not toolbar buttons. */
+.toolbar .menu-popup button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 14px;
+}
+
+.toolbar .menu-popup button:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+/* ---- Updates (PR 6) ------------------------------------------------------ */
+.update-notes {
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  background: #f6f6f6;
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+}
+
+.statusbar .update-notice {
+  font-weight: 600;
+  color: #1a7f37;
+}

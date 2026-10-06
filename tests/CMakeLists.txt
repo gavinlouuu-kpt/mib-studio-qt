@@ -130,6 +130,10 @@ set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;
 mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
 add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
 set_tests_properties(backend.pl_science PROPERTIES LABELS "backend" TIMEOUT 60)
+mib_add_backend_test_executable(instrument_modes_test backend/instrument_modes_test.cpp)
+mib_backend_test_link(instrument_modes_test PRIVATE Threads::Threads)
+add_test(NAME backend.instrument_modes COMMAND $<TARGET_FILE:mib_backend_tests> instrument_modes_test)
+set_tests_properties(backend.instrument_modes PROPERTIES LABELS "backend;concurrency" TIMEOUT 90)
 mib_add_backend_test_executable(pl_science_provider_test backend/pl_science_provider_test.cpp)
 mib_backend_test_link(pl_science_provider_test PRIVATE Threads::Threads)
 add_test(NAME backend.pl_science_provider COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_provider_test
@@ -479,6 +483,9 @@ set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "p
 mib_add_backend_test_executable(pz_platform_monitor_test processing/pz_platform_monitor_test.cpp)
 add_test(NAME processing.pz_platform_monitor COMMAND $<TARGET_FILE:mib_backend_tests> pz_platform_monitor_test)
 set_tests_properties(processing.pz_platform_monitor PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+mib_add_backend_test_executable(pz_bridge_preview_test processing/pz_bridge_preview_test.cpp)
+add_test(NAME processing.pz_bridge_preview COMMAND $<TARGET_FILE:mib_backend_tests> pz_bridge_preview_test)
+set_tests_properties(processing.pz_bridge_preview PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
 add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test
@@ -723,6 +730,19 @@ set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording
 
 # KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
 # round-trip + fault injection for the save path and the frontend codec.
+# ReviewSession (plan 2026-10-01-standalone-review-app): the one review
+# implementation behind the Qt tab, the Tauri shell and YOFO Review.
+# Round-trip on experiment/legacy/recording fixtures + fault injection.
+mib_add_backend_test_executable(review_session_test review/review_session_test.cpp)
+add_test(NAME review.session COMMAND $<TARGET_FILE:mib_backend_tests> review_session_test)
+set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
+# regenerate masks, core contour, density (grid ≈ direct), single flight.
+mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)
+mib_backend_test_link(review_jobs_test PRIVATE Threads::Threads)
+add_test(NAME review.jobs COMMAND $<TARGET_FILE:mib_backend_tests> review_jobs_test)
+set_tests_properties(review.jobs PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 300)
+
 mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
 add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
 set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)
@@ -1312,6 +1332,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_publish_index_merge.py
     )
     set_tests_properties(scripts.publish_update_index PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.publish_review_update
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_publish_review_update.py
+    )
+    set_tests_properties(scripts.publish_review_update PROPERTIES
         LABELS "scripts;release"
         TIMEOUT 30
     )

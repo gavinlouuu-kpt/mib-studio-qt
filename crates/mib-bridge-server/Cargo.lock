@@ -564,6 +564,7 @@ dependencies = [
 name = "mib-bridge"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "cxx",
  "cxx-build",
  "serde_json",

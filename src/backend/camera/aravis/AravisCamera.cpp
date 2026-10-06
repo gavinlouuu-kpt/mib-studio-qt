@@ -263,6 +263,16 @@ bool AravisCamera::applySettingsLocked()
                                   std::to_string(r.x) + "+" + std::to_string(r.y));
         }
     }
+    if (options_.pzHmax) {
+        if (hasFeature(camera_, "PzHmax")) {
+            arv_camera_set_integer(camera_, "PzHmax", *options_.pzHmax, &error);
+            if (error != nullptr)
+                return failLocked("aravis.pz_hmax", errorText(error, "Cannot set PzHmax"));
+        } else if (*options_.pzHmax != 0) {
+            return failLocked("aravis.pz_hmax",
+                              "The GenTL producer has no PzHmax; deploy the producer with PzHmax for this mode");
+        }
+    }
     if (options_.frameRateHz) {
         // Frame-rate enable is optional in SFNC; the PZ7035 producer has none.
         if (hasFeature(camera_, "AcquisitionFrameRateEnable"))
