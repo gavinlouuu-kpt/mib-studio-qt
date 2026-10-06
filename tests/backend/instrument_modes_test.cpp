@@ -22,16 +22,37 @@
 
 #include <cstdlib>
 #include <filesystem>
-#include <unistd.h>
 #include <cstring>
 #include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace pz = backend::pz;
 
 namespace {
+
+void setEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+int processId() {
+#ifdef _WIN32
+    return _getpid();
+#else
+    return static_cast<int>(::getpid());
+#endif
+}
 
 constexpr unsigned S0 = 128; // S[i] = P[128 + i]
 
@@ -171,11 +192,11 @@ const backend::app::ReadinessGate* gateOf(const backend::app::ExperimentReadines
 void testModeSequence(const mib::test::TempDir& td) {
     const auto frames = td.path() / "frames";
     MIB_REQUIRE(mib::test::writeFrames(frames, 8, 512, 96), "mock frames");
-    setenv("MIB_PL_SCIENCE", "1", 1);
-    setenv("MIB_CAMERA_MODE", "mock", 1);
-    setenv("MIB_MOCK_CAMERA_DIR", frames.string().c_str(), 1);
-    setenv("MIB_DISABLED_SERVICES", "sqlite,hdf5,yolo,autofocus,trigger,playback", 1);
-    setenv("MIB_EXECUTION_PROVIDER", "none", 1);
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,yolo,autofocus,trigger,playback");
+    setEnv("MIB_EXECUTION_PROVIDER", "none");
     MIB_REQUIRE(!backend::app::hostProcessingAvailable(), "science on the PL");
 
     backend::AppBackend backend;
@@ -243,7 +264,7 @@ void testModeSequence(const mib::test::TempDir& td) {
                    "storage.persistent follows the destination's filesystem");
         std::error_code ec;
         if (std::filesystem::is_directory("/dev/shm", ec) && backend::app::recordingTarget("/dev/shm").ram) {
-            const auto ramOut = "/dev/shm/mib_gate_" + std::to_string(::getpid()) + ".h5";
+            const auto ramOut = "/dev/shm/mib_gate_" + std::to_string(processId()) + ".h5";
             const auto ramReadiness = backend.experiment().evaluateReadiness(ramOut, "pl");
             const auto* warn = gateOf(ramReadiness, "storage.persistent");
             MIB_EXPECT(warn && warn->status == backend::app::GateStatus::Warn &&
@@ -291,7 +312,7 @@ void testRecordingTarget(const mib::test::TempDir& td) {
     std::error_code ec;
     const fs::path shm = "/dev/shm";
     if (fs::is_directory(shm, ec) && backend::app::recordingTarget(shm.string()).filesystem == "tmpfs") {
-        const auto dir = shm / ("mib_target_" + std::to_string(::getpid()));
+        const auto dir = shm / ("mib_target_" + std::to_string(processId()));
         fs::create_directories(dir, ec);
         const auto ram = backend::app::recordingTarget((dir / "run.h5").string());
         const auto warning = backend::app::recordingTargetWarning(ram);
