@@ -1,5 +1,17 @@
 # Recent Work
 
+## 2026-10-06 — Monitoring density (KDE) handover closed
+
+PR #456 (merged into `develop` 2026-09-26, merge commit `aa3ee95`) delivered
+the Monitoring scatter density colouring, the live and full-run KDE core
+contour records, and the backend-owned
+[[../services/MonitoringDensityService]]. Its handover moved to
+`docs/exec-plans/completed/2026-09-24-monitoring-kde-density-handoff.md`.
+Still open: Windows bench re-run of `integration.monitoring_kde_e2e` and
+`windows-ninja-test` after the backend move, operator acceptance with real
+cells, the bridge/React follow-up, TD-16 and TD-17. See
+[[../task/2026-09-23-monitoring-kde-density]].
+
 ## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
 
 ADR 0011's CI and compatibility-matrix consequences:

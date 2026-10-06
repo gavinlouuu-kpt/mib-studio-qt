@@ -1,12 +1,12 @@
 # Handover: Monitoring scatter density (KDE) and core contour
 
-Status: active
+Status: completed — merged into `develop` by PR #456 (merge commit `aa3ee95`, 2026-09-26). The open items in §5 (Windows bench re-run, operator acceptance, bridge/React follow-up, TD-16/TD-17) remain open outside this plan.
 
 Date: 2026-09-24. Author: the agent sessions that implemented the feature on
 the Windows bench PC (2026-09-23/24). Consumer: whoever reviews the PR,
 watches CI and does operator acceptance. Companion documents: the completed
 execution plan
-[`../completed/2026-09-24-kde-core-region-split.md`](../completed/2026-09-24-kde-core-region-split.md)
+[`2026-09-24-kde-core-region-split.md`](2026-09-24-kde-core-region-split.md)
 (spec, decision log, progress per PR), task note
 `knowledge_map/task/2026-09-23-monitoring-kde-density.md`, vault notes
 `knowledge_map/frontend/ExperimentMonitoringTab.md` and
@@ -182,7 +182,7 @@ feature of gavinlouuu-kpt/mib-studio-qt. The implementation is complete and
 verified locally on branch claude/monitoring-kde-density-handover-mf5q0m
 (= feat/monitoring-kde-density + the backend move of §2a; pushed to origin,
 no PR yet). Read, in this order:
-AGENTS.md; docs/exec-plans/active/2026-09-24-monitoring-kde-density-handoff.md
+AGENTS.md; docs/exec-plans/completed/2026-09-24-monitoring-kde-density-handoff.md
 (this handover); docs/exec-plans/completed/2026-09-24-kde-core-region-split.md;
 knowledge_map/services/MonitoringDensityService.md;
 knowledge_map/frontend/ExperimentMonitoringTab.md;
