@@ -5,7 +5,7 @@ import { DEFAULT_MODE, type OperatingMode } from '../commissioning';
 import { EndpointDiscovery } from './EndpointDiscovery';
 import { HardwareCommandOwner, numericInput } from './hardwareControlModel';
 import {
-  JOG_STEPS_UM, MID_TRAVEL_LABEL, SET_ZERO_WARNING, connectionText, envelopeProblem, limitWiringText, moveStateText,
+  JOG_STEPS_UM, MID_TRAVEL_LABEL, SESSION_ONLY_WARNING, SET_ZERO_WARNING, connectionText, envelopeProblem, limitWiringText, moveStateText,
   parseMicrons, pollIntervalMs, positionText, stageGate, stageIndicators, zeroText, type StageGateKind,
 } from './stageControlModel';
 import './HardwareControls.css';
@@ -138,6 +138,7 @@ export function StageControls({ ready, experimentActive, append, mode = DEFAULT_
     {error && <p role="alert">{error}</p>}
     {statusError && <p role="alert">Status unavailable: {statusError}</p>}
     {status?.last_error && <p role="status">Last stage error: {status.last_error}</p>}
+    {status?.connected && status.session_only_zero && <p role="alert" className="stage-session-only">{SESSION_ONLY_WARNING}</p>}
 
     <fieldset><legend>Connection</legend>
       <p>{connectionText(status)}</p>

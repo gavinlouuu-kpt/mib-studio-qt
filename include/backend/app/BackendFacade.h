@@ -937,6 +937,7 @@ namespace backend::bridge
         bool configured{false}; // controller matches the stage profile
         bool zeroSet{false};    // the operator set zero since the controller powered up
         bool midTravelDeclared{false}; // ... and declared the stage at mid-travel
+        bool sessionOnlyZero{false};   // power-up token off (acceptance mode): a power cycle is NOT detected
         bool limitsVerified{false}; // supervised limit check passed; clears "wiring unverified"
         bool busy{false};       // a move is queued or running
         std::string model;

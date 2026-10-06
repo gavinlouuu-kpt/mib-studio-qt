@@ -47,7 +47,8 @@ int main()
             "enabled": true,
             "endpoint": {"usb_serial": "A10RB8XC", "port": "", "address": 1, "axis": 0},
             "profile": "tbzf6-60",
-            "reference": {"expected_span_um": 6000, "soft_limit_margin_um": 150, "power_up_token_register": 0},
+            "reference": {"expected_span_um": 6000, "soft_limit_margin_um": 150, "power_up_token_register": 0,
+                          "allow_session_only_zero": true},
             "envelope": {"default_um": 400},
             "approach": {"direction": "negative", "overshoot_um": 30},
             "speed_um_s": 1500, "accel_um_s2": 2500,
@@ -81,6 +82,17 @@ int main()
         MIB_EXPECT(rejects(J{{"envelope", {{"default_um", 0}}}}, "default_um"), "an empty envelope");
         MIB_EXPECT(rejects(J{{"approach", {{"direction", "up"}}}}, "direction"), "bad approach direction");
         MIB_EXPECT(rejects(J{{"enabled", "yes"}}, "enabled"), "non-boolean flag");
+    }
+
+    // 3b) Session-only zero (token register 0) turns off power-cycle detection: only
+    // with the explicit acceptance flag.
+    {
+        MIB_EXPECT(rejects(J{{"reference", {{"power_up_token_register", 0}}}}, "allow_session_only_zero"),
+                   "token register 0 needs the acceptance flag");
+        const StageConfig c = parseStageConfig(
+            J{{"reference", {{"power_up_token_register", 0}, {"allow_session_only_zero", true}}}});
+        MIB_EXPECT(c.reference.powerUpTokenRegister == 0 && c.reference.allowSessionOnlyZero, "accepted with it");
+        MIB_EXPECT(!parseStageConfig(J::object()).reference.allowSessionOnlyZero, "off by default");
     }
 
     // 4) Keys of the removed Home are ignored, never acted on: an old config

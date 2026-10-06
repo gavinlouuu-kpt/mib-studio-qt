@@ -82,6 +82,11 @@ StageConfig parseStageConfig(const J& block)
     r.powerUpTokenRegister = integer(ref, "power_up_token_register", r.powerUpTokenRegister, 0, 65535);
     if (r.powerUpTokenRegister != 0 && r.powerUpTokenRegister != 30054)
         throw std::runtime_error("stage.reference.power_up_token_register must be 30054 or 0");
+    r.allowSessionOnlyZero = boolean(ref, "allow_session_only_zero", r.allowSessionOnlyZero);
+    if (r.powerUpTokenRegister == 0 && !r.allowSessionOnlyZero)
+        throw std::runtime_error(
+            "stage.reference.power_up_token_register 0 turns off power-cycle detection; it is for hardware "
+            "acceptance only and needs stage.reference.allow_session_only_zero: true");
     if (2 * r.softLimitMarginUm >= r.expectedSpanUm)
         throw std::runtime_error("stage.reference.soft_limit_margin_um leaves no travel");
 

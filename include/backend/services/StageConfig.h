@@ -21,7 +21,10 @@ struct StageConfig {
     struct Reference {
         double expectedSpanUm{6000.0}; // the stage's travel, from the profile
         double softLimitMarginUm{100.0}; // widest envelope = +/-(span/2 - margin)
-        int powerUpTokenRegister{30054}; // 0 = hold the zero for this session only
+        int powerUpTokenRegister{30054}; // 0 = hold the zero for this session only (acceptance tests)
+        // power_up_token_register 0 silently turns off power-cycle detection, so it
+        // is refused unless this is set too, and the shell shows a warning.
+        bool allowSessionOnlyZero{false};
     } reference;
 
     struct Envelope {

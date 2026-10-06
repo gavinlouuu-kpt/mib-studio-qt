@@ -218,6 +218,19 @@ describe('stage panel: position and moves', () => {
   });
 });
 
+describe('stage panel: session-only zero warning', () => {
+  it('is silent in normal operation', async () => {
+    await render();
+    expect(host.textContent).not.toContain('Hardware-acceptance mode');
+  });
+  it('warns, as an alert, when power cycles are not detected', async () => {
+    vi.mocked(bridge.fetchStageStatus).mockResolvedValue(status({ session_only_zero: true }));
+    await render();
+    expect(host.querySelector('.stage-session-only')?.textContent).toContain('power cycle of the controller is NOT detected');
+    expect(host.querySelector('.stage-session-only')?.getAttribute('role')).toBe('alert');
+  });
+});
+
 describe('stage panel: Stop and the experiment lock', () => {
   it('locks everything but Stop during an experiment', async () => {
     await render({ experimentActive: true });

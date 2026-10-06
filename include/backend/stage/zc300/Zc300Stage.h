@@ -41,10 +41,11 @@ public:
     AxisCalibration calibration() const override;
 
     StageError readStatus(StageStatus& status) override;
-    StageError moveAbsolute(double targetUm) override;
+    StageError moveAbsolute(double targetUm, std::uint64_t expectedStopGeneration = kAnyStopGeneration) override;
     StageError moveRelative(double deltaUm) override;
     StageError jog(Direction direction) override;
     StageError stop() override;
+    std::uint64_t stopGeneration() const override { return stopGeneration_.load(); }
     StageError setPosition(double positionUm) override;
     StageError setSpeed(double umPerS, double umPerS2) override;
     StageError applyProfile(const StageProfile& profile) override;
@@ -99,6 +100,7 @@ private:
     int axis_{0};
     StageProfile profile_;
     ControllerConfig config_;
+    std::atomic<std::uint64_t> stopGeneration_{0};
     std::atomic<bool> connected_{false};
     std::atomic<bool> configured_{false};
 };

@@ -414,6 +414,27 @@ int main()
         MIB_EXPECT(worst < 2000, "no poll waited 2 s or more (worst " + std::to_string(worst) + " ms)");
     }
 
+    // A move that was decided before a Stop must not start motion after it (review
+    // of #531): the caller reads the stop generation first, the driver checks it
+    // under its lock right before the opcode.
+    watchdog.mark("stop generation");
+    {
+        FakeZc300 device;
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        const auto generation = stage.stopGeneration();
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop");
+        MIB_EXPECT(stage.stopGeneration() == generation + 1, "every Stop bumps the generation");
+        const int motions = device.opcodeCount(0x64) + device.opcodeCount(0x65);
+        MIB_EXPECT(stage.moveAbsolute(100, generation) == StageError::Stopped, "a move decided before the Stop is refused");
+        MIB_EXPECT(device.opcodeCount(0x64) + device.opcodeCount(0x65) == motions, "no opcode was sent");
+        MIB_EXPECT(stage.moveAbsolute(100, stage.stopGeneration()) == StageError::None, "a move decided after it goes out");
+        MIB_EXPECT(device.opcodeCount(0x64) == 1, "that opcode was sent");
+    }
+
     // Stop goes to the front of the line. A reviewer found that Stop shared the
     // command FIFO: queued moves and teardown went first, and after the
     // timeout it returned Busy without ever sending. With every reply delayed,

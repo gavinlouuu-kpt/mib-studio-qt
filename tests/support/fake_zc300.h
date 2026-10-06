@@ -99,6 +99,9 @@ public:
     {
         locked([&] { writeObserver_ = std::move(f); });
     }
+    // The next `n` reads of the power-up token register (30054) fail with a device
+    // failure exception: a transient read error, not a different token.
+    void failTokenReads(int n) { locked([&] { failTokenReads_ = n; }); }
     // false: the controller keeps pulsing through a tripped limit switch (a
     // fault, or a limit input the controller does not honour). Only the
     // host-side limit backstop can stop the axis then.
@@ -185,6 +188,11 @@ public:
             const bool input = start < 30050;
             if (input != (func == 0x04) || count < 1 || count > 125) {
                 reply.frame = exception(func, 0x02);
+                return reply;
+            }
+            if (func == 0x03 && start == 30054 && failTokenReads_ > 0) {
+                --failTokenReads_;
+                reply.frame = exception(func, 0x04);
                 return reply;
             }
             reply.frame = {address, func, static_cast<std::uint8_t>(count * 2)};
@@ -453,6 +461,7 @@ private:
     bool enabled_{true};
     bool swapLimits_{false};
     bool limitsHalt_{true};
+    int failTokenReads_{0};
     std::function<void(int, const std::vector<std::uint16_t>&)> writeObserver_;
     float stepDistance_{0.0f};
     std::uint16_t scratch_{0};

@@ -310,6 +310,7 @@ fn stage_commands_fail_safely_without_hardware() {
     let status = bridge.pin_mut().fetch_stage_status();
     assert!(status.valid && !status.connected && !status.zero_set && !status.limits_verified && !status.busy);
     assert!(!status.mid_travel_declared && status.envelope_min_um == 0.0 && status.envelope_max_um == 0.0);
+    assert!(!status.session_only_zero, "power-cycle detection is on by default");
 
     assert!(bridge.pin_mut().stage_stop().ok, "Stop is always accepted");
     assert!(!bridge.pin_mut().stage_move_to(0.0).ok);

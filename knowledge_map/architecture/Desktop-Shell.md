@@ -782,6 +782,9 @@ control is shown.
   and that nothing checks where the stage physically is; an optional
   "the stage is at mid-travel" checkbox widens the travel and does not carry
   over to the next zero. It needs Service mode and arming like the pumps.
+- **Session-only zero warning:** when the backend reports `session_only_zero`
+  (hardware-acceptance mode, power-cycle detection off) the panel shows an
+  alert; it is silent otherwise.
 - **The limit switches are a badge, not a gate:** the indicators carry
   "wiring unverified" until a supervised `zc300ctl verify-limits` passed, and
   that never enables or widens anything. The home bit is not shown (it floats).

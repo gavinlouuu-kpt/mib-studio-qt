@@ -83,6 +83,10 @@ bus session's call mutex is innermost (see [[SerialBus]]).
   granted in a row while anything else waits.
 - Commands are moves, writes, connect and token calls. Polls are
   `readStatus`. `stop()` is its own kind.
+  Every `stop()` bumps `stopGeneration()` before it waits for the driver, and
+  `moveAbsolute(target, generation)` returns `Stopped` under the driver lock
+  if a Stop arrived after the caller read the generation: a move decided
+  before a Stop never starts motion after it.
 - A command or poll that cannot get the driver within 15 s returns `Busy`.
   `disconnect()` waits its turn however long it takes, because teardown must
   not be skipped.

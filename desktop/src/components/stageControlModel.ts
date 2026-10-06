@@ -28,6 +28,9 @@ export const SET_ZERO_WARNING =
   'so a hand move, a stall or a collision silently shifts the real position against the counter. ' +
   'Travel is limited to ±1000 µm around this point unless you declare that the stage is at mid-travel.';
 export const MID_TRAVEL_LABEL = 'The stage is at mid-travel (allows ±2900 µm around this point)';
+export const SESSION_ONLY_WARNING =
+  'Hardware-acceptance mode: the controller’s power-up token is off, so a power cycle of the controller is NOT detected ' +
+  'and the zero is not kept across restarts. Do not use this for normal work.';
 export const LIMITS_UNVERIFIED_NOTE =
   'wiring unverified: the limit switches have not been checked, so do not rely on them to stop the stage';
 export const LIMITS_VERIFIED_NOTE = 'wiring verified by a supervised check';

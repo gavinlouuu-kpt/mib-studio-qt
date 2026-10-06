@@ -2191,6 +2191,7 @@ namespace backend::bridge
         out.configured = snap.configured;
         out.zeroSet = snap.zeroSet;
         out.midTravelDeclared = snap.midTravelDeclared;
+        out.sessionOnlyZero = snap.sessionOnlyZero;
         out.limitsVerified = snap.limitsVerified;
         out.busy = snap.activeOperation != 0;
         out.model = snap.identity.model;

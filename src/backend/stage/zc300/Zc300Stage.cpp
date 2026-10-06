@@ -348,10 +348,17 @@ StageError Zc300Stage::moveLocked(Opcode op, double um)
     return motionLocked(op, um < 0 ? kDirNegative : kDirPositive);
 }
 
-StageError Zc300Stage::moveAbsolute(double targetUm)
+StageError Zc300Stage::moveAbsolute(double targetUm, std::uint64_t expectedStopGeneration)
 {
     Access access(*this, Access::Kind::Command);
     if (!access.owned()) return StageError::Busy;
+    // Under the driver lock, right before the opcode: a Stop that was issued
+    // after the caller read the generation has either run already (Stop is
+    // served first) or is still queued behind us; either way this move must not
+    // start motion after it.
+    if (expectedStopGeneration != kAnyStopGeneration && stopGeneration_.load() != expectedStopGeneration) {
+        return StageError::Stopped;
+    }
     return moveLocked(Opcode::MoveAbsolute, targetUm);
 }
 
@@ -375,6 +382,7 @@ StageError Zc300Stage::jog(Direction direction)
 
 StageError Zc300Stage::stop()
 {
+    stopGeneration_.fetch_add(1); // before waiting for the driver: a queued move must see it
     Access access(*this, Access::Kind::Stop);
     if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;

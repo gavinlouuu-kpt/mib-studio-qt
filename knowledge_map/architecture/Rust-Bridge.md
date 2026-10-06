@@ -491,7 +491,8 @@ change took 30. The stage is never homed.
   `CONTROL` command, dispatch args `{midTravel}`): one write of the position
   counter, no motion, no operation id.
 - **`fetch_stage_status` changes:** `referenced` → `zero_set`; new
-  `mid_travel_declared`; `soft_min_um` / `soft_max_um` → `envelope_min_um` /
+  `mid_travel_declared` and `session_only_zero` (power-up token off: a power
+  cycle is not detected; hardware acceptance only); `soft_min_um` / `soft_max_um` → `envelope_min_um` /
   `envelope_max_um` (0/0 until zero is set). `limits_verified` is now only a
   badge; `home` is the raw, floating controller input.
 - **Backend rules** (the shell enforces none of them): moves are refused until

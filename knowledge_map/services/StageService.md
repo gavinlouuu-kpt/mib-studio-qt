@@ -55,16 +55,20 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   really is there, or power-cycle"). The window is stored in the current
   zero's coordinates and shifted by every re-zero, so repeated re-zeroing can
   never walk the envelope along the stage.
-- **Order of writes, safe at every crash point.**
-  1. A fresh random **token goes to controller register 30054 first**, so no
-     stored record, however stale or undeletable, can match it any more. If this
-     write fails, Set zero is refused and nothing has changed (set
-     `power_up_token_register: 0` to hold the zero for the session only).
-  2. An interim record `{old window, zeroValid = false, frameUncertain = true}`
-     is saved, so a crash keeps the window but restores no zero.
+- **Order of writes, safe at every crash point** (with a power-up token):
+  1. An **interim record** is saved: `{old window, zeroValid = false,
+     frameUncertain = true, token = the controller's, nextToken = the new one}`.
+     It is not restorable, and a reconnect accepts the controller holding
+     either token as "the same power-up", so a crash here never loses the
+     window. If it cannot be stored, Set zero is refused and nothing changed.
+  2. A **fresh token goes to controller register 30054**. It is guaranteed
+     different from the one it replaces (and never 0), so no stored record,
+     however stale or undeletable, can match it. If this write fails, the
+     record is put back and Set zero is refused (nothing changed).
   3. Register 30059 is written (the counter).
   4. The final record `{serial, token, midTravelDeclared, window, zeroValid}`
-     goes to `<dataDir>/stage_reference.json`.
+     goes to `<dataDir>/stage_reference.json`; if that save fails the zero
+     works for this session and the result says a restart will not restore it.
   The store is never trusted to have deleted anything. A failed counter write
   leaves `frameUncertain` set: the next undeclared zero is refused until the
   operator declares mid-travel or the controller is power-cycled.
@@ -72,8 +76,12 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   idle status poll, before every Set zero and before every motion opcode. A
   mismatch (a power cycle while connected) drops the zero, the window and the
   stored record (`ZeroNotSet`). A token that cannot be read fails the move.
-  With `power_up_token_register: 0` there is nothing to compare, so a power
-  cycle goes unnoticed: that mode is only for hardware acceptance.
+  At reconnect an unreadable token is *unknown*, not a mismatch: the record is
+  kept, motion is refused, and the next successful poll (or Set zero) decides.
+- **`power_up_token_register: 0` is hardware-acceptance only.** Config refuses
+  it unless `reference.allow_session_only_zero: true` is set too (`setConfig`
+  refuses it as well). It turns power-cycle detection off and persists nothing;
+  the snapshot says `sessionOnlyZero` and the panel shows an alert.
 - On the next `connect()` the record is restored only if the serial and token
   both match, and the zero only if it was valid and no e-stop or driver alarm
   is active. A power cycle clears the register, so the stage needs Set zero
@@ -85,6 +93,11 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   undeclared Set zero must still be inside it, so a fault cannot be used to
   start a fresh ±1000 µm. Only a new power-up (token change) or a
   mid-travel declaration starts a new window. An operator Stop keeps the zero.
+- **The invalidation is made durable by the worker** after the job or poll that
+  caused it (`persistInvalidation`). If the store refuses the write, the
+  controller token is rotated instead, so a stale "valid" record can never
+  match again; it is retried until one of them works, and also tried before a
+  Disconnect.
 
 ## Travel envelope
 
@@ -129,6 +142,12 @@ panel). It mirrors these rules in the UI and shows why a control is disabled.
   `moveAndWait` leg re-reads the status, publishes it (an e-stop or alarm drops
   the zero), refuses an e-stop, alarm or already-moving axis, re-checks the zero
   and the envelope, and compares the power-up token, all before the opcode.
+- **Stop beats a queued move.** `stop()` bumps the service's stop epoch before
+  and after it reaches the driver, the driver counts every `stop()`
+  (`IMotionStage::stopGeneration`), and `moveAbsolute(target, generation)`
+  fails with `Stopped` under the driver lock if a Stop arrived after the
+  generation was read at the start of the leg. The service also checks
+  cancellation immediately before the opcode.
 - **One at a time on the worker.** `moveTo` (absolute) and `moveBy` (relative
   to the µm grid point nearest the current position) are each validated
   twice: before they are queued, and again when they start. The checks are

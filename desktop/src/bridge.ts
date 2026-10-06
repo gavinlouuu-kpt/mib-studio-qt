@@ -58,6 +58,8 @@ export interface StageStatus {
   zero_set: boolean;
   /** ... and declared the stage was at mid-travel (widens the envelope). */
   mid_travel_declared: boolean;
+  /** Power-up token off (hardware-acceptance mode): a power cycle is NOT detected. Show a warning. */
+  session_only_zero: boolean;
   /** Supervised limit-switch check passed for this controller. A badge only. */
   limits_verified: boolean;
   /** A move is queued or running. */

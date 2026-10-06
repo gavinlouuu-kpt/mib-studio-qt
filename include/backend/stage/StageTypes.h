@@ -27,6 +27,7 @@ enum class StageError {
     DriverAlarm,
     NotEnabled,
     ZeroNotSet,      // StageService only: the operator has not set zero this power-up
+    Stopped,         // a Stop was issued after the caller read the stop generation: the command was not sent
     OffGrid,         // target is not a whole multiple of the command quantum
     InvalidArgument,
     Timeout,

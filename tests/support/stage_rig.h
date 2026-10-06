@@ -21,8 +21,8 @@ public:
     explicit SharedStageReferenceStore(std::shared_ptr<backend::services::MemoryStageReferenceStore> inner)
         : inner_(std::move(inner)) {}
     std::optional<backend::services::StageReferenceRecord> load() override { return inner_->load(); }
-    void save(const backend::services::StageReferenceRecord& r) override { inner_->save(r); }
-    void clear() override { inner_->clear(); }
+    bool save(const backend::services::StageReferenceRecord& r) override { return inner_->save(r); }
+    bool clear() override { return inner_->clear(); }
 
 private:
     std::shared_ptr<backend::services::MemoryStageReferenceStore> inner_;

@@ -20,6 +20,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,10 @@ class SerialBusManager;
 struct StageReferenceRecord {
     std::string controllerSerial;
     std::uint16_t token{0};
+    // Set while a Set zero is writing a new token: the controller holds either
+    // `token` or `nextToken`, and both mean "same power-up", so a crash between the
+    // interim record and the token write cannot lose the window.
+    std::uint16_t nextToken{0};
     bool midTravelDeclared{false};
     double windowMinUm{0.0};
     double windowMaxUm{0.0};
@@ -58,8 +63,9 @@ class IStageReferenceStore {
 public:
     virtual ~IStageReferenceStore() = default;
     virtual std::optional<StageReferenceRecord> load() = 0;
-    virtual void save(const StageReferenceRecord& record) = 0;
-    virtual void clear() = 0;
+    // Both report success; a failed write or deletion is never silent.
+    virtual bool save(const StageReferenceRecord& record) = 0;
+    virtual bool clear() = 0;
 };
 
 // JSON file under the data directory (written via a temporary + rename).
@@ -67,8 +73,8 @@ class FileStageReferenceStore final : public IStageReferenceStore {
 public:
     explicit FileStageReferenceStore(std::string path);
     std::optional<StageReferenceRecord> load() override;
-    void save(const StageReferenceRecord& record) override;
-    void clear() override;
+    bool save(const StageReferenceRecord& record) override;
+    bool clear() override;
 
 private:
     std::string path_;
@@ -82,15 +88,17 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         return record_;
     }
-    void save(const StageReferenceRecord& record) override
+    bool save(const StageReferenceRecord& record) override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         record_ = record;
+        return true;
     }
-    void clear() override
+    bool clear() override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         record_.reset();
+        return true;
     }
 
 private:
@@ -130,6 +138,10 @@ public:
         // The operator declared the zero is at mid-travel, which widens the
         // envelope to the cap.
         bool midTravelDeclared{false};
+        // The controller's power-up token is not used (power_up_token_register: 0,
+        // hardware acceptance only): a power cycle is NOT detected and the zero is
+        // not persisted. The shell must show this.
+        bool sessionOnlyZero{false};
         // A supervised limit-switch check (zc300ctl verify-limits) passed for
         // this controller. It clears the "wiring unverified" badge and gates
         // nothing else.
@@ -188,6 +200,10 @@ public:
     // statement that the stage is at mid-travel; it widens the envelope to the
     // cap. Either way the new zero replaces the old one.
     stage::StageError setZero(bool midTravel, std::string* detail = nullptr);
+
+    // Test seam: the source of power-up tokens (default: random). The service
+    // never writes a token equal to the one it replaces or to 0.
+    void setTokenSourceForTest(std::function<std::uint16_t()> source);
 
     // Cancels the active operation and stops the axis. Always allowed.
     stage::StageError stop();
@@ -251,6 +267,11 @@ private:
     // The controller was power-cycled (or is another one): the zero, its window and
     // the stored record are all gone (mutex_ held).
     void resetPowerUpLocked(const char* why);
+    // Writes the "zero is not valid" state of an invalidation to the store (worker
+    // thread, outside every lock). If that fails, the controller's token is
+    // rotated instead, so a stale valid record can never match again.
+    void persistInvalidation();
+    std::uint16_t distinctToken(std::initializer_list<std::uint16_t> avoid);
     // Compares the controller's power-up token with the one this zero was set
     // under, dropping everything on a mismatch (ZeroNotSet). A read error is
     // returned as it is. Nothing to compare (no record, no token) is None.
@@ -274,6 +295,12 @@ private:
     // dropping the zero never hands out a fresh window; only a new power-up does.
     StageReferenceRecord zeroRecord_;
     bool haveZeroRecord_{false};
+    // An invalidation (zeroValid = false) is not durable yet.
+    bool persistPending_{false};
+    // After a reconnect the token could not be read: the record is kept, motion is
+    // refused, and the next poll decides (same power-up or not).
+    bool tokenUnverified_{false};
+    std::function<std::uint16_t()> tokenSource_;
     std::deque<Job> jobs_;
     std::map<OperationId, OperationInfo> operations_;
     OperationId nextOperation_{1};

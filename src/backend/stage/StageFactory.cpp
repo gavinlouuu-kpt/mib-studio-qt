@@ -17,6 +17,7 @@ const char* toString(StageError error)
     case StageError::DriverAlarm: return "driver alarm";
     case StageError::NotEnabled: return "axis not enabled";
     case StageError::ZeroNotSet: return "zero not set";
+    case StageError::Stopped: return "stopped";
     case StageError::OffGrid: return "target is not a whole micrometre";
     case StageError::InvalidArgument: return "invalid argument";
     case StageError::Timeout: return "timeout";

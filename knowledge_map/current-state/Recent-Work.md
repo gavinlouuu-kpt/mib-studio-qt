@@ -31,6 +31,13 @@ stage.
   writes a fresh token before the counter, so no stale record can restore
   against a rewritten counter even if deleting it fails; and fresh status is
   checked before every opcode, not just at admission.
+- **Second review round (Codex, #531):** Stop now beats a queued move at the
+  driver (`stopGeneration`, `Stopped`); an invalidation is made durable and, if
+  the store refuses, the controller token is rotated; tokens never repeat; an
+  interim record accepting the old or the new token keeps the window across a
+  crash; an unreadable token at reconnect is unknown, not a mismatch; and
+  `power_up_token_register: 0` needs `allow_session_only_zero` and shows an
+  alert.
 - **Known limitation:** the counter is open-loop; a hand move or stall is
   invisible to the software.
 - **Next:** the first real Set zero (one register write plus a read-back) needs

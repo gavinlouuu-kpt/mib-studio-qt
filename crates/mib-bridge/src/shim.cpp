@@ -1194,6 +1194,7 @@ BridgeStageStatus BackendBridge::fetch_stage_status() {
     out.configured = status.configured;
     out.zero_set = status.zeroSet;
     out.mid_travel_declared = status.midTravelDeclared;
+    out.session_only_zero = status.sessionOnlyZero;
     out.limits_verified = status.limitsVerified;
     out.busy = status.busy;
     out.model = status.model;

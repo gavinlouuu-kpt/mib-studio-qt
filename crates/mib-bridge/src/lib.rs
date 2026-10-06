@@ -520,6 +520,9 @@ pub mod ffi {
         pub zero_set: bool,
         /// ... and declared the stage was at mid-travel (widens the envelope).
         pub mid_travel_declared: bool,
+        /// Power-up token off (hardware-acceptance mode): a controller power cycle
+        /// is NOT detected and the zero is not persisted. The shell must warn.
+        pub session_only_zero: bool,
         /// The supervised limit-switch check passed for this controller
         /// (`zc300ctl verify-limits`). It clears a "wiring unverified" badge and
         /// gates nothing.
