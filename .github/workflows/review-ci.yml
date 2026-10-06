@@ -142,13 +142,16 @@ jobs:
           TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo test --no-fail-fast --no-default-features --features review-only
           TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo clippy --all-targets --no-default-features --features review-only -- -D warnings
           # The merged context must name the review product, not MIB Studio.
-          strings target/debug/mib-studio-desktop | grep -q "bio.yofo.review"
+          # grep without -q reads the whole stream: under pipefail `| grep -q`
+          # would SIGPIPE the writer at the first match and fail (or, inside
+          # `if`, silently pass) the check.
+          strings target/debug/mib-studio-desktop | grep "bio.yofo.review" > /dev/null
           # ADR 0014: the review product links no AppBackend (cameras, serial,
           # SQLite, Sentry) — only the review bridge over ReviewSession.
-          if nm -C target/debug/mib-studio-desktop | grep -q "backend::AppBackend"; then
+          if nm -C target/debug/mib-studio-desktop | grep "backend::AppBackend" > /dev/null; then
             echo "review-only binary links AppBackend" >&2; exit 1
           fi
-          nm -C target/debug/mib-studio-desktop | grep -q "backend::review::ReviewSession"
+          nm -C target/debug/mib-studio-desktop | grep "backend::review::ReviewSession" > /dev/null
 
       - name: Review bridge tests (review-only feature, no AppBackend)
         shell: bash

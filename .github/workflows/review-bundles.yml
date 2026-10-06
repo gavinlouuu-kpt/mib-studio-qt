@@ -175,7 +175,11 @@ jobs:
           if otool -L "$bin" | tail -n +2 | grep -vE '^[[:space:]]+(/usr/lib/|/System/)'; then
             echo "app binary links a non-system dylib" >&2; exit 1
           fi
-          codesign -dv "$app" 2>&1 | tee /dev/stderr | grep -q "Signature=adhoc"
+          # Capture, then match: under pipefail a `| grep -q` that exits at
+          # the first match kills the writer with SIGPIPE and fails the step.
+          sig=$(codesign -dv "$app" 2>&1)
+          echo "$sig"
+          grep -q "Signature=adhoc" <<<"$sig"
           dmg=$(ls "$bundle"/dmg/*.dmg)
           mnt=$(mktemp -d)
           hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
