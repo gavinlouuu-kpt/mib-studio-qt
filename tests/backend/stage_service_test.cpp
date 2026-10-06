@@ -1253,7 +1253,9 @@ int main()
         rig.device.setPulsesPerSecond(2000);
         const auto move = svc->moveTo(950);
         MIB_REQUIRE(move.accepted(), "slow move (~1 s)");
-        sleepMs(100);
+        // Wait for the axis to really move: since each leg re-reads status and the token before its
+        // opcode, a fixed sleep is not enough on a slow runner (~28 ms per transaction on Windows).
+        MIB_REQUIRE(waitFor([&] { return rig.device.moving(); }, 5000), "the move has started");
 
         auto t0 = std::chrono::steady_clock::now();
         MIB_EXPECT(svc->applyProfile() == StageError::Busy, "ApplyProfile is refused while a move runs");

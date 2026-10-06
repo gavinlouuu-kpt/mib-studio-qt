@@ -238,7 +238,9 @@ int main()
         device.setPulsesPerSecond(2000);
         const auto running = stage(facade, StageCommandAction::MoveTo, 900);
         MIB_REQUIRE(running.ok, "slow move for the lock check");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Until the axis really moves: each leg reads status and the token first, so a fixed
+        // sleep is not enough on a slow runner (~28 ms per transaction on Windows).
+        MIB_REQUIRE(waitFor([&] { return device.moving(); }, std::chrono::seconds(5)), "the move has started");
         const auto since = [](std::chrono::steady_clock::time_point t0) {
             return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         };
