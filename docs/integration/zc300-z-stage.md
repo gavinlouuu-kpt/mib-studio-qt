@@ -232,6 +232,8 @@ At 1600 pp/rev one pulse is **0.4375 µm**. Controller saved to flash on
 unit pp, lead 4, ratio 180, speed 8000 pp/s, acceleration 12000 pp/s², step
 8000 pp.
 
+Supervised acceptance (none of it run yet): [the checklist](../howto/zc300-hardware-acceptance.md).
+
 Open hardware items: the driver is set to 1.6 A for a 1.3 A motor (at the edge
 of the manual's ±0.3 A guidance; reduce with the SR2-plus DIP switches, power
 off); limit/home sensor wiring and polarity are unverified.
