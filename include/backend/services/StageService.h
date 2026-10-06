@@ -189,8 +189,10 @@ private:
     stage::StageError moveAndWait(OperationId id, double targetUm, double speedUmS, std::string& detail);
     stage::StageError approachAndWait(OperationId id, double targetUm, double minUm, double maxUm,
                                       std::string& detail);
-    stage::StageError jogToLimit(OperationId id, stage::Direction direction, double& positionUm,
-                                 std::string& detail);
+    // Controller-bounded search: a relative move of at most expected_span +
+    // search_margin toward the switch (never an open-ended jog).
+    stage::StageError searchLimit(OperationId id, stage::Direction direction, double& positionUm,
+                                  std::string& detail);
     stage::StageError waitIdle(OperationId id, std::chrono::steady_clock::time_point deadline,
                                stage::StageStatus& status, std::string& detail,
                                const std::function<bool(const stage::StageStatus&)>& abortIf = {});

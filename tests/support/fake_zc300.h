@@ -79,6 +79,9 @@ public:
     void setEnabled(bool on) { locked([&] { enabled_ = on; }); }
     void setDropAfterMove(bool on) { locked([&] { dropAfterMove_ = on; }); }
     void setSaveDelayMs(int ms) { locked([&] { saveDelayMs_ = ms; }); }
+    // Every reply arrives this late: models a stalled host poll (load, OS
+    // sleep granularity, USB latency). Motion keeps running meanwhile.
+    void setReplyDelayMs(int ms) { locked([&] { replyDelayMs_ = ms; }); }
     // Next motion opcode executes but its reply is never sent.
     void dropNextMotionAck() { locked([&] { dropMotionAck_ = true; }); }
     // Next motion opcode is ignored entirely (no execution, no reply).
@@ -112,6 +115,10 @@ public:
     }
     int droppedRequests() { return locked([&] { return dropped_; }); }
     int saves() { return locked([&] { return saves_; }); }
+    // Speed register (mm/s) in force at each motion opcode, in order.
+    std::vector<float> motionSpeeds() { return locked([&] { return motionSpeeds_; }); }
+    // Motion opcodes (0x64/0x65/0x66) in order.
+    std::vector<std::uint16_t> motionLog() { return locked([&] { return motionLog_; }); }
     Config config() { return locked([&] { return config_; }); }
     Config flash() { return locked([&] { return flash_; }); }
     std::uint16_t scratch() { return locked([&] { return scratch_; }); }
@@ -142,7 +149,7 @@ public:
         const int start = ((q[2] << 8) | q[3]) + 1; // manual register number
         const int count = (q[4] << 8) | q[5];
         reply.send = true;
-        reply.readyAt = Clock::now();
+        reply.readyAt = Clock::now() + std::chrono::milliseconds(replyDelayMs_);
 
         if (func == 0x03 || func == 0x04) {
             const bool input = start < 30050;
@@ -280,6 +287,7 @@ private:
             case 30075: config_.pulsesPerRev = static_cast<std::int32_t>((static_cast<std::uint32_t>(w[0]) << 16) | w[1]); return 0;
             case 30084: config_.leadMm = f(); return 0;
             case 30114: stepDistance_ = f(); return 0;
+            case 30129: speed_ = f(); return 0;
             default: break;
             }
         }
@@ -301,6 +309,10 @@ private:
         const std::uint16_t op = w[0];
         opcodeLog_.push_back(op);
         const bool isMotion = op == 0x64 || op == 0x65 || op == 0x66;
+        if (isMotion) {
+            motionLog_.push_back(op);
+            motionSpeeds_.push_back(speed_);
+        }
         if (isMotion && swallowMotion_) {
             swallowMotion_ = false;
             suppressReply = true;
@@ -401,6 +413,10 @@ private:
     bool dropAfterMove_{false};
     bool pendingDrop_{false};
     int saveDelayMs_{0};
+    int replyDelayMs_{0};
+    float speed_{3.5f}; // mm/s, the bench unit's saved cruise speed
+    std::vector<float> motionSpeeds_;
+    std::vector<std::uint16_t> motionLog_;
     bool dropMotionAck_{false};
     bool swallowMotion_{false};
     bool dropStopAck_{false};

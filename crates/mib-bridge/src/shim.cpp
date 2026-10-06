@@ -140,6 +140,11 @@ static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Refresh) == 2);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Download) == 3);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Materialize) == 4);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::RecordValidation) == 5);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SaveDraft) == 6);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::DeleteDraft) == 7);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::SubmitDraft) == 8);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::Transition) == 9);
+static_assert(static_cast<std::uint32_t>(bp::RegistryJobKind::FetchHistory) == 10);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Queued) == 0);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Running) == 1);
 static_assert(static_cast<std::uint32_t>(bp::RegistryJobState::Succeeded) == 2);
@@ -2096,8 +2101,8 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // (registry_sign_in/sign_out/refresh/download/cancel_all,
 // fetch_registry_snapshot/job, set_registry_transport and the registry_*
 // contract groups — #398; registry_job_kinds Materialize/RecordValidation,
-// registry_local_validation, registry_materialize and
-// registry_record_validation were added; built as a provisional 15,
+// registry_local_validation, registry_materialize, registry_record_validation
+// and the authoring job kinds 6-10 were added; built as a provisional 15,
 // renumbered once to 25: 23 = the instrument line, 24 = #501 P0; 15 and 19-24
 // are never reused). All additive over v1 (ADR 0003/0004). Must match
 // contract/bridge-contract.json.

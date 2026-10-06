@@ -78,6 +78,14 @@ freeze exact revision identity/content into historical runs.
   update selection when a newer revision is published.
 - [ ] M2: hardware run continues unchanged during update and registry outage
   (mock-run and HDF5 reopen are covered by `e2e.method_gate`; hardware not yet).
+- [x] M3a (backend): Supabase authoring RPCs (create method, immutable release
+  notes, method heads, revision history) with PGlite tests; local drafts; submit
+  with a pre-submit base-vs-head check that stops with a compared conflict and an
+  explicit branch option; independent review / publish / archive / revoke with
+  reasons; history; update-available helper. `profiles.registry_authoring`.
+- [ ] M3b: authoring/review UI in Qt and React (drafts, submit, conflict
+  compare / branch / new draft from head / discard, review actions by role,
+  release notes, history, update-available badge) and the bridge surface.
 - [ ] M3: local drafts, authoring/submission UI, conflict comparison/branch handling,
   release notes and review/publication management UI.
 - [ ] M4: operator execution entitlements, project distribution, role management,
@@ -148,6 +156,14 @@ freeze exact revision identity/content into historical runs.
   a validation cannot be attached to an unrelated file. (3) React Apply stays
   disabled with the reason instead of approximating it through the
   processing-config document.
+
+- 2026-10-04 (M3a): decisions — (1) methods are created by authors through an
+  audited, idempotent RPC (M0 left method creation to administrators, which made
+  authoring impossible from the app); (2) release notes are immutable revision
+  metadata outside the content hash; (3) the worker checks the head before
+  submitting so a conflict costs no server write and shows both diffs; the server's
+  own 409 remains the authority; (4) drafts live in the per-user cache, so they
+  follow the registry account, not the instrument.
 
 ## Validation
 

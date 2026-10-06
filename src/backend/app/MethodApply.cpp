@@ -11,28 +11,6 @@
 namespace backend::app {
 namespace {
 using Json = nlohmann::json;
-constexpr std::size_t kMaxListedChanges = 200;
-
-void diff(const Json& a, const Json& b, const std::string& prefix, std::vector<std::string>& out) {
-    if (out.size() >= kMaxListedChanges) return;
-    if (a.is_object() && b.is_object()) {
-        for (const auto& [key, value] : a.items()) {
-            const auto path = prefix.empty() ? key : prefix + "." + key;
-            if (!b.contains(key))
-                out.push_back(path + " (removed)");
-            else
-                diff(value, b.at(key), path, out);
-        }
-        for (const auto& [key, value] : b.items())
-            if (!a.contains(key)) out.push_back((prefix.empty() ? key : prefix + "." + key) + " (added)");
-        return;
-    }
-    // Same normalization rule as the canonical hash: 2.0 == 2.
-    const bool bothNumbers = a.is_number() && b.is_number();
-    if (bothNumbers ? a.get<double>() != b.get<double>() : a != b)
-        out.push_back(prefix.empty() ? "<entire document>" : prefix);
-}
-
 std::string readFile(const std::filesystem::path& path, bool& ok) {
     std::ifstream in(path, std::ios::binary);
     ok = static_cast<bool>(in);
@@ -43,14 +21,7 @@ std::string readFile(const std::filesystem::path& path, bool& ok) {
 } // namespace
 
 std::vector<std::string> configDifferences(const std::string& currentJson, const std::string& nextJson) {
-    std::vector<std::string> out;
-    try {
-        diff(Json::parse(currentJson), Json::parse(nextJson), {}, out);
-    } catch (const Json::exception&) {
-        out = {"<entire document>"};
-    }
-    if (out.size() >= kMaxListedChanges) out.push_back("... (more)");
-    return out;
+    return profiles::jsonDifferences(currentJson, nextJson);
 }
 
 MethodApplyPlan planMethodApply(const profiles::RegistryWorkerSnapshot& registry,
@@ -109,6 +80,16 @@ LocalValidationView localValidationFor(const profiles::RegistryWorkerSnapshot& r
         break;
     }
     return view;
+}
+
+std::string newerPublishedRevision(const profiles::RegistryWorkerSnapshot& registry,
+                                   const profiles::CachedRevisionSummary& revision) {
+    const profiles::CachedRevisionSummary* best = nullptr;
+    for (const auto& r : registry.revisions)
+        if (r.methodId == revision.methodId && r.state == profiles::CentralState::Published &&
+            r.revisionNumber > revision.revisionNumber && (!best || r.revisionNumber > best->revisionNumber))
+            best = &r;
+    return best ? best->revisionId : std::string{};
 }
 
 std::string checkValidationEvidence(const std::string& runSnapshotJson, const std::string& revisionId,

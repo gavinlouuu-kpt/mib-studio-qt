@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 namespace backend::stage::zc300 {
@@ -44,6 +45,49 @@ std::int64_t steadyNowNs()
 
 } // namespace
 
+// RAII access to the driver. Command: counts as a priority waiter while it
+// acquires, bounded by kLockTimeout. Poll: first lets pending commands go,
+// then acquires, with the same bound. Lifecycle (disconnect): a priority
+// waiter that keeps trying, because teardown must not be skipped.
+class Zc300Stage::Access {
+public:
+    enum class Kind { Command, Poll, Lifecycle };
+
+    Access(const Zc300Stage& stage, Kind kind) : stage_(stage)
+    {
+        using Clock = std::chrono::steady_clock;
+        const auto deadline = Clock::now() + kLockTimeout;
+        if (kind == Kind::Poll) {
+            while (stage_.priorityWaiters_.load() > 0 && Clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        } else {
+            stage_.priorityWaiters_.fetch_add(1);
+        }
+        for (;;) {
+            if (stage_.mutex_.try_lock()) {
+                owned_ = true;
+                break;
+            }
+            if (kind != Kind::Lifecycle && Clock::now() >= deadline) break;
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        if (kind != Kind::Poll) stage_.priorityWaiters_.fetch_sub(1);
+        if (!owned_) SPDLOG_WARN("Zc300Stage: driver busy for {} s; call refused", kLockTimeout.count());
+    }
+    ~Access()
+    {
+        if (owned_) stage_.mutex_.unlock();
+    }
+    Access(const Access&) = delete;
+    Access& operator=(const Access&) = delete;
+    bool owned() const { return owned_; }
+
+private:
+    const Zc300Stage& stage_;
+    bool owned_{false};
+};
+
 Zc300Stage::Zc300Stage(serialbus::SerialBusManager& busManager) : Zc300Stage(busManager, Timing{}) {}
 
 Zc300Stage::Zc300Stage(serialbus::SerialBusManager& busManager, Timing timing)
@@ -59,7 +103,11 @@ Zc300Stage::~Zc300Stage()
 StageError Zc300Stage::connect(const StageEndpoint& endpoint, const StageProfile& profile,
                                StageIdentity& identity, std::string& detail)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) {
+        detail = "driver busy";
+        return StageError::Busy;
+    }
     releaseLocked();
     if (endpoint.axis < 0 || endpoint.axis >= kAxisCount) {
         detail = "axis out of range";
@@ -127,7 +175,7 @@ StageError Zc300Stage::connect(const StageEndpoint& endpoint, const StageProfile
 
 void Zc300Stage::disconnect()
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Lifecycle);
     if (connected_) {
         StageStatus status;
         if (readStatusLocked(status) == StageError::None && status.state == MoveState::Moving) {
@@ -150,13 +198,15 @@ bool Zc300Stage::isConfigured() const { return configured_.load(); }
 
 AxisCalibration Zc300Stage::calibration() const
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return AxisCalibration{};
     return calibrationFor(config_);
 }
 
 ControllerConfig Zc300Stage::controllerConfig() const
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return ControllerConfig{};
     return config_;
 }
 
@@ -245,7 +295,8 @@ StageError Zc300Stage::requireMotionLocked() const
 
 StageError Zc300Stage::readStatus(StageStatus& status)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Poll);
+    if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;
     return readStatusLocked(status);
 }
@@ -263,13 +314,15 @@ StageError Zc300Stage::moveLocked(Opcode op, double um)
 
 StageError Zc300Stage::moveAbsolute(double targetUm)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     return moveLocked(Opcode::MoveAbsolute, targetUm);
 }
 
 StageError Zc300Stage::moveRelative(double deltaUm)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (const StageError err = requireMotionLocked(); err != StageError::None) return err;
     if (!encodeMicronsAsMm(deltaUm)) return StageError::OffGrid;
     if (std::round(deltaUm) == 0.0) return StageError::None;
@@ -278,14 +331,16 @@ StageError Zc300Stage::moveRelative(double deltaUm)
 
 StageError Zc300Stage::jog(Direction direction)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (const StageError err = requireMotionLocked(); err != StageError::None) return err;
     return motionLocked(Opcode::Jog, direction == Direction::Positive ? kDirPositive : kDirNegative);
 }
 
 StageError Zc300Stage::stop()
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;
     // Idempotent, so it is retried after silence; allowed even when the
     // controller is misconfigured.
@@ -294,7 +349,8 @@ StageError Zc300Stage::stop()
 
 StageError Zc300Stage::setPosition(double positionUm)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (const StageError err = requireMotionLocked(); err != StageError::None) return err;
     if (!encodeMicronsAsMm(positionUm)) return StageError::OffGrid;
     const float mm = static_cast<float>(std::round(positionUm) / 1000.0);
@@ -303,7 +359,8 @@ StageError Zc300Stage::setPosition(double positionUm)
 
 StageError Zc300Stage::setSpeed(double umPerS, double umPerS2)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (const StageError err = requireMotionLocked(); err != StageError::None) return err;
     if (!(umPerS > 0.0) || !(umPerS2 > 0.0) || !std::isfinite(umPerS) || !std::isfinite(umPerS2)) {
         return StageError::InvalidArgument;
@@ -321,7 +378,8 @@ StageError Zc300Stage::setSpeed(double umPerS, double umPerS2)
 
 StageError Zc300Stage::applyProfile(const StageProfile& profile)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;
     if (profile.kind != AxisKind::Linear || profile.pulsesPerRev <= 0 || !(profile.leadMm > 0.0)) {
         return StageError::InvalidArgument;
@@ -360,7 +418,8 @@ StageError Zc300Stage::applyProfile(const StageProfile& profile)
 
 StageError Zc300Stage::readPowerUpToken(std::uint16_t& token)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;
     Frame data;
     const StageError err = readLocked(kRegScratch, 1, data);
@@ -370,7 +429,8 @@ StageError Zc300Stage::readPowerUpToken(std::uint16_t& token)
 
 StageError Zc300Stage::writePowerUpToken(std::uint16_t token)
 {
-    std::scoped_lock lock(mutex_);
+    Access access(*this, Access::Kind::Command);
+    if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;
     return writeLocked(buildWriteU16(address_, kRegScratch, token), timing_.transactionMs);
 }
