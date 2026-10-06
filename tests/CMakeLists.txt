@@ -227,6 +227,15 @@ mib_add_backend_test_executable(zc300_stage_test backend/zc300_stage_test.cpp)
 mib_backend_test_link(zc300_stage_test PRIVATE stage_zc300)
 add_test(NAME backend.zc300_stage COMMAND $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
 set_tests_properties(backend.zc300_stage PROPERTIES LABELS "backend;stage;safety" TIMEOUT 90)
+# The same test pinned to two cores: the scheduling under which a tight
+# status poller starved a move for 60 s on PR #511's TSan runner. Keeps the
+# priority-access fix (Zc300Stage::Access) under that pressure on every run.
+find_program(MIB_TASKSET_EXECUTABLE taskset)
+if(UNIX AND NOT APPLE AND MIB_TASKSET_EXECUTABLE)
+    add_test(NAME backend.zc300_stage_two_cores
+             COMMAND ${MIB_TASKSET_EXECUTABLE} -c 0,1 $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
+    set_tests_properties(backend.zc300_stage_two_cores PROPERTIES LABELS "backend;stage;safety;concurrency" TIMEOUT 120)
+endif()
 
 mib_add_backend_test_executable(stage_config_test backend/stage_config_test.cpp)
 add_test(NAME backend.stage_config COMMAND $<TARGET_FILE:mib_backend_tests> stage_config_test)

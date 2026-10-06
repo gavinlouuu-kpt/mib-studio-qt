@@ -83,7 +83,11 @@ bus session's call mutex is innermost (see [[SerialBus]]).
   move for 60 s on PR #511's TSan CI runner. Locally under TSan on two
   cores, three tight pollers made a move wait up to 2 s. With priority it
   waits ≤ 50 ms and `stop()` ≤ 30 ms (`backend.zc300_stage`
-  "concurrency").
+  "concurrency"; `backend.zc300_stage_two_cores` runs it pinned to two
+  cores on Linux).
+- **Not only a test problem:** a UI or server polling `readStatus` in a
+  tight loop on real hardware could have starved Stop for seconds the same
+  way.
 
 A `stop()` still waits behind the call in flight, at worst one read with its
 retries (~2 s at the default timing). `StageService` owns polling threads.
