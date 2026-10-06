@@ -103,3 +103,15 @@ describe("baseName", () => {
     expect(baseName("out.h5")).toBe("out.h5");
   });
 });
+
+describe("PZ7035 recording target (#501)", () => {
+  const warning = "Recording to RAM: lost on power-off. Copy data off before shutdown. 2.5 GB free.";
+  const storage = (f: Partial<ContextBarFacts>) => deriveContextBar({...BASE, ...f}).segments.find((s) => s.id === "storage")!;
+  it("warns while recordings go to RAM, and names the run file", () => {
+    expect(storage({storageWarning: warning})).toMatchObject({status: "warn", value: "RAM", detail: warning});
+    expect(storage({storageWarning: warning, experimentActive: true, outputPath: "/var/lib/yofo-studio/run.h5"}).value).toBe("RAM · run.h5");
+  });
+  it("clears once the target is persistent", () => {
+    expect(storage({storageWarning: ""}).status).not.toBe("warn");
+  });
+});

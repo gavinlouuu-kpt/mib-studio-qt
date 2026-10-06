@@ -1146,3 +1146,6 @@ button.btn:disabled,
   font-size: 0.9em;
   color: var(--muted, #555);
 }
+
+/* Non-blocking readiness warnings at run start (#501: recording to RAM) */
+.start-notice { margin: 4px 0; color: var(--warn); }

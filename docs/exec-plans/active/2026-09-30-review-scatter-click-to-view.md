@@ -677,10 +677,16 @@ shared fixture `tests/fixtures/review_scatter_hits.json`,
 - [x] PR 2 (#467) — Qt Review tab zoomable scatter, click-to-view, docked frame
       pane, export save/restore (landed together with PR 1 in one PR, branch
       `feat/review-scatter-click-to-view`)
-- [ ] PR 3a (#468) — Backend review density mode, facade methods, bridge contract
-      bump + contract tests (no UI)
+- [x] PR 3a (#468) — Backend review density mode, facade methods, bridge contract
+      bump + contract tests (no UI). Landed in the standalone review plan
+      (2026-10-01-standalone-review-app, PR 1b/1c): `ReviewJobs` density job
+      on the review bridge (contract 15 `review_density`), not a
+      `MonitoringDensityService` mode — the review-only product must not
+      link `mib_backend`.
 - [ ] PR 3b (#469) — Qt KDE colouring, computed contour and save action from the
       facade
-- [ ] PR 4 (#470) — React + Tauri Charts view (#268 / #269): canvas scatter,
-      shared gesture/hit-test rules, frame pane
+- [x] PR 4 (#470) — React + Tauri Charts view (#268 / #269): canvas scatter,
+      shared gesture/hit-test rules, frame pane. Landed as PR 3 of
+      2026-10-01-standalone-review-app (`desktop/src/review/charts/`); the
+      tauri-driver spec moves to that plan's PR 8.
 - [ ] Follow-up issue: chart snapshot export from the Tauri shell

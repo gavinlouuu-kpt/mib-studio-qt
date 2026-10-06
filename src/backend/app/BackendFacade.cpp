@@ -1,4 +1,6 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/app/RecordingTarget.h"
+#include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/app/ProfileCatalog.h"
@@ -702,6 +704,14 @@ namespace backend::bridge
                         " at (" + std::to_string(command.roiX) + ", " + std::to_string(command.roiY) + ")"};
         }
         case CameraCommandAction::StartCapture:
+            if (backend_.instrumentMode() == pz::InstrumentMode::Run)
+            {
+                // #501 P1: the producer stays stopped while the U-Net cell path runs.
+                const std::string message = "In Run mode the live camera stays stopped (previews come from the PL); "
+                                            "switch to Align for the live camera";
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             emitEvent(makeCameraStatus(CameraState::Starting));
             if (!backend_.capture().start())
             {
@@ -2805,10 +2815,19 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
         {"egrabber_script", host},
         {"pl_identity", !host},
         {"led_strobe", !host},
-        // Backend-owned camera modes arrive with P0b.
-        {"align_mode", false},
-        {"run_mode", false},
+        // Backend-owned camera modes (#501 P1): with the PZ7035 register writer.
+        {"align_mode", backend_.instrumentControlAvailable()},
+        {"run_mode", backend_.instrumentControlAvailable()},
     };
+    if (backend_.instrumentControlAvailable()) {
+        const auto limits = [](pz::InstrumentMode m) {
+            const auto l = pz::ledLimits(m);
+            return nlohmann::json{{"delay_min_us", l.delayMinUs}, {"delay_max_us", l.delayMaxUs},
+                                  {"width_min_us", l.widthMinUs}, {"width_max_us", l.widthMaxUs}};
+        };
+        capabilities["led_limits"] = {{"run", limits(pz::InstrumentMode::Run)},
+                                      {"align", limits(pz::InstrumentMode::Align)}};
+    }
     // The PZ7035's two peristaltic pumps share RS485 on /dev/ttyPS1: slave 3
     // feeds the sample, slave 4 the sheath (confirmed on the bench 2026-10-05).
     capabilities["pump"] = host ? nlohmann::json(nullptr)
@@ -2825,11 +2844,74 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
     }.dump();
 }
 
+BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, int x, int y) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    pz::InstrumentMode m = pz::InstrumentMode::Unknown;
+    if (mode == "align") m = pz::InstrumentMode::Align;
+    else if (mode == "run") m = pz::InstrumentMode::Run;
+    else return {false, BackendCommandType::Camera, "camera mode must be align or run"};
+    std::string error;
+    if (!backend_.setInstrumentMode(m, x, y, &error)) {
+        emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, error});
+        return {false, BackendCommandType::Camera, error};
+    }
+    // Align streams the producer's previews; Run stops it (previews come from the PL).
+    emitEvent(makeCameraStatus(m == pz::InstrumentMode::Align ? CameraState::Running : CameraState::Stopped));
+    const auto [rx, ry] = backend_.instrumentRunOffset();
+    return {true, BackendCommandType::Camera,
+            m == pz::InstrumentMode::Align
+                ? (backend_.alignSource() == "bridge" ? std::string("Align: full sensor, whole frames, LED 100/135 µs")
+                                                     : std::string("Align: full sensor (banded preview), LED 0/125 µs"))
+                                           : "Run: 512x96 at (" + std::to_string(rx) + ", " + std::to_string(ry) +
+                                                 "), 5 kHz, U-Net on, LED 7/60 µs"};
+}
+
+BackendCommandResult BackendFacade::setServiceMode(bool on) {
+    backend_.setServiceMode(on);
+    return {true, BackendCommandType::Camera, on ? "Service mode" : "Operator mode"};
+}
+
+BackendCommandResult BackendFacade::setInstrumentLed(double delayUs, double widthUs) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error;
+    if (!backend_.setInstrumentLed(delayUs, widthUs, &error)) return {false, BackendCommandType::Camera, error};
+    char text[64];
+    std::snprintf(text, sizeof(text), "LED %.1f/%.1f µs", delayUs, widthUs);
+    return {true, BackendCommandType::Camera, text};
+}
+
+std::vector<std::uint8_t> BackendFacade::fetchRunPreviewPacket(std::string* error) {
+    std::vector<std::uint8_t> out;
+    if (!initialized_) {
+        if (error) *error = "backend is not initialized";
+        return out;
+    }
+    if (!backend_.fetchRunPreview(out, error)) out.clear();
+    return out;
+}
+
 std::string BackendFacade::fetchInstrumentStatusJson() {
+    // Camera mode the backend applied last (#501 P1); "unknown" until the operator picks one.
+    const auto [runX, runY] = backend_.instrumentRunOffset();
+    const nlohmann::json mode{{"name", pz::instrumentModeName(backend_.instrumentMode())},
+                              {"run_x", runX},
+                              {"run_y", runY},
+                              {"service", backend_.serviceMode()},
+                              {"align_source", backend_.alignSource()}};
+    // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off.
+    const auto target = app::recordingTarget(backend_.dataDir());
+    const nlohmann::json storage{{"path", target.path},
+                                 {"writable", target.writable},
+                                 {"ram", target.ram},
+                                 {"free_bytes", target.freeBytes},
+                                 {"filesystem", target.filesystem},
+                                 {"warning", app::recordingTargetWarning(target)}};
     auto* monitor = initialized_ ? backend_.pzPlatformMonitor() : nullptr;
     if (!monitor) {
         return nlohmann::json{{"available", false},
-                              {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"}}
+                              {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
+                              {"mode", mode},
+                              {"storage", storage}}
             .dump();
     }
     const auto nowUs = static_cast<uint64_t>(
@@ -2837,7 +2919,9 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
             .count());
     const auto s = monitor->sample(nowUs);
     if (!s.available) {
-        return nlohmann::json{{"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}}
+        return nlohmann::json{
+            {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode},
+            {"storage", storage}}
             .dump();
     }
     nlohmann::json expected = nullptr;
@@ -2881,6 +2965,8 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"max_us", s.latencyMaxUs},
           {"over_budget", s.latencyOverBudget},
           {"frames", s.latencyFrames}}},
+        {"mode", mode},
+        {"storage", storage},
     }.dump();
 }
 

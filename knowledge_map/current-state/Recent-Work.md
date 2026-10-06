@@ -1,5 +1,25 @@
 # Recent Work
 
+## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
+
+Opening Camera & Alignment puts the instrument in Align: full sensor at
+500 fps, LED 0/125 µs. Opening Experiment puts it in Run at the placed
+window: 512×96 at 5 kHz, U-Net on, LED 7/60 µs. No shell commands are
+needed in either direction.
+
+- **Sequencing.** The backend does the switch in the order agreed with the
+  PL owner. The GenTL producer applies the sensor timing.
+  `PzInstrumentControl` is the single writer of the LED, the cell path and
+  the cell capture.
+- **Run.** The live camera stays stopped, and the preview is the PL's own
+  frame with the U-Net mask and cell boxes. Readiness asks for Run instead
+  of a live camera.
+- **LED.** Raw values are Service-mode only, enforced by the backend.
+- **Not tested on hardware yet.** The board run is pending.
+
+Bridge ABI 27. See [[../data-model/PZ7035-Records]],
+[[../architecture/Desktop-Shell]].
+
 ## 2026-10-06 — Z stage: Disconnect and ApplyProfile can no longer hold Stop (#464)
 
 [[../services/StageService]] `disconnect()` and `applyProfile()` used to queue
@@ -57,6 +77,175 @@ Before, it was an open-ended jog that the host stopped by polling.
 - **Not fixed by this:** the bound exceeds the ~6000 µm travel, so a
   supervised limit check stays a precondition for the first real Home.
 
+## 2026-10-06 — develop merged into the YOFO Review branch (decision A)
+
+MIB Studio's Tauri shell keeps develop's review stack (#450);
+`ReviewSession` and the review bridge serve YOFO Review only (ADR 0014,
+renumbered from 0008, amended). The shared bridge contract is exactly
+develop's; YOFO Review has its own `review-contract.json` (v1) generated to
+`src/review/reviewContract.ts` and `src-tauri/src/review_packet_contract.rs`,
+with its own packet codec (`review_packet.rs` / `reviewPacket.ts`). The Tauri
+crate is MIB Studio's library behind the default `studio` feature and YOFO
+Review's binary with `--no-default-features --features review-only`
+(`desktop/scripts/tauri-review.mjs`). `mib_backend` links `mib_review_core`
+for the one copy of `ReviewExport.cpp`. Convergence is #512. Notes:
+[[../frontend/YofoReview]], [[../architecture/Rust-Bridge]].
+
+## 2026-10-05 — YOFO Review parity sign-off and manual (plan PR 8)
+
+YOFO Review matches the Qt Review tab on four inputs (z-adjustment-50v, the
+512x96 real-cell run, two 0.25 µm/px fixtures; 40 checks,
+`tools/review_parity/`). Fixes that came with it: the core record's
+`cell_count` is the in-core count, the fallback px→µm is 0.4886, batch
+exports use each file's recorded factor, and the Qt tab reads the recorded
+factor too (TD-17 closed). Accepted differences are listed in
+[[../frontend/YofoReview]]. The operator manual has a YOFO Review page
+(`docs/manual/yofo-review.md`): install, open, export, regenerate,
+pixel-to-micron, updates. TD-18 (Qt Charts scatter cost) is superseded by
+the standalone app.
+
+## 2026-10-04 — YOFO Review-only release tags
+
+`review-vX.Y.Z[-beta.N]` tags release YOFO Review alone
+(`review-release.yml`): `release.yml` ignores them, the bundles get their own
+GitHub Release ("YOFO Review X.Y.Z", not latest) and the signed updates go to
+`review-stable/` or `review-beta/`. Used for the first signed update
+(`review-v1.1.3-beta.1`). Note: [[../frontend/YofoReview]].
+
+## 2026-10-04 — YOFO Review auto-update
+
+YOFO Review gained the Tauri updater: channel-specific Tauri manifests on R2
+(`review-stable/`, `review-beta/`), minisign signature plus a SHA-256 pin
+checked before install (fail closed), Help ▸ Check for updates…, a channel
+preference and a launch-time notice. Releases build signed update bundles
+and publish them (`publish-review-update.py`) once the owner's public key is
+in `tauri.review.conf.json` and the signing secret exists; until then the
+updater is off. Note: [[../frontend/YofoReview]].
+
+## 2026-10-03 — YOFO Review releases, Finder opens, macOS bootstrap
+
+`v*` tags now attach YOFO Review's DMG and NSIS installer (+ SHA-256 sums)
+to the GitHub Release (`review-release.yml` over the reusable
+`review-bundles.yml`, version stamped from the tag). macOS Finder opens reach
+the app (`RunEvent::Opened` → queued request + `review-open-file` event,
+taken once). `scripts/bootstrap.sh` / `doctor.sh` print the YOFO Review steps
+on macOS instead of "no preset yet"; `env/brew-packages.txt` gained the
+desktop-shell section. Note: [[../frontend/YofoReview]].
+
+## 2026-10-03 — YOFO Review macOS and Windows CI lanes (plan PR 5 / PR 6 CI)
+
+`review-ci.yml` gained `review-macos` (macos-14 → unsigned, ad-hoc-signed
+DMG) and `review-windows` (windows-2022 → per-user NSIS installer). The
+review core builds against a static Conan graph (`conanfile.py`
+`review_core=True`: no Qt, OpenCV reduced to core / imgproc / imgcodecs /
+videoio) with new `macos-review-core` / `windows-review-core` presets and
+profile `conan/profiles/macos-appleclang-arm64`; the bridge links from a
+CMake-derived manifest (`mib_review_link_probe` +
+`tools/gen_review_link_manifest.py`, replayed by `build.rs`), so macOS gets a
+working bridge link for the first time. Each lane checks the binaries load no
+third-party dylib/DLL, installs/mounts the bundle and smoke-launches it.
+The manifest path was exercised on Linux against system libraries. Notes:
+[[../frontend/YofoReview]], [[../architecture/Rust-Bridge]],
+[[../build-and-run/Build]].
+
+## 2026-10-02 — YOFO Review exports, regenerate dialog, preferences (PR 4)
+
+Exports in the shared review panel now run behind a progress dialog with
+Cancel (no partial output left) and Show in folder; the toolbar has the Qt
+**More…** menu (Batch Metrics, Batch Export All, Export Charts,
+Regenerate masks). Default metrics names, the `_N` suffix rule, the
+remembered export directory and the Export All series prompt (`9-15`)
+follow the Qt tab. Chart TIFFs are rendered by the same drawing code as
+the Charts view at 1200 × 1200 and reach the new backend Export Charts job
+(all or nothing) over raw IPC. The Regenerate masks dialog covers every
+source and reopens the result; YOFO Review gained File ▸ Preferences
+(fallback px→µm). Fixed on the way: MIB Studio never drained review events
+(the panel owns the drain now), density / computed-record results could
+leak to the next file, batch metrics were named `run_metrics2.csv`.
+Note: [[../frontend/YofoReview]].
+
+## 2026-10-01 — YOFO Review charts view (PR 3)
+
+The review panel's Charts tab now matches the Qt tab on `<canvas>`: the
+deformability-vs-area scatter coloured by the backend density levels,
+isoelastic curves (embedded in the Tauri binary), stored / live / unsaved
+full-run KDE core contours with compute and save from the context menu,
+the Qt `ZoomableChartView` gestures and a click-to-view frame pane, and
+the ring-width histogram over the file's **recorded** ring-ratio range.
+Hit testing is checked against the fixture the Qt test uses. The scatter
+gained a ring-ratio column and the info the recorded config range; a new
+`review_fixture --population N` writes chart test files (20 000 cells:
+density in ~2–3 s). Also fixed: MIB Studio never loaded `review.css` (the
+panel now imports it). Note: [[../frontend/YofoReview]].
+
+## 2026-10-01 — YOFO Review frames view (PR 2)
+
+The shared review panel now has the Qt tab's frames layout: a virtualised
+thumbnail grid fed by 64-tile packed strips from `ReviewSession` (aspect-
+true cells, bounded LRU, keyboard selection), the selected frame's preview
+over a 100-row paged metrics table with every Qt column and a persisted
+column chooser, and an in-app frame viewer with frame / series navigation
+and zoom. Files open from the command line (file associations) or `?open=`.
+Found by driving the real app on real 512×96 cells: a 100-tile strip
+(12 800 px) exceeded the frame packet's 8192 px limit, so pages are 64 tiles
+and the bridge refuses taller strips. New dev tool
+`crates/mib-bridge/examples/review_fixture.rs` writes a synthetic or
+real-cell (regenerate-masks job over a frame folder) review file. Note:
+[[../frontend/YofoReview]].
+
+## 2026-10-01 — Review jobs in the review core (YOFO Review PR 1b)
+
+`ReviewJobs` (`mib_review_core`, [[../services/ReviewSession]]) runs the
+review's long work as single-flight tracked operations on their own
+readers: metrics / Export All / batch exports through `HdfExportService`
+with the recorded factor and shell-rendered chart snapshots, mask
+regeneration through the bundled kernel with the recorded config, the
+full-run core contour, and the review density estimate (grid path above
+5000 cells). Exposed on the review bridge (`review_export_*`,
+`review_batch_export`, `review_regenerate_masks`, `review_compute_core`,
+`review_request_density`, contract groups `review_regenerate_sources`,
+`review_density`) and wired to the React panel's export / batch /
+regenerate buttons. Guards: `review.jobs`, `tests/review_bridge.rs`.
+
+## 2026-10-01 — ReviewSession and the review bridge (YOFO Review PR 1a/1c)
+
+One Qt-free review implementation now sits behind every shell
+([[../services/ReviewSession]], new `mib_review_core` library on
+`mib_processing` only): its own reader (never the experiment writer's
+handle), full-column metrics pages, frames with the overlay and ROI
+composed in the backend (`OverlayCompose`, a port of the Qt renderer),
+series, packed thumbnail strips, columnar scatter, run accounting, stored
+KDE records and the **recorded** pixel-to-micron factor (TD-17 backend
+half). `BackendFacade` delegates its review surface to it, so the Tauri
+shell no longer scrubs the live FrameStore for file frames and can load a
+file during an experiment. A second cxx bridge (`review_ffi`,
+[[../architecture/Rust-Bridge]]) exposes it; contract ABI 15 adds
+`overlay_modes`, `review_pixel_formats` (RGB8 packets), thumbnail/series
+pull kinds and `review_operation_kinds`. The `review-only` cargo feature
+builds only that bridge: the YOFO Review binary links no `AppBackend`
+(`nm` check in `review-ci.yml`). The React review panel now uses the review
+bridge in both products (overlay + ROI controls, Close File, µm² column).
+Guards: `review.session`, `tests/review_bridge.rs` (both feature
+configurations), desktop `review::tests`, `frontend` vitest. Jobs (export,
+batch, regenerate, core contour, density) follow in PR 1b.
+
+## 2026-10-01 — YOFO Review: the Review tab as a React + Tauri product (PR 0)
+
+Decision (ADR 0014, plan
+[`2026-10-01-standalone-review-app`](../../docs/exec-plans/active/2026-10-01-standalone-review-app.md)):
+the standalone review product ships on the React + Tauri shell, not Qt.
+PR 0 lands the product split with no behaviour change: the Review panel
+moved out of `App.tsx` into `desktop/src/review/ReviewPanel.tsx` (mounted
+by MIB Studio's Review tab and by the new `review.html` →
+`ReviewApp.tsx` window), a second Vite page, the cargo feature
+`review-only` that registers only the review / platform / dialog commands,
+the config overlay `tauri.review.conf.json` (name, `bio.yofo.review`,
+`yofo-review`, dmg + nsis targets, `.h5` association, `.icns`), the
+version stamp `scripts/release/stamp-tauri-version.py` (both Tauri
+products carry the repository version) and `review-ci.yml` (Linux build of
+the review context under `TAURI_CONFIG`, Xvfb boot). Vault:
+[[../frontend/YofoReview]]. Next: PR 1 moves review into a Qt-free
+`ReviewSession` behind the bridge.
 ## 2026-10-05 — StageService: read-only start-up, Home at mid-travel (#464, slice 3)
 
 [[../services/StageService]] owns the Z stage, and `AppBackend::stage()`

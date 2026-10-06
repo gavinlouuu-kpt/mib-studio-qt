@@ -1,0 +1,171 @@
+name: YOFO Review release
+
+# Attach the YOFO Review bundles to the GitHub Release of a v* tag (plan
+# 2026-10-01-standalone-review-app, PR 6). One vX.Y.Z tag releases every
+# product (release.yml builds MIB Studio Qt for the same tag); this workflow
+# builds the DMG and the NSIS installer at that tag with the tag's version
+# stamped in, renames them to YOFO_Review_v<version>_aarch64.dmg /
+# YOFO_Review_v<version>_x64-setup.exe and adds them, with SHA-256 sums, to
+# the release (created if release.yml has not created it yet). Unsigned
+# (decision log 2026-10-01): the release notes say how to open them.
+#
+# review-vX.Y.Z[-beta.N] tags release YOFO Review alone: release.yml
+# (v*.*.*) does not match them, and the bundles go to their own GitHub
+# Release ("YOFO Review X.Y.Z", never marked latest) and update channel.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "review-v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach (e.g. v1.2.0 or review-v1.2.0-beta.1)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: review-release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      standalone: ${{ steps.v.outputs.standalone }}
+    steps:
+      - name: Validate the tag
+        id: v
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^(review-)?v([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9A-Za-z][0-9A-Za-z.-]*)?)$ ]]; then
+            echo "not a release tag: $TAG" >&2; exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${BASH_REMATCH[3]}" ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >> "$GITHUB_OUTPUT"
+          if [[ -n "${BASH_REMATCH[1]}" ]]; then echo "standalone=true"; else echo "standalone=false"; fi >> "$GITHUB_OUTPUT"
+
+  bundles:
+    name: Bundles
+    needs: version
+    uses: ./.github/workflows/review-bundles.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      ref: refs/tags/${{ needs.version.outputs.tag }}
+    secrets: inherit
+
+  attach:
+    name: Attach to the GitHub Release
+    needs: [version, bundles]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download the bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: bundles
+
+      - name: Name and checksum
+        id: files
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          dmg=$(find bundles/yofo-review-macos-arm64 -name '*.dmg' | head -1)
+          exe=$(find bundles/yofo-review-windows-x64 -name '*-setup.exe' | head -1)
+          test -n "$dmg" && test -n "$exe"
+          cp "$dmg" "dist/YOFO_Review_v${VERSION}_aarch64.dmg"
+          cp "$exe" "dist/YOFO_Review_v${VERSION}_x64-setup.exe"
+          (cd dist && sha256sum * | tee SHA256SUMS-yofo-review.txt)
+          {
+            echo "sums<<EOF"
+            cat dist/SHA256SUMS-yofo-review.txt
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Add to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          # A shared vX.Y.Z release carries release.yml's name (whichever
+          # workflow creates it); a review-v* tag gets its own release that
+          # never becomes the repository's latest.
+          name: ${{ needs.version.outputs.standalone == 'true' && format('YOFO Review {0}', needs.version.outputs.version) || format('MIB Studio Qt {0}', needs.version.outputs.tag) }}
+          make_latest: ${{ needs.version.outputs.standalone == 'true' && 'false' || 'legacy' }}
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          append_body: true
+          body: |
+
+            ## YOFO Review ${{ needs.version.outputs.tag }}
+
+            The standalone review app for MIB Studio recordings.
+
+            - **macOS (Apple silicon, macOS 13+)** — `YOFO_Review_v${{ needs.version.outputs.version }}_aarch64.dmg`.
+              Not notarised: after the first launch attempt, open **System Settings ▸ Privacy & Security ▸ Open Anyway**.
+            - **Windows x64** — `YOFO_Review_v${{ needs.version.outputs.version }}_x64-setup.exe`, installs per user
+              (no administrator rights). Not signed: SmartScreen needs **More info ▸ Run anyway**.
+
+            ```
+            ${{ steps.files.outputs.sums }}
+            ```
+          files: |
+            dist/YOFO_Review_v${{ needs.version.outputs.version }}_aarch64.dmg
+            dist/YOFO_Review_v${{ needs.version.outputs.version }}_x64-setup.exe
+            dist/SHA256SUMS-yofo-review.txt
+
+  # Signed updates to R2 (review-stable / review-beta). Runs only when the
+  # bundles carry updater signatures (public key in the app + signing secret)
+  # and the R2 credentials exist — the same secrets publish-update.py uses.
+  publish-updates:
+    name: Publish signed updates (R2)
+    needs: [version, bundles, attach]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
+
+      - name: Download the bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: bundles
+
+      - name: Publish latest.json and the update bundles
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          MIB_STUDIO_R2_ENDPOINT: ${{ secrets.MIB_STUDIO_R2_ENDPOINT }}
+          VERSION: ${{ needs.version.outputs.version }}
+          NOTES_URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mac=$(find bundles/yofo-review-macos-arm64 -name '*.app.tar.gz' | head -1)
+          win=$(find bundles/yofo-review-windows-x64 -name '*-setup.exe' | head -1)
+          args=()
+          [ -n "$mac" ] && [ -f "$mac.sig" ] && args+=(--macos-bundle "$mac" --macos-sig "$mac.sig")
+          [ -n "$win" ] && [ -f "$win.sig" ] && args+=(--windows-installer "$win" --windows-sig "$win.sig")
+          if [ ${#args[@]} -eq 0 ]; then
+            echo "::notice::No updater signatures (no public key in the app or no TAURI_SIGNING_PRIVATE_KEY secret): updates not published."
+            exit 0
+          fi
+          if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${MIB_STUDIO_R2_ENDPOINT:-}" ]; then
+            echo "::warning::R2 credentials missing: signed updates built but not published."
+            exit 0
+          fi
+          python -m pip install --quiet boto3
+          python3 scripts/release/publish-review-update.py --version "$VERSION" --notes-url "$NOTES_URL" "${args[@]}"
+

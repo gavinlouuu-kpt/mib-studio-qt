@@ -1,9 +1,9 @@
 {
   "name": "mib-studio-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.1.2",
   "type": "module",
-  "description": "MIB Studio desktop shell (React + Tauri v2) — Phase 3 of epic #246",
+  "description": "MIB Studio and YOFO Review desktop shells (React + Tauri v2) — epic #246",
   "engines": {
     "node": ">=22"
   },
@@ -12,7 +12,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:review:dev": "node scripts/tauri-review.mjs dev",
+    "tauri:review:build": "node scripts/tauri-review.mjs build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
