@@ -67,6 +67,27 @@ each limit, with Gavin present**, to confirm the switches (plan, slice 8).
 Slice 8 will add a per-controller "limits verified" record that Home
 requires.
 
+### Limits-verified gate (#464 slice 4)
+
+`reference()` is refused with `LimitsUnverified` unless
+`<dataDir>/stage_limits_verified.json` holds a record for the connected
+controller's serial. That includes the `on_startup` opt-in.
+- **When it's read:** on every Home request and again when Home starts, so a
+  record written while the app runs counts without a reconnect.
+- **Who writes it:** only the supervised bench procedure,
+  `zc300ctl verify-limits --supervised --allow-motion --data-dir <dataDir>`
+  (`stage::verifyLimits`, `include/backend/stage/LimitVerification.h`).
+  No facade, bridge, server or UI path can write it.
+- **What the procedure does:**
+  - It is operator-paced. It confirms each direction, then moves in
+    controller-bounded steps of at most 500 µm at 200 µm/s, with travel per
+    direction capped at span + 500 µm.
+  - Enter or Ctrl-C stops it.
+  - It checks that the correct switch trips at each end (catching swapped
+    wiring within one step) and that the span is right.
+  - It returns to the start position, and records only on success.
+- The snapshot exposes `limitsVerified`.
+
 ## Operations
 
 - **One at a time on the worker.** `moveTo` (absolute), `moveBy` (relative to

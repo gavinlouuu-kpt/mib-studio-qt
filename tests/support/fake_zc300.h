@@ -77,6 +77,8 @@ public:
     }
     void setDriverAlarm(bool on) { locked([&] { alarm_ = on; }); }
     void setEnabled(bool on) { locked([&] { enabled_ = on; }); }
+    // Miswired stage: the + switch reports on the − bit and vice versa.
+    void setSwapLimitBits(bool on) { locked([&] { swapLimits_ = on; }); }
     void setDropAfterMove(bool on) { locked([&] { dropAfterMove_ = on; }); }
     void setSaveDelayMs(int ms) { locked([&] { saveDelayMs_ = ms; }); }
     // Every reply arrives this late: models a stalled host poll (load, OS
@@ -119,6 +121,8 @@ public:
     std::vector<float> motionSpeeds() { return locked([&] { return motionSpeeds_; }); }
     // Motion opcodes (0x64/0x65/0x66) in order.
     std::vector<std::uint16_t> motionLog() { return locked([&] { return motionLog_; }); }
+    // Step-distance register (unit value) in force at each motion opcode.
+    std::vector<float> motionDistances() { return locked([&] { return motionDistances_; }); }
     Config config() { return locked([&] { return config_; }); }
     Config flash() { return locked([&] { return flash_; }); }
     std::uint16_t scratch() { return locked([&] { return scratch_; }); }
@@ -236,6 +240,11 @@ private:
     }
     bool atPositiveLimit() const { return position_ >= posLimit_; }
     bool atNegativeLimit() const { return position_ <= negLimit_; }
+    // What the controller sees on its limit inputs (swapped when miswired).
+    // It stops motion only on the input for the direction of travel, so a
+    // swapped stage runs past its physical switch.
+    bool positiveInput() const { return swapLimits_ ? atNegativeLimit() : atPositiveLimit(); }
+    bool negativeInput() const { return swapLimits_ ? atPositiveLimit() : atNegativeLimit(); }
 
     std::uint16_t readRegister(int r) const
     {
@@ -248,8 +257,8 @@ private:
         case 30012: return moving_ ? 1 : 0;
         case 30015: {
             std::uint16_t s = 0;
-            if (atPositiveLimit()) s |= 1u << 0;
-            if (atNegativeLimit()) s |= 1u << 1;
+            if (positiveInput()) s |= 1u << 0;
+            if (negativeInput()) s |= 1u << 1;
             if (position_ == 0) s |= 1u << 2;
             if (estop_) s |= 1u << 9;
             if (alarm_) s |= 1u << 10;
@@ -312,6 +321,7 @@ private:
         if (isMotion) {
             motionLog_.push_back(op);
             motionSpeeds_.push_back(speed_);
+            motionDistances_.push_back(stepDistance_);
         }
         if (isMotion && swallowMotion_) {
             swallowMotion_ = false;
@@ -346,7 +356,7 @@ private:
             target = position_ + distancePulses(stepDistance_) * (positive ? 1 : -1);
         }
         const bool towardPositive = op == 0x66 ? positive : target > position_;
-        if ((towardPositive && atPositiveLimit()) || (!towardPositive && atNegativeLimit())) {
+        if ((towardPositive && positiveInput()) || (!towardPositive && negativeInput())) {
             if (op == 0x66 || target != position_) return 0x07;
         }
         if (op == 0x66) {
@@ -381,7 +391,7 @@ private:
         lastDirection_ = direction;
         while (steps-- > 0 && moving_) {
             position_ += direction;
-            const bool hitLimit = (direction > 0 && atPositiveLimit()) || (direction < 0 && atNegativeLimit());
+            const bool hitLimit = (direction > 0 && positiveInput()) || (direction < 0 && negativeInput());
             if (hitLimit || (!jogging_ && position_ == target_)) {
                 moving_ = false;
                 jogging_ = false;
@@ -407,6 +417,7 @@ private:
     bool estop_{false};
     bool alarm_{false};
     bool enabled_{true};
+    bool swapLimits_{false};
     float stepDistance_{0.0f};
     std::uint16_t scratch_{0};
     std::map<int, std::uint16_t> extra_;
@@ -417,6 +428,7 @@ private:
     float speed_{3.5f}; // mm/s, the bench unit's saved cruise speed
     std::vector<float> motionSpeeds_;
     std::vector<std::uint16_t> motionLog_;
+    std::vector<float> motionDistances_;
     bool dropMotionAck_{false};
     bool swallowMotion_{false};
     bool dropStopAck_{false};
