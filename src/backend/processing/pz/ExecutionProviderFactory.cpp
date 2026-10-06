@@ -3,6 +3,12 @@
 #include "backend/processing/pz/PzExecutionProviders.h"
 
 #include <cstdlib>
+
+// mib_processing defines MIB_PL_SCIENCE (0/1); a file compiled outside CMake
+// (e.g. a tool build) gets the desktop default.
+#ifndef MIB_PL_SCIENCE
+#define MIB_PL_SCIENCE 0
+#endif
 #include <fstream>
 #include <iterator>
 

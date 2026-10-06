@@ -1,5 +1,68 @@
 # Recent Work
 
+## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)
+
+PR #511's TSan lane stalled 60 s in `backend.zc300_stage`: a back-to-back
+status poller kept re-locking the driver's unfair mutex and starved a move.
+[[../services/ZC300Stage]] access is now prioritized (commands, including
+Stop, go first; polls step aside) and bounded (`Busy` after 15 s). The
+concurrency test now runs three tight pollers and bounds every command, and
+Stop, by time. Under TSan on two cores the slowest command went from 2 s to
+≤ 50 ms.
+
+## 2026-10-06 — Z stage Home: controller-bounded limit search (#464 fix)
+
+[[../services/StageService]] Home now searches for each limit switch with a
+relative move of at most 6500 µm (opcode 0x65) at the slow search speed.
+Before, it was an open-ended jog that the host stopped by polling.
+- **Why:** Windows CI saw the jog overshoot the bound by ~300 µm, through
+  sleep granularity.
+- **Now:** the controller enforces the bound even when the host stalls.
+- **Tests:** a reply-delayed (80 ms) fake proves it. Mutation checks (jog
+  back in; search at the move speed) fail.
+- **Config:** `search_speed_um_s` is capped at 2000 µm/s.
+- **Not fixed by this:** the bound exceeds the ~6000 µm travel, so a
+  supervised limit check stays a precondition for the first real Home.
+
+## 2026-10-05 — StageService: read-only start-up, Home at mid-travel (#464, slice 3)
+
+[[../services/StageService]] owns the Z stage, and `AppBackend::stage()`
+exposes it.
+- **Start-up is read-only.** `startup()` connects and checks the profile and
+  the power-up token, with zero writes and zero motion.
+- **Before Home**, only Home and Stop are accepted.
+- **Home** probes both limits, checks the span (6000 ± 300 µm), zeroes at
+  mid-travel with a one-sided approach, and sets ±(span/2 − 100) µm soft
+  limits.
+- **The reference survives application restarts** while the controller stays
+  powered: a token on register 30054 plus `<dataDir>/stage_reference.json`.
+- **Failures** stop the axis. Failures that can desync the counter drop the
+  reference.
+- One worker thread; a stop epoch makes a racing Stop cancel the operation.
+
+Tested against the fake controller only (bench hold); the TSan stress test
+races moves against Stop. The Rust bridge links the stage archives.
+
+## 2026-10-05 — ZC300 Z stage driver and `zc300ctl` (#464, slice 2)
+
+`IMotionStage` and the ZC300 driver landed. They are not wired into
+`AppBackend` yet; that is slice 3, `StageService`.
+- `stage_zc300_protocol` is the pure register map, frames and µm encoding.
+- `stage_zc300` is the driver over the shared bus.
+- `zc300ctl` is the diagnostic CLI; motion is gated behind `--allow-motion`.
+
+Behaviour:
+- Connect is observe-only. A controller that does not match the TBZF6-60
+  profile stays read-only.
+- Motion is in whole micrometres; off-grid targets are rejected.
+- Motion opcodes are never re-sent; a lost reply is reconciled from status.
+
+Tests run against a fake controller with the bench quirks
+(`tests/support/fake_zc300.h`).
+
+`SerialBus.cpp` now compiles into `oeabt_serial`, so the Rust bridge archive
+list is unchanged. See [[../services/ZC300Stage]].
+
 ## 2026-10-05 — PZ7035 instrument UI P0a: capabilities, PL-core preflight, token prompt (#501)
 
 On the PZ7035, preflight checks the instrument's own equipment, and a healthy

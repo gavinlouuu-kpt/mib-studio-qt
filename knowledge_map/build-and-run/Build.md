@@ -379,6 +379,14 @@ different Conan package IDs after reinstalls).
 - When `MIB_HAS_COREMOR=OFF`, build wiring skips the CoreMOR import library;
   the full autofocus service and OEABT serial backend still build.
 - `MIB_BUILD_OEABT_TOOLS=ON` builds `oeabtctl` in the build root.
+- `MIB_BUILD_STAGE_TOOLS=ON` (default) builds `zc300ctl` in the build root.
+  It is the ZC300 Z-stage diagnostic: `info` and `status` are read-only,
+  `move` needs `--allow-motion`, and `configure` needs `--allow-write`. It
+  links `stage_zc300` → `stage_zc300_protocol` + `oeabt_serial` (which also
+  carries `SerialBus.cpp`), not the backend. See [[../services/ZC300Stage]].
+  `mib_backend` itself links `stage_zc300` (for [[../services/StageService]]),
+  so the Rust bridge's archive list in `crates/mib-bridge/build.rs` names
+  `stage_zc300` and `stage_zc300_protocol`.
 - When `MIB_HAS_MINDVISION=ON`, CMake requires:
   - Windows: `CameraApiLoad.h` plus `MVCAMSDK.dll` / `MVCAMSDK_X64.dll`
   - Linux/macOS: `CameraApi.h` plus `libMVSDK.so` / `libmvsdk.dylib`

@@ -70,8 +70,11 @@ reports the configuration error; it does not silently substitute MockCamera.
 
 ## Explicit hardware shutdown (2026-09-15)
 
-`shutdown()` now disconnects autofocus, both syringe pumps, and the pulse
-generator after stopping capture/triggers and processing. Callers need not
+`shutdown()` disconnects autofocus, both syringe pumps and the pulse
+generator after stopping capture/triggers and processing. Since #464 slice 3
+it then shuts down the [[../services/StageService]], which cancels any
+operation, stops a moving axis and joins its worker while the bus is alive.
+Callers need not
 destroy the backend to release serial adapters. The final shared-bus client
 releases the port. Each phase is logged to locate future shutdown stalls.
 `backend.hardware_shutdown` checks ten reconnect/shutdown cycles with three
@@ -290,6 +293,11 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
   outlives their sessions) — one shared [[../services/ISerialPort]] owner per
   RS485 adapter; `serialBus()` exposes the manager so tests inject a fake
   serial-port factory
+- `stage()` — accessor for [[../services/StageService]] (Z stage, ADR 0013),
+  built on the same `SerialBusManager` with a `FileStageReferenceStore` at
+  `<dataDir>/stage_reference.json`; declared after `serialBusManager_` so it
+  is destroyed first. `initialize()` neither connects nor moves it; the shell
+  applies the stage config and calls `startup()` (read-only by default)
 
 ### Requested vs effective camera source (issue #369)
 

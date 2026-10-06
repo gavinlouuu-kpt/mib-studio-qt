@@ -28,7 +28,8 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[services/TriggerService]], [[services/SyringePumpService]],
   [[services/ISerialPort]]
   [[services/TriggerService]], [[services/SerialBus]],
-  [[services/SyringePumpService]], [[services/PulseGeneratorService]]
+  [[services/SyringePumpService]], [[services/PulseGeneratorService]],
+  [[services/StageService]] (Z stage, driver [[services/ZC300Stage]])
 - Optional: [[services/YoloService]], [[services/RecorderService]],
   [[services/BatchMaskSources]]
 

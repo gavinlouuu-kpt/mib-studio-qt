@@ -104,9 +104,12 @@ focus" corpus is labelled only by nominal voltage.
 
 6. **Home is mid-travel, found by probing both limits.**
    - The procedure is:
-     1. Drive at search speed to the negative limit switch and record the
-        position.
-     2. Drive to the positive limit and record the position.
+     1. At the slow search speed, search for the negative limit switch and
+        record the position. The search is a controller-bounded relative
+        move of at most `expected_span + search_margin`, never an
+        open-ended jog, so host timing cannot extend it (amended
+        2026-10-06).
+     2. Search for the positive limit the same way and record the position.
      3. Check that the measured span matches the stage profile (TBZF6-60:
         6000 µm ± tolerance).
      4. Move to the midpoint with the normal one-sided approach.
@@ -115,6 +118,10 @@ focus" corpus is labelled only by nominal voltage.
    - The Z frame is therefore symmetric: soft limits are ±(span/2 − margin).
    - Probing both switches on every Home also checks the switch wiring and
      the travel span.
+   - The search bound exceeds the travel, so it limits timing errors, not
+     wiring faults. A supervised check of each limit switch precedes the
+     first real Home on any stage. Slice 8 makes Home require a
+     per-controller "limits verified" record.
    - **Per-power-up persistence.**
      - When Home succeeds, the service writes a random non-zero token to a
        volatile, unsaved controller register. It persists that token with
