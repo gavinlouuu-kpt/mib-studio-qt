@@ -218,6 +218,16 @@ mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
 add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
 set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
 
+mib_add_backend_test_executable(zc300_protocol_test backend/zc300_protocol_test.cpp)
+mib_backend_test_link(zc300_protocol_test PRIVATE stage_zc300_protocol)
+add_test(NAME backend.zc300_protocol COMMAND $<TARGET_FILE:mib_backend_tests> zc300_protocol_test)
+set_tests_properties(backend.zc300_protocol PROPERTIES LABELS "backend;stage" TIMEOUT 30)
+
+mib_add_backend_test_executable(zc300_stage_test backend/zc300_stage_test.cpp)
+mib_backend_test_link(zc300_stage_test PRIVATE stage_zc300)
+add_test(NAME backend.zc300_stage COMMAND $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
+set_tests_properties(backend.zc300_stage PROPERTIES LABELS "backend;stage;safety" TIMEOUT 90)
+
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
 set_tests_properties(backend.oeabt_protocol PROPERTIES LABELS "backend;nanopositioner" TIMEOUT 30)

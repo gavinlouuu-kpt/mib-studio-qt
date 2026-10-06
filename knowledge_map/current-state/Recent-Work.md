@@ -1,5 +1,25 @@
 # Recent Work
 
+## 2026-10-05 — ZC300 Z stage driver and `zc300ctl` (#464, slice 2)
+
+`IMotionStage` and the ZC300 driver landed. They are not wired into
+`AppBackend` yet; that is slice 3, `StageService`.
+- `stage_zc300_protocol` is the pure register map, frames and µm encoding.
+- `stage_zc300` is the driver over the shared bus.
+- `zc300ctl` is the diagnostic CLI; motion is gated behind `--allow-motion`.
+
+Behaviour:
+- Connect is observe-only. A controller that does not match the TBZF6-60
+  profile stays read-only.
+- Motion is in whole micrometres; off-grid targets are rejected.
+- Motion opcodes are never re-sent; a lost reply is reconciled from status.
+
+Tests run against a fake controller with the bench quirks
+(`tests/support/fake_zc300.h`).
+
+`SerialBus.cpp` now compiles into `oeabt_serial`, so the Rust bridge archive
+list is unchanged. See [[../services/ZC300Stage]].
+
 ## 2026-10-05 — PZ7035 instrument UI P0a: capabilities, PL-core preflight, token prompt (#501)
 
 On the PZ7035, preflight checks the instrument's own equipment, and a healthy
