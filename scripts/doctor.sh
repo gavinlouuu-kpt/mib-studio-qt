@@ -143,7 +143,7 @@ case "$OS" in
             if ((${#absent[@]})); then
                 miss "${#absent[@]} formula(e): ${absent[*]}" "$(pkg_manager_hint "${absent[@]}")"
             fi
-            warn "macOS has no CMake preset yet; see knowledge_map/build-and-run/Build.md before configuring"
+            ok "macOS preset: macos-review-core (YOFO Review; docs/howto/macos-build.md)"
         fi ;;
     *)  section "System packages"; warn "unsupported host OS '$OS' for package checks (Windows: use scripts/doctor.ps1)" ;;
 esac
@@ -190,6 +190,7 @@ if ((MISSING == 0)); then
     echo "doctor: everything present for sections '$SECTIONS'."
     case "$OS" in
         Linux)  has_section frontend && echo "next: cmake --preset linux-system-release" || echo "next: cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build" ;;
+        Darwin) echo "next: YOFO Review — conan install (review_core=True) then cmake --preset macos-review-core; see docs/howto/macos-build.md" ;;
     esac
     exit 0
 fi

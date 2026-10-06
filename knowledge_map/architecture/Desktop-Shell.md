@@ -41,6 +41,13 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   commands as typed one-line `#[tauri::command]` shims and keeps the
   desktop-only pieces (app paths, preferences, updater, installers);
   `main.rs` calls `run()`.
+- `desktop/src/review/` + `review.html` — **YOFO Review**, the standalone
+  review app built from this tree: the binary without the default `studio`
+  feature (`--no-default-features --features review-only`; `main.rs` →
+  `src-tauri/src/review_app.rs`, config overlay `tauri.review.conf.json`,
+  `npm run tauri:review:build`). It holds only the review bridge; MIB
+  Studio's Review tab keeps its own components and commands (ADR 0014,
+  decision A). See [[../frontend/YofoReview]].
 - `desktop/scripts/xvfb-smoke.sh` — headless GUI smoke launcher.
 - `desktop/src/workflow.ts` — pure guided-workflow stage derivation (UX-1),
   with `desktop/src/workflow.test.ts` vitest coverage.
@@ -232,6 +239,13 @@ Thin wrappers over the bridge (all take the managed `AppState`; bodies in
 - **Recording/review:** `fetch_indexed_frame_packet(frame_index)` and
   `fetch_review_frame_packet(dataset,index)` accept canonical decimal-string
   indices. `fetch_background_packet` uses the same codec.
+- **Review (ADR 0014):** `src-tauri/src/review.rs` — `review_open/close`,
+  `fetch_review_info/rows/frame/series_*/thumbnails_packet/scatter`,
+  `review_save_core_record`, `poll_review_events`, `cancel_review_operation`
+  over the review bridge ([[Rust-Bridge]]); the only commands the
+  `review-only` build registers besides `init`/`is_initialized`/
+  `abi_version` (review-bridge versions) and `platform::*`. Backend-bridge
+  commands are `#[cfg(not(feature = "review-only"))]`.
 - **Compatibility:** old split-cache commands return
   `FRAME_PROTOCOL_UPGRADE_REQUIRED`; they cannot return a substitute image.
   C++ ABI 11 is unchanged; desktop frame wire protocol v1 is independently
@@ -259,7 +273,11 @@ explicit backend prerequisites and executed versus pending evidence.
 ## Build & run
 
 - Frontend: `npm install && npm run build` in `desktop/` → `desktop/dist`
-  (Tauri's `frontendDist`). `tsc` typechecks under strict mode.
+  (Tauri's `frontendDist`): two pages, `index.html` (MIB Studio) and
+  `review.html` (YOFO Review). `tsc` typechecks under strict mode.
+- Version: `tauri.conf.json` and `package.json` carry the repository
+  version, stamped by `scripts/release/stamp-tauri-version.py` from
+  `cmake/MIBVersion.cmake` (`--check` runs in `review-ci.yml`).
 - App: `cargo build` in `desktop/src-tauri` (needs `dist/` to exist — Tauri
   validates `frontendDist` at compile time). Links the bridge via
   `MIB_BRIDGE_NO_CMAKE=1` when the archives are prebuilt.

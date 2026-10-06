@@ -16,6 +16,7 @@
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
 - [[HdfExportService]] — Qt-free bounded/cancellable CSV+TIFF export job (issue #344)
+- [[ReviewSession]] — YOFO Review's review implementation, also the Qt tab's factor (ADR 0014; `mib_review_core`)
 - [[SqliteService]] — small metadata DB
 
 ## Hardware I/O

@@ -1,0 +1,107 @@
+{
+  "$comment": "YOFO Review's own contract (ADR 0014, plan 2026-10-01-standalone-review-app): the review bridge (crates/mib-bridge/src/review_bridge.rs, review_shim.cpp) and the YOFO Review shell. Separate from bridge-contract.json, the MIB Studio backend bridge ABI, which it never changes. C++ ties to these values via static_asserts in review_shim.cpp; Rust via tests/review_bridge.rs; TypeScript via the generated desktop/src/review/reviewContract.ts and desktop/src-tauri/src/review_packet_contract.rs (scripts/gen_bridge_contract.py --check fails CI on drift). Additive changes only: append values, never renumber or repurpose.",
+  "review_abi_version": 1,
+  "frame_packet": {
+    "base": "bridge-contract.json frame_packet: the same magic, version, header layout, byte order and limits",
+    "pull_kinds": {
+      "review": 3,
+      "review_thumbnails": 5,
+      "review_series": 6
+    },
+    "pixel_formats": {
+      "mono8_legacy": 0,
+      "mono8": 17301505,
+      "rgb8": 35127316
+    },
+    "identity_semantics": "capture_session and store_generation are zero: review frames come from a recorded file, not a capture",
+    "rgb8_semantics": "review pulls (kinds 3, 5, 6) may carry RGB8 (3 bytes per pixel, stride = width*3) when the backend composed an overlay or ROI; mono pulls are unchanged",
+    "thumbnail_strip_semantics": "pull kind 5 packs count tiles of size x size as one frame of width size and height size*count; frame_index = page offset"
+  },
+  "overlay_modes": {
+    "None": 0,
+    "AllContour": 1,
+    "OuterInnerColorCoded": 2,
+    "AllMask": 3,
+    "FilteredMask": 4
+  },
+  "review_pixel_formats": {
+    "Mono8": 0,
+    "Rgb8": 35127316
+  },
+  "review_operation_kinds": {
+    "ExportMetrics": 0,
+    "ExportAll": 1,
+    "BatchExport": 2,
+    "RegenerateMasks": 3,
+    "ComputeCore": 4,
+    "Density": 5,
+    "ExportCharts": 6
+  },
+  "review_regenerate_sources": {
+    "CurrentValid": 0,
+    "CurrentInvalid": 1,
+    "WholeFile": 2,
+    "Avi": 3,
+    "Folder": 4
+  },
+  "review_density": {
+    "level_count": 8,
+    "grid_above_points": 5000,
+    "sample_seed": 20260924,
+    "grid_nx": 256,
+    "grid_ny": 128,
+    "ramp_rgb": [
+      [
+        134,
+        182,
+        239
+      ],
+      [
+        109,
+        167,
+        236
+      ],
+      [
+        85,
+        152,
+        231
+      ],
+      [
+        57,
+        135,
+        229
+      ],
+      [
+        42,
+        120,
+        214
+      ],
+      [
+        37,
+        106,
+        191
+      ],
+      [
+        28,
+        92,
+        171
+      ],
+      [
+        24,
+        79,
+        149
+      ],
+      [
+        16,
+        66,
+        129
+      ],
+      [
+        13,
+        54,
+        107
+      ]
+    ],
+    "ramp_semantics": "backend/processing/MonitoringDensity.h densityRampColor: linear interpolation over the stops, t in [0,1]; level k of n uses t = k/(n-1) (kdeLevelColor)"
+  }
+}

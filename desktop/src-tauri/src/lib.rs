@@ -3,6 +3,11 @@
 //! The commands live in `mib-app-commands` (transport-neutral, shared with the YOFO Studio
 //! WebSocket server); this crate exposes them as typed Tauri commands and keeps what only a
 //! desktop shell has: app paths, preferences, the updater and native installers.
+//!
+//! Built with the default feature `studio`. YOFO Review (`review-only`, ADR 0014)
+//! is a separate app built from this crate's binary (main.rs → review_app.rs);
+//! without `studio` this library is empty.
+#![cfg(feature = "studio")]
 
 use mib_app_commands as cmds;
 use cmds::AppState;

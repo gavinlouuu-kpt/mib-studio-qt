@@ -6,6 +6,10 @@
 //! Asserts the event contract and frame metadata. Runs with no Qt, no webkit,
 //! no display — this is the Phase 2 gate and the boundary regression guard.
 
+// The backend bridge is not compiled under `review-only` (ADR 0014); the
+// review bridge has its own test (tests/review_bridge.rs).
+#![cfg(not(feature = "review-only"))]
+
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
