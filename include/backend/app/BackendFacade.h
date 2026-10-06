@@ -141,7 +141,7 @@ namespace backend::bridge
         MaskRegeneration,
         Reanalysis,
         PumpScan,
-        StageMove,      // Z stage move (#464, ABI 27)
+        StageMove,      // Z stage move (#464, ABI 26)
         StageReference, // Z stage Home: probe both limits, zero at mid-travel
     };
 
@@ -864,7 +864,7 @@ namespace backend::bridge
         double speedRpm{0.0}; // peristaltic head speed setpoint
     };
 
-    // Z stage snapshot (#464, ABI 27): connection, identity, reference state,
+    // Z stage snapshot (#464, ABI 26): connection, identity, reference state,
     // live status and soft limits. Positions are micrometres in the homed
     // frame (zero at mid-travel) once referenced.
     struct BackendStageStatus

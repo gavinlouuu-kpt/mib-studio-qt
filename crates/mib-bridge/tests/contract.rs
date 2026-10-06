@@ -75,11 +75,11 @@ fn abi_version_is_stable() {
     // and contract groups, and the shell-injected HTTPS transport. Built as a
     // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
     // never reused.
-    // v27 the Z stage (#464, ADR 0013): stage_* commands, fetch_stage_status,
-    // operation kinds StageMove/StageReference, discovery kind MotionStage,
-    // stage_move_states. 26 is #501 P1 (whichever lands first takes the
-    // lower number).
-    assert_eq!(ffi::bridge_abi_version(), 27);
+    // v26 = ZC300 stage bridge (#464, ADR 0013): stage_* commands,
+    // fetch_stage_status, operation kinds StageMove/StageReference, discovery
+    // kind MotionStage, stage_move_states. It landed before #501 P1, so it
+    // took 26 under the landing-order rule; 27 reserved for #501 P1.
+    assert_eq!(ffi::bridge_abi_version(), 26);
 }
 
 // ABI 20: a camera without a full-sensor overview (the mock) reports it and
