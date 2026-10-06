@@ -173,6 +173,14 @@ panel). It mirrors these rules in the UI and shows why a control is disabled.
   `moveAndWait` leg re-reads the status, publishes it (an e-stop or alarm drops
   the zero), refuses an e-stop, alarm or already-moving axis, re-checks the zero
   and the envelope, and compares the power-up token, all before the opcode.
+- **An experiment and a moving stage exclude each other (#533).** Experiment Start is
+  refused (`Busy`, "a Z stage operation is active") while a stage operation is active
+  (`ExperimentCoordinator::setStageBusyProbe`, checked under the coordinator lock, which
+  is also held while a stage move is queued, so check and queueing cannot interleave).
+  The worker re-checks `setMotionGate` (the coordinator's idle gate) outside every
+  service lock right before each opcode, every leg; a refusal ends the operation `Busy`
+  with the zero kept. Lock order: coordinator, then stage; the gate is never called with
+  the service mutex held.
 - **Stop beats a queued move.** `stop()` bumps the service's stop epoch before
   and after it reaches the driver, the driver counts every `stop()`
   (`IMotionStage::stopGeneration`), and `moveAbsolute(target, generation)`

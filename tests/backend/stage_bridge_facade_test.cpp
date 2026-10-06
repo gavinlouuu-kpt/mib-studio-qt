@@ -329,6 +329,30 @@ int main()
         backend::app::ExperimentStartRequest req;
         req.outputPath = out;
         req.readinessGeneration = readiness.generation;
+        // #533: an experiment never starts under a moving stage. A slow move is running; Start
+        // is refused, the move carries on, and once it is stopped Start goes through.
+        {
+            bridge::BackendStageStatus st;
+            facade.fetchStageStatus(st);
+            MIB_REQUIRE(st.zeroSet, "the zero is set");
+            const double target = (st.positionUm - st.envelopeMinUm > st.envelopeMaxUm - st.positionUm) ? st.envelopeMinUm
+                                                                                                         : st.envelopeMaxUm;
+            MIB_REQUIRE(std::abs(target - st.positionUm) > 50, "room to move");
+            device.setPulsesPerSecond(2000);
+            const auto slow = stage(facade, StageCommandAction::MoveTo, std::round(target));
+            MIB_REQUIRE(slow.ok && slow.operationId != 0, "a slow move is running");
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            const auto refused = coord.start(req);
+            MIB_EXPECT(refused.outcome == backend::app::ExperimentStartOutcome::Busy &&
+                           refused.message.find("stage operation") != std::string::npos,
+                       "Start is refused while the stage moves: " + refused.message);
+            MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Idle, "and no experiment was started");
+            MIB_EXPECT(device.moving(), "the move carries on");
+            MIB_EXPECT(stage(facade, StageCommandAction::Stop).ok, "Stop");
+            MIB_EXPECT(ops.wait(slow.operationId) == BackendOperationState::Cancelled, "the move ended Cancelled");
+            MIB_EXPECT(waitFor([&] { return !device.moving(); }, std::chrono::seconds(2)), "axis stopped");
+            device.setPulsesPerSecond(200000);
+        }
         MIB_REQUIRE(coord.start(req).outcome == backend::app::ExperimentStartOutcome::Started, "experiment started");
 
         const int opcodesBefore = motionOpcodes(device);

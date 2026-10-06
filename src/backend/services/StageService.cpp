@@ -615,6 +615,12 @@ void StageService::flushStoreClear()
     }
 }
 
+void StageService::setMotionGate(std::function<bool()> allowed)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    motionGate_ = std::move(allowed);
+}
+
 void StageService::setTokenSourceForTest(std::function<std::uint16_t()> source)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1144,6 +1150,17 @@ StageError StageService::moveAndWait(OperationId id, double targetUm, double spe
     // The status and token reads above took time, and a Stop may have completed in
     // between: cancellation is checked again immediately before the opcode.
     if (cancelled(id)) return StageError::None;
+    // An experiment that started since (or whose start raced the queueing) must not be
+    // run under a moving stage: checked right before the opcode, every leg (#533).
+    std::function<bool()> gate;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        gate = motionGate_;
+    }
+    if (gate && !gate()) {
+        detail = "an experiment is active; the stage move was stopped before its next command";
+        return StageError::Busy;
+    }
     if ((err = d->moveAbsolute(target, stopGeneration)) != StageError::None) {
         if (err == StageError::Stopped) return cancelled(id) ? StageError::None : err;
         return err;

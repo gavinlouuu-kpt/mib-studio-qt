@@ -487,6 +487,12 @@ namespace backend
                 (std::filesystem::path(dataDir) / "stage_reference.json").string()),
             std::make_shared<stage::LimitsVerificationStore>(
                 (std::filesystem::path(dataDir) / "stage_limits_verified.json").string()));
+        // An experiment and a moving stage exclude each other (#533): Start is refused while a
+        // stage operation is active, and the stage worker re-checks right before every opcode.
+        experimentCoordinator_->setStageBusyProbe(
+            [this] { return stageService_ && stageService_->snapshot().activeOperation != 0; });
+        stageService_->setMotionGate(
+            [this] { return !experimentCoordinator_ || experimentCoordinator_->withIdleConfiguration([] {}); });
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
         dotGridService_ = std::make_unique<services::DotGridService>();
         dotGridService_->setFrameStore(frameStore_);

@@ -746,6 +746,14 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         result.message = "experiment coordinator is shut down";
         return result;
     }
+    // A stage operation queued before this Start is still running: refuse, never start
+    // under a moving stage (#533). Operations queued after are refused by the idle gate.
+    if (stageBusyProbe_ && stageBusyProbe_()) {
+        result.outcome = ExperimentStartOutcome::Busy;
+        result.message = "a Z stage operation is active; stop it or wait for it to finish before starting an experiment";
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
 
     // Multi-image series capture requires inline realtime processing. Switch
     // before the evaluation so the frozen snapshot records the mode the run
@@ -1222,6 +1230,11 @@ void ExperimentCoordinator::shutdown()
 } // namespace backend::app
 
 namespace backend::app {
+void ExperimentCoordinator::setStageBusyProbe(std::function<bool()> probe) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stageBusyProbe_ = std::move(probe);
+}
+
 bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ != ExperimentRunState::Idle) return false;

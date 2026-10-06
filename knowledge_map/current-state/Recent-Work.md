@@ -1,5 +1,15 @@
 # Recent Work
 
+## 2026-10-07 — An experiment and a moving Z stage exclude each other (#533)
+
+`ExperimentCoordinator::start` neither checked nor cancelled a stage operation queued before it, and
+the stage worker never re-checked the experiment before later opcodes (the approach legs of a
+move). Start is now refused while a stage operation is active, and the worker asks the
+coordinator's idle gate right before every opcode, every leg. Tests: a facade test (slow move,
+Start refused, move carries on, Start works after Stop) and a service test (the gate flips between
+the two legs of an overshoot move: one opcode only, zero kept); both fail with their half of the fix
+removed. Fake controller only. See [[services/StageService]].
+
 ## 2026-10-06 — Draft notes no longer recreate a discarded draft (#398 M3b follow-up)
 
 `BackendFacade::registrySetDraftNotes` queued a full SaveDraft of the snapshot's

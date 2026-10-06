@@ -201,6 +201,12 @@ public:
     // cap. Either way the new zero replaces the old one.
     stage::StageError setZero(bool midTravel, std::string* detail = nullptr);
 
+    // The experiment gate (#533): called on the worker, outside every service lock, right before
+    // each motion opcode. False means an experiment is active: the operation ends (Busy) without
+    // sending it. It may take other locks (the coordinator's), so it must never be called with
+    // mutex_ held.
+    void setMotionGate(std::function<bool()> allowed);
+
     // Test seam: the source of power-up tokens (default: random). The service
     // never writes a token equal to the one it replaces or to 0.
     void setTokenSourceForTest(std::function<std::uint16_t()> source);
@@ -306,6 +312,7 @@ private:
     // refused, and the next poll decides (same power-up or not).
     bool tokenUnverified_{false};
     std::function<std::uint16_t()> tokenSource_;
+    std::function<bool()> motionGate_; // under mutex_; copied out before it is called
     std::deque<Job> jobs_;
     std::map<OperationId, OperationInfo> operations_;
     OperationId nextOperation_{1};

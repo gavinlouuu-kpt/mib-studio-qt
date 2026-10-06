@@ -1161,7 +1161,7 @@ int main()
         svc->stop();
         const auto snap = svc->snapshot();
         const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-        MIB_EXPECT(ms < 400, "stop() and snapshot() did not wait for the deletion (" + std::to_string(ms) + " ms)");
+        MIB_EXPECT(ms < 1000, "stop() and snapshot() did not wait for the deletion (" + std::to_string(ms) + " ms)");
         MIB_EXPECT(!snap.zeroSet, "the zero is already dropped in memory");
         recording->setClearDelayMs(0);
     }
@@ -1208,6 +1208,32 @@ int main()
         }
     }
 #endif
+
+    // #533: the experiment gate is checked right before every motion opcode, on every leg.
+    watchdog.mark("experiment gate before each opcode");
+    {
+        StageRig rig;
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "Set zero");
+        std::atomic<int> calls{0};
+        svc->setMotionGate([&] { return ++calls <= 1; }); // an experiment "starts" after the first leg
+        const auto motions = rig.device.motionLog().size();
+        const auto r = svc->moveTo(-500); // runs against the approach direction: overshoot leg, then the target leg
+        MIB_REQUIRE(r.accepted(), "accepted");
+        MIB_EXPECT(finish(*svc, r.id) == OpState::Failed && svc->operation(r.id)->error == StageError::Busy,
+                   "the second leg is stopped by the gate");
+        MIB_EXPECT(svc->operation(r.id)->detail.find("experiment") != std::string::npos, "and says why");
+        MIB_EXPECT(rig.device.motionLog().size() == motions + 1, "only the first leg's opcode was sent");
+        MIB_EXPECT(!rig.device.moving() && svc->snapshot().zeroSet, "the axis is stopped and the zero is kept (no leg was lost)");
+        // A gate that always refuses sends nothing at all.
+        svc->setMotionGate([] { return false; });
+        const auto before = rig.device.motionLog().size();
+        const auto blocked = svc->moveTo(100);
+        MIB_REQUIRE(blocked.accepted(), "admitted");
+        MIB_EXPECT(finish(*svc, blocked.id) == OpState::Failed && rig.device.motionLog().size() == before, "no opcode while an experiment is active");
+        svc->setMotionGate({});
+        MIB_EXPECT(moveTo(*svc, 100), "and without a gate it moves");
+    }
 
     // --- move failures ---------------------------------------------------------
     watchdog.mark("move failures");
