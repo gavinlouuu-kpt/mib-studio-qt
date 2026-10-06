@@ -341,7 +341,9 @@ int main()
             device.setPulsesPerSecond(2000);
             const auto slow = stage(facade, StageCommandAction::MoveTo, std::round(target));
             MIB_REQUIRE(slow.ok && slow.operationId != 0, "a slow move is running");
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // Until the axis really moves (each leg reads status and the token before its opcode:
+            // ~28 ms per transaction on a Windows runner).
+            MIB_REQUIRE(waitFor([&] { return device.moving(); }, std::chrono::seconds(5)), "the move has started");
             const auto refused = coord.start(req);
             MIB_EXPECT(refused.outcome == backend::app::ExperimentStartOutcome::Busy &&
                            refused.message.find("stage operation") != std::string::npos,
