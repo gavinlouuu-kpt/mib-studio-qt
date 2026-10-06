@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <random>
 #include <thread>
+#include <vector>
 
 using namespace backend::services;
 using backend::stage::StageError;
@@ -87,6 +88,38 @@ int main()
         reader.join();
         svc->shutdown();
         MIB_EXPECT(!rig.device.moving(), "axis stopped after shutdown");
+    }
+
+    // Concurrent Disconnects must not leak the pending count: if it stayed above
+    // zero, every later Connect, ApplyProfile and move would be refused for good.
+    // Review finding on #519: the pending-disconnect state was a bool, so the
+    // first of two overlapping disconnect() calls reopened admission early.
+    {
+        watchdog.mark("disconnect storm");
+        mib::test::StageRig rig;
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None, "start-up");
+        std::vector<std::thread> threads;
+        std::atomic<int> connected{0};
+        for (int t = 0; t < 4; ++t) {
+            threads.emplace_back([&, t] {
+                for (int i = 0; i < 15; ++i) {
+                    if (t % 2 == 0) svc->disconnect();
+                    else if (svc->connect() == StageError::None) connected.fetch_add(1);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1 + (i + t) % 3));
+                }
+            });
+        }
+        for (auto& th : threads) th.join();
+        svc->disconnect();
+        MIB_EXPECT(!svc->snapshot().connected, "a final Disconnect leaves the stage disconnected");
+        std::string detail;
+        MIB_EXPECT(svc->connect(&detail) == StageError::None,
+                   "Connect is admitted again once every Disconnect has run (the pending count drained): " + detail);
+        MIB_EXPECT(svc->snapshot().connected, "and it connected");
+        MIB_EXPECT(connected.load() > 0, "connects raced the disconnects");
+        svc->shutdown();
+        MIB_EXPECT(!rig.device.moving(), "axis stopped");
     }
 
     std::printf("stage stress: %d accepted; completed %d, failed %d, cancelled %d, timed out %d\n", accepted,

@@ -1,5 +1,45 @@
 # Recent Work
 
+## 2026-10-06 — ZC300 stage: no homing, ADR 0013 Amendment 1 (#464, docs only)
+
+Gavin decided the ZC300 is not homed. This change is documentation only; the
+code on develop still has Home until the implementation PR (bridge ABI 30).
+
+- **Bench read (read-only):** register 30015 was `0x0124` on ten reads. The home
+  bit floats (1 on all three axes) and the limit bits read 0 even on the
+  unconnected axes, so the limit wiring is unproven.
+- **Replacement:** "Set zero here" (position register 30059 = 0, no motion) and a
+  travel envelope of ±1000 µm around it, widened to ±2900 µm only by a
+  "zero is at mid-travel" declaration. Moves outside it are refused, not
+  clamped. Limit bits only stop a move heading toward an active limit.
+- **Known limitation:** the counter is open-loop, so a hand move or stall is
+  invisible to the software.
+- **Docs:** ADR 0013 Amendment 1, the plan (slice 5b), the evidence doc and
+  pending-change notes on `StageService` and `ZC300Stage`.
+
+## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
+
+ADR 0011's CI and compatibility-matrix consequences:
+
+- **PL replay lane:** the 15 hardware-free PZ7035 tests carry the ctest label
+  `pl`: record decoder, provider replay and ingest, profile compiler,
+  platform monitor, the Align/Run mode writer and the bridge preview, Contract 3 vectors, host-versus-PL equality and the ABI
+  vendor check. `backend-ci` runs them as a named step ("PL replay lane") with
+  `--no-tests=error` and a lower bound of 15, so a dropped label or test
+  fails CI. `processing.unet_c4` and `processing.pz_board_run_host` report
+  SKIP there: they need the private weights or a board run.
+- **Matrix:** `docs/architecture/processing-contract-compatibility.md` gains
+  the Contract 3 row, a "Reference per contract" table (Contract 3's
+  reference is the pz7035 PL specification), the `unet-cells` line name and
+  the `pl_core` provenance. See [[../services/ProcessingService]].
+## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
+
+A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`
+with `MIB_PL_SCIENCE=ON` for the Cortex-A9 on every PR that touches the
+backend, so a 32-bit or ARM break in the PZ7035 code no longer waits for a
+board build. It uses the distro armhf toolchain, not the Yocto SDK, and leaves
+Aravis out; the SDK artifact job remains a follow-up. See
+[[../build-and-run/Build]].
 ## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
 
 Opening Camera & Alignment puts the instrument in Align: full sensor at
@@ -19,6 +59,51 @@ needed in either direction.
 
 Bridge ABI 27. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
+
+## 2026-10-06 — Z stage: Disconnect and ApplyProfile can no longer hold Stop (#464)
+
+[[../services/StageService]] `disconnect()` and `applyProfile()` used to queue
+behind a running move or Home. The bridge runs one command at a time and
+`stage_stop` needs the same lock, so Stop could have waited out the whole
+operation.
+- **Reproduced:** `applyProfile()` during a 3 s move blocked 2.9 s, then
+  applied and saved the profile.
+- **Now:** `applyProfile()` and `connect()` are refused at once (`Busy`)
+  while an operation is active. `disconnect()` stops the axis and cancels
+  the operation, then disconnects within ~50 ms.
+- **Tests:** `backend.stage_service` and `backend.stage_bridge_facade`
+  cover it at both layers, and the mutations fail them.
+
+## 2026-10-06 — ZC300 driver lock is now fair (#464)
+
+PR #516's plain Linux lane saw `backend.zc300_stage` refuse a status poll
+after 15 s while every command was fine (slowest 40 ms).
+- **Cause:** #511's priority scheme still acquired the driver with a
+  `try_lock` plus sleep loop, which is unfair among pollers.
+- **Fix:** [[../services/ZC300Stage]] now queues waiters and hands the
+  driver straight to the next one, commands first. Polls and commands are
+  both FIFO and bounded.
+- **Stop jumps the queue (review finding):** `stop()` had shared the command
+  FIFO, so queued moves and teardown went first and a Stop could time out
+  into `Busy` without sending. It now has its own queue, served first, with
+  at most four in a row while a Disconnect waits.
+- **Test:** a new fairness block with six tight pollers fails on the old lock
+  every run (fewest 1 of mean 25; waits of 5–8 s) and passes on the new one
+  (25 of 25; worst ~60 ms).
+
+## 2026-10-06 — Z stage panel in the Tauri app (#464, slice 5)
+
+The Connect tab gains a Z stage panel (`StageControls`) under the pump and
+autofocus panel. It uses only the existing `stage_*` bridge commands
+(ABI 26), and is hidden on the PZ7035.
+- **Position:** unknown until Home.
+- **Home:** disabled until the limit switches are verified, then needs a
+  confirmation, Service mode and arming.
+- **Moves:** whole micrometres, pre-checked against the soft limits.
+- **Stop:** always available, and never waits for another panel command.
+- **Everything else:** locked during an experiment.
+
+See [[../architecture/Desktop-Shell]] (Z stage panel).
 
 ## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
 

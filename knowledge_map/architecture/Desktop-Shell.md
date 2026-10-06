@@ -759,3 +759,51 @@ The root Conan recipe defaults `with_qt=True` to preserve Qt builds. The Windows
 ### Portable camera-document Save As
 
 Camera editors stage bounded validated content in a randomized `tempfile::NamedTempFile` in the destination directory, sync file data, then use `persist_noclobber` for Save As. The maintained tempfile implementation uses non-replacing `MoveFileExW` on Windows (including filesystems without hard links) and native no-replace rename where supported on Unix; unavailable safe publication remains an error rather than an overwrite fallback. Existing Save retains its revision recheck and file permissions before replacement. RAII removes staging files on failure. Tests cover exact Unicode/revision roundtrip, existing file/directory conflicts, concurrent creators, bounded input and legacy staging-name collisions. Removable-media hardware/mount testing is not claimed.
+
+## Z stage panel (#464, slice 5)
+
+`StageControls` (`desktop/src/components/StageControls.tsx`, pure rules in
+`stageControlModel.ts`) sits under the pump and autofocus panel on the
+Connect tab. It uses only the `stage_*` commands and `fetch_stage_status` from
+[[Rust-Bridge]] (ABI 26), so it needs no bridge change. It is hidden on the
+PZ7035 until that board has a serial path for the stage. The service rules are
+in [[../services/StageService]].
+
+**The panel mirrors the backend rules; it does not replace them.** A disabled
+button is a courtesy, not a safety gate, and the reason for every disabled
+control is shown.
+- **Position is shown as unknown until Home**, together with the controller
+  counter. The counter is only a position once the stage has been homed.
+- **Moves need a homed stage.**
+  - Targets are whole micrometres.
+  - They are pre-checked against the soft limits, which are also enforced in
+    the backend.
+- **Home is disabled until the controller's limit switches were verified.**
+  The reason names `zc300ctl verify-limits --supervised`; nothing in the app
+  can record that check.
+  - Pressing Home first shows a warning (full 6 mm travel, focus position
+    lost) and a "the full travel is clear" checkbox.
+  - Home then needs Service mode and arming like the pumps.
+- **Arming is one-shot**, consumed only when a move or Home is actually sent.
+  A rejected input (a mistyped target, a target past a soft limit) keeps the
+  arming.
+- **Stop is always enabled and fires while the backend is ready.**
+  - It does not use the panel's command lock, so a pending command cannot
+    hold it.
+  - It works with unreadable status, in operator mode and during an
+    experiment.
+- **Everything else is locked while an experiment is active.**
+  Disconnect is allowed while a move runs: the backend stops the axis first.
+  Apply stage settings is not, and is refused at once with `Busy`.
+- **Status refresh** is 1 s, or 250 ms while something moves.
+- **Endpoint discovery** needs an explicit serial port and looks for kind
+  `MotionStage` with an address scope. Selecting a result fills the fields
+  and never connects.
+
+**Open follow-up:** relax the one-shot arming for small jogs only after the
+first supervised session. The candidate is a jog-only arm window (about 30 s,
+small whole-micrometre steps, homed and limits verified, any other action or
+Stop disarms).
+
+Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
+(panel behaviour with a mocked bridge).

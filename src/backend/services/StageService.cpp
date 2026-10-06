@@ -195,16 +195,59 @@ std::pair<StageError, std::string> StageService::runSync(Job::Type type)
     return future.get();
 }
 
+std::pair<StageError, std::string> StageService::runExclusive(Job::Type type)
+{
+    Job job;
+    job.type = type;
+    job.reply = std::make_shared<std::promise<std::pair<StageError, std::string>>>();
+    auto future = job.reply->get_future();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) return {StageError::NotConnected, "stage service is shutting down"};
+        if (snapshot_.activeOperation != 0 || exclusivePending_ > 0 || pendingDisconnects_ > 0) {
+            return {StageError::Busy, "a stage operation is active; stop it or wait for it to finish"};
+        }
+        ++exclusivePending_;
+        jobs_.push_back(std::move(job));
+    }
+    cv_.notify_all();
+    auto result = future.get();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        --exclusivePending_;
+    }
+    return result;
+}
+
 StageError StageService::connect(std::string* detail)
 {
-    auto [err, text] = runSync(Job::Type::Connect);
+    auto [err, text] = runExclusive(Job::Type::Connect);
     if (detail) *detail = text;
     return err;
 }
 
 void StageService::disconnect()
 {
-    runSync(Job::Type::Disconnect);
+    Job job;
+    job.type = Job::Type::Disconnect;
+    job.reply = std::make_shared<std::promise<std::pair<StageError, std::string>>>();
+    auto future = job.reply->get_future();
+    std::shared_ptr<stage::IMotionStage> toStop;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) return;
+        // Mark first, under the lock that admits operations: a move queued
+        // behind this job ends at its first check, and no new one is admitted.
+        ++pendingDisconnects_;
+        if (snapshot_.activeOperation != 0) {
+            cancelRequested_ = snapshot_.activeOperation;
+            toStop = driver_;
+        }
+        jobs_.push_back(std::move(job));
+    }
+    cv_.notify_all();
+    if (toStop) toStop->stop(); // immediate; the worker ends the operation at its next poll
+    future.get();
 }
 
 StageError StageService::startup(std::string* detail)
@@ -227,7 +270,7 @@ StageError StageService::startup(std::string* detail)
 
 StageError StageService::applyProfile()
 {
-    return runSync(Job::Type::ApplyProfile).first;
+    return runExclusive(Job::Type::ApplyProfile).first;
 }
 
 // --- operations: admission ---------------------------------------------------
@@ -262,8 +305,11 @@ StageService::StartResult StageService::enqueueOperation(OperationKind kind, dou
     StartResult result;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (stopping_ || !snapshot_.connected) {
+        if (stopping_ || !snapshot_.connected || pendingDisconnects_ > 0) {
             result.error = StageError::NotConnected;
+        } else if (exclusivePending_ > 0) {
+            result.error = StageError::Busy;
+            result.detail = "the stage is being connected or configured";
         } else if (!snapshot_.configured) {
             result.error = StageError::Misconfigured;
             result.detail = "the controller does not match the stage profile";
@@ -381,7 +427,7 @@ bool StageService::waitForOperation(OperationId id, std::chrono::milliseconds ti
 bool StageService::cancelled(OperationId id) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return stopping_ || cancelRequested_ == id || stopEpoch_.load() != operationStopEpoch_;
+    return stopping_ || pendingDisconnects_ > 0 || cancelRequested_ == id || stopEpoch_.load() != operationStopEpoch_;
 }
 
 void StageService::finishOperation(OperationId id, OperationState state, StageError error, std::string detail)
@@ -445,6 +491,10 @@ void StageService::workerLoop()
         }
         case Job::Type::Disconnect:
             doDisconnect();
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (pendingDisconnects_ > 0) --pendingDisconnects_; // shutdown() queues one without counting it
+            }
             if (job.reply) job.reply->set_value({StageError::None, {}});
             break;
         case Job::Type::ApplyProfile: {

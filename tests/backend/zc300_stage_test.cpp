@@ -315,12 +315,17 @@ int main()
         MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
         std::atomic<bool> done{false};
         std::atomic<int> pollErrors{0};
+        std::atomic<long long> worstPollMs{0};
         std::vector<std::thread> pollers;
         for (int p = 0; p < 3; ++p) {
             pollers.emplace_back([&] {
                 while (!done.load()) { // deliberately no pause between polls
                     StageStatus s;
+                    const auto t0 = std::chrono::steady_clock::now();
                     if (stage.readStatus(s) != StageError::None) pollErrors.fetch_add(1);
+                    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+                    long long seen = worstPollMs.load();
+                    while (ms > seen && !worstPollMs.compare_exchange_weak(seen, ms)) {}
                 }
             });
         }
@@ -347,9 +352,135 @@ int main()
         std::printf("concurrency: slowest command %lld ms, stop %lld ms, step %lld ms\n", slowestCommandMs, stopMs,
                     static_cast<long long>(elapsed(stepStart)));
         MIB_EXPECT(moveErrors == 0 && pollErrors.load() == 0, "20 moves with three tight pollers, no errors");
+        MIB_EXPECT(worstPollMs.load() < 2000, "no status poll waited 2 s or more behind the other pollers (worst " +
+                                                   std::to_string(worstPollMs.load()) + " ms)");
         MIB_EXPECT(slowestCommandMs < 2000, "no command waited more than 2 s behind the pollers");
         MIB_EXPECT(stopMs < 1000, "Stop got through the pollers within 1 s");
         MIB_EXPECT(!device.moving(), "stopped");
+    }
+
+    // Tight pollers must share the driver fairly. PR #516's plain Linux lane saw
+    // a poll refused after 15 s while commands were fine (slowest command 40 ms):
+    // the lock was a try_lock + sleep loop, so a thread that re-locked within
+    // nanoseconds kept the driver while sleepers lost every race.
+    watchdog.mark("fairness");
+    {
+        FakeZc300 device;
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        constexpr int kPollers = 6;
+        std::atomic<bool> stopFlag{false};
+        std::atomic<long long> calls{0}; // finished polls, for the sample target below
+        std::vector<long long> served(kPollers, 0), failed(kPollers, 0), worstMs(kPollers, 0); // one slot per thread
+        std::vector<std::thread> threads;
+        for (int p = 0; p < kPollers; ++p) {
+            threads.emplace_back([&, p] {
+                while (!stopFlag.load()) {
+                    StageStatus s;
+                    const auto t0 = std::chrono::steady_clock::now();
+                    if (stage.readStatus(s) == StageError::None) ++served[p]; else ++failed[p];
+                    worstMs[p] = std::max<long long>(worstMs[p], std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+                    calls.fetch_add(1);
+                }
+            });
+        }
+        // Run for at least 1.5 s and until enough polls were served for the
+        // share check to mean something, bounded by a deadline. A fixed window
+        // is a Linux-speed assumption: on the Windows runner a poll takes
+        // ~28 ms (timer granularity in the fake serial path), so 1.5 s served
+        // only 53 polls although fairness was perfect (fewest 8, mean 8, worst
+        // wait 187 ms).
+        constexpr long long kSampleTarget = 120;
+        const auto windowStart = std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        while (calls.load() < kSampleTarget &&
+               std::chrono::steady_clock::now() - windowStart < std::chrono::seconds(10)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        stopFlag.store(true);
+        for (auto& t : threads) t.join();
+        long long total = 0, fewest = served[0], worst = 0, errors = 0;
+        for (int p = 0; p < kPollers; ++p) { total += served[p]; fewest = std::min(fewest, served[p]); worst = std::max(worst, worstMs[p]); errors += failed[p]; }
+        const long long mean = total / kPollers;
+        std::printf("fairness: %d pollers, %lld calls, fewest %lld, mean %lld, worst wait %lld ms\n", kPollers, total, fewest, mean, worst);
+        MIB_EXPECT(errors == 0, "no poll was refused");
+        MIB_EXPECT(total >= kSampleTarget, "the pollers served the sample target within the deadline (" +
+                                                std::to_string(total) + " polls)");
+        MIB_EXPECT(fewest * 4 >= mean, "every poller got at least a quarter of the average share (fewest " +
+                                           std::to_string(fewest) + ", mean " + std::to_string(mean) + ")");
+        MIB_EXPECT(worst < 2000, "no poll waited 2 s or more (worst " + std::to_string(worst) + " ms)");
+    }
+
+    // Stop goes to the front of the line. A reviewer found that Stop shared the
+    // command FIFO: queued moves and teardown went first, and after the
+    // timeout it returned Busy without ever sending. With every reply delayed,
+    // each driver call holds the driver ~200 ms, so a queue builds up
+    // behind the in-flight call; Stop must be sent next, ahead of it.
+    watchdog.mark("stop jumps the queue");
+    {
+        FakeZc300 device;
+        device.setPulsesPerSecond(2000); // the first move keeps running
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setReplyDelayMs(200);
+        std::thread inFlight([&] { stage.moveRelative(100); });
+        while (stage.waitingCalls() == 0 && device.opcodeCount(0x65) == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::thread queuedMove([&] { stage.moveRelative(50); });
+        std::thread queuedSpeed([&] { stage.setSpeed(1000, 2000); });
+        const auto queued = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (stage.waitingCalls() < 2 && std::chrono::steady_clock::now() < queued) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        MIB_REQUIRE(stage.waitingCalls() >= 2, "two commands are queued behind the in-flight call");
+
+        const auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop is sent, not refused");
+        const long long stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        inFlight.join(); queuedMove.join(); queuedSpeed.join();
+        const auto ops = device.opcodeSequence();
+        // in-flight move (0x65), then Stop (0x68), only then the queued move (0x65)
+        MIB_REQUIRE(ops.size() >= 3, "all three opcodes reached the wire");
+        MIB_EXPECT(ops[0] == 0x65 && ops[1] == 0x68 && ops[2] == 0x65,
+                   "Stop was sent next, ahead of the queued move (sequence " + std::to_string(ops[0]) + "," +
+                       std::to_string(ops[1]) + "," + std::to_string(ops[2]) + ")");
+        MIB_EXPECT(stopMs < 1200, "Stop took about one in-flight call, not the whole queue (" + std::to_string(stopMs) + " ms)");
+        device.setReplyDelayMs(0);
+    }
+
+    // ...but a Stop storm must not starve teardown: at most four Stops are
+    // granted in a row while a Disconnect waits.
+    watchdog.mark("stop storm does not starve disconnect");
+    {
+        FakeZc300 device;
+        device.setPulsesPerSecond(2000);
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setReplyDelayMs(120);
+        std::thread inFlight([&] { stage.moveRelative(100); });
+        while (device.opcodeCount(0x65) == 0 && stage.waitingCalls() == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::atomic<int> completed{0};
+        std::atomic<int> disconnectIndex{-1};
+        std::thread disconnecting([&] { stage.disconnect(); disconnectIndex = completed.fetch_add(1); });
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (stage.waitingCalls() < 1 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::vector<std::thread> storm;
+        for (int i = 0; i < 6; ++i) storm.emplace_back([&] { stage.stop(); completed.fetch_add(1); });
+        while (stage.waitingCalls() < 7 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        MIB_REQUIRE(stage.waitingCalls() >= 7, "a Disconnect and six Stops are queued behind the in-flight call");
+        inFlight.join();
+        disconnecting.join();
+        for (auto& t : storm) t.join();
+        MIB_EXPECT(disconnectIndex.load() >= 0 && disconnectIndex.load() <= 4,
+                   "Disconnect finished after at most four Stops (index " + std::to_string(disconnectIndex.load()) + " of 7)");
+        MIB_EXPECT(!stage.isConnected(), "disconnected");
+        device.setReplyDelayMs(0);
     }
 
     if (mib::test::exitCode() == 0) std::printf("ZC300 stage driver verified\n");

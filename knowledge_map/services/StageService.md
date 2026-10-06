@@ -3,6 +3,11 @@
 > Owns the Zolix ZC300 / TBZF6-60 Z stage: read-only start-up, operator Home
 > (mid-travel referencing), soft limits, one-sided approach and a reference
 > that lasts one controller power-up. ADR 0013, #464.
+>
+> **Pending change (ADR 0013 Amendment 1, 2026-10-06):** Home is being removed.
+> The operator will "Set zero here" instead (register 30059 = 0, no motion) and
+> travel is bounded to ±1000 µm around it unless the operator declares mid-travel.
+> This note describes the code on develop and changes when that PR lands.
 
 **Source:**
 - `include/backend/services/StageService.h`, `src/backend/services/StageService.cpp`
@@ -88,6 +93,11 @@ controller's serial. That includes the `on_startup` opt-in.
   - It returns to the start position, and records only on success.
 - The snapshot exposes `limitsVerified`.
 
+## Panel
+
+The Tauri panel is described in [[../architecture/Desktop-Shell]] (Z stage
+panel). It mirrors these rules in the UI and shows why a control is disabled.
+
 ## Operations
 
 - **One at a time on the worker.** `moveTo` (absolute), `moveBy` (relative to
@@ -120,6 +130,22 @@ controller's serial. That includes the `on_startup` opt-in.
   stops a moving axis), joins the worker and refuses further work.
   `AppBackend::shutdown()` calls it after the pulse generator, while the bus
   is alive.
+- **No call waits behind a running operation.** The bridge runs one command
+  at a time, and `stage_stop` needs the same lock, so any call that waited
+  for a move would hold Stop for the move's whole duration.
+  - `connect()` and `applyProfile()` are *exclusive* jobs: refused at once
+    with `Busy` while an operation is active or another exclusive job is
+    queued, and operations are refused (`Busy`) while one is pending, so
+    nothing can slip in ahead of it.
+  - `disconnect()` counts itself in `pendingDisconnects_` under the admission
+    lock, cancels the active operation and stops the axis immediately, then
+    queues the disconnect. The operation ends `Cancelled` at its next poll
+    (≤ `poll_ms.moving`). While any Disconnect is pending, no operation,
+    Connect or ApplyProfile is admitted. It is a counter, not a flag, so the
+    first of two overlapping `disconnect()` calls cannot reopen admission
+    while the second is still queued.
+  - Found while designing the Tauri panel: before this, `applyProfile()`
+    during a 3 s move blocked 2.9 s and then *applied and saved* the profile.
 
 ## Gotchas
 
