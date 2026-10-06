@@ -57,6 +57,23 @@ operation.
 - **Tests:** `backend.stage_service` and `backend.stage_bridge_facade`
   cover it at both layers, and the mutations fail them.
 
+## 2026-10-06 — ZC300 driver lock is now fair (#464)
+
+PR #516's plain Linux lane saw `backend.zc300_stage` refuse a status poll
+after 15 s while every command was fine (slowest 40 ms).
+- **Cause:** #511's priority scheme still acquired the driver with a
+  `try_lock` plus sleep loop, which is unfair among pollers.
+- **Fix:** [[../services/ZC300Stage]] now queues waiters and hands the
+  driver straight to the next one, commands first. Polls and commands are
+  both FIFO and bounded.
+- **Stop jumps the queue (review finding):** `stop()` had shared the command
+  FIFO, so queued moves and teardown went first and a Stop could time out
+  into `Busy` without sending. It now has its own queue, served first, with
+  at most four in a row while a Disconnect waits.
+- **Test:** a new fairness block with six tight pollers fails on the old lock
+  every run (fewest 1 of mean 25; waits of 5–8 s) and passes on the new one
+  (25 of 25; worst ~60 ms).
+
 ## 2026-10-06 — Z stage panel in the Tauri app (#464, slice 5)
 
 The Connect tab gains a Z stage panel (`StageControls`) under the pump and

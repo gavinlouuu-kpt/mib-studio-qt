@@ -67,27 +67,43 @@ focus actuator; separate device class). Evidence:
 
 ## Threading
 
-One driver mutex serializes every public call, so multi-frame operations
+One driver lock serializes every public call, so multi-frame operations
 (distance write plus opcode) are atomic with respect to other callers. The
 bus session's call mutex is innermost (see [[SerialBus]]).
 
-**Access is prioritized and bounded (`Zc300Stage::Access`).**
-- Commands register as priority waiters. These are moves, `stop()`, writes,
-  connect and token calls.
-- Status polls (`readStatus`) step aside while any command is waiting.
-- A command that cannot get the driver within 15 s returns `Busy`.
-  `disconnect()` keeps trying, because teardown must not be skipped.
-- Acquisition is `try_lock` in a short sleep loop, not `std::timed_mutex`,
-  whose clock-based waits older TSan runtimes may not intercept.
-- **Why:** with one back-to-back poller, an unfair `std::mutex` starved a
-  move for 60 s on PR #511's TSan CI runner. Locally under TSan on two
-  cores, three tight pollers made a move wait up to 2 s. With priority it
-  waits ≤ 50 ms and `stop()` ≤ 30 ms (`backend.zc300_stage`
-  "concurrency"; `backend.zc300_stage_two_cores` runs it pinned to two
-  cores on Linux).
+**The lock is fair, prioritized and bounded (`Zc300Stage::Access`).**
+- Waiters queue, and a release **hands the driver straight to the next
+  waiter**: **Stop first**, then commands and teardown (FIFO), then status
+  polls (FIFO). Nobody can jump the queue.
+- **Stop has its own queue**, served before everything else. It is sent right
+  after the call in flight, never behind queued moves or teardown. To keep a
+  Stop storm from starving a waiting Disconnect, at most four Stops are
+  granted in a row while anything else waits.
+- Commands are moves, writes, connect and token calls. Polls are
+  `readStatus`. `stop()` is its own kind.
+- A command or poll that cannot get the driver within 15 s returns `Busy`.
+  `disconnect()` waits its turn however long it takes, because teardown must
+  not be skipped.
+- The queue state sits behind a small `gate_` mutex that is never held during
+  bus I/O. Waits use a condition variable's `wait_for`, not
+  `std::timed_mutex`, whose clock-based waits older TSan runtimes may not
+  intercept.
+- **History:**
+  - A plain `std::mutex` is unfair: with one back-to-back poller it starved
+    a move for 60 s on PR #511's TSan runner.
+  - #511's fix (commands as priority waiters, polls yield) used a `try_lock`
+    plus 200 µs sleep loop. That is unfair too: a thread that re-locks within
+    nanoseconds keeps the driver while sleepers lose every race. PR #516's
+    plain Linux lane saw a poll refused after 15 s, with commands fine
+    (slowest 40 ms).
+  - The queue fixes both. `backend.zc300_stage` "fairness" runs six tight
+    pollers for 1.5 s: each must get at least a quarter of the average
+    share, and none may wait 2 s. Before: fewest 1 of a mean 25 and waits
+    of 5–8 s. After: 25 of 25 and a worst wait of ~60 ms.
 - **Not only a test problem:** a UI or server polling `readStatus` in a
   tight loop on real hardware could have starved Stop for seconds the same
-  way.
+  way. In production the worker thread is the only regular poller, so this
+  is defence in depth, not a live defect.
 
 A `stop()` still waits behind the call in flight, at worst one read with its
 retries (~2 s at the default timing). `StageService` owns polling threads.
