@@ -15,21 +15,28 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[architecture/Data-Flow]]
 - [[architecture/Rust-Bridge]] — Rust ↔ C++ bridge (React + Tauri migration)
 - [[architecture/Desktop-Shell]] — React + Tauri v2 desktop app (Phase 3)
+- [[frontend/YofoReview]] — YOFO Review, the standalone review product built from `desktop/`
+- [[services/ReviewSession]] — Qt-free review implementation shared by the Qt tab, the Tauri shell and YOFO Review
 
 ### Services (`src/backend/services/`)
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
+- Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
+- Wafer localization (dot-grid fiducials): [[services/DotGridService]]
+- Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
   [[services/TriggerService]], [[services/SyringePumpService]],
   [[services/ISerialPort]]
   [[services/TriggerService]], [[services/SerialBus]],
-  [[services/SyringePumpService]], [[services/PulseGeneratorService]]
+  [[services/SyringePumpService]], [[services/PulseGeneratorService]],
+  [[services/StageService]] (Z stage, driver [[services/ZC300Stage]])
 - Optional: [[services/YoloService]], [[services/RecorderService]],
   [[services/BatchMaskSources]]
 
 ### Frontend (`src/frontend/`)
+- [[frontend/DesktopInstance]] — duplicate-launch protection for hardware ownership
 - [[frontend/_MOC|Frontend MOC]]
 - [[frontend/MainWindow]], [[frontend/Controllers]]
 - Native core selection: [[frontend/ProcessingCoreDialog]]
@@ -43,11 +50,12 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 ### Camera (`src/camera/`)
 - [[camera/_MOC|Camera MOC]]
 - [[camera/ICamera]], [[camera/EGrabberCamera]], [[camera/MindVisionCamera]],
-  [[camera/MockCamera]]
+  [[camera/MockCamera]], [[camera/AravisCamera]]
 
 ### Data model
 - [[data-model/FrameStore]]
 - [[data-model/HDF5-Storage]]
+- [[data-model/PZ7035-Records]]
 
 ### Diagnostics
 - [[diagnostics/_MOC|Diagnostics MOC]]
@@ -63,6 +71,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[build-and-run/Build]]
 - [[build-and-run/Run-Modes]]
 - [[build-and-run/Dependencies]]
+- [[build-and-run/Assets]] — external datasets and model weights (Hub-hosted, pinned in `env/assets.json`)
 
 ### Conventions
 - [[conventions/Code-Conventions]]
@@ -86,3 +95,5 @@ verifies wikilink integrity (enforced in CI).
 - `docs/` — user-facing how-tos (`docs/howto/*.md`) and integration notes
 - `docs/golden-principles.md` — mechanical rules for this repo
 - `knowledge_map/task/` — dated task records (historical design/debug notes)
+
+- [[services/ProfileRegistryService]] — central registry/cache foundation (#398); desktop integration pending.

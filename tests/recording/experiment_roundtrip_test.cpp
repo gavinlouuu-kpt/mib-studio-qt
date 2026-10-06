@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 using backend::services::Hdf5Service;
@@ -38,6 +39,15 @@ ProcessedFrame makeFrame(uint64_t idx, unsigned char value, bool valid,
     f.validation.objectCount = 1;
     f.validation.area = area;
     f.validation.deformability = deform;
+    // Contract-2 per-object focus metric; must round-trip through HDF5.
+    f.validation.laplacianVariance = 12.5 + static_cast<double>(idx);
+    // Contract-3 (unet-cells) members; must round-trip too.
+    f.validation.brightnessMean = 100.25 + static_cast<double>(idx);
+    f.validation.brightnessVariance = 30.5 + static_cast<double>(idx);
+    f.validation.contourArea = 512.5 + static_cast<double>(idx);
+    f.validation.pixelCount = 600 + static_cast<int>(idx);
+    f.validation.blemishCount = 3 + static_cast<int>(idx);
+    f.validation.degenerateContour = idx == 1;
     return f;
 }
 
@@ -62,6 +72,15 @@ int main()
         MIB_REQUIRE(hdf5.appendFrames(valid, invalid), "appendFrames");
 
         ProcessingConfig cfg;
+        cfg.processing_contract_version = 2;
+        cfg.bg_subtract_threshold = 11;
+        cfg.enable_ring_ratio_check = false;
+        cfg.enable_laplacian_variance_check = true;
+        cfg.laplacian_variance_min = 5.0;
+        cfg.laplacian_variance_max = 500.0;
+        cfg.auto_roi_from_background = true;
+        cfg.channel_band_y = 30;
+        cfg.channel_band_h = 50;
         ProcessingService::Roi roi{1, 2, 6, 7};
         backend::processing::ProcessingCoreIdentity core;
         core.version = "2.3.4";
@@ -102,6 +121,20 @@ int main()
         MIB_EXPECT(coreOut.artifactSha256 == std::string(64, 'a') &&
                        coreOut.manifestSha256 == std::string(64, 'b'),
                    "processing core digests round-trip");
+        MIB_EXPECT(coreOut.contractVersion == 1,
+                   "a plugin core's declared contract is recorded as-is");
+
+        ProcessingConfig cfgOut;
+        MIB_REQUIRE(r.readRecordedProcessingConfig(cfgOut), "recorded processing config reads back");
+        MIB_EXPECT(cfgOut.processing_contract_version == 2 && cfgOut.bg_subtract_threshold == 11,
+                   "declared contract and difference threshold round-trip");
+        MIB_EXPECT(!cfgOut.enable_ring_ratio_check && cfgOut.enable_laplacian_variance_check &&
+                       near(cfgOut.laplacian_variance_min, 5.0) &&
+                       near(cfgOut.laplacian_variance_max, 500.0),
+                   "ring and Laplacian gates round-trip");
+        MIB_EXPECT(cfgOut.auto_roi_from_background && cfgOut.channel_band_y == 30 &&
+                       cfgOut.channel_band_h == 50,
+                   "channel band round-trips");
 
         std::vector<ProcessedFrame> meta;
         MIB_REQUIRE(r.readValidMetadata(meta), "readValidMetadata");
@@ -111,6 +144,17 @@ int main()
             MIB_EXPECT(near(meta[0].validation.area, 100.0), "area[0] round-trips");
             MIB_EXPECT(near(meta[1].validation.deformability, 0.30),
                        "deformability[1] round-trips");
+            MIB_EXPECT(near(meta[0].validation.laplacianVariance, 12.5) &&
+                           near(meta[1].validation.laplacianVariance, 13.5),
+                       "laplacian variance round-trips through HDF5");
+            MIB_EXPECT(near(meta[0].validation.brightnessMean, 100.25) &&
+                           near(meta[1].validation.brightnessVariance, 31.5) &&
+                           near(meta[1].validation.contourArea, 513.5) &&
+                           meta[0].validation.pixelCount == 600 &&
+                           meta[1].validation.blemishCount == 4 &&
+                           !meta[0].validation.degenerateContour &&
+                           meta[1].validation.degenerateContour,
+                       "Contract-3 cell members round-trip through HDF5");
         }
 
         std::vector<ProcessedFrame> full;
@@ -161,6 +205,115 @@ int main()
         reader.closeFile();
     }
 
+    // PL runs (YOFO S3) record metadata only. An imageless group round-trips
+    // without image datasets; a later batch with images is refused (rows and
+    // images would misalign).
+    {
+        const std::string plPath = (td / "pl_run.h5").string();
+        Hdf5Service w;
+        MIB_REQUIRE(w.openFile(plPath) && w.initializeDatasets(), "open PL run file");
+        auto imageless = [](uint64_t idx, bool valid) {
+            ProcessedFrame f;
+            f.index = idx;
+            f.timestampNs = idx * 200000;
+            f.validation.isValid = valid;
+            f.validation.objectId = 1;
+            f.validation.area = 800.0 + static_cast<double>(idx);
+            f.validation.brightnessMean = 112.5;
+            f.validation.pixelCount = 840;
+            return f;
+        };
+        MIB_REQUIRE(w.appendFrames({imageless(1, true), imageless(2, true)}, {imageless(3, false)}),
+                    "first imageless batch");
+        MIB_REQUIRE(w.appendFrames({imageless(4, true)}, {}), "second imageless batch appends");
+        MIB_EXPECT(!w.appendFrames({makeFrame(5, 40, true, 100.0, 0.2)}, {}),
+                   "a batch with images after imageless rows is refused");
+        w.closeFile();
+
+        Hdf5Service r;
+        MIB_REQUIRE(r.loadFile(plPath), "reload PL run file");
+        std::vector<ProcessedFrame> valid, invalid, full;
+        MIB_EXPECT(r.readValidMetadata(valid) && valid.size() == 3 && valid[2].index == 4 &&
+                       valid[0].validation.brightnessMean == 112.5 && valid[0].validation.pixelCount == 840,
+                   "imageless valid rows round-trip");
+        MIB_EXPECT(r.readInvalidMetadata(invalid) && invalid.size() == 1, "imageless invalid row");
+        MIB_EXPECT(r.readValidFrames(full) && full.size() == 3 && full[0].originalImage.empty(),
+                   "readValidFrames returns metadata-only frames");
+        r.closeFile();
+    }
+
+    // A recording made before Contract 3 has no cell members in its metadata
+    // compound. Rewrite /valid_frames/metadata without them: the reader must
+    // keep the "not present" defaults (NaN brightness, zero counts).
+    {
+        const char* cellMembers[] = {"brightness_mean", "brightness_variance", "contourArea",
+                                     "pixelCount", "blemishCount", "degenerateContour"};
+        hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open raw HDF handle for the pre-Contract-3 fixture");
+        hid_t dset = H5Dopen2(file, "/valid_frames/metadata", H5P_DEFAULT);
+        MIB_REQUIRE(dset >= 0, "open valid metadata");
+        hid_t fileType = H5Dget_type(dset);
+        hid_t space = H5Dget_space(dset);
+        const hssize_t rows = H5Sget_simple_extent_npoints(space);
+        // Pack every other member into an older compound, in file order.
+        size_t size = 0;
+        const int members = H5Tget_nmembers(fileType);
+        std::vector<std::pair<std::string, hid_t>> keep;
+        for (int i = 0; i < members; ++i) {
+            char* name = H5Tget_member_name(fileType, static_cast<unsigned>(i));
+            bool cell = false;
+            for (const char* c : cellMembers) cell = cell || std::string(name) == c;
+            if (!cell) {
+                hid_t mt = H5Tget_native_type(H5Tget_member_type(fileType, static_cast<unsigned>(i)),
+                                              H5T_DIR_ASCEND);
+                keep.emplace_back(name, mt);
+                size += H5Tget_size(mt);
+            }
+            H5free_memory(name);
+        }
+        MIB_REQUIRE(static_cast<int>(keep.size()) == members - 6, "the file has all six cell members");
+        hid_t oldType = H5Tcreate(H5T_COMPOUND, size);
+        size_t offset = 0;
+        for (const auto& [name, mt] : keep) {
+            H5Tinsert(oldType, name.c_str(), offset, mt);
+            offset += H5Tget_size(mt);
+        }
+        std::vector<unsigned char> buf(size * static_cast<size_t>(rows));
+        MIB_REQUIRE(H5Dread(dset, oldType, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data()) >= 0,
+                    "read metadata in the older layout");
+        H5Dclose(dset);
+        MIB_REQUIRE(H5Ldelete(file, "/valid_frames/metadata", H5P_DEFAULT) >= 0, "drop metadata");
+        const hsize_t dims[1] = {static_cast<hsize_t>(rows)};
+        hid_t oldSpace = H5Screate_simple(1, dims, nullptr); // the live one is extendible
+        hid_t oldSet = H5Dcreate2(file, "/valid_frames/metadata", oldType, oldSpace, H5P_DEFAULT,
+                                  H5P_DEFAULT, H5P_DEFAULT);
+        H5Sclose(oldSpace);
+        MIB_REQUIRE(oldSet >= 0 && H5Dwrite(oldSet, oldType, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                                            buf.data()) >= 0,
+                    "write metadata without the cell members");
+        H5Dclose(oldSet);
+        for (auto& [name, mt] : keep) H5Tclose(mt);
+        H5Tclose(oldType);
+        H5Sclose(space);
+        H5Tclose(fileType);
+        H5Fclose(file);
+
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(path), "reload the pre-Contract-3 fixture");
+        std::vector<ProcessedFrame> meta;
+        MIB_REQUIRE(reader.readValidMetadata(meta), "read pre-Contract-3 metadata");
+        MIB_EXPECT(meta.size() == 2 && near(meta[1].validation.laplacianVariance, 13.5) &&
+                       near(meta[0].validation.area, 100.0),
+                   "older metadata keeps its own members");
+        MIB_EXPECT(meta.size() == 2 && std::isnan(meta[0].validation.brightnessMean) &&
+                       std::isnan(meta[1].validation.brightnessVariance) &&
+                       meta[0].validation.contourArea == 0.0 && meta[1].validation.pixelCount == 0 &&
+                       meta[1].validation.blemishCount == 0 &&
+                       !meta[1].validation.degenerateContour,
+                   "a file without cell members reads them as not present");
+        reader.closeFile();
+    }
+
     {
         const std::string legacyPath = (td / "legacy.h5").string();
         hid_t file = H5Fcreate(legacyPath.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
@@ -175,6 +328,11 @@ int main()
         backend::processing::ProcessingCoreIdentity missing;
         MIB_EXPECT(!legacy.readProcessingCoreIdentity(missing),
                    "legacy file without core attributes is reported explicitly");
+        ProcessingConfig legacyConfig;
+        legacyConfig.processing_contract_version = 7; // sentinel: no attribute to read
+        MIB_EXPECT(legacy.readRecordedProcessingConfig(legacyConfig) &&
+                       legacyConfig.processing_contract_version == 7,
+                   "attributes a legacy file lacks keep the caller's values");
         legacy.closeFile();
     }
 

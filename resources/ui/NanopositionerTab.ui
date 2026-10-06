@@ -53,13 +53,39 @@
          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
         </property>
         <item row="0" column="0">
-         <widget class="QLabel" name="comPortLabel">
+         <widget class="QLabel" name="backendLabel">
           <property name="text">
-           <string>COM Port:</string>
+           <string>Backend:</string>
           </property>
          </widget>
         </item>
         <item row="0" column="1">
+         <widget class="QComboBox" name="backendCombo">
+          <item>
+           <property name="text">
+            <string>Auto-detect</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>OEABT serial</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>CoreMOR</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="comPortLabel">
+          <property name="text">
+           <string>Serial Device:</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
          <layout class="QHBoxLayout" name="comPortLayout">
           <property name="spacing">
            <number>6</number>
@@ -77,20 +103,20 @@
              <string>Refresh</string>
             </property>
             <property name="toolTip">
-             <string>Rescan for available COM ports</string>
+             <string>Rescan for available nanopositioner serial devices</string>
             </property>
            </widget>
           </item>
          </layout>
         </item>
-        <item row="1" column="0">
+        <item row="2" column="0">
          <widget class="QLabel" name="baudRateLabel">
           <property name="text">
            <string>Baud Rate:</string>
           </property>
          </widget>
         </item>
-        <item row="1" column="1">
+        <item row="2" column="1">
          <widget class="QComboBox" name="baudRateCombo">
           <item>
            <property name="text">
@@ -119,14 +145,14 @@
           </item>
          </widget>
         </item>
-        <item row="2" column="0">
+        <item row="3" column="0">
          <widget class="QLabel" name="deviceAddressLabel">
           <property name="text">
            <string>Device Address:</string>
           </property>
          </widget>
         </item>
-        <item row="2" column="1">
+        <item row="3" column="1">
          <widget class="QSpinBox" name="deviceAddressSpinBox">
           <property name="maximum">
            <number>255</number>

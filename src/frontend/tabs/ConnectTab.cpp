@@ -9,6 +9,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/camera/common/ICamera.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/CaptureService.h"
 #include "frontend/dialogs/MockConfigDialog.h"
@@ -81,15 +82,54 @@ ConnectTab::ConnectTab(backend::AppBackend& backend, QWidget* parent)
     connect(ui->deliveryModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &ConnectTab::onDeliveryModeComboChanged);
 
+    // Results of every camera/framegrabber job (startup, Try again, Refresh)
+    // land here on the UI thread; the lists are only ever filled from a
+    // snapshot (#419).
+    discoverySubscription_.subscribe(backend_.deviceDiscovery(), this,
+                                     [this](const backend::discovery::DiscoverySnapshot& s) {
+                                         onDiscoverySnapshot(s);
+                                     });
+    // Populate asynchronously; the constructor never enumerates hardware.
     onRefresh();
 }
 
 ConnectTab::~ConnectTab() {
+    discoverySubscription_.reset();
     delete ui;
 }
 
 void ConnectTab::onRefresh() {
-    populateDevices();
+    backend::discovery::DiscoveryRequest request;
+    request.kinds = {backend::discovery::DeviceKind::Camera,
+                     backend::discovery::DeviceKind::Framegrabber};
+    request.origin = "connect-tab";
+    const auto start = backend_.deviceDiscovery().startDiscovery(request);
+    if (!start.accepted) {
+        reportDiscoveryProblem(QString::fromStdString(start.reason));
+        return;
+    }
+    refreshJob_ = start.jobId;
+    showDiscoveryStarted();
+    SPDLOG_INFO("ConnectTab: refresh {} discovery job {}", start.coalesced ? "joined" : "started",
+                start.jobId);
+}
+
+void ConnectTab::onDiscoverySnapshot(const backend::discovery::DiscoverySnapshot& snapshot)
+{
+    // Any camera job's result is worth showing (the startup job is delivered
+    // by DeviceInitManager as well); a manual refresh ends the scanning state.
+    if (!backend::discovery::isTerminal(snapshot.state)) return;
+    bool cameraJob = false;
+    for (const auto& c : snapshot.candidates) {
+        cameraJob |= c.kind == backend::discovery::DeviceKind::Camera ||
+                     c.kind == backend::discovery::DeviceKind::Framegrabber;
+    }
+    for (const auto& id : snapshot.providersRun) {
+        cameraJob |= id == "mindvision" || id == "egrabber" || id == "egrabber-framegrabber";
+    }
+    if (!cameraJob && snapshot.jobId != refreshJob_) return;
+    if (snapshot.jobId == refreshJob_) refreshJob_ = 0;
+    showDiscoveryResults(snapshot);
 }
 
 void ConnectTab::tryAutoConnect()
@@ -98,52 +138,18 @@ void ConnectTab::tryAutoConnect()
         initManager_->runCameraStep();
         return;
     }
+    SPDLOG_WARN("ConnectTab: auto-connect requested without a DeviceInitManager; "
+                "discovery never runs on the UI thread");
+}
 
-    // Fallback when no DeviceInitManager: run discovery on UI thread (may block)
-    if (backend_.capture().isRunning())
-    {
-        SPDLOG_INFO("ConnectTab: auto-connect skipped (capture running)");
-        return;
-    }
-    if (backend_.isCameraConfigured())
-    {
-        SPDLOG_INFO("ConnectTab: auto-connect skipped (camera already configured)");
-        return;
-    }
+void ConnectTab::showDiscoveryStarted()
+{
+    ui->statusLabel->setText(tr("Scanning for cameras and framegrabbers..."));
+}
 
-    auto &cc = backend_.cameraControl();
-    const auto cameras = cc.discoverCameras();
-    const auto mindVisionCameras = cc.discoverMindVisionCameras();
-
-    SPDLOG_INFO("ConnectTab: auto-connect discovery found {} eGrabber camera(s) and {} MindVision camera(s)",
-                cameras.size(), mindVisionCameras.size());
-
-    if (cameras.empty() && mindVisionCameras.empty())
-    {
-        ui->statusLabel->setText(tr("No cameras found."));
-        emit noCamerasFound();
-        return;
-    }
-
-    const std::size_t totalCameras = cameras.size() + mindVisionCameras.size();
-    if (totalCameras == 1)
-    {
-        if (!cameras.empty())
-        {
-            const auto &cam = cameras[0];
-            backend_.setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
-            applyCameraSelection(cam.interfaceIndex, cam.deviceIndex, QString::fromStdString(cam.label));
-        }
-        else
-        {
-            const auto &cam = mindVisionCameras[0];
-            backend_.setMindVisionCameraSelection(cam.cameraIndex, cam.label);
-            applyMindVisionSelection(cam.cameraIndex, QString::fromStdString(cam.label));
-        }
-        return;
-    }
-
-    ui->statusLabel->setText(tr("Multiple cameras found; select one and click Connect."));
+void ConnectTab::reportDiscoveryProblem(const QString& message)
+{
+    ui->statusLabel->setText(message);
 }
 
 void ConnectTab::applyCameraSelection(int interfaceIndex, int deviceIndex, const QString& label)
@@ -192,55 +198,56 @@ void ConnectTab::reportMultipleCameras()
     ui->statusLabel->setText(tr("Multiple cameras found; select one and click Connect."));
 }
 
-void ConnectTab::populateDevices() {
+void ConnectTab::showDiscoveryResults(const backend::discovery::DiscoverySnapshot& snapshot) {
+    using backend::discovery::DeviceKind;
+    if (snapshot.jobId != 0 && snapshot.jobId == lastRenderedJob_) return;
+    lastRenderedJob_ = snapshot.jobId;
     ui->framegrabberList->clear();
     ui->cameraList->clear();
     ui->mindVisionList->clear();
 
-    auto& cc = backend_.cameraControl();
-    
-    // Populate framegrabbers tab
-    const auto framegrabbers = cc.discoverFramegrabbers();
-    for (const auto& fg : framegrabbers) {
-        auto* item = new QListWidgetItem(QString::fromStdString(fg.label));
-        item->setData(Qt::UserRole, toVariant(CameraSelection{backend::services::CameraType::EGrabber, fg.interfaceIndex, fg.deviceIndex, -1}));
-        ui->framegrabberList->addItem(item);
+    for (const auto& device : snapshot.candidates) {
+        if (device.kind == DeviceKind::Framegrabber && device.framegrabber) {
+            const auto& fg = *device.framegrabber;
+            auto* item = new QListWidgetItem(QString::fromStdString(fg.label));
+            item->setData(Qt::UserRole, toVariant(CameraSelection{backend::services::CameraType::EGrabber, fg.interfaceIndex, fg.deviceIndex, -1}));
+            ui->framegrabberList->addItem(item);
+        } else if (device.kind == DeviceKind::Camera && device.camera && !device.synthetic) {
+            const auto& cam = *device.camera;
+            auto* item = new QListWidgetItem(QString::fromStdString(cam.label));
+            item->setData(Qt::UserRole, toVariant(CameraSelection{cam.cameraType, cam.interfaceIndex, cam.deviceIndex, cam.cameraIndex}));
+            if (cam.cameraType == backend::services::CameraType::MindVision) {
+                ui->mindVisionList->addItem(item);
+            } else {
+                ui->cameraList->addItem(item);
+            }
+        }
     }
-    
-    if (ui->framegrabberList->count() > 0) {
-        ui->framegrabberList->setCurrentRow(0);
-    }
-    
-    // Populate eGrabber cameras tab
-    const auto cameras = cc.discoverCameras();
-    for (const auto& cam : cameras) {
-        auto* item = new QListWidgetItem(QString::fromStdString(cam.label));
-        item->setData(Qt::UserRole, toVariant(CameraSelection{cam.cameraType, cam.interfaceIndex, cam.deviceIndex, cam.cameraIndex}));
-        ui->cameraList->addItem(item);
-    }
-    
-    if (ui->cameraList->count() > 0) {
-        ui->cameraList->setCurrentRow(0);
-    }
+    if (ui->framegrabberList->count() > 0) ui->framegrabberList->setCurrentRow(0);
+    if (ui->cameraList->count() > 0) ui->cameraList->setCurrentRow(0);
+    if (ui->mindVisionList->count() > 0) ui->mindVisionList->setCurrentRow(0);
 
-    // Populate MindVision cameras tab
-    const auto mindVisionCameras = cc.discoverMindVisionCameras();
-    for (const auto& cam : mindVisionCameras) {
-        auto* item = new QListWidgetItem(QString::fromStdString(cam.label));
-        item->setData(Qt::UserRole, toVariant(CameraSelection{cam.cameraType, cam.interfaceIndex, cam.deviceIndex, cam.cameraIndex}));
-        ui->mindVisionList->addItem(item);
-    }
-
-    if (ui->mindVisionList->count() > 0) {
-        ui->mindVisionList->setCurrentRow(0);
-    }
-
-    ui->statusLabel->setText(QString("Found %1 framegrabber(s), %2 eGrabber camera(s), %3 MindVision camera(s)")
+    QString status = tr("Found %1 framegrabber(s), %2 eGrabber camera(s), %3 MindVision camera(s)")
                          .arg(ui->framegrabberList->count())
                          .arg(ui->cameraList->count())
-                         .arg(ui->mindVisionList->count()));
-    SPDLOG_INFO("ConnectTab: refreshed, {} framegrabber(s), {} eGrabber camera(s), {} MindVision camera(s) listed",
-                ui->framegrabberList->count(), ui->cameraList->count(), ui->mindVisionList->count());
+                         .arg(ui->mindVisionList->count());
+    if (snapshot.state == backend::discovery::JobState::Cancelled) {
+        status = tr("Camera scan cancelled.");
+    } else if (!snapshot.complete) {
+        // Name the first coverage gap so an operator can act on it (busy SDK,
+        // timeout, ...). A compiled-out SDK is expected on a bench PC.
+        for (const auto& e : snapshot.errors) {
+            if (e.kind == backend::discovery::ErrorKind::MissingSdk) continue;
+            status += tr(" (incomplete: %1 %2)")
+                          .arg(QString::fromStdString(e.providerId))
+                          .arg(QString::fromLatin1(backend::discovery::toString(e.kind)));
+            break;
+        }
+    }
+    ui->statusLabel->setText(status);
+    SPDLOG_INFO("ConnectTab: discovery job {} listed {} framegrabber(s), {} eGrabber camera(s), {} MindVision camera(s) (complete={})",
+                snapshot.jobId, ui->framegrabberList->count(), ui->cameraList->count(),
+                ui->mindVisionList->count(), snapshot.complete);
 }
 
 void ConnectTab::onConnect() {

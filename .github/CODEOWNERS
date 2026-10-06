@@ -1,0 +1,20 @@
+# Processing science and gold references (ADR 0007, Contract 2 rollout T0.4).
+# A released contract's behaviour is frozen: edits here need review from the
+# processing owner, and moving a gold reference also needs the
+# `gold-reference-change` label (enforced by gold-reference-guard.yml).
+# Review is mandatory only when branch protection has "Require review from
+# Code Owners" enabled.
+
+/include/backend/processing/ProcessingContract.h      @gavinlouuu-kpt
+/src/backend/processing/ProcessingContract.cpp        @gavinlouuu-kpt
+/include/backend/processing/ImageFilterPipeline.h     @gavinlouuu-kpt
+/src/backend/processing/ImageFilterPipeline.cpp       @gavinlouuu-kpt
+/include/backend/processing/ProcessingScience.h       @gavinlouuu-kpt
+/src/backend/processing/ProcessingScience.cpp         @gavinlouuu-kpt
+/src/backend/processing/BundledProcessingKernel.cpp   @gavinlouuu-kpt
+/src/backend/processing/ProcessingCorePlugin.cpp      @gavinlouuu-kpt
+/include/backend/processing/ProcessingCoreAbi.h       @gavinlouuu-kpt
+/docs/gold_standard_metrics.schema.json               @gavinlouuu-kpt
+/scripts/gold_standard_dataset.json                   @gavinlouuu-kpt
+/scripts/conformance/                                 @gavinlouuu-kpt
+/scripts/build_real_conformance_fixture.py            @gavinlouuu-kpt

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <string_view>
+#include <optional>
 
 namespace cv {
     class Mat;
@@ -45,6 +46,11 @@ public:
     // File operations
     bool openFile(const std::string& filePath);
     bool loadFile(const std::string& filePath); // Open existing file for reading
+    // Open an existing file read-write for post-run metadata only (e.g. the
+    // KDE analysis record). Never creates or truncates; frame datasets are
+    // not initialised, so append paths stay unavailable. Fails when the file
+    // is missing, read-only on disk, or already open elsewhere in-process.
+    bool openFileForUpdate(const std::string& filePath);
     void closeFile();
     bool flush(); // Explicit global flush — call before metadata writes to protect frame data on crash
     bool isFileOpen() const;
@@ -76,6 +82,11 @@ public:
     // false for legacy files that predate processing-core provenance.
     bool readProcessingCoreIdentity(
         backend::processing::ProcessingCoreIdentity& processingCore) const;
+    // Reads the processing_config_* attributes of /experiment_info into
+    // `config`. Attributes a file predates keep their struct defaults, so
+    // legacy files read as the Contract-1 config they ran. Returns false when
+    // the group is missing.
+    bool readRecordedProcessingConfig(ProcessingConfig& config) const;
 
     // Save raw config JSON as a string attribute on /experiment_info.
     // Precondition: writeExperimentInfo() must have been called first.
@@ -106,6 +117,9 @@ public:
                          std::vector<cv::Mat>& outImages) const;
 
     // Metadata-only reads (do not load image/mask payloads)
+    // Distinguishes a legitimately absent lazily-created metadata dataset from
+    // an HDF5 query failure. nullopt means unavailable/error, not empty data.
+    std::optional<bool> metadataDatasetPresent(bool valid) const;
     bool readValidMetadata(std::vector<ProcessedFrame>& frames);
     bool readInvalidMetadata(std::vector<ProcessedFrame>& frames);
 
@@ -169,6 +183,20 @@ public:
     static long long globalOpenObjectCountForDiagnostics();
     long long openObjectCountForDiagnostics() const;
     bool readRunSnapshotJson(std::string& runSnapshotJson, std::string* readinessJson = nullptr) const;
+
+    // KDE core contour records (`kde_core_schema_version` = 1). The JSON
+    // documents are produced and parsed by the frontend codec
+    // (backend/processing/KdeCoreRecord.h) and stored verbatim as UTF-8 string
+    // attributes:
+    //   /monitoring @kde_live_json  — provisional, copy of the contour shown
+    //                                  live when the run stopped;
+    //   /analysis   @kde_core_json  — computed from the full recorded run.
+    // Writers refuse (false + warn) when no file is open or it was opened
+    // read-only; readers return false when the record is absent.
+    bool writeKdeLiveJson(const std::string& json);
+    bool readKdeLiveJson(std::string& json) const;
+    bool writeKdeAnalysisJson(const std::string& json);
+    bool readKdeAnalysisJson(std::string& json) const;
 
     // Acquisition time/telemetry provenance (issue #368, `timestamp_schema_version`
     // = 1): the session's TimestampDescriptor (what `timestampNs` really holds)

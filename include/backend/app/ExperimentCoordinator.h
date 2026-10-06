@@ -63,6 +63,13 @@ public:
     // NotActive when there is no run.
     ExperimentStopOutcome requestStop(bool cancelled);
 
+    // Latest provisional KDE core contour record (JSON, frontend codec) that
+    // the Monitoring view is showing. Accepted only while a run is Active;
+    // cleared at Start; written to the run's file during finalization
+    // (Hdf5Service::writeKdeLiveJson) as a copy of what was on screen. Never
+    // blocks or fails the stop.
+    void setLiveKdeCoreRecord(std::string json);
+
     // Fatal save-error funnel (writer thread): marks the run Failed and
     // finalizes it so the file is closed and readable.
     void onFatalSaveError(const std::string& message);
@@ -92,6 +99,11 @@ public:
     // readiness until cleared.
     void reportUnresolvedFault(const std::string& code, const std::string& message);
     void clearUnresolvedFault();
+    bool acknowledgeFault(uint64_t expectedRun, uint64_t expectedFaultRevision,
+                          const std::string& expectedCode, const std::string& expectedMessage,
+                          std::string& error);
+    // Runs a non-reentrant config transaction while Start is excluded.
+    bool withIdleConfiguration(const std::function<void()>& transaction);
     bool hasUnresolvedFault() const;
 
 private:
@@ -112,6 +124,7 @@ private:
         double pixelToMicron{0.0};
         std::string outputPath;
         std::string profileId;
+        std::string method; // methodInvalidationKey (#398 M2)
         bool faulted{false};
         bool operator==(const InvalidationKey& o) const;
         bool operator!=(const InvalidationKey& o) const { return !(*this == o); }
@@ -143,6 +156,7 @@ private:
     std::string buildId_;
     std::string os_;
     bool faultActive_{false};
+    uint64_t faultRevision_{0};
     std::string faultCode_;
     std::string faultMessage_;
     // Terminal/lifecycle fields that outlive activeRun_ (reset on start).
@@ -158,6 +172,20 @@ private:
     bool fatalRequested_{false};
     std::string fatalMessage_;
     std::optional<RunConfigurationSnapshot> lastRun_;
+    // Provisional KDE core record for the active run (guarded by mutex_).
+    std::string liveKdeCoreJson_;
+    // Method provenance memo (guarded by mutex_): readiness is polled, so the
+    // registry snapshot copy and config canonicalization run only when an
+    // input changes.
+    struct MethodMemo {
+        bool valid{false};
+        std::string rawConfigSha256;
+        uint64_t registryGeneration{0};
+        std::string contextHash;
+        std::string instrumentName;
+        MethodProvenance method;
+    };
+    mutable MethodMemo methodMemo_;
     // Multi-image series runs force inline realtime processing; restored on
     // finalize (moved here from the Qt window).
     bool restoreRealtimeMode_{false};

@@ -32,3 +32,10 @@ mutex.
   not a slot index. Use `queryRange` to get the current window.
 - Save helpers write as TIFF — see `FrameStore::saveFramesToDisk` for the
   single-frame implementation.
+
+Tauri buffer controls reuse index/timestamp save overloads and the same active-kernel
+empty-frame filter as Qt. Buffer mutation requires stopped capture and an idle experiment;
+resize below the retained count requires explicit clear confirmation. Requests preserve
+u64 identifiers as decimal strings and bind selections to the ring generation. Paused
+background capture currently accepts valid Mono8 frames only. Timestamp inputs use raw
+source units, not inferred nanoseconds or converted wall time.

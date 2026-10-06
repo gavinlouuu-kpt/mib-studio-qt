@@ -10,7 +10,9 @@
 
 #include "backend/app/AppBackend.h"
 #include "frontend/system/LutHttpFetcher.h"
+#include "frontend/system/RegistryHttpTransport.h"
 #include "frontend/system/QtLogBridge.h"
+#include "frontend/system/DesktopInstance.h"
 #include "backend/diagnostics/CrashStateMirror.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CrashReporter.h"
@@ -186,6 +188,17 @@ int main(int argc, char* argv[]) {
         // Initialize QApplication first
         QApplication app(argc, argv);
 
+        // Before settings migration, logging, SDK discovery, or hardware opens.
+        // Keep the guard alive through MainWindow and AppBackend destruction.
+        frontend::DesktopInstance desktopInstance(
+            QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
+                .filePath(QStringLiteral("MIB_Studio_Qt/desktop.lock")));
+        if (!desktopInstance.acquire()) {
+            QMessageBox::information(nullptr, QStringLiteral("MIB Studio"),
+                                     desktopInstance.failureMessage());
+            return 1;
+        }
+
         // Establish a complete, stable QSettings identity before any settings
         // are read. Older builds used Qt's "Unknown Organization" fallback;
         // initialize() migrates every legacy key without replacing newer ones.
@@ -237,6 +250,9 @@ int main(int argc, char* argv[]) {
         // no Qt networking, ADR 0002) can update the E-modulus LUT and cache it
         // in the historical location.
         backend.setLutHttpFetcher(mib::frontend::makeQtLutHttpGet());
+        // Same seam for the central profile registry (#398): enabled only when
+        // MIB_PROFILE_REGISTRY_URL / _PUBLISHABLE_KEY are set.
+        backend.setProfileRegistryTransport(mib::frontend::makeQtRegistryHttpTransport());
         backend.setLutAppDataDir(
             QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString());
         if (!backend.initialize(dataDirStd)) {
@@ -273,6 +289,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Application started successfully." << std::endl;
 
         const int rc = app.exec();
+        // Also cover Quit actions/session shutdown that bypass closeEvent.
+        backend.shutdown();
         backend::services::CrashReporter::shutdown();
         return rc;
 

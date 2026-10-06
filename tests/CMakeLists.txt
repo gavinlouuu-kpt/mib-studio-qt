@@ -1,11 +1,33 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
+if(WIN32)
+    add_executable(serial_port_win32_timeout_test backend/serial_port_win32_timeout_test.cpp)
+    target_include_directories(serial_port_win32_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32)
+    add_test(NAME backend.serial_port_win32_timeout COMMAND serial_port_win32_timeout_test)
+    set_tests_properties(backend.serial_port_win32_timeout PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 15)
+endif()
+
+# Catch a MindVision-only Windows build silently substituting the nanopositioner
+# stub merely because the EGrabber SDK is disabled.
+if(WIN32 AND MIB_ENABLE_COREMOR)
+    get_target_property(_backend_sources mib_backend SOURCES)
+    if(NOT "${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp" IN_LIST _backend_sources)
+        message(FATAL_ERROR "Coremor enabled, but the real nanopositioner service is missing")
+    endif()
+    get_target_property(_backend_links mib_backend LINK_LIBRARIES)
+    if(NOT "${PROJECT_SOURCE_DIR}/include/Coremor/XMT_DLL_SER.lib" IN_LIST _backend_links)
+        message(FATAL_ERROR "Coremor enabled, but its SDK is not linked")
+    endif()
+endif()
+
 # Backend tests are compiled into one runner, mib_backend_tests (see
 # cmake/MIBTestRunner.cmake for the how and why). CTest entries run
 # `mib_backend_tests <target> [args]`, one process per test. Tests that must
 # stay their own executable are listed here with the reason.
 include(MIBTestRunner)
 set(MIB_STANDALONE_BACKEND_TESTS
+    processing_core_authenticode_test   # Windows signing workflow invokes this executable directly
     mib_backend_smoke_test              # tools/gen_bridge_link_manifest.py uses its .vcxproj as reference project
     hdf_export_service_test             # exporter-soak.yml builds and runs it directly
     crash_reporter_segv_test            # re-executes argv[0] --crash-child
@@ -14,6 +36,8 @@ set(MIB_STANDALONE_BACKEND_TESTS
     kin6_batch_pipeline_evidence        # uses argv[0]
     kin10_hf_dataset_pipeline_test      # uses argv[0]; the harness passes the binary path
     processing_core_loader_test         # add_dependencies on the plugin fixtures
+    processing_core_v2_plugin_test      # add_dependencies on the plugin (Contract v2 dlopen test)
+    processing_core_contract2_equivalence_test # add_dependencies on the Contract-2 plugin
     processing_core_fixture_matrix_test # add_dependencies on the plugin fixtures
     processing_core_cache_test          # add_dependencies on the plugin fixtures
     processing_core_ed25519_test        # Linux-only; add_dependencies on the plugin + OpenSSL link
@@ -45,6 +69,52 @@ function(mib_backend_test_link target)
     endif()
 endfunction()
 
+if(MIB_HAS_ARAVIS)
+    find_package(Threads REQUIRED)
+    mib_add_backend_test_executable(aravis_camera_test camera/aravis_camera_test.cpp)
+    add_test(NAME camera.aravis_fake COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_test)
+    set_tests_properties(camera.aravis_fake PROPERTIES LABELS "camera;aravis;concurrency" TIMEOUT 30)
+    mib_add_backend_test_executable(aravis_capture_lifecycle_test backend/aravis_capture_lifecycle_test.cpp)
+    mib_backend_test_link(aravis_capture_lifecycle_test PRIVATE Threads::Threads)
+    add_test(NAME backend.aravis_capture_lifecycle
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_capture_lifecycle_test)
+    set_tests_properties(backend.aravis_capture_lifecycle PROPERTIES
+                         LABELS "backend;camera;aravis;concurrency;stress" TIMEOUT 30)
+    mib_add_backend_test_executable(aravis_camera_stress_test camera/aravis_camera_stress_test.cpp)
+    mib_backend_test_link(aravis_camera_stress_test PRIVATE Threads::Threads)
+    add_test(NAME camera.aravis_stress COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_stress_test)
+    set_tests_properties(camera.aravis_stress PROPERTIES LABELS "camera;aravis;concurrency;stress" TIMEOUT 90)
+    # The PZ7035 GenTL producer's pattern device (pz7035-imx426 gentl/); opt-in
+    # because the producer lives in another repository.
+    set(MIB_PZ7035_GENTL_CTI "" CACHE FILEPATH "PZ7035 GenTL producer (.cti) for camera.aravis_pz7035_pattern")
+    mib_add_backend_test_executable(aravis_pz7035_pattern_test camera/aravis_pz7035_pattern_test.cpp)
+    if(MIB_PZ7035_GENTL_CTI)
+        get_filename_component(_mib_pz7035_cti_dir "${MIB_PZ7035_GENTL_CTI}" DIRECTORY)
+        add_test(NAME camera.aravis_pz7035_pattern
+                 COMMAND $<TARGET_FILE:mib_backend_tests> aravis_pz7035_pattern_test)
+        set_tests_properties(camera.aravis_pz7035_pattern PROPERTIES
+                             LABELS "camera;aravis;pz7035" TIMEOUT 90
+                             ENVIRONMENT "GENICAM_GENTL64_PATH=${_mib_pz7035_cti_dir};PZ_GENTL_PATTERN=1")
+    endif()
+    mib_add_backend_test_executable(aravis_camera_overview_test backend/aravis_camera_overview_test.cpp)
+    add_test(NAME backend.aravis_camera_overview
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_camera_overview_test)
+    set_tests_properties(backend.aravis_camera_overview PROPERTIES LABELS "backend;camera;aravis" TIMEOUT 60)
+    mib_add_backend_test_executable(aravis_pipeline_e2e integration/aravis_pipeline_e2e_test.cpp)
+    mib_backend_test_link(aravis_pipeline_e2e PRIVATE Threads::Threads)
+    add_test(NAME integration.aravis_pipeline_e2e
+             COMMAND $<TARGET_FILE:mib_backend_tests> aravis_pipeline_e2e)
+    set_tests_properties(integration.aravis_pipeline_e2e PROPERTIES
+                         LABELS "backend;camera;aravis;integration;e2e;concurrency"
+                         TIMEOUT 90)
+endif()
+
+# Explicit Aravis source selection is validated in both ON and OFF builds:
+# OFF must remain visibly unavailable instead of silently falling back.
+mib_add_backend_test_executable(aravis_appbackend_source_test backend/aravis_appbackend_source_test.cpp)
+add_test(NAME backend.aravis_appbackend_source COMMAND $<TARGET_FILE:mib_backend_tests> aravis_appbackend_source_test)
+set_tests_properties(backend.aravis_appbackend_source PROPERTIES LABELS "backend;aravis" TIMEOUT 60)
+
 mib_add_backend_test_executable(mib_backend_smoke_test backend/backend_smoke_test.cpp)
 add_test(NAME backend.smoke COMMAND $<TARGET_FILE:mib_backend_smoke_test>)
 set_tests_properties(backend.smoke PROPERTIES LABELS "backend")
@@ -57,9 +127,28 @@ mib_add_backend_test_executable(emodulus_lut_degenerate_test backend/emodulus_lu
 add_test(NAME backend.emodulus_lut_degenerate COMMAND $<TARGET_FILE:mib_backend_tests> emodulus_lut_degenerate_test)
 set_tests_properties(backend.emodulus_lut_degenerate PROPERTIES LABELS "backend;processing")
 
+mib_add_backend_test_executable(pl_science_test backend/pl_science_test.cpp)
+add_test(NAME backend.pl_science COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_test)
+set_tests_properties(backend.pl_science PROPERTIES LABELS "backend;pl" TIMEOUT 60)
+mib_add_backend_test_executable(instrument_modes_test backend/instrument_modes_test.cpp)
+mib_backend_test_link(instrument_modes_test PRIVATE Threads::Threads)
+add_test(NAME backend.instrument_modes COMMAND $<TARGET_FILE:mib_backend_tests> instrument_modes_test)
+set_tests_properties(backend.instrument_modes PROPERTIES LABELS "backend;concurrency;pl" TIMEOUT 90)
+mib_add_backend_test_executable(pl_science_provider_test backend/pl_science_provider_test.cpp)
+mib_backend_test_link(pl_science_provider_test PRIVATE Threads::Threads)
+add_test(NAME backend.pl_science_provider COMMAND $<TARGET_FILE:mib_backend_tests> pl_science_provider_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(backend.pl_science_provider PROPERTIES LABELS "backend;recording;concurrency;pl" TIMEOUT 120)
 mib_add_backend_test_executable(backend_lifecycle_smoke_test backend/backend_lifecycle_smoke_test.cpp)
+mib_add_backend_test_executable(hardware_shutdown_test backend/hardware_shutdown_test.cpp)
+add_test(NAME backend.hardware_shutdown COMMAND $<TARGET_FILE:mib_backend_tests> hardware_shutdown_test)
+set_tests_properties(backend.hardware_shutdown PROPERTIES LABELS "backend;concurrency;stress" TIMEOUT 60)
 add_test(NAME backend.lifecycle_smoke COMMAND $<TARGET_FILE:mib_backend_tests> backend_lifecycle_smoke_test)
 set_tests_properties(backend.lifecycle_smoke PROPERTIES LABELS "backend")
+
+mib_add_backend_test_executable(opencv_threads_test backend/opencv_threads_test.cpp)
+add_test(NAME backend.opencv_threads COMMAND $<TARGET_FILE:mib_backend_tests> opencv_threads_test)
+set_tests_properties(backend.opencv_threads PROPERTIES LABELS "backend;processing" TIMEOUT 120)
 
 mib_add_backend_test_executable(frame_store_concurrency_test backend/frame_store_concurrency_test.cpp)
 find_package(Threads REQUIRED)
@@ -79,6 +168,12 @@ mib_add_backend_test_executable(syringe_pump_fake_serial_test backend/syringe_pu
 add_test(NAME backend.syringe_pump_fake_serial COMMAND $<TARGET_FILE:mib_backend_tests> syringe_pump_fake_serial_test)
 set_tests_properties(backend.syringe_pump_fake_serial PROPERTIES LABELS "backend" TIMEOUT 30)
 
+# Tushui peristaltic pump in a pump slot: read-only connect, flow -> rpm,
+# continuous run, purge restore, volume integration (TushuiPumpProtocol.h).
+mib_add_backend_test_executable(peristaltic_pump_fake_serial_test backend/peristaltic_pump_fake_serial_test.cpp)
+add_test(NAME backend.peristaltic_pump_fake_serial COMMAND $<TARGET_FILE:mib_backend_tests> peristaltic_pump_fake_serial_test)
+set_tests_properties(backend.peristaltic_pump_fake_serial PROPERTIES LABELS "backend" TIMEOUT 30)
+
 # BE-7 (#277): facade PumpCommand surface over the fake Modbus serial — both
 # pump identities, structured errors, COM-port conflict rules, safe disconnect.
 mib_add_backend_test_executable(pump_bridge_facade_test backend/pump_bridge_facade_test.cpp)
@@ -95,8 +190,108 @@ add_test(NAME backend.serial_port_enumeration COMMAND $<TARGET_FILE:mib_backend_
 set_tests_properties(backend.serial_port_enumeration PROPERTIES LABELS "backend" TIMEOUT 30)
 
 mib_add_backend_test_executable(autofocus_math_test backend/autofocus_math_test.cpp)
+mib_add_backend_test_executable(nanopositioner_discovery_test backend/nanopositioner_discovery_test.cpp)
+add_test(NAME backend.nanopositioner_discovery COMMAND $<TARGET_FILE:mib_backend_tests> nanopositioner_discovery_test)
+set_tests_properties(backend.nanopositioner_discovery PROPERTIES LABELS "backend;concurrency;stress" TIMEOUT 30)
 add_test(NAME backend.autofocus_math COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_math_test)
 set_tests_properties(backend.autofocus_math PROPERTIES LABELS "backend" TIMEOUT 30)
+
+# Issue #419: backend device-discovery job service over fake providers.
+mib_add_backend_test_executable(device_discovery_service_test backend/device_discovery_service_test.cpp)
+mib_backend_test_link(device_discovery_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_service COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_service_test)
+set_tests_properties(backend.device_discovery_service PROPERTIES LABELS "backend;discovery;concurrency;stress" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_fault_test backend/device_discovery_fault_test.cpp)
+mib_backend_test_link(device_discovery_fault_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_fault COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_fault_test)
+set_tests_properties(backend.device_discovery_fault PROPERTIES LABELS "backend;discovery;fault-injection" TIMEOUT 60)
+mib_add_backend_test_executable(startup_discovery_policy_test backend/startup_discovery_policy_test.cpp)
+mib_backend_test_link(startup_discovery_policy_test PRIVATE Threads::Threads)
+add_test(NAME backend.startup_discovery_policy COMMAND $<TARGET_FILE:mib_backend_tests> startup_discovery_policy_test)
+set_tests_properties(backend.startup_discovery_policy PROPERTIES LABELS "backend;discovery;concurrency" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_providers_test backend/device_discovery_providers_test.cpp)
+mib_backend_test_link(device_discovery_providers_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_providers COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_providers_test)
+set_tests_properties(backend.device_discovery_providers PROPERTIES LABELS "backend;discovery;nanopositioner;serial" TIMEOUT 60)
+mib_add_backend_test_executable(device_discovery_stress_test backend/device_discovery_stress_test.cpp)
+mib_backend_test_link(device_discovery_stress_test PRIVATE Threads::Threads)
+add_test(NAME backend.device_discovery_stress COMMAND $<TARGET_FILE:mib_backend_tests> device_discovery_stress_test)
+set_tests_properties(backend.device_discovery_stress PROPERTIES LABELS "backend;discovery;concurrency;stress" TIMEOUT 120)
+mib_add_backend_test_executable(discovery_facade_test backend/discovery_facade_test.cpp)
+mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
+set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
+
+mib_add_backend_test_executable(zc300_protocol_test backend/zc300_protocol_test.cpp)
+mib_backend_test_link(zc300_protocol_test PRIVATE stage_zc300_protocol)
+add_test(NAME backend.zc300_protocol COMMAND $<TARGET_FILE:mib_backend_tests> zc300_protocol_test)
+set_tests_properties(backend.zc300_protocol PROPERTIES LABELS "backend;stage" TIMEOUT 30)
+
+mib_add_backend_test_executable(zc300_stage_test backend/zc300_stage_test.cpp)
+mib_backend_test_link(zc300_stage_test PRIVATE stage_zc300)
+add_test(NAME backend.zc300_stage COMMAND $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
+set_tests_properties(backend.zc300_stage PROPERTIES LABELS "backend;stage;safety" TIMEOUT 90)
+# The same test pinned to two cores: the scheduling under which a tight
+# status poller starved a move for 60 s on PR #511's TSan runner. Keeps the
+# priority-access fix (Zc300Stage::Access) under that pressure on every run.
+find_program(MIB_TASKSET_EXECUTABLE taskset)
+if(UNIX AND NOT APPLE AND MIB_TASKSET_EXECUTABLE)
+    add_test(NAME backend.zc300_stage_two_cores
+             COMMAND ${MIB_TASKSET_EXECUTABLE} -c 0,1 $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
+    set_tests_properties(backend.zc300_stage_two_cores PROPERTIES LABELS "backend;stage;safety;concurrency" TIMEOUT 120)
+endif()
+
+mib_add_backend_test_executable(stage_bridge_facade_test backend/stage_bridge_facade_test.cpp)
+mib_backend_test_link(stage_bridge_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> stage_bridge_facade_test)
+set_tests_properties(backend.stage_bridge_facade PROPERTIES LABELS "backend;stage;bridge;safety" TIMEOUT 180)
+
+mib_add_backend_test_executable(stage_limit_verification_test backend/stage_limit_verification_test.cpp)
+mib_backend_test_link(stage_limit_verification_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_limit_verification COMMAND $<TARGET_FILE:mib_backend_tests> stage_limit_verification_test)
+set_tests_properties(backend.stage_limit_verification PROPERTIES LABELS "backend;stage;safety" TIMEOUT 180)
+
+mib_add_backend_test_executable(stage_config_test backend/stage_config_test.cpp)
+add_test(NAME backend.stage_config COMMAND $<TARGET_FILE:mib_backend_tests> stage_config_test)
+set_tests_properties(backend.stage_config PROPERTIES LABELS "backend;stage" TIMEOUT 30)
+
+mib_add_backend_test_executable(stage_service_test backend/stage_service_test.cpp)
+mib_backend_test_link(stage_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_service COMMAND $<TARGET_FILE:mib_backend_tests> stage_service_test)
+set_tests_properties(backend.stage_service PROPERTIES LABELS "backend;stage;safety" TIMEOUT 120)
+
+mib_add_backend_test_executable(stage_service_stress_test backend/stage_service_stress_test.cpp)
+mib_backend_test_link(stage_service_stress_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_service_stress COMMAND $<TARGET_FILE:mib_backend_tests> stage_service_stress_test)
+set_tests_properties(backend.stage_service_stress PROPERTIES LABELS "backend;stage;concurrency;stress" TIMEOUT 180)
+
+mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
+add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
+set_tests_properties(backend.oeabt_protocol PROPERTIES LABELS "backend;nanopositioner" TIMEOUT 30)
+
+mib_add_backend_test_executable(autofocus_backend_safety_test backend/autofocus_backend_safety_test.cpp)
+mib_backend_test_link(autofocus_backend_safety_test PRIVATE Threads::Threads)
+add_test(NAME backend.autofocus_backend_safety COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_backend_safety_test)
+set_tests_properties(backend.autofocus_backend_safety PROPERTIES
+    LABELS "backend;nanopositioner;concurrency"
+    TIMEOUT 30)
+
+if(UNIX AND NOT APPLE)
+    mib_add_backend_test_executable(oeabt_serial_pty_test backend/oeabt_serial_pty_test.cpp)
+    mib_backend_test_link(oeabt_serial_pty_test PRIVATE Threads::Threads)
+    add_test(NAME backend.oeabt_serial_pty COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_serial_pty_test)
+    set_tests_properties(backend.oeabt_serial_pty PROPERTIES
+        LABELS "backend;nanopositioner;concurrency"
+        TIMEOUT 30)
+endif()
+mib_add_backend_test_executable(autofocus_focus_score_test backend/autofocus_focus_score_test.cpp)
+add_test(NAME backend.autofocus_focus_score COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_score_test)
+set_tests_properties(backend.autofocus_focus_score PROPERTIES LABELS "backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(autofocus_focus_feed_test backend/autofocus_focus_feed_test.cpp)
+mib_backend_test_link(autofocus_focus_feed_test PRIVATE Threads::Threads)
+add_test(NAME backend.autofocus_focus_feed COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_focus_feed_test)
+set_tests_properties(backend.autofocus_focus_feed PROPERTIES LABELS "backend;stress" TIMEOUT 60)
 
 mib_add_backend_test_executable(hdf_write_queue_test backend/hdf_write_queue_test.cpp)
 mib_backend_test_link(hdf_write_queue_test PRIVATE Threads::Threads)
@@ -115,6 +310,26 @@ set_tests_properties(backend.recording_isframeempty_roi PROPERTIES LABELS "backe
 mib_add_backend_test_executable(monitoring_roi_crop_test frontend/monitoring_roi_crop_test.cpp)
 add_test(NAME frontend.monitoring_roi_crop COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_roi_crop_test)
 set_tests_properties(frontend.monitoring_roi_crop PROPERTIES LABELS "frontend;safety" TIMEOUT 30)
+
+# Monitoring scatter density (KDE): invariants, per-axis bandwidth, degenerate
+# input, colour ramp and a ratio-gated cost budget (no Qt).
+mib_add_backend_test_executable(monitoring_density_test processing/monitoring_density_test.cpp)
+add_test(NAME processing.monitoring_density COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_test)
+set_tests_properties(processing.monitoring_density PROPERTIES LABELS "processing;monitoring;performance" TIMEOUT 60)
+
+# MonitoringDensityService (backend-owned live KDE): settings, lowest-priority
+# worker, fingerprint skip, load back-off, compute budget, record sink, stop,
+# and concurrent callers (TSan lane).
+mib_add_backend_test_executable(monitoring_density_service_test backend/monitoring_density_service_test.cpp)
+add_test(NAME backend.monitoring_density_service COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_service_test)
+set_tests_properties(backend.monitoring_density_service PROPERTIES LABELS "backend;monitoring;concurrency;safety" TIMEOUT 120)
+
+# The density worker never costs the processing pipeline throughput: real
+# computeProcessedFrame on every core, density service off vs on (ratio gate),
+# duty cycle within the compute budget when uncontended.
+mib_add_backend_test_executable(monitoring_density_contention_test performance/monitoring_density_contention_test.cpp)
+add_test(NAME performance.monitoring_density_contention COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_contention_test)
+set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 120)
 
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
@@ -135,12 +350,21 @@ mib_backend_test_link(serial_bus_pty_test PRIVATE Threads::Threads)
 add_test(NAME backend.serial_bus_pty COMMAND $<TARGET_FILE:mib_backend_tests> serial_bus_pty_test)
 set_tests_properties(backend.serial_bus_pty PROPERTIES LABELS "backend" TIMEOUT 60)
 
+mib_add_backend_test_executable(mindvision_overview_mode_test backend/mindvision_overview_mode_test.cpp)
+mib_backend_test_link(mindvision_overview_mode_test PRIVATE Threads::Threads)
+add_test(NAME backend.mindvision_overview_mode COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_overview_mode_test)
+set_tests_properties(backend.mindvision_overview_mode PROPERTIES LABELS "backend;camera;safety;stress;invariant" TIMEOUT 100)
+
 mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config_test.cpp)
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_config_test)
 set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera" TIMEOUT 30)
 
 # Issue #366: MindVision Mono8/geometry fail-closed conversion, driven through
 # the injectable SDK seam (no hardware, no vendor headers).
+mib_add_backend_test_executable(illuminated_live_test backend/illuminated_live_test.cpp)
+add_test(NAME backend.illuminated_live COMMAND $<TARGET_FILE:mib_backend_tests> illuminated_live_test)
+set_tests_properties(backend.illuminated_live PROPERTIES LABELS "backend;camera;concurrency;safety" TIMEOUT 70)
+
 mib_add_backend_test_executable(mindvision_conversion_fault_test backend/mindvision_conversion_fault_test.cpp)
 mib_backend_test_link(mindvision_conversion_fault_test PRIVATE Threads::Threads)
 add_test(NAME backend.mindvision_conversion_fault COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_conversion_fault_test)
@@ -194,6 +418,22 @@ mib_backend_test_link(memory_budget_bench PRIVATE Threads::Threads)
 add_test(NAME performance.memory_budget COMMAND $<TARGET_FILE:mib_backend_tests> memory_budget_bench)
 set_tests_properties(performance.memory_budget PROPERTIES LABELS "performance;memory" TIMEOUT 600)
 
+mib_add_backend_test_executable(core_management_test backend/core_management_test.cpp)
+add_test(NAME backend.core_management COMMAND $<TARGET_FILE:mib_backend_tests> core_management_test)
+set_tests_properties(backend.core_management PROPERTIES LABELS "backend;roundtrip;fault-injection;stress" TIMEOUT 60)
+
+mib_add_backend_test_executable(profile_catalog_test backend/profile_catalog_test.cpp)
+add_test(NAME backend.profile_catalog COMMAND $<TARGET_FILE:mib_backend_tests> profile_catalog_test)
+set_tests_properties(backend.profile_catalog PROPERTIES LABELS "backend;fault-injection;stress" TIMEOUT 60)
+
+mib_add_backend_test_executable(profile_store_test backend/profile_store_test.cpp)
+add_test(NAME backend.profile_store COMMAND $<TARGET_FILE:mib_backend_tests> profile_store_test)
+set_tests_properties(backend.profile_store PROPERTIES LABELS "backend;roundtrip;fault-injection;stress" TIMEOUT 60)
+
+mib_add_backend_test_executable(processing_config_transaction_test backend/processing_config_transaction_test.cpp)
+add_test(NAME backend.processing_config_transaction COMMAND $<TARGET_FILE:mib_backend_tests> processing_config_transaction_test)
+set_tests_properties(backend.processing_config_transaction PROPERTIES LABELS "backend;roundtrip;fault-injection;stress" TIMEOUT 60)
+
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:mib_backend_tests> backend_facade_boundary_test)
 set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")
@@ -227,9 +467,107 @@ mib_add_backend_test_executable(processing_science_seam_test processing/processi
 add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_seam_test)
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+mib_add_backend_test_executable(processing_contract_v2_migration_test processing/processing_contract_v2_migration_test.cpp)
+add_test(NAME processing.contract_v2_migration COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract_v2_migration_test)
+set_tests_properties(processing.contract_v2_migration PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_contract2_conformance_test processing/processing_contract2_conformance_test.cpp)
+add_test(NAME processing.contract2_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract2_conformance_test)
+set_tests_properties(processing.contract2_conformance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_contract3_cells_conformance_test processing/processing_contract3_cells_conformance_test.cpp)
+add_test(NAME processing.contract3_cells_conformance COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract3_cells_conformance_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.contract3_cells_conformance PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 60)
+
+mib_add_backend_test_executable(pz_platform_monitor_test processing/pz_platform_monitor_test.cpp)
+add_test(NAME processing.pz_platform_monitor COMMAND $<TARGET_FILE:mib_backend_tests> pz_platform_monitor_test)
+set_tests_properties(processing.pz_platform_monitor PROPERTIES LABELS "processing;backend;pl" TIMEOUT 30)
+mib_add_backend_test_executable(pz_bridge_preview_test processing/pz_bridge_preview_test.cpp)
+add_test(NAME processing.pz_bridge_preview COMMAND $<TARGET_FILE:mib_backend_tests> pz_bridge_preview_test)
+set_tests_properties(processing.pz_bridge_preview PROPERTIES LABELS "processing;backend;pl" TIMEOUT 30)
+
+mib_add_backend_test_executable(pz_records_test processing/pz_records_test.cpp)
+add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_records_test
+         ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
+
+mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
+add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
+set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(pl_preview_background_test processing/pl_preview_background_test.cpp)
+mib_backend_test_link(pl_preview_background_test PRIVATE Threads::Threads)
+add_test(NAME processing.pl_preview_background COMMAND $<TARGET_FILE:mib_backend_tests> pl_preview_background_test)
+set_tests_properties(processing.pl_preview_background PROPERTIES LABELS "processing;backend;concurrency;pl" TIMEOUT 60)
+
+mib_add_backend_test_executable(pz_profile_compiler_test processing/pz_profile_compiler_test.cpp)
+add_test(NAME processing.pz_profile_compiler COMMAND $<TARGET_FILE:mib_backend_tests> pz_profile_compiler_test
+         ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
+set_tests_properties(processing.pz_profile_compiler PROPERTIES LABELS "processing;backend;pl" TIMEOUT 30)
+
+mib_add_backend_test_executable(pz_execution_provider_test processing/pz_execution_provider_test.cpp)
+mib_backend_test_link(pz_execution_provider_test PRIVATE Threads::Threads)
+add_test(NAME processing.pz_execution_provider COMMAND $<TARGET_FILE:mib_backend_tests> pz_execution_provider_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_execution_provider PROPERTIES LABELS "processing;backend;concurrency;pl" TIMEOUT 90)
+
+mib_add_backend_test_executable(pz_provider_ingest_test processing/pz_provider_ingest_test.cpp)
+mib_backend_test_link(pz_provider_ingest_test PRIVATE Threads::Threads)
+add_test(NAME processing.pz_provider_ingest COMMAND $<TARGET_FILE:mib_backend_tests> pz_provider_ingest_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_provider_ingest PROPERTIES LABELS "processing;backend;recording;concurrency;pl" TIMEOUT 90)
+mib_add_backend_test_executable(pz_unet_cells_host_test processing/pz_unet_cells_host_test.cpp)
+add_test(NAME processing.pz_unet_cells_host COMMAND $<TARGET_FILE:mib_backend_tests> pz_unet_cells_host_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_unet_cells_host PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 60)
+
+mib_add_backend_test_executable(unet_c4_test processing/unet_c4_test.cpp)
+add_test(NAME processing.unet_c4 COMMAND $<TARGET_FILE:mib_backend_tests> unet_c4_test)
+set_tests_properties(processing.unet_c4 PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 300 SKIP_RETURN_CODE 77
+    ENVIRONMENT "MIB_UNET_C4_PARAMS=${MIB_ASSETS_DIR}/models/unet-c4-multiline-v1/c4_multiline_params.npz;MIB_UNET_C4_FIXTURES=${MIB_ASSETS_DIR}/models/unet-c4-multiline-v1/fixtures")
+
+mib_add_backend_test_executable(pz_board_run_host_test processing/pz_board_run_host_test.cpp)
+add_test(NAME processing.pz_board_run_host COMMAND $<TARGET_FILE:mib_backend_tests> pz_board_run_host_test
+         ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
+set_tests_properties(processing.pz_board_run_host PROPERTIES LABELS "processing;backend;gold;pl" TIMEOUT 300 SKIP_RETURN_CODE 77)
+
+mib_add_backend_test_executable(image_filter_pipeline_test processing/image_filter_pipeline_test.cpp)
+add_test(NAME processing.image_filter_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> image_filter_pipeline_test)
+set_tests_properties(processing.image_filter_pipeline PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_laplacian_variance_test processing/processing_laplacian_variance_test.cpp)
+add_test(NAME processing.laplacian_variance COMMAND $<TARGET_FILE:mib_backend_tests> processing_laplacian_variance_test)
+set_tests_properties(processing.laplacian_variance PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_science_golden_test processing/processing_science_golden_test.cpp)
 add_test(NAME processing.science_golden COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_golden_test)
 set_tests_properties(processing.science_golden PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+# Dot-grid wafer localization (docs/architecture/dot-grid-localization.md).
+mib_add_backend_test_executable(dot_grid_codebook_test processing/dot_grid_codebook_test.cpp)
+add_test(NAME processing.dot_grid_codebook COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_codebook_test)
+set_tests_properties(processing.dot_grid_codebook PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(dot_grid_decoder_test processing/dot_grid_decoder_test.cpp)
+add_test(NAME processing.dot_grid_decoder COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_decoder_test)
+set_tests_properties(processing.dot_grid_decoder PROPERTIES LABELS "processing;backend" TIMEOUT 120)
+
+mib_add_backend_test_executable(dot_grid_registry_test processing/dot_grid_registry_test.cpp)
+add_test(NAME processing.dot_grid_registry COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_registry_test
+         ${PROJECT_SOURCE_DIR}/resources/defaults/dot_grid/registry.json)
+set_tests_properties(processing.dot_grid_registry PROPERTIES LABELS "processing;backend" TIMEOUT 120)
+
+mib_add_backend_test_executable(dot_grid_codec_gold_test processing/dot_grid_codec_gold_test.cpp)
+add_test(NAME processing.dot_grid_codec_gold COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_codec_gold_test
+         ${PROJECT_SOURCE_DIR}/scripts/dot_grid/gold/codec-contract1.json)
+set_tests_properties(processing.dot_grid_codec_gold PROPERTIES LABELS "processing;backend;gold" TIMEOUT 120)
+
+mib_add_backend_test_executable(dot_grid_service_test backend/dot_grid_service_test.cpp)
+mib_backend_test_link(dot_grid_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.dot_grid_service COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_service_test)
+set_tests_properties(backend.dot_grid_service PROPERTIES LABELS "backend;processing;stress" TIMEOUT 120)
 
 mib_add_backend_test_executable(processing_identification_metrics_test processing/processing_identification_metrics_test.cpp)
 add_test(NAME processing.identification_metrics COMMAND $<TARGET_FILE:mib_backend_tests> processing_identification_metrics_test)
@@ -252,11 +590,40 @@ set_target_properties(processing_core_abi_c_test PROPERTIES
 add_test(NAME processing.core_abi_c COMMAND $<TARGET_FILE:processing_core_abi_c_test>)
 set_tests_properties(processing.core_abi_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+add_executable(processing_core_abi_v2_c_test
+    ${PROJECT_SOURCE_DIR}/tests/processing/processing_core_abi_v2_c_test.c
+)
+target_include_directories(processing_core_abi_v2_c_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(processing_core_abi_v2_c_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+)
+add_test(NAME processing.core_abi_v2_c COMMAND $<TARGET_FILE:processing_core_abi_v2_c_test>)
+set_tests_properties(processing.core_abi_v2_c PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_capabilities_test processing/processing_core_capabilities_test.cpp)
+add_test(NAME processing.core_capabilities COMMAND $<TARGET_FILE:mib_backend_tests> processing_core_capabilities_test)
+set_tests_properties(processing.core_capabilities PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_core_loader_test processing/processing_core_loader_test.cpp)
 add_dependencies(processing_core_loader_test mib_processing_core)
 add_test(NAME processing.core_loader
     COMMAND $<TARGET_FILE:processing_core_loader_test> $<TARGET_FILE:mib_processing_core>)
 set_tests_properties(processing.core_loader PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_v2_plugin_test processing/processing_core_v2_plugin_test.cpp)
+add_dependencies(processing_core_v2_plugin_test mib_processing_core_absdiff_laplacian)
+add_test(NAME processing.core_v2_plugin
+    COMMAND $<TARGET_FILE:processing_core_v2_plugin_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
+set_tests_properties(processing.core_v2_plugin PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
+mib_add_backend_test_executable(processing_core_contract2_equivalence_test processing/processing_core_contract2_equivalence_test.cpp)
+add_dependencies(processing_core_contract2_equivalence_test mib_processing_core_absdiff_laplacian)
+add_test(NAME processing.core_contract2_equivalence
+    COMMAND $<TARGET_FILE:processing_core_contract2_equivalence_test> $<TARGET_FILE:mib_processing_core_absdiff_laplacian>)
+set_tests_properties(processing.core_contract2_equivalence PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
 add_subdirectory(processing/fixtures)
 mib_add_backend_test_executable(processing_core_fixture_matrix_test processing/processing_core_fixture_matrix_test.cpp)
@@ -360,6 +727,31 @@ set_tests_properties(recording.hdf5_save_performance PROPERTIES LABELS "recordin
 mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_roundtrip_test.cpp)
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> experiment_roundtrip_test)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
+
+# KDE core contour records (/monitoring @kde_live_json, /analysis @kde_core_json):
+# round-trip + fault injection for the save path and the frontend codec.
+# ReviewSession (plan 2026-10-01-standalone-review-app): the one review
+# implementation behind the Qt tab, the Tauri shell and YOFO Review.
+# Round-trip on experiment/legacy/recording fixtures + fault injection.
+mib_add_backend_test_executable(review_session_test review/review_session_test.cpp)
+add_test(NAME review.session COMMAND $<TARGET_FILE:mib_backend_tests> review_session_test)
+set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
+# regenerate masks, core contour, density (grid ≈ direct), single flight.
+mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)
+mib_backend_test_link(review_jobs_test PRIVATE Threads::Threads)
+add_test(NAME review.jobs COMMAND $<TARGET_FILE:mib_backend_tests> review_jobs_test)
+set_tests_properties(review.jobs PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 300)
+
+mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
+add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)
+set_tests_properties(recording.kde_core_roundtrip PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 30)
+mib_add_backend_test_executable(kde_core_fault_test recording/kde_core_fault_test.cpp)
+add_test(NAME recording.kde_core_fault COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_fault_test)
+set_tests_properties(recording.kde_core_fault PROPERTIES LABELS "recording;backend;monitoring;safety" TIMEOUT 30)
+mib_add_backend_test_executable(kde_full_run_core_test recording/kde_full_run_core_test.cpp)
+add_test(NAME recording.kde_full_run_core COMMAND $<TARGET_FILE:mib_backend_tests> kde_full_run_core_test)
+set_tests_properties(recording.kde_full_run_core PROPERTIES LABELS "recording;backend;monitoring" TIMEOUT 60)
 
 # Issue #344: native Qt-free export service (round-trip, cancellation, faults,
 # bounded names, repeated runs with HDF5 open-object accounting). The
@@ -477,6 +869,19 @@ mib_backend_test_link(e2e_pipeline_stress_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_pipeline_stress COMMAND $<TARGET_FILE:mib_backend_tests> e2e_pipeline_stress_test)
 set_tests_properties(integration.e2e_pipeline_stress PROPERTIES LABELS "integration;e2e" TIMEOUT 120)
 
+# Issue #419: end-to-end device-discovery lifecycle over a real AppBackend
+# (startup policy, explicit pulse-generator scan on the fake Modbus bench,
+# cancel, shutdown ordering versus hardware release).
+mib_add_backend_test_executable(e2e_stage_startup_test integration/e2e_stage_startup_test.cpp)
+mib_backend_test_link(e2e_stage_startup_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_stage_startup COMMAND $<TARGET_FILE:mib_backend_tests> e2e_stage_startup_test)
+set_tests_properties(integration.e2e_stage_startup PROPERTIES LABELS "integration;e2e;stage" TIMEOUT 120)
+
+mib_add_backend_test_executable(e2e_device_discovery_lifecycle_test integration/e2e_device_discovery_lifecycle_test.cpp)
+mib_backend_test_link(e2e_device_discovery_lifecycle_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_device_discovery_lifecycle COMMAND $<TARGET_FILE:mib_backend_tests> e2e_device_discovery_lifecycle_test)
+set_tests_properties(integration.e2e_device_discovery_lifecycle PROPERTIES LABELS "integration;e2e;discovery" TIMEOUT 120)
+
 mib_add_backend_test_executable(e2e_live_view_latency_test integration/e2e_live_view_latency_test.cpp)
 mib_backend_test_link(e2e_live_view_latency_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_live_view_latency COMMAND $<TARGET_FILE:mib_backend_tests> e2e_live_view_latency_test)
@@ -513,6 +918,10 @@ mib_add_backend_test_executable(hw_syringe_pump_test hardware/hw_syringe_pump_te
 add_test(NAME hardware.syringe_pump COMMAND $<TARGET_FILE:mib_backend_tests> hw_syringe_pump_test)
 set_tests_properties(hardware.syringe_pump PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+mib_add_backend_test_executable(hw_peristaltic_pump_test hardware/hw_peristaltic_pump_test.cpp)
+add_test(NAME hardware.peristaltic_pump COMMAND $<TARGET_FILE:mib_backend_tests> hw_peristaltic_pump_test)
+set_tests_properties(hardware.peristaltic_pump PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 120)
+
 mib_add_backend_test_executable(hw_nanopositioner_test hardware/hw_nanopositioner_test.cpp)
 add_test(NAME hardware.nanopositioner COMMAND $<TARGET_FILE:mib_backend_tests> hw_nanopositioner_test)
 set_tests_properties(hardware.nanopositioner PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
@@ -520,6 +929,13 @@ set_tests_properties(hardware.nanopositioner PROPERTIES LABELS "hardware" SKIP_R
 mib_add_backend_test_executable(hw_camera_test hardware/hw_camera_test.cpp)
 add_test(NAME hardware.camera COMMAND $<TARGET_FILE:mib_backend_tests> hw_camera_test)
 set_tests_properties(hardware.camera PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+# Issue #413: the complete one-click illuminated Live View cycle against the
+# real XGC/R5D rig (discovery, coordinated start, frames, coordinated stop,
+# generator-OFF readback, restart). Gated by MIB_TEST_ILLUMINATED_LIVE.
+mib_add_backend_test_executable(hw_illuminated_live_test hardware/hw_illuminated_live_test.cpp)
+add_test(NAME hardware.illuminated_live COMMAND $<TARGET_FILE:mib_backend_tests> hw_illuminated_live_test)
+set_tests_properties(hardware.illuminated_live PROPERTIES LABELS "hardware" SKIP_RETURN_CODE 77 TIMEOUT 300)
 
 mib_add_backend_test_executable(hw_egrabber_script_test hardware/hw_egrabber_script_test.cpp)
 add_test(NAME hardware.egrabber_script COMMAND $<TARGET_FILE:mib_backend_tests> hw_egrabber_script_test)
@@ -579,6 +995,21 @@ set_target_properties(processing_core_catalog_test PROPERTIES
 )
 add_test(NAME frontend.processing_core_catalog COMMAND $<TARGET_FILE:processing_core_catalog_test>)
 set_tests_properties(frontend.processing_core_catalog PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
+
+add_executable(registry_http_transport_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/registry_http_transport_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/system/RegistryHttpTransport.cpp
+)
+target_include_directories(registry_http_transport_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(registry_http_transport_test PRIVATE Qt6::Core Qt6::Network Threads::Threads)
+set_target_properties(registry_http_transport_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+)
+add_test(NAME frontend.registry_http_transport COMMAND $<TARGET_FILE:registry_http_transport_test>)
+set_tests_properties(frontend.registry_http_transport PROPERTIES LABELS "frontend;profiles" TIMEOUT 60)
 
 add_executable(application_settings_test
     ${PROJECT_SOURCE_DIR}/tests/frontend/application_settings_test.cpp
@@ -768,8 +1199,44 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.gold_standard_schema_contract
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_gold_standard_schema_contract.py
+    )
+    set_tests_properties(scripts.gold_standard_schema_contract PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.pz7035_abi_vendor
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/vendor_pz7035_abi.py --check
+    )
+    set_tests_properties(scripts.pz7035_abi_vendor PROPERTIES
+        LABELS "scripts;pl"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.contract3_export_review
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_contract3_export_review.py
+    )
+    set_tests_properties(scripts.contract3_export_review PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.contract2_export_review
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_contract2_export_review.py
+    )
+    set_tests_properties(scripts.contract2_export_review PROPERTIES
+        LABELS "scripts;hdf5"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.publish_processing_core
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_publish_processing_core.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_processing_core.py
     )
     set_tests_properties(scripts.publish_processing_core PROPERTIES
         LABELS "scripts;contract"
@@ -778,7 +1245,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.publish_profiles
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_publish_profiles.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_publish_profiles.py
     )
     set_tests_properties(scripts.publish_profiles PROPERTIES
         LABELS "scripts;contract"
@@ -786,8 +1253,38 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.installer_excludes_cores
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_installer_excludes_cores.py
+    )
+    set_tests_properties(scripts.installer_excludes_cores PROPERTIES
+        LABELS "scripts;contract"
+        TIMEOUT 30
+    )
+
+    # ADR 0007 / rollout T1.2: the built absdiff-laplacian core reproduces the
+    # Contract-2 real-frame gold through engine ABI v2 (ctypes, no host code).
+    # Not in sanitizer builds: an uninstrumented python cannot dlopen a
+    # sanitizer-instrumented core (TSan: "cannot allocate memory in static TLS
+    # block"). The native-core CI jobs run it on the unsanitized artifacts.
+    if(TARGET mib_processing_core_absdiff_laplacian AND NOT MIB_SANITIZER)
+        add_test(
+            NAME processing.native_core_contract2_gold
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/run_native_core_conformance.py
+                --core $<TARGET_FILE:mib_processing_core_absdiff_laplacian>
+                --frames-npz ${PROJECT_SOURCE_DIR}/scripts/conformance/focus-50v-real.npz
+                --reference ${PROJECT_SOURCE_DIR}/scripts/conformance/focus-50v-real-contract2.json
+                --skip-if-missing-numpy
+        )
+        set_tests_properties(processing.native_core_contract2_gold PROPERTIES
+            LABELS "processing;contract"
+            TIMEOUT 120
+            SKIP_RETURN_CODE 77
+        )
+    endif()
+
+    add_test(
         NAME scripts.contract_version_consistency
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_contract_version_consistency.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_contract_version_consistency.py
     )
     set_tests_properties(scripts.contract_version_consistency PROPERTIES
         LABELS "scripts;contract"
@@ -796,7 +1293,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.bump_mib_processing_version
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_bump_mib_processing_version.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_bump_mib_processing_version.py
     )
     set_tests_properties(scripts.bump_mib_processing_version PROPERTIES
         LABELS "scripts;contract"
@@ -805,7 +1302,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.verify_processing_core_manifest
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_verify_processing_core_manifest.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_verify_processing_core_manifest.py
     )
     set_tests_properties(scripts.verify_processing_core_manifest PROPERTIES
         LABELS "scripts;contract"
@@ -814,7 +1311,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.processing_core_signer_release_gate
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_processing_core_signer_release_gate.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_processing_core_signer_release_gate.py
     )
     set_tests_properties(scripts.processing_core_signer_release_gate PROPERTIES
         LABELS "scripts;contract;release"
@@ -823,7 +1320,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME scripts.desktop_release_version
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test_desktop_release_version.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_desktop_release_version.py
     )
     set_tests_properties(scripts.desktop_release_version PROPERTIES
         LABELS "scripts;release"
@@ -840,12 +1337,31 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.publish_review_update
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_publish_review_update.py
+    )
+    set_tests_properties(scripts.publish_review_update PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.compare_metrics
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_compare_metrics.py
     )
     set_tests_properties(scripts.compare_metrics PROPERTIES
         LABELS "scripts;contract;processing"
         TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.dot_grid_reference
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/dot_grid/test_dotgrid.py
+    )
+    set_tests_properties(scripts.dot_grid_reference PROPERTIES
+        LABELS "scripts;processing"
+        TIMEOUT 120
+        SKIP_RETURN_CODE 77
     )
 
     add_test(
@@ -875,5 +1391,61 @@ mib_backend_test_link(hw_discovery_reentry_test PRIVATE Threads::Threads)
 add_test(NAME hardware.discovery_reentry COMMAND $<TARGET_FILE:mib_backend_tests> hw_discovery_reentry_test)
 set_tests_properties(hardware.discovery_reentry PROPERTIES LABELS "hardware;camera" SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+mib_add_backend_test_executable(export_bridge_facade_test backend/export_bridge_facade_test.cpp)
+add_test(NAME backend.export_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> export_bridge_facade_test)
+set_tests_properties(backend.export_bridge_facade PROPERTIES LABELS "backend;bridge;recording;stress" TIMEOUT 45)
+
+mib_add_backend_test_executable(frame_identity_test backend/frame_identity_test.cpp)
+add_test(NAME backend.frame_identity COMMAND $<TARGET_FILE:mib_backend_tests> frame_identity_test)
+set_tests_properties(backend.frame_identity PROPERTIES LABELS "backend;bridge;stress;invariant" TIMEOUT 45)
+mib_add_backend_test_executable(processed_preview_packet_test backend/processed_preview_packet_test.cpp)
+add_test(NAME backend.processed_preview_packet COMMAND $<TARGET_FILE:mib_backend_tests> processed_preview_packet_test)
+set_tests_properties(backend.processed_preview_packet PROPERTIES LABELS "backend;bridge;processing;concurrency" TIMEOUT 45)
+
+mib_add_backend_test_executable(profile_registry_test profiles/profile_registry_test.cpp)
+add_test(NAME profiles.registry COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_test)
+set_tests_properties(profiles.registry PROPERTIES LABELS "backend;profiles;roundtrip;fault-injection" TIMEOUT 30)
+
+mib_add_backend_test_executable(profile_registry_worker_test profiles/profile_registry_worker_test.cpp)
+mib_backend_test_link(profile_registry_worker_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_worker COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_worker_test)
+set_tests_properties(profiles.registry_worker PROPERTIES LABELS "backend;profiles;concurrency;fault-injection" TIMEOUT 60)
+
+mib_add_backend_test_executable(profile_registry_backend_test profiles/profile_registry_backend_test.cpp)
+mib_backend_test_link(profile_registry_backend_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_backend COMMAND $<TARGET_FILE:mib_backend_tests> profile_registry_backend_test)
+set_tests_properties(profiles.registry_backend PROPERTIES LABELS "backend;profiles;concurrency" TIMEOUT 60)
+
+mib_add_backend_test_executable(registry_facade_test profiles/registry_facade_test.cpp)
+mib_backend_test_link(registry_facade_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_facade COMMAND $<TARGET_FILE:mib_backend_tests> registry_facade_test)
+set_tests_properties(profiles.registry_facade PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 60)
+
+mib_add_backend_test_executable(instrument_identity_test profiles/instrument_identity_test.cpp)
+add_test(NAME profiles.instrument_identity COMMAND $<TARGET_FILE:mib_backend_tests> instrument_identity_test)
+set_tests_properties(profiles.instrument_identity PROPERTIES LABELS "backend;profiles;fault-injection" TIMEOUT 30)
+
+mib_add_backend_test_executable(registry_method_test profiles/registry_method_test.cpp)
+mib_backend_test_link(registry_method_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_method COMMAND $<TARGET_FILE:mib_backend_tests> registry_method_test)
+set_tests_properties(profiles.registry_method PROPERTIES LABELS "backend;profiles;roundtrip;fault-injection" TIMEOUT 60)
+
+mib_add_backend_test_executable(method_provenance_test backend/method_provenance_test.cpp)
+add_test(NAME backend.method_provenance COMMAND $<TARGET_FILE:mib_backend_tests> method_provenance_test)
+set_tests_properties(backend.method_provenance PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 30)
+
+mib_add_backend_test_executable(method_gate_e2e_test profiles/method_gate_e2e_test.cpp)
+mib_backend_test_link(method_gate_e2e_test PRIVATE Threads::Threads)
+add_test(NAME e2e.method_gate COMMAND $<TARGET_FILE:mib_backend_tests> method_gate_e2e_test)
+set_tests_properties(e2e.method_gate PROPERTIES LABELS "e2e;profiles;hdf5;roundtrip" TIMEOUT 120)
+
+mib_add_backend_test_executable(registry_authoring_test profiles/registry_authoring_test.cpp)
+mib_backend_test_link(registry_authoring_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_authoring COMMAND $<TARGET_FILE:mib_backend_tests> registry_authoring_test)
+set_tests_properties(profiles.registry_authoring PROPERTIES LABELS "backend;profiles;e2e;fault-injection" TIMEOUT 90)
+
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+# The vendored PZ7035 ABI header, for tests that fake bridge registers
+# (processing.pz_platform_monitor).
+target_include_directories(mib_backend_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)

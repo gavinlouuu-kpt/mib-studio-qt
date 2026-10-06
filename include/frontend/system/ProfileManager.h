@@ -107,6 +107,16 @@ public:
     std::optional<Catalog> fetchCatalog(const QUrl& url, QString* errorOut = nullptr) const;
     std::optional<CatalogEntry> findCatalogEntry(const Catalog& catalog, const QString& profileId) const;
 
+    // Explicit Contract-1 -> Contract-2 copy-upgrade. Returns a schema-2 config
+    // document migrated from `v1Doc` via the Qt-free backend migrator
+    // (backend::processing::contract::migrateProfileConfigV1ToV2): unrelated
+    // values preserved, ring configuration removed, identity preprocessing
+    // installed, Laplacian gate disabled. Never rewrites the source; the caller
+    // writes the result to a new/destination profile. Fails closed on a
+    // non-v1 or malformed document.
+    std::optional<QJsonDocument> copyUpgradeConfigToV2(const QJsonDocument& v1Doc,
+                                                       QString* errorOut = nullptr) const;
+
     std::optional<QJsonDocument> loadJsonDocument(const QString& path, QString* errorOut = nullptr) const;
     bool saveJsonDocumentAtomic(const QString& path, const QJsonDocument& doc, QString* errorOut = nullptr) const;
 

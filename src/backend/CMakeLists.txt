@@ -1,3 +1,9 @@
+include("${PROJECT_SOURCE_DIR}/cmake/GenerateReviewIsoelastic.cmake")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt")
+mib_generate_review_isoelastic(
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/ReviewIsoelasticData.h")
 include(MIBLinkHelpers)
 
 # The Python wheel version is the processing-core release identity. Keep a
@@ -12,6 +18,17 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/bindings/python/pyproject.toml")
 endif()
 if(MIB_PROCESSING_CORE_VERSION STREQUAL "")
     set(MIB_PROCESSING_CORE_VERSION "0.1.0")
+endif()
+
+# Dot-grid codec core version (encoder + decoder build line, ADR 0010). One
+# source shared with the Python mask generator: scripts/dot_grid/dotgrid/VERSION.
+set(MIB_DOTGRID_CORE_VERSION "0.0.0")
+if(EXISTS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
+    file(STRINGS "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION" _mib_dotgrid_version LIMIT_COUNT 1)
+    string(STRIP "${_mib_dotgrid_version}" MIB_DOTGRID_CORE_VERSION)
+    # A VERSION bump must re-run configure, or the compiled-in version goes stale.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${PROJECT_SOURCE_DIR}/scripts/dot_grid/dotgrid/VERSION")
 endif()
 
 # mib_processing: the Qt-free deformability-cytometry processing core plus
@@ -32,16 +49,66 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCoreSha256.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/UnetC4.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
+    # Science placement is a leaf (no dependencies); it lives with ProcessingService, which
+    # consults it, so processing-only binaries link.
+    ${PROJECT_SOURCE_DIR}/src/backend/app/SciencePlacement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzPlatformMonitor.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzInstrumentControl.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzExecutionProviders.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/ExecutionProviderFactory.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzBridgePreview.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ProcessingOverlay.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/PipelineTimingRecorder.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/FrameStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/Tools.cpp
 )
+# Where the science runs (SciencePlacement.cpp is in this library): ON for the PZ7035 PS.
+target_compile_definitions(mib_processing PUBLIC MIB_PL_SCIENCE=$<BOOL:${MIB_PL_SCIENCE}>)
+
+# The U-Net weights the PZ7035 PL must run (#501 PL identity check): the
+# first 32 hex of the pinned unet-c4-multiline-v1 .npz sha256 in
+# env/assets.json, the PROFILE_ID the bridge reports for that core.
+file(READ "${PROJECT_SOURCE_DIR}/env/assets.json" _mib_assets_json)
+string(JSON _mib_asset_count LENGTH "${_mib_assets_json}" assets)
+set(MIB_PINNED_UNET_PROFILE_ID "")
+math(EXPR _mib_asset_last "${_mib_asset_count} - 1")
+foreach(_i RANGE ${_mib_asset_last})
+    string(JSON _mib_asset_id GET "${_mib_assets_json}" assets ${_i} id)
+    if(_mib_asset_id STREQUAL "unet-c4-multiline-v1")
+        string(JSON _mib_file_count LENGTH "${_mib_assets_json}" assets ${_i} files)
+        math(EXPR _mib_file_last "${_mib_file_count} - 1")
+        foreach(_f RANGE ${_mib_file_last})
+            string(JSON _mib_file_path ERROR_VARIABLE _mib_no_path GET "${_mib_assets_json}" assets ${_i} files ${_f} path)
+            if(_mib_file_path STREQUAL "c4_multiline_params.npz")
+                string(JSON _mib_npz_sha GET "${_mib_assets_json}" assets ${_i} files ${_f} sha256)
+                string(SUBSTRING "${_mib_npz_sha}" 0 32 MIB_PINNED_UNET_PROFILE_ID)
+            endif()
+        endforeach()
+    endif()
+endforeach()
+if(NOT MIB_PINNED_UNET_PROFILE_ID)
+    message(FATAL_ERROR "env/assets.json: no unet-c4-multiline-v1 c4_multiline_params.npz sha256")
+endif()
+set_property(DIRECTORY ${PROJECT_SOURCE_DIR} APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/env/assets.json")
+set_property(SOURCE ${PROJECT_SOURCE_DIR}/src/backend/pz/PzPlatformMonitor.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS MIB_PINNED_UNET_PROFILE_ID="${MIB_PINNED_UNET_PROFILE_ID}")
 
 # No Q_OBJECT usage in this target, and it must not require the Qt moc
 # toolchain to build standalone (e.g. for a Qt-less Python wheel build --
@@ -57,8 +124,14 @@ set_target_properties(mib_processing PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+target_include_directories(mib_processing PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_include_directories(mib_processing PUBLIC
     ${PROJECT_SOURCE_DIR}/include
+)
+# PZ7035 PS-PL ABI bundle (pz_mib_abi.h), vendored and pinned; private to
+# src/backend/pz (scripts/vendor_pz7035_abi.py).
+target_include_directories(mib_processing PRIVATE
+    ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi
 )
 
 target_link_libraries(mib_processing PUBLIC
@@ -67,7 +140,28 @@ target_link_libraries(mib_processing PUBLIC
 )
 
 target_compile_definitions(mib_processing PUBLIC
+    MIB_DOTGRID_CORE_VERSION="${MIB_DOTGRID_CORE_VERSION}"
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+)
+
+# Contract of the bundled kernel (ADR 0007); 0 = research (any contract).
+if(MIB_PROCESSING_CORE_CONTRACT STREQUAL "1")
+    set(_mib_bundled_contract 1)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "2")
+    set(_mib_bundled_contract 2)
+elseif(MIB_PROCESSING_CORE_CONTRACT STREQUAL "research")
+    if(NOT MIB_BUILD_PYTHON_BINDINGS)
+        message(FATAL_ERROR
+            "MIB_PROCESSING_CORE_CONTRACT=research is only for the Python wheel "
+            "(MIB_BUILD_PYTHON_BINDINGS=ON); shipped builds run one contract (ADR 0007)")
+    endif()
+    set(_mib_bundled_contract 0)
+else()
+    message(FATAL_ERROR
+        "MIB_PROCESSING_CORE_CONTRACT must be 1, 2 or research (got '${MIB_PROCESSING_CORE_CONTRACT}')")
+endif()
+target_compile_definitions(mib_processing PUBLIC
+    MIB_PROCESSING_BUNDLED_CONTRACT=${_mib_bundled_contract}
 )
 if(WIN32)
     target_link_libraries(mib_processing PUBLIC wintrust crypt32)
@@ -97,6 +191,39 @@ endif()
 mib_link_opencv(mib_processing PUBLIC)
 mib_link_hdf5(mib_processing PUBLIC)
 
+# mib_review_core: the one review implementation behind every shell (plan
+# 2026-10-01-standalone-review-app, ADR 0014). Qt-free, built on
+# mib_processing only — no cameras, serial, SQLite, Sentry — so YOFO Review
+# links it without mib_backend, while mib_backend links it for the
+# BackendFacade's review surface and the Qt tab's parity.
+add_library(mib_review_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewJobs.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewSession.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewJobs.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewTypes.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/OverlayCompose.h
+)
+set_target_properties(mib_review_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(mib_review_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(mib_review_core PUBLIC mib_processing)
+
+if(MIB_BUILD_REVIEW_LINK_PROBE)
+    add_executable(mib_review_link_probe ${PROJECT_SOURCE_DIR}/tools/review_link_probe/main.cpp)
+    target_link_libraries(mib_review_link_probe PRIVATE mib_review_core)
+    set_target_properties(mib_review_link_probe PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+endif()
+
 # A wheel build needs only the portable library above. Stopping here keeps Qt,
 # camera services, desktop backends, and the native Windows module out of the
 # manylinux configuration and makes its dependency surface auditable.
@@ -104,36 +231,134 @@ if(MIB_BUILD_PROCESSING_ONLY)
     return()
 endif()
 
-# Native hot-swap artifact. It deliberately links only the mask kernel and
-# OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
-# Windows DLL before the registry publisher hashes it.
-add_library(mib_processing_core MODULE
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+# Clean-room OEABT compatibility layer. The protocol target is standard
+# C++17; native ISerialPort is shared with the existing serial services.
+add_library(oeabt_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/OeabtProtocol.cpp
 )
-target_include_directories(mib_processing_core PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(mib_processing_core PRIVATE spdlog::spdlog)
-mib_link_opencv(mib_processing_core PRIVATE)
-target_compile_definitions(mib_processing_core PRIVATE
-    MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
-    MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
-)
-set_target_properties(mib_processing_core PROPERTIES
-    PREFIX ""
+target_include_directories(oeabt_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(oeabt_core PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     AUTOMOC OFF
     AUTOUIC OFF
     AUTORCC OFF
     POSITION_INDEPENDENT_CODE ON
-    # MSVC only exports __declspec(dllexport) symbols; ELF must opt into the
-    # same discipline so the release audit sees exactly mib_processing_get_api.
-    C_VISIBILITY_PRESET hidden
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
-    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
 )
+
+# oeabt_serial is the shared native serial library despite its name: the
+# platform ISerialPort (added below) and the Modbus RTU bus layer
+# (SerialBus.cpp) live here, so device drivers and their CLIs (zc300ctl) link
+# them without the whole backend, and the Rust bridge's archive list
+# (crates/mib-bridge/build.rs) stays unchanged.
+add_library(oeabt_serial STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
+)
+target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
+if(WIN32)
+    target_link_libraries(oeabt_serial PUBLIC setupapi)
+endif()
+set_target_properties(oeabt_serial PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+# Motorized stages (ADR 0013): pure ZC300 protocol, then the driver over the
+# shared bus. Linked by the backend services and by zc300ctl.
+add_library(stage_zc300_protocol STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/zc300/Zc300Protocol.cpp
+)
+target_include_directories(stage_zc300_protocol PUBLIC ${PROJECT_SOURCE_DIR}/include)
+set_target_properties(stage_zc300_protocol PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+add_library(stage_zc300 STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/StageFactory.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/LimitVerification.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/stage/zc300/Zc300Stage.cpp
+)
+target_link_libraries(stage_zc300 PUBLIC stage_zc300_protocol oeabt_serial spdlog::spdlog)
+if(TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(stage_zc300 PUBLIC nlohmann_json::nlohmann_json) # limits-verified record
+endif()
+set_target_properties(stage_zc300 PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+if(MIB_BUILD_STAGE_TOOLS)
+    add_executable(zc300ctl ${PROJECT_SOURCE_DIR}/tools/zc300ctl/main.cpp)
+    target_link_libraries(zc300ctl PRIVATE stage_zc300)
+    set_target_properties(zc300ctl PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+endif()
+
+if(MIB_BUILD_OEABT_TOOLS)
+    add_executable(oeabtctl ${PROJECT_SOURCE_DIR}/tools/oeabtctl/main.cpp)
+    target_link_libraries(oeabtctl PRIVATE oeabt_serial)
+    set_target_properties(oeabtctl PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+endif()
+
+# Native hot-swap artifacts. They deliberately link only the mask kernel and
+# OpenCV/spdlog, not Qt/HDF5 or the desktop service graph. Release CI signs the
+# Windows DLL before the registry publisher hashes it. Each plugin line
+# implements exactly one contract (ADR 0007) and exports only that contract's
+# entry point: subtract-ring (Contract 1, mib_processing_get_api) and
+# absdiff-laplacian (Contract 2, mib_processing_get_api_v2).
+function(mib_add_processing_core_plugin target contract)
+    add_library(${target} MODULE
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/BundledProcessingKernel.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLut.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingConfigJson.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingCorePlugin.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingScience.cpp
+    )
+    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(${target} PRIVATE spdlog::spdlog)
+    # Header-only: ProcessingScience.cpp includes ProcessingContract.h. Without
+    # the target, MSVC builds (Conan nlohmann_json) cannot find the header.
+    if(TARGET nlohmann_json::nlohmann_json)
+        target_link_libraries(${target} PRIVATE nlohmann_json::nlohmann_json)
+    endif()
+    mib_link_opencv(${target} PRIVATE)
+    target_compile_definitions(${target} PRIVATE
+        MIB_PROCESSING_CORE_PLUGIN_EXPORTS=1
+        MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+        MIB_PROCESSING_BUNDLED_CONTRACT=${contract}
+    )
+    set_target_properties(${target} PROPERTIES
+        PREFIX ""
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        POSITION_INDEPENDENT_CODE ON
+        # MSVC only exports __declspec(dllexport) symbols; ELF must opt into
+        # the same discipline so the release audit sees exactly the one entry
+        # point of the plugin's contract.
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+        LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>"
+    )
+endfunction()
+
+# subtract-ring (Contract 1): the released line (artifact naming, descriptor
+# and signing below are unchanged).
+mib_add_processing_core_plugin(mib_processing_core 1)
+# absdiff-laplacian (Contract 2): built for the ABI-v2 plugin tests. Release
+# naming, descriptor and signing arrive with the Contract 2 core line (T1.1).
+mib_add_processing_core_plugin(mib_processing_core_absdiff_laplacian 2)
 if(WIN32)
     set(_mib_processing_native_basename
         "mib_processing_core-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
@@ -153,6 +378,8 @@ elseif(UNIX AND NOT APPLE)
         set(_mib_processing_native_arch "x86_64")
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
         set(_mib_processing_native_arch "aarch64")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(armv7.*|arm)$")
+        set(_mib_processing_native_arch "armv7")
     else()
         set(_mib_processing_native_arch "${CMAKE_SYSTEM_PROCESSOR}")
     endif()
@@ -181,11 +408,51 @@ elseif(UNIX AND NOT APPLE)
         CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"engine_abi_version\": 1,\n  \"contract_version\": 1,\n  \"entrypoint\": \"mib_processing_get_api\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
 endif()
 
+# absdiff-laplacian (Contract 2) line (ADR 0007): engine ABI v2, entry point
+# mib_processing_get_api_v2. CI builds, audits, tests and uploads it next to
+# the subtract-ring core; signing and publishing are per-line release work.
+# The descriptors above must stay first: release tests read the subtract-ring
+# sidecar's contract_version/engine_abi_version from the first match.
+if(WIN32)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-windows_x86_64")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"windows\",\n  \"arch\": \"x86_64\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"authenticode\"}\n}\n")
+elseif(UNIX AND NOT APPLE)
+    set(_mib_processing_c2_basename
+        "mib_processing_core-absdiff-laplacian-${MIB_PROCESSING_CORE_VERSION}-linux_${_mib_processing_native_arch}")
+    set_target_properties(mib_processing_core_absdiff_laplacian PROPERTIES
+        OUTPUT_NAME "${_mib_processing_c2_basename}")
+    file(GENERATE
+        OUTPUT "${PROJECT_BINARY_DIR}/$<CONFIG>/${_mib_processing_c2_basename}.json"
+        CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
+endif()
+
 add_library(mib_backend STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileCache.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseAuth.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryWorker.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/InstrumentIdentity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/RecordingTarget.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzBridgePreviewCamera.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileStore.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileCatalog.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/MethodApply.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h
     ${PROJECT_SOURCE_DIR}/src/backend/processing/EModulusLutCatalog.cpp
@@ -197,10 +464,22 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/RecorderService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/playback/PlaybackService.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/Zc300Provider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/NanopositionerBackends.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/DeviceDiscoveryService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryPolicy.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/StartupDiscoveryCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/CameraEnumerationProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/NanopositionerProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/PulseGeneratorProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/EGrabberCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp
@@ -208,16 +487,20 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
 )
 
-target_link_libraries(mib_backend PUBLIC mib_processing)
+if(MIB_HAS_ARAVIS)
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/camera/aravis/AravisCamera.cpp
+    )
+endif()
+
+# ReviewExport.cpp is compiled once, in mib_review_core (ADR 0014).
+target_link_libraries(mib_backend PUBLIC mib_review_core mib_processing stage_zc300 oeabt_serial)
+
+
 
 if(MIB_HAS_EGRABBER)
     target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.cpp
         ${PROJECT_SOURCE_DIR}/src/backend/camera/egrabber/GenTLHolder.cpp
-    )
-else()
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/AutofocusService.stub.cpp
     )
 endif()
 
@@ -231,14 +514,27 @@ else()
     )
 endif()
 
+if(MIB_HAS_ARAVIS)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ARAVIS=1)
+    target_link_libraries(mib_backend PUBLIC PkgConfig::MIB_ARAVIS)
+    # On-target smoke/soak of the YOFO Studio preview path (impl spec S6).
+    add_executable(yofo_preview_soak ${PROJECT_SOURCE_DIR}/tools/yofo_preview_soak/main.cpp)
+    target_link_libraries(yofo_preview_soak PRIVATE mib_backend)
+    set_target_properties(yofo_preview_soak PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ARAVIS=0)
+endif()
+
 # Platform serial transport (ISerialPort) — replaces Qt6::SerialPort so the
 # backend links no Qt SerialPort (epic #246).
 if(WIN32)
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortWin32.cpp
     )
 else()
-    target_sources(mib_backend PRIVATE
+    target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortPosix.cpp
     )
 endif()
@@ -253,12 +549,20 @@ set_target_properties(mib_backend PROPERTIES
 target_compile_definitions(mib_backend PUBLIC
     $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG>
     MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
+    MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"
+    MIB_PROCESSING_CORE_ED25519_SPKI_SHA256="${MIB_PROCESSING_CORE_ED25519_SPKI_SHA256}"
 )
 
 if(MIB_HAS_EGRABBER)
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=1)
 else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=0)
+endif()
+
+if(MIB_HAS_COREMOR)
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=1)
+else()
+    target_compile_definitions(mib_backend PUBLIC MIB_HAS_COREMOR=0)
 endif()
 
 if(MIB_HAS_MINDVISION)
@@ -282,9 +586,11 @@ target_include_directories(mib_backend PUBLIC
 )
 if(MIB_HAS_EGRABBER)
     target_include_directories(mib_backend PUBLIC
-        ${PROJECT_SOURCE_DIR}/include/Coremor
         "C:/Program Files/Euresys/eGrabber/include"
     )
+endif()
+if(MIB_HAS_COREMOR)
+    target_include_directories(mib_backend PUBLIC ${PROJECT_SOURCE_DIR}/include/Coremor)
 endif()
 if(MIB_HAS_MINDVISION)
     target_include_directories(mib_backend PUBLIC
@@ -332,7 +638,7 @@ else()
     target_compile_definitions(mib_backend PUBLIC MIB_USE_SENTRY=0)
 endif()
 
-if(MIB_HAS_EGRABBER)
+if(MIB_HAS_COREMOR)
     set(COREMOR_LIB_DIR ${PROJECT_SOURCE_DIR}/include/Coremor)
     target_link_libraries(mib_backend PUBLIC
         ${COREMOR_LIB_DIR}/XMT_DLL_SER.lib

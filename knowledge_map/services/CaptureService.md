@@ -13,6 +13,13 @@
 **Related:** [[../camera/ICamera]], [[../data-model/FrameStore]],
 [[ProcessingService]], [[TriggerService]]
 
+When releasing a camera, the worker keeps `cameraMutex_` while invoking the
+camera's bounded `stop()`. This matches the public stop path and prevents a
+worker/public-stop lock inversion while a grab is in flight. Aravis uses a
+bounded SDK pop and reasserts cancellation after taking its resource locks;
+`backend.aravis_capture_lifecycle` and `camera.aravis_stress` exercise this
+stop/grab/restart boundary.
+
 ## Responsibility
 
 - One thread per service: `run(generation)` blocks on the camera's blocking
@@ -152,3 +159,11 @@ receipt/publish timing is host-side latency, never exposure time. Consumers:
   - Windows (`MIB_HAS_EGRABBER=1`) defaults to [[../camera/EGrabberCamera]].
   - Non-Windows defaults to [[../camera/MockCamera]] (`data/mock_frames`) so
     cloud/Linux builds can exercise non-hardware pipeline paths.
+
+## Illuminated rig teardown (#413)
+
+The MindVision camera owns its optional illumination session, so all existing
+capture stop/fault/shutdown paths also release the generator. `releaseCamera`
+retains an unconfirmed rig shutdown in the lifecycle failure message after
+`camera->stop()`; explicit stop must not silently report physical OFF.
+See [workflow](../../docs/howto/illuminated-live-view.md).

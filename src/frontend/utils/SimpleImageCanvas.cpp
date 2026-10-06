@@ -7,6 +7,8 @@
 #include <QPen>
 #include <QBrush>
 #include <QColor>
+#include <QFontMetrics>
+#include <algorithm>
 #include <cmath>
 
 namespace frontend
@@ -14,10 +16,6 @@ namespace frontend
 
     namespace
     {
-        // ROI alignment constraints: OffsetX must be multiple of 4, OffsetY must be multiple of 16
-        static constexpr int ROI_OFFSET_X_STEP = 16;
-        static constexpr int ROI_OFFSET_Y_STEP = 4;
-
         // Snap a value to the nearest multiple of step, clamping to [0, max]
         static int snapToStep(int value, int step, int max)
         {
@@ -85,6 +83,25 @@ namespace frontend
         }
         p.drawImage(topLeft.toPoint(), scaledImgCache_);
 
+        // Dot-grid wafer localization: detected dots and the image-centre marker
+        // (the reported wafer position); the pose text is drawn last, on top.
+        if (dotGrid_ && dotGrid_->active && dotGrid_->valid)
+        {
+            QPen dotPen(QColor(255, 160, 0));
+            dotPen.setWidth(1);
+            p.setPen(dotPen);
+            p.setBrush(Qt::NoBrush);
+            const double r = std::max(3.0, 6.0 * scale);
+            for (const QPointF &d : dotGrid_->dots)
+                p.drawEllipse(imageToCanvas(d), r, r);
+            QPen centrePen(QColor(0, 220, 255));
+            centrePen.setWidth(2);
+            p.setPen(centrePen);
+            const QPointF c = imageToCanvas(dotGrid_->centre);
+            p.drawLine(c + QPointF(-14, 0), c + QPointF(14, 0));
+            p.drawLine(c + QPointF(0, -14), c + QPointF(0, 14));
+        }
+
         // Draw ROI overlay if visible
         if (roiVisible_ && *roiVisible_ && roiPos_)
         {
@@ -92,13 +109,25 @@ namespace frontend
             const int roiH = roiHeight_ ? *roiHeight_ : 96;
 
             // Convert image coordinates to canvas coordinates
-            QPointF canvasPos = imageToCanvas(*roiPos_);
+            QPointF canvasPos = imageToCanvas(displayedRoiPosition());
             QRectF roiRect(canvasPos.x(), canvasPos.y(), roiW * scale, roiH * scale);
 
             // Draw semi-transparent rectangle
             p.setPen(QPen(QColor(255, 0, 0, 200), 2));
             p.setBrush(QBrush(QColor(255, 0, 0, 30)));
             p.drawRect(roiRect);
+        }
+
+        if (dotGrid_ && dotGrid_->active && !dotGrid_->text.isEmpty())
+        {
+            const QFontMetrics fm(p.font());
+            const QRect textRect = fm.boundingRect(QRect(0, 0, 640, 200), Qt::AlignLeft | Qt::TextWordWrap, dotGrid_->text);
+            const QRectF box(topLeft.x() + 8, topLeft.y() + 8, textRect.width() + 14, textRect.height() + 10);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 150));
+            p.drawRoundedRect(box, 4, 4);
+            p.setPen(dotGrid_->valid ? QColor(255, 220, 120) : QColor(255, 130, 130));
+            p.drawText(box.adjusted(7, 5, -7, -5), Qt::AlignLeft | Qt::TextWordWrap, dotGrid_->text);
         }
     }
 
@@ -118,7 +147,7 @@ namespace frontend
             // Check if click is within ROI rectangle
             const int roiW = roiWidth_ ? *roiWidth_ : 512;
             const int roiH = roiHeight_ ? *roiHeight_ : 96;
-            QRectF roiRect(roiPos_->x(), roiPos_->y(), roiW, roiH);
+            QRectF roiRect(displayedRoiPosition(), QSizeF(roiW, roiH));
 
             if (roiRect.contains(imagePos))
             {
@@ -137,6 +166,8 @@ namespace frontend
             QPointF deltaCanvas = canvasPos - dragStartCanvasPos_;
             QPointF deltaImage = QPointF(deltaCanvas.x() / scale_, deltaCanvas.y() / scale_);
 
+            if (flipX_) deltaImage.setX(-deltaImage.x());
+            if (flipY_) deltaImage.setY(-deltaImage.y());
             QPointF newRoiPos = dragStartRoiPos_ + deltaImage;
 
             // Constrain to image bounds
@@ -155,11 +186,13 @@ namespace frontend
             newRoiPos.setX(std::max(0.0, std::min(double(imgW - roiW), newRoiPos.x())));
             newRoiPos.setY(std::max(0.0, std::min(double(imgH - roiH), newRoiPos.y())));
 
-            // Snap to alignment constraints (X step=4, Y step=16)
+            // Snap to the selected provider's alignment constraints
             int maxOffsetX = imgW - roiW;
             int maxOffsetY = imgH - roiH;
-            int snappedX = snapToStep(static_cast<int>(std::round(newRoiPos.x())), ROI_OFFSET_X_STEP, maxOffsetX);
-            int snappedY = snapToStep(static_cast<int>(std::round(newRoiPos.y())), ROI_OFFSET_Y_STEP, maxOffsetY);
+            int snappedX =
+                snapToStep(static_cast<int>(std::round(newRoiPos.x())), stepX_, maxOffsetX);
+            int snappedY =
+                snapToStep(static_cast<int>(std::round(newRoiPos.y())), stepY_, maxOffsetY);
 
             *roiPos_ = QPointF(snappedX, snappedY);
             update();
@@ -177,6 +210,16 @@ namespace frontend
             }
         }
         QWidget::mouseReleaseEvent(event);
+    }
+
+    QPointF SimpleImageCanvas::displayedRoiPosition() const {
+        if (!roiPos_) return {};
+        auto pos = *roiPos_;
+        if (image_) {
+            if (flipX_) pos.setX(image_->width() - (roiWidth_ ? *roiWidth_ : 512) - pos.x());
+            if (flipY_) pos.setY(image_->height() - (roiHeight_ ? *roiHeight_ : 96) - pos.y());
+        }
+        return pos;
     }
 
     QPointF SimpleImageCanvas::canvasToImage(const QPointF &canvasPos) const

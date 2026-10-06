@@ -7,6 +7,28 @@
 
 ## System (`src/frontend/system/`)
 
+- **`DesktopInstance`** — [[DesktopInstance]] reserves one desktop session
+  before hardware initialization and retains ownership through teardown.
+- **`DeviceInitManager`** (#419) — Qt **adapter** over the backend
+  `StartupDiscoveryCoordinator` ([[../services/DeviceDiscoveryService]]).
+  Same public surface as before (`start`, `stop`, `runCameraStep`,
+  `setConnectTab`, `setNanopositionerTab`, `cameraInitFinished`,
+  `nanopositionerInitFinished`) but it owns no worker: it installs a
+  UI-thread executor (queued `QMetaObject::invokeMethod`) so the policy's
+  selection/connection hooks and outcome listeners run on the UI thread,
+  forwards the saved nanopositioner preference from `NanopositionerTab`, and
+  maps outcomes onto the tabs (`showDiscoveryResults`, `apply*Selection`,
+  `reportNoCameras`, `reportMultipleCameras`, `reportDiscoveryProblem`,
+  `showDiscoveryCandidates`, `applyAutoConnectResult`, status text).
+  `stop()` is terminal: it stops the coordinator (cancels owned jobs, no
+  further hooks); draining the workers is `AppBackend::shutdown()`'s job.
+  The destructor detaches every callback before the QObject goes away.
+- **`DiscoverySubscription`** (`include/frontend/system/DiscoverySubscription.h`)
+  — RAII observer on `DeviceDiscoveryService` that re-posts snapshots to a
+  QObject with a queued invocation; destroying it removes the observer and
+  blocks until an in-flight callback returns, so a tab that owns one as a
+  member can be destroyed mid-scan. Used by `ConnectTab` and `ConfigTabs`.
+
 - **`QtLogBridge`** — `mib::frontend::installQtLogBridge()` installs a
   `qInstallMessageHandler` that routes Qt's process-wide log stream into spdlog
   (criticals/fatals also go to Sentry via
@@ -92,12 +114,26 @@
   `processing_contract_version` is round-tripped through catalog/local
   metadata and marks the profile incompatible when it differs from the active
   core; it never selects a core.
-  `camera.frame_delivery_mode` is classified medium-risk in profile diffs
-  (`isMediumRiskPath`), and `configSourceForPath` buckets `camera.*` paths as
-  Config (not "Camera script", which only matches the `camera_script*` keys).
+  - **Schema-aware loading:** `normalizeConfigForSchema` reads
+    `config_schema_version`, fails closed on a schema newer than this build
+    understands (`> config_schema_version 2`), and merges the shipped v1
+    defaults only into a schema-1 document so a schema-2 config is never
+    polluted with removed keys (e.g. ring thresholds). It no longer forces a
+    document back to schema 1.
+  - **Copy-upgrade:** `copyUpgradeConfigToV2` produces a Contract-2 document
+    from a v1 one by delegating to the Qt-free backend migrator
+    (`backend::processing::contract::migrateProfileConfigV1ToV2`, see
+    [[../services/ProcessingService]]); it never rewrites the source. See
+    `docs/architecture/processing-contract-compatibility.md`.
 - **`DeviceInitManager`** — runs [[../services/CameraControlService]]
   `discoverCameras()` off the UI thread. Emits a signal when discovery
   completes (including "no cameras found").
+  `camera.frame_delivery_mode` is classified medium-risk in profile diffs
+  (`isMediumRiskPath`), and `configSourceForPath` buckets `camera.*` paths as
+  Config (not "Camera script", which only matches the `camera_script*` keys).
+- **`DeviceInitManager`** — see the System section above (#419 adapter);
+  emits `cameraInitFinished` / `nanopositionerInitFinished` when the startup
+  policy reports an outcome (including "no cameras found").
 - **`PlaybackPanel`** — the scrub+preview widget used by [[PreviewPage]]
   and [[MainWindow]]. Owns a `QImage` display, ROI overlay, scrub slider,
   display-FPS throttle, and overlay mode (Off/Mask/Contours/Both).
@@ -206,8 +242,24 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
 
 ## Widgets (`src/frontend/widgets/`)
 
-- **`ZoomableChartView`** — subclass of `QChartView` with scroll/zoom.
+- **`ZoomableChartView`** — subclass of `QChartView`: wheel zoom around the
+  cursor (Ctrl = X only, Shift = Y only, over an axis's labels = that axis
+  only), left- or middle-drag pan, double-click reset to `setDefaultRange`.
   Used by [[ExperimentMonitoringTab]] and [[HdfReviewTab]].
+  **Click vs drag (issue #466):** a press only becomes a pan once the
+  pointer travels `QApplication::startDragDistance()`; a release before that
+  emits `plotClicked(viewPos, button)` (inside `plotArea()` only) and never
+  moves the axes. `hoverMoved` fires when no press is pending.
+  `setResetOnDoubleClick(false)` hands double-click to the owner
+  (`plotDoubleClicked`); `resetZoomAction()` is a "Reset zoom" `QAction` for
+  context menus; `cancelGesture()` drops a pending press or pan; a leave with
+  no button held, or a move whose `buttons()` no longer include the pressed
+  one (release taken by a context menu or modal while the pointer stayed
+  over the view), does the same, so a lost release never leaves a "sticky"
+  pan. `markUserZoomed()` lets an owner that restored axis ranges itself
+  re-arm the user-zoomed state. Only a left double-click resets. Guard:
+  `frontend.zoomable_chart_view` (synthesized events via
+  `tests/support/qt_mouse.h`; the tree has no QtTest).
 - **`RunStatusWidget`** (issue #363) — glyph + `ElidingLabel` bound to a
   `RunStatusModel` (`bind`); text carries the state, color is only a
   secondary cue; accessible name "Run state: …"; bounded width (≤ 260 px).

@@ -1,0 +1,60 @@
+name: Network tests
+
+# Tests labelled `network` fetch rows from the Hugging Face Hub (env/assets.json)
+# and are excluded from every default test preset. This lane runs them nightly
+# and on demand; a private-asset conformance check can be added here with
+# HF_TOKEN from repository secrets.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  network:
+    name: Linux backend-only, network-labelled tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Linux build environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,backend,test-extras
+          conan: "true"
+          mindvision: "true"
+          assets: public
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-backend-only
+          cmake --build --preset linux-backend-only-build --parallel --target kin10_hf_dataset_pipeline_test
+
+      - name: Run network-labelled tests
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: ctest --preset linux-network-test
+
+      # The C4 U-Net the PZ7035 PL runs (private asset unet-c4-multiline-v1):
+      # processing.unet_c4 checks UnetC4 bit-exact on the release fixtures. The
+      # default lanes do not provision it, so there the test reports SKIP.
+      - name: Private model asset, host C4 U-Net bit-exact
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "HF_TOKEN is not set; skipping the private model check"
+            exit 0
+          fi
+          python3 scripts/provision-assets.py --asset unet-c4-multiline-v1
+          cmake --build --preset linux-backend-only-build --parallel --target mib_backend_tests
+          ctest --test-dir build/linux-backend -R '^processing\.unet_c4$' --output-on-failure

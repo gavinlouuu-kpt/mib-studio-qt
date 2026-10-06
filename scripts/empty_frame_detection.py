@@ -687,8 +687,13 @@ def main() -> None:
     use_mlflow = not args.no_mlflow
 
     # --- Load dataset ---
-    print("Loading dataset gavinlouuu/dc_ds ...")
-    dataset = load_dataset("gavinlouuu/dc_ds", split="train")
+    # Corpus id, split and pinned revision live in env/assets.json (asset dc-ds).
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from assets_manifest import get_asset
+
+    dc_ds = get_asset("dc-ds")
+    print(f"Loading dataset {dc_ds.repo}@{dc_ds.revision[:12]} ...")
+    dataset = load_dataset(dc_ds.repo, split=dc_ds.hf_datasets["split"], revision=dc_ds.revision)
     label_feature = dataset.features["label"]
     label_id_to_name = {i: name for i, name in enumerate(label_feature.names)}
 

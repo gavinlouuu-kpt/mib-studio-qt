@@ -18,6 +18,10 @@ jobs:
     name: Linux backend-only build and test
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # The linux-backend-only preset uses Unix Makefiles with no job count, so
+    # without this every build compiled one file at a time on a 4-CPU runner.
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
 
     steps:
       - name: Checkout
@@ -27,41 +31,15 @@ jobs:
         shell: bash
         run: mkdir -p artifacts/backend-ci
 
-      - name: Install Linux system packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            curl \
-            git \
-            libcurl4-openssl-dev \
-            libgl1-mesa-dev \
-            libhdf5-dev \
-            libopencv-dev \
-            libspdlog-dev \
-            libsqlite3-dev \
-            libxkbcommon-dev \
-            nlohmann-json3-dev \
-            pkg-config \
-            python3-pip
-          # No Qt SDK: the backend is fully Qt-free (epic #246 Phase 1 exit
-          # gate). Installing no qt6-* packages proves linux-backend-only
-          # configures/builds/tests without Qt.
-
-      - name: Provision pinned MindVision SDK
-        shell: bash
-        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
-
-      - name: Install Conan
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install conan numpy
-          conan profile detect --force
+      # Sections base+backend only: no qt6-* packages, which proves the backend
+      # is Qt-free (epic #246 Phase 1 exit gate). The list is env/apt-packages.txt.
+      - name: Set up Linux build environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,backend
+          conan: "true"
+          mindvision: "true"
+          assets: required
 
       - name: Probe Conan dependency availability
         shell: bash
@@ -126,6 +104,28 @@ jobs:
         run: |
           set -o pipefail
           ctest --preset linux-backend-only-test --output-on-failure 2>&1 | tee artifacts/backend-ci/test.log
+
+      - name: PL replay lane (ADR 0011)
+        shell: bash
+        # The hardware-free PZ7035 tests carry the `pl` ctest label: record
+        # decoder and provider replay, profile compiler, platform monitor, the
+        # Contract 3 vectors and host/PL equality, and the vendored ABI check.
+        # They already ran above; this step names the lane so it shows up in
+        # the PR checks and so an emptied or shrunken selection fails. Two of
+        # them (processing.unet_c4, processing.pz_board_run_host) report SKIP
+        # here: they need the private model weights or a board run.
+        env:
+          MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
+        run: |
+          set -o pipefail
+          total=$(ctest --preset linux-backend-only-test -N -L pl | sed -n 's/^Total Tests: //p')
+          echo "PL lane: ${total} tests"
+          # Lower bound: raise it when a PL test is added.
+          if [ "${total:-0}" -lt 15 ]; then
+            echo "::error::PL replay lane shrank to ${total:-0} tests (expected >= 15): a pl label or test was dropped."
+            exit 1
+          fi
+          ctest --preset linux-backend-only-test -L pl --no-tests=error --output-on-failure 2>&1 | tee artifacts/backend-ci/pl-lane.log
 
       - name: Upload backend CI logs
         if: failure()

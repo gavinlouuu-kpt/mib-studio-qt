@@ -6,12 +6,12 @@
 
 **Source:** `src/frontend/tabs/OverviewTab.cpp`,
 `include/frontend/tabs/OverviewTab.h`
-**Related:** `src/frontend/utils/SimpleImageCanvas.cpp`,
+**Related:** `src/frontend/utils/SimpleImageCanvas.cpp`, [[../services/DotGridService]] (Wafer Grid),
 `include/frontend/utils/SimpleImageCanvas.h`,
 [[../services/ProcessingService]] (ROI propagation, realtime snapshot),
 [[../architecture/AppBackend]] (recording ROI)
 
-## Display tick (`onTick`, ~20 Hz)
+## Display tick (`onTick`, up to 50 Hz)
 
 A `QTimer` fires `onTick` at the configured display rate. Each tick:
 
@@ -42,6 +42,30 @@ position. ROI drag events emit `roiPositionChanged(QPointF)`, which
 `MainWindow` connects to `ProcessingService::setRealtimeRoi` and
 `AppBackend`'s recording thread.
 
+## Wafer Grid (dot-grid localization, Overview only)
+
+The **Wafer Grid** toolbar button (`overviewWaferGridBtn`, after the ROI
+size spin boxes) flips `DotGridService::Config::enabled` on
+[[../services/DotGridService]]. This is the only place localization is shown:
+the Experiment Preview page has no toggle.
+
+- **Runs only while the Overview is on screen.** The constructor and
+  `hideEvent` call `backend_.dotGrid().setPaused(true)`; `showEvent` calls
+  `setPaused(false)` (which wakes the service to decode the newest frame at
+  once). Switching to the Experiment tab, any other tab, or minimising the
+  window therefore stops decoding even with Wafer Grid on.
+- `onTick` → `updateDotGridOverlay()` (only while visible) follows the
+  service's `isEnabled()` (config.json can switch it too, but only when the
+  file's `dot_grid.enabled` value changes, so the toggle survives unrelated
+  reloads) and, when `DotGridService::poseSequence()` moved, copies the
+  latest `Pose` into `DotGridOverlay`: detected dots, image-centre cross,
+  pose text with design name + chip, or the failure reason.
+  `SimpleImageCanvas::paintEvent` draws dots and cross over the frame and
+  the text box last, on top of the ROI rectangle. No decoding on the GUI
+  thread.
+- Test: `frontend.dot_grid_overview` (tab switches pause/resume, overlay,
+  toggle, no toggle on the Preview page).
+
 ## Gotchas
 
 - `scratchFrame_` persists between ticks; do not move from it.
@@ -54,3 +78,19 @@ position. ROI drag events emit `roiPositionChanged(QPointF)`, which
 - The destructor explicitly stops `timer_` before `delete ui` — if the
   50fps timer fires during widget destruction, `onTick()` accesses
   `backend_.playback()` on a potentially-freed backend (use-after-free).
+
+## MindVision mode and ROI
+
+`refreshCameraMode()` loads the selected MindVision JSON experiment ROI and
+hides the eGrabber script editor, leaving the full view available for selection.
+The editable ROI defaults to 512x96. Drag positions stay in sensor coordinates;
+SimpleImageCanvas transforms the rectangle and drag direction for ISP mirroring.
+Sensor bounds come from the capture capability snapshot, not 1920x1080 constants.
+Save errors restore the previous ROI and remain visible until a successful edit.
+MainWindow synchronizes the four ROI fields into ConfigTabs without discarding
+unrelated JSON edits. Hardware-cropped experiment frames use local processing
+coordinates, so the camera offset is not applied twice.
+
+The display timer is capped at 50 fps; the status identifies the 400 Hz trigger
+separately from measured capture FPS. Hidden tabs do not fetch/copy frames.
+The raw script editor and eGrabber alignment rules remain provider-specific.

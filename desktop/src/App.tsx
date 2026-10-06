@@ -1,14 +1,25 @@
+import {CaptureRecovery} from "./components/CaptureRecovery";
+import {ExperimentRecovery} from "./components/ExperimentRecovery";
+import {recoverNativeRuntime} from "./runtimeRecovery";
+import { useCloseGuard } from "./closeGuard";
+import { ProcessedPreview } from "./components/ProcessedPreview";
+import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
+import {invoke} from "./transport";
+import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {open, save} from "./transport/dialogs";
+import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
   bridge,
   mono8ToImageData,
   type AutofocusStatus,
   type BridgeEvent,
+  type CameraGeometry,
+  type PlatformInfo,
+  type InstrumentStatus,
   type CameraDiscovery,
   type CameraSelection,
   type ExperimentStatus,
@@ -22,9 +33,10 @@ import {
   type ReviewMetricsPage,
   type TriggerStatus,
 } from "./bridge";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSES } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
+import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
 import { deriveQualityGates, GATE_STATUS_LABEL, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
 import {
@@ -34,27 +46,28 @@ import {
   DEFAULT_MODE,
   type OperatingMode,
 } from "./commissioning";
+import { CentralMethodsPanel } from "./CentralMethodsPanel";
+import { CameraScriptControls, useCameraScript } from "./cameraScript";
+import { MonitoringCharts } from "./components/MonitoringCharts";
+import { HardwareControls } from "./components/HardwareControls";
+import { StageControls } from "./components/StageControls";
+import { useLiveConfigDraft } from "./liveConfigDraft";
+import { previewIntervalMs } from "./previewPacing";
+import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
+import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
+import { initialWindow, rateSummary, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { runPreviewRgba, type RunPreview } from "./runPreview";
+import { InstrumentLedControls } from "./components/InstrumentLedControls";
+import { ProfilesPanel, useProfiles } from "./profiles";
+import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
+import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
+import { SavedReviewImage } from "./components/SavedReviewImage";
+import { ReviewCharts } from "./components/ReviewCharts";
+import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
 const SIDEBAR_KEY = "mib.sidebar.collapsed";
-
-// Standard reason strings for controls whose backend surface is not bridged
-// yet. Shown as tooltips — the control stays visible (Qt parity) but cannot
-// be activated, and never fakes backend or hardware state.
-const PENDING = {
-  discovery: "Device discovery is not bridged yet — backend issue BE-2 (#272)",
-  roi: "ROI editing is not bridged yet — backend issue BE-3 (#273)",
-  script: "Camera script/config apply is not bridged yet — BE-2 (#272) / BE-3 (#273)",
-  config: "App config / profiles are not bridged yet — backend issue BE-3 (#273)",
-  profiles: "Profile management is not bridged yet — BE-3 (#273) follow-up",
-  saveBuffer: "Preview buffer save is not bridged yet — UI-3 (#268)",
-  monitoring: "Monitoring data is not bridged yet — backend issue BE-5 (#275)",
-  review: "HDF5 metadata/metrics/export are not bridged yet — backend issue BE-6 (#276)",
-  autofocus: "Autofocus/nanopositioner control is not bridged yet — BE-8 (#278)",
-  platform: "Platform/shell services are not migrated yet — BE-9 (#279)",
-  background: "Background image control is not bridged yet — backend issue BE-3 (#273)",
-};
 
 const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Idle]: "Inactive",
@@ -149,6 +162,7 @@ export default function App() {
   );
   const [fitWindow, setFitWindow] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
+  const [showCentralMethods, setShowCentralMethods] = useState(false);
 
   // Camera discovery/selection (bridge schema v7, BE-2). The selection
   // snapshot from the backend is authoritative — no local mirror of it.
@@ -164,11 +178,17 @@ export default function App() {
 
   // Recording.
   const [recording, setRecording] = useState(false);
+  const [resumedNative,setResumedNative]=useState(false);
+  const recoveredReview=useRef(false);
   const [recPath, setRecPath] = useState("");
 
   // Processing (bridge schema v3).
-  const [procEnabled, setProcEnabled] = useState(false);
-  const [pixelToMicron, setPixelToMicron] = useState("1.0");
+  const quickDraft = useLiveConfigDraft();
+  const {acceptRemote: acceptQuickConfig, generation: quickGeneration, applied: quickApplied} = quickDraft;
+  const quickValues = quickDraft.text ? JSON.parse(quickDraft.text) : {enabled:false,factor:"1.0"};
+  const procEnabled = Boolean(quickValues.enabled);
+  const pixelToMicron = String(quickValues.factor);
+  const [autoBackgroundEnabled,setAutoBackgroundEnabled] = useState(false);
   const [stats, setStats] = useState<ProcessingStats | null>(null);
 
   // Experiment (bridge schema v5, BE-4 — backend-owned lifecycle).
@@ -191,8 +211,9 @@ export default function App() {
   const [sheathPump, setSheathPump] = useState<PumpStatus | null>(null);
 
   // Processing config / ROI / background / core identity (schema v8, BE-3).
-  const [configText, setConfigText] = useState("");
-  const [configDirty, setConfigDirty] = useState(false);
+  const liveDraft=useLiveConfigDraft();
+  const {text:configText,dirty:configDirty,acceptRemote:acceptConfig,applied:configApplied,generation:configGeneration}=liveDraft;
+  const [previewFpsLimit,setPreviewFpsLimit]=useState(30);
   const [coreStatus, setCoreStatus] = useState<ProcessingCoreStatus | null>(null);
   const [backgroundSet, setBackgroundSet] = useState(false);
   const [roiFields, setRoiFields] = useState({ x: "0", y: "0", w: "0", h: "0" });
@@ -213,13 +234,37 @@ export default function App() {
   const liveCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const reviewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const loopRef = useRef<number | null>(null);
   const previewLoopRef = useRef<number | null>(null);
   const framePulls = useRef(new FramePullScheduler());
   const tickBusy = useRef(false);
   const lastMetadataRenderMs = useRef(-Infinity);
   const tabRef = useRef<MainTab>("connect");
   tabRef.current = tab;
+  // ---- Camera & Alignment (ABI 20): the whole sensor and the experiment window on it ----
+  // Where the science runs (ABI 21). On the PZ7035 the PL processes every frame and the host
+  // pipeline's controls (realtime switch, backgrounds, calibration, processed preview) do not apply.
+  const [platform, setPlatform] = useState<PlatformInfo | null>(null);
+  const hostProcessing = platform ? platform.host_processing : true;
+  // #501: surfaces follow what the instrument has; the PZ7035 reports its PL core and health.
+  const caps = capabilitiesOf(platform);
+  const pz7035 = isPz7035(caps);
+  // Backend-owned camera modes (#501 P1): Camera & Alignment = Align, Experiment = Run.
+  const instrumentModes = caps.align_mode && caps.run_mode;
+  const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
+  const instrumentRef = useRef<InstrumentStatus | null>(null);
+  instrumentRef.current = instrument;
+  const runMode = instrument?.mode?.name === "run";
+  const [runPreviewInfo, setRunPreviewInfo] = useState<{frameId: number; listed: number; cells: number; blemishes: number} | null>(null);
+  const [showRunMask, setShowRunMask] = useState(true);
+  const showRunMaskRef = useRef(true);
+  showRunMaskRef.current = showRunMask;
+  const [cameraGeometry, setCameraGeometry] = useState<CameraGeometry | null>(null);
+  const [cameraWindow, setCameraWindow] = useState<Rect | null>(null);
+  const cameraGeometryRef = useRef<CameraGeometry | null>(null);
+  cameraGeometryRef.current = cameraGeometry;
+  const cameraWindowRef = useRef<Rect | null>(null);
+  cameraWindowRef.current = cameraWindow;
+  const windowDragRef = useRef<{dx: number; dy: number} | null>(null);
 
   // Display-side measurements (frames actually drawn / bytes actually pulled
   // over the last 1s window). These are UI measurements, not backend claims.
@@ -254,10 +299,18 @@ export default function App() {
       .catch((e) => append(`abi error: ${e}`));
     (async () => {
       try {
-        const already = await bridge.isInitialized();
-        const ok = already || (await bridge.init(""));
-        setReady(ok);
-        append(ok ? "backend initialized" : "backend init failed");
+        const snapshot=await recoverNativeRuntime();
+        setResumedNative(snapshot.resumed);
+        setRunning(snapshot.runtime.capture_running);setRecording(snapshot.runtime.recording);
+        setExpStatus(snapshot.experiment);setReviewMeta(snapshot.review);
+        if(snapshot.review.file_open){
+          setReviewPath(snapshot.review.file_path);setReviewing(true);
+          setReviewTab(snapshot.review.recording_file?"raw":"valid");
+          recoveredReview.current=true;
+          if(!snapshot.runtime.capture_running)setTab("review");
+        }
+        setReady(true);
+        append(snapshot.resumed ? "native session recovered without replaying startup settings" : "backend initialized");
       } catch (e) {
         append(`init error: ${e}`);
       }
@@ -280,6 +333,14 @@ export default function App() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
+      // Camera & Alignment: the experiment window over a full-sensor image.
+      const geometry = cameraGeometryRef.current, experimentWindow = cameraWindowRef.current;
+      if (canvas === liveCanvasRef.current && geometry?.overview && experimentWindow &&
+          meta.width === geometry.sensor_width && meta.height === geometry.sensor_height) {
+        ctx.strokeStyle = "#ffd400";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(experimentWindow.x + 1, experimentWindow.y + 1, experimentWindow.width - 2, experimentWindow.height - 2);
+      }
       const { data: _pixels, ...metadata } = meta;
       if (canvas !== reviewCanvasRef.current && performance.now() - lastMetadataRenderMs.current >= 200) {
         lastMetadataRenderMs.current = performance.now();
@@ -345,7 +406,9 @@ export default function App() {
     try {
       // State/fault notifications do not wait behind pixel decode/rendering.
       applyEvents(await bridge.pollEvents());
-      if (procEnabledRef.current) setStats(await bridge.fetchProcessingStats());
+      const runtime = await invoke<{capture_running: boolean; recording: boolean}>("fetch_preview_buffer");
+      setRunning(runtime.capture_running); setRecording(runtime.recording);
+      setStats(await bridge.fetchProcessingStats());
       setExpStatus(await bridge.fetchExperimentStatus());
       setAfStatus(await bridge.fetchAutofocusStatus());
     } catch (e) {
@@ -359,13 +422,18 @@ export default function App() {
       window.clearInterval(previewLoopRef.current);
       previewLoopRef.current = null;
     }
-    if (loopRef.current !== null) {
-      window.clearInterval(loopRef.current);
-      loopRef.current = null;
-    }
+
   }, []);
 
   useEffect(() => () => stopLoop(), [stopLoop]);
+  // State reconciliation belongs to the shell, not a capture button/view.
+  // Remains active after stop/finalization and recovers after webview reload.
+  useEffect(() => {
+    if (!ready) return;
+    void tick();
+    const timer = window.setInterval(() => void tick(), 500);
+    return () => window.clearInterval(timer);
+  }, [ready, tick]);
 
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
   // image clones run only while the Monitoring view is actually shown.
@@ -374,15 +442,18 @@ export default function App() {
     if (!ready) return;
     bridge.monitoringSetActive(monitoringVisible).catch(() => {});
     if (!monitoringVisible) return;
+    let polling = false, disposed = false;
     const id = window.setInterval(async () => {
+      if (polling) return; polling = true;
       try {
-        setMonSnapshot(await bridge.fetchMonitoringSnapshot(200));
-        setTrigStatus(await bridge.fetchTriggerStatus());
+        const snapshot = await bridge.fetchMonitoringSnapshot(200);
+        const trigger = await bridge.fetchTriggerStatus();
+        if (!disposed) { setMonSnapshot(snapshot); setTrigStatus(trigger); }
       } catch {
         /* backend gone — next tick will surface it */
-      }
+      } finally { polling = false; }
     }, 500);
-    return () => window.clearInterval(id);
+    return () => { disposed = true; window.clearInterval(id); };
   }, [monitoringVisible, ready]);
 
   const toggleSidebar = useCallback(() => {
@@ -414,14 +485,17 @@ export default function App() {
 
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
-  const refreshConfig = useCallback(async () => {
+  const refreshConfig = useCallback(async (discardDraft=false) => {
+    const generation=configGeneration();
+    const quickToken=quickGeneration();
     try {
       const doc = await bridge.fetchProcessingConfigJson();
       if (doc.valid) {
         const parsed = JSON.parse(doc.json);
-        setConfigText(JSON.stringify(parsed, null, 2));
-        setConfigDirty(false);
+        acceptConfig(JSON.stringify(parsed, null, 2),discardDraft,generation);
         setBackgroundSet(Boolean(parsed.background_set));
+        setAutoBackgroundEnabled(Boolean(parsed.image_processing?.auto_background_enabled));
+        acceptQuickConfig(JSON.stringify({enabled:Boolean(parsed.realtime_processing?.enabled),factor:String(parsed.pixel_to_micron ?? 1)}),discardDraft,quickToken);
         if (parsed.roi) {
           setRoiFields({
             x: String(parsed.roi.x ?? 0),
@@ -435,22 +509,24 @@ export default function App() {
     } catch (e) {
       append(`config fetch error: ${e}`);
     }
-  }, [append]);
+  }, [append,acceptConfig,configGeneration,acceptQuickConfig,quickGeneration]);
 
   useEffect(() => {
     if (ready) void refreshConfig();
   }, [ready, refreshConfig]);
 
   const onApplyConfigJson = useCallback(async () => {
+    if (!liveDraft.canApply()) return append("Runtime configuration changed. Reload and reconcile the preserved draft before applying.");
     try {
       const res = await bridge.applyProcessingConfigJson(configText);
       if (!res.ok) return append(`config apply failed: ${res.message}`);
       append("processing config applied");
+      configApplied(configText);
       await refreshConfig();
     } catch (e) {
       append(`config apply error: ${e}`);
     }
-  }, [configText, append, refreshConfig]);
+  }, [configText, append, refreshConfig,configApplied,liveDraft.canApply]);
 
   const onApplyRoi = useCallback(async () => {
     try {
@@ -470,7 +546,7 @@ export default function App() {
 
   const refreshCameraState = useCallback(async () => {
     try {
-      setDiscovery(await bridge.fetchCameraDiscovery());
+      setDiscovery(await bridge.discoverCameras());
       setCamSelection(await bridge.fetchCameraSelection());
     } catch (e) {
       append(`discovery error: ${e}`);
@@ -547,18 +623,60 @@ export default function App() {
     }
   }, [pickedDevice, discovery, append, refreshCameraState]);
 
+  const previewFollowing = useRef(true);
+  const seekPreview = useCallback((index: string | null) => {
+    previewFollowing.current = index === null;
+    framePulls.current.invalidate("live");
+    framePulls.current.request("live", index === null ? bridge.fetchFrame : () => bridge.fetchFrameByIndex(index));
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !running) return;
+    previewLoopRef.current = window.setInterval(() => {
+      if (previewFollowing.current) framePulls.current.request("live", bridge.fetchFrame, false);
+    }, previewIntervalMs(previewFpsLimit));
+    return stopLoop;
+  }, [ready, running, stopLoop, previewFpsLimit]);
+
+  // PZ7035 Run (#501 P1): the producer is stopped; the preview is the PL cell capture with the
+  // U-Net mask and the listed cells of the same frame.
+  const drawRunPreview = useCallback((p: RunPreview) => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+    canvas.width = p.width;
+    canvas.height = p.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.putImageData(new ImageData(runPreviewRgba(p, showRunMaskRef.current), p.width, p.height), 0, 0);
+    ctx.lineWidth = 1;
+    for (const c of p.list) {
+      ctx.strokeStyle = c.valid ? "#1a7f37" : "#b42318";
+      ctx.strokeRect(c.x + 0.5, c.y + 0.5, Math.max(1, c.width - 1), Math.max(1, c.height - 1));
+    }
+    setRunPreviewInfo({frameId: p.frameId, listed: p.list.length, cells: p.cells, blemishes: p.blemishes});
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !runMode || tab !== "experiment") { setRunPreviewInfo(null); return; }
+    let busy = false, live = true;
+    const id = window.setInterval(() => {
+      if (busy) return;
+      busy = true;
+      void bridge.fetchRunPreview().then((p) => { if (live) drawRunPreview(p); })
+        .catch(() => { /* a capture can time out; the next one follows */ })
+        .finally(() => { busy = false; });
+    }, 100);
+    return () => { live = false; window.clearInterval(id); };
+  }, [ready, runMode, tab, drawRunPreview]);
+
   const onStartCamera = useCallback(async () => {
     try {
       setReviewing(false);
       const res = await bridge.startCapture();
       if (!res.ok) return append(`start failed: ${res.message}`);
       setRunning(true);
-      append("capture started");
-      stopLoop();
-      loopRef.current = window.setInterval(tick, 200);
-      previewLoopRef.current = window.setInterval(() => {
-        framePulls.current.request("live", bridge.fetchFrame, false);
-      }, 1000 / 30);
+      append("capture start requested; waiting for camera-ready confirmation");
+
       // Parity with Qt: a successful start lands the operator on Overview.
       setTab((t) => (t === "connect" ? "overview" : t));
     } catch (e) {
@@ -567,13 +685,14 @@ export default function App() {
   }, [tick, append, stopLoop]);
 
   const onStopCamera = useCallback(async () => {
-    stopLoop();
     try {
       if (recording) {
-        await bridge.stopRecording();
+        const stopped = await bridge.stopRecording();
+        if (!stopped.ok) return append(`stop recording failed: ${stopped.message}`);
         setRecording(false);
       }
-      await bridge.stopCapture();
+      const stopped = await bridge.stopCapture();
+      if (!stopped.ok) return append(`stop capture failed: ${stopped.message}`);
       setRunning(false);
       append("capture stopped");
     } catch (e) {
@@ -594,7 +713,8 @@ export default function App() {
         setRecording(true);
         append(`recording → ${picked}`);
       } else {
-        await bridge.stopRecording();
+        const stopped = await bridge.stopRecording();
+        if (!stopped.ok) return append(`stop recording failed: ${stopped.message}`);
         setRecording(false);
         append("recording stopped");
       }
@@ -606,30 +726,51 @@ export default function App() {
   // ---- Processing settings (bridged subset of App config) ----
 
   const onApplyProcessing = useCallback(async () => {
+    if (!quickDraft.canApply()) return append("Runtime processing controls changed. Reload and reconcile the preserved draft before applying.");
     try {
-      const factor = Number(pixelToMicron) || 1.0;
+      const factor = Number(pixelToMicron);
+      if (!pixelToMicron.trim() || !Number.isFinite(factor) || factor <= 0) return append("processing failed: px→µm must be a finite positive number");
+      const submitted=quickDraft.text;
       const res = await bridge.applyProcessing(procEnabled, factor);
       if (!res.ok) return append(`processing failed: ${res.message}`);
       append(`processing ${procEnabled ? "enabled" : "disabled"} (px→µm ${factor})`);
+      quickApplied(submitted);
+      await refreshConfig();
       setStats(await bridge.fetchProcessingStats());
     } catch (e) {
       append(`processing error: ${e}`);
     }
-  }, [procEnabled, pixelToMicron, append]);
+  }, [procEnabled, pixelToMicron, append, quickDraft.text, quickDraft.canApply, quickApplied, refreshConfig]);
 
   // ---- Experiment lifecycle (backend-owned, BE-4) ----
 
+  const experimentPending = useRef(false);
+  const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
+  const [readinessMessage, setReadinessMessage] = useState("");
+  // Non-blocking readiness warnings shown at run start (e.g. recording to RAM, #501).
+  const [startNotice, setStartNotice] = useState("");
   const onStartExperiment = useCallback(async () => {
+    if (experimentPending.current) return;
+    experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
       const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
       if (!picked) return;
+      const readiness = await bridge.fetchExperimentReadiness(picked);
+      if (!readiness.valid || !readiness.ready) {
+        const reason = readiness.gates.filter(g => g.status === 2 || g.status === 3)
+          .map(g => `${g.id}: ${g.reason}${g.remediation ? ` — ${g.remediation}` : ""}`).join("; ");
+        setReadinessMessage(`${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}`);
+        return;
+      }
+      const notice = readiness.gates.filter(g => g.id === "storage.persistent" && g.status === READINESS_GATE_STATUSES.Warn).map(g => g.reason).join(" ");
       const res = await bridge.experimentStart(picked);
-      if (!res.ok) return append(`experiment start failed: ${res.message}`);
+      if (!res.ok) {setReadinessMessage(`${picked}: ${res.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${res.message}`); }
       append(`experiment started → ${picked}`);
+      if (notice) { setStartNotice(notice); append(notice); }
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment start error: ${e}`);
-    }
+    } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
 
   const onStopExperiment = useCallback(async () => {
@@ -648,40 +789,56 @@ export default function App() {
     const idx = decimalU64(input);
     setReviewIndex(idx);
     framePulls.current.request("review", async () => {
-      const result = await bridge.seekIndex(idx);
-      if (!result.ok) throw new Error(result.message);
-      return bridge.fetchFrameByIndex(idx);
+      return bridge.fetchReviewImage(2, idx);
     });
   }, []);
 
+  const metricsGeneration = useRef(0);
   const loadMetricsPage = useCallback(
-    async (valid: boolean, offset: number) => {
+    async (valid: boolean, offset: number, source = reviewMeta?.file_path) => {
+      const generation = ++metricsGeneration.current;
+      setMetricsPage(null);
       try {
+        const before = await bridge.fetchReviewMetadata();
+        if (!before.file_open || before.file_path !== source || generation !== metricsGeneration.current) return;
         const page = await bridge.fetchReviewMetricsPage(valid, offset, METRICS_PAGE_SIZE);
-        if (page.valid) {
+        const after = await bridge.fetchReviewMetadata();
+        if (page.valid && after.file_open && after.file_path === source && generation === metricsGeneration.current) {
           setMetricsPage(page);
           setMetricsOffset(offset);
         }
       } catch (e) {
-        append(`metrics page error: ${e}`);
+        if (generation === metricsGeneration.current) append(`metrics page error: ${e}`);
       }
     },
-    [append],
+    [append, reviewMeta?.file_path],
   );
 
   const drawReviewImage = useCallback((dataset: number, index: number) => {
     framePulls.current.request("review", () => bridge.fetchReviewImage(dataset, index));
   }, []);
 
+  const reviewSourcePending=useRef(false);
+  const reviewSourceGeneration=useRef(0);
+  const [reviewSourceBusy,setReviewSourceBusy]=useState(false);
+  const clearReviewSource=useCallback(()=>{
+    framePulls.current.invalidate("review"); ++metricsGeneration.current;
+    setReviewMeta(null);setMetricsPage(null);setReviewPath("");setReviewing(false);setReviewIndex("0");setReviewImgIndex(0);
+    const canvas=reviewCanvasRef.current;if(canvas)canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
+  },[]);
   const onSelectHdf = useCallback(async () => {
+    if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
+    const sourceGeneration=++reviewSourceGeneration.current;
+    try {
     const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
-    stopLoop();
-    setRunning(false);
-    setReviewPath(picked);
-    try {
+    ++metricsGeneration.current;
+    framePulls.current.invalidate("review");
+    setMetricsPage(null);
       const res = await bridge.loadRecording(picked);
-      if (!res.ok) return append(`load failed: ${res.message}`);
+      if(sourceGeneration!==reviewSourceGeneration.current)return;
+      if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);return append(`load failed: ${res.message}`); }
+      setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
       applyEvents(await bridge.pollEvents());
@@ -689,32 +846,26 @@ export default function App() {
       setReviewMeta(meta);
       setReviewTab(meta.recording_file ? "raw" : "valid");
       setReviewImgIndex(0);
-      await loadMetricsPage(true, 0);
+      await loadMetricsPage(true, 0, picked);
       if (meta.recording_file) {
-        await onScrub(range.earliest);
+        await onScrub("0");
       } else if (meta.valid_images.present && meta.valid_images.count > 0) {
         await drawReviewImage(0, 0);
       }
     } catch (e) {
       append(`load error: ${e}`);
-    }
+      try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
+    } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage]);
+  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
 
-  const onExportCsv = useCallback(async () => {
-    try {
-      const picked = await save({
-        title: "Export Metrics to CSV",
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-        defaultPath: "metrics.csv",
-      });
-      if (!picked) return;
-      const res = await bridge.reviewExportCsv(picked);
-      append(res.ok ? `CSV export started (operation ${res.operation_id})` : `export failed: ${res.message}`);
-    } catch (e) {
-      append(`export error: ${e}`);
-    }
-  }, [append]);
+  useEffect(()=>{
+    if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;
+    recoveredReview.current=false;
+    void loadMetricsPage(true,0,reviewMeta.file_path);
+    if(reviewMeta.recording_file)onScrub("0");
+    else if(reviewMeta.valid_images.present&&reviewMeta.valid_images.count>0)drawReviewImage(0,0);
+  },[ready,tab,reviewMeta,loadMetricsPage,onScrub,drawReviewImage]);
 
   const openReviewFromMenu = useCallback(() => {
     setTab("review");
@@ -729,17 +880,151 @@ export default function App() {
   const invalidFps = stats?.valid ? stats.invalid_fps1s : null;
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
-  const expActive = expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
-  const startExperimentReason = !ready
+  const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
+    ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
+  const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
+
+  useEffect(() => {
+    if (!ready) return;
+    void bridge.fetchPlatformInfo().then(setPlatform).catch(() => setPlatform(null));
+  }, [ready]);
+
+  // PZ7035 identity and health, once a second (link rates need two samples).
+  useEffect(() => {
+    if (!ready || !caps.pl_identity) { setInstrument(null); return; }
+    let live = true;
+    const poll = () => void bridge.fetchInstrumentStatus().then((s) => { if (live) setInstrument(s); })
+      .catch((e) => { if (live) setInstrument({ available: false, error: String(e) }); });
+    poll();
+    const id = window.setInterval(poll, 1000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [ready, caps.pl_identity]);
+
+  const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
+    try {
+      const geometry = await bridge.fetchCameraGeometry();
+      setCameraGeometry(geometry);
+      if (geometry.supported && geometry.sensor_width > 0) setCameraWindow((w) => w ?? initialWindow(geometry));
+      return geometry;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
+  // saved window, other tabs leave the camera as it is; never during a run. A running capture
+  // restarts in the new mode (backend).
+  useEffect(() => {
+    if (!ready || (tab !== "overview" && tab !== "experiment")) return;
+    let cancelled = false;
+    void (async () => {
+      const geometry = await refreshCameraGeometry();
+      if (cancelled || expActive) return;
+      if (instrumentModes) {
+        // PZ7035 (#501 P1): the backend owns the switch (LED, cell path, producer timing).
+        const want = tab === "overview" ? "align" : "run";
+        const current = instrumentRef.current?.mode;
+        const win = cameraWindowRef.current ? snapRunWindow(cameraWindowRef.current) : null;
+        if (want === "run" && !win) return append("Run: place the window in Camera & Alignment first");
+        if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) return;
+        append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
+        const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
+        append(result.ok ? result.message : `Camera mode: ${result.message}`);
+        if (cancelled) return;
+        setRunning(result.ok && want === "align");
+        await refreshCameraGeometry();
+        return;
+      }
+      if (!geometry?.supported) return;
+      const overview = tab === "overview";
+      if (geometry.overview === overview) return;
+      const result = await bridge.setCameraOverview(overview);
+      append(result.ok ? result.message : `Camera mode: ${result.message}`);
+      if (!cancelled) await refreshCameraGeometry();
+    })();
+    return () => { cancelled = true; };
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes]);
+
+  // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
+  useEffect(() => {
+    if (!ready || tab !== "overview") return;
+    const id = window.setInterval(() => void refreshCameraGeometry(), 2000);
+    return () => window.clearInterval(id);
+  }, [ready, tab, refreshCameraGeometry]);
+
+  const saveCameraWindow = useCallback(async (rect: Rect) => {
+    if (instrumentModes) {
+      // The Run window is applied (and saved) by the switch to Run when Experiment opens.
+      const snapped = snapRunWindow(rect);
+      setCameraWindow(snapped);
+      append(`Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`);
+      return;
+    }
+    const geometry = cameraGeometryRef.current;
+    if (!geometry?.supported) return;
+    const snapped = snapWindow(rect, geometry);
+    setCameraWindow(snapped);
+    const result = await bridge.saveCameraRoi(snapped.x, snapped.y, snapped.width, snapped.height);
+    append(result.ok ? result.message : `Camera ROI not saved: ${result.message}`);
+    await refreshCameraGeometry();
+  }, [append, refreshCameraGeometry, instrumentModes]);
+
+  // Drag the window on the full-sensor image; release saves it (Qt saves on every move).
+  const canvasPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = e.currentTarget, box = canvas.getBoundingClientRect();
+    return {x: (e.clientX - box.left) * canvas.width / box.width, y: (e.clientY - box.top) * canvas.height / box.height};
+  };
+  const onWindowPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
+    if (!geometry?.overview || !rect || expActive) return;
+    const p = canvasPoint(e);
+    if (p.x < rect.x || p.y < rect.y || p.x > rect.x + rect.width || p.y > rect.y + rect.height) return;
+    windowDragRef.current = {dx: p.x - rect.x, dy: p.y - rect.y};
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onWindowPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = windowDragRef.current, geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
+    if (!drag || !geometry || !rect) return;
+    const p = canvasPoint(e);
+    const next = instrumentModes
+      ? snapRunWindow({x: p.x - drag.dx, y: p.y - drag.dy})
+      : snapWindow({...rect, x: p.x - drag.dx, y: p.y - drag.dy}, geometry);
+    cameraWindowRef.current = next;
+    setCameraWindow(next);
+  };
+  const onWindowPointerUp = () => {
+    if (!windowDragRef.current) return;
+    windowDragRef.current = null;
+    if (cameraWindowRef.current) void saveCameraWindow(cameraWindowRef.current);
+  };
+
+
+  const cameraScript = useCameraScript({
+    ready, running, experimentActive: expActive, selection: camSelection, append,
+    refresh: refreshCameraState,
+  });
+  const cameraDocumentContext={ready,running,experimentActive:expActive,selection:camSelection,append,refresh:refreshCameraState};
+  const scriptDocument=useCameraDocument(cameraDocumentContext,"js");
+  const mindvisionDocument=useCameraDocument(cameraDocumentContext,"json",operatingMode==="service"&&triggerArmed);
+  const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
+  const cores = useCoreManagement({ready,resume:resumedNative,active:expActive,append,onChanged:refreshConfig});
+  const startExperimentReason = !ready || !cores.initialized
     ? "Backend is not initialized"
     : !running
       ? "Camera must be running before starting an experiment"
       : expActive
         ? "Experiment is already running"
-        : "Authoritative readiness is unavailable in this backend revision";
+        : experimentRequestBusy ? "Experiment start request pending" : undefined;
+  const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
+  const profiles = useProfiles({ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
+  useEffect(()=>{const fps=profiles.activeProfile?.display_fps;if(typeof fps==="number"&&Number.isFinite(fps))setPreviewFpsLimit(Math.min(240,Math.max(1,fps)));},[profiles.activeProfile]);
 
+
+  const reviewExport = useReviewExport(ready, append);
+  const reanalysis = useReanalysis(ready);
+  const requestClose = useCloseGuard({ready, busy:scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || cores.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy, dirty:scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty, report:(text)=>{append(text);setShowLog(true);}});
   const cameraConfigured = camSelection?.configured ?? false;
-  const startCameraReason = !ready
+  const startCameraReason = cores.appUpdateBusy ? "Application update is pending" : cameraScript.busy ? "Camera setup is in progress" : !ready
     ? "Backend is not initialized"
     : !cameraConfigured
       ? "No camera configured — select a device in the Connect tab"
@@ -801,25 +1086,27 @@ export default function App() {
     autofocus: {
       valid: afStatus?.valid ?? false,
       connected: afStatus?.connected ?? false,
-      identity: afStatus?.valid ? `COM${afStatus.com_port}` : "",
+      identity: afStatus?.connected ? (afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}`) : "",
     },
     samplePump: {
       valid: samplePump?.valid ?? false,
       connected: samplePump?.connected ?? false,
-      identity: samplePump?.valid ? `COM${samplePump.com_port}` : "",
+      identity: samplePump?.connected ? (samplePump.port_name || `COM${samplePump.com_port}`) : "",
     },
     sheathPump: {
       valid: sheathPump?.valid ?? false,
       connected: sheathPump?.connected ?? false,
-      identity: sheathPump?.valid ? `COM${sheathPump.com_port}` : "",
+      identity: sheathPump?.connected ? (sheathPump.port_name || `COM${sheathPump.com_port}`) : "",
     },
     trigger: { valid: trigStatus?.valid ?? false, cameraAttached: trigStatus?.camera_attached ?? false },
-    // Authoritative storage/free-space status is not bridged yet (backend
-    // follow-up); the check stays informational until it is.
-    storageKnown: false,
-    storageWritable: false,
-    storageFreeOk: false,
-    storagePath: "",
+    // The PZ7035 reports its recording target (#501); the desktop's check stays informational.
+    storageKnown: !!instrument?.storage,
+    storageWritable: instrument?.storage?.writable ?? false,
+    storageFreeOk: (instrument?.storage?.free_bytes ?? 0) >= 1e9,
+    storagePath: instrument?.storage?.path ?? "",
+    storageWarning: instrument?.storage?.warning ?? "",
+    capabilities: caps,
+    instrument,
   };
   const preflight = derivePreflight(preflightInput);
 
@@ -840,6 +1127,7 @@ export default function App() {
     frameW: lastMeta?.width ?? 0,
     frameH: lastMeta?.height ?? 0,
     pixelToMicron: stats?.pixel_to_micron ?? NaN,
+    pz7035,
   };
   const quality = deriveQualityGates(qualityInput);
 
@@ -847,7 +1135,7 @@ export default function App() {
   // Warnings = unresolved attention items surfaced by preflight + quality.
   const warningsCount = preflight.failed + preflight.warning + quality.warn + quality.fail;
   const contextFacts: ContextBarFacts = {
-    profileName: "", // Experiment Profile management not bridged yet (UX-2 #306)
+    profileName: profiles.activeProfile?.profile_id || profiles.activeProfile?.name || "",
     cameraConfigured,
     cameraRunning: running,
     cameraLabel: camSelection?.label || (camSelection?.mode === 1 ? "Mock camera" : ""),
@@ -860,6 +1148,7 @@ export default function App() {
     operatorName: "", // operator identity not captured yet
     outputPath: expStatus?.output_path ?? "",
     warningsCount,
+    storageWarning: instrument?.storage?.warning ?? "",
   };
   const contextBar = deriveContextBar(contextFacts);
 
@@ -881,6 +1170,8 @@ export default function App() {
     }
     setOperatingMode(next);
     if (next !== "service") setTriggerArmed(false);
+    // The backend refuses raw LED values outside Service mode (#501 P1).
+    if (instrumentModes) void bridge.setServiceMode(next === "service").catch(() => {});
   };
 
   const actuateCheck = canActuate({
@@ -943,16 +1234,17 @@ export default function App() {
                   .catch((e) => append(`open data folder failed: ${e}`));
               },
             },
-            { label: "Exit", pending: PENDING.platform },
+            { label: "Exit", onClick: () => void requestClose() },
           ]}
         />
         <Menu
           label="Settings"
           items={[
-            { label: "Processing Settings…", pending: PENDING.config },
-            { label: "Pixel to Micron…", pending: PENDING.config },
-            { label: "Monitoring Settings…", pending: PENDING.monitoring },
-            { label: "Updates…", pending: PENDING.platform },
+            { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+            { label: "Central Methods…", onClick: () => setShowCentralMethods(true) },
+            { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           ]}
         />
         <Menu
@@ -967,7 +1259,7 @@ export default function App() {
                 );
               },
             },
-            { label: "Report a Problem…", pending: PENDING.platform },
+            { label: "Report a Problem…", onClick: () => void openUrl("https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/new/choose").catch(e => append(`Open issue page: ${e}`)) },
           ]}
         />
         <div className="menubar-spacer" />
@@ -988,6 +1280,7 @@ export default function App() {
             <strong>Service / Commissioning mode</strong> — hardware-actuating controls are enabled.
             Not for routine operation.
           </span>
+          <label><input type="checkbox" checked={triggerArmed} disabled={expActive} onChange={e => setTriggerArmed(e.target.checked)} /> Arm one hardware action</label>
           <button type="button" onClick={() => enterMode("operator")}>
             Exit to Operator
           </button>
@@ -997,20 +1290,21 @@ export default function App() {
       <div className="body">
         {/* ---- Telemetry sidebar ---- */}
         <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`} aria-label="Telemetry sidebar">
-          <div className="side-section">
+          {caps.host_background && <div className="side-section">
             <div className="bg-preview" title="Processing background state (set/clear in Experiment ▸ Preview)">
               {backgroundSet ? "Background set" : "No background set"}
             </div>
-          </div>
+          </div>}
           <div className="side-section">
             <h4>Display</h4>
             <SideRow k="FPS:" v={displayFps.toFixed(1)} />
           </div>
           <div className="side-section">
             <h4>Processing</h4>
-            <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />
-            <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />
+            {!hostProcessing && <SideRow k="Runs on:" v="PL (every frame)" />}
+            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
             <SideRow k="px→µm:" v={stats?.valid ? String(stats.pixel_to_micron) : "—"} cls={stats?.valid ? "" : "dim"} />
           </div>
           <div className="side-section">
@@ -1019,7 +1313,18 @@ export default function App() {
             <SideRow k="Display rate:" v={`${displayFps.toFixed(1)} fps`} />
             <SideRow k="Data rate:" v={`${dataRate.toFixed(1)} MB/s`} />
           </div>
-          <div className="side-section">
+          {pz7035 && <div className="side-section" title="PZ7035 PL core and health (#501)">
+            <h4>PL core</h4>
+            <SideRow k="Build:" v={instrument?.core ? instrument.core.build_id.slice(0, 8) || "—" : "—"}
+              cls={instrument?.core?.build_match === "match" ? "ok" : "dim"} />
+            <SideRow k="Weights:" v={instrument?.core ? instrument.core.profile_id.slice(0, 8) || "—" : "—"}
+              cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
+            <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
+              cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
+            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${instrument.latency.max_us.toFixed(1)} µs` : "—"}
+              cls={instrument?.latency && instrument.latency.frames > 0 ? "" : "dim"} />
+          </div>}
+          {caps.autofocus && <div className="side-section">
             <h4>Autofocus</h4>
             <SideRow
               k="Ring width:"
@@ -1031,7 +1336,7 @@ export default function App() {
               v={afStatus?.connected ? `connected (${afStatus.enabled ? "auto" : "manual"})` : "disconnected"}
               cls={afStatus?.connected ? "ok" : "dim"}
             />
-          </div>
+          </div>}
           <div className="side-section">
             <h4>Experiment</h4>
             <SideRow
@@ -1044,16 +1349,16 @@ export default function App() {
             <SideRow k="Flush Status:" v={expStatus?.flushing ? "Flushing" : "Idle"} />
             <SideRow k="Valid Images Saved:" v={expStatus?.valid ? expStatus.valid_saved : "Unavailable"} />
             <SideRow
-              k="Runtime:"
-              v="Unavailable (clock domain unverified)"
+              k="Elapsed (wall):"
+              v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}
             />
           </div>
-          <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
+          {caps.autofocus && <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
             <h4>Nanopositioner Autofocus</h4>
             <SideRow
-              k="COM Port:"
-              v={afStatus?.valid ? `COM${afStatus.com_port}` : "—"}
-              cls={afStatus?.valid ? "" : "dim"}
+              k="Endpoint:"
+              v={afStatus?.connected ? (afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}`) : "Disconnected"}
+              cls={afStatus?.connected ? "" : "dim"}
             />
             <SideRow
               k="Voltage:"
@@ -1069,7 +1374,7 @@ export default function App() {
               }
               cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
             />
-          </div>
+          </div>}
         </aside>
         <button
           className="sidebar-toggle"
@@ -1154,7 +1459,18 @@ export default function App() {
             </div>
           )}
 
+          <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => setTab("connect")} />
+          <ExperimentRecovery ready={ready} status={expStatus} onStatus={setExpStatus} />
+          {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
+          <ExportStatus model={reviewExport} />
           <div className="tab-body">
+            <div hidden={tab !== "connect"}>
+              <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
+                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
+              {/* Z stage (#464): hidden on the PZ7035 until the board has a serial path for it. */}
+              {!pz7035 && <StageControls ready={ready} experimentActive={expActive} append={append}
+                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} />}
+            </div>
             {/* ---- Connect ---- */}
             {tab === "connect" && (
               <>
@@ -1163,12 +1479,12 @@ export default function App() {
                   <button className={connectTab === "cameras" ? "active" : ""} onClick={() => setConnectTab("cameras")}>
                     Cameras
                   </button>
-                  <button className={connectTab === "mindvision" ? "active" : ""} onClick={() => setConnectTab("mindvision")}>
+                  {!pz7035 && <button className={connectTab === "mindvision" ? "active" : ""} onClick={() => setConnectTab("mindvision")}>
                     MindVision
-                  </button>
-                  <button className={connectTab === "framegrabbers" ? "active" : ""} onClick={() => setConnectTab("framegrabbers")}>
+                  </button>}
+                  {caps.egrabber_script && <button className={connectTab === "framegrabbers" ? "active" : ""} onClick={() => setConnectTab("framegrabbers")}>
                     Framegrabbers
-                  </button>
+                  </button>}
                 </div>
                 <div className="subtab-body">
                   <div className="devices-list" role="listbox" aria-label="Discovered devices">
@@ -1208,7 +1524,7 @@ export default function App() {
                     <button onClick={refreshCameraState} disabled={!ready}>Refresh</button>
                     <button
                       onClick={onConnectPicked}
-                      disabled={!ready || !pickedDevice}
+                      disabled={!ready || !pickedDevice || cameraScript.busy || running || expActive}
                       title={pickedDevice ? undefined : "Pick a device first"}
                     >
                       Connect
@@ -1299,26 +1615,73 @@ export default function App() {
               <>
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
-                  <button disabled title="ROI overlay rendering lands with UI-2 (#267)">ROI Overlay: Off</button>
-                  <label>
-                    X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
-                  </label>
-                  <label>
-                    Y: <input type="number" value={roiFields.y} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
-                  </label>
-                  <label>
-                    W: <input type="number" value={roiFields.w} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
-                  </label>
-                  <label>
-                    H: <input type="number" value={roiFields.h} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
-                  </label>
-                  <button className="btn" onClick={onApplyRoi} disabled={!ready}>
-                    Apply ROI
-                  </button>
+
+                  {cameraGeometry?.supported ? (
+                    <>
+                      {/* Camera window (ROI 1, sensor coordinates), placed on the full sensor. */}
+                      {(["x", "y", "width", "height"] as const).map((key) => (
+                        <label key={key}>
+                          {key === "x" ? "X" : key === "y" ? "Y" : key === "width" ? "W" : "H"}:{" "}
+                          <input
+                            type="number"
+                            aria-label={`Camera window ${key}`}
+                            value={cameraWindow ? cameraWindow[key] : 0}
+                            disabled={!cameraWindow || expActive}
+                            onChange={(e) => setCameraWindow((w) => (w ? {...w, [key]: Number(e.target.value) || 0} : w))}
+                          />
+                          {key === "width" || key === "height" ? " px" : ""}
+                        </label>
+                      ))}
+                      <button
+                        className="btn"
+                        onClick={() => cameraWindow && void saveCameraWindow(cameraWindow)}
+                        disabled={!ready || expActive || !cameraWindow || cameraGeometry.sensor_width === 0}
+                        title="Save the experiment window; Experiment uses it"
+                      >
+                        Save camera ROI
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                    <label>
+                      X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
+                    </label>
+                    <label>
+                      Y: <input type="number" value={roiFields.y} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
+                    </label>
+                    <label>
+                      W: <input type="number" value={roiFields.w} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
+                    </label>
+                    <label>
+                      H: <input type="number" value={roiFields.h} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
+                    </label>
+                    <button className="btn" onClick={onApplyRoi} disabled={!ready}>
+                      Apply ROI
+                    </button>
+                    </>
+                  )}
                 </div>
+                {cameraGeometry?.supported && (
+                  <div className="camera-alignment-status" aria-label="Camera mode">
+                    <strong>
+                      {cameraGeometry.overview
+                        ? `Full sensor ${cameraGeometry.sensor_width || "?"}×${cameraGeometry.sensor_height || "?"}`
+                        : "Experiment window"}
+                    </strong>
+                    {cameraGeometry.overview && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+                    {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
+                  </div>
+                )}
                 <div className="canvas-wrap">
                   {!lastMeta && <span className="canvas-hint">No frame yet — configure a camera and press Start Camera</span>}
-                  <canvas ref={liveCanvasRef} className={fitWindow ? "fit" : ""} />
+                  <canvas
+                    ref={liveCanvasRef}
+                    className={fitWindow ? "fit" : ""}
+                    onPointerDown={onWindowPointerDown}
+                    onPointerMove={onWindowPointerMove}
+                    onPointerUp={onWindowPointerUp}
+                    onPointerCancel={onWindowPointerUp}
+                  />
                 </div>
 
                 {/* ---- UX-4 image quality gates ---- */}
@@ -1349,21 +1712,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="toolbar" style={{ marginTop: 6 }}>
-                  <button disabled title={PENDING.script}>Reset</button>
-                  <button disabled title={PENDING.script}>Save</button>
-                  <button disabled title={PENDING.script}>Apply to Camera</button>
-                  <button disabled title={PENDING.script}>Browse…</button>
-                  <button disabled title={PENDING.script}>Clear</button>
-                  <span className="path-label right">camera script: not bridged (BE-2 #272)</span>
-                </div>
-                <textarea
-                  className="script-editor"
-                  disabled
-                  title={PENDING.script}
-                  value={"// Camera script editing is not bridged yet — BE-2 (#272)."}
-                  readOnly
-                />
+                {caps.egrabber_script && <CameraScriptControls model={cameraScript} />}
                 <p className="mono">
                   {lastMeta
                     ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`
@@ -1401,20 +1750,37 @@ export default function App() {
                   </div>
                 </div>
 
+                {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+                {startNotice && <p role="status" className="start-notice">{startNotice}</p>}
+
                 {expTab === "preview" && (
                   <>
                     <div className="canvas-wrap">
-                      {!lastMeta && <span className="canvas-hint">No frame yet — configure a camera and press Start Camera</span>}
+                      {!lastMeta && !runPreviewInfo && <span className="canvas-hint">{instrumentModes
+                        ? (runMode ? "Waiting for the PL cell capture…" : "Switching to Run…")
+                        : "No frame yet — configure a camera and press Start Camera"}</span>}
                       <canvas ref={previewCanvasRef} className={fitWindow ? "fit" : ""} />
                     </div>
+                    {instrumentModes && runMode && (
+                      <p className="mono" role="status">
+                        Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
+                        {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
+                        {" · "}latency max {instrument?.latency ? `${instrument.latency.max_us.toFixed(0)} µs` : "—"}
+                        {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
+                      </p>
+                    )}
+                    {instrumentModes && operatingMode === "service" && (runMode || instrument?.mode?.name === "align") && (
+                      <InstrumentLedControls mode={runMode ? "run" : "align"} alignBands={instrument?.mode?.align_source === "bands"} limits={caps.led_limits?.[runMode ? "run" : "align"]}
+                        current={instrument?.led} disabled={!ready || expActive} apply={bridge.setInstrumentLed} append={append} />
+                    )}
                     <div className="toolbar" style={{ marginTop: 6 }}>
-                      <button disabled title={PENDING.monitoring}>Overlay: Both</button>
+
                       <span className="legend">
                         <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
                       </span>
-                      <button
+                      {hostProcessing && <button
                         onClick={async () => {
                           const res = await bridge.setBackgroundFromCurrentFrame();
                           append(res.ok ? "background captured from current frame" : `set background failed: ${res.message}`);
@@ -1424,7 +1790,7 @@ export default function App() {
                         title={running ? "Capture the current frame as the processing background" : "Camera is not running"}
                       >
                         Set Background
-                      </button>
+                      </button>}
                       <button
                         onClick={async () => {
                           await bridge.clearBackgroundImage();
@@ -1436,9 +1802,9 @@ export default function App() {
                       >
                         Clear Background
                       </button>
-                      <label title="Auto background is configured via auto_background_* in the App config">
-                        <input type="checkbox" disabled checked={false} /> Auto
-                      </label>
+                      <button onClick={()=>{setConfigTab("app");}} title="Edit image_processing.auto_background_* in the configuration below">
+                        Auto background: {autoBackgroundEnabled ? "on" : "off"} · configure
+                      </button>
                       <button
                         onClick={async () => {
                           setRoiFields({ x: "0", y: "0", w: "0", h: "0" });
@@ -1449,40 +1815,40 @@ export default function App() {
                       >
                         Clear ROI
                       </button>
-                      <button disabled title={PENDING.saveBuffer}>Save Buffer</button>
+
                       <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
                       </button>
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
-                    <input type="range" className="scrub" disabled title={PENDING.saveBuffer} aria-label="Preview buffer scrub (not bridged)" />
+                    {caps.frame_buffer && <PreviewBufferControls model={previewBuffer} />}
+                    {hostProcessing ? (
+                      <>
+                        <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
+                        <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                      </>
+                    ) : (
+                      <p className="mono" role="status">Processing runs on the PL for every frame. Its results reach this screen once the record path is connected; previews and recording work now.</p>
+                    )}
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
                       <button className={configTab === "app" ? "active" : ""} onClick={() => setConfigTab("app")}>
                         App config (config.json)
                       </button>
-                      <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
+                      {caps.egrabber_script && <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
                         Camera script
-                      </button>
+                      </button>}
                     </div>
                     <div className="subtab-body">
                       {configTab === "app" && (
                         <>
                           <div className="toolbar">
-                            <button onClick={refreshConfig} disabled={!ready} title="Reload the live config from the backend">
+                            <button onClick={()=>{if((!configDirty&&!quickDraft.dirty)||window.confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
                               Reload
                             </button>
-                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
+                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
                               Apply
                             </button>
-                            <label>
-                              Profile:{" "}
-                              <select disabled title={PENDING.profiles}>
-                                <option>&lt;no prof&gt;</option>
-                              </select>
-                            </label>
-                            <button disabled title={PENDING.profiles}>Save Profile</button>
-                            <button disabled title={PENDING.profiles}>Show Diff</button>
                             <span className="mono right" title="Active processing core identity (backend-owned trust)">
                               core {coreStatus?.valid ? `v${coreStatus.active_version} (${coreStatus.source})` : "—"}
                               {coreStatus?.valid && !coreStatus.pin_satisfied
@@ -1490,28 +1856,31 @@ export default function App() {
                                 : ""}
                             </span>
                           </div>
+                          {caps.core_updates && <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />}
+                          <ProfilesPanel model={profiles} />
+                          <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
                               <h5>Live config document (merge-applied on Apply)</h5>
+                              {liveDraft.runtimeChanged&&configDirty&&<p role="status">Runtime configuration changed; your draft is preserved. Reload and reconcile before applying a stale snapshot.</p>}
                               <textarea
                                 className="script-editor"
                                 style={{ minHeight: 160 }}
                                 value={configText}
                                 onChange={(e) => {
-                                  setConfigText(e.target.value);
-                                  setConfigDirty(true);
+                                  liveDraft.edit(e.target.value);
                                 }}
                                 aria-label="Processing configuration JSON"
                               />
                             </div>
-                            <div className="config-group">
+                            {hostProcessing && <div className="config-group">
                               <h5>realtime_processing</h5>
                               <div className="row">
                                 <label>
                                   <input
                                     type="checkbox"
                                     checked={procEnabled}
-                                    onChange={(e) => setProcEnabled(e.target.checked)}
+                                    onChange={(e) => quickDraft.edit(JSON.stringify({enabled:e.target.checked,factor:pixelToMicron}))}
                                   />{" "}
                                   realtime processing
                                 </label>
@@ -1523,13 +1892,14 @@ export default function App() {
                                     type="text"
                                     style={{ width: 70 }}
                                     value={pixelToMicron}
-                                    onChange={(e) => setPixelToMicron(e.target.value)}
+                                    onChange={(e) => quickDraft.edit(JSON.stringify({enabled:procEnabled,factor:e.target.value}))}
                                   />
                                 </label>
-                                <button className="btn" onClick={onApplyProcessing} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+                                <button className="btn" onClick={onApplyProcessing} disabled={!ready || quickDraft.runtimeChanged} title={ready ? undefined : "Backend is not initialized"}>
                                   Apply
                                 </button>
                               </div>
+                              {quickDraft.runtimeChanged && <p role="status">Runtime processing controls changed; your edits are preserved. Use Reload above, then reconcile your changes.</p>}
                               {stats?.valid && (
                                 <p className="mono">
                                   algo {formatMetric(stats.algo_fps1s)} · valid {formatMetric(stats.valid_fps1s)} · invalid{" "}
@@ -1537,26 +1907,11 @@ export default function App() {
                                 </p>
                               )}
                               <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
-                            </div>
+                            </div>}
                           </div>
                         </>
                       )}
-                      {configTab === "script" && (
-                        <>
-                          <div className="toolbar">
-                            <button disabled title={PENDING.script}>Reset</button>
-                            <button disabled title={PENDING.script}>Save</button>
-                            <button disabled title={PENDING.script}>Apply to Camera</button>
-                          </div>
-                          <textarea
-                            className="script-editor"
-                            disabled
-                            title={PENDING.script}
-                            value={"// Camera script editing is not bridged yet — BE-2 (#272)."}
-                            readOnly
-                          />
-                        </>
-                      )}
+                      {configTab === "script" && caps.egrabber_script && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
                     </div>
                   </>
                 )}
@@ -1686,22 +2041,12 @@ export default function App() {
                       </span>
                     </div>
                     <div className="config-grid" style={{ flex: 1 }}>
-                      <div className="config-group" title={PENDING.monitoring}>
-                        <h5>Deformability vs Area (µm²)</h5>
+                      <MonitoringCharts snapshot={monSnapshot} />
+                      <div className="config-group">
+                        <h5>Processing settings</h5>
+                        <button disabled={expActive} onClick={() => {setExpTab("preview");setConfigTab("app");}}>Edit processing configuration</button>
                         <p className="pending-note">
-                          Chart rendering lands with UI-3 (#268); the bounded metric rows below are the live chart inputs.
-                        </p>
-                      </div>
-                      <div className="config-group" title={PENDING.monitoring}>
-                        <h5>Ring Width Distribution</h5>
-                        <p className="pending-note">
-                          Chart rendering lands with UI-3 (#268); ring-ratio inputs are in the metric rows below.
-                        </p>
-                      </div>
-                      <div className="config-group" title={PENDING.config}>
-                        <h5>Tune Params</h5>
-                        <p className="pending-note">
-                          Filter thresholds / target group / multi-image editing lands with the config round-trip — BE-3 (#273).
+                          Filter thresholds, target groups and multi-image settings use the checked processing configuration. Changes are locked during an experiment.
                         </p>
                       </div>
                     </div>
@@ -1714,7 +2059,7 @@ export default function App() {
                             <th>Track</th>
                             <th>Valid</th>
                             <th>Target</th>
-                            <th>Area (µm²)</th>
+                            <th>Area (raw px²)</th>
                             <th>Deformability</th>
                             <th>Ring ratio</th>
                             <th>E (kPa)</th>
@@ -1731,7 +2076,7 @@ export default function App() {
                               <td>{r.area.toFixed(1)}</td>
                               <td>{r.deformability.toFixed(3)}</td>
                               <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
                             </tr>
                           ))}
                           {(monSnapshot?.rows?.length ?? 0) === 0 && (
@@ -1754,20 +2099,30 @@ export default function App() {
             {tab === "review" && (
               <>
                 <div className="toolbar">
-                  <button onClick={onSelectHdf} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+                  <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} title={ready ? undefined : "Backend is not initialized"}>
                     Select HDF File…
                   </button>
-                  <button disabled title="Loading a new file replaces the current one">Close File</button>
+                  <button disabled={!reviewMeta?.file_open || expActive || recording || reviewSourceBusy} onClick={async () => {
+                    if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);++reviewSourceGeneration.current;
+                    try {
+                    const result = await bridge.closeReview();
+                    if (!result.ok) return append(result.message);
+                    clearReviewSource();
+                    }catch(e){append(`Close review failed: ${e}`);}finally{reviewSourcePending.current=false;setReviewSourceBusy(false);}
+                  }}>Close File</button>
                   <button
-                    onClick={onExportCsv}
-                    disabled={!reviewMeta?.file_open}
+                    onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}
+                    disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy}
                     title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
                   >
                     Export Metrics to CSV…
                   </button>
-                  <button disabled title={PENDING.review}>Export All…</button>
-                  <button disabled title={PENDING.review}>Batch Metrics…</button>
-                  <button disabled title={PENDING.review}>Regenerate masks…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
+                  <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("charts")}>Export Charts…</button>
+                  <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
+                  <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
+
                   <span className="legend">
                     <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                     <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
@@ -1780,7 +2135,7 @@ export default function App() {
                   </span>
                 </div>
                 <div className="subtabs" role="tablist" aria-label="Review views">
-                  <button className={reviewTab === "raw" ? "active" : ""} onClick={() => setReviewTab("raw")}>
+                  <button className={reviewTab === "raw" ? "active" : ""} onClick={() => { ++metricsGeneration.current; setMetricsPage(null); setReviewTab("raw"); }}>
                     Raw Frames
                   </button>
                   <button
@@ -1791,7 +2146,6 @@ export default function App() {
                       setReviewTab("valid");
                       setReviewImgIndex(0);
                       await loadMetricsPage(true, 0);
-                      await drawReviewImage(0, 0);
                     }}
                   >
                     Valid Frames
@@ -1804,35 +2158,37 @@ export default function App() {
                       setReviewTab("invalid");
                       setReviewImgIndex(0);
                       await loadMetricsPage(false, 0);
-                      await drawReviewImage(1, 0);
                     }}
                   >
                     Invalid Frames
                   </button>
-                  <button disabled title="Chart rendering lands with UI-4 (#269)">Charts</button>
+                  <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
                 </div>
                 <div className="subtab-body">
-                  <div className="review-split">
+                  <ReviewExportOptions model={reviewExport}/>
+                  {caps.reanalysis && <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>}
+                  {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
+                  <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
                     <div className="frames">
-                      <div className="canvas-wrap">
+                      {reviewMeta?.file_open && (reviewTab === "valid" || reviewTab === "invalid") && <SavedReviewImage metadata={reviewMeta} valid={reviewTab === "valid"} index={reviewImgIndex} fit={fitWindow}/>}
+                      <div className="canvas-wrap" style={{display:reviewTab === "raw" ? undefined : "none"}}>
                         {!reviewing && <span className="canvas-hint">No recording loaded — Select HDF File…</span>}
                         <canvas ref={reviewCanvasRef} className={fitWindow ? "fit" : ""} />
                       </div>
-                      {reviewing && reviewTab === "raw" && BigInt(range.count) > 0n && (
+                      {reviewing && reviewTab === "raw" && (reviewMeta?.recorded_images.count ?? 0) > 0 && (
                         <>
                           <input
                             type="range"
                             className="scrub"
-                            min={range.earliest}
-                            max={range.latest}
+                            min={0}
+                            max={Math.max(0, (reviewMeta?.recorded_images.count ?? 0) - 1)}
                             value={reviewIndex}
                             onChange={(e) => onScrub(e.target.value)}
-                            disabled={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER)}
-                            title={BigInt(range.latest) > BigInt(Number.MAX_SAFE_INTEGER) ? "Range exceeds exact browser slider precision" : "Choose frame"}
+                            title="Choose recorded frame"
                             aria-label="Frame scrubber"
                           />
                           <span className="mono">
-                            frame {reviewIndex} of [{range.earliest}…{range.latest}] ({range.count} available)
+                            frame {reviewIndex} of {reviewMeta?.recorded_images.count ?? 0} recorded frames
                           </span>
                         </>
                       )}
@@ -1852,7 +2208,6 @@ export default function App() {
                             onChange={async (e) => {
                               const idx = Number(e.target.value);
                               setReviewImgIndex(idx);
-                              await drawReviewImage(reviewTab === "valid" ? 0 : 1, idx);
                             }}
                             aria-label="Review image scrubber"
                           />
@@ -1879,15 +2234,19 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {(metricsPage?.rows ?? []).map((r) => (
-                            <tr key={`${r.frame_index}:${r.object_id}`}>
+                          {(metricsPage?.rows ?? []).map((r, rowIndex) => (
+                            <tr key={`${r.frame_index}:${r.object_id}`} tabIndex={0}
+                              aria-selected={reviewImgIndex === metricsOffset + rowIndex}
+                              onClick={() => setReviewImgIndex(metricsOffset + rowIndex)}
+                              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setReviewImgIndex(metricsOffset + rowIndex); } }}>
+
                               <td>{r.frame_index}</td>
                               <td>{r.object_id}</td>
                               <td>{r.track_id}</td>
                               <td>{r.area.toFixed(1)}</td>
                               <td>{r.deformability.toFixed(3)}</td>
                               <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{r.youngs_modulus.toFixed(2)}</td>
+                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
                             </tr>
                           ))}
                           {(metricsPage?.rows?.length ?? 0) === 0 && (
@@ -2022,6 +2381,11 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ---- Central Methods (registry, #398) ---- */}
+      {showCentralMethods && (
+        <CentralMethodsPanel onClose={() => setShowCentralMethods(false)} onError={append} />
       )}
 
       {/* ---- About modal ---- */}

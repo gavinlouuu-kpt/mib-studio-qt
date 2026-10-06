@@ -23,6 +23,16 @@
   ([[../services/TriggerService]]).
 - **ROI** — rectangular region of interest; applied pre-analysis by
   [[../services/ProcessingService]] and by display in [[../frontend/PreviewPage]].
+- **Channel wall** — the high-contrast top/bottom edges of the microfluidic
+  channel. Inside the processing ROI they produce spurious contours (noise) and
+  keep the empty-frame fast path awake; cells flow in the central band between
+  them. See issue #295.
+- **Channel band** — the rows between the channel walls, detected automatically
+  from a captured background (`detectChannelRoi`) by the walls'
+  vertical-gradient row profile. Objects whose **centroid** lies outside the
+  band (debris stuck on a wall) are rejected with invalid reason `Channel`; the
+  ROI is not cropped. Gated by `auto_roi_from_background`; see
+  [[../services/ProcessingService]].
 
 ## Portability
 
@@ -37,14 +47,43 @@
   config schema, or LUT format changes incompatibly. Currently declared
   independently in six places (`test_contract_version_consistency.py` guards
   against drift until/unless that's folded into one source of truth).
+- **Processing Contract v2** — a new, explicitly versioned science pipeline
+  that coexists with the frozen Contract v1. It uses `cv::absdiff` for
+  background comparison, adds a deterministic preprocessing filter stage, and
+  replaces ring width with a per-detected-object Laplacian variance focus
+  metric. Contract and config-schema versions are both `2` and matched by
+  equality, not ordering. See `docs/decisions/0006-processing-contract-v2.md`
+  and `docs/architecture/processing-contract-compatibility.md`. The Qt-free
+  versioning / migration / compatibility boundary is
+  `backend::processing::contract` (issue V2-1); later slices add the shared
+  absdiff path, the object metric, ABI v2, and persistence migration.
+- **Processing Contract 3 (`unet-cells`)** — the U-Net cell science shared with
+  the PZ7035 PL cell stage: objects are top-level mask components, a size gate
+  in pixels (`min_cell_area_px`) splits cells from **blemishes** (small
+  components, counted per frame, never objects), a 1 px cut-off rule, and
+  brightness as mean and variance instead of quartiles. Defined in
+  `science::filterUnetCellObjects`; not yet served by a shipped core. See
+  `docs/architecture/processing-contract-compatibility.md`.
+- **`difference_threshold`** — the canonical Contract-v2 config key for the
+  background-difference binarization threshold. Replaces the v1
+  `bg_subtract_threshold`, which is accepted only through the v1→v2 migration /
+  compatibility adapter (`resolveDifferenceThreshold`).
+- **Laplacian variance (focus metric)** — the Contract-v2 replacement for ring
+  width: variance of the Laplacian computed per detected object (issue V2-3),
+  used as a peak-seeking autofocus focus score (V2-4). Ring width / ring ratio
+  is removed from the v2 contract entirely.
 - **Processing core registry** — versioned engine metadata published by
-  `publish-processing-core.py`: a complete short-cache active pointer at
+  `scripts/release/publish-processing-core.py`: a complete short-cache active pointer at
   `{channel}/processing-core/latest.json`, immutable manifests under
   `versions/<version>.json`, and an enumerable `index.json`. Schema v2 pins
   the canonical core/contract version, hash-qualified Python wheels, optional
   signed native plugins, profile catalog, and emodulus LUT as one reproducible
   set. The generated PEP 503 page supports baked `mib-processing==<version>`
-  dependencies. See `docs/portable-processing-sync.md`.
+  dependencies. There is one registry per **core line** (ADR 0007):
+  `subtract-ring` (Contract 1, with the wheel) at `processing-core/`, and
+  `absdiff-laplacian` (Contract 2, native cores only) at
+  `processing-core-absdiff-laplacian/` (`--line`). See
+  `docs/portable-processing-sync.md`.
 - **Processing core active version** — the full manifest named by both
   `latest.json` and `index.json.active_version`. Publishing or rolling back a
   channel changes these mutable pointers; it never rewrites immutable version
@@ -56,9 +95,11 @@
   keeps the live signed publication gate open). ABI v1 owns mask generation
   and empty-frame classification; host metrics/tracking/orchestration remain
   outside it.
-- **Processing conformance reference** —
-  `scripts/gold_standard_dataset.json`, a deterministic full-parity output from
-  the installed wheel. `scripts/run_processing_conformance.py` fails on metric,
+- **Processing conformance reference** (gold reference) —
+  `scripts/gold_standard_dataset.json` (synthetic) and
+  `scripts/conformance/focus-50v-real-contract1.json` (real 50 V frames), each
+  a deterministic full-parity output from the installed wheel. Frozen per
+  contract (ADR 0007); changed only with the `gold-reference-change` label. `scripts/run_processing_conformance.py` fails on metric,
   mask, series-image, target-group, tracking, or record-accounting drift.
 
 ## Protocols & SDKs
@@ -99,7 +140,12 @@
   [[../services/PulseGeneratorService]], framed by `ModbusRtu.h` over
   [[../services/SerialBus]].
 - **Coremor XMT** — serial protocol for the piezo nanopositioner used by
-  [[../services/AutofocusService]]. DLL under `include/Coremor/`.
+  the Windows backend of [[../services/AutofocusService]]. DLL under
+  `include/Coremor/`.
+- **OEABT** — single-piezo controller supported by
+  [[../services/AutofocusService]] through a clean-room ASCII serial backend.
+  Linux uses the standard `ch341` USB-serial driver; see
+  `docs/integration/oeabt-nanopositioner.md`.
 - **ONNX Runtime** — ML runtime for [[../services/YoloService]].
 
 ## Code idioms

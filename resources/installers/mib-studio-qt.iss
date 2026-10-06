@@ -68,6 +68,10 @@ Name: "installegrabber"; Description: "Install eGrabber SDK (required for camera
 Name: "installmindvision"; Description: "Install MindVision Camera SDK (required for MindVision cameras)"; GroupDescription: "Additional components"
 #endif
 
+[InstallDelete]
+; Unsigned processing-core DLLs packed by installers before this exclusion.
+Type: files; Name: "{app}\mib_processing_core*.dll"
+
 [Files]
 ; Main executables
 Source: "{#SourceDir}{#BuildDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
@@ -87,7 +91,9 @@ Source: "{#SourceDir}{#BuildDir}\Qt6*.dll"; DestDir: "{app}"; Flags: ignoreversi
 ; Third-party DLLs (deployed by windeployqt and CMake post-build)
 ; Expected: spdlog.dll, OpenCV DLLs, HDF5 DLLs, SQLite DLLs, codec DLLs (jpeg, tiff, webp, etc.)
 ; Also includes: XMT_DLL_SER.dll (Coremor), and other dependencies
-Source: "{#SourceDir}{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Processing-core plugins are excluded: they reach rigs only as signed registry
+; downloads (ADR 0007), never from the install directory.
+Source: "{#SourceDir}{#BuildDir}\*.dll"; DestDir: "{app}"; Excludes: "mib_processing_core*.dll"; Flags: ignoreversion
 
 ; Qt plugins (critical: platforms/qwindows.dll must be present)
 Source: "{#SourceDir}{#BuildDir}\platforms\*"; DestDir: "{app}\platforms"; Flags: ignoreversion recursesubdirs createallsubdirs

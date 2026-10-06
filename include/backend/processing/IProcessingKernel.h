@@ -51,6 +51,12 @@ public:
     virtual ~IProcessingKernel() = default;
 
     virtual const ProcessingCoreIdentity& identity() const noexcept = 0;
+    // ADR 0007: a shipped core implements exactly one processing contract, the
+    // one its identity declares. The host refuses to process a config whose
+    // processing_contract_version this returns false for.
+    virtual bool servesContract(int contract) const noexcept {
+        return contract > 0 && identity().contractVersion == static_cast<uint32_t>(contract);
+    }
     virtual bool processMask(const cv::Mat& gray,
                              const cv::Mat& background,
                              const KernelConfig& config,
@@ -71,6 +77,9 @@ public:
     // science (ProcessingScience). ABI v1 dynamic cores inherit them because
     // the C ABI transports only mask/empty decisions; an ABI v2 core
     // overrides them to own the full pipeline across the plugin boundary.
+    // `background` is the background matching `originalImage` (empty when
+    // there is none); the bundled science ignores it, an ABI v2 core reruns
+    // its pipeline from originalImage + background (ADR 0007).
     virtual bool analyzeObjects(const cv::Mat& processedImage,
                                 const cv::Rect& roi,
                                 const services::ProcessingConfig& config,
@@ -78,7 +87,8 @@ public:
                                 double pixelToMicronFactor,
                                 const backend::EModulusLut* eModulusLut,
                                 std::vector<services::FilterResult>& results,
-                                std::string* error = nullptr);
+                                std::string* error = nullptr,
+                                const cv::Mat& background = cv::Mat());
     virtual bool matchTrack(const std::vector<services::BatchTrack>& tracks,
                             const std::vector<bool>& matchedThisFrame,
                             const services::FilterResult& detection,
@@ -88,7 +98,15 @@ public:
                             std::string* error = nullptr);
 };
 
+// The bundled kernel's contract is fixed at build time
+// (MIB_PROCESSING_CORE_CONTRACT). 0 means a research build (Python wheel) that
+// serves every supported contract, selected per config.
+int bundledProcessingContract() noexcept;
 std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel();
+// A bundled kernel for one explicit contract (0 = research). The default
+// overload uses bundledProcessingContract(); this one exists for tests and
+// per-contract core builds.
+std::shared_ptr<IProcessingKernel> makeBundledProcessingKernel(int contract);
 ProcessingCoreIdentity bundledProcessingCoreIdentity();
 
 } // namespace backend::processing

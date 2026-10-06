@@ -6,7 +6,8 @@
 // diagnosing pipeline/trigger latency without hardware.
 //
 // Feed it a folder of stream frames (e.g. the Hugging Face dataset
-// gavinlouuu/512x96stream, fetched with scripts/fetch_hf_512x96stream.py).
+// gavinlouuu/512x96stream, asset 512x96stream-mock-frames in env/assets.json:
+// python3 scripts/provision-assets.py --asset 512x96stream-mock-frames).
 // By default the ROI is the RIGHT THIRD of the field of view, the background
 // is the per-pixel median of sampled frames, and the target-group gates are
 // wide open so EVERY valid detection fires TriggerService (MockCamera

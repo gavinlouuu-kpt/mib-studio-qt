@@ -1,0 +1,28 @@
+[package]
+name = "mib-app-commands"
+version = "0.1.0"
+edition = "2021"
+description = "Transport-neutral command layer over mib-bridge, shared by the Tauri shell and the YOFO Studio WebSocket server"
+license = "MIT"
+publish = false
+
+[lib]
+name = "mib_app_commands"
+crate-type = ["rlib"]
+
+[dependencies]
+mib-bridge = { path = "../mib-bridge" }
+cxx = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Camera configuration documents: revision hashes and atomic saves.
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3.27.0"
+
+[dev-dependencies]
+mib-bridge = { path = "../mib-bridge", features = ["contract-fixtures"] }
+# Backend-constructing tests must run serially: the C++ backend has
+# process-global state, so cargo's default parallel test execution can SIGSEGV
+# when two AppBackends race in one process.
+serial_test = "3"

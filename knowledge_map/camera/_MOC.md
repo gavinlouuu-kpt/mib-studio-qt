@@ -9,5 +9,6 @@
 - [[EGrabberCamera]] — hardware via Euresys EGrabber SDK
 - [[MindVisionCamera]] — hardware via MindVision SDK
 - [[MockCamera]] — folder-backed dev camera
+- [[AravisCamera]] — optional Aravis Fake/GenICam consumer (copied Mono8 first slice)
 
 **Up**: [[../README|Vault home]] · **See also**: [[../services/CaptureService]]

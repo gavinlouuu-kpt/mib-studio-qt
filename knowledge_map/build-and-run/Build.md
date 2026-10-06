@@ -3,53 +3,170 @@
 > CMake + Conan. Windows (VS2022 x64) is the primary target, with Linux
 > cloud builds supported for non-hardware paths.
 
-**Source:** `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`
+**Source:** `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`,
+`env/` (`apt-packages.txt`, `brew-packages.txt`, `toolchain.toml`,
+`requirements-*.txt`, `assets.json`), `conan/profiles/`,
+`scripts/doctor.{sh,ps1}`, `scripts/bootstrap.{sh,ps1}`
+
+## Start here (any host, 2026-09-21)
+
+```bash
+scripts/doctor.sh [--sections base,backend,frontend,desktop-shell] [--with-private]
+scripts/bootstrap.sh [--sections ...] [--public-assets-only] [--dry-run]
+```
+
+The doctor only checks and prints one fix command per missing item; the
+bootstrap installs (system packages via apt/brew, a `.venv` with Conan and
+NumPy from `env/requirements-build.txt`, the MindVision SDK, the required
+assets) and is safe to rerun. Windows: `.\scripts\doctor.ps1` /
+`.\scripts\bootstrap.ps1 [-Generator Ninja]` (winget for tools, then
+`conan install` with `conan/profiles/windows-msvc194[-ninja]`). Every list
+these read has exactly one home:
+
+| Concern | File | Read by |
+|---|---|---|
+| apt packages, by `# section:` | `env/apt-packages.txt` | doctor/bootstrap; `.devcontainer/Dockerfile`; `.github/actions/setup-linux-env` (every Linux CI lane) |
+| Homebrew formulae | `env/brew-packages.txt` | doctor/bootstrap on macOS |
+| tool minimums | `env/toolchain.toml` | doctor (flat `name = ">=x"` lines) |
+| runtime pins | `rust-toolchain.toml`, `.nvmrc` + `desktop/package.json` engines, `.python-version`, `mise.toml` | rustup, nvm/Node, pyenv/uv, mise |
+| Python packages | `env/requirements-build.txt` (conan, numpy), `-scripts.txt`, `-tools-runtime.txt`, `-tools-build.txt` | bootstrap, `tools/build_*`, `scripts/build_*`, CI |
+| Conan host profiles | `conan/profiles/linux-gcc13`, `windows-msvc194`, `windows-msvc194-ninja` (carries the `cpuinfo` `[replace_requires]`) | `conan install -pr conan/profiles/<name>`; Windows workflows |
+| external datasets / models | `env/assets.json` | `scripts/provision-assets.py`, CMake, harnesses ([[Assets]]) |
+
+## Containers and CI lanes (2026-09-21)
+
+`.devcontainer/` builds `ubuntu:24.04` + sections `base,backend,frontend` of
+`env/apt-packages.txt`, a `/opt/venv` with Conan + NumPy, and on create runs
+`scripts/bootstrap.sh --skip-packages --public-assets-only` (SDK, `.venv`,
+Conan profile, public assets) then the doctor. Named volumes keep the
+Hugging Face and Conan caches across rebuilds; `HF_TOKEN` passes through from
+the host when set. The image is built per job/container, not published
+(decision in the plan). `.github/actions/setup-linux-env` is the one place
+Linux workflows get packages (`sections`, `extra-packages`), Conan
+(`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
+`desktop-ci`, `review-ci` (YOFO Review, [[../frontend/YofoReview]]; builds
+`mib_review_core`, the Qt-free review library [[../services/ReviewSession]]
+that `mib_backend` and the review bridge link),
+`sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
+and `network-tests` all use it, and `grep apt-get .github/workflows` should
+match nothing. `network-tests.yml` (nightly + manual) runs
+`ctest --preset linux-network-test`; every default test preset excludes the
+`network` label.
 
 ## Presets
 
-From `CMakePresets.json`:
-- `windows-default` — VS2022 x64, uses `build/conan_toolchain.cmake`
-- `linux-backend-only` — Linux backend-only configure (`mib_backend` + tests;
-  skips frontend executables)
+Every configure preset carries a `description` naming the `env/` sections
+and Conan profile it expects (`cmake --list-presets` shows them). The shared
+file holds no machine-specific paths: put ignores such as a conda or
+linuxbrew prefix in `CMakeUserPresets.json` (gitignored; start from
+`CMakeUserPresets.example.json`).
+
+From `CMakePresets.json` (each preset's `description` says which `env/`
+sections and Conan profile it needs):
+
+| Configure preset | Generator | Toolchain | Use |
+|---|---|---|---|
+| `windows-default` | VS 2022 x64 | `conan install . -of build -pr conan/profiles/windows-msvc194` | Debug/Release multi-config; installers |
+| `windows-ninja` | Ninja, `build-ninja/` | `conan install . -of build-ninja -pr conan/profiles/windows-msvc194-ninja` (VS x64 dev shell) | **fast local loop**; sccache picked up automatically ([[../task/2026-09-09-windows-ninja-fast-loop]]) |
+| `windows-ninja-ci` | Ninja, `build/` | same profile, `-of build` | what `build-windows.yml` uses |
+| `linux-backend-only` | Makefiles | apt sections `base,backend` | backend libs + CTest, no Qt; CI and devcontainer |
+| `linux-system-release` | Ninja | apt sections `base,backend,frontend` | full app from Ubuntu packages |
+| `linux-release` / `linux-sentry-release` | Makefiles | `conan/profiles/linux-gcc13` | Conan Qt 6.7.3 on Linux |
+| `macos-review-core` | Ninja, `build/review-core/` | `conan install . -of build/review-core -o "&:review_core=True" -pr:h/-pr:b conan/profiles/macos-appleclang-arm64` | YOFO Review: `mib_processing` + `mib_review_core` + link probe, static deps ([[../frontend/YofoReview]], `docs/howto/macos-build.md`) |
+| `windows-review-core` | Ninja, `build/review-core/` | same with `conan/profiles/windows-msvc194-ninja` (VS x64 dev shell) | YOFO Review on Windows (`docs/howto/build-installer.md`) |
+
 - Every preset builds with `MIB_USE_SENTRY=ON` (the option's default) so
   CrashReporter's sentry-native paths are compiled and tested everywhere;
-  on Linux this needs `libcurl4-openssl-dev`, and an offline fetch degrades
-  gracefully to local-only crash reporting. The wheel workflow's plugin
-  builds pass `-DMIB_USE_SENTRY=OFF` explicitly — processing-core wheels
-  don't ship crash reporting.
-- `windows-ninja` — **the fast local iteration preset** (2026-09-09):
-  single-config Release in `build-ninja/` (executables in
-  `build-ninja/Release/`, the same layout as the VS tree: every target
-  sets `RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/$<CONFIG>`, which
-  ConfigTabs' dev config dir `<exe>/../include` and the packaging paths
-  rely on), Ninja generator, needs a
-  VS 2022 x64 developer shell (`vcvars64.bat`) and its own Conan toolchain:
-  `conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja`
-  (add `-r conancenter` if the team remote prompts for credentials). On the
-  bench PC: cold full build 67 s, no-op 0.1 s, header touch 16 s, clean
-  rebuild 26 s with sccache warm — versus 56 s no-op / 107 s header touch
-  / ~10 min full under the VS generator. Set `MIB_MINDVISION_SDK_ROOT` in
-  the environment before the first configure of a new build dir.
-- **sccache**: `cmake/MIBCompilerSettings.cmake` uses `sccache` as the
-  C/C++ compiler launcher whenever it is on PATH (`winget install
-  Mozilla.sccache`; override with `-DMIB_COMPILER_LAUNCHER=`). Release
-  compiles with `/Z7` (debug info in the object, cacheable) — the PDB is
-  still produced at link by `/DEBUG`. Works with Ninja/Makefiles; the VS
-  generator ignores compiler launchers.
-- `windows-ninja-ci` — the `windows-ninja` layout in `build/` (toolchain
-  `build/conan_toolchain.cmake`); this is what `build-windows.yml` uses
-  since 2026-09-09 (CI profile `ci` carries
-  `tools.cmake.cmaketoolchain:generator=Ninja`, `ilammy/msvc-dev-cmd`
-  provides cl.exe, `mozilla-actions/sccache-action` the cache).
+  on Linux this needs `libcurl4-openssl-dev` (in section `backend`), and an
+  offline fetch degrades gracefully to local-only crash reporting. The wheel
+  workflow's plugin builds pass `-DMIB_USE_SENTRY=OFF` explicitly.
+- Windows + Ninja requires cl.exe's `/showIncludes` prefix to be detected;
+  configure fails otherwise ([[../task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo]]).
 - Build presets: `windows-default-build` (Debug),
-  `windows-default-build-release` (Release), `windows-ninja-build`,
-  `linux-backend-only-build`
-- Test presets: `windows-test`, `windows-ninja-test` (fast lane: excludes
-  `integration|hardware|soak` — `scripts.exporter_soak` alone is ~10 min
-  and belongs to `soak.yml`), `windows-ninja-integration-test`,
-  `windows-ninja-hardware-test`, `linux-backend-only-test`
+  `windows-default-build-release`, `windows-ninja-build`, `windows-ninja-ci-build`,
+  `linux-*-build`.
+- Test presets: `windows-test` / `windows-ninja-test` (fast lane: excludes
+  `integration|hardware|soak` — `scripts.exporter_soak` alone is ~10 min and
+  belongs to `soak.yml`), `windows-ninja-integration-test`,
+  `windows-ninja-hardware-test`, `linux-backend-only-test` (excludes label
+  `network`), `linux-network-test` (only `network`).
 
 ## Targets
+
+## Optional Aravis Fake validation
+
+Aravis is an optional Qt-free backend dependency and is disabled by default.
+For a local Fake-interface validation build, provision the pinned 0.9.3 source
+described by `env/aravis.toml` (USB, packet-socket, viewer and GStreamer can be
+disabled), then configure with `MIB_ENABLE_ARAVIS=ON` and set
+`PKG_CONFIG_PATH` to that prefix. Build `mib_backend_tests` and run the
+`camera.aravis_*` plus `backend.aravis_*` CTest cases. `MIB_CAMERA_MODE=aravis`
+requires `MIB_ARAVIS_FAKE=1` for the Fake device; it never silently falls back
+to the folder replay camera. Adding
+`-DMIB_PZ7035_GENTL_CTI=<pz7035-imx426>/gentl/build/libpz7035_gentl.cti`
+registers `camera.aravis_pz7035_pattern`, which runs the adapter against the
+PZ7035 producer's pattern device (no hardware). See [[../camera/AravisCamera]]
+and [[../task/2026-09-27-aravis-framework]].
+
+### ARMv7 cross-build for the PZ7035 PS (YOFO Studio)
+
+The `linux-armv7-yocto` preset cross-compiles the backend, the CTest runner and
+`yofo_preview_soak` for the Cortex-A9 with the YOFO Yocto SDK
+(pz7035-imx426 `yocto/meta-yofo`: `bitbake yofo-image -c populate_sdk`; the
+image carries the matching runtime libraries). Aravis on; Sentry and MindVision
+off; OpenCV, spdlog, SQLite, OpenSSL and HDF5 from the SDK sysroot.
+
+```bash
+. <sdk>/environment-setup-cortexa9t2hf-neon-amd-linux-gnueabi   # in a clean shell
+cmake --preset linux-armv7-yocto && cmake --build --preset linux-armv7-yocto-build -j16
+scripts/yofo/deploy_target.sh 20   # strips, copies to the PS, runs scripts/yofo/target_smoke.sh
+```
+
+The YOFO Studio server cross-compiles the same way after the CMake tree:
+`YOFO_SDK=<sdk> scripts/yofo/cargo-armv7.sh build --release --manifest-path
+crates/mib-bridge-server/Cargo.toml` (needs `rustup target add
+armv7-unknown-linux-gnueabihf`). The script maps the SDK compilers to cargo's
+target-specific variables (the generic `CC`/`CFLAGS` would hit host build
+scripts) and points the bridge at `build/linux-armv7-yocto`
+(`MIB_BRIDGE_BUILD_DIR`, `MIB_BRIDGE_SYSROOT`); `crates/mib-bridge/build.rs`
+links the Aravis libraries recorded in that tree's `CMakeCache.txt`.
+
+`cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
+HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
+dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the
+host's `h5cc` and compile against host headers, so the toolchain skips the
+config and gives FindHDF5 a failing wrapper, which makes it search the sysroot.
+`target_smoke.sh` runs the backend and Aravis lifecycle tests from the runner,
+then `yofo_preview_soak` against the live producer (preview and Overview);
+`deploy_target.sh` reads `YOFO_TARGET`, `YOFO_SSH_OPTS` and
+`YOFO_SUDO_PASSWORD_FILE`.
+
+#### CI compile smoke (`armv7-smoke.yml`)
+
+The Yocto SDK exists only on the build host, so CI cannot build the shipped
+binary. `.github/workflows/armv7-smoke.yml` instead cross-compiles
+`mib_processing` and `mib_backend` with `MIB_PL_SCIENCE=ON` using the distro
+toolchain (preset `linux-armhf-smoke`, toolchain
+`cmake/toolchains/linux-armhf.cmake`, Cortex-A9 NEON hard-float). It catches
+32-bit and ARM breaks in the PL code (a `long` assumed 64-bit, `time_t`, an
+unguarded Linux-only call); a 64-bit-`long` `static_assert` in a PL source
+fails it.
+
+- **Packages:** `scripts/ci/enable-armhf-apt.sh` adds the armhf architecture
+  (ports.ubuntu.com; the existing sources become amd64-only). Then
+  `setup-linux-env` installs `base,armhf-cross` from `env/apt-packages.txt`.
+- **Cost:** the armhf packages take about 8 minutes to install, and the build
+  about 2 minutes at 4 jobs (a runner has 4 vCPU; more parallel compiles than
+  cores can exhaust memory).
+- **Gating:** like `sanitizers.yml`, a path filter gates the steps, not the
+  job, so docs-only PRs finish in seconds and the status context exists.
+- **After the build:** the job checks the objects are 32-bit ARM hard-float (a
+  silently fallen-back host compiler would otherwise pass), and compiles
+  `tools/pz_provider_probe/main.cpp` syntax-only.
+- **Not covered:** Aravis (Ubuntu's armhf libaravis is older than the 0.9.3 the
+  build needs), the Rust server link and the UI, library versions of the real
+  image, and any artifact for `meta-yofo`. That job needs the SDK published
+  for CI (ADR 0011, decision 14) and is a follow-up.
 
 | Target | Kind | Purpose |
 |---|---|---|
@@ -239,7 +356,7 @@ links `opencv_geometry`; OpenCV 4 keeps the existing imgproc-only path.
 ## Commands
 
 ```bash
-# Configure (once)
+# Configure (once; after scripts/bootstrap.ps1, which runs conan install with conan/profiles/windows-msvc194)
 cmake --preset windows-default
 
 # Build Debug
@@ -249,7 +366,7 @@ cmake --build build --config Debug
 cmake --build build --preset windows-default-build-release
 
 # Fast local loop (VS 2022 x64 developer shell; see the windows-ninja preset above)
-conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja
+conan install . -of build-ninja --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194-ninja
 cmake --preset windows-ninja
 cmake --build --preset windows-ninja-build
 ctest --preset windows-ninja-test -j8
@@ -265,8 +382,13 @@ windeployqt.exe --release build/Release/mib_studio_qt.exe
 
 ## Conan
 
-Dependencies resolved via Conan (not vcpkg — despite old comments). See
-[[Dependencies]] and `conanfile.txt`. Post-build hooks call
+Dependencies resolved via Conan 2 (`conanfile.py`; host profiles in
+`conan/profiles/`). See [[Dependencies]]. Option `review_core=True` (YOFO
+Review) resolves only spdlog, HDF5, OpenCV (four modules, no FFmpeg /
+protobuf / Eigen) and nlohmann_json, with OpenCV and HDF5 **static**; the
+default graph is unchanged (shared OpenCV / HDF5, Qt, SQLite, ONNX Runtime on
+Windows) — the shared/static choice moved from `default_options` to
+`configure()`. Post-build hooks call
 `windeployqt.exe` to copy Qt plugins and DLLs next to the exe. CMake resolves
 `windeployqt` and the `PATH` prefix from Conan CMakeDeps’ `qt_PACKAGE_FOLDER_*`
 so Release/Debug tools stay aligned with the linked Qt package (stale
@@ -284,13 +406,24 @@ different Conan package IDs after reinstalls).
 - `cmake/MIBDependencies.cmake` sets `MIB_HAS_MINDVISION`:
   - `ON` when `MIB_ENABLE_MINDVISION=ON` for desktop/backend builds
   - `OFF` for processing-only builds, which do not compile camera services
+- `MIB_HAS_COREMOR` independently detects the Windows CoreMOR SDK. Windows
+  defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver even when
+  `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber; set `MIB_ENABLE_COREMOR=OFF`
+  for a build without it. Linux and processing-only builds are SDK-free for
+  Coremor (vendor inventory: [[../services/AutofocusService]]).
 - When `MIB_HAS_EGRABBER=OFF`, build wiring skips:
   - EGrabber include path (`C:/Program Files/Euresys/eGrabber/include`)
-  - Coremor include path (`include/Coremor`)
-  - Coremor import library (`XMT_DLL_SER.lib`)
-  - Windows-only autofocus implementation (`AutofocusService.cpp`)
-- Non-Windows uses `src/backend/services/AutofocusService.stub.cpp` so Linux
-  cloud builds can compile and run mock/non-hardware workflows.
+- When `MIB_HAS_COREMOR=OFF`, build wiring skips the CoreMOR import library;
+  the full autofocus service and OEABT serial backend still build.
+- `MIB_BUILD_OEABT_TOOLS=ON` builds `oeabtctl` in the build root.
+- `MIB_BUILD_STAGE_TOOLS=ON` (default) builds `zc300ctl` in the build root.
+  It is the ZC300 Z-stage diagnostic: `info` and `status` are read-only,
+  `move` needs `--allow-motion`, and `configure` needs `--allow-write`. It
+  links `stage_zc300` → `stage_zc300_protocol` + `oeabt_serial` (which also
+  carries `SerialBus.cpp`), not the backend. See [[../services/ZC300Stage]].
+  `mib_backend` itself links `stage_zc300` (for [[../services/StageService]]),
+  so the Rust bridge's archive list in `crates/mib-bridge/build.rs` names
+  `stage_zc300` and `stage_zc300_protocol`.
 - When `MIB_HAS_MINDVISION=ON`, CMake requires:
   - Windows: `CameraApiLoad.h` plus `MVCAMSDK.dll` / `MVCAMSDK_X64.dll`
   - Linux/macOS: `CameraApi.h` plus `libMVSDK.so` / `libmvsdk.dylib`
@@ -310,24 +443,9 @@ different Conan package IDs after reinstalls).
 
 ## Linux cloud toolchain note (`cannot find -lstdc++`)
 
-Some cloud images can fail during compiler smoke-test before project
-configuration with:
-
-`/usr/bin/ld: cannot find -lstdc++`
-
-In those cases, `/usr/bin/c++` is often set to `clang++` via alternatives while
-the image lacks the expected unversioned `libstdc++.so` path for that clang
-setup.
-
-Workaround:
-
-```bash
-sudo update-alternatives --set c++ /usr/bin/g++
-printf 'int main(){return 0;}' | c++ -x c++ - -o /tmp/cxx-link-test
-```
-
-If this succeeds, rerun CMake/Conan. Any next failure is likely dependency
-resolution/provisioning, not the runtime linker.
+Some cloud images pin `/usr/bin/c++` to clang without an unversioned
+`libstdc++.so`; switch the alternative to g++. Details and the smoke test:
+[[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]].
 
 ## Linux cloud dependency fallback (ONNX Runtime optional)
 
@@ -350,3 +468,70 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/windows-deploy.md`
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
+
+## Profile registry foundation (#398)
+
+Registry sources are part of `mib_backend`; `profiles.registry` is in backend CTest.
+They use existing nlohmann JSON, SQLite and shared SHA-256 without Qt. Optional
+PostgreSQL policy tests run with `npm ci --prefix supabase && npm test --prefix supabase`
+(pinned PGlite development dependency); the `profile-registry-ci.yml` lane runs
+them on `supabase/**` changes. No new desktop run mode is enabled.
+
+## Windows Authenticode test target
+
+`processing_core_authenticode_test` stays a standalone executable because the
+Python-wheel workflow and `scripts/test-processing-core-authenticode.ps1` invoke
+it directly with unsigned/signed fixture paths and a signer SPKI hash. Bundling
+it into `mib_backend_tests` removes the expected MSBuild target and breaks that
+release verification. The standalone-test list in `tests/CMakeLists.txt` preserves
+this contract.
+
+## History
+
+Dated build notes live in `knowledge_map/task/` (this note states current
+truth only):
+
+- [[../task/2026-09-15-rig-pc-ninja-showincludes-cpuinfo]] — localized cl.exe prefix, `cpuinfo` conflict
+- [[../task/2026-09-09-windows-ninja-fast-loop]] — Ninja preset measurements, sccache, Rust bridge on the Ninja tree
+- [[../task/2026-09-15-hardware-shutdown]] — shutdown regression targets and why two desktop tests are standalone
+- [[../task/2026-09-15-mindvision-overview-roi]] — MindVision overview test coverage
+- [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — `-lstdc++` cloud image fix
+- [[../task/2026-06-01-backend-only-build-test-mode]] — origin of `MIB_BUILD_BACKEND_ONLY`
+
+### Native GTK workflow acceptance
+
+The production-webview harness in `desktop/scripts/native-workflow.py` accepts
+the GTK folder picker with its real Open button while retaining the typed
+location. Escape discards that location and is not a valid acceptance action.
+The export gate asserts the exact selected destination parent, not just terminal
+success. Idle exit verifies native-window disappearance if WebKit closes its
+session before replying. Failure artifacts include the full X11 desktop so
+native dialogs are visible alongside webview screenshots.
+
+Windows Tauri candidate staging resolves model files with the same manifest root
+and `<kind>s/<id>/<file>` layout as the provisioner/CMake, honors `MIB_ASSETS_DIR`,
+and checks the declared SHA256 before packaging. The GTK harness tolerates only
+confirmed dialog unmapping between window search and focus; other X11 failures
+remain errors.
+
+Native packaged acceptance also regenerates a new HDF through the real UI/save
+dialog, verifies the source file digest is unchanged, waits for the frontend
+terminal status, and reopens the regenerated output with processing-core identity.
+
+Fresh GTK Recent mode is explicitly left via Home before folder selection; the
+harness uses in-memory GSettings to avoid depending on an operator desktop.
+Idle Exit verifies both native-window disappearance and owning-process exit via
+X11/procfs, avoiding hung WebDriver requests after its last window closes. It
+also avoids deleting the terminated session; the driver process is cleaned up.
+
+The Xvfb smoke script bounds and terminates its entire owned process group via
+GNU timeout, not only the xvfb-run wrapper. A real-child regression reproduces
+and prevents orphan applications holding the executable open during bundling.
+The smoke run uses disposable XDG state and mock-camera mode, never an operator
+profile or remembered hardware configuration.
+The alive timer starts inside Xvfb, after display startup; the regression delays
+display startup deliberately to prevent a false pass before the app launches.
+
+The Windows candidate saves successfully provisioned Conan dependencies before
+application compilation, so subsequent source/test failures do not discard the
+completed dependency cache. It never caches a failed dependency install.

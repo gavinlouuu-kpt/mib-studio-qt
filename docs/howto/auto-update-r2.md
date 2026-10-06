@@ -56,7 +56,7 @@ auto-check; `index.json` is additive.
 
 Newest-first; a release sorts above its own betas. Equal numeric SHA betas use
 `published_utc` newest-first, then their version string as a deterministic
-tie-break. `publish-update.py` maintains it automatically on every publish (see
+tie-break. `scripts/release/publish-update.py` maintains it automatically on every publish (see
 *Publishing a New App Version*). The app
 parses it with `UpdateCatalog`; entries missing `version`/`installer_url`/
 `installer_sha256` are skipped, and a missing/invalid `index.json` degrades to
@@ -119,7 +119,7 @@ Example:
 Publishing:
 
 ```bash
-python publish-emodulus-lut.py \
+python scripts/release/publish-emodulus-lut.py \
   --lut "resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt" \
   --revision "2026.06.11-1"
 ```
@@ -127,7 +127,7 @@ python publish-emodulus-lut.py \
 Verification:
 
 ```bash
-python verify-emodulus-lut-manifest.py
+python scripts/release/verify-emodulus-lut-manifest.py
 ```
 
 Runtime behavior:
@@ -144,7 +144,7 @@ Rollback:
 
 1. Publish a corrected `stable/emodulus-lut/latest.json` that points to the
    last known-good LUT.
-2. Verify with `python verify-emodulus-lut-manifest.py`.
+2. Verify with `python scripts/release/verify-emodulus-lut-manifest.py`.
 3. If the cache is corrupted locally, delete the LUT cache directory to force a
    fresh seed from the bundled copy or the next successful remote manifest.
 
@@ -187,7 +187,7 @@ wheel/native conformance, creates the GitHub Release, then derives and hashes
 the release assets before updating R2:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --from-release mib-processing-v0.1.0 \
   --channel stable \
   --upload-method s3
@@ -206,7 +206,7 @@ instead of silently publishing an unusable registry.
 To preview already-downloaded release assets without GitHub or R2:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --from-release mib-processing-v0.1.0 \
   --release-assets-dir ./dist \
   --published-at 2026-07-13T00:00:00Z \
@@ -236,7 +236,7 @@ must consult `latest.json` before labeling a catalog entry Active.
 Promote or roll back by copying an existing immutable manifest byte-for-byte:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --promote-version 0.1.0 \
   --channel stable \
   --published-at 2026-07-13T01:02:03Z \
@@ -271,7 +271,7 @@ The tag step verifies both version files are clean and already present at
 Verification:
 
 ```bash
-python verify-processing-core-manifest.py
+python scripts/release/verify-processing-core-manifest.py
 ```
 
 ### Manifest Format
@@ -318,6 +318,8 @@ Configure these outside the repo:
    - `profiles/*/<profile-id>/{profile.meta.json,config.json,egrabberConfig.js,CHANGELOG.md}`: moderate TTL because current profile revisions are mutable.
    - `*/processing-core/{latest.json,index.json,simple/**}`: short TTL because active selection and package history are mutable.
    - `*/processing-core/versions/*.json`: one-year immutable caching; these keys are never overwritten with different content.
+   - `*/processing-core-absdiff-laplacian/{latest.json,index.json}`: short TTL, as for `processing-core/` (the absdiff-laplacian core line, ADR 0007; no `simple/` page). Add this before the first `mib-processing-absdiff-laplacian-v*` release.
+   - `*/processing-core-absdiff-laplacian/versions/*.json`: one-year immutable caching.
    - Versioned `.exe` and `.zip` artifacts: long TTL because filenames are immutable.
 5. Create least-privilege write credentials for release publishing. Credentials need object write access to the updater bucket only.
 6. Store credentials in a local AWS profile such as `mib-studio-r2`, environment variables, or CI secrets.
@@ -359,7 +361,7 @@ cmake --build build --target package_installer_update --config Release
 Publish the update package:
 
 ```bash
-python publish-update.py \
+python scripts/release/publish-update.py \
   --installer "build/dist/MIB_Studio_Qt_Update_v0.2.0.exe" \
   --version "0.2.0" \
   --release-notes-url "https://github.com/gavinlouuu-kpt/mib-studio-qt/releases/tag/v0.2.0"
@@ -368,10 +370,10 @@ python publish-update.py \
 Publish the optional full installer:
 
 ```bash
-python publish-update.py --installer "build/dist/MIB_Studio_Qt_Setup_v0.2.0.exe"
+python scripts/release/publish-update.py --installer "build/dist/MIB_Studio_Qt_Setup_v0.2.0.exe"
 ```
 
-`publish-update.py` uploads to `s3://mib-studio-qt-updates/<channel>/...`, generates `<channel>/latest.json`, **updates `<channel>/index.json`** (reads the current index, inserts the new version via `merge_index` — dedupe by version, newest-first — and re-uploads), and prints final public URLs under `https://updates.yofo.bio`. An explicit beta `--version` must share the numeric version in the local installer filename and becomes the immutable object filename. It uses S3/boto3 when `MIB_STUDIO_R2_ENDPOINT` is set, otherwise Wrangler. `publish-update.ps1` is a Windows compatibility wrapper around the Python command.
+`scripts/release/publish-update.py` uploads to `s3://mib-studio-qt-updates/<channel>/...`, generates `<channel>/latest.json`, **updates `<channel>/index.json`** (reads the current index, inserts the new version via `merge_index` — dedupe by version, newest-first — and re-uploads), and prints final public URLs under `https://updates.yofo.bio`. An explicit beta `--version` must share the numeric version in the local installer filename and becomes the immutable object filename. It uses S3/boto3 when `MIB_STUDIO_R2_ENDPOINT` is set, otherwise Wrangler. `scripts/release/publish-update.ps1` is a Windows compatibility wrapper around the Python command.
 
 **Reading the existing index** uses the **S3 API** (same endpoint/credentials as the upload), not the public `updates.yofo.bio` URL — the public CDN can block/cache reads from CI runners (Cloudflare challenges the default `Python-urllib` user agent), which previously caused every release to *replace* the index with a single entry instead of growing it. If the existing index cannot be read (a genuine read error, distinct from "no index yet"), the publish **skips** the index update rather than clobber a good catalog. The `index.json` accumulates from each publish onward; older releases predating index maintenance need a one-time backfill (re-publish their update packages — `merge_index` dedupes — or build the index and upload it via the S3 API).
 
@@ -380,7 +382,7 @@ For legacy S3-compatible targets that require object ACLs, pass `--acl public-re
 ### Publishing Tools
 
 ```bash
-python publish-tools.py --zip "tools/dist/MIB_Studio_Tools_v0.1.7_windows.zip"
+python scripts/release/publish-tools.py --zip "tools/dist/MIB_Studio_Tools_v0.1.7_windows.zip"
 ```
 
 The tools manifest is published to `https://updates.yofo.bio/stable/tools/tools-latest.json`.
@@ -424,13 +426,13 @@ The publisher derives checksums, generates `profile.meta.json` for upload, and
 writes `profiles/<channel>/catalog.json`:
 
 ```bash
-python publish-profiles.py --profiles-root "./profile-catalog/stable"
+python scripts/release/publish-profiles.py --profiles-root "./profile-catalog/stable"
 ```
 
 Use dry-run first when preparing a new catalog:
 
 ```bash
-python publish-profiles.py \
+python scripts/release/publish-profiles.py \
   --profiles-root "./profile-catalog/stable" \
   --catalog-out "build/profile-catalog/catalog.json" \
   --dry-run
@@ -440,7 +442,7 @@ If importing legacy config files during catalog setup, this option generates an
 upload copy with `config_schema_version: 1` before checksums are calculated:
 
 ```bash
-python publish-profiles.py \
+python scripts/release/publish-profiles.py \
   --profiles-root "./profile-catalog/stable" \
   --add-missing-config-schema \
   --dry-run
@@ -453,7 +455,7 @@ the same variables used by app update publishing:
 ```bash
 export MIB_STUDIO_R2_ENDPOINT="https://<account-id>.r2.cloudflarestorage.com"
 export MIB_STUDIO_R2_PROFILE="mib-studio-r2"
-python publish-profiles.py --profiles-root "./profile-catalog/stable"
+python scripts/release/publish-profiles.py --profiles-root "./profile-catalog/stable"
 ```
 
 After publishing, verify public reads:
@@ -477,13 +479,13 @@ Cloudflare setup required for KIN-47:
 Run the public manifest verifier after publishing:
 
 ```bash
-python verify-update-manifest.py
+python scripts/release/verify-update-manifest.py
 ```
 
 For beta channel smoke tests:
 
 ```bash
-python verify-update-manifest.py --manifest-url "https://updates.yofo.bio/beta/latest.json"
+python scripts/release/verify-update-manifest.py --manifest-url "https://updates.yofo.bio/beta/latest.json"
 ```
 
 Manual checks:
@@ -518,7 +520,7 @@ afterwards they track `updates.yofo.bio` like every other client.
 If a bad R2 release is published:
 
 1. Generate and publish a corrected `stable/latest.json` that points to the last known-good update package.
-2. Verify with `python verify-update-manifest.py`.
+2. Verify with `python scripts/release/verify-update-manifest.py`.
 3. If R2 public access is unhealthy, set `MIB_STUDIO_UPDATE_MANIFEST_URL` for smoke tests or publish a temporary manifest on a known-good HTTPS endpoint.
 4. Confirm clients pick up the corrected `updates.yofo.bio` manifest (no legacy `s3.yofo.bio` endpoint is involved).
 
@@ -540,3 +542,61 @@ If a bad R2 release is published:
 - Confirm `MIB_STUDIO_R2_ENDPOINT` is set to the account-specific R2 S3 API endpoint.
 - Confirm `MIB_STUDIO_R2_PROFILE` points to a profile with write access to `mib-studio-qt-updates`.
 - Avoid committing access keys or endpoint-specific secrets to the repo.
+
+### YOFO Review (Tauri updater)
+
+YOFO Review, the standalone review app, updates through the Tauri updater
+plugin rather than the MIB Studio installer flow above. It shares the bucket
+and hostname with its own channel prefixes:
+
+- `review-stable/latest.json`, `review-beta/latest.json` (Tauri format)
+- `review-<channel>/YOFO_Review_v<version>_aarch64.app.tar.gz` (macOS)
+- `review-<channel>/YOFO_Review_v<version>_x64-setup.exe` (Windows NSIS)
+
+`latest.json` carries, per platform (`darwin-aarch64`, `windows-x86_64`),
+the bundle `url`, its minisign `signature` and a `sha256`. The app verifies
+the signature against the public key compiled into it and then the SHA-256
+pin, failing closed (`desktop/src-tauri/src/review_update.rs`). Users pick
+the channel under **File ▸ Preferences** and update from **Help ▸ Check for
+updates…**; a status-bar notice appears when a newer version is available.
+
+**One-time key setup (on the team's local server — the private key never goes
+into the repository, a chat or a cloud session).** The step-by-step
+procedure, including Tauri CLI pitfalls and an agent prompt, is
+[`docs/exec-plans/completed/2026-10-04-yofo-review-update-key-handover.md`](../exec-plans/completed/2026-10-04-yofo-review-update-key-handover.md);
+in short:
+
+```bash
+cd desktop
+umask 077
+npx tauri signer generate -w ~/.tauri/yofo-review.key     # prompts for a password
+# non-interactive: --ci -p "<password>" (with --ci but no -p the key is UNENCRYPTED)
+```
+
+1. Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the contents of
+   `~/.tauri/yofo-review.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+2. Put the **public** key (`~/.tauri/yofo-review.key.pub`) into
+   `desktop/src-tauri/tauri.review.conf.json`:
+
+   ```json
+   "plugins": { "updater": {
+     "pubkey": "<contents of yofo-review.key.pub>",
+     "endpoints": ["https://updates.yofo.bio/review-stable/latest.json"]
+   } }
+   ```
+
+Until the public key is committed the app has no updater (the plugin is not
+registered; **Check for updates…** says so) and releases ship without update
+bundles. `scripts/release/review-updater-enabled.py` reports the state.
+
+**Publishing** is automatic on `v*` and YOFO-Review-only `review-v*` tags
+(`.github/workflows/review-release.yml`; see `release-workflow.md`):
+with the public key committed and the signing secret present, the bundle
+jobs build the signed updater artifacts, and `publish-updates` runs
+`scripts/release/publish-review-update.py`, which uploads the bundles first
+and `latest.json` last to `review-stable/` (or `review-beta/` for
+`-beta.*` versions) with the same R2 secrets as `publish-update.py`. By
+hand: `python3 scripts/release/publish-review-update.py --version X.Y.Z
+--macos-bundle … --macos-sig … --windows-installer … --windows-sig …
+[--dry-run]`. Losing the private key means existing installs can no longer
+verify updates: keep a backup of `~/.tauri/yofo-review.key`.

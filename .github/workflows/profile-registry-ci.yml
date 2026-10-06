@@ -1,0 +1,31 @@
+name: Profile registry CI
+# PostgreSQL migration, grants/RLS and lifecycle tests for the central profile
+# registry (#398). The C++ registry test (`profiles.registry`) runs in
+# backend-ci.yml with the rest of backend CTest.
+on:
+  pull_request:
+    branches: [main, develop, dev/react-tauri]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/profile-registry-ci.yml'
+  push:
+    branches: [develop]
+    paths:
+      - 'supabase/**'
+permissions:
+  contents: read
+jobs:
+  registry-sql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: supabase/package-lock.json
+      - name: PostgreSQL grants, RLS and lifecycle
+        run: |
+          npm ci --prefix supabase --ignore-scripts
+          npm test --prefix supabase

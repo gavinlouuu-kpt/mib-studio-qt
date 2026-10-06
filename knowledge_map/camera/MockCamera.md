@@ -75,3 +75,12 @@ not claim `timestampsHostComparable`.
   `directory_iterator` — the folder can vanish between the `exists()` check
   and iteration, and the throwing overload would propagate
   `std::filesystem_error` out of `start()`.
+
+## Getting frames (2026-09-21)
+
+Real 512x96 stream frames come from the Hub asset `512x96stream-mock-frames`
+(`env/assets.json`): `python3 scripts/provision-assets.py --asset
+512x96stream-mock-frames --count 1000` materialises them under
+`build/vendor/assets/datasets/512x96stream-mock-frames/` for
+`MIB_MOCK_CAMERA_DIR`. `scripts/fetch_hf_512x96stream.py` was removed. See
+[[../build-and-run/Assets]].

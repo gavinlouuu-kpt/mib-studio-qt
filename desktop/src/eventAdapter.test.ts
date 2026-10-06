@@ -38,7 +38,7 @@ it("distinguishes command acceptance from a terminal operation notification",()=
 });
 it("keeps experiment snapshot counts exact and refuses partial snapshots",()=>{
   const snapshot={transport_version:1,valid:true,state:2,start_time_ns:"18446744073709551614",end_time_ns:"18446744073709551615",valid_buffered:"9007199254740993",invalid_buffered:"5",valid_saved:"18446744073709551615",invalid_saved:"7",dropped_valid:"9007199254740993",dropped_invalid:"18446744073709551615",flushing:true,cancelled:false,output_path:"test.h5",message:"saving",
-    start_generation:"9007199254740993",readiness_generation:"3",capture_generation:"18446744073709551615",persistence_admitted:"18446744073709551615",persistence_committed:"9007199254740993",persistence_failed:"7",terminal:true,finalization_ok:true,completion:0,completion_reason:"all admitted frames reconciled",fault_code:"",fault_message:""};
+    start_generation:"9007199254740993",readiness_generation:"3",capture_generation:"18446744073709551615",persistence_admitted:"18446744073709551615",persistence_committed:"9007199254740993",persistence_failed:"7",terminal:true,finalization_ok:true,completion:0,completion_reason:"all admitted frames reconciled",fault_revision:"9007199254740993",fault_code:"",fault_message:""};
   expect(decodeExperimentStatus(snapshot).valid_saved).toBe("18446744073709551615");
   expect(decodeExperimentStatus(snapshot).persistence_admitted).toBe("18446744073709551615");
   expect(decodeExperimentStatus(snapshot).completion).toBe(0);

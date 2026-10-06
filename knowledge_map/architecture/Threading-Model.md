@@ -1,5 +1,20 @@
 # Threading Model
 
+Device discovery (#419) runs on backend-owned worker threads: one per
+discovery job inside [[../services/DeviceDiscoveryService]], providers
+sequential within a job and serialized per resource class across jobs.
+Observers fire on the worker with no service lock held; the Qt adapter
+(`DeviceInitManager`, `DiscoverySubscription`) re-posts every result to the
+UI thread, and the startup policy's selection/connection hooks run through
+the adapter's UI-thread executor because `AppBackend`'s selection setters are
+read by widgets. No frontend object owns a discovery thread any more.
+`AppBackend::shutdown()` stops the policy and joins every discovery worker
+before releasing serial hardware; a vendor enumeration already inside the SDK
+must still return (TD-10). Windows serial transmit drain polls to the supplied
+timeout, avoiding the unbounded `FlushFileBuffers` wait. See
+[[../task/2026-09-15-hardware-shutdown]] and
+[[../task/2026-09-15-device-discovery-service]].
+
 > Who runs on which thread. Getting this wrong causes deadlocks, missed
 > frames, or UI freezes.
 
@@ -16,10 +31,16 @@
 | Realtime processing | [[../services/ProcessingService]] `realtimeLoop()` | FrameStore writeIndex | Low-latency per-frame analysis; drop-frames mode skips to latest |
 | Native processing-core contexts | selected `IProcessingKernel` | short context-pool mutex | Each concurrent processing call leases one plugin-owned context; a context is never shared concurrently |
 | Autofocus stats | [[../services/AutofocusService]] `statsLoop()` | `pendingSamplesCV_` + 10 ms drain interval | Drains ring-ratio samples pushed by `ProcessingService` realtime thread, maintains 1000-sample deque, refreshes `{median,average,min,max}RingRatio_` atomics. Runs for the full lifetime of the service, not just while connected. |
-| Autofocus control | [[../services/AutofocusService]] `controlLoop()` | serial COM | Reads ring-ratio stats atomics, writes voltage to nanopositioner. Runs only between `connect()` / `disconnect()`. |
+| Autofocus control | [[../services/AutofocusService]] `controlLoop()` | selected nanopositioner transport | Owns all OEABT/CoreMOR reads and writes, consumes ring-ratio stats atomics, and writes voltage only after explicit manual/autofocus requests. Runs only between `connect()` / `disconnect()`. |
 | Trigger | [[../services/TriggerService]] `triggerLoop()` | `triggerCV_` | Issues camera digital-output pulse on target-group events |
+| Dot-grid localization | [[../services/DotGridService]] `loop()` | `wakeCv_` (+ `wakeRequested_`) + `interval_ms` timeout; paused while the Overview tab is hidden | Samples the latest committed FrameStore frame at a low rate, decodes the wafer fiducial pattern, publishes a pose snapshot + callback; never on the capture/realtime threads |
 | Syringe pump poll | [[../services/SyringePumpService]] per pump | serial (Modbus RTU) | UI-driven status polls |
+| Z stage worker | [[../services/StageService]] `workerLoop()` (one thread) | job queue CV + `poll_ms` timeout | Owns the ZC300 driver: connect/disconnect, one operation at a time (moves, Home), idle status polls. `stop()` reaches the driver from any thread and bumps a stop epoch that cancels the running operation. Joined by `StageService::shutdown()`, called from `AppBackend::shutdown()` before the bus is released. |
 | Frame-recording | `AppBackend` `frameRecordingThread_` | FrameStore | Only active in recording mode; drains non-empty frames into HDF5 |
+| Discovery workers | [[../services/DeviceDiscoveryService]] (one per job, ≤ 4) | provider enumeration / probe, retry-delay CV | Camera SDK enumeration, nanopositioner identity probes, pulse-generator FC03 scans; cooperative cancel between steps; joined at `shutdownDiscovery()` |
+| Profile registry | `profiles::ProfileRegistryWorker` (one thread, [[../services/ProfileRegistryService]]) | command-queue CV; the injected HTTPS POST (≤ 8 s, aborts on cancel) | Sign-in, token refresh, paged registry refresh, revision download, per-user SQLite cache. Never touches capture, recording or Start; snapshots are value copies under one mutex, cache reads happen outside it. Stopped first in `AppBackend::shutdown()`. The Qt transport runs a local `QEventLoop` on this (Qt-adopted) thread. |
+| Monitoring density | [[../services/MonitoringDensityService]] worker | `cv_` (interval / request / settings) | **Lowest OS priority** (`SCHED_IDLE` / `THREAD_PRIORITY_LOWEST`): the live scatter KDE + core contour over the monitoring ring. Skips a tick when frames were dropped or the batch queue is ≥ 25% full; next wake ≥ 20× the last estimate's thread CPU time (≤ ~5% of one core). Publishes an immutable result + generation; hands the provisional record to the coordinator. Stopped first in `AppBackend::shutdown()`. |
+| Qt global thread pool (`QtConcurrent::run`) | frontend, per job | — | Short value-typed jobs owned by a widget through a `QFutureWatcher`: HDF export and the full-run core contour of [[../frontend/HdfReviewTab]]. Never touches services or widgets; results are applied on the GUI thread. |
 
 ## Sync primitives
 
@@ -95,3 +116,19 @@ The frontend scheduler bounds aggregate pending pulls and discards retired view
 responses. Details and limitations: `docs/architecture/frame-packet-v1.md`.
 The accepted readiness/configuration/finalization/recovery handoff is still open
 under #372; this slice does not establish native experiment acceptance.
+
+## Illuminated Live View (#413)
+
+Generator prepare/enable execute on capture startup; stop runs through the
+existing serialized MindVision teardown, whether requested by the UI or a
+worker fault. Generator service ownership rejects manual writes/disconnect
+while a rig owns it. No new worker, frame-path serial polling or host-timer
+strobe scheduling is added. SDK stop uses its existing in-flight drain.
+
+## MindVision overview transitions
+
+Mode changes run on the existing lifecycle owner: capture is joined and realtime
+processing stopped before replacing their FrameStore references. No additional
+worker is introduced. Camera factories load an atomic mode flag once and pass an
+immutable effective configuration to startup. Capability publication uses a
+mutex-protected snapshot; the display reads that snapshot without SDK calls.

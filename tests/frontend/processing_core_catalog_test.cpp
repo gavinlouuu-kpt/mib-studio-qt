@@ -208,5 +208,84 @@ int main() {
         ed25519Template.arg(truncatedFields).toUtf8());
     MIB_EXPECT(!truncatedSignature.ok,
                "an ed25519 entry with a non-canonical signature length is rejected");
+    // ADR 0007: the absdiff-laplacian (Contract 2) line has its own registry
+    // directory, a wheel-less manifest with a top-level release identity, and
+    // engine-ABI-v2 cores with the v2 entry point.
+    namespace cat = frontend::processingcorecatalog;
+    MIB_EXPECT(cat::findCoreLine("subtract-ring") &&
+                   cat::findCoreLine("subtract-ring")->registryDir == "processing-core" &&
+                   cat::findCoreLine("absdiff-laplacian") &&
+                   cat::findCoreLine("absdiff-laplacian")->registryDir ==
+                       "processing-core-absdiff-laplacian" &&
+                   !cat::findCoreLine("unet-cells"),
+               "core lines map to their registry directories");
+    const QByteArray c2Plugin = R"({"filename":"mib_processing_core-absdiff-laplacian-0.1.0-linux_x86_64.so",
+       "os":"linux","arch":"x86_64","algorithm":"absdiff-laplacian",
+       "url":"https://example/c2.so","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+       "size_bytes":64,"engine_abi_version":2,"contract_version":2,
+       "runtime_fingerprint":"linux-x86_64-gcc13-cxx17","entrypoint":"mib_processing_get_api_v2",
+       "app_min_version":"1.0.0","app_max_version":null,
+       "signing":{"scheme":"authenticode","required":true}})";
+    const QByteArray c2Manifest = QByteArray(R"({
+      "processing_core_manifest_schema_version":2,"channel":"stable","line":"absdiff-laplacian",
+      "version":"0.1.0","contract_version":2,"published_at":"2026-10-05T00:00:00Z",
+      "release_tag":"mib-processing-absdiff-laplacian-v0.1.0",
+      "release_url":"https://example/releases/tag/mib-processing-absdiff-laplacian-v0.1.0",
+      "native_plugins":[)") + c2Plugin + "]}";
+    const auto c2Parsed = cat::parseVersionManifest(c2Manifest);
+    MIB_REQUIRE(c2Parsed.ok, c2Parsed.error.toStdString());
+    MIB_EXPECT(c2Parsed.version.line == "absdiff-laplacian" && c2Parsed.version.contractVersion == 2 &&
+                   c2Parsed.version.releaseTag == "mib-processing-absdiff-laplacian-v0.1.0",
+               "Contract-2 manifest takes its release identity from the top level (no wheel)");
+    const auto* c2Native = cat::findNativePlugin(c2Parsed.version, "linux", "x86_64");
+    MIB_REQUIRE(c2Native != nullptr, "Contract-2 Linux core listed");
+    MIB_EXPECT(c2Native->engineAbiVersion == 2 && c2Native->algorithm == "absdiff-laplacian" &&
+                   c2Native->entrypoint == "mib_processing_get_api_v2",
+               "Contract-2 core metadata parsed");
+
+    const QByteArray c2Index = QByteArray(R"({"processing_core_index_schema_version":1,
+      "channel":"stable","line":"absdiff-laplacian","active_version":"0.1.0","versions":[
+       {"version":"0.1.0","line":"absdiff-laplacian","contract_version":2,
+        "published_at":"2026-10-05T00:00:00Z",
+        "release_tag":"mib-processing-absdiff-laplacian-v0.1.0",
+        "release_url":"https://example/releases/tag/mib-processing-absdiff-laplacian-v0.1.0",
+        "manifest_url":"https://updates.example/stable/processing-core-absdiff-laplacian/versions/0.1.0.json",
+        "native_plugins":[)") + c2Plugin + "]}]}";
+    const auto c2IndexParsed = cat::parseIndex(c2Index);
+    MIB_REQUIRE(c2IndexParsed.ok, c2IndexParsed.error.toStdString());
+    MIB_EXPECT(c2IndexParsed.line == "absdiff-laplacian", "Contract-2 index line parsed");
+    const auto c2Active = cat::validateCanonicalActive(c2IndexParsed, c2Parsed);
+    MIB_EXPECT(c2Active.ok && c2Active.version == "0.1.0", "Contract-2 latest pointer validated");
+    MIB_EXPECT(!cat::validateCanonicalActive(parsed, c2Parsed).ok,
+               "a Contract-2 latest pointer is refused against a subtract-ring index");
+
+    QByteArray c2WithV1Entry = c2Manifest;
+    c2WithV1Entry.replace("\"entrypoint\":\"mib_processing_get_api_v2\"",
+                          "\"entrypoint\":\"mib_processing_get_api\"");
+    MIB_EXPECT(!cat::parseVersionManifest(c2WithV1Entry).ok,
+               "an ABI-v2 core must use the v2 entry point");
+    QByteArray c2AsContract1 = c2Manifest;
+    c2AsContract1.replace("\"version\":\"0.1.0\",\"contract_version\":2",
+                          "\"version\":\"0.1.0\",\"contract_version\":1");
+    MIB_EXPECT(!cat::parseVersionManifest(c2AsContract1).ok,
+               "an absdiff-laplacian manifest must declare Contract 2");
+    QByteArray c2NoTag = c2Manifest;
+    c2NoTag.replace("\"release_tag\":\"mib-processing-absdiff-laplacian-v0.1.0\",", "");
+    MIB_EXPECT(!cat::parseVersionManifest(c2NoTag).ok,
+               "a wheel-less manifest needs a top-level release tag");
+    QByteArray unknownLine = c2Manifest;
+    unknownLine.replace("\"line\":\"absdiff-laplacian\"", "\"line\":\"unet-cells\"");
+    MIB_EXPECT(!cat::parseVersionManifest(unknownLine).ok, "unknown core line refused");
+    QByteArray c2InC1Manifest = manifest;
+    c2InC1Manifest.replace("\"entrypoint\":\"mib_processing_get_api\"",
+                           "\"entrypoint\":\"mib_processing_get_api_v2\"");
+    MIB_EXPECT(!cat::parseVersionManifest(c2InC1Manifest).ok,
+               "a subtract-ring core with the v2 entry point is refused");
+    QByteArray mixedIndex = c2Index;
+    mixedIndex.replace("\"version\":\"0.1.0\",\"line\":\"absdiff-laplacian\"",
+                       "\"version\":\"0.1.0\",\"line\":\"subtract-ring\"");
+    MIB_EXPECT(!cat::parseIndex(mixedIndex).ok,
+               "an index entry of another core line is refused");
+
     return mib::test::exitCode();
 }

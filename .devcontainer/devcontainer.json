@@ -1,0 +1,24 @@
+{
+  "name": "mib-studio-qt",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": { "SECTIONS": "base,backend,frontend" }
+  },
+  "remoteUser": "ubuntu",
+  "workspaceFolder": "/workspaces/mib-studio-qt",
+  "postCreateCommand": "scripts/bootstrap.sh --skip-packages --public-assets-only && scripts/doctor.sh --sections base,backend,frontend",
+  "mounts": [
+    "source=mib-studio-qt-hf-cache,target=/home/ubuntu/.cache/huggingface,type=volume",
+    "source=mib-studio-qt-conan,target=/home/ubuntu/.conan2,type=volume"
+  ],
+  "remoteEnv": {
+    "HF_TOKEN": "${localEnv:HF_TOKEN}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-vscode.cmake-tools", "ms-vscode.cpptools", "rust-lang.rust-analyzer"],
+      "settings": { "cmake.configureOnOpen": false }
+    }
+  }
+}

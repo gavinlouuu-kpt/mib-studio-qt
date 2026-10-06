@@ -59,7 +59,10 @@ FrameViewerDialog::FrameViewerDialog(const backend::services::ProcessedFrame& fr
     connect(ui->zoomOutButton, &QPushButton::clicked, this, &FrameViewerDialog::onZoomOut);
     connect(ui->fitToWindowButton, &QPushButton::clicked, this, &FrameViewerDialog::onFitToWindow);
     connect(ui->exportButton, &QPushButton::clicked, this, &FrameViewerDialog::onExportFrame);
-    connect(ui->closeButton, &QPushButton::clicked, this, &QDialog::accept);
+    connect(ui->closeButton, &QPushButton::clicked, this, [this]() {
+        if (embedded_) emit requestOpenInWindow();
+        else accept();
+    });
 
     // Add series navigation controls to the controls layout (before the spacer before zoom)
     seriesPrevBtn_ = new QPushButton(tr("< Series Prev"), this);
@@ -81,6 +84,38 @@ FrameViewerDialog::FrameViewerDialog(const backend::services::ProcessedFrame& fr
 
 FrameViewerDialog::~FrameViewerDialog() {
     delete ui;
+}
+
+void FrameViewerDialog::setEmbedded(bool embedded) {
+    embedded_ = embedded;
+    if (embedded) {
+        setWindowFlags(Qt::Widget);
+        ui->closeButton->setText(tr("Open in window…"));
+        ui->closeButton->setToolTip(tr("Open this cell in a separate viewer window"));
+        ui->closeButton->setDefault(false);
+        ui->closeButton->setAutoDefault(false);
+        ui->frameInfoLabel->setWordWrap(true);
+    } else {
+        ui->closeButton->setText(tr("Close"));
+        ui->closeButton->setToolTip(QString());
+        ui->frameInfoLabel->setWordWrap(false);
+    }
+    // The host owns overlay mode and ROI (setOverlayMode / setShowRoiOverlay)
+    // and exports (Export All), and the pane must stay narrow beside a chart:
+    // keep one short row — Prev, Next, Fit to Window, Open in window…
+    // (Ctrl+wheel still zooms, Fit resets).
+    for (QWidget* w : {static_cast<QWidget*>(ui->overlayModeLabel), static_cast<QWidget*>(ui->overlayModeCombo),
+                       static_cast<QWidget*>(ui->roiOverlayCheck), static_cast<QWidget*>(ui->zoomOutButton),
+                       static_cast<QWidget*>(ui->zoomInButton), static_cast<QWidget*>(ui->exportButton)}) {
+        w->setVisible(!embedded);
+    }
+}
+
+void FrameViewerDialog::done(int result) {
+    // An embedded viewer is part of its parent's layout; closing it would
+    // leave an empty hole next to the chart.
+    if (embedded_) return;
+    QDialog::done(result);
 }
 
 void FrameViewerDialog::setFrame(const backend::services::ProcessedFrame& frame) {
@@ -201,7 +236,9 @@ void FrameViewerDialog::keyPressEvent(QKeyEvent* event) {
         onNextFrame();
         event->accept();
     } else if (event->key() == Qt::Key_Escape) {
-        accept();
+        if (!embedded_) accept();
+        event->accept();
+    } else if (embedded_ && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
         event->accept();
     } else {
         QDialog::keyPressEvent(event);
