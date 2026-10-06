@@ -68,9 +68,13 @@ InstrumentIdentity loadOrCreateInstrumentIdentity(const std::filesystem::path& d
     const auto path = dataDir / kFile;
 
     if (std::filesystem::exists(path, ec)) {
-        std::ifstream in(path, std::ios::binary);
+        // Read in its own scope: Windows cannot rename a file that is still open,
+        // and the corrupt file is moved aside below.
         std::stringstream text;
-        text << in.rdbuf();
+        {
+            std::ifstream in(path, std::ios::binary);
+            text << in.rdbuf();
+        }
         try {
             const auto j = Json::parse(text.str());
             const auto id = j.at("instrument_id").get<std::string>();
