@@ -19,6 +19,7 @@
 
 #include "support/assert.h"
 #include "support/stage_rig.h"
+#include "support/tempdir.h"
 #include "support/watchdog.h"
 
 #include <atomic>
@@ -26,6 +27,7 @@
 #include <cmath>
 #include <optional>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -927,6 +929,171 @@ int main()
         MIB_EXPECT(waitFor([&] { return !rig.store->load().has_value(); }), "the next poll sees the mismatch and drops the record");
         MIB_EXPECT(!svc->snapshot().zeroSet, "no zero");
     }
+
+    // --- third Codex review of #531: persistence, fail closed ----------------------------
+    // 3. The first Set zero with no record must not change anything when the record
+    //    cannot be stored.
+    watchdog.mark("first zero with an unwritable store");
+    {
+        StageRig rig;
+        auto log = std::make_shared<EventLog>();
+        auto* recording = new RecordingStore(rig.store, log, false, true); // every save fails
+        auto svc = rig.serviceWithStore(rig.config(), std::unique_ptr<IStageReferenceStore>(recording));
+        MIB_REQUIRE(svc->startup() == StageError::None, "connect");
+        const auto counter = rig.device.counterPulses();
+        const int writes = rig.device.writes();
+        std::string detail;
+        MIB_EXPECT(svc->setZero(false, &detail) != StageError::None, "refused: " + detail);
+        MIB_EXPECT(rig.device.writes() == writes && rig.device.scratch() == 0 && rig.device.counterPulses() == counter,
+                   "no token, no counter write: nothing changed");
+        MIB_EXPECT(!svc->snapshot().zeroSet && svc->moveTo(0).error == StageError::ZeroNotSet, "and no motion is enabled");
+    }
+
+    // 3b. A final record that cannot be stored leaves nothing trusted.
+    watchdog.mark("final record unwritable");
+    {
+        StageRig rig;
+        rig.device.setLimits(-20000, 20000);
+        auto log = std::make_shared<EventLog>();
+        auto* recording = new RecordingStore(rig.store, log, false, false);
+        auto svc = rig.serviceWithStore(rig.config(), std::unique_ptr<IStageReferenceStore>(recording));
+        MIB_REQUIRE(svc->startup() == StageError::None, "connect");
+        // The interim record is stored, then the disk fails before the final one:
+        rig.device.setWriteObserver([&](int start, const std::vector<std::uint16_t>&) {
+            if (start == 30059) recording->setFailSave(true);
+        });
+        std::string detail;
+        MIB_EXPECT(svc->setZero(false, &detail) != StageError::None && detail.find("could not be stored") != std::string::npos,
+                   "the result is a failure, not a success: " + detail);
+        recording->setFailSave(false);
+        MIB_EXPECT(!svc->snapshot().zeroSet && svc->moveTo(0).error == StageError::ZeroNotSet, "nothing is trusted");
+    }
+
+    // 4. After a token rotation the replacement record keeps being retried, so the
+    //    window survives a store that comes back.
+    watchdog.mark("rotation record retried");
+    {
+        StageRig rig;
+        rig.device.setLimits(-20000, 20000);
+        auto log = std::make_shared<EventLog>();
+        auto* recording = new RecordingStore(rig.store, log, false, false);
+        std::uint16_t tokenAtZero = 0;
+        {
+            auto svc = rig.serviceWithStore(rig.config(), std::unique_ptr<IStageReferenceStore>(recording));
+            MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc) && moveTo(*svc, 900), "zero, then +900 um");
+            tokenAtZero = rig.device.scratch();
+            recording->setFailSave(true);
+            rig.device.setDriverAlarm(true);
+            MIB_REQUIRE(waitFor([&] { return !svc->snapshot().zeroSet; }), "an alarm drops the zero");
+            MIB_REQUIRE(waitFor([&] { return rig.device.scratch() != tokenAtZero; }), "the token is rotated");
+            sleepMs(120); // several polls with the store still down: it must keep trying
+            rig.device.setDriverAlarm(false);
+            recording->setFailSave(false); // the disk comes back
+            MIB_EXPECT(waitFor([&] {
+                           const auto k = rig.store->load();
+                           return k && !k->zeroValid && k->token == rig.device.scratch();
+                       }),
+                       "the replacement record (new token, window kept, not valid) is stored once the disk is back");
+        }
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None, "restart");
+        MIB_EXPECT(!svc->snapshot().zeroSet, "no zero is restored");
+        MIB_REQUIRE(zero(*svc), "an undeclared zero inside the old window");
+        MIB_EXPECT(svc->snapshot().envelopeMaxUm <= 101.0, "the window of this power-up survived the outage");
+    }
+
+    // 5. A token write that timed out may have been applied: keep accepting the new
+    //    token, trust nothing, and do not treat the next reconnect as a power cycle.
+    watchdog.mark("unacknowledged token write");
+    {
+        StageRig rig;
+        rig.device.setLimits(-20000, 20000);
+        std::uint16_t before = 0;
+        {
+            auto svc = rig.service();
+            MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "zero");
+            before = rig.device.scratch();
+            rig.device.dropWriteAcks(30054, 8); // applied, never acknowledged, on every attempt
+            std::string detail;
+            MIB_EXPECT(svc->setZero(false, &detail) != StageError::None, "Set zero reports the failure: " + detail);
+            MIB_EXPECT(rig.device.scratch() != before, "although the controller did take the new token");
+            MIB_EXPECT(!svc->snapshot().zeroSet, "nothing is trusted meanwhile");
+            rig.device.dropWriteAcks(30054, 0);
+        }
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None, "reconnect");
+        MIB_EXPECT(rig.store->load().has_value(), "the record survives: the new token is not a power cycle");
+        std::string detail;
+        MIB_EXPECT(svc->setZero(false, &detail) == StageError::OutOfSoftLimits && detail.find("interrupted") != std::string::npos,
+                   "an undeclared zero is refused (window kept, frame uncertain): " + detail);
+        MIB_EXPECT(svc->setZero(true, &detail) == StageError::None, "a declaration re-establishes it");
+    }
+
+    // 6. A fault seen while the stored zero is not trusted yet must still cost it.
+    watchdog.mark("fault while the token is unknown");
+    {
+        StageRig rig;
+        {
+            auto svc = rig.service();
+            MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "zero");
+        }
+        auto cfg = rig.config();
+        cfg.pollIdleMs = 40;
+        rig.device.failTokenReads(10); // the token stays unknown for ~10 polls
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None, "connect with the token unreadable");
+        rig.device.setDriverAlarm(true);
+        MIB_REQUIRE(waitFor([&] { return svc->snapshot().status.driverAlarm; }), "the alarm is seen");
+        rig.device.setDriverAlarm(false); // and clears before the token can be checked
+        MIB_REQUIRE(waitFor([&] { return !svc->snapshot().status.driverAlarm; }), "alarm cleared");
+        sleepMs(700); // the token reads recover
+        MIB_EXPECT(!svc->snapshot().zeroSet, "the zero is not restored once the token matches again");
+        const auto k = rig.store->load();
+        MIB_EXPECT(k.has_value() && !k->zeroValid, "its record says so, keeping the window");
+    }
+
+    // 6b. The same when the fault is already there at connect (the first poll comes later).
+    watchdog.mark("fault at connect while the token is unknown");
+    {
+        StageRig rig;
+        {
+            auto svc = rig.service();
+            MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "zero");
+        }
+        auto cfg = rig.config();
+        cfg.pollIdleMs = 300; // the first poll comes after the alarm is gone
+        rig.device.setDriverAlarm(true);
+        rig.device.failTokenReads(1);
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None, "connect under an alarm with the token unreadable");
+        rig.device.setDriverAlarm(false);
+        sleepMs(900); // polls verify the token; the alarm is long gone
+        MIB_EXPECT(!svc->snapshot().zeroSet, "the zero is not restored after a fault seen at connect");
+        const auto k = rig.store->load();
+        MIB_EXPECT(k.has_value() && !k->zeroValid, "and its record says so");
+    }
+
+    // 7. A record file that fails at flush or close time is not renamed into place.
+#if defined(__linux__)
+    watchdog.mark("file store close failure");
+    {
+        mib::test::TempDir dir("stage_store");
+        const auto path = dir.path() / "stage_reference.json";
+        FileStageReferenceStore store(path.string());
+        StageReferenceRecord r;
+        r.controllerSerial = "26017"; r.token = 5; r.windowMinUm = -1000; r.windowMaxUm = 1000;
+        MIB_EXPECT(store.save(r), "a normal save succeeds");
+        const auto loaded = store.load();
+        MIB_EXPECT(loaded && loaded->token == 5 && loaded->zeroValid && !loaded->frameUncertain, "and reads back");
+        std::filesystem::remove(path);
+        std::error_code ec;
+        std::filesystem::create_symlink("/dev/full", path.string() + ".tmp", ec); // writes fail with ENOSPC at flush
+        if (!ec) {
+            MIB_EXPECT(!store.save(r), "a flush-time failure is reported");
+            MIB_EXPECT(!std::filesystem::exists(path) && !store.load().has_value(), "and nothing was renamed into place");
+        }
+    }
+#endif
 
     // --- move failures ---------------------------------------------------------
     watchdog.mark("move failures");

@@ -99,6 +99,12 @@ public:
     {
         locked([&] { writeObserver_ = std::move(f); });
     }
+    // The next `count` writes to `reg` are executed but never answered: the host sees
+    // a timeout although the controller applied the value.
+    void dropWriteAcks(int reg, int count) { locked([&] { dropAckRegister_ = reg; dropAckCount_ = count; }); }
+    // Reads (FC03/FC04) get no reply at all while writes are answered normally: a
+    // controller whose status reads go silent, so a poller burns through its retries.
+    void setSilentReads(bool on) { locked([&] { silentReads_ = on; }); }
     // The next `n` reads of the power-up token register (30054) fail with a device
     // failure exception: a transient read error, not a different token.
     void failTokenReads(int n) { locked([&] { failTokenReads_ = n; }); }
@@ -184,6 +190,10 @@ public:
         reply.send = true;
         reply.readyAt = Clock::now() + std::chrono::milliseconds(replyDelayMs_);
 
+        if ((func == 0x03 || func == 0x04) && silentReads_) {
+            reply.send = false;
+            return reply;
+        }
         if (func == 0x03 || func == 0x04) {
             const bool input = start < 30050;
             if (input != (func == 0x04) || count < 1 || count > 125) {
@@ -223,6 +233,10 @@ public:
             if (words[0] == 0x6D && exc == 0) reply.readyAt += std::chrono::milliseconds(saveDelayMs_);
         } else {
             exc = writeRegisters(start, words);
+            if (exc == 0 && start == dropAckRegister_ && dropAckCount_ > 0) {
+                --dropAckCount_;
+                suppressReply = true; // applied, never answered
+            }
         }
         if (suppressReply) {
             reply.send = false;
@@ -462,6 +476,9 @@ private:
     bool swapLimits_{false};
     bool limitsHalt_{true};
     int failTokenReads_{0};
+    bool silentReads_{false};
+    int dropAckRegister_{0};
+    int dropAckCount_{0};
     std::function<void(int, const std::vector<std::uint16_t>&)> writeObserver_;
     float stepDistance_{0.0f};
     std::uint16_t scratch_{0};

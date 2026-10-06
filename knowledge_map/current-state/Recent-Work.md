@@ -38,6 +38,15 @@ stage.
   crash; an unreadable token at reconnect is unknown, not a mismatch; and
   `power_up_token_register: 0` needs `allow_session_only_zero` and shows an
   alert.
+- **Third review round (Codex, #531):** the Stop generation is checked right
+  before every motion opcode on every path, and Stop no longer sits behind a
+  silent controller's retries; and the lifetime of the zero fails closed: the
+  first zero stores its interim record too, a failed final save trusts nothing,
+  a replacement record after a token rotation is retried until stored, an
+  unacknowledged token write keeps the interim record, a fault seen while the
+  token is unknown still drops the zero, and the record file is flushed, fsynced
+  and closed before the rename. The #532 stop-storm test now measures the
+  driver's grant order.
 - **Known limitation:** the counter is open-loop; a hand move or stall is
   invisible to the software.
 - **Next:** the first real Set zero (one register write plus a read-back) needs

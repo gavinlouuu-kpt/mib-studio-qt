@@ -435,11 +435,79 @@ int main()
         MIB_EXPECT(device.opcodeCount(0x64) == 1, "that opcode was sent");
     }
 
+    // Third review of #531: the generation is checked right before every motion
+    // opcode, on every path, not only before the target write.
+    watchdog.mark("stop overtakes the target write");
+    {
+        FakeZc300 device;
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setReplyDelayMs(200); // every transaction takes ~200 ms
+        StageError result = StageError::None;
+        std::thread mover([&] { result = stage.moveAbsolute(100); }); // no caller-supplied generation
+        std::this_thread::sleep_for(std::chrono::milliseconds(60)); // inside the target write
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop during the target write");
+        mover.join();
+        device.setReplyDelayMs(0);
+        MIB_EXPECT(result == StageError::Stopped, "the move gave way to the Stop");
+        MIB_EXPECT(device.opcodeCount(0x64) == 0, "and no motion opcode was sent");
+    }
+    watchdog.mark("stop overtakes a queued relative move and a queued jog");
+    for (const bool jog : {false, true}) {
+        FakeZc300 device;
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setReplyDelayMs(200);
+        std::thread poller([&] { StageStatus st; stage.readStatus(st); }); // holds the driver ~200 ms
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        StageError result = StageError::None;
+        std::thread mover([&] { result = jog ? stage.jog(Direction::Positive) : stage.moveRelative(50); }); // queues
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop while the move waits for the driver");
+        poller.join();
+        mover.join();
+        device.setReplyDelayMs(0);
+        const std::string what = jog ? "jog" : "relative move";
+        MIB_EXPECT(result == StageError::Stopped, std::string("a queued ") + what + " gives way to a Stop that came after it");
+        MIB_EXPECT(device.opcodeCount(0x66) + device.opcodeCount(0x65) == 0, "no motion opcode was sent for the " + what);
+    }
+
+    // Stop latency: it must not sit behind a silent controller's retries
+    // (4 x 500 ms) held by a status poll.
+    watchdog.mark("stop latency behind retries");
+    {
+        FakeZc300 device;
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager); // the real timing: 500 ms x 4 attempts
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        device.setSilentReads(true);
+        StageError pollResult = StageError::None;
+        std::thread poller([&] { StageStatus st; pollResult = stage.readStatus(st); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the poll is in its first silent attempt
+        const auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(stage.stop() == StageError::None, "Stop gets through");
+        const long long stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        poller.join();
+        device.setSilentReads(false);
+        MIB_EXPECT(stopMs < 1000, "Stop got through in under 1 s although a poll was retrying (" + std::to_string(stopMs) + " ms)");
+        MIB_EXPECT(pollResult == StageError::Stopped, "the poll gave way instead of finishing its retries");
+        MIB_EXPECT(device.opcodeCount(0x68) + device.opcodeCount(0x67) >= 1, "the stop opcode reached the fake");
+    }
+
     // Stop goes to the front of the line. A reviewer found that Stop shared the
     // command FIFO: queued moves and teardown went first, and after the
     // timeout it returned Busy without ever sending. With every reply delayed,
     // each driver call holds the driver ~200 ms, so a queue builds up
-    // behind the in-flight call; Stop must be sent next, ahead of it.
+    // behind the in-flight call; Stop must be sent next, ahead of it, and a move that
+    // was queued before it must not run after it.
     watchdog.mark("stop jumps the queue");
     {
         FakeZc300 device;
@@ -463,11 +531,13 @@ int main()
         const long long stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         inFlight.join(); queuedMove.join(); queuedSpeed.join();
         const auto ops = device.opcodeSequence();
-        // in-flight move (0x65), then Stop (0x68), only then the queued move (0x65)
-        MIB_REQUIRE(ops.size() >= 3, "all three opcodes reached the wire");
-        MIB_EXPECT(ops[0] == 0x65 && ops[1] == 0x68 && ops[2] == 0x65,
+        // in-flight move (0x65), then Stop (0x68); the move that was queued before the
+        // Stop must not start motion after it (third review of #531), so it is not sent
+        MIB_REQUIRE(ops.size() >= 2, "the in-flight move and the Stop reached the wire");
+        MIB_EXPECT(ops[0] == 0x65 && ops[1] == 0x68,
                    "Stop was sent next, ahead of the queued move (sequence " + std::to_string(ops[0]) + "," +
-                       std::to_string(ops[1]) + "," + std::to_string(ops[2]) + ")");
+                       std::to_string(ops[1]) + ")");
+        MIB_EXPECT(ops.size() == 2, "and the queued move never went out after it");
         MIB_EXPECT(stopMs < 1200, "Stop took about one in-flight call, not the whole queue (" + std::to_string(stopMs) + " ms)");
         device.setReplyDelayMs(0);
     }
@@ -483,23 +553,29 @@ int main()
         zc300::Zc300Stage stage(manager);
         StageIdentity id;
         MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        stage.enableGrantLog();
         device.setReplyDelayMs(120);
         std::thread inFlight([&] { stage.moveRelative(100); });
         while (device.opcodeCount(0x65) == 0 && stage.waitingCalls() == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        std::atomic<int> completed{0};
-        std::atomic<int> disconnectIndex{-1};
-        std::thread disconnecting([&] { stage.disconnect(); disconnectIndex = completed.fetch_add(1); });
+        std::thread disconnecting([&] { stage.disconnect(); });
         const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (stage.waitingCalls() < 1 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
         std::vector<std::thread> storm;
-        for (int i = 0; i < 6; ++i) storm.emplace_back([&] { stage.stop(); completed.fetch_add(1); });
+        for (int i = 0; i < 6; ++i) storm.emplace_back([&] { stage.stop(); });
         while (stage.waitingCalls() < 7 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
         MIB_REQUIRE(stage.waitingCalls() >= 7, "a Disconnect and six Stops are queued behind the in-flight call");
         inFlight.join();
         disconnecting.join();
         for (auto& t : storm) t.join();
-        MIB_EXPECT(disconnectIndex.load() >= 0 && disconnectIndex.load() <= 4,
-                   "Disconnect finished after at most four Stops (index " + std::to_string(disconnectIndex.load()) + " of 7)");
+        // The order the driver *granted* the calls in, not the order the threads happened to return
+        // and be rescheduled (#532): the in-flight move, then Stops, with the Disconnect among the
+        // first four of them at the latest.
+        const std::string grants = stage.grantLog();
+        const auto lifecycle = grants.find('L');
+        MIB_REQUIRE(lifecycle != std::string::npos, "the Disconnect was granted (grants: " + grants + ")");
+        const auto stopsBefore = static_cast<int>(std::count(grants.begin(), grants.begin() + static_cast<long>(lifecycle), 'S'));
+        MIB_EXPECT(stopsBefore <= 4, "at most four Stops were granted before the Disconnect (grants: " + grants + ")");
+        MIB_EXPECT(std::count(grants.begin(), grants.end(), 'S') == 6, "all six Stops were granted, the rest after the Disconnect (grants: " + grants + ")");
         MIB_EXPECT(!stage.isConnected(), "disconnected");
         device.setReplyDelayMs(0);
     }

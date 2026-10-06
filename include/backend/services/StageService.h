@@ -297,6 +297,7 @@ private:
     bool haveZeroRecord_{false};
     // An invalidation (zeroValid = false) is not durable yet.
     bool persistPending_{false};
+    bool rotatedForPending_{false}; // the token was already rotated for this pending invalidation
     // After a reconnect the token could not be read: the record is kept, motion is
     // refused, and the next poll decides (same power-up or not).
     bool tokenUnverified_{false};

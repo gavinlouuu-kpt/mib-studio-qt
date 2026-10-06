@@ -55,16 +55,24 @@ public:
     ControllerConfig controllerConfig() const;
     // Calls currently queued for the driver (diagnostics and tests).
     std::size_t waitingCalls() const;
+    // Test hook: records the kind of every call in the order the driver *granted* it
+    // (S stop, C command, P poll, L lifecycle). Unlike the order in which threads
+    // return, it does not depend on scheduling.
+    void enableGrantLog();
+    std::string grantLog() const;
 
 private:
     // All require the driver held (an owned Access).
     StageError readLocked(int reg, std::uint16_t count, Frame& data);
     StageError writeLocked(const Frame& request, int timeoutMs);
-    StageError motionLocked(Opcode op, std::uint16_t direction);
+    StageError motionLocked(Opcode op, std::uint16_t direction, std::uint64_t expectedStopGeneration);
+    // True while a Stop is waiting for the driver and the current holder is not that Stop: retries
+    // and further transactions give way to it (Stop latency, #531).
+    bool stopWaiting() const { return !holderIsStop_ && stopsWaiting_.load() > 0; }
     StageError readStatusLocked(StageStatus& status);
     StageError readConfigLocked(ControllerConfig& config);
     StageError requireMotionLocked() const;
-    StageError moveLocked(Opcode op, double um);
+    StageError moveLocked(Opcode op, double um, std::uint64_t expectedStopGeneration);
     void releaseLocked();
 
     services::serialbus::SerialBusManager& busManager_;
@@ -85,6 +93,7 @@ private:
     class Access;
     struct Waiter {
         bool granted{false}; // set by the releasing thread, under gate_
+        char kind{'C'};      // S stop, C command, P poll, L lifecycle (grant log)
     };
     static constexpr std::chrono::seconds kLockTimeout{15};
     static constexpr int kMaxConsecutiveStops{4};
@@ -94,6 +103,8 @@ private:
     mutable std::deque<Waiter*> stopQueue_;    // Stop only: served first
     mutable std::deque<Waiter*> commandQueue_; // commands and teardown
     mutable int consecutiveStops_{0};
+    mutable bool grantLogEnabled_{false};
+    mutable std::string grantLog_; // under gate_
     mutable std::deque<Waiter*> pollQueue_;
     std::shared_ptr<services::serialbus::ModbusBusSession> bus_;
     std::uint8_t address_{1};
@@ -101,6 +112,8 @@ private:
     StageProfile profile_;
     ControllerConfig config_;
     std::atomic<std::uint64_t> stopGeneration_{0};
+    std::atomic<int> stopsWaiting_{0}; // stop() calls between entry and return
+    mutable bool holderIsStop_{false}; // written and read only by the current holder of the driver
     std::atomic<bool> connected_{false};
     std::atomic<bool> configured_{false};
 };

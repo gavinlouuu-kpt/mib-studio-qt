@@ -86,7 +86,18 @@ bus session's call mutex is innermost (see [[SerialBus]]).
   Every `stop()` bumps `stopGeneration()` before it waits for the driver, and
   `moveAbsolute(target, generation)` returns `Stopped` under the driver lock
   if a Stop arrived after the caller read the generation: a move decided
-  before a Stop never starts motion after it.
+  before a Stop never starts motion after it. The generation is checked again
+  right before **every** motion opcode (move, relative move, jog), after the
+  target write, and without a caller-supplied value it is read when the call
+  starts, so a Stop queued behind a call in flight still wins.
+- **Stop latency.** While a Stop waits for the driver, the retries of the call in
+  flight give way between attempts (`Stopped`) instead of burning through
+  4 × `transactionMs`, so a Stop sits behind at most one transaction. A profile
+  Save (up to 3 s) is not interruptible, but it only runs on an idle axis with
+  no operation (the service admits nothing meanwhile), so no motion is pending.
+- **Test hook:** `enableGrantLog()` / `grantLog()` record the order in which calls
+  were *granted* (S stop, C command, P poll, L lifecycle); tests assert on it,
+  not on the order threads happened to return (#532).
 - A command or poll that cannot get the driver within 15 s returns `Busy`.
   `disconnect()` waits its turn however long it takes, because teardown must
   not be skipped.

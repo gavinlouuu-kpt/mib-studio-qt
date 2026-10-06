@@ -55,23 +55,31 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   really is there, or power-cycle"). The window is stored in the current
   zero's coordinates and shifted by every re-zero, so repeated re-zeroing can
   never walk the envelope along the stage.
+- **Fail closed.** Any uncertainty about what is on the controller or on disk
+  (a save failed, a token write was not acknowledged, the token is unknown, a
+  fault was seen while it was unknown) leaves the stage in "zero invalid, window
+  uncertain": moves and an undeclared re-zero are refused, and the way out is an
+  explicit operator action: Set zero **with the mid-travel declaration** (or a
+  controller power cycle). That state is persisted.
 - **Order of writes, safe at every crash point** (with a power-up token):
-  1. An **interim record** is saved: `{old window, zeroValid = false,
-     frameUncertain = true, token = the controller's, nextToken = the new one}`.
-     It is not restorable, and a reconnect accepts the controller holding
-     either token as "the same power-up", so a crash here never loses the
-     window. If it cannot be stored, Set zero is refused and nothing changed.
-  2. A **fresh token goes to controller register 30054**. It is guaranteed
-     different from the one it replaces (and never 0), so no stored record,
-     however stale or undeletable, can match it. If this write fails, the
-     record is put back and Set zero is refused (nothing changed).
-  3. Register 30059 is written (the counter).
-  4. The final record `{serial, token, midTravelDeclared, window, zeroValid}`
-     goes to `<dataDir>/stage_reference.json`; if that save fails the zero
-     works for this session and the result says a restart will not restore it.
-  The store is never trusted to have deleted anything. A failed counter write
-  leaves `frameUncertain` set: the next undeclared zero is refused until the
-  operator declares mid-travel or the controller is power-cycled.
+  1. An **interim record** is saved, for the *first* zero too: `{window,
+     zeroValid = false, frameUncertain = true, token = the controller's,
+     nextToken = the new one}`. A reconnect accepts the controller holding either
+     token as "the same power-up", so a crash never loses the window. If it
+     cannot be stored, Set zero is refused and nothing has changed.
+  2. A **fresh token goes to controller register 30054**, guaranteed different
+     from the one it replaces (and never 0), so no stored record, however stale
+     or undeletable, can match it. If the write fails or is not acknowledged the
+     controller may hold either token: the interim record (accepting both) is
+     kept, nothing is trusted, and Set zero must be repeated with a declaration.
+  3. Register 30059 is written (the counter). A failure leaves the stage
+     uncertain, as above.
+  4. The final record `{serial, token, midTravelDeclared, window, zeroValid}` is
+     saved (three attempts) and only then is the zero used. If it cannot be
+     stored the call fails: the counter is already new, so nothing is trusted.
+  The store is never trusted to have deleted anything, and
+  `FileStageReferenceStore::save` writes, flushes, fsyncs and closes before it
+  renames, so a close-time failure cannot replace the record with a truncated file.
 - **Power-up detection.** The token is compared with the controller's on every
   idle status poll, before every Set zero and before every motion opcode. A
   mismatch (a power cycle while connected) drops the zero, the window and the
@@ -95,9 +103,13 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   mid-travel declaration starts a new window. An operator Stop keeps the zero.
 - **The invalidation is made durable by the worker** after the job or poll that
   caused it (`persistInvalidation`). If the store refuses the write, the
-  controller token is rotated instead, so a stale "valid" record can never
-  match again; it is retried until one of them works, and also tried before a
-  Disconnect.
+  controller token is rotated (once), so a stale "valid" record can never match
+  again, and the replacement record is **retried on every poll until it is
+  stored** (also tried before a Disconnect). If the store never recovers, a
+  restart cannot know this power-up's window: that is reported in `lastError`.
+- **A fault seen while the stored zero is not trusted yet** (token unknown at
+  reconnect) still costs it, even if the fault clears before the token can be
+  checked.
 
 ## Travel envelope
 
