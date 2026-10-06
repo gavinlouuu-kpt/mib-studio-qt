@@ -69,9 +69,28 @@ focus actuator; separate device class). Evidence:
 
 One driver mutex serializes every public call, so multi-frame operations
 (distance write plus opcode) are atomic with respect to other callers. The
-bus session's call mutex is innermost (see [[SerialBus]]). A `stop()` waits
-behind an in-flight call, at worst one read with its retries (~2 s at the
-default timing). `StageService` (slice 3) owns polling threads.
+bus session's call mutex is innermost (see [[SerialBus]]).
+
+**Access is prioritized and bounded (`Zc300Stage::Access`).**
+- Commands register as priority waiters. These are moves, `stop()`, writes,
+  connect and token calls.
+- Status polls (`readStatus`) step aside while any command is waiting.
+- A command that cannot get the driver within 15 s returns `Busy`.
+  `disconnect()` keeps trying, because teardown must not be skipped.
+- Acquisition is `try_lock` in a short sleep loop, not `std::timed_mutex`,
+  whose clock-based waits older TSan runtimes may not intercept.
+- **Why:** with one back-to-back poller, an unfair `std::mutex` starved a
+  move for 60 s on PR #511's TSan CI runner. Locally under TSan on two
+  cores, three tight pollers made a move wait up to 2 s. With priority it
+  waits ≤ 50 ms and `stop()` ≤ 30 ms (`backend.zc300_stage`
+  "concurrency"; `backend.zc300_stage_two_cores` runs it pinned to two
+  cores on Linux).
+- **Not only a test problem:** a UI or server polling `readStatus` in a
+  tight loop on real hardware could have starved Stop for seconds the same
+  way.
+
+A `stop()` still waits behind the call in flight, at worst one read with its
+retries (~2 s at the default timing). `StageService` owns polling threads.
 
 ## Gotchas
 

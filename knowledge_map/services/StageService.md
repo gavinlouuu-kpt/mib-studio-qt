@@ -36,10 +36,16 @@ The driver underneath is [[ZC300Stage]].
 
 ## Home (`reference()`)
 
-1. Jog to the negative limit switch at `search_speed_um_s`. If the stage
-   travels `expected_span + search_margin` without reaching it, the search
-   aborts.
-2. Jog to the positive limit switch the same way.
+1. **Search for the negative limit switch** at `search_speed_um_s` (at most
+   2000 µm/s; 1000 µm/s by default).
+   - The search is a relative move (opcode 0x65) of at most
+     `expected_span + search_margin` (6500 µm), never an open-ended jog.
+   - The ZC300 itself ends the move at the bound, or earlier at a tripped
+     limit switch, so host stalls (load, OS sleep granularity, USB latency)
+     cannot extend it. Host polling can only stop it earlier.
+   - If it ends without the switch active: `ReferenceFailed`, "check the
+     limit-switch wiring".
+2. Search for the positive limit switch the same way.
 3. Check the span: `|span − expected_span| ≤ span_tolerance`, otherwise
    `ReferenceFailed`.
 4. Move to the midpoint with the one-sided approach.
@@ -52,6 +58,14 @@ On the next `connect()`, the reference is restored only if the serial and
 token both match. A power cycle clears the register, so the stage needs Home
 again. With `power_up_token_register: 0`, the reference lasts for the session
 only.
+
+**The 6500 µm bound fixes timing, not wiring.** It is larger than the
+TBZF6-60's ~6000 µm travel, so on a stage whose limit switches are unwired
+or broken, a search reaches the mechanical hard stop before the bound. Before
+the first real Home on any stage, someone must do a **supervised slow jog to
+each limit, with Gavin present**, to confirm the switches (plan, slice 8).
+Slice 8 will add a per-controller "limits verified" record that Home
+requires.
 
 ## Operations
 

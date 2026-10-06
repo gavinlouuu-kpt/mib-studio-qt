@@ -18,12 +18,14 @@
 #include "support/fake_zc300.h"
 #include "support/watchdog.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace backend::stage;
 using backend::services::serialbus::SerialBusManager;
@@ -300,6 +302,9 @@ int main()
     }
 
     // --- concurrent pollers and commands (TSan lane) ------------------------
+    // Status pollers that re-lock the driver back to back must not starve a
+    // command: PR #511's TSan lane stalled 60 s here with one tight poller.
+    // Every command must get through within a bound, and so must Stop.
     watchdog.mark("concurrency");
     {
         FakeZc300 device;
@@ -310,21 +315,41 @@ int main()
         MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
         std::atomic<bool> done{false};
         std::atomic<int> pollErrors{0};
-        std::thread poller([&] {
-            while (!done.load()) {
-                StageStatus s;
-                if (stage.readStatus(s) != StageError::None) pollErrors.fetch_add(1);
-            }
-        });
+        std::vector<std::thread> pollers;
+        for (int p = 0; p < 3; ++p) {
+            pollers.emplace_back([&] {
+                while (!done.load()) { // deliberately no pause between polls
+                    StageStatus s;
+                    if (stage.readStatus(s) != StageError::None) pollErrors.fetch_add(1);
+                }
+            });
+        }
+        using Ms = std::chrono::milliseconds;
+        const auto elapsed = [](std::chrono::steady_clock::time_point t0) {
+            return std::chrono::duration_cast<Ms>(std::chrono::steady_clock::now() - t0).count();
+        };
+        const auto stepStart = std::chrono::steady_clock::now();
         int moveErrors = 0;
+        long long slowestCommandMs = 0;
         for (int i = 0; i < 20; ++i) {
+            const auto t0 = std::chrono::steady_clock::now();
             if (stage.moveAbsolute(i % 2 ? 50 : 0) != StageError::None) ++moveErrors;
+            slowestCommandMs = std::max<long long>(slowestCommandMs, elapsed(t0));
             if (!waitIdle(stage)) ++moveErrors;
         }
+        device.setPulsesPerSecond(2000);
+        MIB_EXPECT(stage.moveAbsolute(2000) == StageError::None, "slow move under pollers");
+        const auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(stage.stop() == StageError::None, "stop under pollers");
+        const long long stopMs = elapsed(t0);
         done.store(true);
-        poller.join();
-        MIB_EXPECT(moveErrors == 0 && pollErrors.load() == 0, "20 moves with a concurrent poller, no errors");
-        MIB_EXPECT(device.positionPulses() == 114, "ends at 50 um (114 pulses)");
+        for (auto& t : pollers) t.join();
+        std::printf("concurrency: slowest command %lld ms, stop %lld ms, step %lld ms\n", slowestCommandMs, stopMs,
+                    static_cast<long long>(elapsed(stepStart)));
+        MIB_EXPECT(moveErrors == 0 && pollErrors.load() == 0, "20 moves with three tight pollers, no errors");
+        MIB_EXPECT(slowestCommandMs < 2000, "no command waited more than 2 s behind the pollers");
+        MIB_EXPECT(stopMs < 1000, "Stop got through the pollers within 1 s");
+        MIB_EXPECT(!device.moving(), "stopped");
     }
 
     if (mib::test::exitCode() == 0) std::printf("ZC300 stage driver verified\n");

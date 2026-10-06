@@ -1,5 +1,29 @@
 # Recent Work
 
+## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)
+
+PR #511's TSan lane stalled 60 s in `backend.zc300_stage`: a back-to-back
+status poller kept re-locking the driver's unfair mutex and starved a move.
+[[../services/ZC300Stage]] access is now prioritized (commands, including
+Stop, go first; polls step aside) and bounded (`Busy` after 15 s). The
+concurrency test now runs three tight pollers and bounds every command, and
+Stop, by time. Under TSan on two cores the slowest command went from 2 s to
+≤ 50 ms.
+
+## 2026-10-06 — Z stage Home: controller-bounded limit search (#464 fix)
+
+[[../services/StageService]] Home now searches for each limit switch with a
+relative move of at most 6500 µm (opcode 0x65) at the slow search speed.
+Before, it was an open-ended jog that the host stopped by polling.
+- **Why:** Windows CI saw the jog overshoot the bound by ~300 µm, through
+  sleep granularity.
+- **Now:** the controller enforces the bound even when the host stalls.
+- **Tests:** a reply-delayed (80 ms) fake proves it. Mutation checks (jog
+  back in; search at the move speed) fail.
+- **Config:** `search_speed_um_s` is capped at 2000 µm/s.
+- **Not fixed by this:** the bound exceeds the ~6000 µm travel, so a
+  supervised limit check stays a precondition for the first real Home.
+
 ## 2026-10-05 — StageService: read-only start-up, Home at mid-travel (#464, slice 3)
 
 [[../services/StageService]] owns the Z stage, and `AppBackend::stage()`

@@ -208,17 +208,52 @@ int main()
         MIB_EXPECT(svc->operation(r.id)->error == StageError::ReferenceFailed, "ReferenceFailed");
         MIB_EXPECT(!svc->snapshot().referenced && !rig.device.moving(), "stopped and unreferenced");
     }
-    {
+    // Missing (or unwired) limit switches: the search must end at its
+    // 6500 um bound, enforced by the controller, whatever the host's timing.
+    // Windows CI caught an open-ended jog overshooting by ~300 um (#464).
+    // 6500 um / 0.4375 um per pulse = 14857 pulses.
+    for (const int replyDelayMs : {0, 80}) {
         StageRig rig;
         rig.device.setLimits(-40000, 40000); // no switch within the 6500 um search
-        rig.device.setPulsesPerSecond(20000);   // ~44 um per 5 ms poll
-        auto svc = rig.service();
+        rig.device.setPulsesPerSecond(20000);   // 8.75 um/ms: an 80 ms stall = 700 um
+        rig.device.setReplyDelayMs(replyDelayMs); // stalled host polls
+        auto cfg = rig.config();
+        cfg.speedUmS = 3000;                 // fast moves ...
+        cfg.reference.searchSpeedUmS = 500;  // ... but a slow search
+        auto svc = rig.service(cfg);
         MIB_REQUIRE(svc->startup() == StageError::None, "start-up");
         const auto r = svc->reference();
-        MIB_EXPECT(finish(*svc, r.id) == OpState::Failed, "missing limit fails");
-        MIB_EXPECT(!rig.device.moving(), "jog stopped");
-        MIB_EXPECT(std::abs(rig.device.positionPulses()) * kUmPerPulse < 6500 + 300,
-                   "search stopped near its 6500 um bound");
+        MIB_EXPECT(finish(*svc, r.id, 30000) == OpState::Failed, "missing limit fails");
+        MIB_EXPECT(svc->operation(r.id)->error == StageError::ReferenceFailed, "ReferenceFailed");
+        MIB_EXPECT(!rig.device.moving(), "search stopped");
+        MIB_EXPECT(std::abs(rig.device.positionPulses()) <= 14858,
+                   "search ended within its 6500 um bound (reply delay " + std::to_string(replyDelayMs) + " ms)");
+        const auto speeds = rig.device.motionSpeeds();
+        const auto motions = rig.device.motionLog();
+        MIB_REQUIRE(!motions.empty(), "the search issued a move");
+        MIB_EXPECT(motions.front() == 0x65, "the search is a bounded relative move, never a jog");
+        for (std::size_t i = 0; i < motions.size(); ++i) {
+            MIB_EXPECT(motions[i] != 0x66, "Home never jogs");
+            MIB_EXPECT(std::abs(speeds[i] - 0.5f) < 1e-4f, "every search move ran at the 500 um/s search speed");
+        }
+    }
+
+    // The search runs at the search speed; the midpoint move at the move speed.
+    {
+        StageRig rig;
+        auto cfg = rig.config();
+        cfg.speedUmS = 3000;
+        cfg.reference.searchSpeedUmS = 500;
+        auto svc = rig.service(cfg);
+        MIB_REQUIRE(svc->startup() == StageError::None && home(*svc), "Home");
+        const auto speeds = rig.device.motionSpeeds();
+        const auto motions = rig.device.motionLog();
+        MIB_REQUIRE(motions.size() >= 3, "two searches and the midpoint approach");
+        MIB_EXPECT(motions[0] == 0x65 && motions[1] == 0x65, "both searches are bounded relative moves");
+        MIB_EXPECT(std::abs(speeds[0] - 0.5f) < 1e-4f && std::abs(speeds[1] - 0.5f) < 1e-4f,
+                   "both limit searches at the slow search speed");
+        for (std::size_t i = 2; i < motions.size(); ++i)
+            MIB_EXPECT(std::abs(speeds[i] - 3.0f) < 1e-4f, "the midpoint approach at the move speed");
     }
     {
         StageRig rig;
