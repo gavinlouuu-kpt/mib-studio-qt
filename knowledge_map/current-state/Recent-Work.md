@@ -20,6 +20,20 @@ needed in either direction.
 Bridge ABI 27. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
 
+## 2026-10-06 — Z stage: Disconnect and ApplyProfile can no longer hold Stop (#464)
+
+[[../services/StageService]] `disconnect()` and `applyProfile()` used to queue
+behind a running move or Home. The bridge runs one command at a time and
+`stage_stop` needs the same lock, so Stop could have waited out the whole
+operation.
+- **Reproduced:** `applyProfile()` during a 3 s move blocked 2.9 s, then
+  applied and saved the profile.
+- **Now:** `applyProfile()` and `connect()` are refused at once (`Busy`)
+  while an operation is active. `disconnect()` stops the axis and cancels
+  the operation, then disconnects within ~50 ms.
+- **Tests:** `backend.stage_service` and `backend.stage_bridge_facade`
+  cover it at both layers, and the mutations fail them.
+
 ## 2026-10-06 — Z stage panel in the Tauri app (#464, slice 5)
 
 The Connect tab gains a Z stage panel (`StageControls`) under the pump and

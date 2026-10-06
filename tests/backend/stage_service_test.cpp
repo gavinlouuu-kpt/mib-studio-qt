@@ -329,6 +329,39 @@ int main()
         MIB_EXPECT(!rig.device.moving() && !svc->snapshot().referenced, "stopped; reference dropped");
     }
 
+    // The bridge runs one command at a time, and Stop needs the same lock: a
+    // Disconnect or ApplyProfile that queues behind a running move would hold
+    // Stop for the whole move (found while designing the Tauri panel, #464).
+    watchdog.mark("disconnect and apply profile never wait behind a move");
+    {
+        StageRig rig;
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None && home(*svc), "Home");
+        rig.device.setPulsesPerSecond(2000);
+        const auto move = svc->moveTo(2500);
+        MIB_REQUIRE(move.accepted(), "slow move (~3 s)");
+        sleepMs(100);
+
+        auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(svc->applyProfile() == StageError::Busy, "ApplyProfile is refused while a move runs");
+        const auto applyMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        MIB_EXPECT(applyMs < 500, "ApplyProfile answered at once, not after the move (" + std::to_string(applyMs) + " ms)");
+        MIB_EXPECT(rig.device.moving() && rig.device.saves() == 0, "the move was not disturbed and nothing was saved");
+
+        std::string detail;
+        MIB_EXPECT(svc->connect(&detail) == StageError::Busy, "Connect is refused while a move runs");
+        MIB_EXPECT(rig.device.moving(), "still moving");
+
+        t0 = std::chrono::steady_clock::now();
+        svc->disconnect();
+        const auto discMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        MIB_EXPECT(discMs < 1500, "Disconnect stopped the move and returned (" + std::to_string(discMs) + " ms), not after ~3 s");
+        MIB_EXPECT(!rig.device.moving(), "the axis is stopped");
+        MIB_EXPECT(svc->operation(move.id)->state == OpState::Cancelled, "the move was cancelled");
+        MIB_EXPECT(!svc->snapshot().connected, "disconnected");
+        MIB_EXPECT(!svc->moveTo(0).accepted(), "no motion after Disconnect");
+    }
+
     watchdog.mark("shutdown while moving");
     {
         StageRig rig;
