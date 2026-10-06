@@ -220,6 +220,19 @@ int main()
         MIB_EXPECT(ops.wait(slow.operationId) == BackendOperationState::Cancelled, "move cancelled");
         MIB_EXPECT(waitFor([&] { return !device.moving(); }, std::chrono::seconds(2)), "cancel stopped the axis");
         device.setPulsesPerSecond(200000);
+
+        // Rule 2 with verified limits and a homed stage: a reconnect must
+        // still be observe-only (the gate cannot mask an implicit Home here).
+        MIB_REQUIRE(stage(facade, StageCommandAction::Disconnect).ok, "Disconnect");
+        const int writes = device.writes();
+        const auto motions = motionOpcodes(device);
+        const auto at = device.positionPulses();
+        MIB_REQUIRE(stage(facade, StageCommandAction::Connect, 0, device.portName).ok, "reconnect");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        MIB_EXPECT(device.writes() == writes && motionOpcodes(device) == motions && device.positionPulses() == at,
+                   "reconnect with verified limits wrote nothing and moved nothing");
+        facade.fetchStageStatus(st);
+        MIB_EXPECT(st.referenced && st.limitsVerified, "still homed (power-up token) and verified");
     }
 
     // --- pump cannot claim the stage's bus address ----------------------------
