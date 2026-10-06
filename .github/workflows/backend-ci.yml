@@ -117,8 +117,8 @@ jobs:
           total=$(ctest --preset linux-backend-only-test -N -L pl | sed -n 's/^Total Tests: //p')
           echo "PL lane: ${total} tests"
           # Lower bound: raise it when a PL test is added.
-          if [ "${total:-0}" -lt 13 ]; then
-            echo "::error::PL replay lane shrank to ${total:-0} tests (expected >= 13): a pl label or test was dropped."
+          if [ "${total:-0}" -lt 15 ]; then
+            echo "::error::PL replay lane shrank to ${total:-0} tests (expected >= 15): a pl label or test was dropped."
             exit 1
           fi
           ctest --preset linux-backend-only-test -L pl --no-tests=error --output-on-failure 2>&1 | tee artifacts/backend-ci/pl-lane.log

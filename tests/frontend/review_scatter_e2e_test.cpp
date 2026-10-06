@@ -5,7 +5,8 @@
 // zoom, drag pan, Reset zoom, Prev/Next, "Open in window…". A screenshot of
 // every state goes to MIB_REVIEW_E2E_OUT (or the temp dir). Requires the real
 // frames (python scripts/provision-assets.py --asset 512x96stream-mock-frames
-// --count 1000); without them the test is skipped (exit 77).
+// --count 1000); without them the test is skipped (exit 77). MIB_REVIEW_E2E_KEEP_H5
+// copies the recorded run there (input of tools/review_parity/).
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
@@ -261,6 +262,12 @@ int main(int argc, char* argv[]) {
     tabs->setCurrentIndex(3);
     auto* review = window.findChild<frontend::HdfReviewTab*>();
     MIB_REQUIRE(review, "review tab");
+    // Parity sign-off input (tools/review_parity/run.sh): keep the recorded run.
+    if (const char* keep = std::getenv("MIB_REVIEW_E2E_KEEP_H5")) {
+        std::error_code ec;
+        std::filesystem::copy_file(written, keep, std::filesystem::copy_options::overwrite_existing, ec);
+        MIB_EXPECT(!ec, "kept the recorded run at MIB_REVIEW_E2E_KEEP_H5: " + ec.message());
+    }
     review->loadHdfFileForTests(QString::fromStdString(written));
     auto* frameTypeTabs = review->findChild<QTabWidget*>(QStringLiteral("frameTypeTabs"));
     MIB_REQUIRE(frameTypeTabs, "frame type tabs");

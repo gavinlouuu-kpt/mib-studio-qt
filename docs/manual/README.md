@@ -20,6 +20,8 @@ and redeploys whenever these pages or the generated screenshots change.
    preview, monitoring charts, and recording experiments to HDF5.
 4. [Review & post-process](review-and-postprocess.md) — browse recorded
    files, export metrics/images, reanalyse, and the standalone tools.
+   [YOFO Review](yofo-review.md) — the Review tab as a standalone
+   macOS / Windows app: install, open files, export, updates.
 5. [Troubleshooting](troubleshooting.md) — logs, crash reports, and common
    failure modes.
 

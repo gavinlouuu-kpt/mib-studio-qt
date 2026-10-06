@@ -1934,6 +1934,35 @@ rust::String BackendBridge::fetch_instrument_status() {
     }
 }
 
+BridgeCommandResult BackendBridge::set_instrument_mode(rust::Str mode, std::int32_t x, std::int32_t y) {
+    try {
+        return toBridgeResult(impl_->facade.setInstrumentMode(toStd(mode), x, y));
+    } catch (const std::exception& e) { return errorResult(std::string("set_instrument_mode: ") + e.what()); }
+    catch (...) { return errorResult("set_instrument_mode: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_service_mode(bool on) {
+    try {
+        return toBridgeResult(impl_->facade.setServiceMode(on));
+    } catch (...) { return errorResult("set_service_mode: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_instrument_led(double delay_us, double width_us) {
+    try {
+        return toBridgeResult(impl_->facade.setInstrumentLed(delay_us, width_us));
+    } catch (const std::exception& e) { return errorResult(std::string("set_instrument_led: ") + e.what()); }
+    catch (...) { return errorResult("set_instrument_led: unknown error"); }
+}
+
+rust::Vec<std::uint8_t> BackendBridge::fetch_run_preview() {
+    try {
+        std::string error;
+        return bytesToVec(impl_->facade.fetchRunPreviewPacket(&error));
+    } catch (...) {
+        return {};
+    }
+}
+
 rust::String BackendBridge::fetch_camera_geometry() {
     try {
         return rust::String(impl_->facade.fetchCameraGeometryJson());
@@ -2214,7 +2243,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 26; }
+std::uint32_t bridge_abi_version() { return 27; }
 
 } // namespace mib_bridge
 

@@ -26,6 +26,7 @@ nav:
   - Connect a camera: connect.md
   - Acquire & record: acquire-and-record.md
   - Review & post-process: review-and-postprocess.md
+  - YOFO Review: yofo-review.md
   - Troubleshooting: troubleshooting.md
 
 theme:

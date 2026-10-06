@@ -103,9 +103,15 @@ public:
     ProviderStatus status() const override;
     // BUILD_ID, PROFILE_ID, ABI_VERSION and SCIENCE_PROFILE from the bridge.
     ProviderIdentity identity() override;
+    // As pzres preview (Align, images results8 on): refused while a run is armed.
+    bool startPreview(const BridgePreviewConfig& config, std::string* error) override;
+    bool fetchPreview(uint64_t lastFrameId, std::chrono::milliseconds timeout, BridgePreviewImage& out,
+                      std::string* error) override;
+    void stopPreview() override;
 
 private:
     class Mapping;
+    class PreviewIo;
     void run();
     bool ensureMapped(std::string* error);
 
@@ -117,6 +123,10 @@ private:
     std::thread thread_;
     std::atomic<bool> stopRequested_{false};
     std::atomic<bool> running_{false};
+    std::mutex previewMutex_;              // serialises preview start/fetch/stop
+    std::unique_ptr<PreviewIo> preview_;   // set while previewing
+    BridgePreviewConfig previewConfig_;
+    std::atomic<bool> previewing_{false};
 };
 #endif
 

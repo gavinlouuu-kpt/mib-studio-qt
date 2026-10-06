@@ -132,7 +132,15 @@ case "$OS" in
             echo "    ctest --preset linux-backend-only-test        # network-labelled tests: linux-network-test"
         fi ;;
     Darwin)
-        echo "    macOS has no CMake preset yet; start from knowledge_map/build-and-run/Build.md"
-        echo "    (Qt-free core: cmake -S . -B build/mac -G Ninja -DMIB_BUILD_PROCESSING_ONLY=ON -DMIB_BUILD_BACKEND_ONLY=ON -DBUILD_TESTING=OFF -DMIB_USE_SENTRY=OFF)" ;;
+        # YOFO Review (docs/howto/macos-build.md): static Conan deps + preset.
+        echo "    conan install . -of build/review-core --build=missing -o \"&:review_core=True\" \\"
+        echo "        -pr:h conan/profiles/macos-appleclang-arm64 -pr:b conan/profiles/macos-appleclang-arm64"
+        echo "    cmake --preset macos-review-core && cmake --build --preset macos-review-core-build"
+        echo "    python3 tools/gen_review_link_manifest.py"
+        if [[ ",$SECTIONS," == *",desktop-shell,"* ]]; then
+            echo "    cd desktop && npm install && npm run tauri:review:build -- --features review-only --bundles app,dmg"
+        else
+            echo "    (bundling the app needs --sections base,desktop-shell: Node 22 + Rust)"
+        fi ;;
 esac
 echo "    verify any time with: scripts/doctor.sh --sections $SECTIONS"
