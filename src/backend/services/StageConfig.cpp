@@ -76,7 +76,9 @@ StageConfig parseStageConfig(const J& block)
     const auto& ref = object(block, "reference");
     auto& r = c.reference;
     r.onStartup = boolean(ref, "on_startup", r.onStartup);
-    r.searchSpeedUmS = number(ref, "search_speed_um_s", r.searchSpeedUmS, 1.0, 7000.0);
+    // Home searches for the limit switches at this speed; keep it slow, as a
+    // stage with unverified switches may reach its hard stop (#464).
+    r.searchSpeedUmS = number(ref, "search_speed_um_s", r.searchSpeedUmS, 1.0, 2000.0);
     r.expectedSpanUm = number(ref, "expected_span_um", r.expectedSpanUm, 1.0, 1e6);
     r.spanToleranceUm = number(ref, "span_tolerance_um", r.spanToleranceUm, 0.0, 1e6);
     r.searchMarginUm = number(ref, "search_margin_um", r.searchMarginUm, 0.0, 1e6);
