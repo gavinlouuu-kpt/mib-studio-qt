@@ -83,10 +83,14 @@ freeze exact revision identity/content into historical runs.
   with a pre-submit base-vs-head check that stops with a compared conflict and an
   explicit branch option; independent review / publish / archive / revoke with
   reasons; history; update-available helper. `profiles.registry_authoring`.
-- [ ] M3b: authoring/review UI in Qt and React (drafts, submit, conflict
-  compare / branch / new draft from head / discard, review actions by role,
-  release notes, history, update-available badge) and the bridge surface.
-- [ ] M3: local drafts, authoring/submission UI, conflict comparison/branch handling,
+- [x] M3b: authoring/review UI in React (Drafts view, review actions by role
+  with reasons, details/history, "rN available"; rules in `registry.ts`), bridge
+  authoring functions inside the registry ABI (25). The Qt version was
+  dropped (ADR 0011).
+- [ ] M3: template drafts (a new method from a bundled template), a per-key
+  draft editor beyond "current config.json", and release-note display in a
+  method picker / context bar (#312).
+- [x] M3 core: local drafts, authoring/submission UI, conflict comparison/branch handling,
   release notes and review/publication management UI.
 - [ ] M4: operator execution entitlements, project distribution, role management,
   independent approval display and attributed execution/session journal integration.
@@ -122,16 +126,6 @@ freeze exact revision identity/content into historical runs.
   facade shutdown (caught by the new `profiles.registry_facade` test); the facade
   now stops it first. ABI 15 was free on `develop`; the review-scatter plan also
   names "14 → 15", so whichever lands second takes the next number.
-- 2026-10-05 (renumber): the registry surface was built as a provisional ABI 15 and
-  rode develop's number through the restack. #495 took 23 for the instrument line
-  and #502 took 24 (#501 P0), so the stack is **25** (contract, `shim.cpp`, contract
-  test, generated `bridgeContract.ts`, registry comments): a bump to 24 was first
-  committed (17b08e71), then set to 25 when develop reached 24 (merge commit
-  resolving the ABI lines). 15 and 19-24 are never reused. The Tauri commands moved to `mib-app-commands` on
-  develop; the registry commands stay in the desktop crate (`registry` module)
-  because they need the shell's transport and a sign-in carries a password that must
-  not cross the YOFO Studio WebSocket.
-
 - 2026-10-04 (M2a backend): decisions — (1) operator choices on #398: an
   unvalidated central revision warns and Start is allowed; validation is an
   explicit operator confirmation (who = signed-in registry user, when, instrument
@@ -164,6 +158,36 @@ freeze exact revision identity/content into historical runs.
   submitting so a conflict costs no server write and shows both diffs; the server's
   own 409 remains the authority; (4) drafts live in the per-user cache, so they
   follow the registry account, not the instrument.
+
+- 2026-10-04 (ABI hold): ADR 0011 (PR #484) freezes bridge-ABI bumps on `develop`
+  until #450 (`dev/react-tauri`) lands, then renumbers once. #474/#475 do not touch
+  the bridge; #477 introduces the registry surface as ABI 15 and #478-#482 extend it
+  inside that unreleased 15, so none of them lands before #450. After the
+  renumbering the stack is rebased (version + changelog only; contract groups and
+  function names stay). ADR 0011 also limits Qt to fixes until #450 reaches parity,
+  which bears on the Qt-only parts of #479 (Apply) and #482 (authoring UI); owner's
+  call.
+- 2026-10-05 (restack): merge coordination decided to drop the Qt parts. #475 (Qt
+  dialog) closes unmerged; #477 is based directly on `develop` (bridge ABI 19 after
+  #450) by merging `develop` in (published branches are never rebased), and the Qt
+  dialog, Qt Apply and Qt authoring UI were removed from #477/#479/#482; the
+  fake Supabase test support stays. Until the stack lands, ABI conflicts resolve
+  to the highest number (the registry rides 19). The stack lands after
+  `feat/yofo-remote-server` and `feat/yofo-pl-results` (merged together as #495).
+- 2026-10-05 (renumber): the registry surface was built as a provisional ABI 15 and
+  rode develop's number through the restack. #495 took 23 for the instrument line
+  and #502 took 24 (#501 P0), so the stack is **25** (contract, `shim.cpp`, contract
+  test, generated `bridgeContract.ts`, registry comments): a bump to 24 was first
+  committed (17b08e71), then set to 25 when develop reached 24 (merge commit
+  resolving the ABI lines). 15 and 19-24 are never reused. The Tauri commands moved to `mib-app-commands` on
+  develop; the registry commands stay in the desktop crate (`registry` module)
+  because they need the shell's transport and a sign-in carries a password that must
+  not cross the YOFO Studio WebSocket.
+- 2026-10-06 (M3b ABI): the authoring surface (#482) changes the bridge FFI, so it
+  takes its own number. Merge coordination assigned **28** (26 = the ZC300 stage
+  bridge #513, 27 = #501 P1 #510); the bump is its own commit, and the ABI lines
+  resolve to 28 when `develop` reaches 27. #510 landed (develop at 27) and the
+  follow-up merge resolved the ABI lines to 28.
 
 ## Validation
 

@@ -434,6 +434,18 @@ unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
 
+## 2026-10-04 — Central method authoring and review UI (#398 M3b)
+
+The React **Central Methods…** panel can now author and govern central
+methods: a **Drafts** view (new method from the current config.json, release
+notes, submit, and the explicit conflict choices with the compared changes)
+and, on Methods, **New draft**, role-gated **Approve / Reject / Publish /
+Archive / Revoke** with a required reason, **History**, a details block and
+"rN available", through new facade/bridge authoring commands (bridge ABI 28;
+27 is #501 P1) and pure `registry.ts` rules. Guards:
+`profiles.registry_facade`, bridge cargo tests, `registry.test.ts`. A Qt
+version was built and dropped (ADR 0011).
+
 ## 2026-10-04 — Central method authoring backend (#398 M3a)
 
 Supabase migration `202610040001_registry_authoring.sql` lets authors create

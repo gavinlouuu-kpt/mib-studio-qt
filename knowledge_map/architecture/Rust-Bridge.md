@@ -100,15 +100,22 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `registry_session_states`, `registry_connectivity`, `registry_job_kinds`
   (`Materialize` = 4 and `RecordValidation` = 5 appended for #398 M2, and
   `SaveDraft` 6, `DeleteDraft` 7, `SubmitDraft` 8, `Transition` 9,
-  `FetchHistory` 10 for M3, before the registry ABI was released; the
-  authoring kinds have no bridge command yet),
+  `FetchHistory` 10 for M3, before the registry ABI was released),
   `registry_job_states`, `registry_central_states`, `registry_local_validation`
   (M2b). M2b also adds `registry_materialize(revision_id)` → job ID and
   `registry_record_validation(revision_id, evidence_file, passed)` →
   `BridgeRegistryValidationRequest { job_id, error }` (the evidence check runs
   before queueing), per-revision `materialized_dir` / `local_validation` /
   `validated_by` / `validated_at_utc`, and snapshot `instrument_id` /
-  `instrument_name` — all part of ABI 25. **Transport seam (ADR
+  `instrument_name` — all part of ABI 25. M3b (ABI 28) adds
+  `BridgeRegistryDraft` / `Method` / `HistoryEntry` / `Conflict` in the
+  snapshot (`drafts`, `methods`, `history_revision_id` + `history`,
+  `submit_conflict`), per-revision `parent_revision_id` / `release_notes` /
+  `newer_revision_id`, and the authoring functions
+  `registry_new_draft_from_revision`, `registry_new_method_draft`,
+  `registry_set_draft_notes`, `registry_draft_from_head`,
+  `registry_submit_draft`, `registry_delete_draft`, `registry_transition`,
+  `registry_fetch_history` → `BridgeRegistryCommand { job_id, error }`. **Transport seam (ADR
   0002 addendum):** the shell installs its HTTPS POST with
   `set_registry_transport(fn(&BridgeHttpRequest) -> BridgeHttpResponse)`
   *before* `initialize` (refused afterwards). Each request carries a
@@ -437,7 +444,8 @@ takes 25 (24 went to #501 P0).
 - `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
   prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
 - 25 is reserved for the #398 profile-registry stack. 26 = the ZC300 stage
-  bridge (#464); 27 is reserved for #501 P1.
+  bridge (#464); 27 = #501 P1 camera modes; 28 = central method authoring
+  (#398 M3b).
 
 ## ABI 26: Z stage commands (#464, ADR 0013)
 

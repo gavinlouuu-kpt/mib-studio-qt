@@ -1509,6 +1509,26 @@ namespace backend
         return result;
     }
 
+    profiles::MethodDraft AppBackend::currentConfigDraft(std::string *error) const
+    {
+        profiles::MethodDraft draft;
+        const auto config = getLastConfigJson();
+        if (config.empty())
+        {
+            if (error) *error = "No config.json is applied";
+            return draft;
+        }
+        draft.configJson = config;
+        if (processingService_)
+        {
+            const auto core = processingService_->activeProcessingCoreIdentity();
+            draft.processingCoreId = core.version;
+            draft.processingContractVersion = static_cast<int>(core.contractVersion);
+        }
+        draft.hardwareCompatibilityJson.clear();
+        return draft;
+    }
+
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {
         if (!captureService_)

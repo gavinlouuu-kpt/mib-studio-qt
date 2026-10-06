@@ -61,12 +61,15 @@ the current context — `checkValidationEvidence`). See
 - `canonicalConfigSha256(configJson)` / `revisionConfigSha256(envelope)` (M2):
   key-order/whitespace/integral-double independent config hash; every
   `CachedRevisionSummary` carries `configSha256`.
-- Authoring (M3a, backend only so far):
+- Authoring (M3a backend; M3b UI in the React Central Methods panel, see
+  [[../architecture/Desktop-Shell]]):
   `requestSaveDraft(MethodDraft, copyFromRevisionId)` stores a local draft in
   the per-user cache (`registry_drafts`; works offline; IDs for draft, method
   and revision pre-generated with `generateUuidV4()` so a retried submit is
   idempotent); with a source revision the config, camera script, core,
-  compatibility, method and base are copied from it. The draft must
+  compatibility, method and base are copied from it — only the content fields
+  the caller left empty, so `AppBackend::currentConfigDraft()` can put the
+  applied config.json on top of a revision. The draft must
   canonicalize. `requestDeleteDraft`. `requestSubmitDraft(id, asBranch)`
   (signed in): creates the method for a new-method draft, otherwise reads the
   method head (`listMethods`) and, when it is not the draft's base, stops with

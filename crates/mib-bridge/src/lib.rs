@@ -331,6 +331,64 @@ pub mod ffi {
         pub local_validation: u32,
         pub validated_by: String,
         pub validated_at_utc: String,
+        /// #398 M3b: lineage, author's notes, and a newer published revision
+        /// of the same method ("" = none).
+        pub parent_revision_id: String,
+        pub release_notes: String,
+        pub newer_revision_id: String,
+    }
+
+    /// A local method draft (#398 M3b); never sent until submitted.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryDraft {
+        pub draft_id: String,
+        pub project_id: String,
+        pub method_id: String,
+        pub new_method: bool,
+        pub method_display_name: String,
+        pub base_revision_id: String,
+        pub release_notes: String,
+        pub submitted_revision_id: String,
+        pub updated_at_utc: String,
+    }
+
+    /// A registry method with its published head (#398 M3b).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryMethod {
+        pub method_id: String,
+        pub project_id: String,
+        pub display_name: String,
+        pub head_revision_id: String,
+    }
+
+    /// One review decision (`review` true) or audit event of a revision.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryHistoryEntry {
+        pub who: String,
+        pub what: String,
+        pub reason: String,
+        pub created_at: String,
+        pub review: bool,
+    }
+
+    /// The last submit stopped because the draft's base is no longer the
+    /// method head (#398 M3b); nothing was sent.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryConflict {
+        pub present: bool,
+        pub draft_id: String,
+        pub base_revision_id: String,
+        pub head_revision_id: String,
+        pub compared: bool,
+        pub upstream_changes: Vec<String>,
+        pub draft_vs_head: Vec<String>,
+    }
+
+    /// Outcome of an authoring command: `job_id` 0 = refused, `error` why.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeRegistryCommand {
+        pub job_id: u64,
+        pub error: String,
     }
 
     /// Outcome of `registry_record_validation` (#398 M2b): `job_id` 0 means
@@ -382,6 +440,12 @@ pub mod ffi {
         /// This instrument's identity (UUID + optional name; #398 M2b).
         pub instrument_id: String,
         pub instrument_name: String,
+        /// #398 M3b authoring state.
+        pub drafts: Vec<BridgeRegistryDraft>,
+        pub methods: Vec<BridgeRegistryMethod>,
+        pub history_revision_id: String,
+        pub history: Vec<BridgeRegistryHistoryEntry>,
+        pub submit_conflict: BridgeRegistryConflict,
     }
 
     /// Authoritative selected-device snapshot (schema v7, BE-2). `mode` is a
@@ -1020,6 +1084,30 @@ pub mod ffi {
             evidence_file: &str,
             passed: bool,
         ) -> BridgeRegistryValidationRequest;
+        /// #398 M3b authoring: drafts stay local until submitted; review and
+        /// publication need the matching project role (server-enforced) and
+        /// a reason. `state` = `registry_central_states`.
+        fn registry_new_draft_from_revision(
+            self: Pin<&mut BackendBridge>,
+            revision_id: &str,
+            use_current_config: bool,
+        ) -> BridgeRegistryCommand;
+        fn registry_new_method_draft(
+            self: Pin<&mut BackendBridge>,
+            project_id: &str,
+            name: &str,
+            release_notes: &str,
+        ) -> BridgeRegistryCommand;
+        fn registry_set_draft_notes(self: Pin<&mut BackendBridge>, draft_id: &str, notes: &str)
+            -> BridgeRegistryCommand;
+        fn registry_draft_from_head(self: Pin<&mut BackendBridge>, draft_id: &str, keep_draft_config: bool)
+            -> BridgeRegistryCommand;
+        fn registry_submit_draft(self: Pin<&mut BackendBridge>, draft_id: &str, as_branch: bool)
+            -> BridgeRegistryCommand;
+        fn registry_delete_draft(self: Pin<&mut BackendBridge>, draft_id: &str) -> BridgeRegistryCommand;
+        fn registry_transition(self: Pin<&mut BackendBridge>, revision_id: &str, state: u32, reason: &str)
+            -> BridgeRegistryCommand;
+        fn registry_fetch_history(self: Pin<&mut BackendBridge>, revision_id: &str) -> BridgeRegistryCommand;
         /// Value snapshot of the registry worker; never waits on a request.
         fn fetch_registry_snapshot(self: Pin<&mut BackendBridge>) -> BridgeRegistrySnapshot;
         fn fetch_registry_job(self: Pin<&mut BackendBridge>, job_id: u64) -> BridgeRegistryJob;
