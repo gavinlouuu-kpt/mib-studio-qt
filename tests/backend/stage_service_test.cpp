@@ -109,6 +109,7 @@ public:
         return true;
     }
     void setFailSave(bool on) { failSave_.store(on); }
+    void setFailClear(bool on) { failClear_.store(on); }
     void setClearDelayMs(int ms) { clearDelayMs_.store(ms); }
     bool inClear() const { return inClear_.load(); }
 
@@ -1100,6 +1101,30 @@ int main()
         auto fresh = rig.service();
         MIB_REQUIRE(fresh->startup() == StageError::None && zero(*fresh), "zero after a power cycle needs no declaration");
         MIB_EXPECT(fresh->snapshot().envelopeMaxUm == 1000.0, "and gets a fresh window");
+    }
+
+    // A deletion that failed earlier and is still pending must not erase a record
+    // that Set zero saved afterwards.
+    watchdog.mark("pending deletion does not erase a newer record");
+    {
+        StageRig rig;
+        auto log = std::make_shared<EventLog>();
+        auto* recording = new RecordingStore(rig.store, log, true, false); // every deletion fails
+        auto svc = rig.serviceWithStore(rig.config(), std::unique_ptr<IStageReferenceStore>(recording));
+        MIB_REQUIRE(svc->startup() == StageError::None && zero(*svc), "zero");
+        rig.device.powerCycle(); // the next poll drops the record: the deletion fails and stays pending
+        MIB_REQUIRE(waitFor([&] { return !svc->snapshot().zeroSet; }), "the poll sees the new power-up");
+        sleepMs(120); // several retries of the deletion, all failing
+        MIB_REQUIRE(zero(*svc), "the operator sets zero in the new power-up (saves a newer record)");
+        recording->setFailClear(false); // the disk recovers: a retry of the old deletion would now succeed
+        sleepMs(250);                    // many polls
+        const auto kept = rig.store->load();
+        MIB_EXPECT(kept.has_value() && kept->zeroValid && kept->token == rig.device.scratch(),
+                   "the newer record survives the retry");
+        svc.reset();
+        auto again = rig.service();
+        MIB_REQUIRE(again->startup() == StageError::None, "reconnect");
+        MIB_EXPECT(again->snapshot().zeroSet, "and the zero is restored without a declaration");
     }
 
     // Final review: Set zero publishes the status it reads, so a fault that is gone by

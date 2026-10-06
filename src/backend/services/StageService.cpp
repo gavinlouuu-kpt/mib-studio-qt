@@ -591,6 +591,17 @@ void StageService::resetPowerUpLocked(const char* why)
     storeClearPending_ = true;
 }
 
+bool StageService::saveRecord(const StageReferenceRecord& record)
+{
+    // Every store operation runs on the worker, one at a time. A record that was
+    // saved successfully is newer than any deletion still pending (a clear() that
+    // failed earlier): the retry must not delete it.
+    if (!store_->save(record)) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    storeClearPending_ = false;
+    return true;
+}
+
 void StageService::flushStoreClear()
 {
     {
@@ -643,7 +654,7 @@ void StageService::persistInvalidation()
         rec = zeroRecord_;
         rotated = rotatedForPending_;
     }
-    bool durable = store_->save(rec);
+    bool durable = saveRecord(rec);
     if (!durable && !rotated) {
         // The stale "valid" record may still be on disk and the controller token is
         // unchanged: after a restart it would be restored. A new token makes it
@@ -661,7 +672,7 @@ void StageService::persistInvalidation()
                     zeroRecord_.nextToken = 0;
                     rotatedForPending_ = true;
                 }
-                durable = store_->save(rec); // the replacement record: kept pending until it is stored
+                durable = saveRecord(rec); // the replacement record: kept pending until it is stored
             } else {
                 // The write may still have happened: accept both tokens from here on.
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -1326,7 +1337,7 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
         token = distinctToken({current, previous.token, previous.nextToken});
         interim.token = current;
         interim.nextToken = token;
-        if (!store_->save(interim)) {
+        if (!saveRecord(interim)) {
             return {StageError::Protocol, "could not store the zero record; nothing was changed"};
         }
         if (const StageError err = d->writePowerUpToken(token); err != StageError::None) {
@@ -1358,7 +1369,7 @@ std::pair<StageError, std::string> StageService::doSetZero(bool midTravel)
     bool stored = true;
     if (tokenUsed) {
         stored = false;
-        for (int attempt = 0; attempt < 3 && !stored; ++attempt) stored = store_->save(record);
+        for (int attempt = 0; attempt < 3 && !stored; ++attempt) stored = saveRecord(record);
     } else {
         store_->clear();
     }

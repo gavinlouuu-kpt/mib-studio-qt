@@ -589,6 +589,41 @@ int main()
         device.setReplyDelayMs(0);
     }
 
+    // A fairness grant to a waiting poll under a sustained Stop queue must complete a
+    // read: yielding before the first transaction of a granted call would starve it.
+    watchdog.mark("fairness grant to a poll under a stop storm");
+    {
+        FakeZc300 device;
+        device.setPulsesPerSecond(2000);
+        SerialBusManager manager;
+        useFake(manager, device);
+        zc300::Zc300Stage stage(manager);
+        StageIdentity id;
+        MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
+        stage.enableGrantLog();
+        device.setReplyDelayMs(120);
+        std::thread inFlight([&] { stage.moveRelative(100); });
+        while (device.opcodeCount(0x65) == 0 && stage.waitingCalls() == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        StageError pollResult = StageError::Stopped;
+        std::thread poller([&] { StageStatus st; pollResult = stage.readStatus(st); });
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (stage.waitingCalls() < 1 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::vector<std::thread> storm;
+        for (int i = 0; i < 8; ++i) storm.emplace_back([&] { stage.stop(); });
+        while (stage.waitingCalls() < 9 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        MIB_REQUIRE(stage.waitingCalls() >= 9, "a poll and eight Stops are queued behind the in-flight call");
+        inFlight.join();
+        poller.join();
+        for (auto& t : storm) t.join();
+        device.setReplyDelayMs(0);
+        const std::string grants = stage.grantLog();
+        const auto pollGrant = grants.find('P');
+        MIB_REQUIRE(pollGrant != std::string::npos, "the poll was granted (grants: " + grants + ")");
+        MIB_EXPECT(std::count(grants.begin(), grants.begin() + static_cast<long>(pollGrant), 'S') <= 4,
+                   "after at most four Stops (grants: " + grants + ")");
+        MIB_EXPECT(pollResult == StageError::None, "and its read completed instead of giving way again (" + std::string(toString(pollResult)) + ")");
+    }
+
     // ...but a Stop storm must not starve teardown: at most four Stops are
     // granted in a row while a Disconnect waits.
     watchdog.mark("stop storm does not starve disconnect");

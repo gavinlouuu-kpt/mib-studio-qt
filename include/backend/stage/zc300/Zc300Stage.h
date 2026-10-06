@@ -68,7 +68,10 @@ private:
     StageError motionLocked(Opcode op, std::uint16_t direction, std::uint64_t expectedStopGeneration);
     // True while a Stop is waiting for the driver and the current holder is not that Stop: retries
     // and further transactions give way to it (Stop latency, #531).
-    bool stopWaiting() const { return !holderIsStop_ && stopsWaiting_.load() > 0; }
+    // Only *between* transactions of one call: a call that was just granted the driver (a fairness
+    // grant to a poll under a Stop storm, say) always completes its first transaction, or a
+    // sustained Stop queue would starve everything else.
+    bool stopWaiting() const { return transactionsInCall_ > 0 && !holderIsStop_ && stopsWaiting_.load() > 0; }
     StageError readStatusLocked(StageStatus& status);
     StageError readConfigLocked(ControllerConfig& config);
     StageError requireMotionLocked() const;
@@ -116,6 +119,7 @@ private:
     std::atomic<std::uint64_t> stopGeneration_{0};
     std::atomic<int> stopsWaiting_{0}; // stop() calls between entry and return
     mutable bool holderIsStop_{false}; // written and read only by the current holder of the driver
+    mutable int transactionsInCall_{0}; // holder only: transactions sent since the call got the driver
     std::atomic<bool> connected_{false};
     std::atomic<bool> configured_{false};
 };

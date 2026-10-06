@@ -272,6 +272,8 @@ private:
     // rotated instead, so a stale valid record can never match again.
     void persistInvalidation();
     void flushStoreClear(); // worker only, outside every lock
+    // Saves a record; a successful save supersedes a deletion still pending (worker only).
+    bool saveRecord(const StageReferenceRecord& record);
     std::uint16_t distinctToken(std::initializer_list<std::uint16_t> avoid);
     // Compares the controller's power-up token with the one this zero was set
     // under, dropping everything on a mismatch (ZeroNotSet). A read error is

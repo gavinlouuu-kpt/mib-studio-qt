@@ -115,7 +115,8 @@ One write to position register 30059 through the driver's `setPosition(0)`:
   mid-travel declaration starts a new window. An operator Stop keeps the zero.
 - **No file I/O under the service lock.** Deleting a stored record is queued
   (`storeClearPending_`) and done by the worker right after, outside `mutex_`
-  (`flushStoreClear`), as are saves, the port enumeration and the limit-record
+  (`flushStoreClear`; a successful save of a newer record supersedes a deletion still
+  pending, so a retry never erases it), as are saves, the port enumeration and the limit-record
   read, so a slow disk cannot hold `stop()` or `snapshot()`.
 - **Set zero publishes the status it reads**, exactly as a poll would: a fault seen
   there drops the existing zero too, even if it clears before the next poll.

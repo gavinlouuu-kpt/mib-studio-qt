@@ -91,7 +91,9 @@ bus session's call mutex is innermost (see [[SerialBus]]).
   target write, and without a caller-supplied value it is read when the call
   starts, so a Stop queued behind a call in flight still wins.
 - **Stop latency.** While a Stop waits for the driver, the call in flight gives way
-  before **every** further transaction (`Stopped`): retries, a lost-ack
+  before **every further** transaction (`Stopped`), but never before the *first* one of
+  a call that was just granted the driver: a fairness grant to a poll under a Stop storm
+  always completes a read, or a sustained Stop queue would starve it: retries, a lost-ack
   reconciliation read, each configuration write of a profile apply, and the Save
   (which is not started while a Stop waits). A Stop therefore sits behind at most
   the one transaction in progress (up to `transactionMs`). A Save already running

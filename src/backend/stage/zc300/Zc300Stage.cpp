@@ -63,6 +63,7 @@ public:
             stage_.held_ = true;
             owned_ = true;
             stage_.holderIsStop_ = kind == Kind::Stop;
+            stage_.transactionsInCall_ = 0;
             stage_.recordGrantLocked(code);
             return;
         }
@@ -74,11 +75,13 @@ public:
             stage_.gateCv_.wait(lock, [&] { return waiter.granted; });
             owned_ = true;
             stage_.holderIsStop_ = false;
+            stage_.transactionsInCall_ = 0;
             return;
         }
         if (stage_.gateCv_.wait_for(lock, kLockTimeout, [&] { return waiter.granted; })) {
             owned_ = true;
             stage_.holderIsStop_ = kind == Kind::Stop;
+            stage_.transactionsInCall_ = 0;
             return;
         }
         queue.erase(std::find(queue.begin(), queue.end(), &waiter)); // timed out; still queued, under gate_
@@ -283,6 +286,7 @@ StageError Zc300Stage::readLocked(int reg, std::uint16_t count, Frame& data)
         // every one. This also covers a lost-ack reconciliation read and each write of a
         // profile apply, Save included: it is not started while a Stop waits.
         if (stopWaiting()) return StageError::Stopped;
+        ++transactionsInCall_;
         const auto t = bus_->transact(request, timing_.transactionMs);
         if (t.error == serialbus::BusError::Timeout) continue;
         if (t.error != serialbus::BusError::None) return fromBus(t);
@@ -297,6 +301,7 @@ StageError Zc300Stage::writeLocked(const Frame& request, int timeoutMs)
     if (!bus_) return StageError::NotConnected;
     for (int attempt = 0; attempt <= timing_.silenceRetries; ++attempt) {
         if (stopWaiting()) return StageError::Stopped; // see readLocked
+        ++transactionsInCall_;
         const auto t = bus_->transact(request, timeoutMs);
         if (t.error == serialbus::BusError::Timeout) continue;
         return fromBus(t);
@@ -312,6 +317,7 @@ StageError Zc300Stage::motionLocked(Opcode op, std::uint16_t direction, std::uin
     if (stopGeneration_.load() != expectedStopGeneration) return StageError::Stopped;
     // Sent exactly once: a re-sent move could run twice. When the reply is
     // lost, status decides whether the controller accepted the command.
+    ++transactionsInCall_; // the reconciliation read below is a further transaction: it yields to a Stop
     const auto t = bus_->transact(buildOpcode(address_, op, 2, axisCode(axis_), direction),
                                   timing_.transactionMs);
     if (t.error != serialbus::BusError::Timeout) return fromBus(t);
